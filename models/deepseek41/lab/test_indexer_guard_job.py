@@ -1,6 +1,7 @@
 """Marker coverage and failure parsing without a GPU."""
 import json
 import unittest
+from unittest.mock import patch
 import indexer_guard_job as job
 
 
@@ -27,6 +28,11 @@ def logs():
 
 
 class Checks(unittest.TestCase):
+    def test_dry_run_requires_compact_fixture_regression(self):
+        with patch.object(job, 'read', return_value={'cpu_tests': []}):
+            with self.assertRaisesRegex(AssertionError, 'compact GPU fixture builder'):
+                job.validate(None)
+
     def test_markers_anywhere_and_shard_sums(self):
         result = job.results(logs())
         self.assertEqual(result['matrix_shapes'], 93)

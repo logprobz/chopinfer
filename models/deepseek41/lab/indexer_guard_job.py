@@ -15,6 +15,8 @@ def read(path):
 
 def validate(stage_path):
     stage = read(stage_path)
+    assert 'indexer_mma::guard::cpu_compact_matrix_uses_distinct_tags' in stage['cpu_tests'], \
+        'dry run must exercise the compact GPU fixture builder'
     for name, digest in stage['sha256'].items():
         path = Path(name)
         assert path.is_absolute() and hashlib.sha256(path.read_bytes()).hexdigest() == digest, name

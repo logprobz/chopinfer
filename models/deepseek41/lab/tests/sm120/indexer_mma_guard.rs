@@ -274,6 +274,109 @@ fn gpu_real_guard_frequency_and_cost() {
     assert!(ran.is_some());
 }
 
+fn matrix_shapes() -> Vec<(u32, u32, u32, u32)> {
+    let mut shapes = vec![];
+    for layer in [2, 20, 24] {
+        for rows in [1, 2, 4, 6, 8, 16, 32] {
+            for offset in [8192, 32768, 131072] {
+                shapes.push((layer, rows, offset, 0));
+            }
+        }
+        for offset in [0, 32768, 131072] {
+            shapes.push((layer, 8192, offset, 0));
+        }
+        for case in 1..8 {
+            shapes.push((layer, 6, 1024, case));
+        }
+    }
+    shapes
+}
+
+// CPU admission and GPU execution use the same metadata and allocations.
+fn compact_matrix_buffers(
+    b: &PositionSelectBuffers<View>,
+    visible: Vec<i32>,
+    mut input: impl FnMut(&[u8]) -> LabResult<View>,
+) -> LabResult<PositionBlockSelectBuffers<View>> {
+    let rows = visible.len();
+    let mut ids = vec![-1; rows * 2048];
+    for (row, count) in visible.iter().enumerate() {
+        let blocks = (*count as usize).div_ceil(8);
+        let kept = blocks.min(2048);
+        for i in 0..kept {
+            ids[row * 2048 + i] = if i + 1 == kept {
+                (blocks - 1) as i32
+            } else {
+                i as i32
+            };
+        }
+    }
+    let tags = input(&vec![0; rows * 8])?;
+    let retained_tags = input(&vec![0; rows * 8])?;
+    Ok(PositionBlockSelectBuffers {
+        q: b.q,
+        head_weights: b.head_weights,
+        keys: b.keys,
+        positions: b.positions,
+        row_batch: b.row_batch,
+        live_rows: b.live_rows,
+        row_tags: tags,
+        candidates: CandidateBlockIds {
+            ids: input(&ints(ids))?,
+            row_tags: retained_tags,
+            visible_positions: input(&ints(visible))?,
+            status: input(&vec![0; rows * 4])?,
+            position_capacity: b.position_capacity,
+        },
+        scores: b.scores,
+        status: b.status,
+        output: b.output,
+    })
+}
+
+#[test]
+fn cpu_compact_matrix_uses_distinct_tags() {
+    let mut cases = 0;
+    for (layer, rows, offset, case) in matrix_shapes().into_iter().filter(|s| s.0 == 24) {
+        let ratio = FLASH.compress_ratio(layer);
+        let page = 64 / ratio;
+        let width = ((offset + rows + 63) / 64 * 64 / ratio).max(page);
+        let mut dense = cpu_buffers(rows, ratio, width);
+        dense.scores = v(9, u64::from(rows) * 16384 * 4);
+        let visible = (0..rows)
+            .map(|i| ((offset + i + 1) / ratio) as i32)
+            .collect();
+        let mut handle = 100;
+        let b = compact_matrix_buffers(&dense, visible, |bytes| {
+            handle += 1;
+            Ok(v(handle, bytes.len() as u64))
+        })
+        .unwrap();
+        let query = indexer::block_selection(&FLASH, layer, rows).unwrap();
+        for backend in backends() {
+            let op = backend
+                .position_block_indexer(&query, 512, width, Need::rows(rows))
+                .unwrap();
+            let scratch = v(99, op.info().workspace);
+            op.launches(&b, scratch, Counts::rows(rows))
+                .unwrap_or_else(|error| {
+                    panic!("compact rows={rows} offset={offset} case={case}: {error}");
+                });
+            let mut aliased = b;
+            aliased.candidates.row_tags = aliased.row_tags;
+            assert_eq!(
+                op.launches(&aliased, scratch, Counts::rows(rows))
+                    .unwrap_err()
+                    .0,
+                "current compact row tags must be distinct from retained tags"
+            );
+        }
+        assert_ne!(b.row_tags.handle, b.candidates.row_tags.handle);
+        cases += 1;
+    }
+    assert_eq!(cases, 31);
+}
+
 fn bf16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
     values
         .into_iter()
@@ -285,12 +388,7 @@ fn bf16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
 fn gpu_decode_prefill_and_exponent_edges() {
     let ran=kernel_harness::gpu_test_with(test_cubins(),12<<30,|session| {
         let shard:usize=std::env::var("CHOPINFER_L4_SHARD").unwrap().parse().unwrap();assert!(shard<2);
-        let mut shapes=vec![];
-        for layer in [2,20,24] {
-            for rows in [1,2,4,6,8,16,32] { for offset in [8192,32768,131072] {shapes.push((layer,rows,offset,0));} }
-            for offset in [0,32768,131072] { shapes.push((layer,8192,offset,0)); }
-            for case in 1..8 {shapes.push((layer,6,1024,case));}
-        }
+        let shapes=matrix_shapes();
         let total=shapes.len();let mut completed=0;
         let mut modules=BTreeMap::new();let probe=probe(session)?;
         for (shape,(layer,rows,offset,case)) in shapes.into_iter().enumerate().filter(|(i,_)|i%2==shard) {
@@ -331,15 +429,7 @@ fn gpu_decode_prefill_and_exponent_edges() {
             let label=serde_json::json!({"matrix":shape,"rows":rows,"offset":offset,"layer":layer,"ratio":ratio,"case":case,"width":width});
             if compact {
                 let visible:Vec<_>=positions.iter().map(|p|(p+1)/ratio as i32).collect();
-                let mut ids=vec![-1;rows as usize*2048];
-                for (row,count) in visible.iter().enumerate() {
-                    let blocks=(*count as usize).div_ceil(8);let kept=blocks.min(2048);
-                    for i in 0..kept {ids[row*2048+i]=if i+1==kept {(blocks-1) as i32}else{i as i32};}
-                }
-                let tags=arena.input(&vec![0;rows as usize*8])?;
-                let b=PositionBlockSelectBuffers {q:b.q,head_weights:b.head_weights,keys:b.keys,positions:b.positions,row_batch:b.row_batch,live_rows:b.live_rows,row_tags:tags,
-                    candidates:CandidateBlockIds {ids:arena.input(&ints(ids))?,row_tags:tags,visible_positions:arena.input(&ints(visible))?,status:arena.input(&vec![0;rows as usize*4])?,position_capacity:width},
-                    scores:b.scores,status:b.status,output:b.output};
+                let b=compact_matrix_buffers(&b,visible,|bytes|arena.input(bytes))?;
                 let query=indexer::block_selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_block_indexer(&query,512,width,Need::rows(rows)).unwrap());
                 exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe)?;

@@ -16,6 +16,7 @@ mod indexer;
 mod latent;
 mod logits;
 mod moe;
+mod moe_direct;
 mod moe_floor;
 mod norm_quantize;
 
@@ -129,6 +130,9 @@ impl Lowering<'_> {
     }
 
     fn stage_inner(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
+        if let Some(launches) = self.moe_direct_stage(phase, stage)? {
+            return Ok(Some(launches));
+        }
         if let Some(launches) = self.moe_floor_stage(phase, stage)? {
             return Ok(Some(launches));
         }

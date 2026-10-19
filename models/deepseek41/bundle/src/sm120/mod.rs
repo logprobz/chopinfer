@@ -77,6 +77,7 @@ mod latent_window_bf16;
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod moe;
+mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 mod moe_direct_kernels;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -188,6 +189,20 @@ impl crate::Kernels {
         mxfp8_fold_stream::qualified(g, query, rows, paired)
     }
 
+    pub(crate) fn measured_moe_direct(
+        shape: &crate::shape::Shape,
+        set: model_deepseek41_contract::moe::Experts,
+    ) -> Result<
+        Vec<(
+            kernel_core::precision::ExecutionPhase,
+            u32,
+            crate::ops::moe::direct::Prepared,
+        )>,
+        kernel_core::backend::Refused,
+    > {
+        moe_direct::prepare_set(shape, set)
+    }
+
     /// Whether the locked entry declares this pointer argument as const input.
     pub(crate) fn const_input_argument(symbol: &str, index: usize) -> bool {
         CONST_INPUT_ARGUMENTS
@@ -259,7 +274,8 @@ impl crate::Kernels {
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
-            && !cubin.starts_with("bandwidth_moe_")
+            && (!cubin.starts_with("bandwidth_moe_")
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("floor_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("prefill_moe_")

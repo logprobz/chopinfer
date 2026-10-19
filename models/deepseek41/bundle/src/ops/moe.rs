@@ -12,6 +12,7 @@
 //! The projections and routes are prepared for each kind of phase: a
 //! prefill's rows, a decode bucket's and a verify step's.
 
+pub(crate) mod direct;
 pub(crate) mod floor;
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
@@ -76,6 +77,7 @@ struct Kind {
 pub(crate) struct MoeOps {
     /// The layer input's quantizer, the gate/up's activation.
     quantize: RowBuckets<BlockQuantizeBuffers<View>>,
+    direct: Vec<(ExecutionPhase, u32, direct::Prepared)>,
     kinds: [Kind; 3],
     /// Prepare measured decode/verify ranges separately so phase-wide
     /// capacities cannot hide the 8/64-row streamed entries.
@@ -254,9 +256,14 @@ impl MoeOps {
         if let Some(op) = &floor {
             op.record(asks);
         }
+        let direct = crate::Kernels::measured_moe_direct(shape, set)?;
+        for (phase, rows, op) in &direct {
+            op.record(asks, *phase, *rows);
+        }
         let [prefill, decode, verify] = USES;
         Ok(MoeOps {
             quantize,
+            direct,
             floor,
             kinds: [kind(prefill)?, kind(decode)?, kind(verify)?],
             buckets: crate::Kernels::moe_buckets(shape)
@@ -280,6 +287,23 @@ impl MoeOps {
         } else {
             None
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retain_reference_in_test(&mut self) {
+        self.direct.clear();
+    }
+
+    pub(crate) fn direct(&self, phase: Phase) -> Option<&direct::Prepared> {
+        let kind = match phase {
+            Phase::Decode(_) => ExecutionPhase::Decode,
+            Phase::Verify { .. } => ExecutionPhase::Verify,
+            Phase::Prefill { .. } => return None,
+        };
+        self.direct
+            .iter()
+            .find(|(p, n, _)| *p == kind && *n == phase.rows())
+            .map(|(_, _, op)| op)
     }
 
     fn kind(&self, phase: Phase) -> &Kind {

@@ -1,0 +1,324 @@
+//! Qualify exact row/phase buckets and prepare their locked direct MoE ABI.
+use crate::ops::moe::direct::{Call, Point, Pointer, Prepared, Source};
+use kernel_core::backend::{Launch, OpInfo, Refused};
+use kernel_core::contract::{Argument, ArgumentList};
+use kernel_core::precision::ExecutionPhase;
+use kernels_sm120::moe::chained::{
+    bandwidth,
+    floor::{Entry, Stage},
+};
+use model_deepseek41_contract::moe::Experts;
+
+// TP4, 250 W, 2026-10-19, paired full graphs, bitwise in all three routing
+// patterns. Direct gains at least 3% in these buckets. Backbone Verify-48
+// gains only 1.6% for all-distinct routing and retains the prior selection.
+// Backbone C1/C8: 76.16/284.40 -> 65.22/255.17 us per full MoE.
+// Drafter C1/C8: 61.65/126.51 -> 47.22/112.38 us against the qualified path.
+// Prefetch loses at larger dispersed buckets. No unmeasured rows are inferred.
+fn buckets(set: Experts) -> Vec<(ExecutionPhase, u32)> {
+    use ExecutionPhase::{Decode, Verify};
+    let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
+    out.extend([(Verify, 6), (Verify, 64)]);
+    if set.count == 128 {
+        out.push((Verify, 48));
+    }
+    out
+}
+
+pub(super) fn prepare_set(
+    shape: &crate::shape::Shape,
+    set: Experts,
+) -> Result<Vec<(ExecutionPhase, u32, Prepared)>, Refused> {
+    if !super::moe::streamed_qualified(shape.geometry, shape.ranks())
+        || !matches!((set.count, set.top_k), (384, 6) | (128, 3))
+    {
+        return Ok(Vec::new());
+    }
+    let entry = super::moe_direct_kernels::entries(shape.geometry)
+        .map_err(Refused::Rule)?
+        .into_iter()
+        .find(|e| e.experts() == set.count)
+        .expect("declared expert set");
+    let scaling = model_deepseek41_contract::moe::router(shape.geometry, set)
+        .scaling_factor
+        .to_bits();
+    buckets(set)
+        .into_iter()
+        .map(|(phase, rows)| Ok((phase, rows, prepare(&entry, rows, scaling)?)))
+        .collect()
+}
+
+fn prepare(entry: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> {
+    let scratch = entry.workspace_bytes(rows)?;
+    let ticket_offset = scratch.next_multiple_of(256);
+    let mut info = OpInfo::new(
+        "sm120.moe.direct.v1",
+        kernel_core::properties::Invariance::any_rows(rows),
+        Vec::new(),
+    );
+    info.workspace = ticket_offset + 256;
+    let mut calls = Vec::new();
+    let router = bandwidth::router(entry);
+    let mut stages = vec![(None, router.entry()?, router.plan(rows)?)];
+    for s in [
+        Stage::Metadata,
+        Stage::GateSmall,
+        Stage::GateWide,
+        Stage::GateFinish,
+        Stage::DownSmall,
+        Stage::DownWide,
+        Stage::DownFinish,
+    ] {
+        if rows <= 8 && matches!(s, Stage::GateWide | Stage::DownWide) {
+            continue;
+        }
+        let direct = matches!(
+            s,
+            Stage::GateSmall
+                | Stage::GateWide
+                | Stage::GateFinish
+                | Stage::DownSmall
+                | Stage::DownWide
+        );
+        stages.push((
+            Some(s),
+            if direct {
+                bandwidth::entry(entry, s, bandwidth::Loads::Direct)
+            } else {
+                entry.entry(s)
+            },
+            if direct {
+                bandwidth::plan(entry, s, rows)?
+            } else {
+                entry.plan(s, rows)?
+            },
+        ));
+    }
+    for (stage, spec, plan) in stages {
+        let pointers = spec
+            .params
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| match p {
+                kernel_build::EntryParam::DevicePointer { name, .. } => Some(Pointer {
+                    index,
+                    source: match name.as_str() {
+                        "scratch" => Source::Workspace,
+                        "tickets" => Source::Tickets,
+                        _ => Source::View(role(stage, name).into()),
+                    },
+                    bytes: bytes(entry, stage, name, rows),
+                    alignment: if name == "weight" { 16 } else { 1 },
+                }),
+                _ => None,
+            })
+            .collect();
+        info.symbols
+            .push((spec.symbol.clone(), plan.dynamic_shared_bytes));
+        let arguments = ArgumentList(
+            spec.params
+                .iter()
+                .map(|p| match p {
+                    kernel_build::EntryParam::U32 { name } if name == "scale_bits" => {
+                        Argument::U32(scaling)
+                    }
+                    _ => Argument::NullDevicePointer,
+                })
+                .collect(),
+        );
+        calls.push(Call {
+            point: match stage {
+                None | Some(Stage::Metadata) => Point::Route,
+                Some(Stage::GateSmall | Stage::GateWide | Stage::GateFinish) => Point::Gate,
+                Some(Stage::DownSmall | Stage::DownWide) => Point::Down,
+                Some(Stage::DownFinish) => Point::Sum,
+                _ => unreachable!(),
+            },
+            pointers,
+            launch: Launch {
+                symbol: spec.symbol,
+                rows,
+                plan,
+                arguments,
+                collective: false,
+                persistent: false,
+            },
+        });
+    }
+    Ok(Prepared::new(info, calls, ticket_offset))
+}
+
+fn role(stage: Option<Stage>, name: &str) -> &str {
+    match (stage, name) {
+        (None, "live_tokens") => "live",
+        (Some(Stage::GateSmall | Stage::GateWide), "input") => "input_codes",
+        (Some(Stage::GateSmall | Stage::GateWide), "scales") => "input_scales",
+        (Some(Stage::GateSmall | Stage::GateWide), "weight") => "gate_weight",
+        (Some(Stage::GateSmall | Stage::GateWide), "weight_scales") => "gate_scales",
+        (Some(Stage::DownSmall | Stage::DownWide), "input") => "codes",
+        (Some(Stage::DownSmall | Stage::DownWide), "weight") => "down_weight",
+        (Some(Stage::DownSmall | Stage::DownWide), "weight_scales") => "down_scales",
+        _ => name,
+    }
+}
+fn bytes(e: &Entry, s: Option<Stage>, name: &str, rows: u32) -> u64 {
+    let (x, k, h, i, r) = (
+        u64::from(e.experts()),
+        u64::from(e.top_k()),
+        u64::from(e.hidden()),
+        u64::from(e.intermediate()),
+        u64::from(rows),
+    );
+    let gate = matches!(s, Some(Stage::GateSmall | Stage::GateWide));
+    match name {
+        "live" | "live_tokens" | "padded" => 4,
+        "status" => r * 4,
+        "tickets" => 256,
+        "scratch" => e.workspace_bytes(rows).unwrap(),
+        "ids" | "weights" => r * k * 4,
+        "counts" => x * 4,
+        "offsets" | "active" => (x + 1) * 4,
+        "sorted" => x * 64 * 4,
+        "bias" | "alternate_bias" => x * 4,
+        "scores" | "logits" => r * x * 4,
+        "bias_select" => r,
+        "input" => {
+            if gate {
+                r * h
+            } else {
+                r * k * i
+            }
+        }
+        "weight" => {
+            if gate {
+                x * i * h
+            } else {
+                x * h * i / 2
+            }
+        }
+        "weight_scales" => {
+            if gate {
+                x * i * h / 16
+            } else {
+                x * h * i / 32
+            }
+        }
+        "scales" => {
+            if gate {
+                r * h / 32
+            } else {
+                r * k * i / 32
+            }
+        }
+        "intermediate" => r * k * i * 2,
+        "codes" => r * k * i,
+        "shared" | "output" => r * h * 4,
+        "routed" => r * k * h * 4,
+        _ => unreachable!("unknown direct MoE argument {name}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+    use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
+
+    #[test]
+    fn direct_admission_keeps_unmeasured_phases_and_weak_buckets_out() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+            for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
+                let ops = prepare_set(&shape, set).unwrap();
+                for rows in 1..=192 {
+                    for phase in [
+                        ExecutionPhase::Prefill,
+                        ExecutionPhase::Decode,
+                        ExecutionPhase::Verify,
+                    ] {
+                        let wanted = ranks == Ranks::TP4
+                            && match phase {
+                                ExecutionPhase::Decode => [1, 2, 4, 8, 16, 32].contains(&rows),
+                                ExecutionPhase::Verify => {
+                                    rows == 6 || rows == 64 || (set.count == 128 && rows == 48)
+                                }
+                                _ => false,
+                            };
+                        assert_eq!(
+                            ops.iter().any(|(p, n, _)| *p == phase && *n == rows),
+                            wanted
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_binding_bounds_every_view_and_keeps_tickets_outside_partials() {
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
+            for (_, rows, op) in prepare_set(&shape, set).unwrap() {
+                let workspace = DeviceBufferSpanV1::new(
+                    BundleDeviceBufferHandleV1 { raw: 1 },
+                    256,
+                    op.info.workspace,
+                );
+                for point in [Point::Route, Point::Gate, Point::Down, Point::Sum] {
+                    let views = |_: &str| {
+                        Ok(DeviceBufferSpanV1::new(
+                            BundleDeviceBufferHandleV1 { raw: 2 },
+                            0,
+                            1 << 32,
+                        ))
+                    };
+                    let good = op.launch(point, workspace, views).unwrap();
+                    assert!(!good.is_empty());
+                    assert!(
+                        op.launch(
+                            point,
+                            DeviceBufferSpanV1 {
+                                length: op.info.workspace - 1,
+                                ..workspace
+                            },
+                            views
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        op.launch(point, workspace, |_| Ok(DeviceBufferSpanV1::new(
+                            BundleDeviceBufferHandleV1 { raw: 2 },
+                            0,
+                            0
+                        )))
+                        .is_err()
+                    );
+                    for call in good {
+                        assert_eq!(call.launch.rows, rows);
+                        if call
+                            .launch
+                            .symbol
+                            .starts_with("chop_moe_sqrt_softplus_row_bias_")
+                        {
+                            assert_eq!(call.launch.plan.grid, [8, 1, 1]);
+                        }
+                        assert!(!call.launch.symbol.contains("bandwidth_prefetch"));
+                        for arg in &call.launch.arguments.0 {
+                            if let Argument::DeviceBuffer(id) = arg {
+                                let span = call.launch.bindings.get(*id).unwrap();
+                                if span.buffer == workspace.buffer {
+                                    assert!(span.offset >= workspace.offset);
+                                    assert!(
+                                        span.offset + span.length
+                                            <= workspace.offset + workspace.length
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

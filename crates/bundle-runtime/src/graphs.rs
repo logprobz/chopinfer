@@ -66,6 +66,8 @@ pub fn verify_tokens<G: BundleGeometry>(items: Items) -> u32 {
 pub fn verify_bucket_within<G: BundleGeometry>(live: u32, items: Items) -> Option<u32> {
     if live == 0 || live > verify_tokens::<G>(items) {
         None
+    } else if G::EXACT_VERIFY_GRAPHS {
+        Some(live)
     } else {
         Some(live.next_power_of_two())
     }
@@ -251,10 +253,22 @@ impl<G: BundleGeometry> GraphCache<G> {
                 G::MAX_VERIFY_ROWS,
             ),
         };
+        let exact =
+            matches!(self.kind, GraphKind::Verify) && key.items != 0 && G::EXACT_VERIFY_GRAPHS;
+        let valid_rows = if exact {
+            key.bucket > 0 && key.bucket <= tokens
+        } else {
+            is_bucket(key.bucket, tokens)
+        };
+        let valid_items = if exact {
+            key.items <= self.items.get()
+        } else {
+            is_bucket(key.items, capacity)
+        };
         if !self.ranks.contains(key.rank)
-            || !is_bucket(key.bucket, tokens)
+            || !valid_rows
             || (key.items != 0
-                && (!is_bucket(key.items, self.items.capacity())
+                && (!valid_items
                     || key.items > key.bucket
                     || key.bucket > key.items * rows_per_item))
         {

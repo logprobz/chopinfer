@@ -221,6 +221,10 @@ pub trait BundleGeometry {
     /// Most decode-phase rows in one verify step, and the largest verify
     /// graph token bucket.
     const VERIFY_TOKENS: u32 = Self::DECODE_BATCH;
+    /// Verify graphs use exact row and item counts. Decode and drafter
+    /// catch-up graphs retain power-of-two capacities. Opt in only when
+    /// lowering supports every admitted width without changing its numerics.
+    const EXACT_VERIFY_GRAPHS: bool = false;
     /// Optional narrow-instance limit: an instance serving at most this
     /// many items uses this many verify rows. Wider instances use the
     /// full verify limit, so AR siblings leave room for drafted rows.

@@ -36,6 +36,58 @@ impl BundleGeometry for Steps {
 
 type Backend = HostServicesV1Backend<FakeHostDeviceV1>;
 
+struct ExactSteps;
+
+impl BundleGeometry for ExactSteps {
+    const PAGE_TOKENS: u64 = Steps::PAGE_TOKENS;
+    const PREFILL_TOKENS: u32 = Steps::PREFILL_TOKENS;
+    const DECODE_BATCH: u32 = Steps::DECODE_BATCH;
+    const MAX_VERIFY_ROWS: u32 = 6;
+    const EXACT_VERIFY_GRAPHS: bool = true;
+    const TOKEN_GRANULE: u32 = Steps::TOKEN_GRANULE;
+}
+
+#[test]
+fn exact_verify_graphs_keep_width_identity_and_release_order() {
+    for ranks in rank_counts() {
+        let (table, backend, streams, baseline) = host(ranks);
+        let mut cache = GraphCache::<ExactSteps>::with_items(ranks, Items::new(3).unwrap());
+        for (rows, items) in [(6, 1), (7, 3), (9, 3), (5, 3), (6, 1)] {
+            for rank in 0..ranks.get() {
+                capture(&mut cache, &table, &streams, key(rank, rows, items), 1);
+            }
+            assert!(
+                cache
+                    .replay_piece_major(table.caller(), &streams, (rows, items), |_| {})
+                    .unwrap()
+            );
+        }
+        assert_eq!(backend.live_resource_count() - baseline, 4 * ranks.count());
+        for (rows, items) in [(0, 1), (7, 1), (2, 3), (6, 4), (33, 3), (3, 0)] {
+            assert!(
+                cache
+                    .capture::<BundleAbiError>(
+                        table.caller(),
+                        streams[0],
+                        key(0, rows, items),
+                        1,
+                        |_| Ok(())
+                    )
+                    .is_err()
+            );
+        }
+        // Opt-in does not relax the catch-up cache's bucket contract.
+        let mut catch_up = GraphCache::<ExactSteps>::catch_up_sharing(&cache);
+        assert!(
+            catch_up
+                .capture::<BundleAbiError>(table.caller(), streams[0], key(0, 3, 1), 1, |_| Ok(()))
+                .is_err()
+        );
+        cache.release_all(table.caller()).unwrap();
+        assert_eq!(backend.live_resource_count(), baseline);
+    }
+}
+
 /// Every supported rank count.
 fn rank_counts() -> impl Iterator<Item = Ranks> {
     SUPPORTED_RANKS

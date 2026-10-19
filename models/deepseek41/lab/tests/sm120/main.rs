@@ -20,13 +20,13 @@ mod dspark_cubin;
 #[path = "../../../bundle/src/sm120/dspark_entries.rs"]
 mod dspark_entries;
 mod dspark_heads;
+mod dspark_ring_gather;
+mod indexer;
 #[path = "../../../bundle/src/sm120/ring_gather.rs"]
 mod ring_gather;
 #[path = "../../../bundle/src/sm120/ring_gather_entries.rs"]
 #[allow(dead_code, reason = "the bundle build owns the lock family")]
 mod ring_gather_entries;
-mod dspark_ring_gather;
-mod indexer;
 // The indexer registrations; the lab builds none of the separately locked
 // runtime candidate producers.
 #[path = "../../../bundle/src/sm120/indexer.rs"]

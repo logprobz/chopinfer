@@ -58,6 +58,7 @@ pub(crate) mod encoder;
 pub(crate) mod encoders;
 pub mod engram_hash;
 pub mod engram_hash_entries;
+pub mod f32_blocked;
 pub mod f32_decode;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod f32_dense;

@@ -4,6 +4,7 @@
 
 mod ceil_parallel;
 mod embedding_replicated;
+mod f32_blocked;
 mod f32_decode;
 mod f32_head;
 mod f32_prefill;

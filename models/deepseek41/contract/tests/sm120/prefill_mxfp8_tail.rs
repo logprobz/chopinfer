@@ -195,6 +195,7 @@ fn plans_symbols_and_launch_attributes_cover_partial_tiles() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_PREFILL_TMA_CUBINS"]
 fn partial_tile_strategies_match_bits_and_time_on_gpu() {
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("tail comparison needs idle GPUs").unwrap();

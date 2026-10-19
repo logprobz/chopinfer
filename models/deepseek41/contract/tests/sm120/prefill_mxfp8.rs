@@ -230,6 +230,7 @@ fn prefill_tma_plans_cover_declared_shapes_and_preserve_refusals() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_PREFILL_TMA_CUBINS"]
 fn prefill_tma_snapshot_has_every_module_and_symbol() {
     if std::env::var_os("CHOPINFER_PREFILL_TMA_CUBINS").is_none() {
         kernel_harness::skip("prefill symbol audit: set CHOPINFER_PREFILL_TMA_CUBINS").unwrap();
@@ -255,6 +256,7 @@ fn prefill_tma_snapshot_has_every_module_and_symbol() {
     }
 }
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_PREFILL_TMA_CUBINS"]
 fn prefill_tma_launch_configs_match_function_limits() {
     if std::env::var_os("CHOPINFER_PREFILL_TMA_CUBINS").is_none() {
         kernel_harness::skip("prefill launch audit: set CHOPINFER_PREFILL_TMA_CUBINS").unwrap();
@@ -708,6 +710,7 @@ fn case_strategies(
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_PREFILL_TMA_CUBINS"]
 fn prefill_tma_matches_every_declared_shape_on_gpu() {
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("prefill comparison: select idle GPUs").unwrap();

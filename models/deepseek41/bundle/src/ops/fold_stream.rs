@@ -58,7 +58,16 @@ pub(crate) fn storage(
             },
         ],
         state: *views.get(&name(weight, paired, "state"))?,
-        workspace: *views.get(&name(weight, paired, "workspace"))?,
+        workspace: views
+            .get(&name(weight, paired, "workspace"))
+            .copied()
+            .unwrap_or_else(|| {
+                Span::new(
+                    runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+                    0,
+                    0,
+                )
+            }),
     })
 }
 

@@ -21,10 +21,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     options.lock_update = match std::env::args().nth(2).as_deref() {
         None => false,
-        Some("--initialize") => true,
-        _ => return Err("expected --initialize or no option".into()),
+        Some("--initialize" | "--initialize-serving") => true,
+        _ => return Err("expected --initialize, --initialize-serving or no option".into()),
     };
-    let dir = root.join("kernels.lock.d");
+    let dir = if std::env::args().nth(2).as_deref() == Some("--initialize-serving") {
+        root.join("../bundle/kernels.lock.d")
+    } else {
+        root.join("kernels.lock.d")
+    };
     if options.lock_update && dir.join(format!("{}.lock", family::FAMILY)).exists() {
         return Err("cannot replace an existing family lock".into());
     }

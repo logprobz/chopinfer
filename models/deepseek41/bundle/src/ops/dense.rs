@@ -336,8 +336,12 @@ impl DenseOps {
         })
     }
 
-    /// Largest selected bucket initializes one persistent operation per weight.
-    pub(crate) fn stream_weight_ops(&self, weight: &str) -> Vec<(bool, &fold_stream::Op)> {
+    /// Row buckets share packed weights and zero-reset state in stream order.
+    /// Size each region independently; a smaller bucket can need more state.
+    pub(crate) fn stream_weight_ops(
+        &self,
+        weight: &str,
+    ) -> Vec<(bool, &fold_stream::Op, [u64; 4])> {
         let Some((id, _)) = self
             .tensors
             .iter()
@@ -346,18 +350,34 @@ impl DenseOps {
             return Vec::new();
         };
         let mut result = Vec::new();
-        if let Some((_, _, op)) = self
-            .stream
-            .iter()
-            .filter(|(of, _, _)| of == id)
-            .max_by_key(|(_, rows, _)| *rows)
-        {
-            result.push((false, op));
-        }
-        if *id == "moe.shared-gate"
-            && let Some((_, op)) = self.stream_pair.iter().max_by_key(|(rows, _)| *rows)
-        {
-            result.push((true, op));
+        for paired in [false, true] {
+            let ops: Vec<_> = if paired {
+                if *id != "moe.shared-gate" {
+                    continue;
+                }
+                self.stream_pair
+                    .iter()
+                    .map(|(rows, op)| (*rows, op))
+                    .collect()
+            } else {
+                self.stream
+                    .iter()
+                    .filter(|(of, _, _)| of == id)
+                    .map(|(_, rows, op)| (*rows, op))
+                    .collect()
+            };
+            if let Some((_, op)) = ops.iter().max_by_key(|(rows, _)| *rows) {
+                let mut bytes = [0; 4];
+                for (_, bucket) in &ops {
+                    for (bound, required) in bytes
+                        .iter_mut()
+                        .zip(fold_stream::allocation_bytes(bucket, paired))
+                    {
+                        *bound = (*bound).max(required);
+                    }
+                }
+                result.push((paired, *op, bytes));
+            }
         }
         result
     }
@@ -540,6 +560,49 @@ mod tests {
             DecodePath::Split => "mxfp8_decode_",
             DecodePath::Ticket => "mxfp8_ticket_",
             DecodePath::Prefetch => "mxfp8_prefetch_",
+        }
+    }
+
+    #[test]
+    fn packed_fold_allocations_cover_each_schedule_and_engram_rows_64() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops =
+                DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            for (id, tensor) in &ops.tensors {
+                let weight = format!("layers.0.{tensor}.weight");
+                for (paired, init, bounds) in ops.stream_weight_ops(&weight) {
+                    let buckets: Vec<_> = if paired {
+                        ops.stream_pair.iter().map(|(_, op)| op).collect()
+                    } else {
+                        ops.stream
+                            .iter()
+                            .filter(|(of, _, _)| of == id)
+                            .map(|(_, _, op)| op)
+                            .collect()
+                    };
+                    for op in buckets {
+                        for (bound, required) in bounds
+                            .into_iter()
+                            .zip(fold_stream::allocation_bytes(op, paired))
+                        {
+                            assert!(
+                                bound >= required,
+                                "{id}: state and workspace need independent maxima"
+                            );
+                        }
+                    }
+                    if *id == "engram.kv" {
+                        assert!(init.info().implementation.contains("direct"));
+                        assert_eq!(bounds[2], 13824);
+                        assert!(bounds[3] > 0, "earlier stream buckets still need partials");
+                    }
+                    if shape.ranks() == 4 && *id == "attention.o-b" {
+                        assert!(bounds[2] > init.info().bytes_of("state").unwrap());
+                    }
+                }
+            }
         }
     }
 

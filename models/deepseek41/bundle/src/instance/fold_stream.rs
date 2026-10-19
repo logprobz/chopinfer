@@ -36,9 +36,9 @@ pub(super) fn initialize(
         if name == "mtp.0.main_proj.weight"
             && let Some(op) = drafter.and_then(|d| d.prepared.main_stream_initializer())
         {
-            selected.push((false, op));
+            selected.push((false, op, fold_stream::allocation_bytes(op, false)));
         }
-        for (paired, op) in selected {
+        for (paired, op, [a, b, state, workspace]) in selected {
             let second = if paired {
                 let prefix = name
                     .strip_suffix("w1.weight")
@@ -53,7 +53,6 @@ pub(super) fn initialize(
                     0,
                 )
             };
-            let [a, b, state, workspace] = fold_stream::allocation_bytes(op, paired);
             // Each operation owns all writable storage, including workspace.
             // Row buckets share it only through ordered graph submissions.
             let storage = Storage {
@@ -70,7 +69,15 @@ pub(super) fn initialize(
                     },
                 ],
                 state: allocate_span(services, pool, stream, state, held)?,
-                workspace: allocate_span(services, pool, stream, workspace, held)?,
+                workspace: if workspace > 0 {
+                    allocate_span(services, pool, stream, workspace, held)?
+                } else {
+                    Span::new(
+                        runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+                        0,
+                        0,
+                    )
+                },
             };
             let launches = fold_stream::initialize(op, [weight, second], storage, paired).map_err(
                 |error| {

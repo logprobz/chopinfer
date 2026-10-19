@@ -13,7 +13,9 @@ fn packed_folds_initialize_once_and_own_disjoint_state_and_workspace() {
         let mut initialized = BTreeMap::new();
         let mut persistent = std::collections::BTreeSet::new();
         for line in initial.iter().filter(|l| {
-            l.starts_with("launch ") && l.contains("mxfp8_stream_") && l.contains("_prepare_v1")
+            l.starts_with("launch ")
+                && (l.contains("mxfp8_stream_") || l.contains("mxfp8_direct_"))
+                && l.contains("_prepare_v1")
         }) {
             let symbol = line
                 .split_whitespace()
@@ -67,24 +69,36 @@ fn packed_folds_initialize_once_and_own_disjoint_state_and_workspace() {
         let lines = host.device.journal.borrow()[from..].to_vec();
         let mut workspaces = BTreeMap::new();
         let mut observed = 0;
-        for line in lines
-            .iter()
-            .filter(|l| l.starts_with("launch ") && l.contains("mxfp8_stream_"))
-        {
+        for line in lines.iter().filter(|l| {
+            l.starts_with("launch ") && (l.contains("mxfp8_stream_") || l.contains("mxfp8_direct_"))
+        }) {
             assert!(!line.contains("_prepare_v1"), "initializer entered a step");
             let symbol = line.split_whitespace().nth(2).unwrap();
             let spans = journal_spans(line);
             let state = spans[spans.len() - 3];
-            let workspace = spans[spans.len() - 4];
+            let workspace = (!symbol.contains("mxfp8_direct_")).then(|| spans[spans.len() - 4]);
             let (owner, packed) = initialized.get(&state).expect("uninitialized fold state");
-            assert_eq!(owner, symbol);
+            let shape = |symbol: &str| {
+                symbol
+                    .split('_')
+                    .filter(|part| {
+                        part.len() > 1
+                            && matches!(part.as_bytes()[0], b'n' | b'k' | b'g')
+                            && part[1..].bytes().all(|b| b.is_ascii_digit())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("_")
+            };
+            assert_eq!(shape(owner), shape(symbol));
             assert_eq!(spans[2], packed[0]);
             if packed.len() == 2 {
                 assert_eq!(spans[4], packed[1]);
             }
-            assert!(!persistent.contains(&workspace.0));
-            if let Some(old) = workspaces.insert(workspace.0, state.0) {
-                assert_eq!(old, state.0, "workspace shared by distinct fold operations");
+            if let Some(workspace) = workspace {
+                assert!(!persistent.contains(&workspace.0));
+                if let Some(old) = workspaces.insert(workspace.0, state.0) {
+                    assert_eq!(old, state.0, "workspace shared by distinct fold operations");
+                }
             }
             observed += 1;
         }

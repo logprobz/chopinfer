@@ -544,7 +544,8 @@ impl FakePackage for FakeHost {
     }
     fn check_launch(&self, symbol: &str, config: LaunchConfigV1) {
         if symbol.starts_with("chop_latent_prefill_")
-            || (symbol.starts_with("chop_deepseek41_mxfp8_stream_")
+            || ((symbol.starts_with("chop_deepseek41_mxfp8_stream_")
+                || symbol.starts_with("chop_deepseek41_mxfp8_direct_"))
                 && symbol.ends_with("_prepare_v1"))
         {
             assert_eq!(
@@ -940,6 +941,7 @@ fn journal_steps(host: &Rc<Host>) {
 /// score-tail lists. Prefill and verify retain their original merge.
 /// Measured router epilogues add one module. These two-item captures retain
 /// their original router launches; the one-item media capture audits fusion.
+/// Measured direct folds use per-operation state sized across all selected row buckets.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

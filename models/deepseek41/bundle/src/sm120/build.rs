@@ -131,6 +131,8 @@ mod moe_pipeline_vector;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod mxfp8_fold;
 #[allow(dead_code)]
+mod mxfp8_fold_direct_entries;
+#[allow(dead_code)]
 mod mxfp8_fold_stream;
 #[allow(dead_code)]
 mod own_entries;
@@ -356,6 +358,7 @@ pub fn selection(
         owners.push((mxfp8_fold::prefetch_cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((mxfp8_fold_stream::cubin_name(geometry), geometry.id));
+            owners.push((mxfp8_fold_direct_entries::CUBIN.into(), geometry.id));
         }
         owners.push((
             format!("latent_q_norm_{}_sm120", geometry.kernel_tag),
@@ -488,6 +491,15 @@ pub fn selection(
     specs
         .extend(mxfp8_fold::prefetch_cubins(geometries).expect("deepseek41 MXFP8 prefetch cubins"));
     specs.extend(mxfp8_fold_stream::cubins(geometries).expect("MXFP8 packed fold cubins"));
+    if geometries
+        .iter()
+        .any(|g| g.id == model_deepseek41_contract::geometry::FLASH.id)
+    {
+        specs.push((
+            mxfp8_fold_direct_entries::FAMILY,
+            mxfp8_fold_direct_entries::cubin().expect("direct fold cubin"),
+        ));
+    }
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     // A composition may already carry the floor family for a drafter route.
     // Reuse that identical locked module; add only absent direct dependencies.

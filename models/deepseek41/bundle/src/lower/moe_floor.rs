@@ -134,8 +134,7 @@ mod tests {
                 .cloned()
                 .collect();
             for weight in weights {
-                for (paired, op) in ops.dense.as_ref().unwrap().stream_weight_ops(&weight) {
-                    let sizes = crate::ops::fold_stream::allocation_bytes(op, paired);
+                for (paired, _, sizes) in ops.dense.as_ref().unwrap().stream_weight_ops(&weight) {
                     for (role, bytes) in ["packed0", "packed1", "state", "workspace"]
                         .into_iter()
                         .zip(sizes)

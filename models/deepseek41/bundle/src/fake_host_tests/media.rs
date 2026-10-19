@@ -330,6 +330,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// unchanged allocation sizes and audited capture node reductions.
 /// One-row TP4 decode fuses router reduction, selection and metadata, with
 /// the cached producer unchanged and disjoint routed scratch offsets.
+/// Qualified direct folds retain the image path and bind the same quantized
+/// operands during text decode.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (20907, 0xd28729a73500a819)),
     (Ranks::TP4, (46247, 0xff8f54bf09618663)),

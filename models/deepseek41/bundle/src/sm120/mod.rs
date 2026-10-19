@@ -28,6 +28,8 @@ pub mod latent_decode;
 pub mod latent_scheduled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
+pub mod mxfp8_fold_direct;
+pub mod mxfp8_fold_direct_entries;
 pub mod mxfp8_fold_stream;
 pub mod norm_prefill;
 pub mod norm_quantize;
@@ -225,6 +227,7 @@ impl crate::Kernels {
         paired: bool,
     ) -> bool {
         mxfp8_fold_stream::qualified(g, query, rows, paired)
+            || mxfp8_fold_direct::selected(g, query, rows, paired).is_some()
     }
 
     pub(crate) fn measured_moe_direct(
@@ -489,6 +492,7 @@ impl crate::Kernels {
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

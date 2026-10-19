@@ -283,6 +283,50 @@ impl Prepared {
             .map_err(|e| e.to_string())
     }
 
+    /// Retained original packed coordinates for the upper-layer skip profile.
+    pub fn feature_range(
+        &self,
+        base: &Lowering<'_>,
+        layer: u32,
+        first: u32,
+        count: u32,
+        staging: Span,
+    ) -> Result<Vec<Lowered>, String> {
+        let g = self.shape.geometry;
+        if base.shape != &self.shape
+            || count == 0
+            || first
+                .checked_add(count)
+                .is_none_or(|end| end > PREFILL_TOKENS)
+        {
+            return Err("DSpark feature geometry or row count differs".into());
+        }
+        let target = g
+            .shape
+            .dspark
+            .targets
+            .iter()
+            .position(|&id| id == layer)
+            .ok_or("layer is not a DSpark target")?;
+        let plane = u64::from(PREFILL_TOKENS) * u64::from(g.shape.hidden) * 2;
+        let mut bind = Bind::default();
+        let buffers = StreamHeadBuffers {
+            x: bind.view(crate::buffers::row_range(
+                super::super::streams(&base.buffers.scratch, 2 * layer),
+                first,
+                count,
+            )?),
+            output: bind.view(slice(
+                staging,
+                target as u64 * plane + u64::from(first) * u64::from(g.shape.hidden) * 2,
+                u64::from(count) * u64::from(g.shape.hidden) * 2,
+            )?),
+            live_rows: bind.view(base.inputs.live_tokens),
+        };
+        bind.launch(&self.feature, &buffers, Counts::rows(count))
+            .map_err(|e| e.to_string())
+    }
+
     /// Row indices for `[target, capacity, hidden]` to `[row, target, hidden]`.
     pub fn feature_indices(&self, rows: u32) -> Result<Vec<u32>, String> {
         if rows == 0 || rows > PREFILL_TOKENS {

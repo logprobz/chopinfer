@@ -117,6 +117,36 @@ pub fn staged_projection(
     staged_row: u64,
     max_rows: u32,
 ) -> Result<Vec<ProjectionChunk>> {
+    staged_projection_from(config, item, stage, staged_row, max_rows, 0)
+}
+
+/// The final retained prefill rows produce exactly the final projected ring.
+/// Earlier projected rows are overwritten before any drafter reads them.
+pub fn staged_retained_projection(
+    config: Config,
+    item: CommitItem,
+    stage: u32,
+    staged_row: u64,
+    max_rows: u32,
+) -> Result<Vec<ProjectionChunk>> {
+    staged_projection_from(
+        config,
+        item,
+        stage,
+        staged_row,
+        max_rows,
+        u64::from(item.retain_offset),
+    )
+}
+
+fn staged_projection_from(
+    config: Config,
+    item: CommitItem,
+    stage: u32,
+    staged_row: u64,
+    max_rows: u32,
+    first: u64,
+) -> Result<Vec<ProjectionChunk>> {
     commit(config, item)?;
     if !item.project_from_staging || stage >= config.stages || max_rows == 0 {
         return Err("invalid DSpark staged projection");
@@ -125,7 +155,7 @@ pub fn staged_projection(
         .checked_add(u64::from(item.kept))
         .ok_or("DSpark staged row overflow")?;
     let window = u64::from(config.window);
-    let mut offset = 0_u64;
+    let mut offset = first;
     let mut chunks = Vec::new();
     while offset < u64::from(item.kept) {
         let position = item.rows.start + offset;

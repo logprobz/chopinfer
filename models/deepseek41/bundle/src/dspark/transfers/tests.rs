@@ -338,3 +338,37 @@ fn malformed_transfer_plans_fail_before_any_copy() {
         assert!(snapshot_copies(config, 0, bad).is_err());
     }
 }
+
+#[test]
+fn retained_prefill_projection_matches_every_final_ring_cell() {
+    use std::collections::BTreeMap;
+    for window in [3, 8, 128] {
+        let config = config(window);
+        for start in [0, 1, 127, 529, 8192] {
+            for count in [2048, 8192] {
+                let item = long_commit(config, start, count);
+                for stage in 0..config.stages {
+                    let full = staged_projection(config, item, stage, 37, 128).unwrap();
+                    let narrow = staged_retained_projection(config, item, stage, 37, 128).unwrap();
+                    let final_cells = |chunks: &[ProjectionChunk]| {
+                        let mut cells = BTreeMap::new();
+                        for (position, source, cell) in rows(chunks) {
+                            cells.insert(cell, (position, source));
+                        }
+                        cells
+                    };
+                    assert_eq!(final_cells(&full), final_cells(&narrow));
+                    assert_eq!(rows(&narrow).len(), window as usize);
+                    assert!(
+                        rows(&narrow)
+                            .iter()
+                            .all(|&(_, source, _)| source >= 37 + u64::from(item.retain_offset))
+                    );
+                    // Physical raw-history copies are independent of projection.
+                    let copies = retain_copies(config, item, 37).unwrap();
+                    assert_eq!(copies.iter().map(|c| c.rows).sum::<u32>(), window);
+                }
+            }
+        }
+    }
+}

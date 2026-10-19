@@ -2,6 +2,7 @@
 
 mod cycle;
 mod features;
+pub(crate) use features::PrefillFeatureRange;
 mod graphs;
 mod launch;
 mod results;

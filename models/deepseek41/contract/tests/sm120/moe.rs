@@ -238,3 +238,52 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
         }
     }
 }
+
+#[test]
+fn floor_candidate_bounds_preserve_chain_and_workspace_layouts() {
+    use kernels_sm120::moe::chained::{floor, streamed};
+    for e in registration::floor_entries(&model_deepseek41_contract::geometry::FLASH).unwrap() {
+        for rows in [1, 2, 4, 6, 8, 16, 32, 48, 64] {
+            assert_eq!(
+                e.workspace_bytes(rows).unwrap(),
+                streamed::workspace_bytes(&e.gate, rows)
+                    .unwrap()
+                    .max(streamed::workspace_bytes(&e.down, rows).unwrap())
+            );
+            let router = e.plan(floor::Stage::Router, rows).unwrap();
+            assert_eq!(
+                router.grid,
+                [
+                    e.experts() / 16,
+                    rows.div_ceil(8),
+                    e.hidden().div_ceil(128).div_ceil(4)
+                ]
+            );
+            let finish = e.plan(floor::Stage::GateFinish, rows).unwrap();
+            assert_eq!(
+                finish.grid,
+                [e.intermediate().div_ceil(128), rows * e.top_k(), 1]
+            );
+            for stage in floor::STAGES {
+                let plan = e.plan(stage, rows).unwrap();
+                assert_eq!(plan.block[0], e.entry(stage).max_threads);
+                assert!(plan.workspace_bytes > 0);
+                assert!(e.plan(stage, 0).is_err());
+                assert!(e.plan(stage, 65).is_err());
+            }
+        }
+        let mut wrong = e.down.clone();
+        wrong.tokens_capacity = 8;
+        assert!(floor::Entry::new(e.gate.clone(), wrong, e.floor_bits, "invalid".into()).is_err());
+        assert!(
+            floor::Entry::new(
+                e.gate.clone(),
+                e.down.clone(),
+                f32::NAN.to_bits(),
+                "invalid".into()
+            )
+            .is_err()
+        );
+        assert!(floor::Entry::new(e.down, e.gate, e.floor_bits, "reversed".into()).is_err());
+    }
+}

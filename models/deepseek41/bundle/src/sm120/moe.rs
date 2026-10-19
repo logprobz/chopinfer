@@ -14,7 +14,56 @@ pub const FAMILY: &str = "routed_moe";
 pub const ACTIVE_FAMILY: &str = "routed_moe_active";
 pub const STREAMED_FAMILY: &str = "routed_moe_streamed";
 
+pub const FLOOR_FAMILY: &str = "routed_moe_floor";
+
 pub const PREFILL_FAMILY: &str = "routed_moe_prefill";
+
+/// Lab-only exact pipeline until paired measurements qualify each bucket.
+pub fn floor_entries(
+    g: &Geometry,
+) -> Result<Vec<kernels_sm120::moe::chained::floor::Entry>, String> {
+    let projections = streamed_projections(g)?;
+    moe::expert_sets(g)
+        .into_iter()
+        .map(|set| {
+            let find = |kind| {
+                projections
+                    .iter()
+                    .find(|p| {
+                        p.tokens_capacity == 64
+                            && p.query.projection.gemm.grouped.unwrap().experts == set.count
+                            && p.query.projection.projection == kind
+                    })
+                    .unwrap()
+                    .clone()
+            };
+            kernels_sm120::moe::chained::floor::Entry::new(
+                find(GatedMlpProjection::GateUp),
+                find(GatedMlpProjection::Down),
+                1e-4_f32.to_bits(),
+                format!(
+                    "chop_{}_moe_floor_e{}_k{}",
+                    g.kernel_tag, set.count, set.top_k
+                ),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+pub fn floor_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut specs = Vec::new();
+    for g in geometries.iter().filter(|g| streamed_qualified(g, 4)) {
+        specs.extend(
+            kernels_sm120::moe::chained::floor::cubins(
+                &format!("floor_moe_{}", g.kernel_tag),
+                &floor_entries(g)?,
+            )
+            .into_iter()
+            .map(|spec| (FLOOR_FAMILY, spec)),
+        );
+    }
+    Ok(specs)
+}
 
 /// TP4, 250 W, 2026-10-19, balanced/seeded/concentrated routing: all
 /// eighteen complete prefill comparisons are bitwise. Gate/up wins at
@@ -397,7 +446,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(specs)
 }
 
-pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+pub fn register_prior(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in quantizers(g, ranks)? {
         backend = backend.with_block_quantize(entry);
     }
@@ -419,9 +468,6 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     for entry in serving_compact_projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
-    for entry in serving_prefill_projections(g, ranks)? {
-        backend = backend.with_quantized_chained_projection(entry);
-    }
     if streamed_qualified(g, ranks) {
         for entry in streamed_routes(g) {
             backend = backend.with_row_bias_route(entry);
@@ -435,6 +481,15 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     }
     for entry in active_routes(g) {
         backend = backend.with_row_bias_route(entry);
+    }
+    Ok(backend)
+}
+
+/// Serving selection, with the independently measured prefill buckets.
+pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    let mut backend = register_prior(backend, g, ranks)?;
+    for entry in serving_prefill_projections(g, ranks)? {
+        backend = backend.with_quantized_chained_projection(entry);
     }
     Ok(backend)
 }

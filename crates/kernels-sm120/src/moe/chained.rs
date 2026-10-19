@@ -56,6 +56,7 @@ use kernel_core::gated_mlp::{
 use kernel_core::properties::{Invariance, Ties};
 use std::path::PathBuf;
 
+pub mod floor;
 pub mod formats;
 pub mod prefill;
 pub mod quantized;

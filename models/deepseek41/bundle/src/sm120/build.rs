@@ -178,6 +178,14 @@ pub fn selection(
             format!("prefill_moe_{}_compute_sm120", geometry.kernel_tag),
             geometry.id,
         ));
+        if moe::streamed_qualified(geometry, 4) {
+            for part in ["compute", "route"] {
+                owners.push((
+                    format!("floor_moe_{}_{part}_sm120", geometry.kernel_tag),
+                    geometry.id,
+                ));
+            }
+        }
         for part in ["compute", "routes"] {
             owners.push((
                 format!("streamed_moe_{}_{part}_sm120", geometry.kernel_tag),
@@ -246,6 +254,7 @@ pub fn selection(
     specs.extend(moe::active_cubins(geometries).expect("active routed MoE cubins"));
     specs.extend(moe::streamed_cubins(geometries).expect("streamed routed MoE cubins"));
     specs.extend(moe::prefill_cubins(geometries).expect("grouped prefill MoE cubins"));
+    specs.extend(moe::floor_cubins(geometries).expect("fused decode MoE cubins"));
     specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));

@@ -53,6 +53,10 @@ path = "examples/sm120/build_ceil_parallel.rs"
 name = "build_dspark_ring_gather"
 path = "examples/sm120/build_dspark_ring_gather.rs"
 
+[[example]]
+name = "build_moe_floor"
+path = "examples/sm120/build_moe_floor.rs"
+
 [lints]
 workspace = true
 

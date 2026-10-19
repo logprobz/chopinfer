@@ -191,6 +191,7 @@ impl crate::Kernels {
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
+            && !cubin.starts_with("floor_moe_")
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))

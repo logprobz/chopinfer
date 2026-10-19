@@ -15,6 +15,25 @@ use runtime_cuda::{Function, Stream};
 use serde_json::json;
 use std::collections::BTreeMap;
 
+// time_ab reports the median of B/A pairs from alternating AB and BA rounds.
+const MAX_PAIRED_RATIO: f32 = 1.03;
+
+fn accepts_paired_ratio(ratio: f32, unchanged: bool) -> bool {
+    ratio.is_finite() && ratio > 0.0 && (unchanged || ratio <= MAX_PAIRED_RATIO)
+}
+
+#[test]
+fn timing_gate_allows_three_percent_interleaved_median_noise() {
+    for ratio in [0.8, 1.0, 1.001_422_5, 1.03] {
+        assert!(accepts_paired_ratio(ratio, false), "ratio={ratio}");
+    }
+    for ratio in [1.0301, 1.04, 0.0, f32::NAN, f32::INFINITY] {
+        assert!(!accepts_paired_ratio(ratio, false), "ratio={ratio}");
+    }
+    assert!(accepts_paired_ratio(1.04, true));
+    assert!(!accepts_paired_ratio(f32::NAN, true));
+}
+
 fn entries() -> Vec<Entry> {
     registration::decode_catalog(&FLASH).unwrap()
 }
@@ -616,7 +635,9 @@ pub(super) fn compare_with(
         // implementation subject to a noisy self-comparison timing gate.
         record["same_implementation"] = json!(unchanged);
         record["routing"] = json!(if unchanged { "split-fold" } else { "ticket" });
-        record["no_regression"] = json!(unchanged || paired.paired_ratio <= 1.0);
+        record["no_regression"] = json!(accepts_paired_ratio(paired.paired_ratio, unchanged));
+        record["regression_limit_ratio"] = json!(MAX_PAIRED_RATIO);
+        record["timing_statistic"] = json!("median of interleaved candidate/baseline ratios");
         record["tile_n"] = json!(if unchanged { 16 } else { ticket.tile_n() });
         record["folds_per_cta"] = json!(if unchanged {
             2

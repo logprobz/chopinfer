@@ -4,7 +4,8 @@
 //! `Backend::projection` at the served prefill capacity, which every
 //! phase's rows fit. The prepared op chooses the ordered split entry at
 //! rows <= 32 for decode and verification. Larger rows retain the prefill
-//! arithmetic, with the weight-domain scan cached at instance creation.
+//! entry above the measured crossover. Split decode reads the weight-domain
+//! table cached at instance creation.
 //!
 //! Beside the head (`ops::head`) they are the vendor's F32 or plain
 //! `F.linear` projections, replicated on every rank:

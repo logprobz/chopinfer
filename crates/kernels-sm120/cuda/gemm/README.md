@@ -82,9 +82,10 @@ order, never a sum of CTA subtotals. The declared split count is
 The whole row and whole weight tile determine tensor eligibility before
 any chain runs. Exceptional values and raw F32 weights keep the original
 SIMT FMA path and IEEE propagation. Inactive outputs and caller row-status
-words remain untouched. Larger launches retain the prefill schedule with
-the cached weight flags. The original header, entries, and locks remain
-available for bitwise comparisons.
+words remain untouched. Larger launches route to the original locked entry. At 250 W on SM120
+(2026-10-19), cached prefill at 64 rows was 1.15-1.17x slower on small-N
+projections; 32 is the largest measured winning split bucket. The original
+header, entries, and locks remain unchanged.
 
 ## Fragment decode
 

@@ -58,7 +58,14 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
     );
     assert!(head.iter().any(|line| line.contains("_cached_decode_v1")));
     assert!(head.iter().any(|line| line.contains("_cached_reduce_v1")));
-    assert!(head.iter().all(|line| line.contains("_cached")));
+    for line in &head {
+        if line.contains("_cached_weights_v1") {
+            continue;
+        }
+        let (_, rows) = line.rsplit_once("U32(").expect("head row argument");
+        let rows: u32 = rows.split_once(')').unwrap().0.parse().unwrap();
+        assert_eq!(line.contains("_cached"), rows <= 32, "{line}");
+    }
     // The create scans precede the first decode projection, and none can
     // be captured or repeated by a graph replay.
     let first_decode = launches

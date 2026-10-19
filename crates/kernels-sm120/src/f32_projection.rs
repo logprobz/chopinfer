@@ -153,7 +153,7 @@ impl Entry {
                     .to_string(),
             },
             implementation: IMPLEMENTATION.into(),
-            stages: self.symbols(),
+            stages: self.runtime_symbols(),
         }
     }
 }

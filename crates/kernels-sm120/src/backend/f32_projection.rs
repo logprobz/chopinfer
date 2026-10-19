@@ -74,7 +74,11 @@ pub(super) fn prepare(
     let mut info = OpInfo::new(
         f32_projection::IMPLEMENTATION,
         chosen.guarantees,
-        entry.symbols().into_iter().map(|s| (s, 0)).collect(),
+        entry
+            .runtime_symbols()
+            .into_iter()
+            .map(|s| (s, 0))
+            .collect(),
     );
     if entry.uses_cached_weights() {
         entry.decode_plan(need.capacity.min(32))?;
@@ -159,9 +163,14 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.weights.codes.covers(self.entry.weight_bytes())?;
         b.live_rows.covers(4)?;
         if self.entry.uses_cached_weights() {
-            let flags = self.weight_domain(b)?;
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            // SM120 at 250 W, 2026-10-19: split decode won through 32
+            // measured rows, but cached prefill at 64 rows was 1.15-1.17x
+            // slower for small-N projections. Keep 32 as the last measured
+            // winning split bucket; all larger rows use the original
+            // symbol, plan and arguments.
             if rows <= 32 {
+                let flags = self.weight_domain(b)?;
                 workspace.covers(self.entry.decode_workspace_bytes(rows))?;
                 return Ok(vec![
                     self.stage(
@@ -207,22 +216,9 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                     ),
                 ]);
             }
-            return Ok(vec![self.stage(
-                "",
-                rows,
-                self.entry.plan(rows)?,
-                vec![
-                    ptr(b.activation),
-                    ptr(b.weights.codes),
-                    ptr(b.output),
-                    ptr(b.live_rows),
-                    Argument::U32(rows),
-                    ptr(flags),
-                ],
-            )]);
         }
         Ok(vec![Launch {
-            symbol: self.entry.symbol().into(),
+            symbol: self.entry.baseline_symbol().into(),
             rows,
             plan: self.entry.plan(rows)?,
             arguments: ArgumentList(vec![

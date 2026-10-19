@@ -7,7 +7,7 @@ pub const MAX_ROWS: u32 = 32;
 
 impl Entry {
     /// Opt into create-time weight classification and ordered split-K at
-    /// up to 32 rows. Larger launches retain the original prefill schedule.
+    /// up to 32 rows. Larger launches use the original locked entry.
     pub fn with_decode(mut self) -> Self {
         self.cached = true;
         self.symbol = format!("{}_cached_v1", self.symbol);
@@ -16,6 +16,31 @@ impl Entry {
 
     pub fn uses_cached_weights(&self) -> bool {
         self.cached
+    }
+
+    pub fn baseline_symbol(&self) -> &str {
+        if self.cached {
+            self.symbol
+                .strip_suffix("_cached_v1")
+                .expect("cached entry suffix")
+        } else {
+            &self.symbol
+        }
+    }
+
+    /// Symbols the prepared op can launch, including its original entry
+    /// above the measured split-decode crossover. `symbols` instead lists
+    /// the exports compiled by this entry's cubin specification.
+    pub fn runtime_symbols(&self) -> Vec<String> {
+        if self.cached {
+            let mut symbols = ["_weights", "_rows", "_decode", "_reduce"]
+                .map(|suffix| self.stage_symbol(suffix))
+                .to_vec();
+            symbols.push(self.baseline_symbol().to_owned());
+            symbols
+        } else {
+            self.symbols()
+        }
     }
 
     pub fn symbols(&self) -> Vec<String> {

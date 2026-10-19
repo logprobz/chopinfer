@@ -303,7 +303,7 @@ fn registered_heads_prepare_every_row_count() {
                 assert_eq!(launches[1].plan, selected.decode_plan(rows).unwrap());
             } else {
                 assert_eq!(launches.len(), 1);
-                assert_eq!(launches[0].symbol, selected.symbol());
+                assert_eq!(launches[0].symbol, selected.baseline_symbol());
                 assert_eq!(
                     launches[0].plan.grid,
                     [q.n.div_ceil(16), rows.div_ceil(8), 1]

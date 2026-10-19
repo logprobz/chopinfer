@@ -106,7 +106,12 @@ pub fn register_f32_projections(
     ranks: u32,
 ) -> Result<Sm120, String> {
     let entries = f32_decode::entries(geometry, ranks)?;
-    let cubins = [f32_decode::cubin_name(geometry)];
+    let cubins = [
+        f32_decode::cubin_name(geometry),
+        f32_dense::cubin_name(geometry),
+        f32_head::cubin_name(geometry),
+        dspark_router::cubin_name(geometry),
+    ];
     let available = crate::CUBINS
         .iter()
         .filter(|cubin| cubins.iter().any(|name| cubin.name == name))

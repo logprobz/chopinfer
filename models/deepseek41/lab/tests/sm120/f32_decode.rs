@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const CUBIN: &str = "f32_decode_edges";
+const TIMING_ROWS: [u32; 12] = [1, 2, 4, 8, 16, 32, 33, 48, 64, 128, 192, 256];
+const MAX_SLOWDOWN_RATIO: f32 = 1.03;
 
 struct ProductionCase {
     old: Entry,
@@ -62,7 +64,8 @@ fn production_cases() -> Vec<ProductionCase> {
                 .expect("registered cached entry retains its baseline stem");
             let old = Entry::new(entry.query(), entry.usage(), stem).unwrap();
             assert_eq!(old.clone().with_decode(), entry);
-            let mut rows = vec![1, 2, 4, 8, 16, 32, 64, maximum];
+            let mut rows = TIMING_ROWS.to_vec();
+            rows.push(maximum);
             rows.sort_unstable();
             rows.dedup();
             ProductionCase { old, rows }
@@ -85,8 +88,9 @@ const EDGE_WITNESSES: [Witness; 11] = [
 ];
 const RANDOM_CASES: u32 = 4;
 
-fn timed(rows: u32) -> bool {
-    matches!(rows, 1 | 32 | 64)
+fn timed(_rows: u32) -> bool {
+    // Time every production case, including the full dense prefill capacity.
+    true
 }
 
 fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
@@ -121,6 +125,7 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
             "rows": case.rows,
             "timing_rows": case.rows.iter().copied().filter(|&rows| timed(rows)).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
+        "maximum_slowdown_ratio": MAX_SLOWDOWN_RATIO,
         "production_cases": production_cases,
         "edge_cases": edge_cases,
         "bitwise_cases": production_cases + edge_cases,
@@ -167,7 +172,7 @@ fn cpu_production_matrix_covers_registered_entries() {
                     "{} lacks its maximum {maximum} rows",
                     entry.symbol()
                 );
-                for rows in [1, 2, 4, 8, 16, 32, 64] {
+                for rows in TIMING_ROWS {
                     assert!(
                         case.rows.contains(&rows),
                         "{} lacks {rows} rows",
@@ -195,13 +200,13 @@ fn cpu_production_matrix_covers_registered_entries() {
                             .iter()
                             .map(|(symbol, _)| symbol.clone())
                             .collect::<Vec<_>>(),
-                        entry.symbols()
+                        entry.runtime_symbols()
                     );
                 }
             }
         }
     }
-    println!("F32_MATRIX {}", coverage(&matrix));
+    println!("\nF32_MATRIX {}", coverage(&matrix));
 }
 
 fn edge(n: u32, k: u32, weight: WeightFormat) -> Entry {
@@ -348,7 +353,7 @@ fn prepared(entry: &Entry, rows: u32) -> Prepared<ProjectionBuffers<View>> {
     let backend = Sm120::new().with_f32_projections(
         F32ProjectionOffers::new(
             vec![entry.clone()],
-            entry.symbols().into_iter().collect(),
+            entry.runtime_symbols().into_iter().collect(),
             "0".repeat(64),
         )
         .unwrap(),
@@ -481,9 +486,22 @@ fn compare(
             .launches(&buffers(4), view(7), Counts::rows(rows))
             .unwrap(),
     ];
+    let runtime_modules = [
+        &modules[0],
+        if launches[1]
+            .iter()
+            .all(|launch| launch.symbol == old.symbol())
+        {
+            &modules[0]
+        } else {
+            &modules[1]
+        },
+    ];
     let graphs = [
-        session.capture(|s| run_launches(session, &modules[0], &bindings, &launches[0], s))?,
-        session.capture(|s| run_launches(session, &modules[1], &bindings, &launches[1], s))?,
+        session
+            .capture(|s| run_launches(session, runtime_modules[0], &bindings, &launches[0], s))?,
+        session
+            .capture(|s| run_launches(session, runtime_modules[1], &bindings, &launches[1], s))?,
     ];
     for live_count in [rows, rows.saturating_sub(1), 0, rows] {
         live.copy_from_bytes(&live_count.to_le_bytes(), &session.stream)
@@ -498,7 +516,7 @@ fn compare(
                 } else {
                     run_launches(
                         session,
-                        &modules[arm],
+                        runtime_modules[arm],
                         &bindings,
                         &launches[arm],
                         &session.stream,
@@ -542,13 +560,19 @@ fn compare(
             paired.arms[1].median_ms * 1000.,
             paired.paired_ratio
         );
+        if !paired.paired_ratio.is_finite() || paired.paired_ratio > MAX_SLOWDOWN_RATIO {
+            return Err(format!(
+                "{label} rows={rows}: routed/baseline ratio {} exceeds {MAX_SLOWDOWN_RATIO}",
+                paired.paired_ratio
+            ));
+        }
         // Each stage is measured separately as well as the full sequence.
         for (arm, entries) in launches.iter().enumerate() {
             for (index, l) in entries.iter().enumerate() {
                 let graph = session.capture(|s| {
                     run_launches(
                         session,
-                        &modules[arm],
+                        runtime_modules[arm],
                         &bindings,
                         std::slice::from_ref(l),
                         s,
@@ -559,7 +583,15 @@ fn compare(
                     2,
                     7,
                     EvictionMode::Write,
-                    |s| run_launches(session, &modules[arm], &bindings, &entries[..index], s),
+                    |s| {
+                        run_launches(
+                            session,
+                            runtime_modules[arm],
+                            &bindings,
+                            &entries[..index],
+                            s,
+                        )
+                    },
                     |s| graph.launch(s).map_err(|e| e.to_string()),
                 )?;
                 println!(
@@ -592,6 +624,8 @@ fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>)
 
 #[test]
 fn gpu_bitwise_shapes_and_edges() {
+    // Libtest can print its test prefix without a newline under one test thread.
+    println!();
     kernel_harness::gpu_test_with(timing_cubins(), 4 << 30, |session| {
         for case in production_cases() {
             let old = &case.old;

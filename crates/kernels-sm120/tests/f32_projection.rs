@@ -65,7 +65,7 @@ fn operation(e: &Entry) -> OperationSpec {
     }
 }
 fn backend(entries: Vec<Entry>) -> Sm120 {
-    let available = entries.iter().flat_map(Entry::symbols).collect();
+    let available = entries.iter().flat_map(Entry::runtime_symbols).collect();
     Sm120::new()
         .with_f32_projections(F32ProjectionOffers::new(entries, available, "0".repeat(64)).unwrap())
 }
@@ -74,14 +74,19 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 fn cached_weights_initialize_once_and_decode_preserves_every_chain_plane() {
     for weight in [WeightFormat::Bf16, WeightFormat::F32] {
         let mut q = entry(weight).query();
-        q.m_capacity = 64;
+        q.m_capacity = 256;
         let usage = OperationUse {
-            capacity: 64,
+            capacity: 256,
             ..entry(weight).usage()
         };
-        let e = Entry::new(q, usage, "cached_test").unwrap().with_decode();
+        let original = Entry::new(q, usage, "cached_test").unwrap();
+        let e = original.clone().with_decode();
+        let baseline = backend(vec![original.clone()])
+            .projection(&operation(&original), usage, Need::rows(256))
+            .unwrap()
+            .handle;
         let prepared = backend(vec![e.clone()])
-            .projection(&operation(&e), usage, Need::rows(64))
+            .projection(&operation(&e), usage, Need::rows(256))
             .unwrap()
             .handle;
         let mut b = buffers(&e);
@@ -121,13 +126,17 @@ fn cached_weights_initialize_once_and_decode_preserves_every_chain_plane() {
             };
             assert!(prepared.launches(&b, short, Counts::rows(rows)).is_err());
         }
-        for rows in [33, 64] {
+        for rows in 33..=256 {
             let launches = prepared
                 .launches(&b, workspace, Counts::rows(rows))
                 .unwrap();
             assert_eq!(launches.len(), 1);
-            assert_eq!(launches[0].symbol, e.symbol());
-            assert_eq!(launches[0].arguments.0.len(), 6);
+            assert_eq!(
+                launches,
+                baseline
+                    .launches(&b, View::EMPTY, Counts::rows(rows))
+                    .unwrap()
+            );
         }
         b.scratch.weight_domain.as_mut().unwrap().bytes -= 1;
         assert!(prepared.initialize(&b).is_err());
@@ -155,6 +164,24 @@ fn cached_decode_refuses_unlaunchable_splits_at_prepare() {
         .with_decode();
     assert!(
         backend(vec![e.clone()])
+            .projection(&operation(&e), e.usage(), Need::rows(1))
+            .is_err()
+    );
+}
+
+#[test]
+fn cached_decode_requires_the_locked_baseline_in_its_inventory() {
+    let e = entry(WeightFormat::Bf16).with_decode();
+    let backend = Sm120::new().with_f32_projections(
+        F32ProjectionOffers::new(
+            vec![e.clone()],
+            e.symbols().into_iter().collect(),
+            "0".repeat(64),
+        )
+        .unwrap(),
+    );
+    assert!(
+        backend
             .projection(&operation(&e), e.usage(), Need::rows(1))
             .is_err()
     );

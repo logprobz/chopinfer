@@ -14,6 +14,8 @@ pub struct StateSlotPoolV1 {
     /// The bundle allocates every slot before it acquires serving KV.
     preallocated: bool,
     owners: BTreeMap<RequestId, u64>,
+    /// Monotonic generations survive retirement and are bounded by slot capacity.
+    generations: BTreeMap<u64, u64>,
 }
 
 impl StateSlotPoolV1 {
@@ -24,6 +26,7 @@ impl StateSlotPoolV1 {
             bytes_per_slot: 128,
             preallocated: false,
             owners: BTreeMap::new(),
+            generations: BTreeMap::new(),
         }
     }
 
@@ -65,6 +68,7 @@ impl StateSlotPoolV1 {
             bytes_per_slot,
             preallocated,
             owners: BTreeMap::new(),
+            generations: BTreeMap::new(),
         })
     }
 
@@ -75,6 +79,7 @@ impl StateSlotPoolV1 {
             bytes_per_slot: 0,
             preallocated: false,
             owners: BTreeMap::new(),
+            generations: BTreeMap::new(),
         }
     }
 
@@ -97,6 +102,14 @@ impl StateSlotPoolV1 {
         let slot = (0..self.capacity as u64)
             .find(|slot| !self.owners.values().any(|owned| owned == slot))
             .ok_or("request state slots exhausted")?;
+        let generation = self
+            .generations
+            .get(&slot)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or("request state generation exhausted")?;
+        self.generations.insert(slot, generation);
         self.owners.insert(request, slot);
         Ok(slot)
     }
@@ -104,6 +117,13 @@ impl StateSlotPoolV1 {
     #[must_use]
     pub fn slot(&self, request: RequestId) -> Option<u64> {
         self.owners.get(&request).copied()
+    }
+
+    /// Identity of this live lease, distinct after a slot is reused.
+    #[must_use]
+    pub fn lease(&self, request: RequestId) -> Option<(u64, u64)> {
+        let slot = self.slot(request)?;
+        Some((slot, *self.generations.get(&slot)?))
     }
 
     pub fn retire(&mut self, request: RequestId) {
@@ -116,12 +136,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_late_completion_cannot_match_a_reused_slot_lease() {
+        let mut pool = StateSlotPoolV1::with_capacity(1);
+        let first = RequestId::new(1);
+        let second = RequestId::new(2);
+        pool.allocate(first).unwrap();
+        let old = pool.lease(first).unwrap();
+        pool.allocate(first).unwrap();
+        assert_eq!(pool.lease(first), Some(old));
+        pool.retire(first);
+        pool.retire(first);
+        assert_eq!(pool.lease(first), None);
+        pool.allocate(second).unwrap();
+        let next = pool.lease(second).unwrap();
+        assert_eq!(old.0, next.0);
+        assert_ne!(old.1, next.1);
+        pool.retire(second);
+        pool.allocate(first).unwrap();
+        assert_ne!(
+            pool.lease(first),
+            Some(old),
+            "request ID reuse also changes the lease"
+        );
+        assert_eq!(pool.generations.len(), 1);
+    }
+
+    #[test]
+    fn an_exhausted_generation_does_not_take_the_slot() {
+        let mut pool = StateSlotPoolV1::with_capacity(1);
+        pool.generations.insert(0, u64::MAX);
+        assert!(pool.allocate(RequestId::new(1)).is_err());
+        assert!(pool.owners.is_empty());
+        assert_eq!(pool.generations[&0], u64::MAX);
+    }
+
+    #[test]
     fn slots_are_isolated_bounded_and_reusable() {
         let mut pool = StateSlotPoolV1 {
             capacity: 2,
             bytes_per_slot: 128,
             preallocated: false,
             owners: BTreeMap::new(),
+            generations: BTreeMap::new(),
         };
         let a = RequestId::new(1);
         let b = RequestId::new(2);

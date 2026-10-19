@@ -318,9 +318,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Parallel index queries and native FP4 scores include per-row query packing.
 /// Image and text prefills below 128 rows use the qualified existing folds.
 /// Prefill HC and ceil entries add module handles to this lifecycle.
+/// TP4 text decode uses the direct-load MoE buckets, and the paired shared
+/// gate/up keeps no single packed folds.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (21923, 0xf79c043b9c179e31)),
-    (Ranks::TP4, (44219, 0x45b2690cdd33be6b)),
+    (Ranks::TP2, (20803, 0xd038f4dff171fa11)),
+    (Ranks::TP4, (41851, 0x3a24d94544043dce)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

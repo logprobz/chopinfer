@@ -880,6 +880,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC
 /// row tiles add a separate entry while small-row mixer paths stay unchanged.
 /// Shared expert scratch stays independent across every fork/join region.
+/// TP4 decode and verify use the measured direct-load MoE buckets, and the
+/// paired shared gate/up keeps no single packed folds.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -894,22 +896,22 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (33963, 0x9d38f21ab57c282d),
+        (32843, 0xc6477b788b9023cc),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (33855, 0x86fe78eee7ca36a4),
+        (32735, 0x882854e11a40dd08),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (68387, 0xe8ba96a7622b8bbb),
+        (66019, 0x531294d3234ec39b),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (68131, 0xa777e30906b3338d),
+        (65763, 0x35ba745043b4ba72),
     ),
 ];
 

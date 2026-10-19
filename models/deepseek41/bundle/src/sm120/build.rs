@@ -37,10 +37,10 @@ mod latent_scheduled;
 #[allow(dead_code)]
 mod norm_quantize;
 mod own_cubin;
-mod ring_gather_cubin;
-mod ring_gather_entries;
 #[allow(dead_code)]
 mod replicated_embedding;
+mod ring_gather_cubin;
+mod ring_gather_entries;
 #[allow(dead_code)]
 mod window_fused;
 // The build compiles the entries; the bundle launches them.

@@ -195,9 +195,10 @@ impl Lowering<'_> {
         }
     }
 
-    /// A row op's stage.
+    /// Peer gathering is measured only at two ranks.
     fn replicated_embedding(&self, phase: Phase) -> bool {
         matches!(phase, Phase::Decode(_))
+            && self.shape.ranks() == 2
             && self
                 .ops
                 .rows

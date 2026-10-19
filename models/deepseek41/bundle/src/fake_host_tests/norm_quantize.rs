@@ -45,7 +45,9 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
         .iter()
         .filter(|l| {
             l.starts_with("launch ")
-                && (l.contains("_pair_v1_admit_v1") || l.contains("_pair_f32_v2_initialize_v2"))
+                && (l.contains("_pair_v1_admit_v1")
+                    || l.contains("_pair_f32_v2_initialize_v2")
+                    || l.contains("_pair_f32_v3_initialize_v3"))
         })
         .map(|l| spans(l)[2])
         .collect();
@@ -111,9 +113,9 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
         );
         assert_eq!(count("chop_row_rmsnorm_deepseek41_w5120_v1"), 0);
         assert_eq!(count("chop_deepseek41_q_norm_f32_v1"), 0);
-        // Embedding widening is now inside its replicated gather. Later
-        // indexer projections retain their status-sensitive quantization.
-        assert_eq!(count("chop_row_rounding_widen_deepseek41_w5120_v1"), 0);
+        // TP4 keeps the unmeasured embedding chain. Later indexer
+        // projections retain their status-sensitive quantization.
+        assert_eq!(count("chop_row_rounding_widen_deepseek41_w5120_v1"), ranks);
         let widened = (0..FLASH.layers())
             .flat_map(|layer| {
                 [

@@ -12,6 +12,7 @@ pub mod dspark_entries;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
 pub mod latent;
+pub mod latent_scheduled;
 pub mod mxfp8_fold;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 

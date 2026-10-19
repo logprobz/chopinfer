@@ -13,6 +13,7 @@ pub mod dspark_entries;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
 pub mod hc_expand_mix;
+pub mod hc_mixer_probe;
 pub mod hc_round_expand_mix;
 pub mod latent;
 pub mod latent_scheduled;

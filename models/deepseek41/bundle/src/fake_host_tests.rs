@@ -1095,16 +1095,25 @@ fn every_kv_layout_lowers_every_stage() {
             KvStorage::Native => assert_eq!(launches("window_store_bf16"), 0),
             KvStorage::Bf16 => assert!(launches("window_store_bf16") > 0),
         }
+        let packed = launches("_pack_fp4_v1");
+        let native_scores = launches("_mma_fp4_v1");
+        let expected_packs = if kv.storage == KvStorage::Native {
+            2 * shape.geometry.shape.csa.index_sources.len() * shape.ranks() as usize
+        } else {
+            0
+        };
+        assert_eq!(packed, expected_packs);
+        assert_eq!(native_scores, expected_packs);
         counts.push((
             kv.storage,
-            journal.iter().filter(|l| l.starts_with("launch")).count(),
+            journal.iter().filter(|l| l.starts_with("launch")).count() - packed,
             bf16,
         ));
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
-    // One launch for one: the layouts differ in which entries they launch.
+    // After the validated native query packs, both layouts lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

@@ -314,6 +314,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The pinned journal digest of the image lifecycle at each rank count.
 /// Parallel ceil bindings add 35 records per rank and select the new
 /// small-row symbols and thread blocks in the text decode after the image.
+/// Parallel index queries and native FP4 scores include per-row query packing.
 /// Image and text prefills below 128 rows use the qualified existing folds.
 /// Prefill HC and ceil entries add module handles to this lifecycle.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [

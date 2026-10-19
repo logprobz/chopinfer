@@ -337,18 +337,29 @@ impl Instance {
         if self.dspark.is_none() {
             return Ok(());
         }
-        self.dspark_with(
-            |runtime, host| {
-                runtime
-                    .catch_up(host, request)
-                    .map_err(|e| format!("DSpark snapshot catch-up: {e:?}"))
-            },
-            &[],
-            None,
-            None,
-            BTreeMap::new(),
-        )
-        .map_err(|error| {
+        let result = self
+            .dspark_with(
+                |runtime, host| {
+                    runtime
+                        .catch_up(host, request)
+                        .map_err(|e| format!("DSpark snapshot catch-up: {e:?}"))
+                },
+                &[],
+                None,
+                None,
+                BTreeMap::new(),
+            )
+            .and_then(|()| self.check_dspark_status());
+        if result.is_err() {
+            self.dspark
+                .as_mut()
+                .expect("enabled drafter")
+                .runtime
+                .as_mut()
+                .expect("returned lifecycle")
+                .poison();
+        }
+        result.map_err(|error| {
             self.log(&error);
             BundleStatusV1::BundleError
         })

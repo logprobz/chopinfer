@@ -99,6 +99,20 @@ fn warm_cycle_host_boundary_inventory() {
                 );
                 let totals = counts(&journal[start..]);
                 assert_eq!(
+                    totals["stream_syncs"], 0,
+                    "warm DSpark needs no explicit stream drain"
+                );
+                assert_eq!(
+                    totals["device_to_host"], 6,
+                    "four final rank checks, IDs and confidence"
+                );
+                assert_eq!(counts(&execute[..draft])["device_to_host"], 0);
+                assert_eq!(
+                    counts(&execute[draft..gather])["device_to_host"],
+                    1,
+                    "only the pending Engram ID boundary remains"
+                );
+                assert_eq!(
                     totals["graph_captures"], 0,
                     "inventory must use warm graphs"
                 );
@@ -132,4 +146,71 @@ fn warm_cycle_host_boundary_inventory() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
+}
+
+#[test]
+fn saved_catch_up_and_index_failures_refuse_target_logits() {
+    for index_failure in [false, true] {
+        let shape = Shape::new(&FLASH, Ranks::TP1).unwrap();
+        let (host, mut instance) = create(shape);
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(7, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        let prior_rows = 3 * FLASH.dspark_stages() as usize + 5;
+        let total_rows = prior_rows + 6 * (FLASH.shape.csa.index_sources.len() + 1);
+        let mut status = vec![0; total_rows * 4];
+        status[if index_failure { prior_rows * 4 } else { 0 }] = 1;
+        host.injected.replace(Some(status));
+        let mut sink = Sink::default();
+        assert!(instance.execute(&verify(7, 0, 3, 5), &mut sink).is_err());
+        assert!(
+            sink.views.is_empty(),
+            "invalid saved status published target logits"
+        );
+        assert!(host.injected.borrow().is_none());
+        assert!(
+            host.logs
+                .borrow()
+                .iter()
+                .any(|line| line.contains(if index_failure {
+                    "DSpark index score"
+                } else {
+                    "DSpark quantized input"
+                }))
+        );
+        assert_eq!(state(&instance, 7).end, 3);
+        assert!(instance.commit_accepted(&[kept(7, 6)]).is_err());
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
+fn failed_snapshot_catch_up_poisoned_cursors_cannot_resume() {
+    let shape = Shape::new(&FLASH, Ranks::TP1).unwrap();
+    let (host, mut instance) = create(shape);
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(7, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    let pages = (0..instance.describe_prefix_state().unwrap())
+        .map(|page| 40 + page)
+        .collect::<Vec<_>>();
+    let mut status = vec![0; 3 * FLASH.dspark_stages() as usize * 4];
+    status[0] = 1;
+    host.injected.replace(Some(status));
+    assert!(instance.capture_prefix_state(7, 3, &pages).is_err());
+    assert!(host.injected.borrow().is_none());
+    assert!(
+        instance
+            .execute(&verify(7, 0, 3, 5), &mut Sink::default())
+            .is_err()
+    );
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

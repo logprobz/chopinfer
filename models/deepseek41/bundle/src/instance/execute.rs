@@ -688,6 +688,26 @@ impl Instance {
         }
         let mut status = vec![0_u8; rows as usize * 4];
         for (rank, (&(_, _, stream), buffers)) in self.ranks.iter().zip(&self.buffers).enumerate() {
+            if let Some(device) = &self.dspark {
+                for plane in [
+                    buffers.scratch.row_status,
+                    buffers.scratch.shared_row_status,
+                ] {
+                    device.ranks[rank]
+                        .status
+                        .save(
+                            &self.services,
+                            stream,
+                            crate::buffers::rows(plane, rows),
+                            crate::dspark::status::Kind::Quantized,
+                        )
+                        .map_err(|error| {
+                            self.log(&error);
+                            BundleAbiError::Status(BundleStatusV1::BundleError)
+                        })?;
+                }
+                continue;
+            }
             self.services.synchronize_stream(stream)?;
             for plane in [
                 buffers.scratch.row_status,
@@ -728,6 +748,25 @@ impl Instance {
             return Ok(());
         };
         let sources = self.config.shape.geometry.shape.csa.index_sources;
+        if let Some(device) = &self.dspark {
+            for (source, &layer) in sources.iter().enumerate() {
+                let span = crate::buffers::index_status(buffers.scratch.index_status, source, rows);
+                device.ranks[0]
+                    .status
+                    .save(
+                        &self.services,
+                        stream,
+                        span,
+                        crate::dspark::status::Kind::Index(layer),
+                    )
+                    .map_err(|error| {
+                        self.log(&error);
+                        BundleAbiError::Status(BundleStatusV1::BundleError)
+                    })?;
+            }
+            return Ok(());
+        }
+
         let mut status = vec![0_u8; rows as usize * 4];
         self.services.synchronize_stream(stream)?;
         for (source, &layer) in sources.iter().enumerate() {
@@ -938,6 +977,11 @@ impl Instance {
             .map(|view| view.rank)
             .collect::<std::collections::BTreeSet<_>>();
         for rank in owners {
+            if self.dspark.is_some() {
+                // The consolidated status readback completed every target rank.
+                continue;
+            }
+
             let &(_, _, stream) = self
                 .ranks
                 .get(rank as usize)
@@ -1092,6 +1136,10 @@ impl Instance {
                 self.check_row_status(run)?;
             }
         }
+        self.check_dspark_status().map_err(|error| {
+            self.log(&error);
+            BundleAbiError::Status(BundleStatusV1::BundleError)
+        })?;
         self.emit_logits(runs, sink, ready_epoch)?;
         if ready_epoch.is_some() {
             // Sampler work runs while the host validates this phase. A bad

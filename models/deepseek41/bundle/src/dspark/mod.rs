@@ -12,3 +12,5 @@ pub mod features;
 pub mod staging;
 pub mod state;
 pub mod transfers;
+
+pub(crate) mod status;

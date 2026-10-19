@@ -56,6 +56,7 @@ pub(crate) struct Device {
 
 pub(crate) struct Rank {
     pub inputs: DeviceInputs,
+    pub status: super::status::Status,
     pub window: Window,
     pub item_slots: Span,
     pub source_slots: Span,
@@ -335,7 +336,16 @@ impl Device {
         services.zero_device_buffer(stream, pairs)?;
         let live_width = alloc(4)?;
         services.copy_host_to_device(stream, live_width, &self.shape.vocab_rows().to_le_bytes())?;
+        // Catch-up retains at most one raw window per slot. A target step
+        // and its commit can each inspect all prefill/decode rows and stages.
+        let status_rows = u64::from(self.config.slots)
+            * self.config.history_capacity()
+            * u64::from(self.config.stages)
+            + u64::from(TARGET_ROWS)
+                * (u64::from(self.config.stages) + g.shape.csa.index_sources.len() as u64 + 1)
+            + rows;
         self.ranks.push(Rank {
+            status: super::status::Status::new(alloc(status_rows * 8)?),
             inputs,
             window,
             item_slots: alloc(items * 4)?,

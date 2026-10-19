@@ -317,10 +317,10 @@ fn journal_orders_catch_up_full_draft_readback_gather_upload_and_target() {
             "project 41 2 2 1",
             "draft 1",
             "read_ids 20",
-            "read_confidence 20",
             "hash_gather 6",
             "upload 1",
             "target 1",
+            "read_confidence 20",
         ]
     );
     runtime.commit(&mut host, &[(41, 6)]).unwrap();

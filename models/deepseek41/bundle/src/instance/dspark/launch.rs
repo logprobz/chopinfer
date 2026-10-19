@@ -46,20 +46,29 @@ impl Instance {
     }
 
     fn drafter_status(&self, live: u32) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         for (rank, buffers) in self.buffers.iter().enumerate() {
-            let stream = self.ranks[rank].2;
-            let mut status = vec![0; live as usize * 4];
             for plane in [
                 buffers.scratch.row_status,
                 buffers.scratch.shared_row_status,
             ] {
-                // The host service returns after the stream-ordered readback completes.
-                self.services
-                    .copy_device_to_host(stream, &mut status, rows(plane, live))
-                    .map_err(|e| format!("DSpark status: {e:?}"))?;
-                if status.iter().any(|&byte| byte != 0) {
-                    return Err(format!("DSpark quantized input on rank {rank} is invalid"));
-                }
+                device.ranks[rank].status.save(
+                    &self.services,
+                    self.ranks[rank].2,
+                    rows(plane, live),
+                    crate::dspark::status::Kind::Quantized,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(in crate::instance) fn check_dspark_status(&self) -> Result<(), String> {
+        if let Some(device) = &self.dspark {
+            for (rank, stored) in device.ranks.iter().enumerate() {
+                stored
+                    .status
+                    .check(&self.services, self.ranks[rank].2, rank)?;
             }
         }
         Ok(())
@@ -193,12 +202,10 @@ impl Instance {
                 .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
                 .map_err(|e| format!("DSpark feature retention: {e:?}"))?;
         }
-        for rank in &self.ranks {
-            self.services
-                .synchronize_stream(rank.2)
-                .map_err(|e| format!("DSpark commit synchronize: {e:?}"))?;
-        }
-        Ok(())
+        // Copies remain ordered on each rank's stream. Any following draft,
+        // prefix copy or slot reuse uses that same stream. Staged projections
+        // still validate their saved status before the commit can succeed.
+        self.check_dspark_status()
     }
 
     pub(super) fn dspark_draft(

@@ -3,7 +3,8 @@
 //! The host supplies prepared model operations and pinned Engram staging.
 //! This module orders them: committed-feature catch-up, full draft block,
 //! bounded ID readback, CPU hash/gather, upload, then target verification.
-//! Confidence is read only for diagnostics and never selects serving rows.
+//! Confidence is collected after target execution for diagnostics and never
+//! selects serving rows.
 
 use super::state::{
     self, BLOCK_ROWS, CommitPlan, DraftBlock, Kind, Projection, Rows, Snapshot, State,
@@ -197,11 +198,7 @@ impl Runtime {
                     "DSpark device draft ID is outside the vocabulary",
                 ));
             }
-            let mut scores = vec![[f32::NAN; WIDTH]; blocks.len()];
-            self.host_result(host.read_confidence(&mut scores))?;
-            for (((block, &index), proposed), confidence) in
-                blocks.iter().zip(&drafting).zip(ids).zip(scores)
-            {
+            for ((block, &index), proposed) in blocks.iter().zip(&drafting).zip(ids) {
                 let count = block.emit_rows as usize;
                 target[index].tokens.extend_from_slice(&proposed[..count]);
                 emitted.push(DraftTokens {
@@ -214,7 +211,7 @@ impl Runtime {
                     request: block.request,
                     main_rows: block.main_rows,
                     proposed,
-                    confidence_bits: confidence.map(f32::to_bits),
+                    confidence_bits: [0; WIDTH],
                     outcomes,
                 });
             }
@@ -222,6 +219,13 @@ impl Runtime {
         let gathered = self.host_result(host.hash_and_gather(&target))?;
         self.host_result(host.upload_engram(gathered))?;
         self.host_result(host.target(&target))?;
+        if !blocks.is_empty() {
+            let mut scores = vec![[f32::NAN; WIDTH]; blocks.len()];
+            self.host_result(host.read_confidence(&mut scores))?;
+            for (diagnostic, confidence) in self.diagnostics.iter_mut().zip(scores) {
+                diagnostic.confidence_bits = confidence.map(f32::to_bits);
+            }
+        }
         self.state.executed().map_err(Error::State)?;
         Ok(emitted)
     }

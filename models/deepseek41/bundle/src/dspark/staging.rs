@@ -15,8 +15,9 @@ use super::execution::{Diagnostic, DraftInput, Host, TargetRows};
 use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
 
-/// The prepared program's device work. Device callbacks check row status
-/// before returning success, including before a projection cursor advances.
+/// The prepared program's device work. Projection callbacks may enqueue work;
+/// target, prefix-capture and commit boundaries validate saved status before
+/// publishing results. A failed validation poisons the lifecycle.
 pub trait Program {
     fn project_committed(&mut self, pass: Projection) -> Result<(), String>;
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String>;

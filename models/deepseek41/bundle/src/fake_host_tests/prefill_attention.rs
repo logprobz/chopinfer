@@ -48,12 +48,24 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
         (Ranks::TP4, KV_LAYOUTS[0], 192, 2),
         (Ranks::TP4, KV_LAYOUTS[0], 2496, 2),
         (Ranks::TP4, KV_LAYOUTS[0], 65, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 128, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 128, 2),
+        (Ranks::TP4, KV_LAYOUTS[0], 1281, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 1408, 0),
         (Ranks::TP4, KV_LAYOUTS[0], 2560, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 4096, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 4095, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 4096, 1),
+        (Ranks::TP4, KV_LAYOUTS[0], 4097, 0),
         (Ranks::TP4, KV_LAYOUTS[1], 64, 0),
         (Ranks::TP2, KV_LAYOUTS[0], 64, 0),
-    ] {
+        (Ranks::TP4, KV_LAYOUTS[1], 4096, 0),
+        (Ranks::TP2, KV_LAYOUTS[0], 4096, 0),
+    ]
+    .into_iter()
+    .chain(
+        (256..=1280)
+            .step_by(128)
+            .map(|rows| (Ranks::TP4, KV_LAYOUTS[0], rows, 2)),
+    ) {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, layout);
         let record = crate::config::tests::record(&shape, layout, 1, false);

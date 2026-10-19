@@ -84,9 +84,9 @@ struct PairedPrefill {
 }
 
 fn qualified_rows(entry: &sources::Entry, rows: u32) -> bool {
-    rows == ROWS
-        || ((64..=2496).contains(&rows)
-            && rows % 128 == 64
+    matches!(rows, ROWS | 4096)
+        || ((((64..=2496).contains(&rows) && rows % 128 == 64)
+            || ((64..=1280).contains(&rows) && rows % 64 == 0))
             && matches!(
                 entry.query,
                 LatentAttentionQuery::Attention {

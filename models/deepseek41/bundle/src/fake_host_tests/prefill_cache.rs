@@ -341,10 +341,11 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
             "mode={mode} dma={dma} skip={skip} offset={offset}"
         );
         if mode == 2 && !skip {
+            assert_eq!(attention.len(), 2 * 4 * 40);
             assert!(
                 attention
                     .iter()
-                    .any(|s| !s.contains("_decoded_") && !s.contains("_reuse2_"))
+                    .all(|s| !s.contains("_decoded_") && s.contains("_reuse2_"))
             );
         }
         if skip {

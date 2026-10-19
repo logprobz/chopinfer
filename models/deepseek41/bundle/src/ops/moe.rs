@@ -74,6 +74,9 @@ pub(crate) struct MoeOps {
     /// The layer input's quantizer, the gate/up's activation.
     quantize: Prepared<BlockQuantizeBuffers<View>>,
     kinds: [Kind; 3],
+    /// Prepare C1 separately: a phase-wide decode capacity of 32 must not
+    /// hide the measured one-row gate/up selection.
+    decode_one: Kind,
     /// Each rank's routed sum of F32 rows.
     sums: Vec<Prepared<RoutedSumBuffers<View>>>,
 }
@@ -247,8 +250,20 @@ impl MoeOps {
         Ok(MoeOps {
             quantize,
             kinds: [kind(prefill)?, kind(decode)?, kind(verify)?],
+            decode_one: kind(OperationUse {
+                capacity: 1,
+                ..decode
+            })?,
             sums,
         })
+    }
+
+    fn kind(&self, phase: Phase) -> &Kind {
+        if phase == Phase::Decode(1) {
+            &self.decode_one
+        } else {
+            &self.kinds[kind_of(phase)]
+        }
     }
 
     /// The sorted routed rows' bytes: the most any kind's routes write or
@@ -258,6 +273,7 @@ impl MoeOps {
         let experts = self
             .kinds
             .iter()
+            .chain([&self.decode_one])
             .flat_map(|kind| [kind.gate_up.info(), kind.down.info()])
             .flat_map(|info| info.bytes.iter())
             .filter(|(path, _)| path == "routing.routes.sorted_rows")
@@ -272,6 +288,7 @@ impl MoeOps {
     fn route_bytes(&self, role: &str) -> u64 {
         self.kinds
             .iter()
+            .chain([&self.decode_one])
             .flat_map(|kind| &kind.routes)
             .flat_map(|op| op.info().bytes.iter())
             .filter(|(path, _)| path == role)
@@ -303,7 +320,8 @@ impl MoeOps {
         rank: u32,
         views: &RouteViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let op = self.kinds[kind_of(phase)]
+        let op = self
+            .kind(phase)
             .routes
             .get(rank as usize)
             .ok_or(Refusal("DeepSeek V4.1 has no routes for the rank"))?;
@@ -335,7 +353,7 @@ impl MoeOps {
         gate_up: bool,
         views: &ExpertViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let kind = &self.kinds[kind_of(phase)];
+        let kind = self.kind(phase);
         let op = if gate_up { &kind.gate_up } else { &kind.down };
         let mut bind = Bind::default();
         let buffers = GatedMlpBuffers {
@@ -390,5 +408,55 @@ impl MoeOps {
             live_rows: bind.view(views.live_rows),
         };
         bind.launch(op, &buffers, Counts::rows(phase.rows()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn measured_crossover_survives_phase_wide_preparation() {
+        for ranks in [Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops = MoeOps::prepare(
+                kernels.backend.as_ref(),
+                &shape,
+                &Asks::default(),
+                moe::expert_sets(&FLASH)[0],
+            )
+            .unwrap();
+            for phase in [
+                Phase::Decode(1),
+                Phase::Decode(8),
+                Phase::Decode(32),
+                Phase::Verify { rows: 5, items: 1 },
+                Phase::Verify { rows: 6, items: 1 },
+                Phase::Verify { rows: 32, items: 8 },
+                Phase::Verify {
+                    rows: 192,
+                    items: 32,
+                },
+                Phase::Prefill { rows: 128 },
+            ] {
+                let kind = ops.kind(phase);
+                let active = phase == Phase::Decode(1) && shape.ranks() == 4;
+                assert_eq!(
+                    kind.gate_up.info().symbols[0].0.ends_with("_active_bw4_v1"),
+                    active
+                );
+                assert!(!kind.down.info().symbols[0].0.ends_with("_active_bw4_v1"));
+                let tile = if matches!(phase, Phase::Decode(_)) {
+                    16
+                } else {
+                    64
+                };
+                assert_eq!(kind.gate_up.route_tile(), tile);
+                assert_eq!(kind.down.route_tile(), tile);
+            }
+        }
     }
 }

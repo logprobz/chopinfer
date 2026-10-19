@@ -106,7 +106,7 @@ fn kernel_moe_only_adds_its_model_owned_lock_family() {
 }
 
 #[test]
-fn active_decode_and_verify_keep_prefill_on_the_original_entries() {
+fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() {
     for g in GEOMETRIES {
         for &ranks in SUPPORTED_RANKS {
             let backend = registration::register(Sm120::new(), g, ranks).unwrap();
@@ -117,6 +117,10 @@ fn active_decode_and_verify_keep_prefill_on_the_original_entries() {
             ] {
                 for tokens in [
                     1,
+                    2,
+                    4,
+                    5,
+                    6,
                     8,
                     32,
                     48,
@@ -133,7 +137,12 @@ fn active_decode_and_verify_keep_prefill_on_the_original_entries() {
                             let op = backend
                                 .chained_mlp_projection(&q, usage, Need::rows(tokens))
                                 .unwrap();
-                            let active = phase != ExecutionPhase::Prefill;
+                            let active = phase != ExecutionPhase::Prefill
+                                && tokens == 1
+                                && ranks == 4
+                                && g.id == model_deepseek41_contract::geometry::FLASH.id
+                                && set.count == g.shape.moe.experts
+                                && kind == GatedMlpProjection::GateUp;
                             assert_eq!(op.info().symbols[0].0.ends_with("_active_bw4_v1"), active);
                             assert_eq!(
                                 op.info().bytes_of("routing.routes.active_experts"),

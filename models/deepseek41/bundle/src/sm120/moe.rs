@@ -13,6 +13,35 @@ use model_deepseek41_contract::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, PREFILL_
 pub const FAMILY: &str = "routed_moe";
 pub const ACTIVE_FAMILY: &str = "routed_moe_active";
 
+/// Warm SM120 TP4, 250 W, 2026-10-19: Flash gate/up wins only at the
+/// measured one-row bucket (0.162 -> 0.079 ms). At 8/32 rows it takes
+/// 0.306/1.075 ms versus 0.195/0.812 ms. Active down loses even at one
+/// row (0.068 versus 0.046 ms), and by 5.8x/6.3x at 8/32 rows.
+/// Keep only that gate/up win. Larger or unmeasured buckets, other ranks,
+/// the drafter and every down projection retain the old column schedule.
+/// At K=576 the four-warp schedule executes eight chains for five useful
+/// ones. Its 16-column tiles gather each input four times as often as the
+/// old 64-column tiles; the 376-CTA cap serializes the remaining tiles.
+/// The compact-column candidate removes those costs using the locked
+/// column kernel with a route-count grid bound. It stays in the lab until measured.
+pub fn serving_active_projections(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<quantized::Projection>, String> {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id || ranks != 4 {
+        return Ok(Vec::new());
+    }
+    active_projections(g, ranks)?
+        .into_iter()
+        .filter(|e| {
+            e.gate_up()
+                && e.tokens_capacity == DECODE_BATCH
+                && e.query.projection.gemm.grouped.unwrap().experts == g.shape.moe.experts
+        })
+        .map(|e| e.with_max_rows(1).map_err(|e| e.to_string()))
+        .collect()
+}
+
 pub fn active_projections(g: &Geometry, ranks: u32) -> Result<Vec<quantized::Projection>, String> {
     let mut entries = Vec::new();
     for set in moe::expert_sets(g) {
@@ -176,7 +205,7 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     for entry in projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
-    for entry in active_projections(g, ranks)? {
+    for entry in serving_active_projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
     for entry in routers(g) {

@@ -96,9 +96,9 @@ def compare(left, right):
             "top_logprob_stats": {"base": capture_stats(left), "new": capture_stats(right)}}
 
 
-def capture(p, server, prompts, name):
+def capture(p, server, prompts, name, concurrencies=CONCURRENCIES):
     result = {}
-    for concurrency in CONCURRENCIES:
+    for concurrency in concurrencies:
         for temperature in (0, 1):
             barrier = threading.Barrier(concurrency)
 

@@ -17,6 +17,7 @@ pub mod latent;
 pub mod latent_scheduled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
+pub mod mxfp8_fold_stream;
 pub mod norm_quantize;
 pub mod replicated_embedding;
 pub mod window_fused;

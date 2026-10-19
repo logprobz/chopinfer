@@ -111,3 +111,7 @@ path = "examples/sm120/build_prefill_mxfp8_split.rs"
 [[example]]
 name = "build_position_query_parallel"
 path = "examples/sm120/build_position_query_parallel.rs"
+
+[[example]]
+name = "build_fold_stream"
+path = "examples/sm120/build_fold_stream.rs"

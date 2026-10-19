@@ -84,6 +84,8 @@ mod latent_window_bf16;
 mod latent_window_stage;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod moe;
+#[allow(dead_code)]
+mod moe_direct_kernels;
 #[path = "mxfp8_fold.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod mxfp8_fold;
@@ -144,6 +146,12 @@ pub fn selection(
         specs.push((own_entries::FAMILY, spec));
     }
     for geometry in geometries {
+        owners.extend(
+            moe_direct_kernels::cubins(std::slice::from_ref(geometry))
+                .expect("locked direct MoE cubins")
+                .into_iter()
+                .map(|(_, s)| (s.name, geometry.id)),
+        );
         owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
         owners.extend(
             dspark_router::cubins(std::slice::from_ref(geometry))
@@ -278,6 +286,7 @@ pub fn selection(
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));
     specs.extend(moe::cubins(geometries).expect("deepseek41 routed MoE cubins"));
+    specs.extend(moe_direct_kernels::cubins(geometries).expect("locked direct MoE cubins"));
     specs.extend(moe::active_cubins(geometries).expect("active routed MoE cubins"));
     specs.extend(moe::streamed_cubins(geometries).expect("streamed routed MoE cubins"));
     specs.extend(moe::prefill_cubins(geometries).expect("grouped prefill MoE cubins"));

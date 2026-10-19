@@ -77,6 +77,8 @@ mod latent_window_bf16;
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod moe;
+#[allow(dead_code, reason = "the build script compiles the locked entries")]
+mod moe_direct_kernels;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 pub mod ring_gather;

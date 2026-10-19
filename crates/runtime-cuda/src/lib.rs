@@ -895,6 +895,7 @@ impl Drop for PinnedTransfer<'_> {
 /// Keeps both allocations and the destination stream live until peer DMA
 /// completes. Dropping the guard waits for completion.
 pub struct PeerTransfer {
+    done: Event,
     _destination: DeviceBuffer,
     _source: DeviceBuffer,
     stream: Stream,
@@ -902,8 +903,17 @@ pub struct PeerTransfer {
 }
 
 impl PeerTransfer {
+    /// Retire the allocation leases only after the copy's event completes.
+    /// A failed query keeps ownership and the drop fence intact.
+    pub fn poll(&mut self) -> Result<bool, CudaError> {
+        if !self.completed && self.done.query()? {
+            self.completed = true;
+        }
+        Ok(self.completed)
+    }
+
     pub fn finish(mut self) {
-        if self.stream.synchronize().is_err() {
+        if !self.completed && self.stream.synchronize().is_err() {
             std::process::abort();
         }
         self.completed = true;
@@ -1107,6 +1117,13 @@ pub struct TensorMap {
 }
 
 impl DeviceBuffer {
+    /// The retained CUDA context that owns this allocation.
+    pub fn context(&self) -> Context {
+        Context {
+            inner: Rc::clone(&self.stream.context),
+        }
+    }
+
     /// Page-locked host memory every context maps, owned like a device
     /// allocation of `stream`'s context. Kernels read it over PCIe through
     /// the same kind of pointer a device allocation has.
@@ -1368,9 +1385,8 @@ impl DeviceBuffer {
 
     /// Copies one bounded range of another allocation into a range of this one.
     ///
-    /// The two allocations may belong to different contexts. Crossing contexts
-    /// requires the caller to have enabled peer access first; without it the
-    /// driver refuses the copy rather than reading the wrong memory.
+    /// Both allocations and the stream must belong to the same context.
+    /// Use `copy_peer_range_from_async` for a transfer between contexts.
     pub fn copy_range_from_async(
         &self,
         destination_offset: usize,
@@ -1413,6 +1429,13 @@ impl DeviceBuffer {
         let source_pointer = source.pointer_at(source_offset, byte_len)?;
         require_same_context(&self.stream.context, &stream.inner.context)?;
         stream.require_live()?;
+        let transfer = PeerTransfer {
+            done: stream.context().event()?,
+            _destination: self.clone(),
+            _source: source.clone(),
+            stream: stream.clone(),
+            completed: false,
+        };
         set_current_inner(&self.stream.context)?;
         checked(
             "cuMemcpyPeerAsync",
@@ -1425,12 +1448,8 @@ impl DeviceBuffer {
                 stream.inner.handle,
             ),
         )?;
-        Ok(PeerTransfer {
-            _destination: self.clone(),
-            _source: source.clone(),
-            stream: stream.clone(),
-            completed: false,
-        })
+        transfer.done.record(stream)?;
+        Ok(transfer)
     }
 
     pub fn copy_to_bytes(&self, destination: &mut [u8], stream: &Stream) -> Result<(), CudaError> {

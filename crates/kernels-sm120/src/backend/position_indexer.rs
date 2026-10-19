@@ -198,6 +198,9 @@ pub(super) fn pages(
         if stride < bytes {
             return Err(Refusal("position indexer page stride is below its plane"));
         }
+        if stride % 4 != 0 {
+            return Err(Refusal("position indexer page stride is not 4-byte aligned"));
+        }
         let end = u64::from(keys.pages - 1)
             .checked_mul(stride)
             .and_then(|start| start.checked_add(bytes))
@@ -622,6 +625,36 @@ mod tests {
                 .launches(&short_page, View::EMPTY, Counts::rows(4))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn position_fp4_pages_refuse_unaligned_strides() {
+        let query = entry("aligned", 4).query;
+        let mut keys = buffers(query, 129).keys;
+        // Padding must cover the views, so alignment is the only refusal.
+        keys.codes.bytes = u64::MAX;
+        keys.scales.bytes = u64::MAX;
+        for pages_count in [1, 4] {
+            keys.pages = pages_count;
+            for offset in 1..4 {
+                for codes in [false, true] {
+                    let mut bad = keys;
+                    if codes {
+                        bad.code_page_stride += offset;
+                    } else {
+                        bad.scale_page_stride += offset;
+                    }
+                    assert_eq!(
+                        pages(&bad, query, 129),
+                        Err(Refusal("position indexer page stride is not 4-byte aligned"))
+                    );
+                }
+            }
+            let mut padded = keys;
+            padded.code_page_stride += 4;
+            padded.scale_page_stride += 4;
+            assert!(pages(&padded, query, 129).is_ok());
+        }
     }
 
     #[test]

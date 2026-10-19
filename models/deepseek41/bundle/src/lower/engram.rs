@@ -32,8 +32,24 @@ impl Lowering<'_> {
             .ok_or_else(|| format!("layer {layer} has no Engram rows"))?;
         let scratch = &self.buffers.scratch;
         let destination = crate::engram_rows::Destination {
-            codes: engram_staged(scratch.engram_codes, self.shape, index, phase.rows()),
-            scales: engram_staged(scratch.engram_scales, self.shape, index, phase.rows()),
+            codes: self.carried(
+                phase,
+                engram_staged(
+                    scratch.engram_codes,
+                    self.shape,
+                    index,
+                    crate::buffers::scratch_rows(),
+                ),
+            )?,
+            scales: self.carried(
+                phase,
+                engram_staged(
+                    scratch.engram_scales,
+                    self.shape,
+                    index,
+                    crate::buffers::scratch_rows(),
+                ),
+            )?,
         };
         self.engram_rows_staged(phase, layer, destination)
     }
@@ -80,7 +96,7 @@ impl Lowering<'_> {
         if !phase.prefill() {
             return Err("only a prefill's rows are image rows".into());
         }
-        self.engram_gate_of(phase, layer, Some(rows(text, phase.rows())))
+        self.engram_gate_of(phase, layer, Some(self.carried(phase, text)?))
     }
 
     fn engram_gate_of(
@@ -99,7 +115,7 @@ impl Lowering<'_> {
                 .view(&layer_view(layer, &format!("engram.{name}")))
         };
         let views = GateViews {
-            streams: rows(streams(scratch, index), phase.rows()),
+            streams: self.carried(phase, streams(scratch, index))?,
             kv: rows(scratch.engram_kv, phase.rows()),
             q_weight: weight("q_weight")?,
             k_weight: weight("k_weight")?,

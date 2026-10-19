@@ -74,7 +74,7 @@ impl Lowering<'_> {
                 weight: norm_weight()?,
                 y: rows(scratch.compressed, phase.rows()),
                 live_rows: self.inputs.live_tokens,
-                status: Some(rows(scratch.row_status, phase.rows())),
+                status: Some(self.carried(phase, scratch.row_status)?),
             };
             return ops
                 .normalize(phase.rows(), &views)

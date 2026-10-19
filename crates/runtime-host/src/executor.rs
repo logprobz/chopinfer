@@ -3305,6 +3305,7 @@ mod tests {
     struct FakeExecutionV1 {
         prefill_chunk: u32,
         envelopes: Vec<Vec<u8>>,
+        captured: Vec<(u64, u64)>,
         emitted: Vec<OwnedLogitsRowV1>,
         execute_error: Option<BundleAbiError>,
         commit_error: Option<BundleAbiError>,
@@ -3326,6 +3327,7 @@ mod tests {
             Self {
                 prefill_chunk: 0,
                 envelopes: Vec::new(),
+                captured: Vec::new(),
                 emitted,
                 execute_error: None,
                 commit_error: None,
@@ -3377,10 +3379,11 @@ mod tests {
 
         fn capture_prefix_state(
             &mut self,
-            _request_id: u64,
-            _tokens: u64,
+            request_id: u64,
+            tokens: u64,
             _pages: &[u64],
         ) -> Result<(), BundleAbiError> {
+            self.captured.push((request_id, tokens));
             self.prefix_state()
         }
 
@@ -3528,6 +3531,66 @@ mod tests {
         fn is_poisoned(&self) -> bool {
             self.poisoned
         }
+    }
+
+    #[test]
+    fn guaranteed_profile_reuses_complete_response_state_on_the_next_turn() {
+        use runtime_engine::{Engine, EngineConfig, EngineRequest};
+        use runtime_model_api::ModelVocabulary;
+        use runtime_scheduler::SchedulerConfig;
+        let mut instance = FakeExecutionV1::emitting(Vec::new());
+        instance.prefill_chunk = 2048;
+        instance.dynamic_rows = true;
+        let vocabulary = ModelVocabulary::new(VOCABULARY).unwrap();
+        let geometry = KvGeometry::new(64, 1024).unwrap();
+        let config = EngineConfig::new(
+            SchedulerConfig::new(1, 4, 8192, 2048, 1).unwrap(),
+            geometry,
+            vocabulary,
+            geometry.token_capacity(),
+            4,
+        )
+        .unwrap()
+        .with_guaranteed_prefill_chunks(2048)
+        .unwrap()
+        .with_prefix_cache(1);
+        let mut engine = Engine::new(
+            config,
+            BundleModelExecutorV1::new_with_batch_wire(
+                instance,
+                VOCABULARY,
+                1,
+                super::BatchWireCapabilityV1::V3Speculative,
+            ),
+        )
+        .unwrap();
+        let request = |id, tokens, max| {
+            EngineRequest::new(
+                RequestId::new(id),
+                tokens,
+                max,
+                SamplingParameters::new(0.0).unwrap(),
+                id,
+                Vec::new(),
+                vocabulary,
+            )
+            .unwrap()
+        };
+        engine.submit(request(1, vec![0; 65], 3)).unwrap();
+        for _ in 0..3 {
+            engine.step().unwrap();
+        }
+        assert_eq!(engine.executor().instance.captured, [(1, 65), (1, 67)]);
+        let mut next = vec![0; 65];
+        next.extend([1, 1, 1, 0]);
+        engine.submit(request(2, next, 1)).unwrap();
+        engine.step().unwrap();
+        let instance = &engine.executor().instance;
+        assert!(instance.calls.contains(&CallV1::Restore(2, None)));
+        let envelope =
+            runtime_bundle_sdk::prefill::decode(instance.envelopes.last().unwrap()).unwrap();
+        assert_eq!(envelope.batch.appends()[0].previous_tokens(), 67);
+        assert_eq!(envelope.batch.items()[0].phase_tokens(), 2);
     }
 
     #[test]

@@ -2471,6 +2471,46 @@ impl<E: ModelExecutor> Engine<E> {
                 });
             }
         }
+        if let Some(block_tokens) = self.prefix_block_tokens {
+            for (item, run) in items.iter().zip(&staged) {
+                let Some(run) = run else {
+                    continue;
+                };
+                let record = &requests[&item.request_id];
+                if matches!(item.phase, BatchPhase::Prefill { .. })
+                    || failed.iter().any(|(id, _)| *id == item.request_id)
+                    || !(run.terminal
+                        || record.emitted_tokens + run.tokens.len() == record.maximum_new_tokens)
+                    || !record.media.is_empty()
+                    || !record.spans.is_empty()
+                    || record.positions.is_some()
+                    || pending_batch
+                        .scheduler_mut()
+                        .prefill_boundary_contract(item.request_id)
+                        .map_err(EngineError::Scheduler)?
+                        .is_none()
+                {
+                    continue;
+                }
+                let mut history = record.history.to_vec();
+                history.extend(run.tokens.iter().map(|token| token.token_id));
+                history.pop();
+                let chain = PrefixChainV1::salted(
+                    block_tokens,
+                    Arc::from(history),
+                    Vec::new(),
+                    record.cache_salt.as_deref(),
+                )
+                .map_err(|e| EngineError::Scheduler(ScheduleError::Kv(e)))?;
+                pending_batch
+                    .scheduler_mut()
+                    .prepare_decode_capture(
+                        item.request_id,
+                        PrefixRequestV1::new(Arc::new(chain), true),
+                    )
+                    .map_err(EngineError::Scheduler)?;
+            }
+        }
         let verified: Vec<_> = staged
             .iter()
             .map(|run| {

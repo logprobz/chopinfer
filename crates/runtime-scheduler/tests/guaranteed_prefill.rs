@@ -161,3 +161,56 @@ fn an_abandoned_restore_reinstates_all_cold_capture_points() {
     assert_eq!(rows, [(0, 256), (256, 256), (512, 17)]);
     assert_eq!(captures, [256, 512, 529]);
 }
+
+#[test]
+fn terminal_decode_publishes_complete_response_state_for_the_next_turn() {
+    let mut s = scheduler(2048, true);
+    let first = vec![3; 65];
+    let id = RequestId::new(1);
+    let chain = PrefixChainV1::new(64, Arc::from(first.clone()), Vec::new()).unwrap();
+    s.submit_with_prefix(
+        RequestSpec::new(id, first.len(), 2).unwrap(),
+        Some(PrefixRequestV1::new(Arc::new(chain), true)),
+    )
+    .unwrap();
+    let batch = s.next_batch().unwrap().unwrap();
+    s.commit_batch(
+        batch.id(),
+        &[BatchOutcome::success(
+            id,
+            batch.items()[0].phase(),
+            1,
+            false,
+        )],
+    )
+    .unwrap();
+    for capture in s.take_prefix_captures() {
+        s.begin_prefix_capture(&capture).unwrap();
+        s.end_prefix_capture(&capture).unwrap();
+    }
+    let batch = s.next_batch().unwrap().unwrap();
+    assert_eq!(batch.items()[0].phase(), BatchPhase::Decode);
+    let mut retained = first;
+    retained.push(7);
+    let chain = PrefixChainV1::new(64, Arc::from(retained.clone()), Vec::new()).unwrap();
+    s.prepare_decode_capture(id, PrefixRequestV1::new(Arc::new(chain), true))
+        .unwrap();
+    s.commit_batch(
+        batch.id(),
+        &[BatchOutcome::success(id, BatchPhase::Decode, 1, true)],
+    )
+    .unwrap();
+    let captures = s.take_prefix_captures();
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].tokens(), 66);
+    for capture in captures {
+        assert!(s.begin_prefix_capture(&capture).unwrap().is_some());
+        s.end_prefix_capture(&capture).unwrap();
+    }
+    // The last sampled token has no KV. The following turn recomputes it.
+    retained.push(9);
+    submit(&mut s, 2, &retained, false);
+    s.admit().unwrap();
+    assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 66);
+    s.audit().unwrap();
+}

@@ -10,6 +10,7 @@
 pub(crate) mod compressor;
 pub(crate) mod dense;
 pub(crate) mod engram;
+pub(crate) mod engram_hash;
 pub(crate) mod exact;
 pub(crate) mod exact_f32;
 pub(crate) mod fold_stream;

@@ -128,36 +128,53 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
     execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
     instance.commit().unwrap();
     let mut target_graphs = Vec::new();
-    for (prefill_start, prefill_rows, verify_start) in [(0, 2, 3), (2, 5, 4)] {
-        let batch = BatchRequestV1::new(
-            BatchWireVersionV1::V3,
-            vec![
-                BatchItemV1::new(8, false, prefill_rows, true, vec![9; prefill_rows as usize]),
-                BatchItemV1::verify(7, 6, true, vec![7]),
-            ],
-            vec![
-                BatchAppendV1::new(
-                    prefill_start,
-                    u64::from(prefill_rows),
-                    prefill_start + u64::from(prefill_rows),
-                    vec![8],
-                    None,
-                ),
-                BatchAppendV1::new(verify_start, 6, verify_start + 6, vec![0], None),
-            ],
-        )
-        .with_state_slots(vec![1, 0])
-        .encode()
-        .unwrap();
+    for (prefill_start, prefill_rows, verify_start) in [(0, 2, 3), (2, 5, 4), (7, 0, 5)] {
+        let mut requests = Vec::new();
+        let mut appends = Vec::new();
+        let mut slots = Vec::new();
+        if prefill_rows > 0 {
+            requests.push(BatchItemV1::new(
+                8,
+                false,
+                prefill_rows,
+                true,
+                vec![9; prefill_rows as usize],
+            ));
+            appends.push(BatchAppendV1::new(
+                prefill_start,
+                u64::from(prefill_rows),
+                prefill_start + u64::from(prefill_rows),
+                vec![8],
+                None,
+            ));
+            slots.push(1);
+        }
+        requests.push(BatchItemV1::verify(7, 6, true, vec![7]));
+        appends.push(BatchAppendV1::new(
+            verify_start,
+            6,
+            verify_start + 6,
+            vec![0],
+            None,
+        ));
+        slots.push(0);
+        let batch = BatchRequestV1::new(BatchWireVersionV1::V3, requests, appends)
+            .with_state_slots(slots)
+            .encode()
+            .unwrap();
         let start = host.journal.borrow().len();
         execute(&mut instance, &host, &batch);
         let journal = host.journal.borrow();
         let step = &journal[start..];
-        let gathered = step
+        let boundary = step
             .iter()
-            .rposition(|line| line.starts_with("mapped gather"))
-            .expect("draft IDs must reach Engram staging before target execution");
-        let target = &step[gathered + 1..];
+            .position(|line| line.starts_with("async mapped ids "))
+            .or_else(|| {
+                step.iter()
+                    .rposition(|line| line.starts_with("mapped gather"))
+            })
+            .expect("target rows must have an Engram producer");
+        let target = &step[boundary + 1..];
         let handles = |event: &str| {
             let mut ids: Vec<_> = target
                 .iter()
@@ -185,7 +202,7 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
         drop(journal);
         instance.commit_accepted(&[kept(7, 1)]).unwrap();
     }
-    assert_eq!(state(&instance, 7).end, 5);
+    assert_eq!(state(&instance, 7).end, 6);
     assert_eq!(state(&instance, 8).end, 7);
     instance.retire_request(7).unwrap();
     instance.retire_request(8).unwrap();
@@ -233,7 +250,10 @@ fn drafter_graph_cache_tracks_exact_items_and_reordered_slots() {
         let journal = host.journal.borrow();
         let draft: Vec<_> = journal[start..]
             .iter()
-            .take_while(|line| !line.starts_with("mapped gather"))
+            .take_while(|line| {
+                !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
+                    && !line.starts_with("mapped gather")
+            })
             .collect();
         assert_eq!(
             draft
@@ -351,7 +371,7 @@ fn create_with_limits(
     let record = crate::config::tests::record(&shape, host.kv, items, false);
     let instance = api()
         .create(
-            HostServicesTableV1::new(Rc::new(MappedHost(Rc::clone(&host)))),
+            HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
             &record,
         )
         .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
@@ -682,9 +702,10 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
         let sink = execute(&mut instance, &host, &verify(request, 0, 3, budget));
         let tokens = &sink.drafts[0].tokens;
         let journal = host.journal.borrow();
-        let draft = journal[start..]
-            .iter()
-            .take_while(|line| !line.starts_with("mapped gather"));
+        let draft = journal[start..].iter().take_while(|line| {
+            !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
+                && !line.starts_with("mapped gather")
+        });
         let mut capturing = false;
         let program = draft
             .filter_map(|line| {

@@ -1,12 +1,32 @@
 //! A logical zero-filled mapped table with bounded gather allocations.
 //! All other services use the ordinary fake host, including span checks.
 use super::*;
+use runtime_bundle_abi::{BundleMappedGatherHandleV1, MappedGatherPlaneV1, MappedGatherStatsV1};
 
-pub(in crate::fake_host_tests) struct MappedHost(pub Rc<Host>);
+struct Gather {
+    producer: BundleStreamHandleV1,
+    indices: DeviceBufferSpanV1,
+    planes: Vec<MappedGatherPlaneV1>,
+    pending: Option<u64>,
+    waited: std::collections::BTreeSet<u64>,
+}
+pub(in crate::fake_host_tests) struct MappedHost {
+    host: Rc<Host>,
+    gathers: std::cell::RefCell<std::collections::BTreeMap<u64, Gather>>,
+}
+impl MappedHost {
+    pub(in crate::fake_host_tests) fn new(host: Rc<Host>) -> Self {
+        Self {
+            host,
+            gathers: Default::default(),
+        }
+    }
+}
+
 macro_rules! forward {
     ($name:ident($($arg:ident: $ty:ty),*) -> $result:ty) => {
         fn $name(&self, $($arg: $ty),*) -> HostServiceResultV1<$result> {
-            self.0.$name($($arg),*)
+            self.host.$name($($arg),*)
         }
     };
 }
@@ -76,16 +96,171 @@ impl HostServicesBackendV1 for MappedHost {
     forward!(release_graph(graph: BundleGraphHandleV1) -> ());
     forward!(set_memory_pool_peer_access(pool: BundleMemoryPoolHandleV1, peer_context: BundleContextHandleV1, enabled: bool) -> ());
     forward!(upload_rank_arenas(uploads: &[RankArenaUploadV1]) -> Vec<BundleRankArenaHandleV1>);
+    fn create_mapped_gather(
+        &self,
+        producer: BundleStreamHandleV1,
+        indices: DeviceBufferSpanV1,
+        planes: &[MappedGatherPlaneV1],
+    ) -> HostServiceResultV1<BundleMappedGatherHandleV1> {
+        self.host.check_span(indices);
+        if planes.is_empty() || self.host.capturing_on_device_of(producer.slot()) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        for plane in planes {
+            self.host.check_span(plane.destination);
+            if plane.row_bytes == 0
+                || !plane.destination.length.is_multiple_of(plane.row_bytes)
+                || plane.index_offset + plane.destination.length / plane.row_bytes * 4
+                    > indices.length
+            {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+        }
+        let rank = *self
+            .host
+            .stream_ranks
+            .borrow()
+            .get(&producer.slot())
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        // An event proxy gives this fake gather the existing checked LIFO
+        // resource lifetime. Production owns a dedicated gather handle.
+        let event = self
+            .host
+            .create_event(BundleContextHandleV1::from_parts(1, rank + 1))?;
+        let gather = BundleMappedGatherHandleV1::from_raw(event.raw);
+        self.gathers.borrow_mut().insert(
+            gather.raw,
+            Gather {
+                producer,
+                indices,
+                planes: planes.to_vec(),
+                pending: None,
+                waited: Default::default(),
+            },
+        );
+        self.host
+            .note(format!("async mapped create {}", gather.slot()));
+        Ok(gather)
+    }
+    fn enqueue_mapped_gather(
+        &self,
+        handle: BundleMappedGatherHandleV1,
+        rows: u64,
+    ) -> HostServiceResultV1<()> {
+        let mut gathers = self.gathers.borrow_mut();
+        let gather = gathers
+            .get_mut(&handle.raw)
+            .ok_or(BundleStatusV1::StaleHandle)?;
+        if gather.pending.is_some() || self.host.capturing_on_device_of(gather.producer.slot()) {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        if rows == 0
+            || gather
+                .planes
+                .iter()
+                .any(|p| rows > p.destination.length / p.row_bytes)
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        gather.pending = Some(rows);
+        gather.waited.clear();
+        self.host.note(format!(
+            "async mapped ids {} {}",
+            gather.indices.length, rows
+        ));
+        Ok(())
+    }
+    fn wait_mapped_gather(
+        &self,
+        handle: BundleMappedGatherHandleV1,
+        stream: BundleStreamHandleV1,
+    ) -> HostServiceResultV1<()> {
+        let (rows, planes) = {
+            let mut gathers = self.gathers.borrow_mut();
+            let gather = gathers
+                .get_mut(&handle.raw)
+                .ok_or(BundleStatusV1::StaleHandle)?;
+            let rows = gather.pending.ok_or(BundleStatusV1::InvalidState)?;
+            if self.host.capturing_on_device_of(stream.slot()) || !gather.waited.insert(stream.raw)
+            {
+                return Err(BundleStatusV1::InvalidState);
+            }
+            let planes = gather
+                .planes
+                .iter()
+                .filter(|plane| plane.stream == stream)
+                .cloned()
+                .collect::<Vec<_>>();
+            if planes.is_empty() {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+            (rows, planes)
+        };
+        self.host
+            .note(format!("async mapped wait {}", stream.slot()));
+        for plane in planes {
+            let destination = DeviceBufferSpanV1::new(
+                plane.destination.buffer,
+                plane.destination.offset,
+                rows * plane.row_bytes,
+            );
+            self.gather_mapped_rows(
+                stream,
+                destination,
+                MappedRowGatherV1 {
+                    image: plane.image,
+                    rank: plane.rank,
+                    view_id: &plane.view_id,
+                    row_bytes: plane.row_bytes,
+                    rows: &vec![0; rows as usize],
+                },
+            )?;
+        }
+        Ok(())
+    }
+    fn complete_mapped_gather(
+        &self,
+        handle: BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<Option<MappedGatherStatsV1>> {
+        let mut gathers = self.gathers.borrow_mut();
+        let gather = gathers
+            .get_mut(&handle.raw)
+            .ok_or(BundleStatusV1::StaleHandle)?;
+        if gather.pending.is_none() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        if gather
+            .planes
+            .iter()
+            .any(|plane| !gather.waited.contains(&plane.stream.raw))
+        {
+            return Ok(None);
+        }
+        gather.pending = None;
+        self.host.note("async mapped complete".into());
+        Ok(Some(MappedGatherStatsV1::default()))
+    }
+    fn release_mapped_gather(&self, handle: BundleMappedGatherHandleV1) -> HostServiceResultV1<()> {
+        if !self.gathers.borrow().contains_key(&handle.raw) {
+            return Err(BundleStatusV1::StaleHandle);
+        }
+        self.host
+            .release_event(BundleEventHandleV1::from_raw(handle.raw))?;
+        self.gathers.borrow_mut().remove(&handle.raw);
+        self.host
+            .note(format!("async mapped release {}", handle.slot()));
+        Ok(())
+    }
     fn gather_mapped_rows(
         &self,
         stream: BundleStreamHandleV1,
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
-        if self.0.capturing_on_device_of(stream.slot()) {
+        if self.host.capturing_on_device_of(stream.slot()) {
             return Err(BundleStatusV1::InvalidState);
         }
-        let g = self.0.shape.geometry;
+        let g = self.host.shape.geometry;
         let e = &g.shape.engram;
         let table = e.layers.iter().enumerate().find_map(|(index, layer)| {
             ["weight", "scale"].into_iter().find_map(|part| {
@@ -102,7 +277,7 @@ impl HostServicesBackendV1 for MappedHost {
         });
         let (rows, width) = table.ok_or(BundleStatusV1::NotFound)?;
         if gather.image.raw == 0
-            || gather.rank >= self.0.shape.ranks()
+            || gather.rank >= self.host.shape.ranks()
             || gather.row_bytes != u64::from(width)
             || gather.rows.is_empty()
             || gather.rows.iter().any(|&row| row >= rows)
@@ -110,12 +285,12 @@ impl HostServicesBackendV1 for MappedHost {
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        self.0.note(format!(
+        self.host.note(format!(
             "mapped gather {} {}",
             gather.rank,
             String::from_utf8_lossy(gather.view_id)
         ));
-        self.0
+        self.host
             .copy_host_to_device(stream, destination, &vec![0; destination.length as usize])
     }
 }

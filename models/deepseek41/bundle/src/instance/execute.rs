@@ -490,11 +490,19 @@ impl Instance {
         };
         (0..ranks)
             .map(|rank| {
-                !self.graphs.contains(GraphKey {
+                let key = GraphKey {
                     rank: rank as u32,
                     bucket,
                     items,
-                })
+                };
+                !self.graphs.contains(key)
+                    || self.dspark.as_ref().is_some_and(|device| {
+                        device
+                            .cycle
+                            .tail
+                            .as_ref()
+                            .is_none_or(|tail| !tail.contains(key))
+                    })
             })
             .collect()
     }
@@ -645,6 +653,11 @@ impl Instance {
         #[cfg(feature = "diagnostic-taps")]
         if self.taps.text() && run.arena == PREFILL {
             return self.launch_tapped(&streams, run, &programs, &collectives);
+        }
+        if self.dspark.is_some() && run.arena != PREFILL {
+            return self
+                .launch_dspark_target(&streams, run.graph, &run.stages, programs, collectives)
+                .map_err(|error| self.dispatch_failed(error));
         }
         if run.graph.is_none() {
             return self
@@ -1126,6 +1139,11 @@ impl Instance {
         };
         for run in runs.iter_mut() {
             self.upload(run)?;
+            self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
+                .map_err(|error| {
+                    self.log(&error);
+                    BundleAbiError::Status(BundleStatusV1::BundleError)
+                })?;
             self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
             self.launch(run)?;
             if run.media.is_some() {
@@ -1137,6 +1155,10 @@ impl Instance {
             }
         }
         self.check_dspark_status().map_err(|error| {
+            self.log(&error);
+            BundleAbiError::Status(BundleStatusV1::BundleError)
+        })?;
+        self.finish_dspark_cycle(sink).map_err(|error| {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)
         })?;

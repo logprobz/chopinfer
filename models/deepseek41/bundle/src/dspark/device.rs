@@ -41,6 +41,7 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Device {
     pub shape: Shape,
     pub config: Config,
+    pub cycle: super::cycle::Cycle,
     pub features: Layout,
     pub ops: Ops,
     pub prepared: Prepared,
@@ -118,6 +119,12 @@ impl Device {
             // includes a validated tail beyond the served context.
             position_capacity: u64::from(MAX_POSITIONS),
         };
+        let cycle = super::cycle::Cycle::new(crate::ops::engram_hash::HashDevice::new(
+            kernels.own.as_ref(),
+            g,
+            config.slots,
+            DECODE_BATCH * MAX_VERIFY_ROWS,
+        )?);
         let features = Layout::new(g, config)?;
         let ops = Ops::prepare_set(
             kernels,
@@ -163,6 +170,7 @@ impl Device {
         Ok(Self {
             shape,
             config,
+            cycle,
             features,
             ops,
             prepared,
@@ -270,6 +278,16 @@ impl Device {
         held: &mut Vec<Held>,
     ) -> Result<(), BundleAbiError> {
         let g = self.shape.geometry;
+        if self.ranks.is_empty() {
+            self.cycle.memory = Some(self.cycle.hash.allocate(services, pool, stream, held)?);
+            self.cycle.diagnostics = Some(allocate_span(
+                services,
+                pool,
+                stream,
+                u64::from(DECODE_BATCH * BLOCK_ROWS) * 8,
+                held,
+            )?);
+        }
         let items = u64::from(DECODE_BATCH);
         let rows = u64::from(DRAFT_ROWS);
         let hidden = u64::from(g.shape.hidden);

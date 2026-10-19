@@ -1,5 +1,6 @@
 //! Connect the model-owned lifecycle to one synchronous bundle instance.
 
+mod cycle;
 mod features;
 mod graphs;
 mod launch;
@@ -69,6 +70,33 @@ impl Program for Work<'_> {
             return Err(format!("DSpark target execute: {status:?}"));
         }
         Ok(())
+    }
+
+    fn device_target(
+        &mut self,
+        inputs: &[Input],
+        drafts: &[crate::dspark::execution::DraftInput],
+        history: &[i64],
+        text: &[u8],
+    ) -> Result<Option<crate::dspark::staging::DeviceTarget>, String> {
+        let step = self.step.take().ok_or("DSpark target has no packed step")?;
+        let sink = self
+            .sink
+            .as_deref_mut()
+            .ok_or("DSpark target has no sink")?;
+        self.instance
+            .device_dspark_target(
+                self.request,
+                sink,
+                step,
+                cycle::TargetContext {
+                    inputs,
+                    drafts,
+                    history,
+                    text,
+                },
+            )
+            .map(Some)
     }
 
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String> {

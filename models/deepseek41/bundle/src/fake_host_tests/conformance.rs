@@ -135,7 +135,7 @@ impl<const CASE: usize> Adapter for Model<CASE> {
         host.speculation.set(case.speculation);
         host.drafter.set(case.speculation.is_some());
         Self {
-            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost(
+            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost::new(
                 Rc::clone(&host),
             )))),
             host,
@@ -345,7 +345,7 @@ impl conformance::Startup for Served {
                 .set(Some((serving.draft_tokens, serving.verify_rows())));
         }
         Self {
-            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost(
+            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost::new(
                 Rc::clone(&host),
             )))),
             host,

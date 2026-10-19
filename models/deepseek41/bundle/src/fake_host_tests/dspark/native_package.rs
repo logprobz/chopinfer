@@ -128,7 +128,7 @@ fn package_host(shape: Shape, layout: KvLayout) -> Rc<Host> {
 
 fn create_from_record(host: &Rc<Host>, record: &[u8]) -> Result<BundleInstanceV1, BundleAbiError> {
     api().create(
-        HostServicesTableV1::new(Rc::new(host::MappedHost(Rc::clone(host)))),
+        HostServicesTableV1::new(Rc::new(host::MappedHost::new(Rc::clone(host)))),
         record,
     )
 }

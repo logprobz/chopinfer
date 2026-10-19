@@ -740,7 +740,7 @@ pub(crate) fn create(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
     let record = crate::config::tests::record(&host.shape, host.kv, items, false);
     crate::instance::PARTIAL.with(|partial| partial.set(true));
     let services = if host.drafter.get() {
-        HostServicesTableV1::new(Rc::new(dspark::host::MappedHost(Rc::clone(host))))
+        HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host))))
     } else {
         HostServicesTableV1::new(Rc::clone(host))
     };

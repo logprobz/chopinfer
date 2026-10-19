@@ -6,6 +6,11 @@ fn counts(lines: &[String]) -> serde_json::Value {
     serde_json::json!({
         "stream_syncs": count("synchronize "),
         "device_to_host": count("download "),
+        "async_device_to_host": count("async mapped ids "),
+        "physical_readbacks": count("download ") + count("async mapped ids "),
+        "event_records": count("record "),
+        "event_waits": count("wait "),
+        "mapped_waits": count("async mapped wait "),
         "host_to_device": count("upload "),
         "mapped_gathers": count("mapped gather "),
         "graph_replays": count("replay "),
@@ -81,21 +86,54 @@ fn warm_cycle_host_boundary_inventory() {
                     .iter()
                     .position(|line| line.starts_with("replay "))
                     .unwrap();
-                let gather = execute
+                let hash = execute
                     .iter()
-                    .position(|line| line.starts_with("mapped gather "))
+                    .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
+                    .unwrap();
+                let enqueue = execute
+                    .iter()
+                    .position(|line| line.starts_with("async mapped ids "))
+                    .unwrap();
+                let wait = execute
+                    .iter()
+                    .position(|line| line.starts_with("async mapped wait "))
                     .unwrap();
                 let gathered = execute
                     .iter()
                     .rposition(|line| line.starts_with("mapped gather "))
                     .unwrap()
                     + 2;
-                assert!(draft < gather);
+                let last_replay = execute
+                    .iter()
+                    .rposition(|line| line.starts_with("replay "))
+                    .unwrap();
+                assert!(
+                    draft < hash
+                        && hash < enqueue
+                        && enqueue < wait
+                        && wait < gathered
+                        && gathered < last_replay
+                );
                 assert!(execute[gathered - 1].starts_with("upload "));
                 assert_eq!(
-                    counts(&execute[..gather])["stream_syncs"],
+                    counts(&execute[..last_replay])["device_to_host"],
                     0,
-                    "completed status readbacks must not be bracketed by stream drains"
+                    "no intermediate readback before target replay"
+                );
+                assert_eq!(
+                    counts(&execute[enqueue + 1..wait])["graph_replays"],
+                    4,
+                    "each target prefix must run before waiting for Engram"
+                );
+                assert_eq!(
+                    counts(&execute[draft..hash])["event_records"],
+                    5,
+                    "record all drafter ranks and their join"
+                );
+                assert_eq!(
+                    counts(&execute[draft..hash])["event_waits"],
+                    6,
+                    "join every drafter rank before target scratch reuse"
                 );
                 let totals = counts(&journal[start..]);
                 assert_eq!(
@@ -103,27 +141,33 @@ fn warm_cycle_host_boundary_inventory() {
                     "warm DSpark needs no explicit stream drain"
                 );
                 assert_eq!(
-                    totals["device_to_host"], 6,
-                    "four final rank checks, IDs and confidence"
+                    totals["device_to_host"], 5,
+                    "four final rank checks and one ID/confidence packet"
                 );
-                assert_eq!(counts(&execute[..draft])["device_to_host"], 0);
                 assert_eq!(
-                    counts(&execute[draft..gather])["device_to_host"],
-                    1,
-                    "only the pending Engram ID boundary remains"
+                    totals["async_device_to_host"], 1,
+                    "one batched ID copy feeds the pinned host gather"
+                );
+                assert_eq!(totals["physical_readbacks"], 6);
+                assert_eq!(totals["mapped_waits"], 4);
+                assert_eq!(
+                    totals["graph_replays"], 12,
+                    "one draft and two target pieces per rank"
                 );
                 assert_eq!(
                     totals["graph_captures"], 0,
                     "inventory must use warm graphs"
                 );
                 let record = serde_json::json!({
-                    "items": items, "capacity": 8, "draft_budget": verify_rows - 1, "forced_kept_rows": verify_rows,
-                    "catch_up_and_draft_metadata": counts(&execute[..draft]),
-                    "draft_and_readback": counts(&execute[draft..gather]),
-                    "engram_gather": counts(&execute[gather..gathered]),
-                    "target": counts(&execute[gathered..]),
-                    "commit": counts(&journal[commit..]), "total": totals,
-                    "scope": "bundle execute and commit; excludes executor sampling and scheduler acceptance",
+                    "items":items,"capacity":8,"draft_budget":verify_rows-1,"forced_kept_rows":verify_rows,
+                    "catch_up_and_draft_metadata":counts(&execute[..draft]),
+                    "draft_and_device_join":counts(&execute[draft..hash]),
+                    "hash_and_async_id_copy":counts(&execute[hash..enqueue+1]),
+                    "overlapped_target_prefix":counts(&execute[enqueue+1..wait]),
+                    "engram_consumer_waits":counts(&execute[wait..gathered]),
+                    "target_suffix_and_results":counts(&execute[gathered..]),
+                    "commit":counts(&journal[commit..]),"total":totals,
+                    "scope":"bundle execute and commit; includes the prepared gather ID copy; excludes executor sampling and scheduler acceptance"
                 });
                 println!("{record}");
                 if let Some(output) = &output {

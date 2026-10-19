@@ -782,6 +782,12 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, result));
     }
     instance.admit_prefill_reduce();
+    if let Err(error) = instance.prepare_dspark_cycle() {
+        instance.log(&format!(
+            "create failed preparing DSpark device cycle: {error}"
+        ));
+        return Err(Failed::releasing(instance, status(error)));
+    }
     instance.log(&format!(
         "{} KV pages per rank, {} items; ops prepared on {} and {}",
         instance.kv_pages,
@@ -806,7 +812,14 @@ impl Bundle for Instance {
     }
 
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
-        self.graphs.release_all(&self.services)
+        self.graphs.release_all(&self.services)?;
+        if let Some(device) = &mut self.dspark
+            && let Some(gather) = device.cycle.gather
+        {
+            self.services.release_mapped_gather(gather)?;
+            device.cycle.gather = None;
+        }
+        Ok(())
     }
 
     fn execute(&mut self, request: &[u8], sink: &mut ExecuteResultSinkV1) -> BundleStatusV1 {

@@ -516,6 +516,29 @@ impl PreparedOp<AllReduceBuffers<View>> for RoundedAllReduceOp {
         &self.info
     }
 
+    fn defer_bf16_round(
+        &self,
+        buffers: &AllReduceBuffers<View>,
+        workspace: View,
+        counts: Counts,
+    ) -> Result<Option<kernel_core::backend::DeferredBf16Round>, Refusal> {
+        // Validate with the ordinary path before exposing any state view.
+        let mut launches = self.launches(buffers, workspace, counts)?;
+        if self.forms[counts.rows as usize - 1] != Form::Composed {
+            return Ok(None);
+        }
+        let sum = self.regions(buffers, self.sum.expect("composed sum"), 1)?;
+        let round = launches.pop().expect("composed round");
+        debug_assert_eq!(round.symbol, self.rounding.as_ref().unwrap().round.symbol);
+        Ok(Some(kernel_core::backend::DeferredBf16Round {
+            launches,
+            input: sum[self.rank as usize][0],
+            output: buffers.output,
+            live_rows: buffers.live_rows.expect("validated live rows"),
+            width: self.width as u32,
+        }))
+    }
+
     fn launches(
         &self,
         buffers: &AllReduceBuffers<View>,
@@ -710,6 +733,66 @@ mod tests {
 
     fn handle(rank: u32, region: usize) -> u64 {
         1000 * (u64::from(rank) + 1) + region as u64
+    }
+
+    #[test]
+    fn deferred_round_keeps_collective_launches_state_and_refusals() {
+        for ranks in [1, 2, 4] {
+            for rank in 0..ranks {
+                let op = backend(false, true)
+                    .all_reduce(&reduce(ranks, WIDTH), rank, Need::rows(CAPACITY))
+                    .unwrap();
+                let b = buffers(op.info(), ranks);
+                for rows in [1, 8, 32] {
+                    let counts = Counts::rows(rows);
+                    let old = op.launches(&b, View::EMPTY, counts).unwrap();
+                    let split = op
+                        .defer_bf16_round(&b, View::EMPTY, counts)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(split.launches.len() + 1, old.len());
+                    for (new, old) in split.launches.iter().zip(&old) {
+                        assert_eq!(new.symbol, old.symbol);
+                        assert_eq!(new.plan, old.plan);
+                        assert_eq!(new.arguments, old.arguments);
+                        assert_eq!(new.collective, old.collective);
+                    }
+                    assert_eq!(split.input.handle, handle(rank, 3));
+                    assert_eq!(split.output, b.output);
+                    assert_eq!(split.live_rows, b.live_rows.unwrap());
+                    assert_eq!(split.width, WIDTH as u32);
+                    assert_eq!(
+                        old.last().unwrap().arguments,
+                        rounding::arguments(
+                            split.input.handle,
+                            split.output.handle,
+                            split.live_rows.handle
+                        )
+                        .unwrap()
+                    );
+                }
+                for bad in [0, CAPACITY + 1] {
+                    assert!(
+                        op.defer_bf16_round(&b, View::EMPTY, Counts::rows(bad))
+                            .is_err()
+                    );
+                }
+                let mut bad = b;
+                bad.ranks[rank as usize].state[3].bytes = 1;
+                assert!(
+                    op.defer_bf16_round(&bad, View::EMPTY, Counts::rows(1))
+                        .is_err()
+                );
+            }
+        }
+        let op = backend(true, false)
+            .all_reduce(&reduce(4, WIDTH), 0, Need::rows(CAPACITY))
+            .unwrap();
+        assert!(
+            op.defer_bf16_round(&buffers(op.info(), 4), View::EMPTY, Counts::rows(1))
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// The phased forms take the one-shot round entry to four rows, the

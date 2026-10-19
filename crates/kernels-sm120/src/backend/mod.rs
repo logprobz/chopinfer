@@ -120,6 +120,7 @@ mod position_live;
 mod position_query;
 mod projection;
 mod recurrent;
+mod replicated_embedding;
 mod rmsnorm;
 mod rmsnorm_quantize;
 mod rope_kv;
@@ -132,6 +133,7 @@ mod silu_mul_quantize;
 mod sinkhorn;
 mod sinkhorn_expand_mix;
 mod sinkhorn_lagged;
+mod sinkhorn_round_expand_mix;
 
 pub use attention::AttentionEntries;
 pub use bf16_all_reduce::{
@@ -222,6 +224,8 @@ pub struct Sm120 {
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
     expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
+    round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
+    replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
@@ -291,6 +295,22 @@ impl Sm120 {
         entry: crate::sinkhorn_hc::expand_mix::Entry,
     ) -> Self {
         self.expand_mix.push(entry);
+        self
+    }
+
+    pub fn with_sinkhorn_round_expand_mix(
+        mut self,
+        entry: crate::sinkhorn_hc::round_expand_mix::Entry,
+    ) -> Self {
+        self.round_expand_mix.push(entry);
+        self
+    }
+
+    pub fn with_replicated_embedding(
+        mut self,
+        entry: crate::row::replicated_embedding::Entry,
+    ) -> Self {
+        self.replicated_embeddings.push(entry);
         self
     }
 
@@ -1356,6 +1376,29 @@ impl Backend for Sm120 {
     ) -> Result<Prepared<kernel_core::sinkhorn_expand_mix::SinkhornExpandMixBuffers<View>>, Refused>
     {
         sinkhorn_expand_mix::prepare(&self.expand_mix, op, need)
+    }
+
+    fn sinkhorn_round_expand_mix(
+        &self,
+        op: &kernel_core::sinkhorn_expand_mix::SinkhornExpandMixQuery,
+        need: Need,
+    ) -> Result<
+        Prepared<kernel_core::sinkhorn_expand_mix::SinkhornRoundExpandMixBuffers<View>>,
+        Refused,
+    > {
+        sinkhorn_round_expand_mix::prepare(&self.round_expand_mix, op, need)
+    }
+
+    fn replicated_embedding(
+        &self,
+        op: &kernel_core::replicated_embedding::ReplicatedEmbedding,
+        rank: u32,
+        need: Need,
+    ) -> Result<
+        Prepared<kernel_core::replicated_embedding::ReplicatedEmbeddingBuffers<View>>,
+        Refused,
+    > {
+        replicated_embedding::prepare(&self.replicated_embeddings, op, rank, need)
     }
 
     fn sinkhorn_lagged_mix_collapse(

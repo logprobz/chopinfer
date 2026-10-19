@@ -44,3 +44,28 @@ crate::scratch_record! {
         pub live_rows: value,
     }
 }
+
+crate::scratch_record! {
+    #[derive(Clone, Copy, Debug)]
+    pub struct SinkhornRoundExpandMixBuffers {
+        pub x: value,
+        /// F32 sum, converted to BF16 before every expansion operand.
+        pub sum: value,
+        /// The original round output, still written for live rows.
+        pub rounded: value,
+        pub post_in: value,
+        pub comb_in: value,
+        pub expanded: value,
+        pub fn_: value,
+        pub base: value,
+        pub scale: value,
+        pub pre_in: value,
+        pub collapsed: value,
+        pub pre: value,
+        /// May alias post_in: the partial kernel finishes reading it first.
+        pub post: value,
+        /// May alias comb_in under the same two-kernel lifetime rule.
+        pub comb: value,
+        pub live_rows: value,
+    }
+}

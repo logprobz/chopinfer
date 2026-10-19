@@ -29,6 +29,7 @@ pub mod mix_norm;
 pub mod mix_norm_batched;
 pub mod mix_norm_exact;
 pub mod mix_norm_tree;
+pub mod round_expand_mix;
 pub mod split;
 pub mod tiled;
 

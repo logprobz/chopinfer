@@ -329,10 +329,34 @@ pub struct Launch {
     pub persistent: bool,
 }
 
+/// A producer whose only remaining epilogue is one F32-to-BF16 conversion.
+/// The consumer must retain this exact rounding point and write `output`
+/// for live rows, leaving inactive rows untouched. Run `launches` first;
+/// `input` stays valid only until the producer's state is reused.
+pub struct DeferredBf16Round {
+    pub launches: Vec<Launch>,
+    pub input: View,
+    pub output: View,
+    pub live_rows: View,
+    pub width: u32,
+}
+
 /// An op a backend prepared, which plans launches over buffers of role
 /// record `B` (of [`View`]s).
 pub trait PreparedOp<B>: Send + Sync {
     fn info(&self) -> &OpInfo;
+
+    /// Expose an exact final BF16 round for a consumer to perform. `None`
+    /// keeps the ordinary launches. Success preserves every preceding
+    /// launch, allocation, state transition and refusal of `launches`.
+    fn defer_bf16_round(
+        &self,
+        _buffers: &B,
+        _workspace: View,
+        _counts: Counts,
+    ) -> Result<Option<DeferredBf16Round>, Refusal> {
+        Ok(None)
+    }
 
     /// Initialize persistent metadata from immutable weights before the
     /// first step. Repeat after replacing weights, never during graph
@@ -434,6 +458,19 @@ pub trait Backend: Send + Sync {
         need: Need,
     ) -> Result<Prepared<EmbeddingBuffers<View>>, Refused> {
         let _ = (op, row_offset, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Gather immutable vocabulary shards into replicated rows, preserving
+    /// the local gather, widening, ordered sum and final BF16 round.
+    fn replicated_embedding(
+        &self,
+        op: &crate::replicated_embedding::ReplicatedEmbedding,
+        rank: u32,
+        need: Need,
+    ) -> Result<Prepared<crate::replicated_embedding::ReplicatedEmbeddingBuffers<View>>, Refused>
+    {
+        let _ = (op, rank, need);
         Err(Refused::Unsupported)
     }
 
@@ -581,6 +618,19 @@ pub trait Backend: Send + Sync {
         op: &crate::sinkhorn_expand_mix::SinkhornExpandMixQuery,
         need: Need,
     ) -> Result<Prepared<crate::sinkhorn_expand_mix::SinkhornExpandMixBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Round an F32 sublayer sum once to BF16, then expand and mix.
+    /// The rounded intermediate is observable and is still written.
+    /// Other arithmetic and alias rules match `sinkhorn_expand_mix`.
+    fn sinkhorn_round_expand_mix(
+        &self,
+        op: &crate::sinkhorn_expand_mix::SinkhornExpandMixQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::sinkhorn_expand_mix::SinkhornRoundExpandMixBuffers<View>>, Refused>
+    {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }

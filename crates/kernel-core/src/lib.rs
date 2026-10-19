@@ -55,6 +55,7 @@ pub mod quantize;
 pub mod rank_shape;
 pub mod recurrent;
 pub mod recurrent_oracle;
+pub mod replicated_embedding;
 pub mod rmsnorm;
 pub mod rmsnorm_quantize;
 pub mod rmsnorm_status;

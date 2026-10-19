@@ -11,6 +11,7 @@ pub mod mxfp8_decode;
 pub mod ngram_hash;
 pub mod ordered_sum;
 pub mod precision;
+pub mod replicated_embedding;
 pub mod rmsnorm;
 pub mod rmsnorm_quantize;
 pub mod rmsnorm_tree;

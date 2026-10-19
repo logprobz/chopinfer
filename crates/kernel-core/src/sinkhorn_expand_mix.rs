@@ -69,3 +69,34 @@ crate::scratch_record! {
         pub live_rows: value,
     }
 }
+
+/// The rounded producer and lagged mixer followed by a BF16 input norm.
+/// The collapsed BF16 row remains observable before normalization. Each
+/// constituent retains its reduction, rounding and status contract.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SinkhornRoundNormQuery {
+    pub mixer: SinkhornExpandMixQuery,
+    pub norm: crate::rmsnorm_quantize::RmsNormQuantizeQuery,
+}
+impl Validate for SinkhornRoundNormQuery {
+    fn validate(&self) -> Result<(), Refusal> {
+        self.mixer.validate()?;
+        self.norm.validate()?;
+        if self.mixer.mix.width != self.norm.norm.width
+            || self.norm.norm.input != crate::contract::DType::Bf16
+        {
+            return Err(Refusal("rounded mixer and norm need matching BF16 rows"));
+        }
+        Ok(())
+    }
+}
+use crate::rmsnorm_quantize::RmsNormQuantizeBuffers;
+crate::scratch_record! {
+    #[derive(Clone, Copy, Debug)]
+    pub struct SinkhornRoundNormBuffers {
+        pub hc: record(SinkhornRoundExpandMixBuffers),
+        /// input and live_rows must equal hc.collapsed and hc.live_rows.
+        /// Every additional norm role is distinct from HC roles/workspace.
+        pub norm: record(RmsNormQuantizeBuffers),
+    }
+}

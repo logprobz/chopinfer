@@ -135,6 +135,7 @@ mod select;
 mod silu_mul_quantize;
 mod sinkhorn;
 mod sinkhorn_expand_mix;
+mod sinkhorn_finish_norm;
 mod sinkhorn_lagged;
 mod sinkhorn_round_expand_mix;
 
@@ -234,6 +235,7 @@ pub struct Sm120 {
     expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
     round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
     round_chains: Vec<sinkhorn_round_expand_mix::Chains>,
+    finish_norm: Vec<(crate::sinkhorn_hc::finish_norm::Entry, Vec<u32>)>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -314,6 +316,16 @@ impl Sm120 {
     }
 
     /// Use measured (row bucket, warp count) pairs for the rounded producer.
+    /// Select the measured 1024-thread fused tail for explicit row buckets.
+    pub fn with_sinkhorn_finish_norm(
+        mut self,
+        entry: crate::sinkhorn_hc::finish_norm::Entry,
+        rows: Vec<u32>,
+    ) -> Self {
+        self.finish_norm.push((entry, rows));
+        self
+    }
+
     pub fn with_sinkhorn_round_chain(
         mut self,
         entry: crate::sinkhorn_hc::round_chain_partials::Entry,
@@ -1493,6 +1505,15 @@ impl Backend for Sm120 {
         Refused,
     > {
         sinkhorn_round_expand_mix::prepare(&self.round_expand_mix, &self.round_chains, op, need)
+    }
+
+    fn sinkhorn_round_expand_mix_norm(
+        &self,
+        op: &kernel_core::sinkhorn_expand_mix::SinkhornRoundNormQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::sinkhorn_expand_mix::SinkhornRoundNormBuffers<View>>, Refused>
+    {
+        sinkhorn_finish_norm::prepare(self, op, need)
     }
 
     fn replicated_embedding(

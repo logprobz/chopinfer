@@ -635,6 +635,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Rounded expansion and lagged mixing followed by norm/ceil quantization.
+    /// The BF16 collapse is observable; the norm shares its input/live views
+    /// with the mixer and retains whole-row quantizer failure handling.
+    fn sinkhorn_round_expand_mix_norm(
+        &self,
+        op: &crate::sinkhorn_expand_mix::SinkhornRoundNormQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::sinkhorn_expand_mix::SinkhornRoundNormBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// A mixer's lagged mix-collapse before a sublayer (`MixCollapse` with
     /// the lagged single-pass placement), which collapses with the previous
     /// sublayer's `pre` and stores its own.

@@ -69,6 +69,10 @@ path = "examples/sm120/prefill_attention.rs"
 workspace = true
 
 [[example]]
+name = "build_indexer_prefill"
+path = "examples/sm120/build_indexer_prefill.rs"
+
+[[example]]
 name = "build_attention_pair"
 path = "examples/sm120/build_attention_pair.rs"
 

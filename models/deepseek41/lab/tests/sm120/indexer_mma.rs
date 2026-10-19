@@ -1,5 +1,7 @@
 #[path = "indexer_mma_guard.rs"]
 mod guard;
+#[path = "indexer_prefill.rs"]
+mod prefill;
 // Serving bindings and compact mapping against the sealed real operands.
 use kernel_core::{
     attention::BlockTables,

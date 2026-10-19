@@ -311,6 +311,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn create_refuses_the_parked_indexer_mma_option() {
+        let shape = crate::shape::topologies()[0];
+        let complete = record(&shape, KV_LAYOUTS[0], 1, false);
+        let tag = complete
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|b| b == MODEL_OPTIONS_TAG_V1)
+            .unwrap();
+        for enabled in [false, true] {
+            let mut bytes = complete[..tag].to_vec();
+            append_options(
+                &mut bytes,
+                &serde_json::json!({
+                    "text_config.index_topk":shape.runtime.index_topk,
+                    "text_config.candidate_topk_blocks":shape.runtime.candidate_topk_blocks,
+                    "text_config.indexer_mma":enabled,
+                }),
+            );
+            let logs = std::cell::RefCell::new(Vec::new());
+            let result = decode(&bytes, |line| logs.borrow_mut().push(line.to_owned()));
+            if enabled {
+                assert_eq!(result.unwrap_err(), BundleStatusV1::InvalidArgument);
+                assert!(
+                    logs.borrow()
+                        .iter()
+                        .any(|s| s.contains("serving activation is not qualified"))
+                );
+            } else {
+                assert_eq!(result.unwrap().shape.runtime, shape.runtime);
+            }
+        }
+    }
+
+    #[test]
     fn create_requires_the_complete_resolved_option_set() {
         let mut shape = crate::shape::topologies()[0];
         shape.runtime.candidate_topk_blocks = 1024;

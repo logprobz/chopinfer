@@ -51,6 +51,14 @@ safetensors headers to it before any payload is read. The official
 revision binds all 96,085 tensors, each claimed once
 (`compiler/tests/checkpoint_binding.rs`).
 
+`text_config.indexer_mma` is a reserved Boolean model option, defaulting to
+`false`. Enabling it is rejected at bundle admission. The tensor-core scorer
+remains a lab candidate: aggregate f64 error improved in its paired probe,
+but a quantizer-valid witness became worse and selections changed. Promotion
+requires real served operands at 8K, 32K and 128K: f64 selection agreement
+must be at least the SIMT path's in each context, with no larger aggregate
+score error. The synthetic witness is recorded separately.
+
 ## Reference
 
 `reference.py` is the refrun adapter (`tools/refrun`). It executes the

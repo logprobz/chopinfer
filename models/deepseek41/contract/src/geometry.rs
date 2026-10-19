@@ -110,6 +110,13 @@ impl Geometry {
         {
             return Err(format!("unknown model option {name}"));
         }
+        if let Some(value) = values.get("text_config.indexer_mma") {
+            match value.as_bool() {
+                Some(false) => (),
+                Some(true) => return Err("text_config.indexer_mma is a lab candidate; serving activation is not qualified".into()),
+                None => return Err("text_config.indexer_mma requires a boolean".into()),
+            }
+        }
         let mut owned = std::collections::BTreeMap::new();
         for field in self.runtime_fields() {
             let value = match values.get(field.name) {
@@ -183,7 +190,8 @@ impl Geometry {
         checkpoint: RuntimeValues,
     ) -> Vec<runtime_bundle::model_options::ModelOptionV1> {
         use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
-        self.runtime_fields()
+        let mut options: Vec<_> = self
+            .runtime_fields()
             .into_iter()
             .filter(|field| field.overridable)
             .map(|field| {
@@ -202,7 +210,13 @@ impl Geometry {
                     default_is_qualified: default == field.qualified,
                 }
             })
-            .collect()
+            .collect();
+        options.push(ModelOptionV1 {
+            name: "text_config.indexer_mma".into(),
+            definition: OptionDefinitionV1::Boolean { default: false },
+            default_is_qualified: true,
+        });
+        options
     }
 
     /// Backbone layers, without the DSpark stages.
@@ -350,6 +364,64 @@ mod tests {
     }
 
     #[test]
+    fn indexer_mma_is_declared_off_and_cannot_select_serving() {
+        use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
+        use std::collections::BTreeMap;
+        let defaults = FLASH.runtime_defaults();
+        let options = FLASH.model_options(defaults);
+        let option = options
+            .iter()
+            .find(|o| o.name == "text_config.indexer_mma")
+            .unwrap();
+        assert_eq!(
+            option.definition,
+            OptionDefinitionV1::Boolean { default: false }
+        );
+        assert!(option.default_is_qualified);
+        let declaration = ModelOptionsV1 {
+            schema: CAPABILITY.into(),
+            options,
+        };
+        let resolved = declaration.resolve(&BTreeMap::new()).unwrap();
+        assert_eq!(
+            resolved["text_config.indexer_mma"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            FLASH.resolve_model_options(defaults, &resolved).unwrap(),
+            defaults
+        );
+        let enabled = declaration
+            .resolve(&BTreeMap::from([(
+                "text_config.indexer_mma".into(),
+                "true".into(),
+            )]))
+            .unwrap();
+        assert!(!declaration.is_qualified(&enabled));
+        assert!(
+            FLASH
+                .resolve_model_options(defaults, &enabled)
+                .unwrap_err()
+                .contains("serving activation is not qualified")
+        );
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!("false"),
+            serde_json::Value::Null,
+        ] {
+            assert!(
+                FLASH
+                    .resolve_model_options(
+                        defaults,
+                        &BTreeMap::from([("text_config.indexer_mma".into(), value)])
+                    )
+                    .unwrap_err()
+                    .contains("requires a boolean")
+            );
+        }
+    }
+
+    #[test]
     fn index_topk_options_are_bounded_by_the_compiled_selection() {
         use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
         use std::collections::BTreeMap;
@@ -357,7 +429,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 2);
+        assert_eq!(options.len(), 3);
         assert_eq!(options[1].name, "text_config.index_topk");
         assert_eq!(
             options[1].definition,

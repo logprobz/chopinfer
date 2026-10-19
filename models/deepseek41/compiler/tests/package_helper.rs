@@ -284,7 +284,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "options": [{"name": "text_config.candidate_topk_blocks", "default_is_qualified": blocks == 2048,
                          "definition": {"type": "integer", "default": blocks, "minimum": 1, "maximum": 2048}},
                         {"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
-                             "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}}]
+                             "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}},
+                        {"name": "text_config.indexer_mma", "default_is_qualified": true,
+                             "definition": {"type": "boolean", "default": false}}]
             })
         );
         // The serving host resolves the complete declaration before encoding
@@ -301,6 +303,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
             let expected = serde_json::json!({
                 "text_config.index_topk": override_top_k.unwrap_or(top_k),
                 "text_config.candidate_topk_blocks": blocks,
+                "text_config.indexer_mma": false,
             });
             assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);
             let host_config = runtime_host::HostInstanceConfigV1::new(

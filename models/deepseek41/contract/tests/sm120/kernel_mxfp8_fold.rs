@@ -1,4 +1,5 @@
 #[path = "../../../bundle/src/sm120/mxfp8_fold.rs"]
+#[allow(dead_code)]
 mod registration;
 
 use kernel_core::backend::{Backend, Counts, Need, View};

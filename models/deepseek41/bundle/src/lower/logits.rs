@@ -59,6 +59,7 @@ impl Lowering<'_> {
             weight: self.buffers.view("head.weight")?,
             logits: scratch.head,
             live_rows,
+            state: crate::ops::exact_f32::state(self.buffers, "head.weight"),
         };
         ops.head(rows, &views)
             .map(Some)

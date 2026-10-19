@@ -85,6 +85,10 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                 norm_weight: alloc(hidden * 2),
                 normalized_f32: alloc(u64::from(rows) * hidden * 4),
                 vocabulary_weight: alloc(vocab * hidden * 2),
+                projection_state: crate::ops::exact_f32::ProjectionState {
+                    weight_domain: Some(alloc(vocab.div_ceil(16) * 4)),
+                    workspace: alloc(heads.vocabulary.info().workspace),
+                },
                 logits: block_logits,
                 live_rows: alloc(4),
                 status: alloc(u64::from(rows) * 4),

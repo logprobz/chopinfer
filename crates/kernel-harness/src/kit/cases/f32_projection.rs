@@ -19,6 +19,48 @@ pub const SINGLE_ROW_PROPERTIES: &str =
 use kernels_sm120::f32_projection::Entry;
 use std::cell::RefCell;
 
+/// The original kernel's conservative whole-row/tile admission predicate.
+pub fn tensor_operand(value: f32) -> bool {
+    let bits = value.to_bits() & 0x7fff_ffff;
+    bits == 0 || ((97 << 23)..(158 << 23)).contains(&bits)
+}
+
+/// Independent host classification for comparison with create-time flags.
+pub fn weight_domains(weights: &[f32], k: usize, format: WeightFormat) -> Vec<u32> {
+    weights
+        .chunks(16 * k)
+        .map(|tile| {
+            u32::from(format == WeightFormat::Bf16 && tile.iter().all(|&w| tensor_operand(w)))
+        })
+        .collect()
+}
+
+/// F32 chain witnesses. General MMA results use the f64 oracle bound;
+/// these serial chains also test split storage and ordered reduction on CPU.
+pub fn chain_values(a: &[f32], b: &[f32], tensor: bool) -> Vec<f32> {
+    a.chunks(128)
+        .zip(b.chunks(128))
+        .map(|(a, b)| {
+            if !tensor {
+                return a
+                    .iter()
+                    .zip(b)
+                    .fold(0_f32, |sum, (&a, &b)| a.mul_add(b, sum));
+            }
+            let mut sums = [0_f32; 3];
+            for (&a, &b) in a.iter().zip(b) {
+                for (sum, code) in sums
+                    .iter_mut()
+                    .zip(f32_gemm::decompose(a).unwrap().unwrap())
+                {
+                    *sum = bf16_to_f32(code).mul_add(b, *sum);
+                }
+            }
+            (sums[0] + sums[1]) + sums[2]
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Witness {
     General,
@@ -93,7 +135,7 @@ pub fn required<'a>(entry: Entry, witness: Witness) -> Required<'a> {
     .required()
 }
 
-fn operands(entry: &Entry, witness: Witness) -> (Vec<f32>, Vec<f32>) {
+pub fn operands(entry: &Entry, witness: Witness) -> (Vec<f32>, Vec<f32>) {
     let q = entry.query();
     let (m, n, k) = (q.m_capacity as usize, q.n as usize, q.k as usize);
     let mut a = vec![0.; m * k];
@@ -273,6 +315,14 @@ pub fn case<'a>(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            weight_domain: op.info().bytes_of("scratch.weight_domain").map(|_| {
+                Spec::weight(
+                    weight_domains(&b, q.k as usize, q.weight)
+                        .into_iter()
+                        .flat_map(u32::to_le_bytes)
+                        .collect(),
+                )
+            }),
             quantizer_status: None,
             quantizer_status_row_offset: 0,
             partial: Spec::untouched(16),
@@ -419,6 +469,73 @@ mod tests {
     use super::*;
     use kernel_core::contract::{ActivationFormat, Epilogues, GemmQuery};
     use precision::{ExecutionPhase, OperationUse};
+
+    #[test]
+    fn cached_domain_covers_every_bf16_code_and_tile_tail() {
+        for code in 0..=u16::MAX {
+            let value = bf16_to_f32(code);
+            let magnitude = code & 0x7fff;
+            let expected = magnitude == 0 || (97 * 128..158 * 128).contains(&magnitude);
+            assert_eq!(tensor_operand(value), expected, "{code:04x}");
+            let mut weights = vec![1.; 17 * 129];
+            weights[15 * 129 + 128] = value;
+            assert_eq!(
+                weight_domains(&weights, 129, WeightFormat::Bf16),
+                [u32::from(expected), 1]
+            );
+            assert_eq!(weight_domains(&weights, 129, WeightFormat::F32), [0, 0]);
+        }
+    }
+
+    #[test]
+    fn split_chain_storage_matches_original_oracle_and_rejects_grouped_sums() {
+        let mut seed = 0x3287_5101_u32;
+        let mut random = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            f32::from_bits((seed & 0x807f_ffff) | (127 << 23))
+        };
+        for k in [
+            1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 5120,
+        ] {
+            for _ in 0..16 {
+                let a: Vec<_> = (0..k).map(|_| random()).collect();
+                let b: Vec<_> = (0..k).map(|_| bf16_to_f32(f32_to_bf16(random()))).collect();
+                let chains = chain_values(&a, &b, true);
+                // Completion order never determines a plane's K index.
+                let mut stored = vec![0.; chains.len()];
+                for index in (0..chains.len()).rev() {
+                    stored[index] = chains[index];
+                }
+                let actual = stored.into_iter().fold(0_f32, |a, b| a + b);
+                assert_eq!(
+                    actual.to_bits(),
+                    f32_gemm::folded_dot(&a, &b, DType::Bf16).unwrap().to_bits()
+                );
+                let query = GemmQuery {
+                    m_capacity: 1,
+                    n: 1,
+                    k: k as u32,
+                    weight: WeightFormat::Bf16,
+                    activation: ActivationFormat::F32,
+                    output: DType::F32,
+                    epilogues: Epilogues::default(),
+                    grouped: None,
+                };
+                let oracle = f32_gemm::oracle(query, 1, &a, &b).unwrap();
+                f32_gemm::check_numeric(&[f64::from(actual)], &oracle).unwrap();
+            }
+        }
+        let chains = [1e20_f32, 0., 0., 0., -1e20, 1., 0., 0.];
+        let correct = chains.into_iter().fold(0_f32, |a, b| a + b);
+        let grouped = chains
+            .chunks(4)
+            .map(|c| c.iter().copied().fold(0_f32, |a, b| a + b))
+            .fold(0_f32, |a, b| a + b);
+        assert_eq!(correct, 1.);
+        assert_ne!(correct.to_bits(), grouped.to_bits());
+    }
 
     #[test]
     fn exact_witnesses_distinguish_component_loss_and_merged_chains() {

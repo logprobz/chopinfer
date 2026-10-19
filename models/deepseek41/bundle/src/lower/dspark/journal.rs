@@ -116,10 +116,27 @@ fn dspark_full_block_journal_at_each_topology() {
             let mut weights = BTreeMap::new();
             for (name, bytes, _) in super::views(&shape) {
                 let span = alloc(bytes);
+                let flags = ops
+                    .exact_f32
+                    .as_ref()
+                    .and_then(|dense| dense.weight_op(&name))
+                    .and_then(|op| op.info().bytes_of("scratch.weight_domain"))
+                    .map(alloc);
                 if let Some(suffix) = name.strip_prefix("layers.0.") {
                     for stage in 0..g.dspark_stages() {
                         weights.insert(format!("mtp.{stage}.{suffix}"), span);
+                        if let Some(flags) = flags {
+                            weights.insert(
+                                crate::ops::exact_f32::domain_name(&format!(
+                                    "mtp.{stage}.{suffix}"
+                                )),
+                                flags,
+                            );
+                        }
                     }
+                }
+                if let Some(flags) = flags {
+                    weights.insert(crate::ops::exact_f32::domain_name(&name), flags);
                 }
                 weights.insert(name, span);
             }

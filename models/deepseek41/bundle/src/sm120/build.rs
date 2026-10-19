@@ -35,6 +35,8 @@ mod compressor_bf16;
 #[path = "dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod dense;
+#[allow(dead_code)]
+mod f32_decode;
 #[path = "f32_dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod f32_dense;
@@ -145,6 +147,7 @@ pub fn selection(
         owners.push((dense::cubin_name(geometry), geometry.id));
         owners.push((f32_head::cubin_name(geometry), geometry.id));
         owners.push((f32_dense::cubin_name(geometry), geometry.id));
+        owners.push((f32_decode::cubin_name(geometry), geometry.id));
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::decode_cubin_name(geometry), geometry.id));
@@ -183,6 +186,7 @@ pub fn selection(
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));
     specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
+    specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
     specs.extend(shared::cubins(geometries).expect("deepseek41 shared expert cubins"));
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
@@ -235,7 +239,8 @@ fn main() {
         .iter()
         .filter(|cubin| {
             GEOMETRIES.iter().any(|g| {
-                cubin.name == f32_head::cubin_name(g)
+                cubin.name == f32_decode::cubin_name(g)
+                    || cubin.name == f32_head::cubin_name(g)
                     || cubin.name == f32_dense::cubin_name(g)
                     || cubin.name == dspark_router::cubin_name(g)
             })

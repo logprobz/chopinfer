@@ -536,6 +536,7 @@ pub fn projection_case<'a>(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            weight_domain: None,
             quantizer_status_row_offset: 0,
             quantizer_status: None,
             partial: bytes("scratch.partial").map_or_else(|| Spec::untouched(16), Spec::scratch),

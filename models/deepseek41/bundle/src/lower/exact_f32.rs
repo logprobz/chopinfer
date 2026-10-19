@@ -78,6 +78,10 @@ impl Lowering<'_> {
             weight,
             rows(output, phase.rows()),
             self.inputs.live_tokens,
+            crate::ops::exact_f32::state(
+                self.buffers,
+                &layer_view(layer, &format!("{}.weight", dense.tensor)),
+            ),
         )
         .map(Some)
         .map_err(|refusal| format!("{id} of layer {layer}: {refusal}"))

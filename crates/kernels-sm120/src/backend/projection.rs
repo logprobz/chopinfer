@@ -1275,6 +1275,7 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                weight_domain: None,
                 quantizer_status_row_offset: 0,
                 quantizer_status: None,
                 partial: any,
@@ -1508,6 +1509,7 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                weight_domain: None,
                 quantizer_status_row_offset: 0,
                 quantizer_status: None,
                 partial: any,
@@ -1806,6 +1808,7 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                weight_domain: None,
                 quantizer_status_row_offset: 0,
                 quantizer_status: None,
                 partial: any(5),

@@ -400,7 +400,7 @@ impl Instance {
                 *most = (*most).max(bytes);
             }
         }
-        for (rank, &(context, _, stream)) in ranks.iter().enumerate() {
+        for (rank, &(context, pool, stream)) in ranks.iter().enumerate() {
             let mut resolved = BTreeMap::new();
             // The cubins of this geometry and the shared ones.
             for cubin in crate::CUBINS
@@ -454,6 +454,56 @@ impl Instance {
                         }
                     })?;
                 }
+            }
+            // Flags follow the weight view's name, including drafter stage
+            // remapping. The shared head is classified exactly once.
+            let weights: Vec<_> = views[rank]
+                .iter()
+                .map(|(name, &span)| (name.clone(), span))
+                .collect();
+            for (name, weight) in weights {
+                let ops = if name.starts_with("mtp.") {
+                    self.dspark.as_ref().map(|drafter| &drafter.ops)
+                } else {
+                    Some(&self.ops)
+                };
+                let op = ops.and_then(|ops| {
+                    if name == "head.weight" {
+                        ops.head.as_ref().map(|head| &head.project)
+                    } else {
+                        ops.exact_f32
+                            .as_ref()
+                            .and_then(|dense| dense.weight_op(&name))
+                    }
+                });
+                let Some(op) = op else { continue };
+                let Some(bytes) = op.info().bytes_of("scratch.weight_domain") else {
+                    continue;
+                };
+                let flags = allocate_span(services, pool, stream, bytes, held)?;
+                let launches =
+                    crate::ops::exact_f32::initialize(op, weight, flags).map_err(|error| {
+                        let _ = services.log(error.to_string().as_bytes());
+                        BundleAbiError::InvalidRange("F32 weight-domain initialization")
+                    })?;
+                for lowered in launches {
+                    let launch = lowered.launch;
+                    bundle_runtime::dispatch::launch(
+                        services,
+                        stream,
+                        &resolved,
+                        &launch.symbol,
+                        launch.plan,
+                        &launch.arguments,
+                        &launch.bindings,
+                    )
+                    .map_err(|error| {
+                        let _ = services
+                            .log(format!("F32 weight-domain initialization: {error:?}").as_bytes());
+                        BundleAbiError::InvalidRange("F32 weight-domain initialization")
+                    })?;
+                }
+                views[rank].insert(crate::ops::exact_f32::domain_name(&name), flags);
             }
             self.symbols.push(resolved);
         }

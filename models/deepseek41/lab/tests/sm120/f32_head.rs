@@ -119,6 +119,7 @@ fn heads() -> Vec<(Entry, Sm120)> {
 
 fn scratch<T>(mut unused: impl FnMut() -> T) -> ProjectionScratch<T> {
     ProjectionScratch {
+        weight_domain: None,
         partial: unused(),
         semaphores: unused(),
         unused: unused(),
@@ -193,7 +194,17 @@ fn case(entry: &Entry, op: Prepared<ProjectionBuffers<View>>) -> LabResult<OpCas
         activation_global: None,
         routing: None,
         // This entry has no quantizer or row-status argument.
-        scratch: scratch(|| Spec::untouched(16)),
+        scratch: ProjectionScratch {
+            weight_domain: op.info().bytes_of("scratch.weight_domain").map(|_| {
+                Spec::weight(
+                    vec![1_u32; q.n.div_ceil(16) as usize]
+                        .into_iter()
+                        .flat_map(u32::to_le_bytes)
+                        .collect(),
+                )
+            }),
+            ..scratch(|| Spec::untouched(16))
+        },
         row_offset: 0,
         shard_rows: 0,
     };

@@ -334,6 +334,13 @@ pub struct Launch {
 pub trait PreparedOp<B>: Send + Sync {
     fn info(&self) -> &OpInfo;
 
+    /// Initialize persistent metadata from immutable weights before the
+    /// first step. Repeat after replacing weights, never during graph
+    /// capture. The default needs no initialization.
+    fn initialize(&self, _buffers: &B) -> Result<Vec<Launch>, Refusal> {
+        Ok(Vec::new())
+    }
+
     /// The launches of one step over `buffers` and the op's `workspace`
     /// (at least [`OpInfo::workspace`] bytes; [`View::EMPTY`] when that is
     /// zero), in order. Refuses counts past the prepared capacity and

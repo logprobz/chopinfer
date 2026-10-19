@@ -2,7 +2,9 @@
 //! F32 activations into F32 rows (`ActivationFormat::F32`,
 //! `DecodeOrder::ExactF32Operands`), each bound through
 //! `Backend::projection` at the served prefill capacity, which every
-//! phase's rows fit (as the dense folds through M1).
+//! phase's rows fit. The prepared op chooses the ordered split entry at
+//! rows <= 32 for decode and verification. Larger rows retain the prefill
+//! arithmetic, with the weight-domain scan cached at instance creation.
 //!
 //! Beside the head (`ops::head`) they are the vendor's F32 or plain
 //! `F.linear` projections, replicated on every rank:
@@ -105,10 +107,59 @@ pub(crate) fn project(
     weight: DeviceBufferSpanV1,
     output: DeviceBufferSpanV1,
     live_rows: DeviceBufferSpanV1,
+    state: ProjectionState,
 ) -> Result<Vec<Lowered>, Refusal> {
     let mut bind = Bind::default();
+    let buffers = bind_buffers(
+        &mut bind,
+        activation,
+        weight,
+        output,
+        live_rows,
+        state.weight_domain,
+    );
+    bind.launch_within(op, &buffers, state.workspace, Counts::rows(rows))
+}
+
+/// Immutable weight metadata and the shared per-launch workspace.
+#[derive(Clone, Copy)]
+pub struct ProjectionState {
+    pub weight_domain: Option<DeviceBufferSpanV1>,
+    pub workspace: DeviceBufferSpanV1,
+}
+
+pub(crate) fn domain_name(weight: &str) -> String {
+    format!("{weight}.f32_domain")
+}
+
+pub(crate) fn state(buffers: &crate::buffers::RankBuffers, weight: &str) -> ProjectionState {
+    ProjectionState {
+        weight_domain: buffers.views.get(&domain_name(weight)).copied(),
+        workspace: buffers.workspace,
+    }
+}
+
+/// Classify immutable weights once, after upload and before graph capture.
+pub(crate) fn initialize(
+    op: &Prepared<ProjectionBuffers<View>>,
+    weight: DeviceBufferSpanV1,
+    domain: DeviceBufferSpanV1,
+) -> Result<Vec<Lowered>, Refusal> {
+    let mut bind = Bind::default();
+    let buffers = bind_buffers(&mut bind, weight, weight, weight, weight, Some(domain));
+    bind.initialize(op, &buffers)
+}
+
+fn bind_buffers(
+    bind: &mut Bind,
+    activation: DeviceBufferSpanV1,
+    weight: DeviceBufferSpanV1,
+    output: DeviceBufferSpanV1,
+    live_rows: DeviceBufferSpanV1,
+    weight_domain: Option<DeviceBufferSpanV1>,
+) -> ProjectionBuffers<View> {
     let activation = bind.view(activation);
-    let buffers = ProjectionBuffers {
+    ProjectionBuffers {
         activation,
         live_rows: bind.view(live_rows),
         output: bind.view(output),
@@ -121,6 +172,7 @@ pub(crate) fn project(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            weight_domain: weight_domain.map(|span| bind.view(span)),
             partial: activation,
             semaphores: activation,
             unused: activation,
@@ -137,8 +189,7 @@ pub(crate) fn project(
         },
         row_offset: 0,
         shard_rows: 0,
-    };
-    bind.launch(op, &buffers, Counts::rows(rows))
+    }
 }
 
 /// What a dense F32 projection reads.
@@ -241,6 +292,12 @@ pub(crate) struct WidenViews {
 }
 
 impl ExactF32Ops {
+    pub(crate) fn weight_op(&self, name: &str) -> Option<&Prepared<ProjectionBuffers<View>>> {
+        self.projections.iter().find_map(|(dense, op)| {
+            name.ends_with(&format!(".{}.weight", dense.tensor))
+                .then_some(op)
+        })
+    }
     pub(crate) fn prepare(
         backend: &dyn Backend,
         own: &dyn OwnOps,

@@ -333,6 +333,7 @@ impl Instance {
                             norm_weight: buffers.view(&format!("{stem}.norm.weight"))?,
                             normalized_f32: rows(scratch.normed_wide, live),
                             vocabulary_weight: buffers.view("head.weight")?,
+                            projection_state: crate::ops::exact_f32::state(buffers, "head.weight"),
                             logits: slice(
                                 stored.block_logits,
                                 0,

@@ -65,9 +65,99 @@ fn operation(e: &Entry) -> OperationSpec {
     }
 }
 fn backend(entries: Vec<Entry>) -> Sm120 {
-    let available = entries.iter().map(|e| e.symbol().into()).collect();
+    let available = entries.iter().flat_map(Entry::symbols).collect();
     Sm120::new()
         .with_f32_projections(F32ProjectionOffers::new(entries, available, "0".repeat(64)).unwrap())
+}
+
+#[test]
+fn cached_weights_initialize_once_and_decode_preserves_every_chain_plane() {
+    for weight in [WeightFormat::Bf16, WeightFormat::F32] {
+        let mut q = entry(weight).query();
+        q.m_capacity = 64;
+        let usage = OperationUse {
+            capacity: 64,
+            ..entry(weight).usage()
+        };
+        let e = Entry::new(q, usage, "cached_test").unwrap().with_decode();
+        let prepared = backend(vec![e.clone()])
+            .projection(&operation(&e), usage, Need::rows(64))
+            .unwrap()
+            .handle;
+        let mut b = buffers(&e);
+        let workspace = View {
+            handle: 9,
+            bytes: prepared.info().workspace,
+        };
+        assert!(prepared.initialize(&b).is_err());
+        assert!(prepared.launches(&b, workspace, Counts::rows(1)).is_err());
+        b.scratch.weight_domain = Some(View {
+            handle: 10,
+            bytes: e.weight_domain_bytes(),
+        });
+        let init = prepared.initialize(&b).unwrap();
+        assert_eq!(init.len(), 1);
+        assert_eq!(init[0].symbol, e.stage_symbol("_weights"));
+        assert_eq!(init[0].arguments.0.len(), 2);
+        for rows in [1, 2, 4, 8, 16, 32] {
+            let launches = prepared
+                .launches(&b, workspace, Counts::rows(rows))
+                .unwrap();
+            assert_eq!(launches.len(), 3);
+            assert_eq!(launches[1].plan.grid, [2, rows.div_ceil(8), 1]);
+            assert_eq!(launches[1].plan.block, [128, 1, 1]);
+            assert_eq!(
+                e.decode_workspace_bytes(rows),
+                128 + u64::from(rows * q.n * 3 * 4)
+            );
+            assert!(
+                launches
+                    .iter()
+                    .all(|l| l.plan.pdl && !l.symbol.contains("_weights_"))
+            );
+            let short = View {
+                bytes: e.decode_workspace_bytes(rows) - 1,
+                ..workspace
+            };
+            assert!(prepared.launches(&b, short, Counts::rows(rows)).is_err());
+        }
+        for rows in [33, 64] {
+            let launches = prepared
+                .launches(&b, workspace, Counts::rows(rows))
+                .unwrap();
+            assert_eq!(launches.len(), 1);
+            assert_eq!(launches[0].symbol, e.symbol());
+            assert_eq!(launches[0].arguments.0.len(), 6);
+        }
+        b.scratch.weight_domain.as_mut().unwrap().bytes -= 1;
+        assert!(prepared.initialize(&b).is_err());
+        assert!(prepared.launches(&b, workspace, Counts::rows(1)).is_err());
+        assert!(e.decode_plan(33).is_err());
+        let spec = f32_projection::cubin_spec("cached_test", &[e]).unwrap();
+        assert_eq!(spec.entries.len(), 5);
+        assert!(
+            spec.entries
+                .iter()
+                .all(|entry| entry.symbol.ends_with("_v1"))
+        );
+    }
+}
+
+#[test]
+fn cached_decode_refuses_unlaunchable_splits_at_prepare() {
+    let original = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        k: 65_535 * 512 + 1,
+        ..original.query()
+    };
+    let e = Entry::new(q, original.usage(), "too_many_splits")
+        .unwrap()
+        .with_decode();
+    assert!(
+        backend(vec![e.clone()])
+            .projection(&operation(&e), e.usage(), Need::rows(1))
+            .is_err()
+    );
 }
 fn buffers(e: &Entry) -> ProjectionBuffers<View> {
     let v = |handle, bytes| View { handle, bytes };
@@ -85,6 +175,7 @@ fn buffers(e: &Entry) -> ProjectionBuffers<View> {
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            weight_domain: None,
             quantizer_status: None,
             quantizer_status_row_offset: 0,
             partial: View::EMPTY,

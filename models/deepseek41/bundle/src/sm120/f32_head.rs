@@ -59,6 +59,13 @@ pub fn entry(g: &Geometry, ranks: u32) -> Result<Entry, String> {
     .map_err(|e| e.to_string())
 }
 
+/// The serving head caches its weight-domain table at create and selects
+/// the ordered split entry for up to 32 live-row capacity. Its original
+/// cubin remains the locked comparison baseline.
+pub fn decode_entry(g: &Geometry, ranks: u32) -> Result<Entry, String> {
+    entry(g, ranks).map(Entry::with_decode)
+}
+
 /// Each geometry's head cubin, with every supported rank count's entry.
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
     let mut specs = Vec::new();

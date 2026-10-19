@@ -62,6 +62,30 @@ scale, then writes packed E2M1 codes and UE4M3 scales. It supports output
 width 4096 or 8192, including the fused gate/up output. Direct single-kernel
 output quantization and other widths are refused.
 
+## Exact F32 decode
+
+`f32_projection::Entry::with_decode` adds a separately locked variant of
+`exact_f32.cuh`. Call `PreparedOp::initialize` once after uploading immutable
+weights, binding `scratch.weight_domain` as persistent storage of the size
+in `OpInfo::bytes`. Replacing weights requires reinitializing this table.
+Each U32 flag covers the original 16-output weight tile, including its tail.
+
+At up to 32 rows, one launch classifies each whole activation row. Four
+warps per CTA then compute four independent 128-K chains, using 16-byte
+async copies where operand addresses and K permit them. Scalar loads cover
+unaligned operands and tails. The component split, eight k16 steps, and
+hi/mid/lo merge are the original operations. Each chain writes a separate
+F32 plane. A final launch adds those planes from zero in increasing K
+order, never a sum of CTA subtotals. The declared split count is
+`ceil(ceil(K/128)/4)`; callers cannot supply another count.
+
+The whole row and whole weight tile determine tensor eligibility before
+any chain runs. Exceptional values and raw F32 weights keep the original
+SIMT FMA path and IEEE propagation. Inactive outputs and caller row-status
+words remain untouched. Larger launches retain the prefill schedule with
+the cached weight flags. The original header, entries, and locks remain
+available for bitwise comparisons.
+
 ## Fragment decode
 
 Decode-bound BF16 and FP8 block weights use the fragment-major layout from

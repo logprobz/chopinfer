@@ -74,8 +74,21 @@ pub(super) fn prepare(
     let mut info = OpInfo::new(
         f32_projection::IMPLEMENTATION,
         chosen.guarantees,
-        vec![(entry.symbol().into(), 0)],
+        entry.symbols().into_iter().map(|s| (s, 0)).collect(),
     );
+    if entry.uses_cached_weights() {
+        entry.decode_plan(need.capacity.min(32))?;
+        entry.stage_plan([entry.query().n.div_ceil(16), 1, 1])?;
+        let elements = need
+            .capacity
+            .min(32)
+            .checked_mul(entry.query().n)
+            .ok_or(Refused::Rule("F32 reduction grid overflows".into()))?;
+        entry.stage_plan([elements.div_ceil(128), 1, 1])?;
+        info.workspace = entry.decode_workspace_bytes(need.capacity);
+        info.bytes
+            .push(("scratch.weight_domain".into(), entry.weight_domain_bytes()));
+    }
     info.weight_layouts = vec![(
         "weights".into(),
         kernel_core::precision::WeightLayout::row_major(),
@@ -100,10 +113,29 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
     fn info(&self) -> &OpInfo {
         &self.info
     }
+    fn initialize(&self, b: &ProjectionBuffers<View>) -> Result<Vec<Launch>, Refusal> {
+        if !self.entry.uses_cached_weights() {
+            return Ok(Vec::new());
+        }
+        b.weights.codes.covers(self.entry.weight_bytes())?;
+        let flags = self.weight_domain(b)?;
+        Ok(vec![
+            self.stage(
+                "_weights",
+                0,
+                self.entry
+                    .stage_plan([self.entry.query().n.div_ceil(16), 1, 1])?,
+                vec![
+                    Argument::DeviceBuffer(b.weights.codes.handle),
+                    Argument::DeviceBuffer(flags.handle),
+                ],
+            ),
+        ])
+    }
     fn launches(
         &self,
         b: &ProjectionBuffers<View>,
-        _workspace: View,
+        workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         let rows = counts.rows;
@@ -126,6 +158,69 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.output.covers(u64::from(rows) * u64::from(q.n) * 4)?;
         b.weights.codes.covers(self.entry.weight_bytes())?;
         b.live_rows.covers(4)?;
+        if self.entry.uses_cached_weights() {
+            let flags = self.weight_domain(b)?;
+            let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            if rows <= 32 {
+                workspace.covers(self.entry.decode_workspace_bytes(rows))?;
+                return Ok(vec![
+                    self.stage(
+                        "_rows",
+                        rows,
+                        self.entry.stage_plan([rows, 1, 1])?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(workspace),
+                        ],
+                    ),
+                    self.stage(
+                        "_decode",
+                        rows,
+                        self.entry.decode_plan(rows)?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.weights.codes),
+                            ptr(workspace),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(flags),
+                        ],
+                    ),
+                    self.stage(
+                        "_reduce",
+                        rows,
+                        self.entry.stage_plan([
+                            rows.checked_mul(q.n)
+                                .ok_or(Refusal("F32 reduction grid overflows"))?
+                                .div_ceil(128),
+                            1,
+                            1,
+                        ])?,
+                        vec![
+                            ptr(workspace),
+                            ptr(b.output),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                        ],
+                    ),
+                ]);
+            }
+            return Ok(vec![self.stage(
+                "",
+                rows,
+                self.entry.plan(rows)?,
+                vec![
+                    ptr(b.activation),
+                    ptr(b.weights.codes),
+                    ptr(b.output),
+                    ptr(b.live_rows),
+                    Argument::U32(rows),
+                    ptr(flags),
+                ],
+            )]);
+        }
         Ok(vec![Launch {
             symbol: self.entry.symbol().into(),
             rows,
@@ -140,5 +235,32 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
             collective: false,
             persistent: false,
         }])
+    }
+}
+
+impl Projection {
+    fn weight_domain(&self, b: &ProjectionBuffers<View>) -> Result<View, Refusal> {
+        let flags = b.scratch.weight_domain.ok_or(Refusal(
+            "F32 projection requires initialized weight-domain flags",
+        ))?;
+        flags.covers(self.entry.weight_domain_bytes())?;
+        Ok(flags)
+    }
+
+    fn stage(
+        &self,
+        suffix: &str,
+        rows: u32,
+        plan: kernel_core::contract::LaunchPlan,
+        arguments: Vec<Argument>,
+    ) -> Launch {
+        Launch {
+            symbol: self.entry.stage_symbol(suffix),
+            rows,
+            plan,
+            arguments: ArgumentList(arguments),
+            collective: false,
+            persistent: false,
+        }
     }
 }

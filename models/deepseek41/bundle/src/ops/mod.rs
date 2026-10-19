@@ -465,6 +465,17 @@ pub struct Lowered {
 pub(crate) struct Bind(BufferBindings);
 
 impl Bind {
+    pub(crate) fn initialize<B>(
+        self,
+        op: &Prepared<B>,
+        buffers: &B,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        Ok(op
+            .initialize(buffers)?
+            .into_iter()
+            .map(|launch| self.lowered(launch))
+            .collect())
+    }
     pub(crate) fn view(&mut self, span: DeviceBufferSpanV1) -> View {
         View {
             handle: self.0.bind(span),

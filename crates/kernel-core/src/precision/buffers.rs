@@ -104,6 +104,10 @@ crate::scratch_record! {
     /// never written.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct ProjectionScratch {
+        /// Persistent U32 weight-domain flags for exact F32 projections,
+        /// initialized once from immutable weights by PreparedOp::initialize.
+        /// Unlike scratch, this table must survive between steps.
+        pub weight_domain: option,
         pub partial: value,
         pub semaphores: value,
         pub unused: value,

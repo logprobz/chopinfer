@@ -25,7 +25,7 @@ pub(crate) fn query(shape: &Shape) -> GemmQuery {
 
 /// The head's op of an instance.
 pub(crate) struct HeadOps {
-    project: Prepared<ProjectionBuffers<View>>,
+    pub(crate) project: Prepared<ProjectionBuffers<View>>,
 }
 
 /// A step's spans of the head: its F32 rows, the rank's head weight shard,
@@ -35,6 +35,7 @@ pub(crate) struct HeadViews {
     pub weight: DeviceBufferSpanV1,
     pub logits: DeviceBufferSpanV1,
     pub live_rows: DeviceBufferSpanV1,
+    pub state: super::exact_f32::ProjectionState,
 }
 
 impl HeadOps {
@@ -66,6 +67,7 @@ impl HeadOps {
             views.weight,
             views.logits,
             views.live_rows,
+            views.state,
         )
     }
 }

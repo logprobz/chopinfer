@@ -56,6 +56,7 @@ pub struct HeadViews {
     pub norm_weight: Span,
     pub normalized_f32: Span,
     pub vocabulary_weight: Span,
+    pub projection_state: exact_f32::ProjectionState,
     pub logits: Span,
     pub live_rows: Span,
     pub status: Span,
@@ -297,6 +298,7 @@ impl Heads {
             v.vocabulary_weight,
             v.logits,
             v.live_rows,
+            v.projection_state,
         )?);
         Ok(result)
     }

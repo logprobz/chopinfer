@@ -17,11 +17,14 @@ use kernel_core::precision::{
 pub const HEADER: &str = "gemm/exact_f32.cuh";
 pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 
+mod decode;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
     query: GemmQuery,
     usage: OperationUse,
     symbol: String,
+    cached: bool,
 }
 
 impl Entry {
@@ -52,6 +55,7 @@ impl Entry {
             query,
             usage,
             symbol: format!("{stem}_v1"),
+            cached: false,
         })
     }
     pub fn query(&self) -> GemmQuery {
@@ -88,6 +92,9 @@ impl Entry {
         Ok(plan)
     }
     pub fn entry_spec(&self) -> EntrySpec {
+        if self.cached {
+            return self.cached_spec();
+        }
         let q = self.query;
         let f32_weight = q.weight == WeightFormat::F32;
         EntrySpec::new(
@@ -146,7 +153,7 @@ impl Entry {
                     .to_string(),
             },
             implementation: IMPLEMENTATION.into(),
-            stages: vec![self.symbol.clone()],
+            stages: self.symbols(),
         }
     }
 }
@@ -173,8 +180,15 @@ pub fn cubin_spec(name: impl Into<String>, entries: &[Entry]) -> Result<CubinSpe
         name: name.into(),
         sources_root: crate::cuda_source_root(),
         include_dirs: vec![],
-        headers: vec![format!("#include \"{HEADER}\"")],
+        headers: vec![format!(
+            "#include \"{}\"",
+            if entries.iter().any(Entry::uses_cached_weights) {
+                "gemm/exact_f32_decode.cuh"
+            } else {
+                HEADER
+            }
+        )],
         defines: vec![],
-        entries: entries.iter().map(Entry::entry_spec).collect(),
+        entries: entries.iter().flat_map(Entry::entry_specs).collect(),
     })
 }

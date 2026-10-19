@@ -37,6 +37,43 @@ const IDENTITY_COMPONENT: u32 = 200;
 const VIEW_ALIGNMENT: u64 = 4096;
 
 #[test]
+fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weights() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    journal_steps(&host);
+    let journal = host.device.journal.borrow();
+    let launches: Vec<_> = journal
+        .iter()
+        .filter(|line| line.starts_with("launch "))
+        .collect();
+    let head: Vec<_> = launches
+        .iter()
+        .filter(|line| line.contains("_head_f32_m"))
+        .collect();
+    assert_eq!(
+        head.iter()
+            .filter(|line| line.contains("_cached_weights_v1"))
+            .count(),
+        shape.ranks() as usize
+    );
+    assert!(head.iter().any(|line| line.contains("_cached_decode_v1")));
+    assert!(head.iter().any(|line| line.contains("_cached_reduce_v1")));
+    assert!(head.iter().all(|line| line.contains("_cached")));
+    // The create scans precede the first decode projection, and none can
+    // be captured or repeated by a graph replay.
+    let first_decode = launches
+        .iter()
+        .position(|line| line.contains("_cached_decode_v1"))
+        .unwrap();
+    assert!(
+        launches[first_decode..]
+            .iter()
+            .all(|line| !line.contains("_cached_weights_v1"))
+    );
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn runtime_candidate_pool_reaches_its_separate_producer() {
     for kv in KV_LAYOUTS {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

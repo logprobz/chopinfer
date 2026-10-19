@@ -202,5 +202,12 @@ MMA accumulation changes bits and requires separate accuracy evidence.
 Neumaier-compensated dot, magnitude and head sums as the CPU score oracle.
 Its explicit double operations prevent contraction. Replay checks sampled
 GPU oracle scores and magnitudes bitwise against the CPU oracle before
-using the complete f64 score matrix for selection agreement. Both kernels
-are isolated in the qualification family and have no serving registration.
+using the complete f64 score matrix for selection agreement. The f64 oracle remains in the qualification family. After model-owned
+real-operand qualification, the native scorer also has a separate serving
+family. `position_mma_compact.cuh` maps retained candidate slots to positions
+and reuses the native arithmetic. Dense and compact serving retain the live
+selectors, ordering, candidate validation and failure publication. Query
+packing has its own PDL dependency wait; scores wait for packing before
+reading row status. A failed exact repack selects the original SIMT scorer
+for that row. Packed query scratch follows selection scratch in the rank's
+main workspace and introduces no cross-stream lifetime.

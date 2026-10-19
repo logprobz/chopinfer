@@ -118,6 +118,7 @@ mod pooled_indexer;
 mod position_blocks;
 mod position_indexer;
 mod position_live;
+mod position_mma;
 mod position_query;
 mod position_simt_tile;
 mod projection;
@@ -202,6 +203,7 @@ pub struct Sm120 {
     runtime_candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     live_position_indexer: bool,
     tiled_position_scores: bool,
+    native_position_scores: bool,
     valid_position_candidates: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
@@ -716,6 +718,17 @@ impl Sm120 {
     pub fn with_tiled_position_scores(mut self) -> Self {
         self.live_position_indexer = true;
         self.tiled_position_scores = true;
+        self.native_position_scores = false;
+        self
+    }
+
+    /// Native FP4 scores use exact query repacking and retain live/valid
+    /// selection. BF16 key storage keeps its SIMT implementation.
+    pub fn with_native_position_scores(mut self) -> Self {
+        self.live_position_indexer = true;
+        self.valid_position_candidates = true;
+        self.tiled_position_scores = false;
+        self.native_position_scores = true;
         self
     }
 
@@ -1808,23 +1821,28 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
-        position_simt_tile::prepare(
-            position_live::prepare(
-                position_indexer::select(
-                    &self.position_indexers,
-                    op,
-                    top_k,
-                    position_capacity,
-                    need,
+        position_mma::prepare(
+            position_simt_tile::prepare(
+                position_live::prepare(
+                    position_indexer::select(
+                        &self.position_indexers,
+                        op,
+                        top_k,
+                        position_capacity,
+                        need,
+                    ),
+                    self.live_position_indexer,
+                    need.capacity,
+                    op.max_top_k,
+                    position_live::ScoreKind::Positions,
+                    false,
                 ),
-                self.live_position_indexer,
-                need.capacity,
-                op.max_top_k,
-                position_live::ScoreKind::Positions,
-                false,
+                self.tiled_position_scores,
+                op,
             ),
-            self.tiled_position_scores,
+            self.native_position_scores,
             op,
+            need.capacity,
         )
     }
 
@@ -1905,19 +1923,24 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
-        position_live::prepare(
-            position_blocks::select(
-                &self.position_block_indexers,
-                op,
-                top_k,
-                position_capacity,
-                need,
+        position_mma::prepare(
+            position_live::prepare(
+                position_blocks::select(
+                    &self.position_block_indexers,
+                    op,
+                    top_k,
+                    position_capacity,
+                    need,
+                ),
+                self.live_position_indexer,
+                need.capacity,
+                op.indexer.max_top_k,
+                position_live::ScoreKind::Positions,
+                self.valid_position_candidates,
             ),
-            self.live_position_indexer,
+            self.native_position_scores && op.block_size == 8,
+            &op.indexer,
             need.capacity,
-            op.indexer.max_top_k,
-            position_live::ScoreKind::Positions,
-            self.valid_position_candidates,
         )
     }
 

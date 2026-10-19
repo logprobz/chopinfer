@@ -3,17 +3,20 @@
 //! module line here.
 
 mod ceil_parallel;
+mod embedding_replicated;
 mod f32_decode;
 mod f32_head;
 mod f32_prefill;
 mod fusion_checks;
 mod hc_fused;
+mod hc_round_fused;
 mod head_artifacts;
 mod head_probes;
 mod latent;
 mod latent_bf16;
 mod norm_quantize;
 mod producer_artifacts;
+mod round_artifacts;
 mod window_fused;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.

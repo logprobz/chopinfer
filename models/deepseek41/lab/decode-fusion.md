@@ -67,7 +67,7 @@ entries; prefill and verify keep their previous chains.
 | Window norm/RoPE, ceil, store | 120 | 40 | 80 |
 | Total | 408 | 160 | 248 |
 
-The one-row TP4 fake-host journal falls from 2,332 to 2,084 launches per
+The norm/window stage lowers the one-row TP4 journal from 2,332 to 2,084 launches per
 GPU in both KV layouts. The six complete topology/layout journals change
 only the declared fusion launch families, plus their module and symbol
 registration. The new launch-count regression fails on the previous binding.
@@ -106,7 +106,7 @@ The first attention, the two Engram boundaries and the final head retain
 the original standalone operations. Prefill and verify are unchanged.
 Every fused pair still takes two launches. The purpose is to distribute
 work from the original single finishing CTA; no measured latency gain is
-claimed. The current one-row TP4 count remains 2,084 launches per GPU,
+claimed. This stage keeps the one-row TP4 count at 2,084 launches per GPU,
 248 below the composed baseline.
 
 The new `sinkhorn_hc_expand_mix` lock family preserves every existing
@@ -125,7 +125,47 @@ byte mutations and changed collapse weights. Production comparisons reuse
 the `post`/`comb` buffers. Timings use immutable previous weights and first
 check that this layout gives the same bytes, so timing contains only the
 two kernels. All mismatching cases are collected before the test fails.
-GPU equality and performance remain pending the staged pair run.
+A two-GPU, 250 W comparison on 2026-10-19 passed all 66 cases, 30 byte
+controls and six changed-weight controls per GPU. At one row the original
+two-kernel pair took 32.736/32.768 us and the new pair 30.720/30.720 us,
+a 2.016/2.048 us saving. Across 77 boundaries that extrapolates to
+0.155/0.158 ms per step. These are whole-pair event timings; individual
+kernel exclusive times and serving-step savings were not measured. All
+timing samples flagged SM clock drift, and the four-row result on one
+GPU showed almost no gain.
+
+## Rounded expansion and replicated embedding
+
+The next decode form folds the all-reduce's final BF16 round into the
+expansion/partial task at 77 boundaries. A typed deferred-round interface
+returns the original collective prefix and its F32 sum view. The two
+collective launches, their state bindings, ordered F32 rank sum and refusal
+checks remain unchanged. The fused task still writes the original rounded
+intermediate. Its 16-cell Sinkhorn matrix uses warp shuffles to read the
+previous iteration's cells; every row/column sum and division keeps its
+original order. Larger matrices retain the shared-memory form.
+
+Decode embedding reads the owning immutable vocabulary shard directly on
+every rank, retaining the existing weight layout and peer grants. One task
+writes the local gather, its F32 widening, the rank-ordered sum rounded to
+BF16, and the four residual streams. Signed zero and NaNs retain the old
+collective semantics, checked against the oracle for every BF16 encoding
+at every owner position for one, two, four and eight ranks. The embedding
+stage boundaries remain in the program. Prefill and verify keep the old
+chain, including image injection before stream broadcast.
+
+The round task removes 77 launches and the embedding task removes five.
+The one-row TP4 journal has 2,002 launches per GPU in both KV layouts, 330
+below the composed 2,332-launch baseline. Both kernels use virtual CTA
+indices and caller-owned shared arenas; only entry wrappers wait for or
+signal grid dependencies. Existing locks remain unchanged, with separate
+`sinkhorn_hc_round_expand_mix` and `embedding_replicated` families.
+GPU parity and timings for these new tasks remain pending. The staged job
+compares the original round/expand/mixer chain, and the actual two-GPU
+embedding collective chain, against the fused tasks. Dedicated Nsight
+runs attribute exclusive time after sorting kernel starts, advancing the
+frontier by each kernel's end. Component savings extrapolated by boundary
+count are reported separately from a serving-step measurement.
 
 ## Remaining boundaries
 

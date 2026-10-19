@@ -60,3 +60,7 @@ path = "examples/sm120/build_fold_decode.rs"
 [[example]]
 name = "build_fold_ticket"
 path = "examples/sm120/build_fold_ticket.rs"
+
+[[example]]
+name = "build_moe_active"
+path = "examples/sm120/build_moe_active.rs"

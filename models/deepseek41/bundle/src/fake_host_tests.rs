@@ -21,6 +21,7 @@ mod batch_limits;
 mod conformance;
 mod dspark;
 mod media;
+mod shared_overlap;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
 

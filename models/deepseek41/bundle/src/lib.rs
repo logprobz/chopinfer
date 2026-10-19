@@ -19,6 +19,7 @@ pub mod lower;
 pub mod ops;
 pub mod program;
 pub mod shape;
+mod shared_overlap;
 pub mod sm120;
 pub mod taps;
 

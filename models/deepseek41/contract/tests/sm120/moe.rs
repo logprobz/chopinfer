@@ -104,3 +104,71 @@ fn kernel_moe_only_adds_its_model_owned_lock_family() {
         assert!(!spec.entries.is_empty());
     }
 }
+
+#[test]
+fn active_decode_and_verify_keep_prefill_on_the_original_entries() {
+    for g in GEOMETRIES {
+        for &ranks in SUPPORTED_RANKS {
+            let backend = registration::register(Sm120::new(), g, ranks).unwrap();
+            for phase in [
+                ExecutionPhase::Decode,
+                ExecutionPhase::Verify,
+                ExecutionPhase::Prefill,
+            ] {
+                for tokens in [
+                    1,
+                    8,
+                    32,
+                    48,
+                    serving::DECODE_BATCH * serving::MAX_VERIFY_ROWS,
+                ] {
+                    for set in moe::expert_sets(g) {
+                        for kind in [GatedMlpProjection::GateUp, GatedMlpProjection::Down] {
+                            let q = moe::projection(g, ranks, set, kind, tokens).unwrap();
+                            let usage = OperationUse {
+                                phase,
+                                capacity: tokens,
+                                graph: true,
+                            };
+                            let op = backend
+                                .chained_mlp_projection(&q, usage, Need::rows(tokens))
+                                .unwrap();
+                            let active = phase != ExecutionPhase::Prefill;
+                            assert_eq!(op.info().symbols[0].0.ends_with("_active_bw4_v1"), active);
+                            assert_eq!(
+                                op.info().bytes_of("routing.routes.active_experts"),
+                                active.then_some(u64::from(set.count + 1) * 4)
+                            );
+                            if active {
+                                assert_eq!(op.route_tile(), 16);
+                            }
+                            let routes = MoeQuery::LocalRoutes {
+                                experts: set.count,
+                                local_experts: set.count,
+                                top_k: set.top_k,
+                                capacity: tokens,
+                            };
+                            backend
+                                .moe_row_bias_route(
+                                    &moe::router(g, set),
+                                    &routes,
+                                    0,
+                                    op.route_tile(),
+                                    usage,
+                                    Need::rows(tokens),
+                                )
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+            for entry in registration::active_projections(g, ranks).unwrap() {
+                for rows in [1, 8, 32] {
+                    let grid = entry.plan(rows).unwrap().grid;
+                    assert!(grid[0] > 0 && grid[0] <= 376);
+                    assert_eq!(&grid[1..], &[1, 1]);
+                }
+            }
+        }
+    }
+}

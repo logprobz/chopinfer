@@ -609,6 +609,14 @@ impl Instance {
                 .launch_eager(&streams, &programs, &collectives)
                 .map_err(|error| self.dispatch_failed(error));
         }
+        if let Some(bucket) = run
+            .graph
+            .filter(|&(rows, _)| self.shared_overlap.serves(rows))
+        {
+            return self
+                .launch_overlapped(bucket, &programs, &run.stages)
+                .map_err(|error| self.dispatch_failed(error));
+        }
         pipeline::run_ranks(
             &self.services,
             &streams,
@@ -741,6 +749,68 @@ impl Instance {
             |_| {},
             |_| Ok(()),
         )
+    }
+
+    /// Capture every rank before replay, with each fork/join region in one piece.
+    fn launch_overlapped(
+        &mut self,
+        (bucket, items): (u32, u32),
+        programs: &[Vec<PreparedLaunch>],
+        stages: &[Vec<Stage>],
+    ) -> Result<(), DispatchError> {
+        if self.collectives.is_poisoned() {
+            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
+        }
+        let ranks = self.ranks.len();
+        if self.side_lanes.len() != ranks
+            || self.symbols.len() != ranks
+            || programs.len() != ranks
+            || stages.len() != ranks
+        {
+            return Err(DispatchError::InvalidPlan);
+        }
+        for (rank, lanes) in self.side_lanes.iter().enumerate() {
+            let key = GraphKey {
+                rank: rank as u32,
+                bucket,
+                items,
+            };
+            if self.graphs.contains(key) {
+                continue;
+            }
+            let (program, stages) = (&programs[rank], &stages[rank]);
+            if program.is_empty() || program.len() != stages.len() {
+                return Err(DispatchError::InvalidPlan);
+            }
+            let units = crate::shared_overlap::units(stages).map_err(|error| {
+                self.log(&format!("shared expert overlap: {error}"));
+                DispatchError::InvalidPlan
+            })?;
+            let symbols = &self.symbols[rank];
+            self.graphs
+                .capture(&self.services, lanes.compute, key, units.len(), |range| {
+                    units[range]
+                        .iter()
+                        .try_for_each(|unit| lanes.issue(&self.services, symbols, program, unit))
+                })?;
+        }
+        let streams = self
+            .side_lanes
+            .iter()
+            .map(|lane| lane.compute)
+            .collect::<Vec<_>>();
+        let _unwinding = PoisonOnUnwind(&self.collectives);
+        let replayed = Unit::default().record(
+            &self.collectives,
+            self.graphs
+                .replay_piece_major(&self.services, &streams, (bucket, items), |_| {})
+                .map_err(DispatchError::from),
+        )?;
+        if replayed {
+            Ok(())
+        } else {
+            Err(DispatchError::InvalidPlan)
+        }
     }
 
     /// Every logits row of the step as device views in the original item

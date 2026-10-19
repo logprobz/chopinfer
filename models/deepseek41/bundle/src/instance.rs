@@ -102,6 +102,8 @@ pub struct Instance {
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
     graphs: GraphCache<DeepSeek>,
+    shared_overlap: crate::shared_overlap::Settings,
+    side_lanes: Vec<crate::shared_overlap::Lanes>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -501,6 +503,25 @@ impl Instance {
                 BundleAbiError::InvalidRange("DSpark stage bindings")
             })?;
         }
+        if self.shared_overlap.on() {
+            for &(context, _, stream) in &ranks {
+                let side = bundle_runtime::lanes::SideLane::create(
+                    services,
+                    context,
+                    crate::shared_overlap::EVENTS,
+                    held,
+                )?;
+                let &[fork, join] = side.events.as_slice() else {
+                    unreachable!("every event was created")
+                };
+                self.side_lanes.push(crate::shared_overlap::Lanes {
+                    compute: stream,
+                    side: side.stream,
+                    fork,
+                    join,
+                });
+            }
+        }
         acquire::synchronize(log, &ranks)?;
         self.ranks = ranks;
         Ok(())
@@ -601,6 +622,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         held: Vec::new(),
         collectives: Collectives::default(),
         graphs: GraphCache::with_items(config.create.ranks, items),
+        shared_overlap: crate::shared_overlap::Settings::from_env(),
+        side_lanes: Vec::new(),
         config,
         ranks: Vec::new(),
         symbols: Vec::new(),

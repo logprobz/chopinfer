@@ -4,6 +4,7 @@ use super::*;
 use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
+mod catch_up;
 pub(super) mod host;
 #[cfg(test)]
 mod native_package;
@@ -274,6 +275,7 @@ fn drafter_graph_cache_tracks_exact_items_and_reordered_slots() {
         );
         instance.commit().unwrap();
     }
+    let mut catch_up = std::collections::BTreeSet::new();
     for (slots, fresh) in [
         (vec![0], true),
         (vec![2, 0, 1], true),
@@ -300,11 +302,16 @@ fn drafter_graph_cache_tracks_exact_items_and_reordered_slots() {
         let start = host.journal.borrow().len();
         execute(&mut instance, &host, &batch);
         let journal = host.journal.borrow();
+        catch_up.extend(catch_up::captured_catch_up(&journal[start..]));
         let draft: Vec<_> = journal[start..]
             .iter()
             .take_while(|line| {
                 !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
                     && !line.starts_with("mapped gather")
+            })
+            .filter(|line| {
+                !(line.starts_with("captured ") || line.starts_with("replay "))
+                    || !catch_up.contains(line.split_whitespace().nth(2).unwrap())
             })
             .collect();
         assert_eq!(
@@ -745,6 +752,9 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
     instance.retire_request(1).unwrap();
     let mut full_program = None;
     let mut full_tokens = Vec::new();
+    let mut catch_up = catch_up::captured_catch_up(&host.journal.borrow())
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
     for budget in [5, 1, 2, 3, 4] {
         let request = u64::from(budget) + 10;
         instance
@@ -754,6 +764,7 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
         let sink = execute(&mut instance, &host, &verify(request, 0, 3, budget));
         let tokens = &sink.drafts[0].tokens;
         let journal = host.journal.borrow();
+        catch_up.extend(catch_up::captured_catch_up(&journal[start..]));
         let draft = journal[start..].iter().take_while(|line| {
             !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
                 && !line.starts_with("mapped gather")
@@ -765,7 +776,9 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
                     capturing = true;
                 } else if line.starts_with("captured ") {
                     capturing = false;
-                } else if !capturing && (line.starts_with("launch ") || line.starts_with("replay "))
+                } else if !capturing
+                    && (line.starts_with("launch ") || line.starts_with("replay "))
+                    && !catch_up.contains(line.split_whitespace().nth(2).unwrap())
                 {
                     return Some(line.clone());
                 }

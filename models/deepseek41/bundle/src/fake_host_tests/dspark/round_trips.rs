@@ -94,14 +94,17 @@ fn warm_cycle_host_boundary_inventory() {
             if cycle == 2 {
                 let journal = host.journal.borrow();
                 let execute = &journal[start..commit];
-                let draft = execute
-                    .iter()
-                    .position(|line| line.starts_with("replay "))
-                    .unwrap();
                 let hash = execute
                     .iter()
                     .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
                     .unwrap();
+                let before_hash: Vec<_> = execute[..hash]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, line)| line.starts_with("replay ").then_some(index))
+                    .collect();
+                assert_eq!(before_hash.len(), 8, "one catch-up and one draft graph per rank");
+                let draft = before_hash[4];
                 let enqueue = execute
                     .iter()
                     .position(|line| line.starts_with("async mapped ids "))
@@ -163,8 +166,8 @@ fn warm_cycle_host_boundary_inventory() {
                 assert_eq!(totals["physical_readbacks"], 6);
                 assert_eq!(totals["mapped_waits"], 4);
                 assert_eq!(
-                    totals["graph_replays"], 12,
-                    "one draft and two target pieces per rank"
+                    totals["graph_replays"], 16,
+                    "one catch-up, one draft and two target pieces per rank"
                 );
                 assert_eq!(
                     totals["graph_captures"], 0,

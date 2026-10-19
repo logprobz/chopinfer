@@ -157,7 +157,7 @@ impl Instance {
     /// Gather every pass's retained rows into contiguous staging rows and
     /// project them through every stage, one launch per batch, checking row
     /// status once per launch.
-    pub(super) fn dspark_project_rows(&self, passes: &[RowProjection]) -> Result<(), String> {
+    pub(super) fn dspark_project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let config = device.config;
         let batch_rows = device
@@ -172,7 +172,7 @@ impl Instance {
         Ok(())
     }
 
-    fn project_batch(&self, batch: &transfers::BatchLaunch) -> Result<(), String> {
+    fn project_batch(&mut self, batch: &transfers::BatchLaunch) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let mut positions = Vec::with_capacity(batch.rows as usize);
         let mut slots = Vec::with_capacity(batch.rows as usize);
@@ -185,7 +185,6 @@ impl Instance {
             last[segment.slot as usize] = (segment.position + u64::from(segment.rows) - 1) as u32;
         }
         let (positions, slots, last) = (words(positions), words(slots), words(last));
-        let mut programs = Vec::new();
         for (rank, buffers) in device.stages[0].iter().enumerate() {
             let stream = self.ranks[rank].2;
             let stored = &device.ranks[rank];
@@ -217,6 +216,22 @@ impl Instance {
             self.services
                 .zero_device_buffer(stream, rows(buffers.scratch.shared_row_status, batch.rows))
                 .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
+        }
+        self.replay_catch_up(batch.rows)?;
+        self.drafter_status(batch.rows)
+    }
+
+    pub(super) fn catch_up_programs(&self, count: u32) -> Result<Vec<Vec<Lowered>>, String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let mut programs = Vec::new();
+        for (rank, stored) in device.ranks.iter().enumerate() {
+            let features = device.features.bind(
+                self.buffers[rank]
+                    .state
+                    .named("dspark.features")
+                    .ok_or("DSpark features are absent")?,
+                stored.packed,
+            )?;
             let stages = device
                 .stages
                 .iter()
@@ -238,7 +253,7 @@ impl Instance {
                         inputs: &stored.inputs,
                         rank: rank as u32,
                         kv: self.kv_extent(),
-                        head_rows: batch.rows,
+                        head_rows: count,
                     };
                     Ok((base, ring))
                 })
@@ -247,9 +262,9 @@ impl Instance {
             programs.push(dspark::catch_up_stages(
                 &device.prepared,
                 &stages,
-                batch.rows,
+                count,
                 &CatchUpViews {
-                    raw_features: features.batch_source(batch.rows)?,
+                    raw_features: features.batch_source(count)?,
                     feature_codes: stored.feature_codes,
                     feature_scales: stored.feature_scales,
                     ring,
@@ -258,7 +273,7 @@ impl Instance {
                 },
             )?);
         }
-        self.drafter_launch(programs, batch.rows)
+        Ok(programs)
     }
 
     pub(super) fn dspark_commit_features(&self, plan: &CommitPlan) -> Result<(), String> {

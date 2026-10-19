@@ -1,41 +1,76 @@
-//! Capture every stage and all five Markov positions as one rank graph.
+//! Capture catch-up and full drafts over fixed staging and scratch spans.
 
 use super::Instance;
 use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::graphs::{GraphCache, GraphKey};
 use bundle_runtime::pipeline::{self, PoisonOnUnwind, Unit};
 
+#[derive(Clone, Copy)]
+enum Program {
+    Draft,
+    CatchUp,
+}
+
 impl Instance {
     pub(super) fn replay_drafter(&mut self, items: u32) -> Result<(), String> {
-        // Each exact item count owns a separate cache. Its sole key is an
+        self.replay_dspark_graph(Program::Draft, items)
+    }
+
+    pub(super) fn replay_catch_up(&mut self, rows: u32) -> Result<(), String> {
+        self.replay_dspark_graph(Program::CatchUp, rows)
+    }
+
+    fn replay_dspark_graph(&mut self, program: Program, count: u32) -> Result<(), String> {
+        // Each exact row or item count owns a separate cache. Its sole key is an
         // opaque program unit, so no arithmetic row is padded for capture.
         let key = |rank| GraphKey {
             rank,
             bucket: 1,
             items: 0,
         };
-        let ready = self.draft_graphs.get(&items).is_some_and(|cache| {
+        let cached = match program {
+            Program::Draft => self.draft_graphs.get(&count),
+            Program::CatchUp => self
+                .dspark
+                .as_ref()
+                .ok_or("DSpark is absent")?
+                .catch_up_graphs
+                .get(&count),
+        };
+        let ready = cached.is_some_and(|cache| {
             (0..self.ranks.len()).all(|rank| cache.contains(key(rank as u32)))
         });
         let (programs, waits): (Vec<Vec<_>>, Vec<Vec<_>>) = if ready {
             (Vec::new(), Vec::new())
         } else {
-            self.drafter_programs(items)?
-                .into_iter()
-                .map(|rank| {
-                    rank.into_iter()
-                        .map(|op| (op.launch, op.collective))
-                        .unzip()
-                })
-                .unzip()
+            match program {
+                Program::Draft => self.drafter_programs(count)?,
+                Program::CatchUp => self.catch_up_programs(count)?,
+            }
+            .into_iter()
+            .map(|rank| {
+                rank.into_iter()
+                    .map(|op| (op.launch, op.collective))
+                    .unzip()
+            })
+            .unzip()
         };
         if !ready {
             pipeline::check_collectives(&programs, &waits)?;
         }
         let streams: Vec<_> = self.ranks.iter().map(|rank| rank.2).collect();
-        let cache = self
-            .draft_graphs
-            .entry(items)
+        let caches = match program {
+            Program::Draft => &mut self.draft_graphs,
+            Program::CatchUp => {
+                &mut self
+                    .dspark
+                    .as_mut()
+                    .ok_or("DSpark is absent")?
+                    .catch_up_graphs
+            }
+        };
+        let cache = caches
+            .entry(count)
             .or_insert_with(|| GraphCache::sharing(&self.graphs));
         for (rank, &stream) in streams.iter().enumerate() {
             if cache.contains(key(rank as u32)) {

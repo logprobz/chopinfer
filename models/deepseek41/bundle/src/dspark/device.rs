@@ -3,9 +3,11 @@
 //! completed target invocations. Provisional features and draft KV have
 //! their own storage and never alias committed request state.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bundle_runtime::geometry::Items;
+use bundle_runtime::graphs::GraphCache;
 use bundle_runtime::resources::{Held, allocate_span};
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::allocation::Allocation;
@@ -52,6 +54,8 @@ pub(crate) struct Device {
     pub staging: Option<Staging>,
     pub ranks: Vec<Rank>,
     pub stages: Vec<Vec<RankBuffers>>,
+    /// Exact row counts over the fixed catch-up staging input.
+    pub catch_up_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub diagnostic: Context,
     pub verified: Vec<u64>,
     /// `CHOPINFER_STEP_TRACE=1` at create: each execute logs its phase times.
@@ -184,6 +188,7 @@ impl Device {
             staging: Some(Staging::new(g)?),
             ranks: Vec::new(),
             stages: Vec::new(),
+            catch_up_graphs: BTreeMap::new(),
             diagnostic: Context {
                 instance_id,
                 step_id: 0,

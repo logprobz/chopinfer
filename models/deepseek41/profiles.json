@@ -22,6 +22,41 @@
       },
       "max_sequences": 32,
       "qualified_max_sequences": null,
+      "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout, which kv_cache_dtype auto serves. The BF16 KV layout is not a served profile: it is qual.json's kv-bf16 comparison configuration, not qualified for capacity, preemption under pressure or offload. Its evidence is the release preview's full suite at the release revision (models/deepseek41/README.md#qualification). Prefill runs exact upper-layer dependency intervals at guaranteed 8192-token chunk ends, prompt ends and response ends, bitwise equal to the full schedule; prefix anchors exist only at those ends, so a partial prefix hit recomputes up to 8128 rows. The matching -full-prefill profile keeps the full schedule.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 8192,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "models/deepseek41/README.md#qualification"
+      ],
+      "model_options": {
+        "prefill_chunk_tokens": "8192",
+        "prefill_upper_skip": "true"
+      }
+    },
+    "tp4-ar-full-prefill": {
+      "bundle_id": "deepseek41.v1",
+      "topology": "deepseek41-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
       "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout, which kv_cache_dtype auto serves. The BF16 KV layout is not a served profile: it is qual.json's kv-bf16 comparison configuration, not qualified for capacity, preemption under pressure or offload. Its evidence is the release preview's full suite at the release revision (models/deepseek41/README.md#qualification).",
       "kv_cache_dtype": "auto",
       "prefix_cache": true,
@@ -35,6 +70,41 @@
       ]
     },
     "tp4-dspark": {
+      "bundle_id": "deepseek41.v1",
+      "topology": "deepseek41-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 5,
+        "draft_cost": "per-block",
+        "drafter": "dspark"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Not qualified: DSpark at TP4 on the deepseek-ai checkpoint with native KV. Five proposals are computed per block; scheduler budgets select the emitted prefix. Qualification requires AR and speculative arms, exact greedy equality, the declared speculative-verification bounds and GSM8K at least 193 of 200 in each arm. Prefill runs exact upper-layer dependency intervals at guaranteed 8192-token chunk ends, prompt ends and response ends, bitwise equal to the full schedule; prefix anchors exist only at those ends, so a partial prefix hit recomputes up to 8128 rows. The matching -full-prefill profile keeps the full schedule.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 8192,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "models/deepseek41/README.md#qualification"
+      ],
+      "model_options": {
+        "prefill_chunk_tokens": "8192",
+        "prefill_upper_skip": "true"
+      }
+    },
+    "tp4-dspark-full-prefill": {
       "bundle_id": "deepseek41.v1",
       "topology": "deepseek41-flash-tp4",
       "tensor_parallel": 4,
@@ -100,41 +170,6 @@
         "prefill_upper_skip": "true"
       }
     },
-    "tp4-ar-upper-skip-8192": {
-      "bundle_id": "deepseek41.v1",
-      "topology": "deepseek41-flash-tp4",
-      "tensor_parallel": 4,
-      "devices_required": 4,
-      "devices": [
-        0,
-        1,
-        2,
-        3
-      ],
-      "speculation": {
-        "mode": "fixed",
-        "tokens": 0,
-        "draft_cost": "per-token",
-        "drafter": "none"
-      },
-      "max_sequences": 32,
-      "qualified_max_sequences": null,
-      "qualification": "Not qualified: exact upper-layer prefill dependency intervals with guaranteed 8192-token chunk ends and prompt ends. Prefix capture is restricted to complete state. GPU bitwise state and logits qualification is pending.",
-      "kv_cache_dtype": "auto",
-      "prefix_cache": true,
-      "max_batch_tokens": 8192,
-      "prefill_chunk_tokens": 8192,
-      "queue_depth": null,
-      "kv_memory_fraction": 0.9,
-      "status": "experimental",
-      "evidence": [
-        "models/deepseek41/README.md#qualification"
-      ],
-      "model_options": {
-        "prefill_chunk_tokens": "8192",
-        "prefill_upper_skip": "true"
-      }
-    },
     "tp4-dspark-upper-skip-2048": {
       "bundle_id": "deepseek41.v1",
       "topology": "deepseek41-flash-tp4",
@@ -167,41 +202,6 @@
       ],
       "model_options": {
         "prefill_chunk_tokens": "2048",
-        "prefill_upper_skip": "true"
-      }
-    },
-    "tp4-dspark-upper-skip-8192": {
-      "bundle_id": "deepseek41.v1",
-      "topology": "deepseek41-flash-tp4",
-      "tensor_parallel": 4,
-      "devices_required": 4,
-      "devices": [
-        0,
-        1,
-        2,
-        3
-      ],
-      "speculation": {
-        "mode": "adaptive",
-        "tokens": 5,
-        "draft_cost": "per-block",
-        "drafter": "dspark"
-      },
-      "max_sequences": 32,
-      "qualified_max_sequences": null,
-      "qualification": "Not qualified: exact upper-layer prefill dependency intervals with guaranteed 8192-token chunk ends and prompt ends. Prefix capture is restricted to complete state. GPU bitwise state and logits qualification is pending.",
-      "kv_cache_dtype": "auto",
-      "prefix_cache": true,
-      "max_batch_tokens": 8192,
-      "prefill_chunk_tokens": 8192,
-      "queue_depth": null,
-      "kv_memory_fraction": 0.9,
-      "status": "experimental",
-      "evidence": [
-        "models/deepseek41/README.md#qualification"
-      ],
-      "model_options": {
-        "prefill_chunk_tokens": "8192",
         "prefill_upper_skip": "true"
       }
     }

@@ -198,7 +198,14 @@ checkpoint's `encoding/encoding.py` in chat mode, with the needles near
 
 `profiles.json` holds the experimental `tp4-ar` and `tp4-dspark` profiles. The
 release preview's full suite at the release revision is the
-qualification evidence.
+qualification evidence. Both run exact upper-layer prefill intervals at
+guaranteed 8192-token chunk ends ([prefill-dependencies.md](prefill-dependencies.md)),
+which on 2026-10-19 matched the full schedule bitwise in served tokens,
+logprobs and captured state at 8K, 32K and 128K prompts at TP4. Prefix
+anchors exist only at chunk, prompt and response ends. `tp4-ar-full-prefill`
+and `tp4-dspark-full-prefill` keep the full schedule and anchor anywhere;
+`tp4-ar-upper-skip-2048` and `tp4-dspark-upper-skip-2048` use 2048-token
+chunk ends.
 
 ### DSpark qualification
 

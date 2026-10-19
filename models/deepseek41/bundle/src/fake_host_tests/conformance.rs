@@ -233,10 +233,10 @@ conformance::suite! {
     startup: Served {
         tp4_ar: "tp4-ar",
         tp4_dspark: "tp4-dspark",
+        tp4_ar_full_prefill: "tp4-ar-full-prefill",
+        tp4_dspark_full_prefill: "tp4-dspark-full-prefill",
         tp4_ar_upper_skip_2048: "tp4-ar-upper-skip-2048",
-        tp4_ar_upper_skip_8192: "tp4-ar-upper-skip-8192",
         tp4_dspark_upper_skip_2048: "tp4-dspark-upper-skip-2048",
-        tp4_dspark_upper_skip_8192: "tp4-dspark-upper-skip-8192",
     }
     mod ar_tp1 {
         allocation_release: Model<AR_TP1> => AllocationRelease;
@@ -338,16 +338,21 @@ impl conformance::Startup for Served {
             }),
         }
         };
-        let mut configurations = vec![serving("tp4-ar", 0), serving("tp4-dspark", 5)];
+        let mut configurations = Vec::new();
         for (mode, drafts) in [("ar", 0), ("dspark", 5)] {
-            for chunk in [2048, 8192] {
-                let mut entry = serving(&format!("tp4-{mode}-upper-skip-{chunk}"), drafts);
+            // The default profiles skip at guaranteed 8192-token chunk ends.
+            for (profile, chunk) in [
+                (format!("tp4-{mode}"), 8192),
+                (format!("tp4-{mode}-upper-skip-2048"), 2048),
+            ] {
+                let mut entry = serving(&profile, drafts);
                 entry.model_options = BTreeMap::from([
                     ("prefill_chunk_tokens".into(), chunk.to_string()),
                     ("prefill_upper_skip".into(), "true".into()),
                 ]);
                 configurations.push(entry);
             }
+            configurations.push(serving(&format!("tp4-{mode}-full-prefill"), drafts));
         }
         configurations
     }

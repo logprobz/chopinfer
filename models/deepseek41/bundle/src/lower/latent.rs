@@ -87,21 +87,21 @@ impl Lowering<'_> {
     }
 
     /// The step rows' RoPE rows of `table`.
-    fn rope(&self, phase: Phase, table: RopeTable) -> DeviceBufferSpanV1 {
+    fn rope(&self, phase: Phase, table: RopeTable) -> Result<DeviceBufferSpanV1, String> {
         let scratch = &self.buffers.scratch;
-        rows(
+        self.carried(
+            phase,
             match table {
                 RopeTable::Window => scratch.rope_window,
                 RopeTable::Compressed => scratch.rope_compressed_rows,
             },
-            phase.rows(),
         )
     }
 
     /// The step rows' RoPE rows of the table layer `layer` rotates with.
     fn layer_rope(&self, phase: Phase, layer: u32) -> Result<DeviceBufferSpanV1, String> {
         let table = latent_glue::rope_table(self.shape.geometry, layer)?;
-        Ok(self.rope(phase, table))
+        self.rope(phase, table)
     }
 
     /// Each table's rows at the step's positions.
@@ -117,7 +117,7 @@ impl Lowering<'_> {
                     phase.rows(),
                     self.inputs.positions,
                     self.inputs.live_tokens,
-                    self.rope(phase, table),
+                    self.rope(phase, table)?,
                 )
                 .map_err(|refusal| format!("RoPE rows of the {table:?} table: {refusal}"))?,
             );
@@ -145,7 +145,7 @@ impl Lowering<'_> {
                 .view(&layer_view(layer, "attn.q_norm.weight"))?,
             y: rows(scratch.query_normed, phase.rows()),
             live_rows: self.inputs.live_tokens,
-            status: Some(rows(scratch.row_status, phase.rows())),
+            status: Some(self.carried(phase, scratch.row_status)?),
         };
         glue.query_norm(phase.rows(), &views)
             .map(Some)
@@ -167,7 +167,7 @@ impl Lowering<'_> {
             native_q: rows(scratch.native_q, phase.rows()),
             cos_sin: self.layer_rope(phase, layer)?,
             live_rows: self.inputs.live_tokens,
-            status: rows(scratch.row_status, phase.rows()),
+            status: self.carried(phase, scratch.row_status)?,
         };
         glue.query_rope(phase.rows(), &views)
             .map(Some)
@@ -222,7 +222,7 @@ impl Lowering<'_> {
         let (ring, row_slots, last_positions, first) = match staged {
             false => (
                 self.ring(layer)?,
-                rows_of(scratch.window_rows),
+                self.carried(phase, scratch.window_rows)?,
                 scratch.window_last,
                 None,
             ),
@@ -248,7 +248,7 @@ impl Lowering<'_> {
             ring,
             live_rows: self.inputs.live_tokens,
             workspace: self.buffers.workspace,
-            status: rows_of(scratch.row_status),
+            status: self.carried(phase, scratch.row_status)?,
         };
         glue.window_write(phase, &views, first)
             .map(Some)
@@ -271,9 +271,14 @@ impl Lowering<'_> {
                 let Some(write) = self.ring_write(phase, layer, true)? else {
                     return Ok(None);
                 };
-                let mut launches = glue
-                    .stage(self.ring(layer)?, self.staged(), &self.stage_views())
-                    .map_err(|refusal| format!("window staging of layer {layer}: {refusal}"))?;
+                // A part starting at zero gathers the original ring prefix.
+                // Later parts retain that staged prefix and the earlier rows.
+                let mut launches = if self.prefill_row_origin.is_some_and(|first| first > 0) {
+                    Vec::new()
+                } else {
+                    glue.stage(self.ring(layer)?, self.staged(), &self.stage_views())
+                        .map_err(|refusal| format!("window staging of layer {layer}: {refusal}"))?
+                };
                 launches.extend(write);
                 Ok(Some(launches))
             }
@@ -307,7 +312,7 @@ impl Lowering<'_> {
                 .staged_keys(
                     phase.rows(),
                     &self.stage_views(),
-                    rows(self.buffers.scratch.window_keys, phase.rows()),
+                    self.carried(phase, self.buffers.scratch.window_keys)?,
                 )
                 .map(Some)
                 .map_err(|refusal| format!("staged window key lists: {refusal}"));
@@ -366,12 +371,15 @@ impl Lowering<'_> {
                     tables: self.inputs.block_tables,
                     sequences: self.kv.sequences,
                     max_pages: self.kv.max_pages,
-                    selected: index_selected(
-                        self.buffers.scratch.index_selected,
-                        index,
-                        phase.rows(),
-                        top_k,
-                    ),
+                    selected: self.carried(
+                        phase,
+                        index_selected(
+                            self.buffers.scratch.index_selected,
+                            index,
+                            crate::buffers::scratch_rows(),
+                            top_k,
+                        ),
+                    )?,
                     top_k,
                 })
             }
@@ -388,7 +396,7 @@ impl Lowering<'_> {
             ring,
             item_slots,
             items: self.kv.sequences,
-            window_keys: rows(scratch.window_keys, phase.rows()),
+            window_keys: self.carried(phase, scratch.window_keys)?,
             compressed,
             sinks: self.buffers.view(&layer_view(layer, "attn.attn_sink"))?,
             cos_sin: self.layer_rope(phase, layer)?,

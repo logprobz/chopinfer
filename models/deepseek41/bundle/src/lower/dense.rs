@@ -38,7 +38,7 @@ impl Lowering<'_> {
                 codes: rows_of(codes),
                 scales: rows_of(scales),
                 live_rows: self.inputs.live_tokens,
-                status: rows_of(scratch.row_status),
+                status: self.carried(phase, scratch.row_status)?,
             };
             let width = dense.query.activation_row_stride;
             launches.extend(
@@ -111,9 +111,13 @@ impl Lowering<'_> {
             activation_scales,
             weights: weight("weight")?,
             weight_scales: weight("scale")?,
-            output: rows_of(output),
+            output: if id == "attention.o-b" {
+                self.carried(phase, output)?
+            } else {
+                rows_of(output)
+            },
             live_rows: self.inputs.live_tokens,
-            status: rows_of(scratch.row_status),
+            status: self.carried(phase, scratch.row_status)?,
         };
         launches.extend(
             ops.project(id, phase, &views, self.buffers.workspace)

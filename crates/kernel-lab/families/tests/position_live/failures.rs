@@ -244,6 +244,37 @@ fn cpu_failure_cases_cover_the_contract() {
     );
 }
 
+fn key_codes(bf16: bool) -> Vec<u8> {
+    if bf16 {
+        vec![0x3f80_u16; WIDTH as usize * 128]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    } else {
+        vec![0x22; WIDTH as usize * 64]
+    }
+}
+
+#[test]
+fn cpu_failure_key_fixtures_fit_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024)
+        .spawn(|| {
+            for bf16 in [false, true] {
+                let codes = key_codes(bf16);
+                assert_eq!(codes.len(), WIDTH as usize * if bf16 { 256 } else { 64 });
+                if bf16 {
+                    assert!(codes.chunks_exact(2).all(|v| v == 0x3f80_u16.to_le_bytes()));
+                } else {
+                    assert!(codes.iter().all(|&v| v == 0x22));
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 fn run(session: &Session, module: &Module, case: Case, bf16: bool, compact: bool) -> LabResult<()> {
     let mut a = Arena {
         session,
@@ -262,16 +293,7 @@ fn run(session: &Session, module: &Module, case: Case, bf16: bool, compact: bool
             .flat_map(f32::to_le_bytes)
             .collect::<Vec<_>>(),
     )?;
-    let codes = if bf16 {
-        a.input(
-            &[0x3f80_u16; WIDTH as usize * 128]
-                .into_iter()
-                .flat_map(u16::to_le_bytes)
-                .collect::<Vec<_>>(),
-        )?
-    } else {
-        a.input(&vec![0x22; WIDTH as usize * 64])?
-    };
+    let codes = a.input(&key_codes(bf16))?;
     let scales = if bf16 {
         View::EMPTY
     } else {

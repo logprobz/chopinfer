@@ -340,7 +340,7 @@ fn cpu_compact_matrix_uses_distinct_tags() {
     for (layer, rows, offset, case) in matrix_shapes().into_iter().filter(|s| s.0 == 24) {
         let ratio = FLASH.compress_ratio(layer);
         let page = 64 / ratio;
-        let width = ((offset + rows + 63) / 64 * 64 / ratio).max(page);
+        let width = ((offset + rows).div_ceil(64) * 64 / ratio).max(page);
         let mut dense = cpu_buffers(rows, ratio, width);
         dense.scores = v(9, u64::from(rows) * 16384 * 4);
         let visible = (0..rows)
@@ -393,7 +393,7 @@ fn gpu_decode_prefill_and_exponent_edges() {
         let mut modules=BTreeMap::new();let probe=probe(session)?;
         for (shape,(layer,rows,offset,case)) in shapes.into_iter().enumerate().filter(|(i,_)|i%2==shard) {
             let ratio=FLASH.compress_ratio(layer);let page=64/ratio;
-            let width=((offset+rows+63)/64*64/ratio).max(page);
+            let width=((offset+rows).div_ceil(64)*64/ratio).max(page);
             let compact=layer==24;let extent=if compact{16384}else{width};
             let mut arena=Arena {session,buffers:vec![]};
             let mut seed=0xa76204_u32;let mut rng=||{seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;seed};
@@ -410,7 +410,7 @@ fn gpu_decode_prefill_and_exponent_edges() {
             let mut scales:Vec<_>=(0..width as usize*4).map(|i|125+(i%4) as u8).collect();
             if case==1 {
                 q.fill(0.);w.fill(0.);codes.fill(0x22);scales.fill(127);
-                for row in 0..rows as usize {q[row*4096]=2_f32.powi(25);q[row*4096+33]=1.;q[row*4096+64]=-2_f32.powi(25);w[row*32]=1.;}
+                for row in 0..rows as usize {q[row*4096]=2_f32.powi(25);q[row*4096+33]=1.;q[row*4096+64] = -2_f32.powi(25);w[row*32]=1.;}
             }
             if case==3 {for (i,s) in scales.iter_mut().enumerate(){*s=[0,1,253,255][i%4];}}
             if case==5 {scales.fill(247);}

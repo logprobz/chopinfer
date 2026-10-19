@@ -191,7 +191,9 @@ impl crate::Kernels {
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
-            && !cubin.starts_with("prefill_moe_")
+            && (!cubin.starts_with("prefill_moe_")
+                || (cubin.ends_with("_compute_sm120")
+                    && moe::streamed_qualified(shape.geometry, shape.ranks())))
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
     }
@@ -201,9 +203,17 @@ impl crate::Kernels {
     pub(crate) fn moe_buckets(
         shape: &crate::shape::Shape,
     ) -> &'static [(kernel_core::precision::ExecutionPhase, u32)] {
-        use kernel_core::precision::ExecutionPhase::{Decode, Verify};
+        use kernel_core::precision::ExecutionPhase::{Decode, Prefill, Verify};
         if moe::streamed_qualified(shape.geometry, shape.ranks()) {
-            &[(Decode, 1), (Decode, 8), (Verify, 8), (Verify, 64)]
+            &[
+                (Decode, 1),
+                (Decode, 8),
+                (Verify, 8),
+                (Verify, 64),
+                (Prefill, 512),
+                (Prefill, 2048),
+                (Prefill, 4096),
+            ]
         } else {
             &[(Decode, 1)]
         }

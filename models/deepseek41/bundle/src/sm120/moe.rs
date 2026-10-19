@@ -16,8 +16,56 @@ pub const STREAMED_FAMILY: &str = "routed_moe_streamed";
 
 pub const PREFILL_FAMILY: &str = "routed_moe_prefill";
 
-/// Experimental exact prefill entries; serving keeps the measured decode
-/// policy and the old prefill entries until this family is qualified.
+/// TP4, 250 W, 2026-10-19, balanced/seeded/concentrated routing: all
+/// eighteen complete prefill comparisons are bitwise. Gate/up wins at
+/// 512/2048/4096 rows in both banks. Backbone full time is 7.11 -> 4.43 ms
+/// at 512 balanced rows and 18.12 -> 16.74 ms at 4096. DSpark down at
+/// 2048 is tied (0.628/0.643 -> 0.627/0.641 ms), so retain its old entry.
+/// Exact buckets avoid extrapolating the measurements to 8192 or tails.
+pub fn prefill_selected(
+    g: &Geometry,
+    ranks: u32,
+    experts: u32,
+    kind: GatedMlpProjection,
+    rows: u32,
+) -> bool {
+    streamed_qualified(g, ranks)
+        && [512, 2048, 4096].contains(&rows)
+        && !(experts == 128 && kind == GatedMlpProjection::Down && rows == 2048)
+}
+
+pub fn serving_prefill_projections(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<quantized::Projection>, String> {
+    if !streamed_qualified(g, ranks) {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in prefill_projections(g)? {
+        let projection = entry.query.projection;
+        for rows in [512, 2048, 4096] {
+            if prefill_selected(
+                g,
+                ranks,
+                projection.gemm.grouped.unwrap().experts,
+                projection.projection,
+                rows,
+            ) {
+                entries.push(
+                    entry
+                        .clone()
+                        .with_row_bucket(rows)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+        }
+    }
+    Ok(entries)
+}
+
+/// Exact prefill entries. Serving selects only the measured row buckets;
+/// the lab can request the complete compiled capacity.
 pub fn prefill_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, String> {
     projections(g, 4)?
         .into_iter()
@@ -369,6 +417,9 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
         backend = backend.with_quantized_chained_projection(entry);
     }
     for entry in serving_compact_projections(g, ranks)? {
+        backend = backend.with_quantized_chained_projection(entry);
+    }
+    for entry in serving_prefill_projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
     if streamed_qualified(g, ranks) {

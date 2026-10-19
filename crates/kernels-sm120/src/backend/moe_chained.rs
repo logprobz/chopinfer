@@ -65,6 +65,7 @@ pub(super) fn projection(
         entries
             .iter()
             .filter(|e| math(e.query) == math(*op))
+            .filter(|e| e.min_rows <= need.capacity)
             .filter(|e| e.selection_phase.is_none_or(|phase| phase == usage.phase))
             .filter(|e| !(e.active || e.streamed) || preferred_tile == 16)
             .map(|e| {
@@ -91,6 +92,9 @@ pub(super) fn projection(
     let entry = chosen.entry;
     quantized::Projection::new(entry.query, entry.row_tile, entry.tokens_capacity)?;
     entry.clone().with_max_rows(entry.max_rows)?;
+    if entry.min_rows == 0 {
+        return Err(Refusal("chained selection requires a nonzero minimum").into());
+    }
     if entry.active {
         entry.clone().with_active_experts()?;
     }

@@ -12,6 +12,40 @@ use kernels_sm120::backend::Sm120;
 use model_deepseek41_contract::{admission::SUPPORTED_RANKS, geometry::GEOMETRIES, moe, serving};
 
 #[test]
+fn prefill_winners_are_selected_only_at_measured_buckets() {
+    for g in GEOMETRIES {
+        for &ranks in SUPPORTED_RANKS {
+            let backend = registration::register(Sm120::new(), g, ranks).unwrap();
+            for set in moe::expert_sets(g) {
+                for rows in [1, 128, 511, 512, 513, 1024, 2048, 2049, 4096, 4097, 8192] {
+                    for projection in [GatedMlpProjection::GateUp, GatedMlpProjection::Down] {
+                        let query = moe::projection(g, ranks, set, projection, rows).unwrap();
+                        let usage = OperationUse {
+                            phase: ExecutionPhase::Prefill,
+                            capacity: rows,
+                            graph: false,
+                        };
+                        let op = backend
+                            .chained_mlp_projection(&query, usage, Need::rows(rows))
+                            .unwrap();
+                        let selected = op
+                            .info()
+                            .symbols
+                            .iter()
+                            .any(|(s, _)| s.ends_with("_prefill_pack_v1"));
+                        assert_eq!(
+                            selected,
+                            registration::prefill_selected(g, ranks, set.count, projection, rows),
+                            "{ranks} {set:?} {projection:?} rows={rows}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn kernel_moe_prepares_all_geometries_rank_counts_and_phases() {
     if std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS").is_some() {
         assert!(

@@ -31,6 +31,8 @@ pub struct Projection {
     pub prefill: bool,
     /// Model-owned selection limit, independent of the compiled capacity.
     pub max_rows: u32,
+    /// Smallest prepared row count this selection has qualified.
+    pub min_rows: u32,
     /// Optional model-owned phase restriction; entry code and ABI stay unchanged.
     pub selection_phase: Option<ExecutionPhase>,
 }
@@ -93,6 +95,7 @@ impl Projection {
             streamed: false,
             prefill: false,
             max_rows: tokens_capacity,
+            min_rows: 1,
             selection_phase: None,
         };
         result.padded_rows(tokens_capacity)?;
@@ -104,10 +107,17 @@ impl Projection {
     }
 
     pub fn with_max_rows(mut self, rows: u32) -> Result<Self, Refusal> {
-        if rows == 0 || rows > self.tokens_capacity {
+        if rows < self.min_rows || rows > self.tokens_capacity {
             return Err(Refusal("chained selection limit exceeds compiled capacity"));
         }
         self.max_rows = rows;
+        Ok(self)
+    }
+
+    /// Qualify exactly one prepared bucket without changing the entry ABI.
+    pub fn with_row_bucket(mut self, rows: u32) -> Result<Self, Refusal> {
+        self = self.with_max_rows(rows)?;
+        self.min_rows = rows;
         Ok(self)
     }
 

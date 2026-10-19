@@ -257,7 +257,7 @@ impl MoeOps {
                     let usage = OperationUse {
                         phase,
                         capacity,
-                        graph: true,
+                        graph: phase != ExecutionPhase::Prefill,
                     };
                     Ok((usage, kind(usage)?))
                 })
@@ -270,7 +270,14 @@ impl MoeOps {
         let index = kind_of(phase);
         self.buckets
             .iter()
-            .find(|(usage, _)| usage.phase == USES[index].phase && phase.rows() <= usage.capacity)
+            .find(|(usage, _)| {
+                usage.phase == USES[index].phase
+                    && if phase.prefill() {
+                        phase.rows() == usage.capacity
+                    } else {
+                        phase.rows() <= usage.capacity
+                    }
+            })
             .map_or(&self.kinds[index], |(_, kind)| kind)
     }
 
@@ -463,6 +470,12 @@ mod tests {
                     },
                     Phase::Prefill { rows: 1 },
                     Phase::Prefill { rows: 128 },
+                    Phase::Prefill { rows: 511 },
+                    Phase::Prefill { rows: 512 },
+                    Phase::Prefill { rows: 513 },
+                    Phase::Prefill { rows: 2048 },
+                    Phase::Prefill { rows: 4096 },
+                    Phase::Prefill { rows: 8192 },
                 ] {
                     let kind = ops.kind(phase);
                     let compact = shape.ranks() == 4
@@ -473,7 +486,20 @@ mod tests {
                         && shape.ranks() == 4
                         && phase.rows() <= 64
                         && !matches!(phase, Phase::Prefill { .. });
-                    for op in [&kind.gate_up, &kind.down] {
+                    for (op, projection) in [
+                        (&kind.gate_up, GatedMlpProjection::GateUp),
+                        (&kind.down, GatedMlpProjection::Down),
+                    ] {
+                        assert_eq!(
+                            op.info().symbols[0].0.ends_with("_prefill_pack_v1"),
+                            phase.prefill()
+                                && shape.ranks() == 4
+                                && [512, 2048, 4096].contains(&phase.rows())
+                                && !(set.count == 128
+                                    && projection == GatedMlpProjection::Down
+                                    && phase.rows() == 2048),
+                            "{set:?} {phase:?} {ranks:?}"
+                        );
                         assert_eq!(
                             op.info().symbols[0].0.ends_with("_stream_pack_v1"),
                             streamed,

@@ -198,6 +198,26 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
     }
     let embedded = bundle_deepseek41::sm120::latent_cubins().collect::<Vec<_>>();
     let scheduled = bundle_deepseek41::sm120::latent_scheduled::cubins(GEOMETRIES).unwrap();
+    let flash = &model_deepseek41_contract::geometry::FLASH;
+    let prefill_entries = latent::entries(flash, 4)
+        .unwrap()
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry.query,
+                kernel_core::latent_attention::LatentAttentionQuery::Attention {
+                    phase: kernel_core::contract::AttentionPhase::Prefill,
+                    ..
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    let prefill = kernels_sm120::latent::sources_prefill::reuse_cubin_spec(
+        latent::profile(flash),
+        &prefill_entries,
+        2,
+    )
+    .unwrap();
     assert_eq!(
         embedded.len(),
         GEOMETRIES
@@ -205,8 +225,9 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
             .map(|g| 2 + usize::from(g.shape.compress_ratios.contains(&2)))
             .sum::<usize>()
             + scheduled.len()
+            + 1
     );
-    for spec in scheduled {
+    for spec in scheduled.into_iter().chain([prefill]) {
         let (_, bytes, symbols) = embedded
             .iter()
             .find(|(name, _, _)| *name == spec.name)

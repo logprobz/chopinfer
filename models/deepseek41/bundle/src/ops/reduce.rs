@@ -60,28 +60,95 @@ fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
 #[cfg(test)]
 thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-pub(crate) fn dma_requested() -> bool {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PrefillDma {
+    Off,
+    FullChunk,
+    Explicit,
+}
+
+impl PrefillDma {
+    fn read(setting: Option<&str>) -> Self {
+        match setting {
+            Some("1") => Self::Explicit,
+            None => Self::FullChunk,
+            _ => Self::Off,
+        }
+    }
+
+    pub(crate) fn requested(self, bf16: bool) -> bool {
+        self == Self::Explicit || (self == Self::FullChunk && bf16)
+    }
+
+    /// Automatic transport applies to the full schedule. Negotiated skip
+    /// execution takes priority and has not been qualified with DMA.
+    pub(crate) fn owns_buffers(self, guaranteed_chunk: u32) -> bool {
+        self == Self::Explicit || (self == Self::FullChunk && guaranteed_chunk == 0)
+    }
+
+    pub(crate) fn serves(self, rows: u32) -> bool {
+        self == Self::Explicit || (self == Self::FullChunk && rows == PREFILL_TOKENS)
+    }
+}
+
+pub(crate) fn dma_requested() -> PrefillDma {
     #[cfg(test)]
     return DMA_IN_TESTS.get();
     #[cfg(not(test))]
     {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA").as_deref() == Ok("1")
+        match std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA") {
+            Ok(value) => PrefillDma::read(Some(&value)),
+            Err(std::env::VarError::NotPresent) => PrefillDma::read(None),
+            Err(std::env::VarError::NotUnicode(_)) => PrefillDma::Off,
+        }
     }
 }
 
 #[cfg(test)]
-thread_local! { static DMA_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static DMA_IN_TESTS: std::cell::Cell<PrefillDma> = const { std::cell::Cell::new(PrefillDma::Off) }; }
 
 #[cfg(test)]
 pub(crate) fn with_dma<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
+    with_dma_setting(Some(if enabled { "1" } else { "0" }), run)
+}
+
+#[cfg(test)]
+pub(crate) fn with_dma_setting<T>(setting: Option<&str>, run: impl FnOnce() -> T) -> T {
+    struct Reset(PrefillDma);
     impl Drop for Reset {
         fn drop(&mut self) {
             DMA_IN_TESTS.set(self.0);
         }
     }
-    let _reset = Reset(DMA_IN_TESTS.replace(enabled));
+    let _reset = Reset(DMA_IN_TESTS.replace(PrefillDma::read(setting)));
     run()
+}
+
+#[cfg(test)]
+#[test]
+fn dma_defaults_to_full_chunks_and_preserves_explicit_controls() {
+    let auto = PrefillDma::read(None);
+    assert_eq!(auto, PrefillDma::FullChunk);
+    assert!(auto.requested(true));
+    assert!(!auto.requested(false));
+    assert!(auto.owns_buffers(0));
+    for chunk in [2048, 8192] {
+        assert!(!auto.owns_buffers(chunk));
+    }
+    for rows in [1, 511, 512, 4095, 4096, 8191, 8192] {
+        assert_eq!(auto.serves(rows), rows == 8192);
+    }
+    let explicit = PrefillDma::read(Some("1"));
+    assert!(explicit.requested(false));
+    assert!(explicit.owns_buffers(8192));
+    assert!(explicit.serves(8191));
+    for value in ["0", "", "invalid"] {
+        let off = PrefillDma::read(Some(value));
+        assert_eq!(off, PrefillDma::Off);
+        assert!(!off.requested(true));
+        assert!(!off.owns_buffers(0));
+        assert!(!off.serves(8192));
+    }
 }
 
 #[cfg(test)]

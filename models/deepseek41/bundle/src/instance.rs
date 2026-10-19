@@ -257,7 +257,7 @@ impl Instance {
             views.push(acquire::spans(placed));
         }
         acquire::grant_peers(services, &ranks, held)?;
-        if self.ops.prefill_dma && self.dspark.is_none() {
+        if self.ops.prefill_dma.owns_buffers(self.config.prefill.chunk) && self.dspark.is_none() {
             self.dma =
                 execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
         }
@@ -481,7 +481,7 @@ impl Instance {
                             .is_some_and(|ops| ops.prefill_prepared())
                 })
                 .filter(|cubin| {
-                    cubin.name != "comm_dma_sum_deepseek41_sm120" || self.ops.prefill_dma
+                    cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
                 })
                 .filter(|cubin| {
                     self.dspark.is_some()

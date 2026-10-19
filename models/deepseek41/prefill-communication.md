@@ -130,15 +130,24 @@ slowed during concurrent communication. The exact row routes have since
 passed bitwise GPU checks and now select the measured existing tiled entries.
 Both overlap modes remain explicit experiments.
 
-## Ordered DMA experiment
+## Ordered DMA transport
+
+The automatic transport uses sequential DMA for exactly 8192 rows in a
+single text-request native Flash TP4 autoregressive prefill. It keeps the
+full-chunk attention route. Other row counts retain BF16 communication.
+Negotiated upper-layer skip profiles retain their own executor and do not
+allocate unused DMA resources. `CHOPINFER_DEEPSEEK41_PREFILL_DMA=0` disables
+DMA; `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` also disables automatic DMA
+so the original F32 transport remains selectable. Overlap remains off by
+default, and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` retains sequential work.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
 text-request Flash TP4 autoregressive prefills. It applies to sequential
 execution and the two-part schedule, with at least 512 rows per reduction.
 Shorter parts retain their previous transport. Attention-only overlap,
 media, packed requests, decode, verify and DSpark keep their existing path.
-DMA is off by default while integration and host-planning changes are
-requalified. The original transport passed served and raw-state comparisons.
+This explicit setting retains the wider experimental row coverage. The
+original and integrated transports passed served and raw-state comparisons.
 
 Each rank owns a contiguous interval of complete rows. Three ordered rank
 permutations copy F32 partials into local slots indexed by source rank.
@@ -157,10 +166,10 @@ event records/waits; removing waits must expose a compute/DMA alias.
 
 The host's explicit peer-copy service validates context ownership, directed
 peer access and pool grants before using the driver peer-copy operation.
-Private completion events retain both allocations without synchronizing
-later stream work. Releasing resources or revoking access drains only
-affected copies. The bounded queue refuses overflow before submitting
-another copy; it does not block waiting for an unsubmitted dependency.
+Private completion events retain both allocations and join both allocation
+owners. Resource release and access revocation drain outstanding copies.
+The bounded queue retires completed copies and fences its oldest transfer
+under backpressure, retaining leases until completion.
 Partial submission failures poison the model instance.
 
 On 2026-10-19 at 250 W, the isolated four-rank transport passed every output
@@ -187,8 +196,7 @@ bases. They do not need const-input classification because even read-only
 aliasing is forbidden across these prefill branches. The decode shared-expert
 audit retains its const-input checks. A release CPU fixture reduced part
 construction and DMA auditing from 405.9 to 37.6 ms. This changes no launch,
-event, copy, arithmetic or mutation order; served wall-time confirmation is
-still required.
+event, copy, arithmetic or mutation order.
 
 ### Private allocation ownership
 
@@ -216,5 +224,39 @@ memory accounting. The model host journal records actual allocation owners
 and inserts the qualified host's implicit copy waits; it checks all peer
 regions, creation and destruction fences, failed drain retention and the
 existing scratch audit. The ownership regression fails with compute-owned
-buffers. GPU bitwise equality and wall-time gains remain to be qualified on
-the integrated runtime. DMA and overlap remain default off.
+buffers.
+
+### Integrated qualification and routing
+
+On 2026-10-19, the integrated runtime at 250 W passed every full-vocabulary
+F32 row, snapshot, KV page and restored continuation at 8192, 24576, 32767
+and 32768 tokens. Baseline repeat, sequential DMA and DMA with two parts
+matched the sealed BF16 baseline. All resources were released, and no Xids
+were recorded. Fresh-server ABBA profiles also matched served token and
+logprob bits. GPU exclusive attribution includes peer copies.
+
+For sequential DMA, GPU envelopes at offsets 0 and 24576 fell from
+2014.0/2142.1 ms to 1877.1/1980.4 ms, gains of 6.8%/7.6%. Exclusive GPU time
+fell from 2014.0/2142.1 ms to 1858.2/1960.7 ms. Communication unions fell
+from 525.7/553.8 ms to 343.0/343.1 ms. The measured full-chunk route is the
+automatic choice; its inbox adds 160 MiB per GPU relative to BF16 transport.
+
+Two-part DMA hid about 404 ms of communication but increased its paired GPU
+envelopes from 2024.2/2131.6 ms to 2302.7/2423.0 ms. The 4096-row halves
+lose the exact-8192 paired attention route. In the first candidate repeat,
+attention exclusive time rose from 232.2 to 1101.2 ms at offset zero. This
+loss exceeds the hidden communication, so two-part overlap remains opt-in.
+Fast attention for 4096 rows needs separate qualification.
+
+The audit overhead fix is visible in the new trace: the first micro plan
+interval is 73.5-77.0 ms rather than the old 392.9 ms. Micro wall minus GPU
+is 156.3 ms versus its current baseline's 153.8 ms at offset zero, and
+118.6 versus 116.3 ms at the late offset. Its current loss comes from GPU
+work rather than the old audit delay. These are different integration heads,
+so the plan-interval difference is not a paired wall-speed claim.
+
+With concurrent builds, sequential DMA upload time varied from 249.9 to
+832.1 ms across the first-chunk repeats. Wall medians were 2485.7/2334.0 ms
+for DMA versus 2125.0/2207.8 ms for BF16. CUDA traces place the long gaps
+inside host upload work between driver calls, with short transfer calls.
+The GPU-time route decision does not establish a quiet-host TTFT gain.

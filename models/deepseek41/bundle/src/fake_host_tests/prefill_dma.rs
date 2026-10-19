@@ -3,6 +3,8 @@ use crate::instance::execute::overlap::with_mode;
 use crate::ops::with_dma;
 use std::collections::BTreeSet;
 
+mod defaults;
+
 const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
 type Span = (u64, u64, u64);
 

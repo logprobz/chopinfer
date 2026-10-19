@@ -294,3 +294,28 @@ stream ordering. A model adapter admits only the six qualified producer
 symbols with that ordering and resolves the whole segment before submission;
 PDL-only lists and graph dispatch retain their original helper. No cache
 region is shared across a fork or used by another stream.
+
+Upper-layer row skipping retains cached attention only in the full-width
+prefix before the final compressed source. Its retained key and output
+intervals keep native attention, original row origins, selected planes and
+window planes. The decoded route rejects any lowering with a row origin,
+even if its row count could otherwise qualify.
+
+Output-projection overlap and standalone DMA preserve full-width attention
+on the main stream, so they retain the qualified cache route. Their side
+streams use separate reduction inputs, outputs and inboxes. Two-part
+sublayer overlap rebuilds attention at each part's smaller row count and
+uses native attention; it uploads no unused rebased cache table. The
+shared-expert fork's allowed inputs and private workspace remain unchanged.
+No cache region is used by a peer transfer or a side-stream launch. BF16
+gather admission, reduction order, events and original merges are preserved.
+
+Matched fake-host comparisons retain the same allocation identities with
+and without the cache. They check every unmodified launch, merge argument,
+event and peer transfer, and require native attention arguments to match
+exactly for every smaller part. Real serving composition still requires
+GPU qualification.
+
+With upper-layer skipping, only the twenty full-width prefix layers benefit
+from the cache. The full forty-layer timing projection above does not describe
+that route; its total saving needs a serving measurement.

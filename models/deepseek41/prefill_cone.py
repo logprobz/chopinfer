@@ -123,13 +123,31 @@ def cold(tokens, chunk, dspark):
     return cone(tokens, chunks(tokens, captures, chunk), captures, dspark)
 
 
+def all_choices(tokens, dspark=True):
+    """Envelope over all granule-aligned capture choices, not a forecast.
+
+    Each possible boundary roots the copied target rings. Union commutes
+    with the backward closure. Listing them together does not assert that
+    a single default request captures at every granule. DSpark writer
+    choices cannot enlarge this envelope: it already includes every input
+    row at every upper layer.
+    """
+    ends = list(range(64, tokens, 64)) + [tokens]
+    result = cone(tokens, ends, ends, dspark)
+    result["contract"] = "all-boundary-choices-envelope"
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chunk", type=int, choices=[2048, 8192], default=2048)
     parser.add_argument("--tokens", type=int, nargs="+", default=[8192, 32768, 131072])
+    parser.add_argument("--contract", choices=["fixed", "all-choices"], default="fixed")
     args = parser.parse_args()
-    print(json.dumps([cold(n, args.chunk, dspark) for n in args.tokens
-                      for dspark in [False, True]], indent=2))
+    plans = [all_choices(n) for n in args.tokens] if args.contract == "all-choices" else [
+        cold(n, args.chunk, dspark) for n in args.tokens for dspark in [False, True]
+    ]
+    print(json.dumps(plans, indent=2))
 
 
 if __name__ == "__main__":

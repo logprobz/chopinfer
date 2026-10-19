@@ -71,6 +71,30 @@ class Cone(unittest.TestCase):
         with self.assertRaises(ValueError):
             pc.history_writers([256, 512], [400])
 
+    def test_all_choices_match_union_of_individual_boundary_cones(self):
+        n = 1024
+        individual = []
+        for boundary in range(64, n, 64):
+            captures = [boundary, n]
+            individual.append(pc.cone(n, pc.chunks(n, captures, 2048), captures, True))
+        envelope = pc.all_choices(n)
+        for index, row in enumerate(envelope["layers"]):
+            for role in ["inputs", "outputs", "window_kv", "features"]:
+                self.assertEqual(row[role], pc.union(*(p["layers"][index][role] for p in individual)))
+
+    def test_all_choices_leave_only_final_layer_output_rows_skippable(self):
+        for n in [8192, 32768, 131072]:
+            plan = pc.all_choices(n)
+            for row in plan["layers"]:
+                self.assertEqual(row["inputs"], [(0, n)])
+                self.assertEqual(row["window_kv"], [(0, n)])
+                expected = [(n - 1, n)] if row["layer"] == 39 else [(0, n)]
+                self.assertEqual(row["outputs"], expected)
+            self.assertEqual(plan["upper_output_rows"], 19 * n + 1)
+            self.assertAlmostEqual(plan["upper_output_skip_fraction"], (n - 1) / (20 * n))
+            self.assertAlmostEqual(plan["equal_layer_row_saving"], (n - 1) / (40 * n))
+            self.assertLess(plan["equal_layer_row_saving"], 0.20)
+
 
 if __name__ == "__main__":
     unittest.main()

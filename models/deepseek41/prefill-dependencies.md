@@ -1,10 +1,16 @@
-Flash's exact upper-layer dependency cone is a union of intervals that
-depends on capture points and the actual chunk history. The earlier fixed
-2560-row cutoff misses DSpark snapshot bytes. The interval calculation
-below retains them and, for a cold 32K prompt with prefix caching and
-DSpark, skips about 89.4% of complete upper-layer output rows. Its estimated
-prefill saving is about 44.7% under an equal-cost layer-row model. This is
-a CPU dataflow estimate, not measured TTFT or GPU correctness evidence.
+An upper-layer prefill schedule conservative over every permitted future
+capture and chunk-end choice saves only about 5% of upper-layer output
+rows, or about 2.5% under an equal-cost layer-row timing model. With DSpark
+and prefix caching enabled this is below a 20% estimated TTFT threshold
+at 32K, so this work stops at analysis. No ABI, scheduler, bundle or kernel
+implementation is changed, and no GPU comparison job is staged.
+
+With guaranteed future chunk ends, the smaller exact dependency cone is
+a union of intervals. The fixed-schedule calculation below preserves
+DSpark snapshot bytes and skips about 89.4% of complete upper-layer output
+rows at 32K, an estimated saving of 44.7% in the same timing model. Both
+results are CPU dataflow estimates, not measured TTFT or GPU correctness
+evidence. They describe different scheduling contracts.
 
 The analysis was checked on 2026-10-19. Repository paths below are relative
 to the repository root. Vendor paths refer to
@@ -232,6 +238,77 @@ both AR and DSpark (the feature roots then fit the target-ring cones):
 | 131072 | 8192 | 84.27% | 42.13% |
 
 This additional-boundary policy preserves dynamic scheduling and permits
-an unplanned snapshot. The smaller fixed-schedule cone needs a guarantee
-about future chunk ends or another way to recover previously skipped
-dependencies. Neither table is a GPU qualification result.
+an unplanned snapshot. Its numerical estimates above condition on a
+particular sequence of actual chunks. They are not a minimum saving over
+all chunk and capture choices. An online executor could specialize to the
+item already scheduled, preserving complete persistent state after it,
+without promising the next item's size. Such specialization can recover
+the larger savings when actual chunks are long, but gives no 20% saving
+guarantee under arbitrary traffic and captures.
+
+For the conservative envelope over all scheduler choices, a boundary may
+occur at any positive multiple of the 64-token prefill granule. Shared
+prefix capture uses the observed shared block count and rounds it to that
+granule (`crates/runtime-scheduler/src/lib.rs:3479-3484,3514-3527`). The
+capture ends a chunk through `chunk_remaining` and `chunk_tokens`
+(`crates/runtime-scheduler/src/lib.rs:3455-3466,3592-3622`). These are real
+state-consumer boundaries, not new logits roots. The envelope is a union
+over separately possible boundary choices; it does not assume the default
+server captures at every granule in a single request.
+
+For any prompt row p, choose boundary
+e=64*ceil((p+1)/64), clipped to the prompt end. Then p is in
+[max(0,e-136),e), the copied target-ring interval at e. Thus the union of
+possible C_l sets is [0,N) for every layer. Already at layer 39, that roots
+every X_39 input, forcing every complete layer-38 output. Induction forces
+every output at layers 20-38. The layer-20 compressed/index-key producers
+and all lower layers were required in full already. DSpark's possible
+raw-feature writers are also within [0,N), so they add no rows beyond
+this envelope. Layer 39 still needs only its final complete output at
+N-1; its window-KV and input-preparation branches run on every row.
+
+Consequently, for DSpark plus prefix caching, the exact conservative sets
+are:
+
+```text
+layers 0-19: every row, all ordinary work
+layer 20: every row for compressed and index-key production
+layers 20-39: input and window-KV rows [0,N)
+layers 20-38: complete output rows [0,N)
+layer 39: complete output row [N-1,N)
+```
+
+The skippable complete-output fraction is (N-1)/(20*N), and the equal-row
+time estimate is (N-1)/(40*N). No upper-layer window-KV rows can be skipped.
+This time estimate is optimistic for the omitted final-layer row work:
+its input preparation and KV branch still run, while the model credits
+each skipped complete output as a full layer-row. Prompt scoring would
+root more final-layer outputs and reduce the saving further.
+
+| Prompt | Conservative upper output skip | Conservative KV skip | Conservative estimated TTFT saving | Guaranteed 2048-chunk output skip / TTFT saving | Guaranteed lone-chunk output skip / TTFT saving |
+| --- | --- | --- | --- | --- | --- |
+| 8192 | 4.999390% | 0% | at most about 2.50% | 57.75% / 28.88% | 70.79% / 35.39% |
+| 32768 | 4.999847% | 0% | at most about 2.50% | 89.44% / 44.72% | 89.37% / 44.68% |
+| 131072 | 4.999962% | 0% | at most about 2.50% | 97.36% / 48.68% | 97.34% / 48.67% |
+
+Here "lone-chunk" means the explicit 8192-cap chunk schedule with the
+configured repeat and prompt-end captures used above, guaranteed in
+advance. An idle queue observed once is not by itself such a guarantee.
+On the reported 594-token/s 32K baseline, the conservative row estimate
+would save about 1.38 s from 55.2 s, before overhead, rather than the roughly
+24.7 s fixed-schedule estimate. These remain illustrative estimates.
+
+Run the conservative calculation with:
+
+```sh
+python3 -B models/deepseek41/prefill_cone.py --contract all-choices
+```
+
+Two additional CPU tests verify the closed-form counts at all three prompt
+lengths and check that the envelope equals the union of independently
+planned single-extra-capture cones. This avoids treating a synthetic dense
+capture schedule as evidence that every capture occurs in one real run.
+The eight oracle tests and the existing scheduler shared-prefix and
+granule tests pass on CPU. The conservative contract does not meet the
+implementation threshold; the smaller fixed-schedule contract remains a
+separate scheduling decision.

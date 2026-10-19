@@ -18,6 +18,7 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use std::collections::BTreeMap;
 
 mod cases;
+mod profile;
 mod shared;
 use cases::{Case, Routing};
 
@@ -27,6 +28,7 @@ enum Mode {
     Selected,
     Compact,
     BlockWarps,
+    Streamed,
 }
 
 struct Arena<'a> {
@@ -105,12 +107,20 @@ fn arm(
     let mut backend = registration::quantizers(&FLASH, 4)?
         .into_iter()
         .fold(Sm120::new(), Sm120::with_block_quantize);
-    let tile = if mode == Mode::BlockWarps || case.phase == ExecutionPhase::Decode {
+    let streamed = mode == Mode::Streamed && rows <= 64 && case.phase != ExecutionPhase::Prefill;
+    let tile = if streamed {
+        64
+    } else if mode == Mode::BlockWarps || case.phase == ExecutionPhase::Decode {
         16
     } else {
         64
     };
-    let entries = if mode == Mode::BlockWarps {
+    let entries = if streamed {
+        registration::streamed_projections(&FLASH)?
+            .into_iter()
+            .filter(|e| e.tokens_capacity == if rows <= 8 { 8 } else { 64 })
+            .collect()
+    } else if mode == Mode::BlockWarps {
         registration::active_projections(&FLASH, 4)?
             .into_iter()
             .filter(|e| e.tokens_capacity == if rows <= 32 { 32 } else { 192 })
@@ -137,6 +147,11 @@ fn arm(
     for entry in registration::routes(&FLASH)
         .into_iter()
         .chain(registration::active_routes(&FLASH))
+        .chain(if streamed {
+            registration::streamed_routes(&FLASH)
+        } else {
+            Vec::new()
+        })
     {
         backend = backend.with_row_bias_route(entry);
     }
@@ -253,16 +268,22 @@ fn arm(
         weights: down_weights,
         ..gate_b
     };
+    let bytes = gate.info().workspace.max(down.info().workspace);
+    let workspace = if bytes == 0 {
+        View::EMPTY
+    } else {
+        a.filled(bytes, 0)?
+    };
     let mut launches = route
         .launches(&rb, View::EMPTY, Counts::rows(rows))
         .map_err(|e| e.to_string())?;
     launches.extend(
-        gate.launches(&gate_b, View::EMPTY, Counts::rows(rows))
-            .map_err(|e| e.to_string())?,
+        gate.launches(&gate_b, workspace, Counts::rows(rows))
+            .map_err(|e| format!("{} {mode:?} gate: {e}", case.label()))?,
     );
     launches.extend(
-        down.launches(&down_b, View::EMPTY, Counts::rows(rows))
-            .map_err(|e| e.to_string())?,
+        down.launches(&down_b, workspace, Counts::rows(rows))
+            .map_err(|e| format!("{} {mode:?} down: {e}", case.label()))?,
     );
     let outputs = vec![
         rb.route.ids,
@@ -273,6 +294,9 @@ fn arm(
         output,
     ];
     let mut poison = outputs.clone();
+    if workspace != View::EMPTY {
+        poison.push(workspace);
+    }
     poison.extend([
         metadata.counts.unwrap(),
         metadata.offsets,
@@ -351,10 +375,16 @@ fn compare(
         logits,
         weights: routed_weights,
     };
-    let arms = [Mode::Old, Mode::Selected, Mode::Compact, Mode::BlockWarps]
-        .map(|mode| arm(a, case, mode, inputs, shared_weights))
-        .into_iter()
-        .collect::<LabResult<Vec<_>>>()?;
+    let arms = [
+        Mode::Old,
+        Mode::Selected,
+        Mode::Compact,
+        Mode::BlockWarps,
+        Mode::Streamed,
+    ]
+    .map(|mode| arm(a, case, mode, inputs, shared_weights))
+    .into_iter()
+    .collect::<LabResult<Vec<_>>>()?;
     let dummy = a.filled(4, 0)?;
     let bindings = Bindings {
         buffers: a.buffers.iter().map(|(&h, b)| (h, b)).collect(),
@@ -451,7 +481,7 @@ fn compare(
             Ok(())
         })
     };
-    let graphs = (0..4)
+    let graphs = (0..arms.len())
         .map(|i| capture(i, false, false))
         .collect::<LabResult<Vec<_>>>()?;
     let poison = |arm: &Arm| -> LabResult<()> {
@@ -573,33 +603,68 @@ fn compare(
             .launch(s)
             .map_err(|e| e.to_string())
     })?;
+    let streamed = timed_pair(session, |i, s| {
+        graphs[if i == 0 { 0 } else { 4 }]
+            .launch(s)
+            .map_err(|e| e.to_string())
+    })?;
     let mut kernel_times = BTreeMap::new();
+    let mut floor_ms = BTreeMap::new();
+    let mut floor_ratio = BTreeMap::new();
+    let active = a.read(arms[0].active_list)?;
+    let active_experts = u32::from_le_bytes(active[..4].try_into().unwrap());
     for name in ["gateup", "down"] {
         let kernels = arms
             .iter()
             .map(|arm| {
-                let op = arm
+                let ops = arm
                     .launches
                     .iter()
-                    .find(|op| op.symbol.contains(&format!("before_{name}_")))
-                    .unwrap();
-                session.capture(|s| issue(std::slice::from_ref(op), s))
+                    .filter(|op| op.symbol.contains(&format!("before_{name}_")))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert!(!ops.is_empty());
+                session.capture(|s| issue(&ops, s))
             })
             .collect::<LabResult<Vec<_>>>()?;
-        let served = timed_pair(session, |i, s| {
-            kernels[i].launch(s).map_err(|e| e.to_string())
-        })?;
-        let candidate = timed_pair(session, |i, s| {
-            kernels[if i == 0 { 0 } else { 2 }]
-                .launch(s)
-                .map_err(|e| e.to_string())
-        })?;
-        kernel_times.insert(name, [served[0], served[1], candidate[1]]);
+        let mut times = Vec::new();
+        for candidate in 1..arms.len() {
+            let pair = timed_pair(session, |i, s| {
+                kernels[if i == 0 { 0 } else { candidate }]
+                    .launch(s)
+                    .map_err(|e| e.to_string())
+            })?;
+            if candidate == 1 {
+                times.push(pair[0]);
+            }
+            times.push(pair[1]);
+        }
+        // Weight-only lower bound, including UE8M0/32 bytes. This omits
+        // activation, partial and output traffic and assumes 1.6 TB/s.
+        let elements = if name == "gateup" {
+            1152.0 * 5120.0
+        } else {
+            5120.0 * 576.0
+        };
+        let floor = f64::from(active_experts) * elements * (0.5 + 1.0 / 32.0) / 1.6e9;
+        floor_ms.insert(name, floor);
+        floor_ratio.insert(
+            name,
+            times
+                .iter()
+                .map(|&t| f64::from(t) / floor)
+                .collect::<Vec<_>>(),
+        );
+        kernel_times.insert(name, times);
     }
     let gate = cases::speed_gate(selected[0], selected[1]);
     let record = serde_json::json!({"case":case.label(),"rows":rows,"experts":case.set.count,"top_k":case.set.top_k,
         "phase":format!("{:?}",case.phase),"routing":format!("{:?}",case.routing),"cache":"warm",
         "old_ms":selected[0],"active_ms":selected[1],"compact_ms":compact[1],"block_warps_ms":block_warps[1],"ratio":selected[1]/selected[0],
+        "streamed_ms":streamed[1],"streamed_old_ms":streamed[0],
+        "streamed_candidate":rows<=64 && case.phase!=ExecutionPhase::Prefill,
+        "active_experts":active_experts,"bandwidth_tb_s":1.6,"weight_floor_ms":floor_ms,"floor_ratio":floor_ratio,
+        "kernel_order":["old","selected","compact","block_warps","streamed"],
         "kernel_ms":kernel_times,"bitwise":true,"dropped_join_detected":dropped_join_detected,
         "speed_passed":gate.is_ok(),"selection":if case.phase==ExecutionPhase::Decode && rows==1 && case.set.count==384 {"active gate/up, old down"} else {"old routed kernels"}});
     println!("MOE_RESULT {record}");
@@ -651,10 +716,12 @@ fn suite(bank: usize) {
         ];
         let shared = shared::weights(&mut a)?;
         let mut errors = Vec::new();
+        let weights_end = a.next;
         for case in cases::cases(set) {
             if let Err(error) = compare(&mut a, case, routed, shared) {
                 errors.push(format!("{}: {error}", case.label()));
             }
+            a.buffers.retain(|&handle, _| handle <= weights_end);
         }
         if errors.is_empty() {
             Ok(())
@@ -693,7 +760,13 @@ fn active_moe_cpu_dry_run() {
             let logits = a
                 .filled(u64::from(case.rows) * u64::from(set.count) * 4, 0)
                 .unwrap();
-            for mode in [Mode::Old, Mode::Selected, Mode::Compact, Mode::BlockWarps] {
+            for mode in [
+                Mode::Old,
+                Mode::Selected,
+                Mode::Compact,
+                Mode::BlockWarps,
+                Mode::Streamed,
+            ] {
                 let arm = arm(
                     &mut a,
                     case,
@@ -722,4 +795,9 @@ fn active_moe_cpu_dry_run() {
             }
         }
     }
+}
+
+#[test]
+fn profile_moe_gpu() {
+    kernel_harness::gpu_test(8 << 30, profile::run).unwrap();
 }

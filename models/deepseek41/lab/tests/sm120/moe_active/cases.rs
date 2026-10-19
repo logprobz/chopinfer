@@ -5,6 +5,7 @@ pub enum Routing {
     Mixed,
     All,
     Seeded,
+    Concentrated,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -41,7 +42,7 @@ impl Case {
                         row * 37 % self.set.count
                     }
                 }
-                Routing::Seeded => 0,
+                Routing::Seeded | Routing::Concentrated => 0,
             };
             for e in 0..self.set.count {
                 seed ^= seed << 13;
@@ -62,11 +63,11 @@ impl Case {
 pub fn cases(set: moe::Experts) -> Vec<Case> {
     let mut out = Vec::new();
     for (phase, rows) in [
-        (ExecutionPhase::Decode, &[1, 2, 4, 8, 16, 32][..]),
+        (ExecutionPhase::Decode, &[1, 2, 4, 6, 8, 16, 32][..]),
         // Graph powers of two plus the eager 5/6-row and maximum boundaries.
         (
             ExecutionPhase::Verify,
-            &[1, 2, 4, 5, 6, 8, 16, 32, 64, 128, 192][..],
+            &[1, 2, 4, 5, 6, 8, 16, 32, 48, 64, 128, 192][..],
         ),
         (ExecutionPhase::Prefill, &[128][..]),
     ] {
@@ -80,6 +81,14 @@ pub fn cases(set: moe::Experts) -> Vec<Case> {
     for routing in [Routing::All, Routing::Seeded] {
         out.push(Case {
             rows: 192,
+            phase: ExecutionPhase::Verify,
+            set,
+            routing,
+        });
+    }
+    for routing in [Routing::All, Routing::Seeded, Routing::Concentrated] {
+        out.push(Case {
+            rows: 64,
             phase: ExecutionPhase::Verify,
             set,
             routing,

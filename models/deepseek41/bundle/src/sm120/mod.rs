@@ -24,6 +24,7 @@ pub mod latent_scheduled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_stream;
+pub mod norm_prefill;
 pub mod norm_quantize;
 pub mod norm_quantize_cached;
 pub mod norm_quantize_tiles;
@@ -399,6 +400,7 @@ impl crate::Kernels {
             sm120
         };
         let sm120 = norm_quantize_cached::register(sm120, shape.geometry);
+        let sm120 = norm_prefill::register(sm120, shape.geometry)?;
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);

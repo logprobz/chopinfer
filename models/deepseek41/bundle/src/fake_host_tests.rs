@@ -1830,3 +1830,5 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
     }
     assert!(checked > 0);
 }
+
+mod norm_prefill;

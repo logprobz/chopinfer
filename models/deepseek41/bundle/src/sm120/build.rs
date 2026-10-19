@@ -53,6 +53,8 @@ mod latent_decode;
 #[allow(dead_code)]
 mod latent_scheduled;
 #[allow(dead_code)]
+mod norm_prefill;
+#[allow(dead_code)]
 mod norm_quantize;
 #[path = "norm_quantize_cached.rs"]
 #[allow(dead_code, reason = "the bundle registers the measured entries")]
@@ -233,6 +235,9 @@ pub fn selection(
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
         owners.push((norm_quantize::cubin_name(geometry), geometry.id));
+        if geometry == &model_deepseek41_contract::geometry::FLASH {
+            owners.push((norm_prefill::CUBIN.into(), geometry.id));
+        }
         owners.push((hc_expand_mix::cubin_name(geometry), geometry.id));
         owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
@@ -348,6 +353,7 @@ pub fn selection(
         }
     }
     specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
+    specs.extend(norm_prefill::cubins(geometries).expect("prefill fused norm cubins"));
     specs.extend(hc_expand_mix::cubins(geometries).expect("fused expansion mixer cubins"));
     specs.extend(hc_round_expand_mix::cubins(geometries).expect("fused rounded expansion cubins"));
     for geometry in geometries

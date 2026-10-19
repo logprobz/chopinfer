@@ -20,6 +20,7 @@ pub(crate) mod indexer;
 pub(crate) mod latent;
 pub(crate) mod logits;
 pub(crate) mod moe;
+pub(crate) mod norm_prefill;
 pub(crate) mod norm_quantize;
 mod reduce;
 mod row_buckets;
@@ -62,6 +63,7 @@ pub struct Ops {
     pub(crate) expert_set: model_deepseek41_contract::moe::Experts,
     pub(crate) rows: Option<rows::RowOps>,
     pub(crate) norm_quantize: Option<norm_quantize::NormQuantizeOps>,
+    pub(crate) norm_prefill: Option<norm_prefill::NormPrefillOps>,
     pub(crate) reduce: Option<reduce::ReduceOps>,
     pub(crate) hc: Option<hc::HcOps>,
     pub(crate) moe: Option<moe::MoeOps>,
@@ -169,6 +171,16 @@ impl Ops {
             "fused norm",
             norm_quantize::NormQuantizeOps::prepare(kernels.backend.as_ref(), shape, &asks),
         );
+        let norm_prefill = if shape.geometry == &model_deepseek41_contract::geometry::FLASH {
+            family(
+                &mut missing,
+                &names,
+                "prefill fused norm",
+                norm_prefill::NormPrefillOps::prepare(kernels.backend.as_ref(), &asks),
+            )
+        } else {
+            None
+        };
         let reduce = family(
             &mut missing,
             &names,
@@ -299,6 +311,7 @@ impl Ops {
             expert_set,
             rows,
             norm_quantize,
+            norm_prefill,
             reduce,
             hc,
             moe,

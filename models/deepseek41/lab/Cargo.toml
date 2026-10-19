@@ -103,3 +103,7 @@ path = "examples/sm120/build_confidence_parallel.rs"
 [[example]]
 name = "build_hc_finish_norm"
 path = "examples/sm120/build_hc_finish_norm.rs"
+
+[[example]]
+name = "build_moe_router_finish"
+path = "examples/sm120/build_moe_router_finish.rs"

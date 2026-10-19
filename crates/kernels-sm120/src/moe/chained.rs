@@ -61,6 +61,7 @@ pub mod floor;
 pub mod formats;
 pub mod prefill;
 pub mod quantized;
+pub mod router_finish;
 pub mod row_bias;
 pub mod split;
 pub mod streamed;

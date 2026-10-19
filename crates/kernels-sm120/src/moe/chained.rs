@@ -22,8 +22,10 @@
 //! - A projection's output element of a route (or token, dense) adds each
 //!   128-K block as one MMA chain from zero over ascending K and folds the
 //!   blocks in K order (`fmaf` with the FP8 residual, `__fadd_rn`
-//!   otherwise), with no split K and no atomics; it reads only the route's
-//!   own input row and its expert's weights and writes at the route's
+//!   otherwise). Column schedules do this inside one CTA; streamed
+//!   quantized entries merge independent chains in a second kernel. Neither
+//!   uses atomics. Each reads only the route's own input row and its expert's
+//!   weights and writes at the route's
 //!   index. The row count, the route padding, the row tile, the slot a
 //!   route takes and the other tokens' routes only change which CTA and
 //!   which MMA column computes it. Every schedule computes the same chains
@@ -58,6 +60,7 @@ pub mod formats;
 pub mod quantized;
 pub mod row_bias;
 pub mod split;
+pub mod streamed;
 
 /// Threads of a projection CTA: four warps of 16 output columns.
 pub const THREADS: u32 = 128;

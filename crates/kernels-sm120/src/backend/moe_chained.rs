@@ -18,7 +18,7 @@ use kernel_core::router::{RowBiasRouteBuffers, RowBiasRouterBuffers, RowBiasRout
 
 use super::select::{Candidate, choose};
 use super::{MAX_CAPACITY, check_plan};
-use crate::moe::chained::{RouteKernel, quantized, row_bias};
+use crate::moe::chained::{RouteKernel, quantized, row_bias, streamed};
 
 #[derive(Default)]
 pub(super) struct Selection {
@@ -65,12 +65,13 @@ pub(super) fn projection(
         entries
             .iter()
             .filter(|e| math(e.query) == math(*op))
-            .filter(|e| !e.active || preferred_tile == 16)
+            .filter(|e| !(e.active || e.streamed) || preferred_tile == 16)
             .map(|e| {
                 Candidate::new(e.clone(), &e.symbol, format!("{e:?}"), e.invariance())
                     .capacity(e.max_rows)
                     .rank(
-                        4 * u64::from(e.row_tile != preferred_tile)
+                        8 * u64::from(!e.streamed)
+                            + 4 * u64::from(e.row_tile != preferred_tile)
                             + 2 * u64::from(!e.active)
                             + u64::from(!e.compact_columns),
                     )
@@ -82,6 +83,9 @@ pub(super) fn projection(
     entry.clone().with_max_rows(entry.max_rows)?;
     if entry.active {
         entry.clone().with_active_experts()?;
+    }
+    if entry.streamed {
+        entry.clone().with_streamed_chains()?;
     }
     check_plan(&entry.plan(need.capacity)?)?;
     let g = op.projection.gemm;
@@ -104,7 +108,14 @@ pub(super) fn projection(
     let mut info = OpInfo::new(
         format!("sm120.{}[{}]", op.numerical_contract_id()?, entry.symbol),
         chosen.guarantees,
-        vec![(entry.symbol.clone(), 0)],
+        if entry.streamed {
+            streamed::stages(&entry)
+                .into_iter()
+                .map(|s| (streamed::symbol(&entry, s), 0))
+                .collect()
+        } else {
+            vec![(entry.symbol.clone(), 0)]
+        },
     );
     // Same order as the compute entry's arguments. Down never reads a
     // route-weight view: it has already been applied before its input.
@@ -202,9 +213,15 @@ pub(super) fn projection(
         None
     };
     info.weight_layouts = vec![("weights".into(), WeightLayout::row_major())];
-    if entry.active {
+    if entry.active || entry.streamed {
         info.bytes
             .push(("routing.routes.active_experts".into(), (e + 1) * 4));
+    }
+    if entry.streamed {
+        info.bytes.push(("routing.routes.counts".into(), e * 4));
+        info.workspace = info
+            .workspace
+            .max(streamed::workspace_bytes(&entry, need.capacity)?);
     }
     need.check(&info)?;
     Ok(Box::new(ProjectionOp {
@@ -325,25 +342,100 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
             },
             views[8].handle,
         ];
-        let arguments = if self.entry.active {
+        let mut launches = if self.entry.streamed {
             let active = required(routing.routes.active_experts)?;
+            let route_counts = required(routing.routes.counts)?;
             active.covers(
                 self.info
                     .bytes_of("routing.routes.active_experts")
                     .expect("active list"),
             )?;
-            self.entry.active_arguments(handles, active.handle)?
+            route_counts.covers(
+                self.info
+                    .bytes_of("routing.routes.counts")
+                    .expect("route counts"),
+            )?;
+            workspace.covers(self.info.workspace)?;
+            let mut operands = views.to_vec();
+            operands.extend([active, route_counts, routing.weights]);
+            operands.extend(
+                [
+                    b.scratch.output_codes,
+                    b.scratch.output_scales,
+                    b.scratch.quantizer_status,
+                ]
+                .into_iter()
+                .flatten(),
+            );
+            if operands.iter().any(|v| v.handle == workspace.handle) {
+                return Err(Refusal("streamed workspace overlaps an operand"));
+            }
+            streamed::stages(&self.entry)
+                .into_iter()
+                .map(|stage| {
+                    use streamed::Stage;
+                    let args: Vec<u64> = match stage {
+                        Stage::Pack => vec![
+                            route_counts.handle,
+                            active.handle,
+                            b.live_tokens.handle,
+                            workspace.handle,
+                        ],
+                        Stage::Small | Stage::Wide => handles[..8]
+                            .iter()
+                            .copied()
+                            .chain([workspace.handle])
+                            .collect(),
+                        Stage::Merge => vec![
+                            workspace.handle,
+                            b.live_tokens.handle,
+                            handles[8],
+                            b.output.handle,
+                        ],
+                    };
+                    let arguments = ArgumentList(
+                        args.into_iter()
+                            .map(|h| {
+                                if h == 0 {
+                                    Argument::NullDevicePointer
+                                } else {
+                                    Argument::DeviceBuffer(h)
+                                }
+                            })
+                            .collect(),
+                    );
+                    arguments.validate()?;
+                    Ok(Launch {
+                        symbol: streamed::symbol(&self.entry, stage),
+                        rows,
+                        plan: streamed::plan(&self.entry, stage, rows)?,
+                        arguments,
+                        collective: false,
+                        persistent: false,
+                    })
+                })
+                .collect::<Result<Vec<_>, Refusal>>()?
         } else {
-            self.entry.arguments(handles)?
+            let arguments = if self.entry.active {
+                let active = required(routing.routes.active_experts)?;
+                active.covers(
+                    self.info
+                        .bytes_of("routing.routes.active_experts")
+                        .expect("active list"),
+                )?;
+                self.entry.active_arguments(handles, active.handle)?
+            } else {
+                self.entry.arguments(handles)?
+            };
+            vec![Launch {
+                symbol: self.entry.symbol.clone(),
+                rows,
+                plan: self.entry.plan(rows)?,
+                arguments,
+                collective: false,
+                persistent: false,
+            }]
         };
-        let mut launches = vec![Launch {
-            symbol: self.entry.symbol.clone(),
-            rows,
-            plan: self.entry.plan(rows)?,
-            arguments,
-            collective: false,
-            persistent: false,
-        }];
         if let (Some(quantizer), Some(buffers)) = (&self.quantizer, quantized_output) {
             launches.extend(quantizer.launches(&buffers, workspace, counts)?);
         }
@@ -927,6 +1019,145 @@ mod tests {
             short.scratch.output_codes = None;
             assert!(op.launches(&short, workspace, Counts::rows(1)).is_err());
             assert!(op.launches(&buffers, View::EMPTY, Counts::rows(1)).is_err());
+        }
+    }
+
+    #[test]
+    fn streamed_chains_bound_scratch_and_fold_before_quantization() {
+        for (experts, top_k) in [(384, 6), (128, 3)] {
+            for capacity in [8, 64] {
+                for is_gate in [true, false] {
+                    let mut query = gate_up(experts, top_k);
+                    query.projection.gemm.m_capacity = capacity * top_k;
+                    query.projection.gemm.grouped.as_mut().unwrap().capacity =
+                        RoutedCapacity::TotalRows(capacity * top_k);
+                    if !is_gate {
+                        query.projection.projection = GatedMlpProjection::Down;
+                        query.projection.gemm.n = 64;
+                        query.projection.gemm.k = 576;
+                        query.projection.gemm.output = DType::F32;
+                        query.projection.gemm.epilogues = Epilogues::default();
+                        query.projection.swiglu_clamp = None;
+                        query.k = ChainedK::new(576).unwrap();
+                    }
+                    let entry = quantized::Projection::new(query, 64, capacity)
+                        .unwrap()
+                        .with_streamed_chains()
+                        .unwrap();
+                    assert!(entry.clone().with_active_experts().is_err());
+                    assert!(entry.clone().with_compact_columns().is_err());
+                    let backend = QuantizerProbe::default();
+                    let op = projection(
+                        &backend,
+                        std::slice::from_ref(&entry),
+                        &query,
+                        usage(capacity),
+                        Need::rows(capacity),
+                    )
+                    .unwrap();
+                    let route = LocalRoute {
+                        experts,
+                        local_experts: experts,
+                        top_k,
+                        capacity,
+                        pad: 64,
+                    };
+                    assert!(op.padded_rows() <= route.sorted_rows_capacity());
+                    let mut next = 0;
+                    let mut sized = |path: &str| {
+                        next += 1;
+                        View {
+                            handle: next,
+                            bytes: op.info().bytes_of(path).unwrap_or(0),
+                        }
+                    };
+                    let mut b = GatedMlpBuffers {
+                        activation: sized("activation"),
+                        activation_scales: Some(sized("activation_scales")),
+                        activation_global: None,
+                        live_tokens: sized("live_tokens"),
+                        output: sized("output"),
+                        weights: QuantizedWeights {
+                            codes: sized("weights.codes"),
+                            local_scales: Some(sized("weights.local_scales")),
+                            global_scales: None,
+                        },
+                        routing: Some(ProjectionRouting {
+                            weights: if is_gate {
+                                sized("routing.weights")
+                            } else {
+                                View::EMPTY
+                            },
+                            routes: RouteMetadata {
+                                offsets: sized("routing.routes.offsets"),
+                                sorted_rows: sized("routing.routes.sorted_rows"),
+                                padded_rows: sized("routing.routes.padded_rows"),
+                                counts: Some(sized("routing.routes.counts")),
+                                active_experts: Some(sized("routing.routes.active_experts")),
+                            },
+                        }),
+                        scratch: GatedMlpScratch {
+                            partial: None,
+                            output_codes: Some(sized("scratch.output_codes")),
+                            output_scales: Some(sized("scratch.output_scales")),
+                            quantizer_status: Some(sized("scratch.quantizer_status")),
+                            quantizer_status_row_offset: 0,
+                            unused: View::EMPTY,
+                        },
+                    };
+                    let workspace = View {
+                        handle: 100,
+                        bytes: op.info().workspace,
+                    };
+                    let header = (2 + 4 * u64::from(experts)).next_multiple_of(64) * 4;
+                    let partials = u64::from(capacity * top_k)
+                        * if is_gate { 2 * 576 * 4 } else { 5 * 64 * 4 };
+                    assert_eq!(workspace.bytes, header + partials);
+                    let launches = op.launches(&b, workspace, Counts::rows(capacity)).unwrap();
+                    let stages = streamed::stages(&entry);
+                    assert_eq!(launches.len(), stages.len() + usize::from(is_gate));
+                    assert_eq!(
+                        launches[0].arguments.0[0],
+                        Argument::DeviceBuffer(b.routing.unwrap().routes.counts.unwrap().handle)
+                    );
+                    for (launch, stage) in launches.iter().zip(stages.iter()) {
+                        assert_eq!(launch.symbol, streamed::symbol(&entry, *stage));
+                        assert_eq!(launch.plan.workspace_bytes, workspace.bytes);
+                        launch.plan.validate().unwrap();
+                    }
+                    let merge = &launches[stages.len() - 1];
+                    assert!(merge.symbol.contains("stream_merge"));
+                    if is_gate {
+                        assert_eq!(launches.last().unwrap().symbol, "probe.ceil32");
+                    } else {
+                        assert_eq!(merge.arguments.0[2], Argument::NullDevicePointer);
+                    }
+                    assert!(
+                        op.launches(
+                            &b,
+                            View {
+                                bytes: workspace.bytes - 1,
+                                ..workspace
+                            },
+                            Counts::rows(capacity)
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        op.launches(
+                            &b,
+                            View {
+                                handle: b.output.handle,
+                                ..workspace
+                            },
+                            Counts::rows(capacity)
+                        )
+                        .is_err()
+                    );
+                    b.routing.as_mut().unwrap().routes.counts = None;
+                    assert!(op.launches(&b, workspace, Counts::rows(capacity)).is_err());
+                }
+            }
         }
     }
 

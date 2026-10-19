@@ -9,6 +9,8 @@ use kernel_core::position_blocks::PositionBlockIndexerQuery;
 use crate::geometry::{Geometry, LayerRole};
 use crate::serving::PAGE_TOKENS;
 
+pub mod prefill;
+
 /// The source layers whose storage a layer binds on every step. Binding
 /// does not depend on whether this step completed a compression group:
 /// the owner republishes its existing keys on an incomplete group too.

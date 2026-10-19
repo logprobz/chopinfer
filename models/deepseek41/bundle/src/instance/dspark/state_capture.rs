@@ -9,14 +9,18 @@ use std::path::Path;
 
 impl Instance {
     pub(crate) fn capture_dspark_state(&mut self, request: u64) -> Result<(), String> {
-        let result = match std::env::var_os("CHOPINFER_DSPARK_STATE_DIR") {
-            Some(root) if Path::new(&root).join("enabled").is_file() => {
-                self.capture_dspark_state_to(request, Path::new(&root))
-            }
-            _ => Ok(()),
+        let result = match self.active_dspark_state_capture() {
+            Some(root) => self.capture_dspark_state_to(request, root),
+            None => Ok(()),
         };
         self.state_capture_pages.remove(&request);
         result
+    }
+
+    pub(super) fn active_dspark_state_capture(&self) -> Option<&Path> {
+        self.state_capture_root
+            .as_deref()
+            .filter(|root| root.join("enabled").is_file())
     }
 
     pub(crate) fn capture_dspark_state_to(&self, request: u64, root: &Path) -> Result<(), String> {

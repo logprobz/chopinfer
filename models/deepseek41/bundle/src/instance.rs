@@ -108,6 +108,8 @@ pub struct Instance {
     draft_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     #[cfg(feature = "diagnostic-taps")]
     state_capture_pages: BTreeMap<u64, Vec<i32>>,
+    #[cfg(feature = "diagnostic-taps")]
+    state_capture_root: Option<std::path::PathBuf>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -688,6 +690,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         draft_graphs: BTreeMap::new(),
         #[cfg(feature = "diagnostic-taps")]
         state_capture_pages: BTreeMap::new(),
+        #[cfg(feature = "diagnostic-taps")]
+        state_capture_root: std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").map(Into::into),
         config,
         ranks: Vec::new(),
         symbols: Vec::new(),
@@ -925,5 +929,35 @@ pub(crate) fn capture_dspark_state_for_test(
             .get_mut(handle)
             .expect("a live instance")
             .capture_dspark_state_to(request, root)
+    })
+}
+
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) fn set_dspark_state_capture_root_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    root: Option<std::path::PathBuf>,
+) {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .state_capture_root = root;
+    });
+}
+
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) fn dspark_state_capture_requests_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<u64> {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .state_capture_pages
+            .keys()
+            .copied()
+            .collect()
     })
 }

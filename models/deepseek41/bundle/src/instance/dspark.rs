@@ -230,10 +230,14 @@ impl Instance {
             }
         };
         #[cfg(feature = "diagnostic-taps")]
-        for phase in [&step.prefill, &step.decode] {
-            for (&request, pages) in phase.request_ids.iter().zip(&phase.block_tables) {
-                self.state_capture_pages.insert(request, pages.clone());
+        if self.active_dspark_state_capture().is_some() {
+            for phase in [&step.prefill, &step.decode] {
+                for (&request, pages) in phase.request_ids.iter().zip(&phase.block_tables) {
+                    self.state_capture_pages.insert(request, pages.clone());
+                }
             }
+        } else {
+            self.state_capture_pages.clear();
         }
         let device = self.dspark.as_mut().expect("enabled drafter");
         let Some(id) = device.diagnostic.step_id.checked_add(1) else {

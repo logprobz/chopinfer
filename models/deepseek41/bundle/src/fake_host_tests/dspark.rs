@@ -26,6 +26,8 @@ fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
     std::fs::create_dir_all(root.join("second")).unwrap();
     let shape = Shape::new(&FLASH, Ranks::TP1).unwrap();
     let (host, mut instance) = create(shape);
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    std::fs::write(root.join("enabled"), []).unwrap();
     execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
     instance.commit().unwrap();
     execute(&mut instance, &host, &verify(7, 0, 3, 2));
@@ -79,6 +81,43 @@ fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn disabled_state_capture_does_not_retain_block_tables() {
+    let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+        .join("deepseek41-tests")
+        .join(format!("dspark-disabled-state-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let shape = Shape::new(&FLASH, Ranks::TP1).unwrap();
+    let (host, mut instance) = create(shape);
+    let handle = instance.handle();
+    let captured = || crate::instance::dspark_state_capture_requests_for_test(handle);
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), None);
+    execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
+    instance.commit().unwrap();
+    assert!(
+        captured().is_empty(),
+        "capture without a directory retained block tables"
+    );
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    for (start, active) in [(3, false), (4, true), (5, false)] {
+        if active {
+            std::fs::write(root.join("enabled"), []).unwrap();
+        }
+        execute(&mut instance, &host, &verify(7, 0, start, 2));
+        instance.commit_accepted(&[kept(7, 1)]).unwrap();
+        assert_eq!(captured(), if active { vec![7] } else { vec![] });
+        if active {
+            std::fs::remove_file(root.join("enabled")).unwrap();
+        }
+    }
+    instance.retire_request(7).unwrap();
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    std::fs::remove_dir(root).unwrap();
 }
 
 #[test]

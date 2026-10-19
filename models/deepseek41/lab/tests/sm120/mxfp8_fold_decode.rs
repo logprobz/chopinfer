@@ -297,7 +297,7 @@ pub(super) fn compare_with(
         .or_else(|| baseline_pair.as_ref().map(|op| op.info().workspace))
         .unwrap_or(0);
     let new_query = if let Some(ticket) = ticket {
-        ticket.query
+        registration::small_query(ticket.query, rows)
     } else if rows <= 32 {
         q
     } else {
@@ -604,9 +604,25 @@ pub(super) fn compare_with(
         record["weight_bytes"] = json!(weight_bytes);
         record["floor_us"] = json!(floor_us);
         record["floor_ratio"] = json!(f64::from(paired.arms[1].median_ms) * 1000.0 / floor_us);
-        record["no_regression"] = json!(paired.paired_ratio <= 1.0);
-        record["tile_n"] = json!(ticket.tile_n());
-        record["folds_per_cta"] = json!(ticket.folds_per_cta(rows));
+        let unchanged = new_query.m_capacity == 32;
+        if unchanged {
+            assert_eq!(old_calls.len(), new_calls.len());
+            for (old, new) in old_calls.iter().zip(&new_calls) {
+                assert_eq!(old.symbol, new.symbol);
+                assert_eq!(old.plan, new.plan);
+            }
+        }
+        // An identical launch sequence is a retained baseline, not a new
+        // implementation subject to a noisy self-comparison timing gate.
+        record["same_implementation"] = json!(unchanged);
+        record["routing"] = json!(if unchanged { "split-fold" } else { "ticket" });
+        record["no_regression"] = json!(unchanged || paired.paired_ratio <= 1.0);
+        record["tile_n"] = json!(if unchanged { 16 } else { ticket.tile_n() });
+        record["folds_per_cta"] = json!(if unchanged {
+            2
+        } else {
+            ticket.folds_per_cta(rows)
+        });
         record["workspace_bytes"] = json!(workspace);
         if profile {
             let stage_times = |calls: &[Launch], functions: &[Function]| -> LabResult<Vec<f32>> {

@@ -14,6 +14,7 @@ pub mod dspark_entries;
 mod dspark_router;
 pub mod hc_expand_mix;
 pub mod hc_mixer_probe;
+pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
 pub mod latent;
 pub mod latent_scheduled;
@@ -21,6 +22,7 @@ pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_stream;
 pub mod norm_quantize;
+pub mod norm_quantize_cached;
 pub mod norm_quantize_tiles;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;

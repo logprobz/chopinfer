@@ -83,3 +83,11 @@ path = "examples/sm120/build_acceptance.rs"
 [[example]]
 name = "build_host_acceptance"
 path = "examples/sm120/build_host_acceptance.rs"
+
+[[example]]
+name = "build_norm_quantize_cached"
+path = "examples/sm120/build_norm_quantize_cached.rs"
+
+[[example]]
+name = "build_hc_round_chain"
+path = "examples/sm120/build_hc_round_chain.rs"

@@ -33,7 +33,7 @@ class VerifyWidthJobTests(unittest.TestCase):
 
     def test_exact_capacity_is_derived_from_live_rows_not_old_host_estimate(self):
         row = {"prefill_tokens": 0, "decode_rows": 1, "verify_items": 1,
-               "verify_rows": 6, "row_capacity": 8, "execution_micros": 123.0}
+               "verify_rows": 6, "row_capacity": 8, "execution_us": 123.0}
         exact = job.width_costs([row], True)[0]
         bucket = job.width_costs([row], False)[0]
         self.assertEqual((exact["items"], exact["live_rows"], exact["graph_rows"]), (2, 7, 7))

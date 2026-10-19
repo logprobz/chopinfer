@@ -94,7 +94,7 @@ def width_costs(rows, exact):
             continue
         live = row["decode_rows"] + row["verify_rows"]
         capacity = live if exact else 1 << (live - 1).bit_length()
-        micros = row["execution_micros"]
+        micros = row["execution_us"]
         if live < 1 or not math.isfinite(micros) or micros <= 0:
             raise ValueError("invalid measured cycle cost")
         key = (row["decode_rows"] + row["verify_items"], live, capacity)

@@ -23,6 +23,7 @@ mod dspark;
 mod media;
 mod position_valid;
 mod shared_overlap;
+mod prefill_tma;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
 

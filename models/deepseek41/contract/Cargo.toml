@@ -23,6 +23,9 @@ model-compiler-sdk.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+kernel-harness.workspace = true
+runtime-cuda.workspace = true
+kernel-lab-families.workspace = true
 kernel-build.workspace = true
 kernels-sm120.workspace = true
 
@@ -88,3 +91,11 @@ path = "examples/sm120/build_f32_split.rs"
 [[example]]
 name = "build_position_valid"
 path = "examples/sm120/build_position_valid.rs"
+
+[[example]]
+name = "build_prefill_mxfp8"
+path = "examples/sm120/build_prefill_mxfp8.rs"
+
+[[test]]
+name = "kernel_prefill_mxfp8"
+path = "tests/sm120/prefill_mxfp8.rs"

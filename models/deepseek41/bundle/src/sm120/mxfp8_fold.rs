@@ -129,9 +129,18 @@ pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
 }
 
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    let backend = entries(g, ranks)?
+    let prefill: std::collections::BTreeSet<_> = prefill_entries(g, ranks)?
         .into_iter()
-        .fold(backend, Sm120::with_mxfp8_fold);
+        .map(|entry| entry.symbol)
+        .collect();
+    let backend = entries(g, ranks)?.into_iter().fold(backend, |backend, entry| {
+        let backend = if prefill.contains(&entry.symbol) {
+            backend.with_mxfp8_prefill(entry.clone())
+        } else {
+            backend
+        };
+        backend.with_mxfp8_fold(entry)
+    });
     let backend = decode_entries(g, ranks)?
         .into_iter()
         .fold(backend, Sm120::with_mxfp8_fold_decode);
@@ -353,6 +362,47 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             let spec = kernels_sm120::gemm::mxfp8_fold::cubin_spec(&cubin_name(g), &catalog(g)?)
                 .map_err(|e| e.to_string())?;
             Ok((FAMILY, spec))
+        })
+        .collect()
+}
+
+/// Only declared prefill uses opt into the staged engine. Decode and verify
+/// retain their current entry and operand layout.
+pub fn prefill_entries(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for r in registrations(g, ranks, 0)? {
+        if r.usage.phase == kernel_core::precision::ExecutionPhase::Prefill {
+            entries.insert(r.entry.symbol.clone(), r.entry);
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+pub fn prefill_catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        for e in prefill_entries(g, ranks)? {
+            entries.insert(e.symbol.clone(), e);
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+pub const PREFILL_FAMILY: &str = "mxfp8_prefill";
+pub fn prefill_cubin_name(g: &Geometry) -> String {
+    format!("mxfp8_prefill_{}_sm120", g.kernel_tag)
+}
+#[allow(dead_code, reason = "the build compiles the prefill entries")]
+pub fn prefill_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                PREFILL_FAMILY,
+                kernels_sm120::gemm::mxfp8_prefill::cubin_spec(
+                    &prefill_cubin_name(g),
+                    &prefill_catalog(g)?,
+                )
+                .map_err(|e| e.to_string())?,
+            ))
         })
         .collect()
 }

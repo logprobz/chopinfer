@@ -173,9 +173,12 @@ fn all_declared_fold_shapes_prepare_at_every_rank_count() {
                     assert_eq!(q.output, DType::F32);
                     assert_eq!(q.groups, r.source_groups.end - r.source_groups.start);
                     assert_eq!(r.scales_offset, r.codes_offset / 32);
-                    let op = backend
-                        .mxfp8_fold_gemm(&q, Need::rows(r.usage.capacity))
-                        .unwrap();
+                    let op = if r.usage.phase == kernel_core::precision::ExecutionPhase::Prefill {
+                        backend.mxfp8_prefill_gemm(&q, Need::rows(r.usage.capacity))
+                    } else {
+                        backend.mxfp8_fold_gemm(&q, Need::rows(r.usage.capacity))
+                    }
+                    .unwrap();
                     let b = r.entry.bytes(q.m_capacity);
                     let v = |handle, bytes| View { handle, bytes };
                     let buffers = Mxfp8FoldGemmBuffers {
@@ -191,8 +194,20 @@ fn all_declared_fold_shapes_prepare_at_every_rank_count() {
                     let launches = op
                         .launches(&buffers, View::EMPTY, Counts::rows(q.m_capacity))
                         .unwrap();
-                    assert_eq!(launches.len(), 1);
-                    assert!(catalog.iter().any(|e| e.symbol == launches[0].symbol));
+                    if r.usage.phase == kernel_core::precision::ExecutionPhase::Prefill {
+                        assert_eq!(launches.len(), 2);
+                        assert_eq!(
+                            launches[1].symbol,
+                            kernels_sm120::gemm::mxfp8_prefill::symbol(&r.entry)
+                        );
+                        assert_eq!(
+                            launches[1].plan.grid,
+                            [q.n.div_ceil(128), q.m_capacity.div_ceil(128), q.groups]
+                        );
+                    } else {
+                        assert_eq!(launches.len(), 1);
+                        assert!(catalog.iter().any(|e| e.symbol == launches[0].symbol));
+                    }
                     assert_eq!(
                         op.info().bytes_of("weights"),
                         Some(u64::from(q.groups) * u64::from(q.n) * u64::from(q.k))

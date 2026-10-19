@@ -159,6 +159,7 @@ pub fn selection(
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::decode_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::ticket_cubin_name(geometry), geometry.id));
+        owners.push((mxfp8_fold::prefill_cubin_name(geometry), geometry.id));
         owners.push((
             format!("latent_q_norm_{}_sm120", geometry.kernel_tag),
             geometry.id,
@@ -207,6 +208,7 @@ pub fn selection(
     specs.extend(mxfp8_fold::cubins(geometries).expect("deepseek41 MXFP8 fold cubins"));
     specs.extend(mxfp8_fold::decode_cubins(geometries).expect("deepseek41 MXFP8 decode cubins"));
     specs.extend(mxfp8_fold::ticket_cubins(geometries).expect("deepseek41 MXFP8 ticket cubins"));
+    specs.extend(mxfp8_fold::prefill_cubins(geometries).expect("MXFP8 prefill cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     Selection { specs, owners }
 }

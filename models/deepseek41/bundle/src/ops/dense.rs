@@ -203,6 +203,7 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
+    prefill_gemms: Vec<(&'static str, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// Each quantized input's quantizer, by width and type.
     quantizers: Vec<(QuantizedInput, RowBuckets<BlockQuantizeBuffers<View>>)>,
     /// Each projection's GEMM, by stage ID.
@@ -236,6 +237,15 @@ impl DenseOps {
             .map(|dense| {
                 let gemm = asks.ask(format!("dense.{}", dense.id), every, |need| {
                     backend.mxfp8_fold_gemm(&dense.query, need)
+                })?;
+                Ok((dense.id, gemm))
+            })
+            .collect::<Result<_, Refused>>()?;
+        let prefill_gemms = projections(shape)
+            .into_iter()
+            .map(|dense| {
+                let gemm = asks.ask(format!("dense.prefill.{}", dense.id), every, |need| {
+                    backend.mxfp8_prefill_gemm(&dense.query, need)
                 })?;
                 Ok((dense.id, gemm))
             })
@@ -281,6 +291,7 @@ impl DenseOps {
             gemms,
             decode,
             paired,
+            prefill_gemms,
         })
     }
 
@@ -320,7 +331,10 @@ impl DenseOps {
         workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        let op = if !phase.prefill() && rows <= crate::Kernels::dense_decode_capacity() {
+        let op = if phase.prefill() {
+            &self.prefill_gemms.iter().find(|(of, _)| *of == id)
+                .ok_or(Refusal("DeepSeek V4.1 has no dense prefill projection of this ID"))?.1
+        } else if rows <= crate::Kernels::dense_decode_capacity() {
             &self
                 .decode
                 .iter()

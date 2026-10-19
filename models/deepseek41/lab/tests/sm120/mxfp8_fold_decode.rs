@@ -1,5 +1,5 @@
 //! Paired old/new measurements on every serving Flash dense shape.
-mod modules;
+pub(super) mod modules;
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
@@ -78,7 +78,7 @@ fn required() -> (Sm120, Vec<Required<'static>>) {
     (backend, required)
 }
 
-fn check(report: &kit::Report, expected: usize, gpu: bool) {
+pub(super) fn check(report: &kit::Report, expected: usize, gpu: bool) {
     assert!(expected > 0);
     assert_eq!(report.prepared().len(), expected);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
@@ -197,6 +197,57 @@ fn run(
 }
 
 fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json::Value> {
+    compare_with(session, entry, rows, None, None, true, false)
+}
+
+pub(super) struct Weights {
+    buffers: Vec<runtime_cuda::DeviceBuffer>,
+}
+fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
+    (0..bytes as usize)
+        .map(|i| {
+            let x = i.wrapping_mul(1664525).wrapping_add(seed * 1013904223);
+            ((x >> 13) % 120) as u8 | if (x >> 7) & 1 != 0 { 128 } else { 0 }
+        })
+        .collect()
+}
+fn scales(bytes: u64, seed: usize) -> Vec<u8> {
+    (0..bytes as usize)
+        .map(|i| 117 + ((i * 7 + i / 11 + seed) % 17) as u8)
+        .collect()
+}
+impl Weights {
+    pub(super) fn new(session: &Session, entry: &Entry) -> LabResult<Self> {
+        let sizes = entry.legacy().map_err(|e| e.to_string())?.bytes(1);
+        let images = [
+            pattern(sizes.weights, 2),
+            scales(sizes.weight_scales, 2),
+            pattern(if entry.paired { sizes.weights } else { 4 }, 3),
+            scales(if entry.paired { sizes.weight_scales } else { 4 }, 3),
+        ];
+        let buffers = images
+            .iter()
+            .map(|bytes| {
+                let b = session.allocate(bytes.len())?;
+                b.copy_from_bytes(bytes, &session.stream)
+                    .map_err(|e| e.to_string())?;
+                Ok(b)
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        Ok(Self { buffers })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compare_with(
+    session: &Session,
+    entry: &Entry,
+    rows: u32,
+    ticket: Option<&kernels_sm120::gemm::mxfp8_fold_ticket::Entry>,
+    weights: Option<&Weights>,
+    timed: bool,
+    profile: bool,
+) -> LabResult<serde_json::Value> {
     let q = entry.query;
     let ranks = topologies(entry);
     let old = registration::entries(
@@ -216,10 +267,38 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
     let old_op = old_backend
         .mxfp8_fold_gemm(&old.query, Need::rows(rows))
         .map_err(|e| e.to_string())?;
-    let backend = Sm120::new()
+    let mut backend = Sm120::new()
         .with_mxfp8_fold(old)
         .with_mxfp8_fold_decode(entry.clone());
-    let new_query = if rows <= 32 {
+    if let Some(ticket) = ticket {
+        backend = backend.with_mxfp8_fold_ticket(ticket.clone());
+    }
+    let baseline_single = if ticket.is_some() && rows <= 32 && !entry.paired {
+        Some(
+            backend
+                .mxfp8_fold_gemm(&q, Need::rows(rows))
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let baseline_pair = if ticket.is_some() && rows <= 32 && entry.paired {
+        Some(
+            backend
+                .mxfp8_fold_gemm_pair(&q, Need::rows(rows))
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let baseline_workspace = baseline_single
+        .as_ref()
+        .map(|op| op.info().workspace)
+        .or_else(|| baseline_pair.as_ref().map(|op| op.info().workspace))
+        .unwrap_or(0);
+    let new_query = if let Some(ticket) = ticket {
+        ticket.query
+    } else if rows <= 32 {
         q
     } else {
         kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
@@ -239,7 +318,7 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
     let pair = if entry.paired {
         Some(
             backend
-                .mxfp8_fold_gemm_pair(&q, Need::rows(rows))
+                .mxfp8_fold_gemm_pair(&new_query, Need::rows(rows))
                 .map_err(|e| e.to_string())?,
         )
     } else {
@@ -251,19 +330,6 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
     );
     let sizes = entry.legacy().map_err(|e| e.to_string())?.bytes(rows);
     const OFFSET: usize = 3;
-    let pattern = |bytes: u64, seed: usize| {
-        (0..bytes as usize)
-            .map(|i| {
-                let x = i.wrapping_mul(1664525).wrapping_add(seed * 1013904223);
-                ((x >> 13) % 120) as u8 | if (x >> 7) & 1 != 0 { 128 } else { 0 }
-            })
-            .collect::<Vec<_>>()
-    };
-    let scales = |bytes: u64, seed: usize| {
-        (0..bytes as usize)
-            .map(|i| 117 + ((i * 7 + i / 11 + seed) % 17) as u8)
-            .collect::<Vec<_>>()
-    };
     let initial_status: Vec<u8> = (0..rows as usize + OFFSET + 2)
         .flat_map(|i| {
             (if i < OFFSET || i >= OFFSET + rows as usize {
@@ -277,18 +343,35 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
     let mut images = vec![
         pattern(sizes.activations, 1),
         scales(sizes.activation_scales, 1),
-        pattern(sizes.weights, 2),
-        scales(sizes.weight_scales, 2),
+        if weights.is_some() {
+            vec![0; 4]
+        } else {
+            pattern(sizes.weights, 2)
+        },
+        if weights.is_some() {
+            vec![0; 4]
+        } else {
+            scales(sizes.weight_scales, 2)
+        },
         vec![0xa5; sizes.output as usize],
         rows.to_ne_bytes().to_vec(),
         initial_status.clone(),
         vec![0xcd; workspace.max(4) as usize],
-        pattern(if entry.paired { sizes.weights } else { 4 }, 3),
-        scales(if entry.paired { sizes.weight_scales } else { 4 }, 3),
+        if weights.is_some() {
+            vec![0; 4]
+        } else {
+            pattern(if entry.paired { sizes.weights } else { 4 }, 3)
+        },
+        if weights.is_some() {
+            vec![0; 4]
+        } else {
+            scales(if entry.paired { sizes.weight_scales } else { 4 }, 3)
+        },
         vec![0xa5; sizes.output as usize],
         vec![0xa5; sizes.output as usize],
         vec![0xa5; sizes.output as usize],
         initial_status,
+        vec![0xcd; baseline_workspace.max(4) as usize],
     ];
     let buffers = images
         .iter()
@@ -296,7 +379,14 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
         .collect::<LabResult<Vec<_>>>()?;
     let view = |i: usize| View {
         handle: i as u64 + 1,
-        bytes: images[i].len() as u64,
+        bytes: weights
+            .and_then(|w| {
+                [2, 3, 8, 9]
+                    .iter()
+                    .position(|&index| index == i)
+                    .map(|index| w.buffers[index].byte_len() as u64)
+            })
+            .unwrap_or(images[i].len() as u64),
     };
     let first = Mxfp8FoldGemmBuffers {
         activations: view(0),
@@ -334,6 +424,16 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
                 .map_err(|e| e.to_string())?,
         );
     }
+    if let Some(op) = baseline_single {
+        old_calls = op
+            .launches(&first, view(14), Counts::rows(rows))
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(op) = baseline_pair {
+        old_calls = op
+            .launches(&[first, second], view(14), Counts::rows(rows))
+            .map_err(|e| e.to_string())?;
+    }
     let new_calls = if let Some(op) = single {
         op.launches(&new_first, view(7), Counts::rows(rows))
     } else {
@@ -343,15 +443,23 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
     .map_err(|e| e.to_string())?;
     let old_functions = functions(session, &old_calls)?;
     let new_functions = functions(session, &new_calls)?;
-    let bindings = Bindings {
+    let mut bindings = Bindings {
         buffers: buffers
             .iter()
             .enumerate()
             .map(|(i, b)| (i as u64 + 1, b))
             .collect(),
     };
+    if let Some(weights) = weights {
+        for (i, b) in [2, 3, 8, 9].into_iter().zip(&weights.buffers) {
+            bindings.buffers.insert(i + 1, b);
+        }
+    }
     let upload = |images: &[Vec<u8>]| -> LabResult<()> {
-        for (buffer, bytes) in buffers.iter().zip(images) {
+        for (index, (buffer, bytes)) in buffers.iter().zip(images).enumerate() {
+            if weights.is_some() && [2, 3, 8, 9].contains(&index) {
+                continue;
+            }
             buffer
                 .copy_from_bytes(bytes, &session.stream)
                 .map_err(|e| e.to_string())?;
@@ -365,8 +473,8 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
             .map_err(|e| e.to_string())?;
         Ok(bytes)
     };
-    // Capture the real three-stage chain once and replay it with changing
-    // live counts and poisoned partials. The original path runs eagerly.
+    // Capture the candidate chain once and replay it with changing live
+    // counts and poisoned partials. The baseline runs eagerly here.
     upload(&images)?;
     session.stream.synchronize().map_err(|e| e.to_string())?;
     session.stream.begin_capture().map_err(|e| e.to_string())?;
@@ -394,6 +502,16 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
             &bindings,
         )?;
         graph.launch(&session.stream).map_err(|e| e.to_string())?;
+        if ticket.is_some() {
+            graph.launch(&session.stream).map_err(|e| e.to_string())?;
+            run(
+                session,
+                &session.stream,
+                &new_calls,
+                &new_functions,
+                &bindings,
+            )?;
+        }
         assert_eq!(read(4)?, read(11)?, "{q:?} rows={rows} live={live}");
         assert_eq!(read(6)?, read(13)?, "status {q:?}");
         if entry.paired {
@@ -412,6 +530,10 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
         (126, 254, 0),
         (1, 0, 0),
         (56, 127, 0x80),
+        (126, 127, 0),
+        (127, 3, 0),
+        (255, 246, 0),
+        (1, 2, 0),
     ] {
         images[0][at] = code;
         images[1][at / 32] = scale;
@@ -455,17 +577,79 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
         "{}",
         json!({"phase":"bitwise-complete","n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,"bitwise":true})
     );
-    let old_timing = kernel_harness::time_named(session, "mxfp8-fold-baseline", 2, 7, |stream| {
-        run(session, stream, &old_calls, &old_functions, &bindings)
-    })?;
-    let new_timing = kernel_harness::time_named(session, "mxfp8-fold-decode", 2, 7, |stream| {
-        run(session, stream, &new_calls, &new_functions, &bindings)
-    })?;
-    Ok(
-        json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,
-        "bitwise":true,"baseline_us":old_timing.median_ms*1000.0,"decode_us":new_timing.median_ms*1000.0,
-        "baseline_launches":old_calls.len(),"decode_launches":new_calls.len()}),
-    )
+    let mut record = json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,
+        "bitwise":true,"baseline_launches":old_calls.len(),"decode_launches":new_calls.len()});
+    if !timed {
+        return Ok(record);
+    }
+    if let Some(ticket) = ticket {
+        let old_graph = session
+            .capture(|stream| run(session, stream, &old_calls, &old_functions, &bindings))?;
+        let mode = kernel_harness::eviction::EvictionMode::selected()?;
+        let paired = kernel_harness::with_timing_label("mxfp8-fold-ticket-ab", || {
+            kernel_harness::time_ab(session, 2, 5, [mode, mode], |arm, stream| {
+                if arm == 0 {
+                    old_graph.launch(stream)
+                } else {
+                    graph.launch(stream)
+                }
+                .map_err(|e| e.to_string())
+            })
+        })?;
+        let weight_bytes = (sizes.weights + sizes.weight_scales) * if entry.paired { 2 } else { 1 };
+        let floor_us = weight_bytes as f64 / 1_600_000.0;
+        record["baseline_us"] = json!(paired.arms[0].median_ms * 1000.0);
+        record["decode_us"] = json!(paired.arms[1].median_ms * 1000.0);
+        record["paired_ratio"] = json!(paired.paired_ratio);
+        record["weight_bytes"] = json!(weight_bytes);
+        record["floor_us"] = json!(floor_us);
+        record["floor_ratio"] = json!(f64::from(paired.arms[1].median_ms) * 1000.0 / floor_us);
+        record["no_regression"] = json!(paired.paired_ratio <= 1.0);
+        record["tile_n"] = json!(ticket.tile_n());
+        record["folds_per_cta"] = json!(ticket.folds_per_cta(rows));
+        record["workspace_bytes"] = json!(workspace);
+        if profile {
+            let stage_times = |calls: &[Launch], functions: &[Function]| -> LabResult<Vec<f32>> {
+                (0..calls.len())
+                    .map(|i| {
+                        kernel_harness::time_prepared(
+                            session,
+                            1,
+                            3,
+                            mode,
+                            |stream| run(session, stream, &calls[..i], &functions[..i], &bindings),
+                            |stream| {
+                                run(
+                                    session,
+                                    stream,
+                                    &calls[i..i + 1],
+                                    &functions[i..i + 1],
+                                    &bindings,
+                                )
+                            },
+                        )
+                        .map(|t| t.median_ms * 1000.0)
+                    })
+                    .collect()
+            };
+            record["baseline_stage_us"] = json!(stage_times(&old_calls, &old_functions)?);
+            record["ticket_stage_us"] = json!(stage_times(&new_calls, &new_functions)?);
+            record["baseline_grid"] =
+                json!(old_calls.iter().map(|c| c.plan.grid).collect::<Vec<_>>());
+            record["ticket_grid"] =
+                json!(new_calls.iter().map(|c| c.plan.grid).collect::<Vec<_>>());
+        }
+    } else {
+        let old = kernel_harness::time_named(session, "mxfp8-fold-baseline", 2, 7, |stream| {
+            run(session, stream, &old_calls, &old_functions, &bindings)
+        })?;
+        let new = kernel_harness::time_named(session, "mxfp8-fold-decode", 2, 7, |stream| {
+            run(session, stream, &new_calls, &new_functions, &bindings)
+        })?;
+        record["baseline_us"] = json!(old.median_ms * 1000.0);
+        record["decode_us"] = json!(new.median_ms * 1000.0);
+    }
+    Ok(record)
 }
 
 #[test]

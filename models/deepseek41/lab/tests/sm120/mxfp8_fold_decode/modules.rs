@@ -43,6 +43,11 @@ fn expected() -> LabResult<BTreeMap<String, Expected>> {
             add(symbol)?;
         }
     }
+    for entry in mxfp8_fold::ticket_catalog(&FLASH)? {
+        for symbol in entry.symbols() {
+            add(symbol)?;
+        }
+    }
     for entry in mxfp8_fold::catalog(&FLASH)?
         .into_iter()
         .filter(|e| e.query.m_capacity == PREFILL_TOKENS)
@@ -128,13 +133,13 @@ fn validate(dir: &Path, required: &BTreeMap<String, Expected>) -> LabResult<Valu
     Ok(json!({"test":"mxfp8_fold_decode::decode_fold_gpu","modules":modules}))
 }
 
-pub(super) fn check() -> LabResult<Value> {
+pub(crate) fn check() -> LabResult<Value> {
     validate(&directory()?, &expected()?)
 }
 
 /// The session must register the timing module by name even though model
 /// functions and PDL probes are loaded from the bundle's embedded bytes.
-pub(super) fn timing_cubins() -> LabResult<Cubins> {
+pub(crate) fn timing_cubins() -> LabResult<Cubins> {
     static BYTES: OnceLock<LabResult<Vec<u8>>> = OnceLock::new();
     static TABLE: OnceLock<[(&str, &[u8]); 1]> = OnceLock::new();
     let bytes = BYTES

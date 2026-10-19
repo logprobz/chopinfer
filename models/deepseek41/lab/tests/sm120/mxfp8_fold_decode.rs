@@ -1,4 +1,5 @@
-//! Paired old/new measurements on the serving Flash TP4 dense shapes.
+//! Paired old/new measurements on every serving Flash dense shape.
+mod modules;
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
@@ -7,13 +8,54 @@ use kernel_harness::launch::{Bindings, launch};
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_fold_decode::Entry;
-use model_deepseek41_contract::{geometry::FLASH, serving::PREFILL_TOKENS};
+use model_deepseek41_contract::{
+    admission::SUPPORTED_RANKS, geometry::FLASH, serving::PREFILL_TOKENS,
+};
 use runtime_cuda::{Function, Stream};
 use serde_json::json;
 use std::collections::BTreeMap;
 
 fn entries() -> Vec<Entry> {
-    registration::decode_entries(&FLASH, 4).unwrap()
+    registration::decode_catalog(&FLASH).unwrap()
+}
+
+fn topologies(entry: &Entry) -> Vec<u32> {
+    SUPPORTED_RANKS
+        .iter()
+        .copied()
+        .filter(|&ranks| {
+            registration::decode_entries(&FLASH, ranks)
+                .unwrap()
+                .iter()
+                .any(|e| {
+                    e.symbol == entry.symbol && e.query == entry.query && e.paired == entry.paired
+                })
+        })
+        .collect()
+}
+
+#[test]
+fn decode_fold_topologies_are_covered() {
+    let tested = entries();
+    for &ranks in SUPPORTED_RANKS {
+        for enabled in registration::decode_entries(&FLASH, ranks).unwrap() {
+            assert!(
+                tested.iter().any(|entry| entry.symbol == enabled.symbol
+                    && entry.query == enabled.query
+                    && entry.paired == enabled.paired),
+                "missing TP{ranks} comparison: {}",
+                enabled.symbol
+            );
+            if enabled.paired {
+                assert_eq!(enabled.query.n, FLASH.shape.moe.intermediate / ranks);
+            }
+        }
+    }
+    let (_, conformance) = required();
+    assert_eq!(
+        conformance.len(),
+        tested.iter().filter(|entry| !entry.paired).count()
+    );
 }
 
 fn required() -> (Sm120, Vec<Required<'static>>) {
@@ -21,10 +63,11 @@ fn required() -> (Sm120, Vec<Required<'static>>) {
     let mut required = Vec::new();
     for entry in entries().into_iter().filter(|e| !e.paired) {
         let q = entry.query;
+        let ranks = topologies(&entry);
         backend = backend.with_mxfp8_fold_decode(entry);
         required.push(
             Required::new(
-                format!("decode {q:?}"),
+                format!("decode ranks={ranks:?} {q:?}"),
                 cases::need(32),
                 move |backend, need| backend.mxfp8_fold_gemm(&q, need),
                 move |op| cases::case(q, 32, op),
@@ -61,31 +104,37 @@ fn check(report: &kit::Report, expected: usize, gpu: bool) {
 
 #[test]
 fn decode_fold_dry_run() {
+    println!("{}", modules::check().unwrap());
+    let cubins = modules::timing_cubins().unwrap();
+    assert!(!cubins.bytes("probe_sm120").unwrap().is_empty());
     let (backend, required) = required();
     let report = kit::conform(&backend, &super::mxfp8_fold::ModelModules, None, &required).unwrap();
     check(&report, required.len(), false);
-    let registered = registration::decode_registrations(&FLASH, 4, 0).unwrap();
-    for id in [
-        "layer.wq_a",
-        "layer.wq_b",
-        "layer.wkv",
-        "layer.wo_a",
-        "layer.wo_b",
-        "layer.shared.gate-up",
-        "layer.shared.down",
-        "csa.indexer.wq_b",
-        "engram.wkv",
-        "dspark.main_proj",
-    ] {
-        for rows in registration::DECODE_BUCKETS {
-            assert!(
-                registered
-                    .iter()
-                    .any(|r| r.projection == id && r.usage.capacity == rows)
-            );
+    for &ranks in SUPPORTED_RANKS {
+        let registered = registration::decode_registrations(&FLASH, ranks, 0).unwrap();
+        for id in [
+            "layer.wq_a",
+            "layer.wq_b",
+            "layer.wkv",
+            "layer.wo_a",
+            "layer.wo_b",
+            "layer.shared.gate-up",
+            "layer.shared.down",
+            "csa.indexer.wq_b",
+            "engram.wkv",
+            "dspark.main_proj",
+        ] {
+            for rows in registration::DECODE_BUCKETS {
+                assert!(
+                    registered
+                        .iter()
+                        .any(|r| r.projection == id && r.usage.capacity == rows)
+                );
+            }
         }
     }
     for entry in entries() {
+        assert!(!topologies(&entry).is_empty());
         for rows in registration::DECODE_BUCKETS {
             let backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
             let info = if entry.paired {
@@ -108,7 +157,7 @@ fn decode_fold_dry_run() {
         }
     }
     println!(
-        "validated {} Flash TP4 shapes at rows 1,2,4,8,16,32 and prefill 64",
+        "validated {} distinct Flash TP1/TP2/TP4 shapes at rows 1,2,4,8,16,32 and prefill 64",
         entries().len()
     );
 }
@@ -149,16 +198,20 @@ fn run(
 
 fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json::Value> {
     let q = entry.query;
-    let old = registration::entries(&FLASH, 4)?
-        .into_iter()
-        .find(|old| {
-            old.query
-                == kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
-                    m_capacity: PREFILL_TOKENS,
-                    ..q
-                }
-        })
-        .ok_or("missing prefill-shaped baseline")?;
+    let ranks = topologies(entry);
+    let old = registration::entries(
+        &FLASH,
+        *ranks.first().ok_or("entry has no enabled topology")?,
+    )?
+    .into_iter()
+    .find(|old| {
+        old.query
+            == kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: PREFILL_TOKENS,
+                ..q
+            }
+    })
+    .ok_or("missing prefill-shaped baseline")?;
     let old_backend = Sm120::new().with_mxfp8_fold(old.clone());
     let old_op = old_backend
         .mxfp8_fold_gemm(&old.query, Need::rows(rows))
@@ -398,6 +451,10 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
         images[i][status_at..status_at + 4].fill(0);
     }
     upload(&images)?;
+    println!(
+        "{}",
+        json!({"phase":"bitwise-complete","n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,"bitwise":true})
+    );
     let old_timing = kernel_harness::time_named(session, "mxfp8-fold-baseline", 2, 7, |stream| {
         run(session, stream, &old_calls, &old_functions, &bindings)
     })?;
@@ -405,7 +462,7 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
         run(session, stream, &new_calls, &new_functions, &bindings)
     })?;
     Ok(
-        json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,
+        json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,
         "bitwise":true,"baseline_us":old_timing.median_ms*1000.0,"decode_us":new_timing.median_ms*1000.0,
         "baseline_launches":old_calls.len(),"decode_launches":new_calls.len()}),
     )
@@ -413,7 +470,8 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
 
 #[test]
 fn decode_fold_gpu() {
-    kernel_harness::gpu_test_multi(3 << 30, |sessions| {
+    let cubins = modules::timing_cubins().unwrap();
+    kernel_harness::gpu_test_multi_with(cubins, 3 << 30, |sessions| {
         let (backend, required) = required();
         let report = kit::conform(
             &backend,
@@ -422,6 +480,10 @@ fn decode_fold_gpu() {
             &required,
         )?;
         check(&report, required.len(), true);
+        println!(
+            "{}",
+            json!({"phase":"conformance-complete","cases":required.len(),"ranks":SUPPORTED_RANKS})
+        );
         for session in sessions {
             let mut records = Vec::new();
             for entry in entries() {

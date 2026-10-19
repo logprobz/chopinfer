@@ -22,6 +22,10 @@ pub struct Projection {
     pub tokens_capacity: u32,
     /// Compact route tiles, four ordered K chains and async operand stages.
     pub active: bool,
+    /// Bound the old column grid by nonempty route tiles, keeping its cubin.
+    pub compact_columns: bool,
+    /// Model-owned selection limit, independent of the compiled capacity.
+    pub max_rows: u32,
 }
 
 impl Projection {
@@ -78,6 +82,8 @@ impl Projection {
             row_tile,
             tokens_capacity,
             active: false,
+            compact_columns: false,
+            max_rows: tokens_capacity,
         };
         result.padded_rows(tokens_capacity)?;
         Ok(result)
@@ -87,7 +93,30 @@ impl Projection {
         self.query.projection.projection == GatedMlpProjection::GateUp
     }
 
+    pub fn with_max_rows(mut self, rows: u32) -> Result<Self, Refusal> {
+        if rows == 0 || rows > self.tokens_capacity {
+            return Err(Refusal("chained selection limit exceeds compiled capacity"));
+        }
+        self.max_rows = rows;
+        Ok(self)
+    }
+
+    /// Reuse the column kernel with a tighter graph-stable grid. Every
+    /// padded tile contains at least one route, so tiles <= tokens * top_k.
+    /// This retains 64 columns per CTA and lets CUDA schedule all work,
+    /// without a persistent cap, warp-chain handovers or extra K padding.
+    pub fn with_compact_columns(mut self) -> Result<Self, Refusal> {
+        if self.active {
+            return Err(Refusal("compact columns require the column entry"));
+        }
+        self.compact_columns = true;
+        Ok(self)
+    }
+
     pub fn with_active_experts(mut self) -> Result<Self, Refusal> {
+        if self.compact_columns {
+            return Err(Refusal("active block warps cannot use the column grid"));
+        }
         let grouped = self.query.projection.gemm.grouped.expect("routed contract");
         if u64::from(self.tokens_capacity)
             * u64::from(grouped.top_k)
@@ -130,7 +159,7 @@ impl Projection {
 
     pub fn plan(&self, tokens: u32) -> Result<LaunchPlan, Refusal> {
         self.query.validate()?;
-        if tokens == 0 || tokens > self.tokens_capacity {
+        if tokens == 0 || tokens > self.tokens_capacity || tokens > self.max_rows {
             return Err(Refusal("quantized chained launch exceeds token capacity"));
         }
         let plan = LaunchPlan {
@@ -146,7 +175,12 @@ impl Projection {
                 ]
             } else {
                 [
-                    self.padded_rows(tokens)? / self.row_tile,
+                    if self.compact_columns {
+                        (self.padded_rows(tokens)? / self.row_tile)
+                            .min(tokens * self.query.projection.gemm.grouped.unwrap().top_k)
+                    } else {
+                        self.padded_rows(tokens)? / self.row_tile
+                    },
                     self.columns() / TILE_N,
                     1,
                 ]

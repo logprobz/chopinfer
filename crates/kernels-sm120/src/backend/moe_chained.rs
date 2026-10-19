@@ -68,13 +68,18 @@ pub(super) fn projection(
             .filter(|e| !e.active || preferred_tile == 16)
             .map(|e| {
                 Candidate::new(e.clone(), &e.symbol, format!("{e:?}"), e.invariance())
-                    .capacity(e.tokens_capacity)
-                    .rank(2 * u64::from(e.row_tile != preferred_tile) + u64::from(!e.active))
+                    .capacity(e.max_rows)
+                    .rank(
+                        4 * u64::from(e.row_tile != preferred_tile)
+                            + 2 * u64::from(!e.active)
+                            + u64::from(!e.compact_columns),
+                    )
             }),
         need,
     )?;
     let entry = chosen.entry;
     quantized::Projection::new(entry.query, entry.row_tile, entry.tokens_capacity)?;
+    entry.clone().with_max_rows(entry.max_rows)?;
     if entry.active {
         entry.clone().with_active_experts()?;
     }
@@ -1236,6 +1241,18 @@ mod tests {
             ..buffers
         };
         assert!(op.launches(&short, View::EMPTY, Counts::rows(1)).is_err());
+        let columns = quantized::Projection::new(query, 16, 32).unwrap();
+        let compact = columns.clone().with_compact_columns().unwrap();
+        assert_eq!(
+            format!("{:?}", columns.entry()),
+            format!("{:?}", compact.entry())
+        );
+        assert_eq!(compact.plan(1).unwrap().grid, [3, 1, 1]);
+        assert_eq!(compact.plan(32).unwrap().grid, [96, 1, 1]);
+        assert!(compact.clone().with_active_experts().is_err());
+        assert!(columns.clone().with_max_rows(0).is_err());
+        assert!(columns.clone().with_max_rows(33).is_err());
+        assert!(columns.with_max_rows(1).unwrap().plan(2).is_err());
         let entry = quantized::Projection::new(query, 16, 32)
             .unwrap()
             .with_active_experts()

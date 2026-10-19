@@ -725,6 +725,11 @@ spec = json.load(sys.stdin)
 api.input_path = lambda name: Path(spec['inputs'][name])
 api.input_bytes = lambda name: Path(spec['inputs'][name]).read_bytes()
 api.thinking_kwargs = lambda enabled: {'thinking': enabled}
+reasoning = json.loads(Path(spec['inputs']['frontend']).read_text())['reasoning']
+api.thinking_control = lambda enabled: (
+    {'thinking': {'type': 'enabled' if enabled else 'disabled'}}
+    if reasoning.get('switch') == 'thinking-object'
+    else {'chat_template_kwargs': api.thinking_kwargs(enabled)})
 api.thinking_can_be_disabled = lambda: json.loads(Path(spec['inputs']['frontend']).read_text())[
     'reasoning'].get('allow_disabled', True) is not False
 api.arguments = lambda description, model_facts=False: common.arguments(description)

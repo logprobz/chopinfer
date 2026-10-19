@@ -11,6 +11,7 @@ mod dense;
 pub mod dspark;
 mod engram;
 mod exact_f32;
+mod hc_expand_mix;
 mod indexer;
 mod latent;
 mod logits;
@@ -146,6 +147,9 @@ impl Lowering<'_> {
                 Ok(Some(launches))
             }
             Stage::EmbeddingReduce => self.embedding_reduce(phase),
+            Stage::HcMix(layer, sublayer) if self.mix_was_fused(phase, layer, sublayer) => {
+                Ok(Some(Vec::new()))
+            }
             Stage::HcMix(layer, sublayer) => self.mix(phase, layer, sublayer),
             Stage::HcExpand(layer, sublayer) => self.expand(phase, layer, sublayer),
             Stage::HeadCollapse => self.head(phase),
@@ -304,6 +308,9 @@ impl Lowering<'_> {
         layer: u32,
         sublayer: Sublayer,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        if let Some(launches) = self.expand_with_next_mix(phase, layer, sublayer)? {
+            return Ok(Some(launches));
+        }
         let Some(ops) = &self.ops.hc else {
             return Ok(None);
         };

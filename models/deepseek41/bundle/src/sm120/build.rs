@@ -26,6 +26,8 @@ mod encoder;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
+#[allow(dead_code)]
+mod hc_expand_mix;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
 #[allow(dead_code)]
@@ -128,6 +130,7 @@ pub fn selection(
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
         owners.push((norm_quantize::cubin_name(geometry), geometry.id));
+        owners.push((hc_expand_mix::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
@@ -214,6 +217,7 @@ pub fn selection(
         }
     }
     specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
+    specs.extend(hc_expand_mix::cubins(geometries).expect("fused expansion mixer cubins"));
     specs.push((
         window_fused::FAMILY,
         window_fused::cubin().expect("fused window cubin"),

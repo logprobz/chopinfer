@@ -1,0 +1,117 @@
+use super::{Lowering, layer_view, mixer, pre, rows, streams, sublayer_index};
+use crate::{
+    ops::Lowered,
+    program::{Phase, Sublayer},
+};
+use kernel_core::sinkhorn_expand_mix::SinkhornExpandMixBuffers;
+use model_deepseek41_contract::geometry::Geometry;
+
+/// Only adjacent sublayers whose intervening stages preserve the streams.
+/// Engram modifies the next attention's streams, and the final expand feeds
+/// the head. Neither boundary can reuse the earlier projection partials.
+fn successor(g: &Geometry, layer: u32, sublayer: Sublayer) -> Option<(u32, Sublayer)> {
+    if layer >= g.layers() {
+        return None;
+    }
+    match sublayer {
+        Sublayer::Attention => Some((layer, Sublayer::Mlp)),
+        Sublayer::Mlp if layer + 1 < g.layers() && !g.is_engram_layer(layer + 1) => {
+            Some((layer + 1, Sublayer::Attention))
+        }
+        _ => None,
+    }
+}
+impl Lowering<'_> {
+    fn has_expand_mix(&self, phase: Phase) -> bool {
+        matches!(phase, Phase::Decode(_))
+            && self.ops.hc.as_ref().is_some_and(|ops| ops.has_expand_mix())
+    }
+    pub(super) fn mix_was_fused(&self, phase: Phase, layer: u32, sublayer: Sublayer) -> bool {
+        if !self.has_expand_mix(phase) {
+            return false;
+        }
+        let previous = match sublayer {
+            Sublayer::Mlp => Some((layer, Sublayer::Attention)),
+            Sublayer::Attention => layer.checked_sub(1).map(|l| (l, Sublayer::Mlp)),
+        };
+        previous
+            .is_some_and(|(l, s)| successor(self.shape.geometry, l, s) == Some((layer, sublayer)))
+    }
+    pub(super) fn expand_with_next_mix(
+        &self,
+        phase: Phase,
+        layer: u32,
+        sublayer: Sublayer,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        if !self.has_expand_mix(phase) {
+            return Ok(None);
+        }
+        let Some((next_layer, next_sublayer)) = successor(self.shape.geometry, layer, sublayer)
+        else {
+            return Ok(None);
+        };
+        let s = &self.buffers.scratch;
+        let index = sublayer_index(layer, sublayer);
+        let row = |span| rows(span, phase.rows());
+        let weight = |name: &str| {
+            self.buffers.view(&layer_view(
+                next_layer,
+                &format!("{}_{name}", mixer(next_sublayer)),
+            ))
+        };
+        let buffers = SinkhornExpandMixBuffers {
+            x: row(streams(s, index)),
+            y: row(s.reduced),
+            post_in: row(s.post),
+            comb_in: row(s.comb),
+            expanded: row(streams(s, index + 1)),
+            fn_: weight("fn")?,
+            base: weight("base")?,
+            scale: weight("scale")?,
+            pre_in: row(pre(s, index)),
+            collapsed: row(s.collapsed),
+            pre: row(pre(s, index + 1)),
+            post: row(s.post),
+            comb: row(s.comb),
+            live_rows: self.inputs.live_tokens,
+        };
+        self.ops
+            .hc
+            .as_ref()
+            .unwrap()
+            .expand_mix(phase.rows(), buffers, self.buffers.workspace)
+            .map(Some)
+            .map_err(|e| format!("expand and next lagged mixer: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::{Stage, stages};
+    use model_deepseek41_contract::geometry::FLASH;
+    #[test]
+    fn fused_boundaries_follow_the_program_and_stop_at_engram_and_head() {
+        let program = stages(&FLASH, Phase::Decode(1));
+        let mut count = 0;
+        for (at, stage) in program.iter().enumerate() {
+            let Stage::HcExpand(l, s) = *stage else {
+                continue;
+            };
+            if let Some((layer, sublayer)) = successor(&FLASH, l, s) {
+                let next = program[at + 1..]
+                    .iter()
+                    .find(|s| !matches!(s, Stage::DsparkFeature(_)))
+                    .unwrap();
+                assert_eq!(*next, Stage::HcMix(layer, sublayer));
+                count += 1;
+            }
+        }
+        assert_eq!(count, 77);
+        for &engram in FLASH.shape.engram.layers {
+            assert_eq!(successor(&FLASH, engram - 1, Sublayer::Mlp), None);
+        }
+        assert_eq!(successor(&FLASH, FLASH.layers() - 1, Sublayer::Mlp), None);
+        assert_eq!(successor(&FLASH, FLASH.layers(), Sublayer::Attention), None);
+    }
+}

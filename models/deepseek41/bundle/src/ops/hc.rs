@@ -4,6 +4,7 @@
 //! `pre`, each prepared for a prefill's rows.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
+use kernel_core::sinkhorn_expand_mix::{SinkhornExpandMixBuffers, SinkhornExpandMixQuery};
 use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
     WeightedStreamHeadBuffers,
@@ -24,6 +25,7 @@ pub(crate) struct HcOps {
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
+    fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
 }
 
 /// The mixer scratch the mix-collapse lists, in bytes: its partials,
@@ -89,7 +91,50 @@ impl HcOps {
             head: asks.ask("hc.head", need, |need| {
                 backend.sinkhorn_weighted_head(&hc::head(g, need.capacity), need)
             })?,
+            fused: {
+                let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
+                let need = exact::need(capacity, exact::every_phase(capacity));
+                match asks.ask("hc.expand_mix", need, |need| {
+                    backend.sinkhorn_expand_mix(&SinkhornExpandMixQuery { mix: hc::mix(g) }, need)
+                }) {
+                    Ok(op) => Some(op),
+                    Err(Refused::Unsupported) => None,
+                    Err(e) => return Err(e),
+                }
+            },
         })
+    }
+
+    pub(crate) fn has_expand_mix(&self) -> bool {
+        self.fused.is_some()
+    }
+    pub(crate) fn expand_mix(
+        &self,
+        rows: u32,
+        views: SinkhornExpandMixBuffers<DeviceBufferSpanV1>,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, kernel_core::contract::Refusal> {
+        let op = self.fused.as_ref().ok_or(kernel_core::contract::Refusal(
+            "fused expansion mixer unavailable",
+        ))?;
+        let mut bind = Bind::default();
+        let b = SinkhornExpandMixBuffers {
+            x: bind.view(views.x),
+            y: bind.view(views.y),
+            post_in: bind.view(views.post_in),
+            comb_in: bind.view(views.comb_in),
+            expanded: bind.view(views.expanded),
+            fn_: bind.view(views.fn_),
+            base: bind.view(views.base),
+            scale: bind.view(views.scale),
+            pre_in: bind.view(views.pre_in),
+            collapsed: bind.view(views.collapsed),
+            pre: bind.view(views.pre),
+            post: bind.view(views.post),
+            comb: bind.view(views.comb),
+            live_rows: bind.view(views.live_rows),
+        };
+        bind.launch_within(op, &b, workspace, Counts::rows(rows))
     }
 
     /// The mixer scratch every rank allocates for the mix-collapse.

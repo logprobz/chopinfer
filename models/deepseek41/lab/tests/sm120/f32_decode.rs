@@ -1,5 +1,7 @@
 //! Bitwise baseline comparisons and paired cold-weight launch timings.
-use bundle_deepseek41::sm120::{f32_head, fold_cubin_for_symbol};
+use bundle_deepseek41::sm120::{
+    f32_decode, f32_head, fold_cubin_for_symbol, register_f32_projections,
+};
 use kernel_build::{BuildOptions, CubinSpec, EntryParam, EntrySpec, LockDir, Toolchain};
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
 use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
@@ -11,13 +13,196 @@ use kernels_sm120::{
     backend::{F32ProjectionOffers, Sm120},
     f32_projection::{Entry, cubin_spec},
 };
-use model_deepseek41_contract::geometry::FLASH;
+use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
+use model_deepseek41_contract::geometry::GEOMETRIES;
 use runtime_cuda::{Module, Stream};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const CUBIN: &str = "f32_decode_edges";
+
+struct ProductionCase {
+    old: Entry,
+    rows: Vec<u32>,
+}
+
+// Enumerate the same declarations the serving registration consumes, then
+// deduplicate entries shared by several supported topologies.
+fn production_cases() -> Vec<ProductionCase> {
+    let mut selected = BTreeMap::new();
+    for g in GEOMETRIES {
+        for &ranks in SUPPORTED_RANKS {
+            if check_ranks(g, ranks).is_err() {
+                continue;
+            }
+            let head = f32_head::decode_entry(g, ranks).unwrap();
+            for entry in f32_decode::entries(g, ranks).unwrap() {
+                let maximum = if entry == head {
+                    bundle_deepseek41::buffers::logits_rows()
+                } else {
+                    entry.query().m_capacity
+                };
+                assert!(maximum <= entry.query().m_capacity);
+                if let Some((previous, previous_maximum)) =
+                    selected.insert(entry.symbol().to_owned(), (entry.clone(), maximum))
+                {
+                    assert_eq!(previous, entry);
+                    assert_eq!(previous_maximum, maximum);
+                }
+            }
+        }
+    }
+    selected
+        .into_values()
+        .map(|(entry, maximum)| {
+            let stem = entry
+                .symbol()
+                .strip_suffix("_v1_cached_v1")
+                .expect("registered cached entry retains its baseline stem");
+            let old = Entry::new(entry.query(), entry.usage(), stem).unwrap();
+            assert_eq!(old.clone().with_decode(), entry);
+            let mut rows = vec![1, 2, 4, 8, 16, 32, 64, maximum];
+            rows.sort_unstable();
+            rows.dedup();
+            ProductionCase { old, rows }
+        })
+        .collect()
+}
+
+const EDGE_WITNESSES: [Witness; 11] = [
+    Witness::General,
+    Witness::WeightBits,
+    Witness::LowComponent,
+    Witness::SeparateChains,
+    Witness::MergeOrder,
+    Witness::FoldBoundary,
+    Witness::Fallback,
+    Witness::Underflow,
+    Witness::NonfiniteInput,
+    Witness::NonfiniteWeight,
+    Witness::Overflow,
+];
+const RANDOM_CASES: u32 = 4;
+
+fn timed(rows: u32) -> bool {
+    matches!(rows, 1 | 32 | 64)
+}
+
+fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
+    let edge_cases: usize = edges()
+        .iter()
+        .map(|entry| {
+            if entry.query().n == 65536 {
+                1
+            } else {
+                EDGE_WITNESSES.len() + RANDOM_CASES as usize + usize::from(entry.query().k == 129)
+            }
+        })
+        .sum();
+    let production_cases: usize = matrix.iter().map(|case| case.rows.len()).sum();
+    let timing_cases: usize = matrix
+        .iter()
+        .flat_map(|case| &case.rows)
+        .filter(|&&rows| timed(rows))
+        .count();
+    let launch_timings: usize = matrix
+        .iter()
+        .flat_map(|case| &case.rows)
+        .filter(|&&rows| timed(rows))
+        .map(|&rows| if rows <= 32 { 4 } else { 2 })
+        .sum();
+    serde_json::json!({
+        "production": matrix.iter().map(|case| serde_json::json!({
+            "baseline": case.old.symbol(),
+            "candidate": case.old.clone().with_decode().symbol(),
+            "n": case.old.query().n,
+            "k": case.old.query().k,
+            "rows": case.rows,
+            "timing_rows": case.rows.iter().copied().filter(|&rows| timed(rows)).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "production_cases": production_cases,
+        "edge_cases": edge_cases,
+        "bitwise_cases": production_cases + edge_cases,
+        "timing_cases": timing_cases,
+        "launch_timings": launch_timings,
+    })
+}
+
+#[test]
+fn cpu_production_matrix_covers_registered_entries() {
+    let matrix = production_cases();
+    let covered: BTreeSet<_> = matrix
+        .iter()
+        .flat_map(|case| case.old.clone().with_decode().symbols())
+        .collect();
+    let compiled: BTreeSet<_> = f32_decode::cubins(GEOMETRIES)
+        .unwrap()
+        .into_iter()
+        .flat_map(|(_, spec)| spec.entries.into_iter().map(|entry| entry.symbol))
+        .collect();
+    assert_eq!(
+        covered, compiled,
+        "every compiled production entry must have bitwise comparisons"
+    );
+    for g in GEOMETRIES {
+        for &ranks in SUPPORTED_RANKS {
+            if check_ranks(g, ranks).is_err() {
+                continue;
+            }
+            let backend = register_f32_projections(Sm120::new(), g, ranks).unwrap();
+            let head = f32_head::decode_entry(g, ranks).unwrap();
+            for entry in f32_decode::entries(g, ranks).unwrap() {
+                let case = matrix
+                    .iter()
+                    .find(|case| case.old.clone().with_decode() == entry)
+                    .unwrap();
+                let maximum = if entry == head {
+                    bundle_deepseek41::buffers::logits_rows()
+                } else {
+                    entry.query().m_capacity
+                };
+                assert!(
+                    case.rows.contains(&maximum),
+                    "{} lacks its maximum {maximum} rows",
+                    entry.symbol()
+                );
+                for rows in [1, 2, 4, 8, 16, 32, 64] {
+                    assert!(
+                        case.rows.contains(&rows),
+                        "{} lacks {rows} rows",
+                        entry.symbol()
+                    );
+                }
+                assert!(
+                    fold_cubin_for_symbol(case.old.symbol()).is_some(),
+                    "locked baseline is missing"
+                );
+                for symbol in entry.symbols() {
+                    assert!(
+                        fold_cubin_for_symbol(&symbol).is_some(),
+                        "registered symbol is missing"
+                    );
+                }
+                for &rows in &case.rows {
+                    let op = backend
+                        .projection(&cases::operation(&entry), entry.usage(), Need::rows(rows))
+                        .unwrap()
+                        .handle;
+                    assert_eq!(
+                        op.info()
+                            .symbols
+                            .iter()
+                            .map(|(symbol, _)| symbol.clone())
+                            .collect::<Vec<_>>(),
+                        entry.symbols()
+                    );
+                }
+            }
+        }
+    }
+    println!("F32_MATRIX {}", coverage(&matrix));
+}
 
 fn edge(n: u32, k: u32, weight: WeightFormat) -> Entry {
     let q = GemmQuery {
@@ -407,43 +592,13 @@ fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>)
 
 #[test]
 fn gpu_bitwise_shapes_and_edges() {
-    kernel_harness::gpu_test_with(timing_cubins(), 2 << 30, |session| {
-        let g = &FLASH;
-        for (label, n, k) in [
-            ("router", g.shape.moe.experts, g.shape.hidden),
-            ("wkv", g.shape.attention.head_dim, g.shape.hidden),
-            ("weights_proj", g.shape.indexer.heads, g.shape.hidden),
-            ("head", g.shape.vocab / 4, g.shape.hidden),
-        ] {
-            let old = if label == "head" {
-                f32_head::entry(g, 4).unwrap()
-            } else {
-                let q = GemmQuery {
-                    n,
-                    k,
-                    ..f32_head::query(g, 4)
-                };
-                Entry::new(
-                    q,
-                    f32_head::usage(),
-                    &format!(
-                        "chop_{}_dense_f32_m{}_n{n}_k{k}",
-                        g.kernel_tag, q.m_capacity
-                    ),
-                )
-                .unwrap()
-            };
-            for rows in [1, 2, 4, 8, 16, 32, 64] {
-                let (a, b) = random_operands(rows, n, k, 0x7813_9231 + rows);
-                compare(
-                    session,
-                    &old,
-                    rows,
-                    &a,
-                    &b,
-                    label,
-                    matches!(rows, 1 | 32 | 64),
-                )?;
+    kernel_harness::gpu_test_with(timing_cubins(), 4 << 30, |session| {
+        for case in production_cases() {
+            let old = &case.old;
+            let q = old.query();
+            for rows in case.rows {
+                let (a, b) = random_operands(rows, q.n, q.k, 0x7813_9231 + rows);
+                compare(session, old, rows, &a, &b, old.symbol(), timed(rows))?;
             }
         }
         for old in edges() {
@@ -470,19 +625,7 @@ fn gpu_bitwise_shapes_and_edges() {
                 )?;
                 continue;
             }
-            for witness in [
-                Witness::General,
-                Witness::WeightBits,
-                Witness::LowComponent,
-                Witness::SeparateChains,
-                Witness::MergeOrder,
-                Witness::FoldBoundary,
-                Witness::Fallback,
-                Witness::Underflow,
-                Witness::NonfiniteInput,
-                Witness::NonfiniteWeight,
-                Witness::Overflow,
-            ] {
+            for witness in EDGE_WITNESSES {
                 let (a, b) = cases::operands(&old, witness);
                 compare(
                     session,
@@ -494,7 +637,7 @@ fn gpu_bitwise_shapes_and_edges() {
                     false,
                 )?;
             }
-            for seed in 1..=4 {
+            for seed in 1..=RANDOM_CASES {
                 let (mut a, mut b) = random_operands(32, q.n, q.k, seed * 123_457);
                 if q.weight == WeightFormat::F32 {
                     for (index, value) in b.iter_mut().enumerate() {

@@ -92,6 +92,8 @@ impl HostTransform {
     /// perform only CPU work, never call CUDA, and may report an error for the
     /// owner to check before publishing results. Uploads still complete after
     /// an error, so all output bytes are initialized before the callback runs.
+    /// The source producer must be its allocation stream, which orders both
+    /// allocation and content production before the recorded dependency.
     pub fn enqueue(
         &mut self,
         source: &DeviceBuffer,
@@ -108,6 +110,9 @@ impl HostTransform {
         producer.require_live()?;
         require_same_context(&source.stream.context, &self.stream.inner.context)?;
         require_same_context(&source.stream.context, &producer.inner.context)?;
+        if !Rc::ptr_eq(&source.stream, &producer.inner) {
+            return Err(CudaError::InvalidLaunch);
+        }
         checked_host_range(self.input.len(), 0, bytes)?;
         let pointer = source.pointer_at(offset, bytes)?;
         if bytes == 0 || targets.is_empty() {

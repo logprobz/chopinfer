@@ -164,3 +164,17 @@ fn host_transform_reports_callback_failure_after_upload_completion() {
         assert_eq!(actual, [0; 8]);
     }
 }
+
+#[test]
+fn host_transform_refuses_an_unordered_source_producer() {
+    let mut f = fixture();
+    let unrelated = f.owners[0].context().stream().unwrap();
+    assert!(
+        f.transform
+            .enqueue(&f.source, 0, 8, &unrelated, &f.targets, |_, _| Ok(()))
+            .is_err()
+    );
+    assert_eq!(ffi::fake_driver_call_count(34), 0);
+    enqueue(&mut f).unwrap();
+    finish(&mut f);
+}

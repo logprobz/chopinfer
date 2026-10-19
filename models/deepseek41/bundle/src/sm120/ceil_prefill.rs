@@ -9,23 +9,24 @@ use kernels_sm120::{
 use model_deepseek41_contract::{admission::SUPPORTED_RANKS, geometry::Geometry};
 pub const FAMILY: &str = "ceil_prefill";
 pub const WARPS: [u32; 3] = [4, 8, 16];
-pub const SERVED_WARPS: u32 = 8;
 pub fn cubin_name(g: &Geometry) -> String {
     format!("ceil_prefill_{}_sm120", g.kernel_tag)
 }
 pub fn baseline_quantizers(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
     super::dense::quantizers(g, ranks)
 }
+fn prefill(mut entry: Entry, warps: u32) -> Result<Entry, String> {
+    entry.symbol = format!(
+        "{}_prefill_w{warps}_v1",
+        entry.symbol.strip_suffix("_v1").unwrap()
+    );
+    entry.prefill(warps).map_err(|e| e.to_string())
+}
+
 pub fn quantizers(g: &Geometry, ranks: u32, warps: u32) -> Result<Vec<Entry>, String> {
     baseline_quantizers(g, ranks)?
         .into_iter()
-        .map(|mut e| {
-            e.symbol = format!(
-                "{}_prefill_w{warps}_v1",
-                e.symbol.strip_suffix("_v1").unwrap()
-            );
-            e.prefill(warps).map_err(|e| e.to_string())
-        })
+        .map(|entry| prefill(entry, warps))
         .collect()
 }
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
@@ -50,7 +51,12 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         .collect()
 }
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    Ok(quantizers(g, ranks, SERVED_WARPS)?
+    // Pair measurements at 1024, 2048 and 8192 rows favor sixteen warps
+    // for wide rows. Eight retains the small-width wins across row counts.
+    baseline_quantizers(g, ranks)?
         .into_iter()
-        .fold(backend, Sm120::with_block_quantize))
+        .try_fold(backend, |backend, entry| {
+            let warps = if entry.query.width >= 8192 { 16 } else { 8 };
+            Ok(backend.with_block_quantize(prefill(entry, warps)?))
+        })
 }

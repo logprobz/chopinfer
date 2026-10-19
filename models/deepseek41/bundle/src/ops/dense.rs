@@ -766,8 +766,13 @@ mod tests {
                 if rows <= DECODE_BATCH {
                     assert!(call.symbol.ends_with("_parallel_v1"), "{}", call.symbol);
                 } else {
-                    assert!(call.symbol.ends_with("_prefill_w8_v1"), "{}", call.symbol);
-                    assert_eq!(call.plan.block, [256, 1, 1]);
+                    let warps = if width >= 8192 { 16 } else { 8 };
+                    assert!(
+                        call.symbol.ends_with(&format!("_prefill_w{warps}_v1")),
+                        "{}",
+                        call.symbol
+                    );
+                    assert_eq!(call.plan.block, [warps * 32, 1, 1]);
                 }
             }
         }

@@ -111,9 +111,9 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
         );
         assert_eq!(count("chop_row_rmsnorm_deepseek41_w5120_v1"), 0);
         assert_eq!(count("chop_deepseek41_q_norm_f32_v1"), 0);
-        // Only the embedding's widening remains. Later indexer projections
-        // retain their quantization after other producers can set status.
-        assert_eq!(count("chop_row_rounding_widen_deepseek41_w5120_v1"), ranks);
+        // Embedding widening is now inside its replicated gather. Later
+        // indexer projections retain their status-sensitive quantization.
+        assert_eq!(count("chop_row_rounding_widen_deepseek41_w5120_v1"), 0);
         let widened = (0..FLASH.layers())
             .flat_map(|layer| {
                 [

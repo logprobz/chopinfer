@@ -28,6 +28,7 @@ pub(crate) struct ReduceOps {
     /// The bytes of each comm state region every rank keeps, in the ops'
     /// role order.
     state: Vec<u64>,
+    width: u32,
 }
 
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
@@ -104,6 +105,7 @@ impl ReduceOps {
             reduces,
             widen,
             state,
+            width: shape.dims().hidden,
         })
     }
 
@@ -138,6 +140,58 @@ impl ReduceOps {
                 .collect(),
         };
         bind.launch(op, &buffers, Counts::rows(rows))
+    }
+
+    /// Keep the exact collective prefix while a following op writes the
+    /// BF16 round. The producer owns the F32 sum's state layout.
+    pub(crate) fn defer_round(
+        &self,
+        rank: u32,
+        rows: u32,
+        views: &ReduceViews,
+    ) -> Result<Option<(Vec<Lowered>, DeviceBufferSpanV1)>, Refusal> {
+        let op = self
+            .reduces
+            .get(rank as usize)
+            .ok_or(Refusal("no all-reduce for this rank"))?;
+        let mut bind = Bind::default();
+        let buffers = AllReduceBuffers {
+            input: bind.view(views.input),
+            output: bind.view(views.output),
+            live_rows: Some(bind.view(views.live_rows)),
+            ranks: views
+                .peers
+                .iter()
+                .map(|peer| RankViews {
+                    output: bind.view(peer.output),
+                    state: peer.state.iter().map(|&span| bind.view(span)).collect(),
+                })
+                .collect(),
+        };
+        let Some(round) = op.defer_bf16_round(&buffers, View::EMPTY, Counts::rows(rows))? else {
+            return Ok(None);
+        };
+        if round.width != self.width
+            || round.output != buffers.output
+            || Some(round.live_rows) != buffers.live_rows
+        {
+            return Err(Refusal("deferred round differs from the reduction output"));
+        }
+        round
+            .input
+            .covers(u64::from(rows) * u64::from(self.width) * 4)?;
+        let sum = bind
+            .0
+            .get(round.input.handle)
+            .map_err(|_| Refusal("deferred round source is not bound"))?;
+        Ok(Some((
+            round
+                .launches
+                .into_iter()
+                .map(|l| bind.lowered(l))
+                .collect(),
+            sum,
+        )))
     }
 
     /// The launches of the embedding's widening of `rows` rows.

@@ -28,6 +28,8 @@ mod encoder;
 mod hc;
 #[allow(dead_code)]
 mod hc_expand_mix;
+#[allow(dead_code)]
+mod hc_round_expand_mix;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
 #[allow(dead_code)]
@@ -37,6 +39,8 @@ mod norm_quantize;
 mod own_cubin;
 mod ring_gather_cubin;
 mod ring_gather_entries;
+#[allow(dead_code)]
+mod replicated_embedding;
 #[allow(dead_code)]
 mod window_fused;
 // The build compiles the entries; the bundle launches them.
@@ -131,6 +135,8 @@ pub fn selection(
         );
         owners.push((norm_quantize::cubin_name(geometry), geometry.id));
         owners.push((hc_expand_mix::cubin_name(geometry), geometry.id));
+        owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
+        owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
@@ -218,6 +224,8 @@ pub fn selection(
     }
     specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
     specs.extend(hc_expand_mix::cubins(geometries).expect("fused expansion mixer cubins"));
+    specs.extend(hc_round_expand_mix::cubins(geometries).expect("fused rounded expansion cubins"));
+    specs.extend(replicated_embedding::cubins(geometries).expect("replicated embedding cubins"));
     specs.push((
         window_fused::FAMILY,
         window_fused::cubin().expect("fused window cubin"),

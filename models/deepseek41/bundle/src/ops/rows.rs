@@ -7,6 +7,7 @@
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::Refusal;
+use kernel_core::replicated_embedding::{ReplicatedEmbedding, ReplicatedEmbeddingBuffers};
 use kernel_core::rmsnorm::RmsNormBuffers;
 use kernel_core::row_copy::RowCopyBuffers;
 use kernel_core::rows::EmbeddingBuffers;
@@ -34,6 +35,7 @@ pub(crate) struct RowOps {
     final_norm: Prepared<RmsNormBuffers<View>>,
     /// Each rank's gather from its vocabulary shard, in rank order.
     embeddings: Vec<Prepared<EmbeddingBuffers<View>>>,
+    replicated: Option<Vec<Prepared<ReplicatedEmbeddingBuffers<View>>>>,
     /// The vocabulary rows of one rank's shard.
     shard: u32,
     expand_streams: Prepared<RowCopyBuffers<View>>,
@@ -107,6 +109,30 @@ impl RowOps {
             norms,
             final_norm,
             embeddings,
+            replicated: {
+                let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
+                let need = exact::need(capacity, exact::every_phase(capacity));
+                let q = ReplicatedEmbedding {
+                    vocab: g.shape.vocab,
+                    width: g.shape.hidden,
+                    ranks: shape.ranks(),
+                    streams: g.shape.hc.streams,
+                };
+                let ops = (0..shape.ranks())
+                    .map(|rank| {
+                        asks.ask(
+                            format!("rows.replicated_embedding rank {rank}"),
+                            need,
+                            |need| backend.replicated_embedding(&q, rank, need),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                match ops {
+                    Ok(ops) => Some(ops),
+                    Err(Refused::Unsupported) => None,
+                    Err(e) => return Err(e),
+                }
+            },
             shard,
             expand_streams: asks.ask("rows.expand_streams", need, |need| {
                 backend.broadcast_streams(&rows::expand_streams(g), need)
@@ -158,6 +184,33 @@ impl RowOps {
             table_rows: self.shard,
         };
         bind.launch(op, &buffers, Counts::rows(rows))
+    }
+
+    pub(crate) fn has_replicated_embedding(&self) -> bool {
+        self.replicated.is_some()
+    }
+    pub(crate) fn replicated_embedding(
+        &self,
+        rank: u32,
+        rows: u32,
+        v: ReplicatedEmbeddingBuffers<DeviceBufferSpanV1>,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let op = self
+            .replicated
+            .as_ref()
+            .and_then(|ops| ops.get(rank as usize))
+            .ok_or(Refusal("replicated embedding unavailable"))?;
+        let mut bind = Bind::default();
+        let b = ReplicatedEmbeddingBuffers {
+            tables: v.tables.into_iter().map(|s| bind.view(s)).collect(),
+            ids: bind.view(v.ids),
+            shard: bind.view(v.shard),
+            wide: bind.view(v.wide),
+            output: bind.view(v.output),
+            expanded: bind.view(v.expanded),
+            live_rows: bind.view(v.live_rows),
+        };
+        bind.launch(op, &b, Counts::rows(rows))
     }
 
     /// The live rows of `views` copied into every residual stream, over the

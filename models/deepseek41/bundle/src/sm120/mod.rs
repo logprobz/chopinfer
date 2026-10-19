@@ -12,10 +12,12 @@ pub mod dspark_entries;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
 pub mod hc_expand_mix;
+pub mod hc_round_expand_mix;
 pub mod latent;
 pub mod latent_scheduled;
 pub mod mxfp8_fold;
 pub mod norm_quantize;
+pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
@@ -216,6 +218,8 @@ impl crate::Kernels {
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
+        let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
+        let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);
         let sm120 = compressor::CompressorKernels::serving(shape.geometry)

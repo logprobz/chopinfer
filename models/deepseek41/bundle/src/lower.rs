@@ -153,7 +153,13 @@ impl Lowering<'_> {
             Stage::HcMix(layer, sublayer) => self.mix(phase, layer, sublayer),
             Stage::HcExpand(layer, sublayer) => self.expand(phase, layer, sublayer),
             Stage::HeadCollapse => self.head(phase),
-            Stage::Reduce(..) => self.reduce(phase, |scratch| scratch.reduced),
+            Stage::Reduce(layer, sublayer) => {
+                if let Some(fused) = self.round_expand_with_next_mix(phase, layer, sublayer)? {
+                    Ok(Some(fused))
+                } else {
+                    self.reduce(phase, |scratch| scratch.reduced)
+                }
+            }
             Stage::QuantizeInput(..) => self.quantize_input(phase),
             Stage::Route(layer) => self.route(phase, layer),
             Stage::ExpertsGateUp(layer) => self.experts(phase, layer, true),
@@ -190,6 +196,15 @@ impl Lowering<'_> {
     }
 
     /// A row op's stage.
+    fn replicated_embedding(&self, phase: Phase) -> bool {
+        matches!(phase, Phase::Decode(_))
+            && self
+                .ops
+                .rows
+                .as_ref()
+                .is_some_and(|r| r.has_replicated_embedding())
+    }
+
     fn row_stage(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
         let error = |refusal: kernel_core::contract::Refusal| format!("{stage:?}: {refusal}");
         let Some(row_ops) = &self.ops.rows else {
@@ -212,6 +227,26 @@ impl Lowering<'_> {
                 .map_err(error)
         };
         match stage {
+            Stage::Embedding if self.replicated_embedding(phase) => {
+                let views = kernel_core::replicated_embedding::ReplicatedEmbeddingBuffers {
+                    tables: self
+                        .peers
+                        .iter()
+                        .map(|p| p.view("embed.weight"))
+                        .collect::<Result<_, _>>()?,
+                    ids: self.inputs.token_ids,
+                    shard: rows_of(scratch.embedding),
+                    wide: rows_of(scratch.partial),
+                    output: rows_of(scratch.embedded),
+                    expanded: rows_of(scratch.streams),
+                    live_rows,
+                };
+                row_ops
+                    .replicated_embedding(self.rank, phase.rows(), views)
+                    .map(Some)
+                    .map_err(error)
+            }
+            Stage::ExpandStreams if self.replicated_embedding(phase) => Ok(Some(Vec::new())),
             Stage::Embedding => {
                 let views = EmbeddingViews {
                     table: self.buffers.view("embed.weight")?,
@@ -353,6 +388,9 @@ impl Lowering<'_> {
     /// The embedding's shard rows widened into the partials, then reduced
     /// into the embedding.
     fn embedding_reduce(&self, phase: Phase) -> Result<Option<Vec<Lowered>>, String> {
+        if self.replicated_embedding(phase) {
+            return Ok(Some(Vec::new()));
+        }
         let Some(ops) = &self.ops.reduce else {
             return Ok(None);
         };
@@ -382,8 +420,19 @@ impl Lowering<'_> {
         let Some(ops) = &self.ops.reduce else {
             return Ok(None);
         };
+        let views = self.reduce_views(phase, output);
+        ops.reduce(self.rank, phase.rows(), &views)
+            .map(Some)
+            .map_err(|refusal| format!("all-reduce: {refusal}"))
+    }
+
+    fn reduce_views(
+        &self,
+        phase: Phase,
+        output: impl Fn(&Scratch<DeviceBufferSpanV1>) -> DeviceBufferSpanV1,
+    ) -> ReduceViews {
         let rows_of = |span| rows(span, phase.rows());
-        let views = ReduceViews {
+        ReduceViews {
             input: rows_of(self.buffers.scratch.partial),
             output: rows_of(output(&self.buffers.scratch)),
             live_rows: self.inputs.live_tokens,
@@ -395,10 +444,7 @@ impl Lowering<'_> {
                     state: peer.comm.clone(),
                 })
                 .collect(),
-        };
-        ops.reduce(self.rank, phase.rows(), &views)
-            .map(Some)
-            .map_err(|refusal| format!("all-reduce: {refusal}"))
+        }
     }
 }
 

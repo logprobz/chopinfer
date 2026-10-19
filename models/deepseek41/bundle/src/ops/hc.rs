@@ -4,7 +4,9 @@
 //! `pre`, each prepared for a prefill's rows.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
-use kernel_core::sinkhorn_expand_mix::{SinkhornExpandMixBuffers, SinkhornExpandMixQuery};
+use kernel_core::sinkhorn_expand_mix::{
+    SinkhornExpandMixBuffers, SinkhornExpandMixQuery, SinkhornRoundExpandMixBuffers,
+};
 use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
     WeightedStreamHeadBuffers,
@@ -26,6 +28,7 @@ pub(crate) struct HcOps {
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
+    round_fused: Option<Prepared<SinkhornRoundExpandMixBuffers<View>>>,
 }
 
 /// The mixer scratch the mix-collapse lists, in bytes: its partials,
@@ -102,6 +105,20 @@ impl HcOps {
                     Err(e) => return Err(e),
                 }
             },
+            round_fused: {
+                let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
+                let need = exact::need(capacity, exact::every_phase(capacity));
+                match asks.ask("hc.round_expand_mix", need, |need| {
+                    backend.sinkhorn_round_expand_mix(
+                        &SinkhornExpandMixQuery { mix: hc::mix(g) },
+                        need,
+                    )
+                }) {
+                    Ok(op) => Some(op),
+                    Err(Refused::Unsupported) => None,
+                    Err(e) => return Err(e),
+                }
+            },
         })
     }
 
@@ -121,6 +138,42 @@ impl HcOps {
         let b = SinkhornExpandMixBuffers {
             x: bind.view(views.x),
             y: bind.view(views.y),
+            post_in: bind.view(views.post_in),
+            comb_in: bind.view(views.comb_in),
+            expanded: bind.view(views.expanded),
+            fn_: bind.view(views.fn_),
+            base: bind.view(views.base),
+            scale: bind.view(views.scale),
+            pre_in: bind.view(views.pre_in),
+            collapsed: bind.view(views.collapsed),
+            pre: bind.view(views.pre),
+            post: bind.view(views.post),
+            comb: bind.view(views.comb),
+            live_rows: bind.view(views.live_rows),
+        };
+        bind.launch_within(op, &b, workspace, Counts::rows(rows))
+    }
+
+    pub(crate) fn has_round_expand_mix(&self) -> bool {
+        self.round_fused.is_some()
+    }
+    pub(crate) fn round_expand_mix(
+        &self,
+        rows: u32,
+        views: SinkhornRoundExpandMixBuffers<DeviceBufferSpanV1>,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, kernel_core::contract::Refusal> {
+        let op = self
+            .round_fused
+            .as_ref()
+            .ok_or(kernel_core::contract::Refusal(
+                "fused expansion mixer unavailable",
+            ))?;
+        let mut bind = Bind::default();
+        let b = SinkhornRoundExpandMixBuffers {
+            x: bind.view(views.x),
+            sum: bind.view(views.sum),
+            rounded: bind.view(views.rounded),
             post_in: bind.view(views.post_in),
             comb_in: bind.view(views.comb_in),
             expanded: bind.view(views.expanded),

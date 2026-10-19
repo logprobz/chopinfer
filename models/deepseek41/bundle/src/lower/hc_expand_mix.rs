@@ -3,7 +3,7 @@ use crate::{
     ops::Lowered,
     program::{Phase, Sublayer},
 };
-use kernel_core::sinkhorn_expand_mix::SinkhornExpandMixBuffers;
+use kernel_core::sinkhorn_expand_mix::{SinkhornExpandMixBuffers, SinkhornRoundExpandMixBuffers};
 use model_deepseek41_contract::geometry::Geometry;
 
 /// Only adjacent sublayers whose intervening stages preserve the streams.
@@ -43,6 +43,14 @@ impl Lowering<'_> {
         layer: u32,
         sublayer: Sublayer,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        // The preceding reduction stage already wrote the round and both
+        // HC results when its producer exposed the deferred conversion.
+        if self
+            .round_expand_with_next_mix(phase, layer, sublayer)?
+            .is_some()
+        {
+            return Ok(Some(Vec::new()));
+        }
         if !self.has_expand_mix(phase) {
             return Ok(None);
         }
@@ -82,6 +90,66 @@ impl Lowering<'_> {
             .expand_mix(phase.rows(), buffers, self.buffers.workspace)
             .map(Some)
             .map_err(|e| format!("expand and next lagged mixer: {e}"))
+    }
+
+    pub(super) fn round_expand_with_next_mix(
+        &self,
+        phase: Phase,
+        layer: u32,
+        sublayer: Sublayer,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        if !self.has_expand_mix(phase) {
+            return Ok(None);
+        }
+        let hc = self.ops.hc.as_ref().unwrap();
+        if !hc.has_round_expand_mix() {
+            return Ok(None);
+        }
+        let Some((next_layer, next_sublayer)) = successor(self.shape.geometry, layer, sublayer)
+        else {
+            return Ok(None);
+        };
+        let Some(reduce) = self.ops.reduce.as_ref() else {
+            return Ok(None);
+        };
+        let views = self.reduce_views(phase, |s| s.reduced);
+        let Some((mut launches, sum)) = reduce
+            .defer_round(self.rank, phase.rows(), &views)
+            .map_err(|e| format!("deferred all-reduce round: {e}"))?
+        else {
+            return Ok(None);
+        };
+        let s = &self.buffers.scratch;
+        let index = sublayer_index(layer, sublayer);
+        let row = |span| rows(span, phase.rows());
+        let weight = |name: &str| {
+            self.buffers.view(&layer_view(
+                next_layer,
+                &format!("{}_{name}", mixer(next_sublayer)),
+            ))
+        };
+        let buffers = SinkhornRoundExpandMixBuffers {
+            x: row(streams(s, index)),
+            sum,
+            rounded: row(s.reduced),
+            post_in: row(s.post),
+            comb_in: row(s.comb),
+            expanded: row(streams(s, index + 1)),
+            fn_: weight("fn")?,
+            base: weight("base")?,
+            scale: weight("scale")?,
+            pre_in: row(pre(s, index)),
+            collapsed: row(s.collapsed),
+            pre: row(pre(s, index + 1)),
+            post: row(s.post),
+            comb: row(s.comb),
+            live_rows: self.inputs.live_tokens,
+        };
+        launches.extend(
+            hc.round_expand_mix(phase.rows(), buffers, self.buffers.workspace)
+                .map_err(|e| format!("round, expand and next lagged mixer: {e}"))?,
+        );
+        Ok(Some(launches))
     }
 }
 

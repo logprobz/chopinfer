@@ -18,8 +18,9 @@
 //! expert. Engram rewrites the streams before its layers; each
 //! DSpark target layer's attention input is retained for the drafter. The
 //! head collapses the streams by the last FFN mixer's `pre`, then the final
-//! norm and the vocabulary-split head. Every prompt row runs the whole
-//! decoder (D13).
+//! norm and the vocabulary-split head. Legacy execution runs every prompt row through the whole
+//! decoder. The optional prefill profile specializes this order in
+//! `instance::execute::skip` after the last compressed-key producer.
 
 use model_deepseek41_contract::geometry::{Geometry, LayerRole};
 

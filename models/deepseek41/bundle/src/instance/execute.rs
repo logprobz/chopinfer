@@ -35,6 +35,7 @@ use crate::program::{Phase, Stage};
 pub(crate) mod dma;
 mod micro;
 pub(crate) mod overlap;
+pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
@@ -44,6 +45,7 @@ const VERIFY: usize = 2;
 /// One phase of a step, planned before the step opens.
 struct Run {
     dma: Option<dma::Plan>,
+    skip: Option<skip::Plan>,
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
     inputs: PhaseInputs,
@@ -399,8 +401,12 @@ impl Instance {
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        let (programs, collectives, stages) =
-            self.program(phase, arena, &layout, &lower, head_rows, media.is_some())?;
+        let skipping = self.skip_prefill && arena == PREFILL;
+        let (programs, collectives, stages) = if skipping {
+            (Vec::new(), Vec::new(), Vec::new())
+        } else {
+            self.program(phase, arena, &layout, &lower, head_rows, media.is_some())?
+        };
         let mut tails = Vec::new();
         for buffers in &self.buffers {
             let upload = tail_upload(
@@ -432,6 +438,7 @@ impl Instance {
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             dma: None,
+            skip: None,
             overlap: None,
             micro: None,
             index,
@@ -449,20 +456,27 @@ impl Instance {
             tails,
             phase,
         };
-        run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
-            self.log(&error);
-            BundleStatusV1::InternalError
-        })?;
-        if run.micro.is_none() {
-            run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
+        if skipping {
+            run.skip = Some(skip::Plan::prepare(self, &run).map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::InternalError
+            })?);
+        } else {
+            run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
                 self.log(&error);
                 BundleStatusV1::InternalError
             })?;
-            if run.dma.is_none() {
-                run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+            if run.micro.is_none() {
+                run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
                     self.log(&error);
                     BundleStatusV1::InternalError
                 })?;
+                if run.dma.is_none() {
+                    run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+                        self.log(&error);
+                        BundleStatusV1::InternalError
+                    })?;
+                }
             }
         }
         Ok(run)
@@ -511,7 +525,9 @@ impl Instance {
     /// every rank's phase arena.
     fn upload(&mut self, run: &Run) -> Result<(), BundleAbiError> {
         // Only a prefill gathers its logits rows; decode rows are its items.
-        let rows = if run.arena == PREFILL {
+        let rows = if run.skip.is_some() {
+            (0..run.head_rows).collect()
+        } else if run.arena == PREFILL {
             run.inputs.logit_rows()
         } else {
             Vec::new()
@@ -537,6 +553,10 @@ impl Instance {
                     .zero_device_buffer(stream, scratch.row_status)?;
                 self.services
                     .zero_device_buffer(stream, scratch.shared_row_status)?;
+                if run.skip.is_some() {
+                    self.services
+                        .zero_device_buffer(stream, scratch.index_status)?;
+                }
                 let index = &run.index;
                 // Only a prefill stages its window.
                 let staging = |values: &[i32]| match run.arena {
@@ -628,6 +648,9 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        if let Some(plan) = &run.skip {
+            return plan.execute(self);
+        }
         if let Some(plan) = &run.dma {
             return plan
                 .execute(self)
@@ -1164,7 +1187,9 @@ impl Instance {
                     self.log(&error);
                     BundleAbiError::Status(BundleStatusV1::BundleError)
                 })?;
-            self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
+            if run.skip.is_none() {
+                self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
+            }
             self.launch(run)?;
             if run.media.is_some() {
                 self.clear_flags()?;

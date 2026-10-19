@@ -462,6 +462,9 @@ fn deferred_adapter_keeps_confidence_bits_and_commits_only_retained_text_history
         fn project_committed(&mut self, _: Projection) -> Result<(), String> {
             Ok(())
         }
+        fn project_rows(&mut self, _: &[RowProjection]) -> Result<(), String> {
+            Ok(())
+        }
         fn draft(&mut self, _: &[DraftInput]) -> Result<(), String> {
             Ok(())
         }
@@ -545,6 +548,7 @@ fn deferred_adapter_keeps_confidence_bits_and_commits_only_retained_text_history
         ranks: &[],
         readback: &readback,
         text: &text,
+        times: Some(PhaseTimes::default()),
         diagnostic: Context {
             instance_id: 1,
             step_id: 1,

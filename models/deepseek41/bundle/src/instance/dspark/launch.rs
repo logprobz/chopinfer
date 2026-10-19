@@ -230,6 +230,7 @@ impl Instance {
                         stage as u32,
                     )?;
                     let base = Lowering {
+                        prefill_row_origin: None,
                         shape: &device.shape,
                         ops: &device.ops,
                         buffers,

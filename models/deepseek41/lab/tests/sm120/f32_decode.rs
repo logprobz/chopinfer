@@ -265,7 +265,7 @@ fn edge(n: u32, k: u32, weight: WeightFormat) -> Entry {
     .unwrap()
 }
 
-fn edges() -> Vec<Entry> {
+pub(super) fn edges() -> Vec<Entry> {
     let mut entries: Vec<_> = [1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513]
         .into_iter()
         .map(|k| edge(17, k, WeightFormat::Bf16))
@@ -405,7 +405,7 @@ fn timing_cubins() -> Cubins {
     )
 }
 
-fn prepared(entry: &Entry, rows: u32) -> Prepared<ProjectionBuffers<View>> {
+pub(super) fn prepared(entry: &Entry, rows: u32) -> Prepared<ProjectionBuffers<View>> {
     let backend = Sm120::new().with_f32_projections(
         F32ProjectionOffers::new(
             vec![entry.clone()],
@@ -441,13 +441,33 @@ fn run_launches(
     Ok(())
 }
 
-struct ComparisonWeights {
+pub(super) struct ComparisonWeights {
+    candidate: Entry,
     modules: Vec<Module>,
     weight: runtime_cuda::DeviceBuffer,
     domain: runtime_cuda::DeviceBuffer,
     expected_flags: Vec<u8>,
     initialized: std::cell::Cell<bool>,
 }
+
+fn bf16_weight_code(value: f32) -> u16 {
+    let bits = value.to_bits();
+    if bits & 0xffff == 0 {
+        // Already a BF16 code, including signaling NaNs. A numeric
+        // conversion would quiet those payloads and lose edge coverage.
+        (bits >> 16) as u16
+    } else {
+        f32_to_bf16(value)
+    }
+}
+
+#[test]
+fn cpu_weight_codes_preserve_all_bf16_payloads() {
+    for bits in 0..=u16::MAX {
+        assert_eq!(bf16_weight_code(bf16_to_f32(bits)), bits, "{bits:04x}");
+    }
+}
+
 impl ComparisonWeights {
     fn new(session: &Session, old: &Entry, b: &[f32]) -> LabResult<Self> {
         let new = old.clone().with_split_decode();
@@ -467,8 +487,45 @@ impl ComparisonWeights {
                 session.load_cubin(bytes)
             })
             .collect::<Result<_, _>>()?;
+        Self::with_modules(session, old, new, b, modules)
+    }
+
+    pub(super) fn prefill(
+        session: &Session,
+        old: &Entry,
+        features: u32,
+        b: &[f32],
+        bytes: [&[u8]; 2],
+    ) -> LabResult<Self> {
+        let new = old
+            .clone()
+            .with_prefill_tiles(features)
+            .map_err(|e| e.to_string())?;
+        let modules = bytes
+            .into_iter()
+            .map(|bytes| session.load_cubin(bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        modules[1]
+            .function(new.symbol())
+            .map_err(|e| e.to_string())?
+            .set_max_dynamic_shared_memory(
+                new.prefill_plan(1)
+                    .map_err(|e| e.to_string())?
+                    .dynamic_shared_bytes,
+            )
+            .map_err(|e| e.to_string())?;
+        Self::with_modules(session, old, new, b, modules)
+    }
+
+    fn with_modules(
+        session: &Session,
+        old: &Entry,
+        new: Entry,
+        b: &[f32],
+        modules: Vec<Module>,
+    ) -> LabResult<Self> {
         let weight = if old.query().weight == WeightFormat::Bf16 {
-            session.upload_bf16(&b.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>())?
+            session.upload_bf16(&b.iter().copied().map(bf16_weight_code).collect::<Vec<_>>())?
         } else {
             session.upload_f32(b)?
         };
@@ -478,6 +535,7 @@ impl ComparisonWeights {
             .flat_map(u32::to_le_bytes)
             .collect();
         Ok(Self {
+            candidate: new,
             modules,
             weight,
             domain,
@@ -487,7 +545,7 @@ impl ComparisonWeights {
     }
 }
 
-fn compare(
+pub(super) fn compare(
     session: &Session,
     old: &Entry,
     rows: u32,
@@ -496,7 +554,7 @@ fn compare(
     label: &str,
     measure: bool,
 ) -> LabResult<()> {
-    let new = old.clone().with_split_decode();
+    let new = weights.candidate.clone();
     let q = old.query();
     let modules = &weights.modules;
     let weight = &weights.weight;
@@ -581,7 +639,7 @@ fn compare(
             .all(|launch| launch.symbol == old.symbol())
         {
             &modules[0]
-        } else if rows <= 32 {
+        } else if !new.uses_prefill_tiles() && rows <= 32 {
             &modules[2]
         } else {
             &modules[1]
@@ -700,7 +758,7 @@ fn compare(
     Ok(())
 }
 
-fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>) {
+pub(super) fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>) {
     let mut state = seed;
     let mut value = || {
         state ^= state << 13;
@@ -716,13 +774,13 @@ fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>)
     )
 }
 
-struct Shard {
-    ordinal: usize,
-    count: usize,
-    next: usize,
+pub(super) struct Shard {
+    pub(super) ordinal: usize,
+    pub(super) count: usize,
+    pub(super) next: usize,
 }
 impl Shard {
-    fn from_env() -> LabResult<Self> {
+    pub(super) fn from_env() -> LabResult<Self> {
         match (
             std::env::var("CHOPINFER_F32_SHARD"),
             std::env::var("CHOPINFER_F32_SHARDS"),
@@ -749,7 +807,7 @@ impl Shard {
             _ => Err("set both exact-F32 shard variables or neither".into()),
         }
     }
-    fn take(&mut self) -> Option<usize> {
+    pub(super) fn take(&mut self) -> Option<usize> {
         let id = self.next;
         self.next += 1;
         (id.count_ones() as usize % self.count == self.ordinal).then_some(id)

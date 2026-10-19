@@ -45,6 +45,7 @@ pub mod f32_decode;
 mod f32_dense;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub mod f32_head;
+pub mod f32_prefill;
 pub mod f32_split;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;

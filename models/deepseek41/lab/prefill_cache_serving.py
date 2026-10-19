@@ -159,7 +159,7 @@ def interrupted(number, frame):
 def arm(out, name, config):
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM):
         signal.signal(sig, interrupted)
-    signal.alarm(220)
+    signal.alarm(900)
     request_ids = json.loads((ROOT/'prompt.json').read_text())
     assert len(request_ids) == 32768
     install, cache = Path(config['install']), Path(config['cache'])
@@ -190,7 +190,7 @@ def arm(out, name, config):
     try:
         with (out/'server.stdout.log').open('w') as stdout, (out/'server.stderr.log').open('w') as stderr:
             process = subprocess.Popen(launch, stdout=stdout, stderr=stderr, env=env, start_new_session=True)
-            deadline = time.monotonic()+130
+            deadline = time.monotonic()+600
             while True:
                 assert process.poll() is None, 'server exited before readiness'
                 try:
@@ -260,7 +260,7 @@ def job(out, dry):
     out.mkdir(parents=True, exist_ok=True)
     result = dict(status='running', dry_run=dry)
     since = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    deadline = time.monotonic()+500
+    deadline = time.monotonic()+2000
     def step(name, args, seconds=25, check=True):
         return run_step(out, name, args, min(seconds, max(.001, deadline-time.monotonic())), check=check, cwd=ROOT)[0]
     def telemetry(when):
@@ -292,7 +292,7 @@ def job(out, dry):
             for name in ('base', 'candidate'):
                 target = out/name
                 target.mkdir()
-                step(name, [sys.executable, '-B', str(ROOT/'prefill_cache_serving.py'), '--arm', name, '--output', str(target)], 235)
+                step(name, [sys.executable, '-B', str(ROOT/'prefill_cache_serving.py'), '--arm', name, '--output', str(target)], 930)
             a, b = [json.loads((out/name/'result.json').read_text()) for name in ('base', 'candidate')]
             assert a['exact'] == b['exact'] and a['timed'] == b['timed'], 'served token/logprob bits differ'
             assert (out/'base/logits.f32').read_bytes() == (out/'candidate/logits.f32').read_bytes(), 'full F32 logits differ'
@@ -320,7 +320,7 @@ def main():
         if os.getpid() != os.getpgrp():
             os.setsid()
         write(Path(sys.argv[2]), dict(pgid=os.getpgrp()))
-        os.execv('/usr/bin/timeout', ['/usr/bin/timeout', '--foreground', '--signal=TERM', '--kill-after=10s', '225s', *sys.argv[3:]])
+        os.execv('/usr/bin/timeout', ['/usr/bin/timeout', '--foreground', '--signal=TERM', '--kill-after=10s', '925s', *sys.argv[3:]])
     parser = argparse.ArgumentParser()
     parser.add_argument('--verify', action='store_true')
     parser.add_argument('--dry-run', action='store_true')

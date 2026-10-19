@@ -838,37 +838,39 @@ fn journal_steps(host: &Rc<Host>) {
 /// position selection, measured weight prefetch and parallel ceil operations.
 /// Prefill uses valid candidate work, existing folds below 128 rows,
 /// staged MXFP8 tiles for full rows and measured exact F32 row buckets.
+/// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC
+/// row tiles add a separate entry while small-row mixer paths stay unchanged.
 /// Shared expert scratch stays independent across every fork/join region.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (14891, 0x40c6c9af4fdc2978),
+        (14943, 0x3f4061d9a3e82662),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (14889, 0xf6319f5000634d80),
+        (14941, 0x2295e343ba424765),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (29819, 0x3ae01f275f5cfa96),
+        (29923, 0xc0ee2b15ff814173),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (29815, 0xaf52c850f7138599),
+        (29919, 0xb9463f04ac4540a0),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (60459, 0xe98c9067a9708374),
+        (60667, 0xdfac1d809d18393b),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (60451, 0x26766719313ae368),
+        (60659, 0xd8b668cbba310bcb),
     ),
 ];
 

@@ -72,3 +72,7 @@ path = "examples/sm120/build_moe_streamed.rs"
 [[example]]
 name = "build_moe_prefill"
 path = "examples/sm120/build_moe_prefill.rs"
+
+[[example]]
+name = "build_position_live"
+path = "examples/sm120/build_position_live.rs"

@@ -118,6 +118,7 @@ pub(crate) struct CandidateViews {
 /// F32 head weights, the keys, each row's position and item, the block's
 /// live count, the scores, and the selection's status and output.
 pub(crate) struct SelectViews {
+    pub workspace: DeviceBufferSpanV1,
     pub q: DeviceBufferSpanV1,
     pub head_weights: DeviceBufferSpanV1,
     pub keys: KeyPages,
@@ -260,7 +261,7 @@ impl SelectOps {
             status: bind.view(views.status),
             output: bind.view(views.output),
         };
-        bind.launch(op, &buffers, Counts::rows(rows))
+        bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
     }
 
     /// The block IDs of a block of `rows` rows from its dense `scores`,
@@ -321,7 +322,7 @@ impl SelectOps {
             status: bind.view(views.status),
             output: bind.view(views.output),
         };
-        bind.launch(op, &buffers, Counts::rows(rows))
+        bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
     }
 }
 

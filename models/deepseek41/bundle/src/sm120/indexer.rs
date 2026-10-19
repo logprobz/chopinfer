@@ -6,7 +6,7 @@
 use kernel_build::CubinSpec;
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::pooled_indexer::{
-    position, position_bf16, position_blocks, position_candidates_runtime,
+    position, position_bf16, position_blocks, position_candidates_runtime, position_live,
 };
 use model_deepseek41_contract::{geometry::Geometry, indexer, serving::PREFILL_TOKENS};
 
@@ -146,8 +146,37 @@ pub fn runtime_candidates_cubins(
         .collect()
 }
 
+/// A new family preserves all previous cubins and their lock records.
+pub const LIVE_FAMILY: &str = "position_live";
+pub fn live_cubin_name(g: &Geometry) -> String {
+    format!("position_live_{}_sm120", g.kernel_tag)
+}
+pub fn live_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut result = Vec::new();
+    for g in geometries {
+        let mut specs = Vec::new();
+        for bf16 in [false, true] {
+            for entry in entries(g) {
+                specs.extend(position_live::dense_specs(&entry, bf16).map_err(|e| e.0)?);
+            }
+            for entry in block_entries(g) {
+                specs.extend(position_live::compact_specs(&entry, bf16).map_err(|e| e.0)?);
+            }
+        }
+        for runtime in [false, true] {
+            specs.extend(position_live::candidate_specs(&candidates(g), runtime).map_err(|e| e.0)?);
+        }
+        result.push((
+            LIVE_FAMILY,
+            position_live::cubin_spec(live_cubin_name(g), specs),
+        ));
+    }
+    Ok(result)
+}
+
 pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     sm120
+        .with_live_position_indexer()
         .with_position_indexer(entries(g))
         .with_position_indexer_bf16(entries(g))
         .with_position_block_indexer(block_entries(g))
@@ -169,7 +198,7 @@ mod tests {
     #[test]
     fn every_index_source_prepares_from_the_registered_entries_at_every_rank_count() {
         for g in GEOMETRIES {
-            let dense = cubin(g).unwrap();
+            let dense = live_cubins(&[*g]).unwrap().remove(0).1;
             let blocks = blocks_cubin(g).unwrap();
             let registered = |symbol: &str| {
                 dense
@@ -201,7 +230,7 @@ mod tests {
                             .clone(),
                     };
                     assert_eq!(info.guarantees.ties, Ties::LowerIndex);
-                    assert_eq!(info.symbols.len(), 2);
+                    assert_eq!(info.symbols.len(), 3);
                     for (symbol, _) in &info.symbols {
                         assert!(registered(symbol), "{symbol}");
                     }
@@ -214,6 +243,7 @@ mod tests {
                 assert_eq!(
                     producer.info().workspace,
                     8 * u64::from(width.div_ceil(query.block_size)) * 4
+                        + position_live::workspace_bytes(8, query.top_k_blocks)
                 );
                 for (symbol, _) in &producer.info().symbols {
                     assert!(registered(symbol), "{symbol}");
@@ -225,8 +255,8 @@ mod tests {
     fn bf16_index_sources_prepare_from_separate_cubins_at_every_rank_count() {
         use kernel_core::pooled_indexer::IndexerKeyFormat;
         for g in GEOMETRIES {
-            let cubins = bf16_cubins(&[*g]).unwrap();
-            assert_eq!(cubins.len(), 2);
+            let cubins = live_cubins(&[*g]).unwrap();
+            assert_eq!(cubins.len(), 1);
             for &ranks in admission::SUPPORTED_RANKS {
                 if admission::check_ranks(g, ranks).is_err() {
                     continue;

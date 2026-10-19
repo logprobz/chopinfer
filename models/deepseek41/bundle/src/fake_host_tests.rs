@@ -66,10 +66,19 @@ fn runtime_candidate_pool_reaches_its_separate_producer() {
                     && line.contains("_gather_v3")
             })
             .collect();
-        assert_eq!(producers.len(), 8);
+        assert_eq!(producers.len(), 16);
+        for suffix in ["_live_v1", "_live_merge_v1"] {
+            assert_eq!(
+                producers
+                    .iter()
+                    .filter(|line| line.contains(suffix))
+                    .count(),
+                8
+            );
+        }
         for line in producers {
             assert!(line.contains("_runtime_gather_v3"), "{line}");
-            assert!(line.ends_with("U32(1024)]"), "{line}");
+            assert!(line.contains("U32(1024),"), "{line}");
         }
         drop(lines);
         instance.cancel().unwrap();
@@ -125,7 +134,7 @@ fn runtime_index_topk_reaches_dense_and_compact_launches() {
                 .collect();
             assert!(!selections.is_empty(), "{family}");
             for line in selections {
-                assert!(line.ends_with("U32(256)]"), "{line}");
+                assert!(line.contains("U32(256),"), "{line}");
             }
         }
         drop(lines);

@@ -104,6 +104,7 @@ impl Lowering<'_> {
                 status: block(scratch.candidate_status, first, n),
             };
             let views = SelectViews {
+                workspace: self.buffers.workspace,
                 q: block(scratch.index_prepared, first, n),
                 head_weights: block(scratch.index_weights, first, n),
                 keys,

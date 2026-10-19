@@ -137,6 +137,15 @@ impl EngineConfig {
         self.speculation
     }
 
+    /// Applies an optional bundle declaration to prefill scheduling and captures.
+    pub fn with_guaranteed_prefill_chunks(
+        mut self,
+        tokens: usize,
+    ) -> Result<Self, runtime_scheduler::ConfigError> {
+        self.scheduler = self.scheduler.with_guaranteed_prefill_chunks(tokens)?;
+        Ok(self)
+    }
+
     /// Enables prefix caching. Each anchor holds a bundle snapshot of
     /// `state_pages` KV pages; the executor must capture and restore them.
     #[must_use]
@@ -520,6 +529,7 @@ impl Error for ExecutorError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelBatchItem {
+    prefill_boundary: Option<PrefillBoundary>,
     output_cycle: Option<OutputCycle>,
     request_id: RequestId,
     phase: BatchPhase,
@@ -533,6 +543,13 @@ pub struct ModelBatchItem {
     media_injects: Vec<MediaInjectV1>,
     position_axes: Vec<[i32; 3]>,
     anchor: bool,
+}
+
+/// A bundle-negotiated fixed prefill grid and this request's prompt end.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefillBoundary {
+    pub chunk_tokens: usize,
+    pub prompt_tokens: usize,
 }
 
 /// The drafts a verify item carries or asks the executor for.
@@ -779,6 +796,17 @@ impl SamplingWork {
 }
 
 impl ModelBatchItem {
+    #[must_use]
+    pub const fn prefill_boundary(&self) -> Option<PrefillBoundary> {
+        self.prefill_boundary
+    }
+
+    #[must_use]
+    pub const fn with_prefill_boundary(mut self, boundary: PrefillBoundary) -> Self {
+        self.prefill_boundary = Some(boundary);
+        self
+    }
+
     /// Present only when the executor opts into checked device results.
     #[must_use]
     pub fn output_cycle(&self) -> Option<&OutputCycle> {
@@ -804,6 +832,7 @@ impl ModelBatchItem {
         expects_logits: bool,
     ) -> Self {
         Self {
+            prefill_boundary: None,
             output_cycle: None,
             request_id,
             phase,
@@ -2236,6 +2265,18 @@ impl<E: ModelExecutor> Engine<E> {
                 return Err(error);
             }
         };
+        for item in &mut items {
+            if matches!(item.phase, BatchPhase::Prefill { .. }) {
+                item.prefill_boundary = pending_batch
+                    .scheduler_mut()
+                    .prefill_boundary_contract(item.request_id)
+                    .map_err(EngineError::Scheduler)?
+                    .map(|(chunk_tokens, prompt_tokens)| PrefillBoundary {
+                        chunk_tokens,
+                        prompt_tokens,
+                    });
+            }
+        }
         if executor.device_results_v1() {
             let epoch = self.next_output_cycle;
             self.next_output_cycle = epoch
@@ -3650,6 +3691,7 @@ fn model_items_parts(
             Vec::new()
         };
         items.push(ModelBatchItem {
+            prefill_boundary: None,
             output_cycle: None,
             request_id: item.request_id(),
             phase: item.phase(),
@@ -5177,6 +5219,7 @@ mod transaction_tests {
             .unwrap();
         let batch = scheduler.next_batch().unwrap().unwrap();
         let items = vec![ModelBatchItem {
+            prefill_boundary: None,
             output_cycle: None,
             request_id,
             phase: BatchPhase::Prefill { tokens: 1 },

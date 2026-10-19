@@ -863,6 +863,10 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
 /// them. Naming them here also lets a test drive every failure path between a
 /// successful `execute` and its finalizer without a device.
 pub trait BundleExecutionV1 {
+    fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+        Ok(0)
+    }
+
     fn supports_device_results(&self) -> bool {
         false
     }
@@ -1002,6 +1006,10 @@ pub trait BundleExecutionV1 {
 }
 
 impl BundleExecutionV1 for LoadedBundleInstanceV1 {
+    fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+        Self::prefill_policy(self).map(|policy| policy.chunk_tokens)
+    }
+
     fn supports_device_results(&self) -> bool {
         Self::supports_device_results(self)
     }
@@ -1137,7 +1145,15 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
         };
         {
             let _phase = PhaseTimer::traced(StepPhase::BundleExecute);
-            if let Err(error) = Self::execute(self, request, &mut sink) {
+            let executed = if request.starts_with(runtime_bundle_sdk::prefill::MAGIC) {
+                if sink.device.is_some() {
+                    return Err(BundleAbiError::Status(BundleStatusV1::Unsupported));
+                }
+                Self::execute_prefill(self, request, &mut sink)
+            } else {
+                Self::execute(self, request, &mut sink)
+            };
+            if let Err(error) = executed {
                 // A failed callback may have issued private-stream consumers.
                 // Fence them before dropping any borrowed result ownership.
                 if sink.discard_device().is_err() {
@@ -1185,6 +1201,54 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
     fn is_poisoned(&self) -> bool {
         Self::is_poisoned(self)
     }
+}
+
+/// An optional export is negotiated independently of the legacy wire version.
+/// Device-result execution keeps its existing entry point and full schedule.
+fn negotiated_prefill_request(
+    instance: &impl BundleExecutionV1,
+    request: Vec<u8>,
+    items: &[ModelBatchItem],
+) -> Result<Vec<u8>, ExecutorError> {
+    if !items.iter().any(|item| item.prefill_boundary().is_some()) {
+        return Ok(request);
+    }
+    let chunk = instance
+        .prefill_chunk_tokens()
+        .map_err(|e| executor_error_v1(format!("bundle prefill declaration failed: {e}")))?;
+    if chunk == 0 {
+        return Ok(request);
+    }
+    let batch = runtime_bundle_sdk::BatchCodecV1::decode(&request)
+        .map_err(|e| executor_error_v1(e.to_string()))?;
+    if batch.appends().len() != items.len() {
+        return Err(executor_error_v1(
+            "prefill append count mismatch".to_owned(),
+        ));
+    }
+    let boundaries = items
+        .iter()
+        .zip(batch.appends())
+        .filter_map(|(item, append)| {
+            item.prefill_boundary().map(|contract| {
+                if contract.chunk_tokens != chunk as usize {
+                    return Err(executor_error_v1("prefill declaration changed".to_owned()));
+                }
+                let chunk_end = append
+                    .previous_tokens()
+                    .checked_add(u64::from(item.phase().appended_tokens() as u32))
+                    .ok_or_else(|| executor_error_v1("prefill boundary overflow".to_owned()))?;
+                Ok(runtime_bundle_sdk::prefill::Boundary {
+                    request_id: item.request_id().get(),
+                    chunk_tokens: chunk,
+                    prompt_tokens: contract.prompt_tokens as u64,
+                    chunk_end,
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    runtime_bundle_sdk::prefill::encode(&request, &boundaries)
+        .map_err(|e| executor_error_v1(format!("invalid guaranteed prefill: {e}")))
 }
 
 /// The finalizer the engine drives for one uncommitted bundle execution.
@@ -1667,6 +1731,11 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
             .device_results_v1()
             .then(|| cycle_metadata(items, self.state_slots.as_ref()))
             .flatten();
+        let request = if metadata.is_none() {
+            negotiated_prefill_request(&self.instance, request, items)?
+        } else {
+            request
+        };
         let emitted = self
             .instance
             .execute_with_device_sampling(
@@ -3234,6 +3303,8 @@ mod tests {
 
     /// A bundle execution that emits exactly the rows a test hands it.
     struct FakeExecutionV1 {
+        prefill_chunk: u32,
+        envelopes: Vec<Vec<u8>>,
         emitted: Vec<OwnedLogitsRowV1>,
         execute_error: Option<BundleAbiError>,
         commit_error: Option<BundleAbiError>,
@@ -3253,6 +3324,8 @@ mod tests {
     impl FakeExecutionV1 {
         fn emitting(emitted: Vec<OwnedLogitsRowV1>) -> Self {
             Self {
+                prefill_chunk: 0,
+                envelopes: Vec::new(),
                 emitted,
                 execute_error: None,
                 commit_error: None,
@@ -3283,6 +3356,10 @@ mod tests {
     }
 
     impl BundleExecutionV1 for FakeExecutionV1 {
+        fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+            Ok(self.prefill_chunk)
+        }
+
         fn last_execute_refusal(&self) -> Option<&str> {
             self.pre_device_refusal
                 .then_some("packing check: item token budget exceeded")
@@ -3335,7 +3412,7 @@ mod tests {
 
         fn execute_batch(
             &mut self,
-            _request: &[u8],
+            request: &[u8],
             limits: ResultSinkLimitsV1,
         ) -> Result<Vec<OwnedLogitsRowV1>, BundleAbiError> {
             if let Some(error) = self.execute_error.clone() {
@@ -3345,6 +3422,11 @@ mod tests {
             }
             if self.emitted.len() as u64 > limits.maximum_rows {
                 return Err(BundleAbiError::ExecuteResultCapacity);
+            }
+            if request.starts_with(runtime_bundle_sdk::prefill::MAGIC) {
+                assert_ne!(self.prefill_chunk, 0);
+                runtime_bundle_sdk::prefill::decode(request).unwrap();
+                self.envelopes.push(request.to_vec());
             }
             self.calls.push(CallV1::Execute);
             Ok(self.emitted.clone())
@@ -3445,6 +3527,94 @@ mod tests {
 
         fn is_poisoned(&self) -> bool {
             self.poisoned
+        }
+    }
+
+    #[test]
+    fn engine_supplies_each_guaranteed_chunk_end_and_final_boundary() {
+        use runtime_engine::{Engine, EngineConfig, EngineRequest};
+        use runtime_model_api::ModelVocabulary;
+        use runtime_scheduler::SchedulerConfig;
+        for chunk in [2048, 8192] {
+            let mut instance = FakeExecutionV1::emitting(Vec::new());
+            instance.prefill_chunk = chunk as u32;
+            instance.dynamic_rows = true;
+            let vocabulary = ModelVocabulary::new(VOCABULARY).unwrap();
+            let geometry = KvGeometry::new(64, 1024).unwrap();
+            let config = EngineConfig::new(
+                SchedulerConfig::new(1, 1, 8192, 2048, 1).unwrap(),
+                geometry,
+                vocabulary,
+                geometry.token_capacity(),
+                1,
+            )
+            .unwrap()
+            .with_guaranteed_prefill_chunks(chunk)
+            .unwrap();
+            let mut engine =
+                Engine::new(config, BundleModelExecutorV1::new(instance, VOCABULARY, 1)).unwrap();
+            let prompt = chunk * 2 + 17;
+            engine
+                .submit(
+                    EngineRequest::new(
+                        RequestId::new(1),
+                        vec![0; prompt],
+                        1,
+                        SamplingParameters::new(0.0).unwrap(),
+                        1,
+                        Vec::new(),
+                        vocabulary,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            for _ in 0..3 {
+                engine.step().unwrap();
+            }
+            let envelopes = &engine.executor().instance.envelopes;
+            assert_eq!(envelopes.len(), 3);
+            for (encoded, end) in envelopes.iter().zip([chunk, chunk * 2, prompt]) {
+                let envelope = runtime_bundle_sdk::prefill::decode(encoded).unwrap();
+                assert_eq!(envelope.boundaries.len(), 1);
+                assert_eq!(envelope.boundaries[0].chunk_end, end as u64);
+                assert_eq!(envelope.boundaries[0].prompt_tokens, prompt as u64);
+                assert_eq!(envelope.batch.items()[0].expects_logits(), end == prompt);
+            }
+        }
+    }
+
+    #[test]
+    fn prefill_envelope_requires_both_a_declaration_and_scheduled_boundaries() {
+        use runtime_engine::PrefillBoundary;
+        for declared in [false, true] {
+            for scheduled in [false, true] {
+                let mut instance = FakeExecutionV1::emitting(vec![row(REQUEST, &[1.0, 2.0, 3.0])]);
+                instance.prefill_chunk = if declared { 2048 } else { 0 };
+                let mut executor = BundleModelExecutorV1::new(instance, VOCABULARY, 8);
+                let mut items = items();
+                if scheduled {
+                    items[0] = items[0].clone().with_prefill_boundary(PrefillBoundary {
+                        chunk_tokens: 2048,
+                        prompt_tokens: 2,
+                    });
+                }
+                drop(executor.execute(&items, &kv_plan()).unwrap());
+                assert_eq!(
+                    executor.instance.envelopes.len(),
+                    usize::from(declared && scheduled)
+                );
+                if declared && scheduled {
+                    let envelope =
+                        runtime_bundle_sdk::prefill::decode(&executor.instance.envelopes[0])
+                            .unwrap();
+                    assert_eq!(envelope.boundaries[0].chunk_end, 2);
+                    assert_eq!(envelope.boundaries[0].prompt_tokens, 2);
+                    assert_eq!(
+                        envelope.original,
+                        super::encode_batch_request_v1(&items, &kv_plan()).unwrap()
+                    );
+                }
+            }
         }
     }
 

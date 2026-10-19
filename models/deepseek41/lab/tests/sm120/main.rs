@@ -42,6 +42,7 @@ mod reduce;
 mod widen;
 
 mod moe;
+mod moe_active;
 
 mod latent_glue;
 

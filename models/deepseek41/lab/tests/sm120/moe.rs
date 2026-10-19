@@ -3,7 +3,7 @@
 
 #[path = "../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
-mod registration;
+pub(super) mod registration;
 
 use kernel_harness::conformance::Probes;
 use kernel_harness::kit::modules::Functions;

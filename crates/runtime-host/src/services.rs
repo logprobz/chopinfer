@@ -403,8 +403,6 @@ const PARALLEL_GATHER_BYTES: usize = 1 << 20;
 /// Most threads one chunk's gather uses.
 const GATHER_THREADS: usize = 8;
 
-pub use crate::host_rows::gather::MAPPED_READ_AHEAD_ENV_V1;
-
 /// Writes bytes `at..at + chunk.len()` of the rows `rows` of `table`, each
 /// `row_bytes` long, laid end to end, into `chunk`. The caller has checked
 /// every row against the table.

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use runtime_scheduler::{DraftBudget, DraftLimits};
 
+mod balanced;
 pub mod confidence;
 pub mod table;
 
@@ -181,6 +182,10 @@ pub enum SpeculationMode {
     /// Every eligible item verifies as many drafts as its limits allow, in
     /// batch order, until the batch budget runs out.
     Fixed,
+    /// Give eligible items a common executable depth, then spend spare
+    /// rows on the next prefixes with the highest expected acceptance.
+    /// Batch and request limits determine depth; elapsed time does not.
+    Balanced,
     /// Drafts are added where they are expected to raise tokens per unit of
     /// step time, from per-request acceptance and measured step costs.
     Adaptive,
@@ -824,8 +829,11 @@ impl SpeculationPolicy {
     /// differ by the catch-ups of the drafters that were fresh only in the
     /// first.
     pub(crate) fn observe_step(&mut self, drafts: &[usize], fresh: usize, micros: u64) {
-        if matches!(self.config.mode, SpeculationMode::Table(_)) {
-            // Table plans never read step times.
+        if matches!(
+            self.config.mode,
+            SpeculationMode::Table(_) | SpeculationMode::Balanced
+        ) {
+            // These plans never read step times.
             self.step_accepted = 0;
             return;
         }
@@ -1049,6 +1057,9 @@ impl SpeculationPolicy {
                     *draft = candidate.maximum_draft_tokens.min(remaining);
                     remaining -= *draft;
                 }
+            }
+            SpeculationMode::Balanced => {
+                drafts = self.plan_balanced(candidates, remaining);
             }
             SpeculationMode::Adaptive if budget.prefill() => {
                 // A batch that also prefills is no decode step: its time is

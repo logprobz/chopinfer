@@ -489,7 +489,11 @@ fn every_drafter_policy_and_row_path_emits_exactly_the_reference_output() {
             Drafter::Stop,
             Drafter::Mostly,
         ] {
-            for mode in [SpeculationMode::Fixed, SpeculationMode::Adaptive] {
+            for mode in [
+                SpeculationMode::Fixed,
+                SpeculationMode::Balanced,
+                SpeculationMode::Adaptive,
+            ] {
                 for source in [DraftSource::Bundle, DraftSource::Host] {
                     for cost_model in [
                         runtime_engine::DraftCostModel::PerToken,
@@ -513,6 +517,85 @@ fn every_drafter_policy_and_row_path_emits_exactly_the_reference_output() {
                             );
                             assert!(metrics.spec_emitted_tokens <= metrics.spec_rows);
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn balanced_sampled_batches_preserve_target_draws_and_logprob_bits() {
+    for count in [8, 16] {
+        let base = EngineConfig::new(
+            SchedulerConfig::new(count, 64, 128, 4, 1).unwrap(),
+            KvGeometry::new(4, KV_BLOCKS).unwrap(),
+            vocabulary(),
+            256,
+            64,
+        )
+        .unwrap();
+        for seed in [0, 1, 17, 142] {
+            let requests = (0..count)
+                .map(|index| {
+                    EngineRequest::new(
+                        RequestId::new(index as u64 + 1),
+                        vec![1, 2, 3, index as u32],
+                        24,
+                        SamplingParameters::new(1.0)
+                            .unwrap()
+                            .with_top_p(1.0)
+                            .unwrap()
+                            .with_top_logprobs(5)
+                            .unwrap(),
+                        seed + index as u64,
+                        Vec::new(),
+                        vocabulary(),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            for rows in [Rows::Logits, Rows::Sampled] {
+                let mut reference = Engine::new(base, Model::new(Drafter::Greedy, rows)).unwrap();
+                for request in &requests {
+                    reference.submit(request.clone()).unwrap();
+                }
+                let expected = run(&mut reference, &[]);
+                for drafter in [
+                    Drafter::Greedy,
+                    Drafter::Wrong,
+                    Drafter::Mostly,
+                    Drafter::Noise,
+                ] {
+                    for source in [DraftSource::Host, DraftSource::Bundle] {
+                        let mut engine = Engine::new(
+                            base.with_speculation(speculation(
+                                5,
+                                32,
+                                SpeculationMode::Balanced,
+                                source,
+                            )),
+                            Model::new(drafter, rows),
+                        )
+                        .unwrap();
+                        for request in &requests {
+                            engine.submit(request.clone()).unwrap();
+                        }
+                        let actual = run(&mut engine, &[]);
+                        assert_eq!(
+                            actual, expected,
+                            "{count} {seed} {rows:?} {drafter:?} {source:?}"
+                        );
+                        assert_eq!(logprob_bits(&actual), logprob_bits(&expected));
+                        assert!(engine.executor().verify_steps.contains(&(32, count)));
+                        assert!(
+                            engine
+                                .executor()
+                                .verify_steps
+                                .iter()
+                                .all(|&(rows, _)| rows <= 32)
+                        );
+                        assert!(engine.metrics().snapshot().spec_verify_items > 0);
                     }
                 }
             }

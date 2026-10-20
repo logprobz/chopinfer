@@ -144,7 +144,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--kv-memory-fraction F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
   [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
-  [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|adaptive|table]
+  [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
@@ -2098,6 +2098,7 @@ fn serving_identity_v1(
                 mode: match speculation.map(SpeculationConfig::mode) {
                     None => "off",
                     Some(SpeculationMode::Fixed) => "fixed",
+                    Some(SpeculationMode::Balanced) => "balanced",
                     Some(SpeculationMode::Adaptive) => "adaptive",
                     Some(SpeculationMode::Table(_)) => "table",
                 }
@@ -4897,12 +4898,13 @@ impl ArgumentsV1 {
                 "--speculation" => {
                     let mode = match value.as_str() {
                         "fixed" => SpeculationMode::Fixed,
+                        "balanced" => SpeculationMode::Balanced,
                         "adaptive" => SpeculationMode::Adaptive,
                         // The costs arrive with --speculation-costs.
                         "table" => SpeculationMode::Table(StepCosts::default()),
                         _ => {
                             return Err(usage_error(
-                                "--speculation must be fixed, adaptive or table",
+                                "--speculation must be fixed, balanced, adaptive or table",
                             ));
                         }
                     };
@@ -6971,7 +6973,7 @@ mod tests {
         );
         assert!(
             refusal(&["serve", "--bundle", "a", "--speculation", "unknown"])
-                .contains("must be fixed, adaptive or table")
+                .contains("must be fixed, balanced, adaptive or table")
         );
         // Table mode needs its costs, and only it takes them.
         let costs = "1:13500:4400:700:760,8:22300:4400:700:780";

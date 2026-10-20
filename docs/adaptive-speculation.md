@@ -9,6 +9,19 @@ depend on those choices: at C1 every MiMo and Qwen verify row equals the AR
 row at its position bit for bit ([exact verify rows](#exact-verify-rows)), so
 greedy speculation serves AR's tokens and logprobs whatever the policy picks.
 
+`--speculation balanced` gives eligible requests the deepest common
+executable prefix that fits the batch budget, bounded by
+`--speculative-tokens` and each request's remaining output and KV capacity.
+It assigns leftover rows to the next prefixes with the greatest expected
+accepted tokens per row, using the existing per-request acceptance
+estimates. Ties follow batch order. With five available drafts per request
+and a 32-row budget, eight requests verify three drafts each and sixteen
+verify one each. Requests at a smaller limit free rows for the others.
+This mode does not back off from measured times or read confidence scores.
+It leaves target sampling, acceptance, RNG advancement and logprobs unchanged.
+The adaptive mode remains the default until a served comparison selects a
+replacement.
+
 ## Step costs
 
 `--draft-cost per-token` (MTP) prices a step as the AR estimate of its row

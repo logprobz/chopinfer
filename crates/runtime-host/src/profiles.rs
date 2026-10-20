@@ -183,7 +183,7 @@ impl Profile {
         }
         if !matches!(
             self.speculation.mode.as_str(),
-            "fixed" | "adaptive" | "table"
+            "fixed" | "balanced" | "adaptive" | "table"
         ) || !matches!(
             self.speculation.draft_cost.as_str(),
             "per-token" | "per-block"
@@ -899,6 +899,10 @@ mod tests {
             mode(&["--speculation", "fixed"]),
             (3, runtime_engine::SpeculationMode::Fixed)
         );
+        assert_eq!(
+            mode(&["--speculation", "balanced"]),
+            (3, runtime_engine::SpeculationMode::Balanced)
+        );
         assert_eq!(mode(&["--speculative-tokens", "0"]).0, 0);
         // Costs belong to table mode only.
         for (mode, costs) in [
@@ -922,6 +926,32 @@ mod tests {
             };
             let refusal = refusal.to_string();
             assert!(refusal.contains("needs valid costs"), "{refusal}");
+        }
+    }
+
+    #[test]
+    fn balanced_profiles_resolve_without_costs_and_keep_cli_overrides() {
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "balanced".into();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry,
+        };
+        for (args, expected) in [
+            (Vec::new(), runtime_engine::SpeculationMode::Balanced),
+            (
+                vec!["--speculation".into(), "fixed".into()],
+                runtime_engine::SpeculationMode::Fixed,
+            ),
+        ] {
+            let resolved = direct_arguments(&profile, 2, &args, Path::new("/cache/p-x")).unwrap();
+            let crate::HostCommandV1::Serve {
+                speculation_mode, ..
+            } = crate::parse_host_command_v1(&resolved.arguments).unwrap()
+            else {
+                panic!("serve");
+            };
+            assert_eq!(speculation_mode, expected);
         }
     }
 

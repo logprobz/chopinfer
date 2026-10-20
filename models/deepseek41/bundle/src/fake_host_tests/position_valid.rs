@@ -326,12 +326,23 @@ pub(super) fn audit_batched(host: &Host, journal: &[String], skip: bool) -> Resu
             )?;
         }
         if ratio == 1 {
-            let gather = journal.get(at + 5).ok_or("missing candidate merge")?;
+            // The admitted schedule publishes with the fused producer, which
+            // reads the selector's scores directly.
+            let fused = host.shape.runtime.indexer_prefill_tile;
+            let gather = journal
+                .get(at + if fused { 3 } else { 5 })
+                .ok_or("missing candidate publication")?;
             require(
-                gather.contains("chop_candidate_block_ids_") && gather.contains("merge"),
+                gather.contains("chop_candidate_block_ids_")
+                    && if fused {
+                        gather.contains("_gather_v3_cached4_v1 ")
+                    } else {
+                        gather.contains("merge")
+                    },
                 "candidate publication ordering",
             )?;
             let c = spans(gather);
+            require(!fused || c[0] == b[8], "fused candidates changed scores")?;
             let tags = uploaded(host, c[2])?;
             let original: Vec<_> = tags
                 .chunks_exact(8)

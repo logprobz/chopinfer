@@ -356,6 +356,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// per TP4 rank; no launch or allocation changes.
 /// Prefill matrix tiles add the same TP4 module resources as the text
 /// lifecycle. Every image allocation, launch and dependency is retained.
+/// The fused candidate publisher adds one module, one resolve and two
+/// releases per rank, and replaces each layer-20 producer triple with one
+/// launch.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
     (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),

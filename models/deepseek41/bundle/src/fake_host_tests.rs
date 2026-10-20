@@ -993,11 +993,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// Qualified matrix and TMA tiles add two modules, 138 resolves, ten
 /// shared-memory configurations and 140 releases per TP4 rank. This
 /// short-row lifecycle keeps every allocation, launch and dependency.
+/// The fused candidate publisher adds one module, one resolve and two
+/// releases per native rank, and replaces each layer-20 producer triple
+/// (scores, local gather, merge) with one launch on the merge's spans.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17361, 0x98b3ceb0c552d139),
+        (17352, 0xe5b953e51a6a8bc4),
     ),
     (
         "deepseek41-flash-tp1",
@@ -1007,7 +1010,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34909, 0x634c896900b45d63),
+        (34891, 0x1d5c0e0ab9d44bcc),
     ),
     (
         "deepseek41-flash-tp2",
@@ -1363,9 +1366,20 @@ fn every_kv_layout_lowers_every_stage() {
                 0
             }
         );
+        // Native prefill publishes each layer-20 candidate batch with one
+        // fused launch in place of the scores, local-gather and merge triple.
+        let fused_candidates = launches("_gather_v3_cached4_v1 ");
+        assert_eq!(
+            fused_candidates,
+            if kv.storage == KvStorage::Native {
+                shape.ranks() as usize
+            } else {
+                0
+            }
+        );
         counts.push((
             kv.storage,
-            journal.iter().filter(|l| l.starts_with("launch")).count()
+            journal.iter().filter(|l| l.starts_with("launch")).count() + 2 * fused_candidates
                 - packed
                 - cache_producers
                 - hierarchical_groups,
@@ -1375,8 +1389,8 @@ fn every_kv_layout_lowers_every_stage() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
-    // After the validated query packs, cache producers and group/final merges,
-    // both layouts lower the same stages.
+    // After the validated query packs, cache producers, group/final merges
+    // and fused candidates, both layouts lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

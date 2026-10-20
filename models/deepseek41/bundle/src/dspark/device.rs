@@ -44,6 +44,7 @@ pub(crate) struct Device {
     pub shape: Shape,
     pub config: Config,
     pub cycle: super::cycle::Cycle,
+    pub prefetch: super::prefetch::Cache,
     pub results: super::results::Results,
     pub features: Layout,
     pub ops: Ops,
@@ -66,6 +67,7 @@ pub(crate) struct Device {
 }
 
 pub(crate) struct Rank {
+    pub metadata: Span,
     pub inputs: DeviceInputs,
     pub status: super::status::Status,
     pub window: Window,
@@ -191,6 +193,7 @@ impl Device {
             shape,
             config,
             cycle,
+            prefetch: super::prefetch::Cache::new(),
             results: super::results::Results::new(kernels.own.as_ref(), g.shape.vocab)?,
             features,
             ops,
@@ -325,13 +328,40 @@ impl Device {
         let markov = u64::from(g.shape.dspark.markov_rank);
         let targets = g.shape.dspark.targets.len() as u64;
         let mut alloc = |bytes| allocate_span(services, pool, stream, bytes, held);
+        if self.prefetch.enabled {
+            let declaration =
+                model_deepseek41_contract::state::request_state(g, KvStorage::Native, true);
+            let ring = declaration
+                .buffers
+                .iter()
+                .find(|buffer| buffer.name == "dspark.ring")
+                .ok_or(BundleAbiError::InvalidRange("DSpark ring declaration"))?;
+            let bytes =
+                u64::from(self.config.slots) * ring.layers * ring.planes.iter().sum::<u64>();
+            self.prefetch.ranks.push(super::prefetch::Memory {
+                undo_ring: alloc(bytes)?,
+                next_ring: alloc(bytes)?,
+                draft_ids: alloc(rows * 4)?,
+                confidence: alloc(rows * 4)?,
+                status: super::status::Status::new(alloc(
+                    u64::from(super::state::BATCH_PROJECTION_ROWS + 8 * BLOCK_ROWS) * 8,
+                )?),
+            });
+        }
         let layout = InputLayout::new::<DeepSeek>(DRAFT_ROWS.max(self.config.window), DRAFT_ROWS);
+        let cells = self.config.window + BLOCK_ROWS;
+        let metadata_layout = super::upload::Layout::new(layout.end, items, rows, u64::from(cells))
+            .map_err(|_| BundleAbiError::InvalidRange("DSpark metadata layout"))?;
+        let metadata = alloc(metadata_layout.bytes)?;
+        let plane = |(at, bytes)| {
+            slice(metadata, at, bytes)
+                .map_err(|_| BundleAbiError::InvalidRange("DSpark metadata plane"))
+        };
         let arena = PhaseArena {
-            arena: alloc(layout.end)?,
+            arena: plane(metadata_layout.inputs)?,
             block_tables: alloc(4)?,
         };
         let inputs = DeviceInputs::within(arena, &layout);
-        let cells = self.config.window + BLOCK_ROWS;
         let stride = u64::from(cells) * u64::from(g.shape.attention.head_dim);
         let window = Window {
             codes: alloc(items * stride)?,
@@ -393,21 +423,22 @@ impl Device {
                 * (u64::from(self.config.stages) + g.shape.csa.index_sources.len() as u64 + 1)
             + rows;
         self.ranks.push(Rank {
+            metadata,
             status: super::status::Status::new(alloc(status_rows * 8)?),
             inputs,
             window,
-            item_slots: alloc(items * 4)?,
-            source_slots: alloc(items * 4)?,
-            first: alloc(items * 4)?,
-            last: alloc(items * 4)?,
-            keys: alloc(rows * u64::from(cells) * 4)?,
+            item_slots: plane(metadata_layout.item_slots)?,
+            source_slots: plane(metadata_layout.source_slots)?,
+            first: plane(metadata_layout.first)?,
+            last: plane(metadata_layout.last)?,
+            keys: plane(metadata_layout.keys)?,
             taps: alloc(u64::from(PREFILL_TOKENS) * targets * hidden * 2)?,
             packed: alloc(u64::from(TARGET_ROWS) * targets * hidden * 2)?,
             feature_indices,
             feature_counts,
             feature_codes: alloc(u64::from(self.config.window) * targets * hidden)?,
             feature_scales: alloc(u64::from(self.config.window) * targets * hidden / 32)?,
-            predecessor_ids: alloc(items * 4)?,
+            predecessor_ids: plane(metadata_layout.predecessor_ids)?,
             draft_ids: alloc(rows * 4)?,
             confidence: alloc(rows * 4)?,
             chunk_output: alloc(rows * 8)?,
@@ -419,7 +450,7 @@ impl Device {
             embedding: alloc(items * markov * 2)?,
             pairs,
             gathered: alloc(items * 2 * 4 * u64::from(self.shape.ranks()))?,
-            live_items: alloc(4)?,
+            live_items: plane(metadata_layout.live_items)?,
             live_width,
             reduce_state,
             gather_state,

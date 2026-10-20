@@ -80,6 +80,16 @@ impl Instance {
         let joined = self.services.create_event(self.ranks[0].0)?;
         self.held.push(Held::Event(joined));
         device.cycle.draft_joined = Some(joined);
+        if device.prefetch.enabled {
+            for &(context, _, _) in &self.ranks {
+                let event = self.services.create_event(context)?;
+                self.held.push(Held::Event(event));
+                device.prefetch.done.push(event);
+            }
+            let event = self.services.create_event(self.ranks[0].0)?;
+            self.held.push(Held::Event(event));
+            device.prefetch.joined = Some(event);
+        }
         for &(context, _, _) in &self.ranks {
             for events in [
                 &mut device.results.target_ready,
@@ -169,6 +179,7 @@ impl Instance {
             text: text.to_vec(),
             result: None,
             packed_diagnostics: Default::default(),
+            feedback: Default::default(),
         });
         self.emit_dspark_device_drafts(sink)?;
         let status = self.execute_packed(request, sink, step);
@@ -378,6 +389,7 @@ impl Instance {
         };
         let ids = words(&output[..bytes as usize]);
         let confidence_bits = words(&output[bytes as usize..]);
+        let feedback = pending.feedback.borrow_mut().take();
         if ids
             .iter()
             .flatten()
@@ -414,7 +426,9 @@ impl Instance {
             layers.join(","),
         );
         let _ = self.services.log(message.as_bytes());
-        let cycle = &mut self.dspark.as_mut().expect("drafter retained").cycle;
+        let device = self.dspark.as_mut().expect("drafter retained");
+        device.prefetch.feedback = feedback;
+        let cycle = &mut device.cycle;
         cycle.gathering = false;
         cycle.pending.as_mut().expect("pending cycle").result = Some(DeviceTarget {
             ids,

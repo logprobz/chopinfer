@@ -1,12 +1,12 @@
-//! Qualification of the native MoE prefill tiles (../../native_moe_prefill.md):
+//! Qualification of the native MoE prefill tiles (../../../native_moe_prefill.md):
 //! the instruction probe, f64 oracle bounds, serving-entry and tile
 //! identity, invariance, negative controls and paired timing, over
 //! synthetic and captured operands. GPU tests are ignored by default and
 //! read the staged lab cubin named by CHOPINFER_DEEPSEEK41_NATIVE_MOE_CUBINS.
-#[path = "../../sm120/native_moe.rs"]
+#[path = "../../../sm120/native_moe.rs"]
 #[allow(dead_code)]
 mod family;
-#[path = "../../../bundle/src/sm120/moe.rs"]
+#[path = "../../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
 mod registration;
 

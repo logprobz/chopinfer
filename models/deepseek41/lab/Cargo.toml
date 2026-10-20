@@ -150,4 +150,4 @@ path = "examples/sm120/build_native_moe_prefill.rs"
 
 [[test]]
 name = "native_moe_prefill"
-path = "tests/native_moe_prefill/main.rs"
+path = "tests/sm120/native_moe_prefill/main.rs"

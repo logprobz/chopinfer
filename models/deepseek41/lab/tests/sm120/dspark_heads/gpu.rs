@@ -21,7 +21,8 @@ mod probe;
 #[path = "parallel.rs"]
 mod parallel;
 
-const ROWS: u32 = 7;
+// More than two eight-row passes of the tiled Markov step.
+const ROWS: u32 = 19;
 
 fn upload(session: &Session, bytes: &[u8]) -> LabResult<DeviceBuffer> {
     let buffer = session.allocate(bytes.len())?;
@@ -76,6 +77,8 @@ struct Case {
 fn run(session: &Session, case: Case) -> LabResult<()> {
     let module = session.load_cubin(if case.hidden_width.is_some() {
         super::parallel_cubin()
+    } else if case.launch.symbol == crate::markov_tiled::SYMBOL {
+        super::tiled_cubin()
     } else {
         cubin()
     })?;
@@ -127,7 +130,7 @@ fn run(session: &Session, case: Case) -> LabResult<()> {
         )
     };
     let graph = session.capture(invoke)?;
-    for n in [0, 1, 3, ROWS] {
+    for n in [0, 1, 3, 8, 9, ROWS] {
         live.copy_from_bytes(&n.to_le_bytes(), &session.stream)
             .map_err(|e| e.to_string())?;
         let ranges: Vec<_> = (0..n as usize)

@@ -75,6 +75,65 @@ fn parallel_cubin() -> &'static [u8] {
     })
 }
 
+fn tiled_cubin() -> &'static [u8] {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    BYTES.get_or_init(|| {
+        if let Some(path) = std::env::var_os("CHOPINFER_DEEPSEEK41_MARKOV_CUBIN") {
+            return std::fs::read(path).expect("prebuilt tiled Markov cubin");
+        }
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../bundle")
+            .canonicalize()
+            .unwrap();
+        let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("markov-tiled");
+        std::fs::create_dir_all(&out).unwrap();
+        let built = kernel_build::build_in_families(
+            &Toolchain::detect().unwrap(),
+            &[crate::markov_tiled::cubin_spec(&bundle)],
+            &out,
+            &LockDir::new(bundle.join("kernels.lock.d"))
+                .family(crate::markov_tiled::FAMILY, [crate::markov_tiled::CUBIN]),
+            BuildOptions {
+                lock_update: false,
+                emit_cargo_directives: false,
+                profile_line_info: false,
+            },
+            None,
+        )
+        .expect("tiled Markov cubin matches its lock");
+        std::fs::read(&built[0].path).unwrap()
+    })
+}
+
+#[test]
+fn head_cpu_tiled_markov_matches_lock_and_waits_before_reads() {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("markov-tiled-audit.cubin");
+    std::fs::write(&path, tiled_cubin()).unwrap();
+    let output =
+        std::process::Command::new(Toolchain::detect().unwrap().home.join("bin/cuobjdump"))
+            .arg("--dump-sass")
+            .arg(&path)
+            .output()
+            .unwrap();
+    assert!(output.status.success());
+    let sass = String::from_utf8(output.stdout).unwrap();
+    let body = sass
+        .split(&format!("Function : {}", crate::markov_tiled::SYMBOL))
+        .nth(1)
+        .expect("tiled Markov symbol");
+    assert!(body.find("PREEXIT").unwrap() < body.find("ACQBULK").unwrap());
+    assert!(body.find("ACQBULK").unwrap() < body.find("LDG.").unwrap());
+    assert!(body.contains("FFMA") && body.contains("FADD") && body.contains("BAR.SYNC"));
+    for forbidden in ["TF32", "HMMA", "HGMMA", "UTMMA"] {
+        assert!(!body.contains(forbidden), "unexpected {forbidden}");
+    }
+    // The tile index divisions compile to the integer divide sequence, whose
+    // reciprocal truncation is F2I.FTZ. No floating-point arithmetic flushes.
+    for line in body.lines().filter(|line| line.contains(".FTZ")) {
+        assert!(line.contains("F2I.FTZ.U32.TRUNC"), "unexpected {line}");
+    }
+}
+
 #[test]
 fn head_cpu_parallel_confidence_matches_lock_and_waits_before_reads() {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("confidence-parallel-audit.cubin");
@@ -185,7 +244,8 @@ fn head_cpu_markov_checks_spans_aliases_and_all_vocab_shards() {
         let launch = prepared.launches(&b, View::EMPTY, Counts::rows(7)).unwrap();
         assert_eq!(launch.len(), 1);
         assert!(launch[0].plan.pdl);
-        assert_eq!(launch[0].plan.grid[1], 7);
+        assert_eq!(launch[0].symbol, crate::markov_tiled::SYMBOL);
+        assert_eq!(launch[0].plan.grid, [vocab.div_ceil(128), 1, 1]);
         let alias = MarkovStepBuffers {
             output: b.base,
             ..b

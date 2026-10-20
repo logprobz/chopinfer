@@ -1,7 +1,8 @@
 //! Own-op preparation for the model's Markov and confidence heads.
 
 use super::confidence_parallel;
-use super::dspark_entries::{MARKOV, THREADS};
+use super::dspark_entries::THREADS;
+use super::markov_tiled;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
 use kernel_core::properties::Invariance;
@@ -10,6 +11,9 @@ use model_deepseek41_contract::own_ops::dspark::{
     CONFIDENCE_CONTRACT, ConfidenceHead, ConfidenceHeadBuffers, MARKOV_CONTRACT, MarkovStep,
     MarkovStepBuffers,
 };
+
+// Both heads launch through `launch`, which uses the shared block size.
+const _: () = assert!(markov_tiled::THREADS == THREADS);
 
 pub fn markov(
     geometry: &Geometry,
@@ -22,7 +26,7 @@ pub fn markov(
             "sm120 DSpark Markov rank or grid capacity is unsupported".into(),
         ));
     }
-    let info = info(MARKOV, MARKOV_CONTRACT, need)?;
+    let info = info(markov_tiled::SYMBOL, MARKOV_CONTRACT, need)?;
     Ok(Box::new(Markov {
         op: *op,
         capacity: need.capacity,
@@ -128,9 +132,9 @@ impl PreparedOp<MarkovStepBuffers<View>> for Markov {
         b.live_rows.covers(4)?;
         distinct(b.output, &[b.embedding, b.weight, b.live_rows])?;
         Ok(launch(
-            MARKOV,
+            markov_tiled::SYMBOL,
             rows,
-            [op.vocab_rows.div_ceil(THREADS), rows, 1],
+            [op.vocab_rows.div_ceil(markov_tiled::THREADS), 1, 1],
             vec![
                 Argument::DeviceBuffer(b.embedding.handle),
                 Argument::DeviceBuffer(b.weight.handle),

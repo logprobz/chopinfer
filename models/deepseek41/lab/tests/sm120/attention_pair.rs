@@ -8,6 +8,8 @@ use candidate as latent_scheduled;
 mod cache;
 #[path = "attention_pair/cache_catalog.rs"]
 mod cache_catalog;
+#[path = "attention_pair/captured_replay.rs"]
+mod captured_replay;
 #[path = "attention_pair/decode.rs"]
 mod decode;
 #[path = "../../../bundle/src/sm120/latent_decode.rs"]
@@ -28,6 +30,8 @@ mod stages;
 #[path = "attention_pair/probe.rs"]
 #[allow(dead_code)]
 mod state_probe;
+#[path = "attention_pair/verify_cache.rs"]
+mod verify_cache;
 
 use fixture::{Case, DeviceFixture, Fixture};
 use kernel_core::contract::AttentionPhase;

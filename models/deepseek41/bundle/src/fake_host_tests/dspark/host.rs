@@ -13,12 +13,23 @@ struct Gather {
 pub(in crate::fake_host_tests) struct MappedHost {
     host: Rc<Host>,
     gathers: std::cell::RefCell<std::collections::BTreeMap<u64, Gather>>,
+    peer_copies: bool,
 }
 impl MappedHost {
     pub(in crate::fake_host_tests) fn new(host: Rc<Host>) -> Self {
         Self {
             host,
             gathers: Default::default(),
+            peer_copies: false,
+        }
+    }
+
+    /// Journal peer copies as the ordinary fake host does (`peer-copy`
+    /// lines), so the prefill DMA audit can order them.
+    pub(in crate::fake_host_tests) fn with_peer_copies(host: Rc<Host>) -> Self {
+        Self {
+            peer_copies: true,
+            ..Self::new(host)
         }
     }
 }
@@ -80,6 +91,15 @@ impl HostServicesBackendV1 for MappedHost {
             source_context.slot(),
             destination_context.slot()
         ));
+        if self.peer_copies {
+            return self.host.copy_peer_to_peer(
+                stream,
+                destination_context,
+                destination,
+                source_context,
+                source,
+            );
+        }
         self.host.copy_device_to_device(stream, destination, source)
     }
     forward!(zero_device_buffer(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1) -> ());

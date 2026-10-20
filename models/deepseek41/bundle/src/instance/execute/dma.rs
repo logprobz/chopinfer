@@ -387,15 +387,17 @@ pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
     run.phase.prefill()
         && instance.dma.len() == 4
         && instance.ops.prefill_dma.enabled()
-        && instance.dspark.is_none()
         && run.media.is_none()
         && run.inputs.request_ids.len() == 1
 }
 
 /// The full-schedule and two-part executors take DMA only when it was
-/// selected explicitly; the default serves the upper-skip executor alone.
+/// selected explicitly, and never for a DSpark target; the default serves
+/// the upper-skip executor alone.
 pub(super) fn eligible_full_schedule(instance: &Instance, run: &Run) -> bool {
-    eligible(instance, run) && instance.ops.prefill_dma.serves_full_schedule()
+    eligible(instance, run)
+        && instance.ops.prefill_dma.serves_full_schedule()
+        && instance.dspark.is_none()
 }
 
 impl Plan {

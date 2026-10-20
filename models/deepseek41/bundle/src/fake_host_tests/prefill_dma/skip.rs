@@ -34,7 +34,17 @@ fn create_with_services(host: &Rc<Host>, services: HostServicesTableV1) -> Bundl
 }
 
 fn capture(rows: u64, enabled: Option<bool>) -> Vec<String> {
+    capture_with(rows, enabled, false)
+}
+
+/// `dspark` creates a drafter instance through the mapped Engram host, so
+/// the prefill is a DSpark target chunk with its feature captures.
+fn capture_with(rows: u64, enabled: Option<bool>, dspark: bool) -> Vec<String> {
     let host = host();
+    if dspark {
+        host.drafter.set(true);
+        host.speculation.set(Some((5, 32)));
+    }
     host.device.residency.set(Some(BundleRawClusterResidencyV1 {
         multiprocessor_count: 188,
         usable_multiprocessors: 188,
@@ -43,7 +53,12 @@ fn capture(rows: u64, enabled: Option<bool>) -> Vec<String> {
             | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
         ..BundleRawClusterResidencyV1::unreported()
     }));
-    let mut instance = create_sparse(&host);
+    let mut instance = if dspark {
+        let services = dspark::host::MappedHost::with_peer_copies(Rc::clone(&host));
+        create_with_services(&host, HostServicesTableV1::new(Rc::new(services)))
+    } else {
+        create_sparse(&host)
+    };
     assert_eq!(instance.prefill_policy().unwrap().chunk_tokens, 8192);
     host.device.journal.borrow_mut().clear();
     let wire = encode(
@@ -143,6 +158,55 @@ fn sparse_dma_preserves_compute_and_orders_only_the_required_rows() {
             audit(&missing).is_err(),
             "missing peer joins must expose the alias"
         );
+    }
+}
+
+/// A DSpark target chunk takes the same ordered transport: every compute
+/// launch, feature capture and commit keeps its operands, and only the
+/// phased reductions become owner sums and ordered peer copies.
+#[test]
+fn sparse_dma_serves_dspark_target_prefill() {
+    for rows in [8192, 8191] {
+        let reference = capture_with(rows, Some(false), true);
+        let candidate = capture_with(rows, None, true);
+        assert!(
+            reference
+                .iter()
+                .any(|line| line.starts_with("launch ") && line.contains("dspark"))
+        );
+        let phased = |journal: &[String]| {
+            journal
+                .iter()
+                .filter(|line| {
+                    line.starts_with("launch ")
+                        && line.contains("chop_comm_allreduce_phased_round_f32_v1")
+                })
+                .count()
+        };
+        let reductions = phased(&reference) / 4;
+        assert_eq!(phased(&reference), reductions * 4);
+        assert_eq!(reductions, 73);
+        assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
+        let before = compute(&reference);
+        let after = compute(&candidate);
+        assert_eq!(before.len(), after.len());
+        for (index, (before, after)) in before.iter().zip(&after).enumerate() {
+            assert_eq!(before, after, "compute dispatch {index}");
+        }
+        assert_eq!(phased(&candidate), 0);
+        assert_eq!(
+            candidate
+                .iter()
+                .filter(|line| line.starts_with("peer-copy "))
+                .count(),
+            reductions * 24
+        );
+        assert_eq!(audit(&candidate).unwrap(), reductions * (24 * 2 + 4 * 3));
+        let missing = candidate
+            .into_iter()
+            .filter(|line| !line.starts_with("wait "))
+            .collect::<Vec<_>>();
+        assert!(audit(&missing).is_err());
     }
 }
 

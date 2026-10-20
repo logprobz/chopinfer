@@ -45,7 +45,22 @@ fn capture(
     prefill: &BTreeMap<String, serde_json::Value>,
     rows: u32,
 ) -> Vec<String> {
+    capture_with(setting, bf16, prefill, rows, false)
+}
+
+/// `dspark` creates a drafter instance through the mapped Engram host.
+fn capture_with(
+    setting: Option<&str>,
+    bf16: bool,
+    prefill: &BTreeMap<String, serde_json::Value>,
+    rows: u32,
+    dspark: bool,
+) -> Vec<String> {
     let host = host();
+    if dspark {
+        host.drafter.set(true);
+        host.speculation.set(Some((5, 32)));
+    }
     // Report residency as the served host does, so the BF16 gather's phased
     // reductions are admitted and the upper-skip executor can replace them.
     host.device.residency.set(Some(BundleRawClusterResidencyV1 {
@@ -64,7 +79,18 @@ fn capture(
                 api()
                     .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                     .unwrap()
-                    .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+                    .create(
+                        if dspark {
+                            HostServicesTableV1::new(Rc::new(
+                                super::super::dspark::host::MappedHost::with_peer_copies(
+                                    Rc::clone(&host),
+                                ),
+                            ))
+                        } else {
+                            HostServicesTableV1::new(Rc::clone(&host))
+                        },
+                        &record,
+                    )
             })
         })
     })
@@ -159,6 +185,19 @@ fn package_defaults_select_dma_for_upper_skip_only() {
     );
     assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
     assert_ne!(unset, capture(Some("0"), true, &defaults, 8192));
+    // A DSpark target prefill under the tp4-dspark defaults takes the same
+    // transport and allocates the same inbox, streams and events.
+    let dspark = capture_with(None, true, &defaults, 8192, true);
+    assert_eq!(dspark, capture_with(Some("1"), true, &defaults, 8192, true));
+    assert_eq!(
+        dspark
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .count(),
+        73 * 24
+    );
+    assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_ne!(dspark, capture_with(Some("0"), true, &defaults, 8192, true));
     // Without the BF16 gather it was measured with, the default keeps
     // the SM transport.
     assert_disabled_journal(

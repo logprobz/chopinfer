@@ -517,3 +517,66 @@ fn unset_bf16_partials_keep_other_kv_on_f32() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+#[test]
+fn bf16_prefill_partials_compose_with_native_experts() {
+    for rows in [65, 8191, 8192] {
+        let host = host(true);
+        let mut instance = crate::sm120::moe_native::with_native(true, || {
+            with_partial_setting(Some("prefill"), || create(&host, 1))
+        });
+        let begin = host.device.journal.borrow().len();
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, rows, true),
+            &mut Views::default(),
+        );
+        {
+            let journal = host.device.journal.borrow();
+            let launches = journal[begin..]
+                .iter()
+                .filter(|line| line.starts_with("launch "))
+                .collect::<Vec<_>>();
+            let native = launches
+                .iter()
+                .filter(|line| line.contains("chop_moe_native_"))
+                .count();
+            assert!(native > 0 && native % 16 == 0, "{rows}: {native}");
+            assert!(launches.iter().any(|line| partial_entry(line)), "{rows}");
+            // At the exact full bucket, native replaces the grouped down.
+            assert!(
+                launches
+                    .iter()
+                    .all(|line| !line.contains("_group_m128n128")),
+                "{rows}"
+            );
+        }
+        for repeat in 0..2 {
+            let begin = host.device.journal.borrow().len();
+            step(
+                &mut instance,
+                &decode(&[(7, 0, rows + repeat, 9)]),
+                &mut Views::default(),
+            );
+            let journal = host.device.journal.borrow();
+            assert!(journal[begin..].iter().all(|line| {
+                !line.contains("chop_moe_native_")
+                    && !(line.starts_with("launch ") && partial_entry(line))
+            }));
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_COMBINED_JOURNAL_DIR") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let name = format!("prefill-{rows}.journal");
+            std::fs::write(dir.join(&name), host.device.journal.borrow().join("\n")).unwrap();
+            super::decode_attention::export_handles(&host.device, &dir, &name);
+        }
+    }
+}
+
+#[test]
+fn bf16_prefill_and_native_experts_keep_f32_draft_and_verify() {
+    crate::sm120::moe_native::with_native(true, || check_draft_reductions("prefill"));
+}

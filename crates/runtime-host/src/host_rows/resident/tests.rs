@@ -228,6 +228,21 @@ fn measurement_reset_discards_tags_and_keeps_the_same_allocation_and_bytes() {
 }
 
 #[test]
+fn measurement_page_table_release_keeps_resident_rows_and_counters() {
+    let registry = registry(1);
+    let mapping = mapping("measurement-page-tables", &source(1000, 264), 24);
+    attach(&registry, vec![(Arc::clone(&mapping), 264)]).unwrap();
+    let cache = &mapping.resident.get().unwrap().cache;
+    let first = copy(&mapping, 264, 17, 0, 264);
+    let before = cache.measurement_snapshot();
+    super::super::release_page_tables(&[Arc::clone(&mapping)]).unwrap();
+    assert_eq!(cache.measurement_snapshot(), before);
+    assert_eq!(copy(&mapping, 264, 17, 0, 264), first);
+    assert_eq!(cache.hits.load(Ordering::Relaxed), 1);
+    assert_eq!(cache.misses.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn cache_is_on_by_default_and_disabled_budgets_are_not_parsed() {
     let default = Config::parse(|_| None).unwrap().unwrap();
     assert_eq!((default.set_bytes, default.total_bytes), (1 << 30, 2 << 30));

@@ -360,6 +360,37 @@ pub fn mapped_bytes_v1() -> u64 {
         .sum()
 }
 
+/// Release page-table entries at an explicit measurement boundary. The job
+/// can then evict selected file ranges without discarding locked row copies.
+pub(crate) fn release_page_tables_for_measurement() -> io::Result<u64> {
+    let mappings = REGISTRY
+        .lock()
+        .map_err(|_| io::Error::other("mapped row registry is poisoned"))?
+        .values()
+        .filter_map(Weak::upgrade)
+        .filter(|mapping| mapping.key.identity.is_some())
+        .collect::<Vec<_>>();
+    release_page_tables(&mappings)
+}
+
+fn release_page_tables(mappings: &[Arc<MappedRowsV1>]) -> io::Result<u64> {
+    if mappings.is_empty()
+        || mappings
+            .iter()
+            .any(|mapping| mapping.key.identity.is_none())
+    {
+        return Err(io::Error::other(
+            "measurement requires authenticated mapped rows",
+        ));
+    }
+    let mut bytes = 0;
+    for mapping in mappings {
+        mapping.advise(RowAdviceV1::DontNeed)?;
+        bytes += mapping.len();
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +435,32 @@ mod tests {
         rows.will_need_rows(256, &[10_000]);
         rows.will_need_rows(0, &[1]);
         assert_eq!(rows.bytes(), &bytes[300..39_300]);
+    }
+
+    #[test]
+    fn measurement_releases_only_authenticated_mapping_page_tables() {
+        use std::io::{Read, Seek, SeekFrom};
+        let present = |rows: &MappedRowsV1| {
+            let mut file = File::open("/proc/self/pagemap").unwrap();
+            file.seek(SeekFrom::Start(
+                rows.base as u64 / page_bytes_v1() as u64 * 8,
+            ))
+            .unwrap();
+            let mut entry = [0; 8];
+            file.read_exact(&mut entry).unwrap();
+            u64::from_ne_bytes(entry) & (1 << 63) != 0
+        };
+        let bytes: Vec<u8> = (0..40_000_u32).map(|i| (i * 13 + 5) as u8).collect();
+        let (_temp, file) = file("release-page-tables", &bytes);
+        let rows = map_authenticated_rows_v1(&file, 300, 39_000, [7; 32]).unwrap();
+        assert_eq!(rows.bytes(), &bytes[300..39_300]);
+        assert!(present(&rows));
+        assert_eq!(release_page_tables(&[Arc::clone(&rows)]).unwrap(), 39_000);
+        assert!(!present(&rows));
+        assert_eq!(rows.bytes(), &bytes[300..39_300]);
+        let plain = map_rows_v1(&file, 300, 39_000).unwrap();
+        assert!(release_page_tables(&[plain]).is_err());
+        assert!(release_page_tables(&[]).is_err());
     }
 
     #[test]

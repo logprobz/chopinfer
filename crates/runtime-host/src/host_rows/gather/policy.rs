@@ -39,10 +39,17 @@ impl Policy {
         if command.reset_cache {
             crate::host_rows::resident::reset_for_measurement()?;
         }
+        let released_mapping_bytes = if command.release_page_tables {
+            crate::host_rows::release_page_tables_for_measurement()
+                .map_err(|error| format!("release mapped row page tables: {error}"))?
+        } else {
+            0
+        };
         self.mode.store(mode, Ordering::Release);
         Ok(serde_json::json!({
             "schema":"chopinfer.mapped-row-policy.v1", "status":"applied",
             "epoch":command.epoch, "mode":command.mode, "reset_cache":command.reset_cache,
+            "released_mapping_bytes":released_mapping_bytes,
             "sync":self.snapshot(0), "async":self.snapshot(1),
             "cache":crate::host_rows::resident::measurement_snapshot(),
         }))
@@ -68,6 +75,8 @@ struct Command {
     epoch: u64,
     mode: String,
     reset_cache: bool,
+    #[serde(default)]
+    release_page_tables: bool,
 }
 
 fn mode(value: &str) -> Result<u8, String> {
@@ -238,6 +247,7 @@ mod tests {
                 epoch: epoch as u64,
                 mode: name.into(),
                 reset_cache: false,
+                release_page_tables: false,
             };
             let record = advance(&policy, &command, &mut last).unwrap().unwrap();
             assert_eq!(record["epoch"], command.epoch);
@@ -252,7 +262,8 @@ mod tests {
                 &Command {
                     epoch: 0,
                     mode: "both".into(),
-                    reset_cache: false
+                    reset_cache: false,
+                    release_page_tables: false,
                 },
                 &mut last
             )
@@ -271,9 +282,11 @@ mod tests {
         std::fs::write(&path, br#"{"epoch":1,"mode":"sync","reset_cache":false}"#).unwrap();
         let command = read_command(&path).unwrap();
         assert_eq!(command.epoch, 1);
+        assert!(!command.release_page_tables);
         let policy = Policy::new(0, true);
         let record = policy.apply(&command).unwrap();
         assert_eq!(record["status"], "applied");
+        assert_eq!(record["released_mapping_bytes"], 0);
         assert_eq!(policy.mode.load(Ordering::Relaxed), 1);
         let link = root.join("link");
         symlink(&path, &link).unwrap();
@@ -287,6 +300,12 @@ mod tests {
         .unwrap();
         assert!(read_command(&path).is_err());
         assert_eq!(policy.mode.load(Ordering::Relaxed), 1);
+        std::fs::write(
+            &path,
+            br#"{"epoch":3,"mode":"off","reset_cache":false,"release_page_tables":true}"#,
+        )
+        .unwrap();
+        assert!(read_command(&path).unwrap().release_page_tables);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

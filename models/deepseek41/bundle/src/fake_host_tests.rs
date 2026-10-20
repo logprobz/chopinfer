@@ -950,36 +950,39 @@ fn journal_steps(host: &Rc<Host>) {
 /// separately with the same loaded catalog in reference and serving modes.
 /// The tiled indexer adds twelve resolves and thirteen releases per native
 /// rank; these short-context fixtures retain their prior indexer launches.
+/// Qualified HC row tiles and prefill mixers retain their exact operands.
+/// Fused prefill heads add only their declared module resources here; their
+/// active output/merge substitutions are audited in full prefill lifetimes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17267, 0xed9b09dd71743442),
+        (17334, 0x796ed0dea273c656),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17167, 0xc1ea918dc2b571bb),
+        (17209, 0x9c1299f6d405c33b),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34721, 0x64778dce5a90b7f5),
+        (34855, 0xbd6e19dbc724cc4b),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34521, 0x8add3aa38dc17c35),
+        (34605, 0xc4fd08f2c39fe6a3),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (74227, 0x8ca0faf37fca8323),
+        (74755, 0x9913d480b8c12715),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (72395, 0x0f2c58abd58ab59d),
+        (72707, 0x220bab3eb90ee567),
     ),
 ];
 

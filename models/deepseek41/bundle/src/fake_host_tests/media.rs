@@ -337,8 +337,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// only resource identities move. Larger-row projection graphs are audited
 /// separately with the same loaded catalog in reference and serving modes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22783, 0x16c27042beff1943)),
-    (Ranks::TP4, (50103, 0x0428427a09488530)),
+    (Ranks::TP2, (22917, 0x71af93528d62b2fc)),
+    (Ranks::TP4, (50631, 0xb735eca9b0a1e6cb)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

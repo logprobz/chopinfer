@@ -72,8 +72,14 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 count("hc_round_chain_w4_v1") / 4
             );
             if count("hc_finish_norm_w32_v1") == pairs {
-                assert_eq!(count("hc_round_chain_w4_v1"), if rows == 6 { pairs } else { 0 });
-                assert_eq!(count("hc_round_rows_r2_v1"), if rows == 32 { pairs } else { 0 });
+                assert_eq!(
+                    count("hc_round_chain_w4_v1"),
+                    if rows == 6 { pairs } else { 0 }
+                );
+                assert_eq!(
+                    count("hc_round_rows_r2_v1"),
+                    if rows == 32 { pairs } else { 0 }
+                );
                 assert_eq!(count("hc_round_chain_w8_v1"), 0);
                 assert_eq!(count("hc_round_expand_mix_partials_v1"), 0);
                 assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
@@ -96,7 +102,10 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     assert!(line.contains(&format!("grid_x: 160, grid_y: {rows}, grid_z: 1")));
                     assert!(line.contains("block_x: 128, block_y: 1, block_z: 1"));
                 }
-                for line in launches.iter().filter(|l| l.contains("hc_round_rows_r2_v1")) {
+                for line in launches
+                    .iter()
+                    .filter(|l| l.contains("hc_round_rows_r2_v1"))
+                {
                     assert_eq!(rows, 32);
                     assert!(line.contains("grid_x: 160, grid_y: 16, grid_z: 1"));
                     assert!(line.contains("block_x: 256, block_y: 1, block_z: 1"));

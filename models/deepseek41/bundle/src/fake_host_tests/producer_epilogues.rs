@@ -40,14 +40,8 @@ fn decode_fuses_77_hc_boundaries() {
                 );
                 assert_eq!(count("hc_round_rows_r4_v1"), 0);
                 assert_eq!(count("hc_round_rows_r8_v1"), 0);
-                assert_eq!(
-                    count("hc_round_expand_mix_finish_v1"),
-                    0
-                );
-                assert_eq!(
-                    count("hc_finish_norm_w32_v1"),
-                    77 * nr
-                );
+                assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
+                assert_eq!(count("hc_finish_norm_w32_v1"), 77 * nr);
                 assert_eq!(count("hc_finish_norm_w16_v1"), 0);
                 assert_eq!(
                     count("lagged_mix_collapse_split_v1"),

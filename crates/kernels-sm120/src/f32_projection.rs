@@ -37,6 +37,7 @@ pub struct Entry {
     blocked_buckets: Vec<(u32, u32)>,
     wide_tile_n: u32,
     wide_buckets: Vec<(u32, u32)>,
+    reuse_rows: Vec<u32>,
 }
 
 impl Entry {
@@ -75,6 +76,7 @@ impl Entry {
             blocked_buckets: Vec::new(),
             wide_tile_n: 0,
             wide_buckets: Vec::new(),
+            reuse_rows: Vec::new(),
         })
     }
     pub fn query(&self) -> GemmQuery {

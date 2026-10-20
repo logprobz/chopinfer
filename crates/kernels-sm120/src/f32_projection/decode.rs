@@ -54,6 +54,14 @@ impl Entry {
     /// above the measured split-decode crossover. `symbols` instead lists
     /// the exports compiled by this entry's cubin specification.
     pub fn runtime_symbols(&self) -> Vec<String> {
+        let mut symbols = self.base_runtime_symbols();
+        if let Some(&rows) = self.reuse_rows.first() {
+            symbols.push(super::reuse::symbol(&self.entry_for_rows(rows)));
+        }
+        symbols
+    }
+
+    fn base_runtime_symbols(&self) -> Vec<String> {
         if self.uses_prefill_tiles() {
             return self.symbols();
         }

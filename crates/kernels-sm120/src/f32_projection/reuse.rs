@@ -52,3 +52,22 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         entries: entries.iter().map(spec).collect::<Result<_, _>>()?,
     })
 }
+
+impl Entry {
+    /// Opt into the compiled reuse entry only at explicit measured row counts.
+    pub fn with_decode_reuse(mut self, mut rows: Vec<u32>) -> Result<Self, Refusal> {
+        rows.sort_unstable();
+        if rows.is_empty() || rows.windows(2).any(|w| w[0] == w[1]) {
+            return Err(Refusal("decode reuse needs distinct measured row buckets"));
+        }
+        for &row in &rows {
+            plan(&self.entry_for_rows(row), row)?;
+        }
+        self.reuse_rows = rows;
+        Ok(self)
+    }
+
+    pub fn uses_decode_reuse(&self, rows: u32) -> bool {
+        self.reuse_rows.binary_search(&rows).is_ok()
+    }
+}

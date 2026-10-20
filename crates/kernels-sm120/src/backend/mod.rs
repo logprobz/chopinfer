@@ -110,6 +110,7 @@ mod multimodal;
 mod mxfp8_fold;
 mod mxfp8_fold_decode;
 mod mxfp8_fold_direct;
+mod mxfp8_fold_reuse;
 mod mxfp8_fold_stream;
 mod mxfp8_fold_ticket;
 mod mxfp8_prefill;
@@ -254,6 +255,7 @@ pub struct Sm120 {
     mxfp8_fold_tickets: Vec<crate::gemm::mxfp8_fold_ticket::Entry>,
     mxfp8_fold_streams: Vec<crate::gemm::mxfp8_fold_stream::Entry>,
     mxfp8_fold_directs: Vec<crate::gemm::mxfp8_fold_direct::Entry>,
+    mxfp8_fold_reuse: Vec<(crate::gemm::mxfp8_fold_reuse::Entry, u32)>,
 }
 
 impl Sm120 {
@@ -294,6 +296,16 @@ impl Sm120 {
 
     pub fn with_mxfp8_fold_direct(mut self, entry: crate::gemm::mxfp8_fold_direct::Entry) -> Self {
         self.mxfp8_fold_directs.push(entry);
+        self
+    }
+
+    /// Register one explicit row bucket with its qualified fold allocation.
+    pub fn with_mxfp8_fold_reuse(
+        mut self,
+        entry: crate::gemm::mxfp8_fold_reuse::Entry,
+        folds: u32,
+    ) -> Self {
+        self.mxfp8_fold_reuse.push((entry, folds));
         self
     }
 
@@ -1301,6 +1313,13 @@ impl Backend for Sm120 {
         op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: Need,
     ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
+        if self
+            .mxfp8_fold_reuse
+            .iter()
+            .any(|(e, _)| e.ticket.query == *op)
+        {
+            return mxfp8_fold_reuse::prepare(&self.mxfp8_fold_reuse, op, need);
+        }
         if self
             .mxfp8_fold_tickets
             .iter()

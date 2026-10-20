@@ -254,7 +254,7 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
             if !entry.uses_fused_split() && rows <= 32 {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(entry.decode_workspace_bytes(rows))?;
-                return Ok(vec![
+                let mut launches = vec![
                     Self::stage(
                         &entry,
                         "_rows",
@@ -299,7 +299,12 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                             Argument::U32(rows),
                         ],
                     ),
-                ]);
+                ];
+                if entry.uses_decode_reuse(rows) {
+                    launches[1].symbol = f32_projection::reuse::symbol(&entry);
+                    launches[1].plan = f32_projection::reuse::plan(&entry, rows)?;
+                }
+                return Ok(launches);
             }
         }
         Ok(vec![Launch {

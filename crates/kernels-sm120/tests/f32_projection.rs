@@ -739,3 +739,65 @@ fn wide_prefill_keeps_preparation_and_unmeasured_dispatch() {
     }
     assert!(new.with_prefill_buckets(vec![(512, 32)]).is_err());
 }
+
+#[test]
+fn decode_reuse_changes_only_qualified_compute_launches() {
+    let seed = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        m_capacity: 256,
+        ..seed.query()
+    };
+    let usage = OperationUse {
+        capacity: 256,
+        ..seed.usage()
+    };
+    let old = Entry::new(q, usage, "reuse_test")
+        .unwrap()
+        .with_split_decode();
+    let new = old.clone().with_decode_reuse((9..=32).collect()).unwrap();
+    let bind = |entry: Entry| {
+        backend(vec![entry.clone()])
+            .projection(&operation(&entry), usage, Need::rows(256))
+            .unwrap()
+            .handle
+    };
+    let before = bind(old.clone());
+    let after = bind(new.clone());
+    let mut b = buffers(&new);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: new.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: before.info().workspace,
+    };
+    assert_eq!(before.info().workspace, after.info().workspace);
+    assert_eq!(
+        before.initialize(&b).unwrap(),
+        after.initialize(&b).unwrap()
+    );
+    for rows in 1..=256 {
+        let mut expected = before.launches(&b, work, Counts::rows(rows)).unwrap();
+        let actual = after.launches(&b, work, Counts::rows(rows)).unwrap();
+        if (9..=32).contains(&rows) {
+            assert_ne!(expected, actual, "reference must exercise the old route");
+            expected[1].symbol = f32_projection::reuse::symbol(&old.entry_for_rows(rows));
+            expected[1].plan.grid[1] = 1;
+        }
+        assert_eq!(
+            expected, actual,
+            "rows={rows}: preserve every argument, classifier and ordered reducer"
+        );
+    }
+    let mut available: std::collections::BTreeSet<_> = new.runtime_symbols().into_iter().collect();
+    available.remove(&f32_projection::reuse::symbol(&new.entry_for_rows(9)));
+    let missing = Sm120::new().with_f32_projections(
+        F32ProjectionOffers::new(vec![new.clone()], available, "0".repeat(64)).unwrap(),
+    );
+    assert!(
+        missing
+            .projection(&operation(&new), usage, Need::rows(256))
+            .is_err()
+    );
+}

@@ -2,11 +2,13 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import capture
 import cycles
@@ -27,6 +29,43 @@ def steps(directory):
 
 
 class Attribution(unittest.TestCase):
+    def test_missing_unstarted_session_keeps_the_startup_error(self):
+        cases = [(started, failed, missing) for started, failed in (
+            (False, True), (False, False), (True, True)) for missing in (False, True)]
+        for started, startup_failed, named in cases:
+            with self.subTest(started=started, startup_failed=startup_failed, named=named):
+                with tempfile.TemporaryDirectory() as tmp:
+                    runner = SimpleNamespace(directory=Path(tmp), output=Path(tmp), settings={},
+                                             dry=False, env={}, remaining=lambda x: x)
+                    session = capture.Session(runner, "cpu")
+                    session.started = started
+                    message = (f"Session is not found: {session.name}" if named
+                               else "There are no active sessions.")
+                    def result(argv, **_):
+                        return subprocess.CompletedProcess(
+                            argv, 1 if "shutdown" in argv else 0, "",
+                            message if "shutdown" in argv else "")
+                    with patch("session.subprocess.run", side_effect=result):
+                        if startup_failed and not started:
+                            session.close(startup_failed=True)
+                        else:
+                            with self.assertRaises(AssertionError):
+                                session.close(startup_failed=startup_failed)
+                    self.assertTrue(session.closed)
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = object.__new__(capture.Runner)
+            runner.directory = Path(tmp)
+            runner.session = SimpleNamespace(close=lambda **_: (_ for _ in ()).throw(
+                RuntimeError("cleanup failed")))
+            with self.assertRaisesRegex(ValueError, "original startup error"):
+                try:
+                    raise ValueError("original startup error")
+                finally:
+                    runner.close_session()
+            receipt = json.loads((Path(tmp)/"cleanup-error.json").read_text())
+            self.assertEqual(receipt["primary"], "original startup error")
+            self.assertEqual(receipt["cleanup"], "cleanup failed")
+
     def test_server_wrapper_owns_its_group_under_each_launcher_state(self):
         for options in ({}, {"process_group": 0}, {"start_new_session": True}):
             with self.subTest(options=options), tempfile.TemporaryDirectory() as tmp:

@@ -5,14 +5,15 @@ use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, ArgumentList};
 use kernels_sm120::latent::sources_cached;
 
-struct Captured {
-    label: String,
-    source: Entry,
-    rows: u32,
-    cached: bool,
-    scalars: Value,
-    data: BTreeMap<String, Vec<u8>>,
-    expected: [Vec<u8>; 2],
+#[derive(Clone)]
+pub(super) struct Captured {
+    pub(super) label: String,
+    pub(super) source: Entry,
+    pub(super) rows: u32,
+    pub(super) cached: bool,
+    pub(super) scalars: Value,
+    pub(super) data: BTreeMap<String, Vec<u8>>,
+    pub(super) expected: [Vec<u8>; 2],
 }
 fn read_blob(root: &std::path::Path, value: &Value) -> LabResult<Vec<u8>> {
     let sha = value["sha256"].as_str().ok_or("blob digest absent")?;
@@ -36,7 +37,7 @@ fn read_blob(root: &std::path::Path, value: &Value) -> LabResult<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn captures() -> LabResult<Vec<Captured>> {
+pub(super) fn captures() -> LabResult<Vec<Captured>> {
     let root = PathBuf::from(
         std::env::var_os("CHOPINFER_ATTENTION_CAPTURE_ROOT")
             .ok_or("CHOPINFER_ATTENTION_CAPTURE_ROOT is required")?,
@@ -177,7 +178,7 @@ fn captures() -> LabResult<Vec<Captured>> {
     Ok(all)
 }
 impl Captured {
-    fn view(&self, name: &str) -> LabResult<View> {
+    pub(super) fn view(&self, name: &str) -> LabResult<View> {
         let index = self
             .data
             .keys()
@@ -207,7 +208,7 @@ impl Captured {
         }
         Ok(ArgumentList(args))
     }
-    fn calls(&self) -> LabResult<Vec<Launch>> {
+    pub(super) fn calls(&self) -> LabResult<Vec<Launch>> {
         let body = Launch {
             symbol: self.source.symbol(),
             rows: self.rows,

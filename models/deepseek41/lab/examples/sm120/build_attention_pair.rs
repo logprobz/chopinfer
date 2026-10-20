@@ -12,6 +12,8 @@ mod decode_candidate;
 #[path = "../../../bundle/src/sm120/latent_glue.rs"]
 #[allow(dead_code)]
 mod glue;
+#[path = "../../tests/sm120/attention_pair/grouped_cache.rs"]
+mod grouped_cache;
 #[path = "../../../bundle/src/sm120/latent.rs"]
 #[allow(dead_code)]
 mod latent;
@@ -179,6 +181,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         initialize
             && !probe_locks
                 .join(format!("{}.lock", cache_catalog::FAMILY))
+                .exists(),
+    )?);
+    modules.extend(build_family(
+        &toolchain,
+        &directory,
+        &probe_locks,
+        grouped_cache::FAMILY,
+        &[grouped_cache::cubin(g)?],
+        initialize
+            && !probe_locks
+                .join(format!("{}.lock", grouped_cache::FAMILY))
                 .exists(),
     )?);
     modules.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));

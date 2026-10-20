@@ -3330,3 +3330,5 @@ mod tests {
 
 pub mod mxfp8_fold_tiled;
 pub mod mxfp8_prefill_matrix;
+
+pub mod mxfp8_prefill_tma_matrix;

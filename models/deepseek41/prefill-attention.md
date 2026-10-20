@@ -418,3 +418,55 @@ pages after each part publishes its native sources. Cache storage and
 tables must remain disjoint from all concurrent reduction spans until
 join. The overlap binding, publication ordering and served-state evidence
 remain separate integration work.
+
+## Shared staging across sixteen heads
+
+Full native Flash TP4 mixed prefill rows now use one query row and all
+sixteen local heads per CTA. The eight warps share one ordered 64-key
+staging tile in 83,200 dynamic shared bytes. Each head keeps its previous
+QK chains, ordered warp fold, softmax, BF16 probability rounding and PV
+chains. The original partial workspace and merge remain unchanged.
+
+The native route is restricted to one eager 8192-row chunk at offset zero,
+with no retained-row origin. The existing decoded-cache route uses direct
+BF16 asynchronous copies for full mixed chunks at offsets 8192, 16384 and
+24576. Window attention, native fallback at other offsets, smaller parts,
+retained mixed64 rows, other topologies and BF16 KV keep their previous
+routes. The consumed-half pipeline remains a lab candidate: direct async
+copies were faster in every measured cached case.
+
+On two SM120 GPUs at 250 W on 2026-10-20, all 196 bitwise gates passed
+before 40 interleaved timings. Gates compare F32 partials and BF16 output,
+with 784 changed-query/live-count poisoned graph replays and 196 partition
+comparisons. They cover native cold mixed32/mixed64, all three cached
+staging candidates at the later offsets, TP1/TP2/TP4 local head counts,
+retained tails, invalid selection entries, untouched cache/output guards
+and a two-byte-aligned BF16 cache. Actual selected/window lists came from
+serving; Q and KV values were synthetic. TP1/TP2 and the smaller parts were
+checked for equality but not timed, so their serving routes remain intact.
+
+Times below are milliseconds per full 8192-row mixed layer. They include
+cache construction when used, attention and merge, with one warmup and
+three interleaved samples. Device A/B identify the two measured GPUs.
+
+| Offset | Variant | Previous A/B | Winning A/B | Staging |
+| ---: | --- | ---: | ---: | --- |
+| 0 | mixed32 | 5.692 / 5.588 | 3.584 / 3.522 | shared native |
+| 0 | mixed64 | 5.912 / 5.796 | 3.621 / 3.577 | shared native |
+| 8192 | mixed32 | 5.435 / 5.347 | 2.844 / 2.763 | direct async |
+| 8192 | mixed64 | 5.914 / 5.796 | 3.301 / 3.217 | direct async |
+| 16384 | mixed32 | 5.402 / 5.303 | 2.799 / 2.722 | direct async |
+| 16384 | mixed64 | 5.831 / 5.716 | 3.219 / 3.141 | direct async |
+| 24576 | mixed32 | 5.364 / 5.265 | 2.763 / 2.688 | direct async |
+| 24576 | mixed64 | 5.709 / 5.622 | 3.106 / 3.029 | direct async |
+
+Across the eighteen full mixed32 layers of an upper-skip prefill, these
+per-entry measurements project a reduction of 37.2-38.0 ms per cold chunk
+and 46.4-46.9 ms per later chunk. The twenty retained mixed64 layers stay
+on their qualified paired route. These projections are not served chunk
+latencies; the full composition still needs serving qualification.
+
+The binding adds two immutable modules and their shared-memory attributes.
+It adds no workspace region, producer, cross-stream use or row split.
+Native key arguments, decoded-cache producers and spans, original row
+origins, transfers and the reference merge retain their existing ownership.

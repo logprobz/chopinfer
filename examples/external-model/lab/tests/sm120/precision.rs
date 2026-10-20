@@ -604,6 +604,7 @@ fn execute(
             },
         }),
         scratch: ProjectionScratch {
+            weight_domain: None,
             partial: view(PARTIAL),
             semaphores: view(SEMAPHORES),
             unused: view(UNUSED),

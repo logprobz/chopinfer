@@ -78,19 +78,18 @@ impl Feedback {
         let mut kept = Vec::new();
         let mut drafts = Vec::new();
         for (index, (input, item)) in self.inputs.iter().zip(&self.metadata.items).enumerate() {
-            let result = BundleAcceptanceResultV1::from_le_bytes(
+            // The host validates the same record and owns any failure. An
+            // unreadable or stale record only declines the prediction.
+            let Ok(DeviceAcceptanceV1::Prefix {
+                emitted_rows,
+                terminal: false,
+                ..
+            }) = BundleAcceptanceResultV1::from_le_bytes(
                 self.packet
                     .get(index * 32..index * 32 + 32)
                     .ok_or("DSpark successor acceptance record is absent")?,
             )
-            .map_err(|e| format!("{e:?}"))?;
-            let DeviceAcceptanceV1::Prefix {
-                emitted_rows,
-                terminal: false,
-                ..
-            } = result
-                .validate(item.acceptance)
-                .map_err(|e| format!("{e:?}"))?
+            .and_then(|result| result.validate(item.acceptance))
             else {
                 return Ok(None);
             };

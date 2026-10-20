@@ -199,6 +199,7 @@ impl Plan {
                         rank: rank as u32,
                         kv: instance.kv_extent(),
                         head_rows: run.head_rows,
+                        prefill_hc_fusion: true,
                     };
                     let phase = Phase::Prefill { rows: rows[part] };
                     let lower = |stage| {

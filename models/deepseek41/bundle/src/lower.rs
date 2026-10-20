@@ -55,6 +55,10 @@ pub struct Lowering<'a> {
     /// The rows the head scores: a prefill's logits rows, or a decode or
     /// verify phase's rows.
     pub head_rows: u32,
+    /// Whether a prefill's HC expansion may also run the next sublayer's
+    /// lagged mixer at measured rows. The upper-layer skip lowers a mixer
+    /// at other rows than the expansion before it, so it keeps them apart.
+    pub prefill_hc_fusion: bool,
 }
 
 /// The serving KV pages and request state a rank's stages address: the
@@ -718,6 +722,7 @@ mod tests {
                 max_pages: 1,
             },
             head_rows: 1,
+            prefill_hc_fusion: true,
         };
         let phase = Phase::Decode(1);
         let scratch = &buffers.scratch;

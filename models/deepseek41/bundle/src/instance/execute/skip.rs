@@ -108,6 +108,7 @@ fn lowering<'a>(
         rank: rank as u32,
         kv: instance.kv_extent(),
         head_rows: run.head_rows,
+        prefill_hc_fusion: false,
     }
 }
 

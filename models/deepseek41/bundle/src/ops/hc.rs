@@ -12,6 +12,7 @@ use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
     WeightedStreamHeadBuffers,
 };
+use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::hc;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
@@ -31,6 +32,8 @@ pub(crate) struct HcOps {
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
+    /// The measured prefill rows' expansion and next mixer in one launch.
+    prefill_fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
     round_fused: Option<Prepared<SinkhornRoundExpandMixBuffers<View>>>,
     finish_norm: Option<Prepared<SinkhornRoundNormBuffers<View>>>,
 }
@@ -133,6 +136,13 @@ impl HcOps {
                     Err(e) => return Err(e),
                 }
             },
+            prefill_fused: match asks.ask("hc.prefill_expand_mix", need, |need| {
+                backend.sinkhorn_expand_mix(&SinkhornExpandMixQuery { mix: hc::mix(g) }, need)
+            }) {
+                Ok(op) => Some(op),
+                Err(Refused::Unsupported) => None,
+                Err(e) => return Err(e),
+            },
             round_fused: {
                 let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
                 let need = exact::need(capacity, exact::every_phase(capacity));
@@ -180,6 +190,43 @@ impl HcOps {
             live_rows: bind.view(views.live_rows),
         };
         bind.launch_within(op, &b, workspace, Counts::rows(rows))
+    }
+
+    /// Only the measured prefill rows (`sm120::hc_prefill_expand_mix`).
+    pub(crate) fn has_prefill_expand_mix(&self, geometry: &Geometry, phase: Phase) -> bool {
+        phase.prefill()
+            && self.prefill_fused.is_some()
+            && crate::sm120::hc_prefill_expand_mix::selected(geometry, phase.rows())
+    }
+    pub(crate) fn prefill_expand_mix(
+        &self,
+        rows: u32,
+        views: SinkhornExpandMixBuffers<DeviceBufferSpanV1>,
+    ) -> Result<Vec<Lowered>, kernel_core::contract::Refusal> {
+        let op = self
+            .prefill_fused
+            .as_ref()
+            .ok_or(kernel_core::contract::Refusal(
+                "prefill expansion mixer unavailable",
+            ))?;
+        let mut bind = Bind::default();
+        let b = SinkhornExpandMixBuffers {
+            x: bind.view(views.x),
+            y: bind.view(views.y),
+            post_in: bind.view(views.post_in),
+            comb_in: bind.view(views.comb_in),
+            expanded: bind.view(views.expanded),
+            fn_: bind.view(views.fn_),
+            base: bind.view(views.base),
+            scale: bind.view(views.scale),
+            pre_in: bind.view(views.pre_in),
+            collapsed: bind.view(views.collapsed),
+            pre: bind.view(views.pre),
+            post: bind.view(views.post),
+            comb: bind.view(views.comb),
+            live_rows: bind.view(views.live_rows),
+        };
+        bind.launch(op, &b, Counts::rows(rows))
     }
 
     pub(crate) fn has_round_expand_mix(&self) -> bool {
@@ -438,6 +485,70 @@ mod tests {
                         assert_eq!(new, old, "{phase:?}");
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn prefill_expand_mix_serves_only_measured_flash_rows() {
+        let view = |handle| View {
+            handle,
+            bytes: u64::MAX / 2,
+        };
+        let buffers = SinkhornExpandMixBuffers {
+            x: view(1),
+            y: view(2),
+            post_in: view(3),
+            comb_in: view(4),
+            expanded: view(5),
+            fn_: view(6),
+            base: view(7),
+            scale: view(8),
+            pre_in: view(9),
+            collapsed: view(10),
+            pre: view(11),
+            post: view(12),
+            comb: view(13),
+            live_rows: View {
+                bytes: 4,
+                ..view(14)
+            },
+        };
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            let op = ops.prefill_fused.as_ref().unwrap();
+            assert_eq!(op.info().workspace, 0);
+            for rows in [1, 63, 64, 65, 192, 320, 2496, 4096, 8191, 8192] {
+                let tile = match rows {
+                    64 | 320 => Some("r4_c4"),
+                    8192 => Some("r8_c8"),
+                    _ => None,
+                };
+                for phase in [
+                    Phase::Prefill { rows },
+                    Phase::Verify { rows, items: 1 },
+                    Phase::Decode(rows),
+                ] {
+                    assert_eq!(
+                        ops.has_prefill_expand_mix(&FLASH, phase),
+                        phase.prefill() && tile.is_some()
+                    );
+                }
+                let launches = op.launches(&buffers, View::EMPTY, Counts::rows(rows));
+                let Some(tile) = tile else {
+                    assert!(launches.is_err(), "{rows}");
+                    continue;
+                };
+                let launches = launches.unwrap();
+                assert_eq!(launches.len(), 1);
+                assert_eq!(
+                    launches[0].symbol,
+                    format!("chop_deepseek41_hc_prefill_expand_mix_{tile}_v1")
+                );
+                assert_eq!(launches[0].arguments.0.len(), 14);
+                assert_eq!(launches[0].plan.block, [256, 1, 1]);
             }
         }
     }

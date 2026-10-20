@@ -343,6 +343,7 @@ impl Instance {
                 rank: rank as u32,
                 kv: self.kv_extent(),
                 head_rows,
+                prefill_hc_fusion: true,
             };
             let mut launches = Vec::new();
             let mut waits = Vec::new();

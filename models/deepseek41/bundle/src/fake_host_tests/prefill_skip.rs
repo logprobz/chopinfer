@@ -22,6 +22,16 @@ fn bounded_indexer_keeps_upper_skip_query_and_candidate_origins() {
         .execute_prefill(&request, &mut Sink::default())
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     super::position_valid::audit_batched(&host, &host.device.journal.borrow(), true).unwrap();
+    // The upper skip lowers a mixer at other rows than the expansion before
+    // it, so even a measured 8192-row chunk keeps them apart.
+    let journal = host.device.journal.borrow();
+    assert!(journal.iter().any(|l| l.contains("_expand_f32_v1")));
+    assert!(
+        !journal
+            .iter()
+            .any(|l| l.contains("_hc_prefill_expand_mix_") && l.starts_with("launch "))
+    );
+    drop(journal);
     instance.commit().unwrap();
     instance.retire_request(1).unwrap();
     instance.destroy().unwrap();

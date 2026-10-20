@@ -143,6 +143,7 @@ impl Instance {
                 rank: rank as u32,
                 kv: self.kv_extent(),
                 head_rows: pass.rows,
+                prefill_hc_fusion: true,
             };
             programs.push(dspark::catch_up(
                 &device.prepared,
@@ -330,6 +331,7 @@ impl Instance {
                         rank: rank as u32,
                         kv: self.kv_extent(),
                         head_rows: count,
+                        prefill_hc_fusion: true,
                     };
                     Ok((base, ring))
                 })
@@ -513,6 +515,7 @@ impl Instance {
                     rank: rank as u32,
                     kv: self.kv_extent(),
                     head_rows: live,
+                    prefill_hc_fusion: true,
                 };
                 if stage == 0 {
                     program.extend(dspark::initialize(&base, phase)?);

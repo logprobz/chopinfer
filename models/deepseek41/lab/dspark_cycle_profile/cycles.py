@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sqlite3
 import statistics
+from clock_alignment import calibrate
+import families
 
 EMBED = "chop_row_embedding_deepseek41_tp4_v1"
 MARKOV = "chop_deepseek41_dspark_markov_v1"
@@ -127,7 +129,8 @@ def analyze(path, directory, *, historical=False):
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA query_only=ON")
     db.execute("PRAGMA temp_store=MEMORY")
-    epoch = db.execute("SELECT utcEpochNs FROM TARGET_INFO_SESSION_START_TIME").fetchone()[0]
+    metadata = dict(db.execute("SELECT * FROM TARGET_INFO_SESSION_START_TIME").fetchone())
+    epoch = metadata["utcEpochNs"]
     rows = [dict(r) for r in db.execute("""SELECT k.start,k.end,k.deviceId,k.graphId,k.gridX,
         s.value name FROM CUPTI_ACTIVITY_KIND_KERNEL k JOIN StringIds s ON s.id=k.shortName
         ORDER BY k.start,k.end""")]
@@ -143,7 +146,7 @@ def analyze(path, directory, *, historical=False):
                 copies[r[2]].append((r[0], r[1]))
     copies = {device: union(intervals) for device, intervals in copies.items()}
     diagnostics = [dict(r) for r in db.execute("SELECT * FROM DIAGNOSTIC_EVENT")] if "DIAGNOSTIC_EVENT" in tables else []
-    cases = {}
+    selected = {}
     for concurrency in (8, 16):
         source = directory / f"C{concurrency}" / "steps.jsonl"
         if historical and not source.exists():
@@ -154,6 +157,12 @@ def analyze(path, directory, *, historical=False):
                  and all(s["decode_rows"] + s["verify_items"] == concurrency for s in (a, b))]
         pairs = pairs[4:]
         assert len(pairs) >= 8, "fewer than eight complete full-concurrency cycles"
+        selected[concurrency] = pairs
+    points = {s["completed_unix_ns"]: s for pairs in selected.values() for ab in pairs for s in ab}
+    alignment = calibrate(metadata, directory, rows, list(points.values()))
+    epoch += alignment["offset_ns"]
+    cases = {}
+    for concurrency, pairs in selected.items():
         devices = {}
         for device in range(4):
             rr = [r for r in rows if r["deviceId"] == device]
@@ -188,6 +197,8 @@ def analyze(path, directory, *, historical=False):
                     mean_ms=statistics.mean(c["phase_ms"]["target"] for c in selected),
                     kernels_mean_ms={name: statistics.mean(
                         c["target_kernels_ms"].get(name, 0) for c in selected) for name in sorted(names)})
+                target_by_rows[str(width)]["families_mean_ms"] = families.summarize(
+                    target_by_rows[str(width)]["kernels_mean_ms"])
             devices[str(device)] = dict(cycles=cycles, count=len(cycles),
                 target_by_rows=target_by_rows,
                 mean_cycle_ms=statistics.mean(c["elapsed_ms"] for c in cycles),
@@ -195,8 +206,9 @@ def analyze(path, directory, *, historical=False):
         cases[str(concurrency)] = dict(devices=devices)
     assert len(cases) == (1 if historical else 2)
     return dict(schema="chopinfer.cycle-attribution.v1", source=str(path), epoch_ns=epoch,
+                clock_alignment=alignment,
                 cases=cases, capture_diagnostics=diagnostics, synthetic="CPU_FIXTURE" in tables,
-                method="Engine completion-to-completion intervals, UTC aligned; exclusive kernel charge end-max(start,frontier).",
+                method="Engine completion intervals aligned by one independently bracketed clock offset; exclusive kernel charge end-max(start,frontier).",
                 limits=["No recorded kernel does not prove host idle; copies and untraced work may occupy gaps.",
                         "Host API overlap includes blocking and concurrent threads; categories overlap and must not be added.",
                         "Host sampling and commit timers are separate from GPU phase charges.",

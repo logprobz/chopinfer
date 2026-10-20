@@ -24,8 +24,20 @@ the accepted prefix. It would need matched arithmetic, rounding, storage
 lifetime and rejection tests, and it would project some rejected rows.
 This job changes no catch-up implementation.
 
-The analyzer uses `utcEpochNs` from Nsight to align engine completion
-timestamps. It retains consecutive full-concurrency cycles, discards the
+Both raw captures and their receipts are saved before either SQLite export
+or analysis. Post-processing attempts both servers, saves each error, and
+fails the job if either analysis fails. It cannot suppress the second capture.
+
+The analyzer brackets the difference between Nsight's clock metadata and
+the engine's realtime timestamps using independently recorded host clocks.
+New captures save bracketed realtime/monotonic samples. Older captures can
+use their recorded host uptime samples, whose centisecond precision leaves
+a wider initial bracket. Rank-zero sampling completion and the next kernel
+constrain that bracket to one offset valid for every selected boundary.
+An ambiguous marker or inconsistent offset fails analysis; cycles are never
+shifted individually. The offset and its uncertainty remain in the receipt.
+Without independent anchors, historical captures retain their UTC alignment.
+The analyzer retains consecutive full-concurrency cycles, discards the
 first four and requires at least eight. It checks target geometry, a
 complete target head, drafter markers and rank-zero device acceptance.
 Graph IDs are discovered from kernel markers within each cycle. All target

@@ -11,6 +11,7 @@ import time
 class Session:
     def __init__(self, runner, config):
         self.runner = runner
+        self.directory = runner.directory
         self.name = f"x7-cycle-{config}-{os.getpid()}-{time.time_ns()}"
         self.pidfile = runner.directory / "server-group.json"
         store = Path(runner.settings.get("profile_store", runner.output / "captures"))
@@ -18,6 +19,7 @@ class Session:
         self.prefix.parent.mkdir(parents=True)
         self.starts = self.stops = 0
         self.started = self.closed = False
+        self.clocks = []
         self.tool = ([sys.executable, "-B", str(Path(__file__).with_name("nsys_fixture.py"))]
                      if runner.dry else [runner.settings.get("nsys_path", "nsys")])
 
@@ -35,7 +37,7 @@ class Session:
         args += list(map(str, extra))
         result = subprocess.run(args, env=self.runner.env, capture_output=True, text=True,
                                 timeout=timeout if cleanup else self.runner.remaining(timeout))
-        (self.runner.directory / f"nsys-{action}.log").write_text(result.stdout + result.stderr)
+        (self.directory / f"nsys-{action}.log").write_text(result.stdout + result.stderr)
         missing = (result.stdout + result.stderr).strip() in (
             "There are no active sessions.", f"Session is not found: {self.name}")
         assert result.returncode == 0 or (missing_ok and action == "shutdown" and missing), (
@@ -47,7 +49,17 @@ class Session:
         self.starts += 1
         # Even a failed start can leave collection active; cleanup stops it once.
         self.started = True
+        self.clock_anchor()
         self.call("start", ["--sample=none", "--cpuctxsw=none", "--output", self.prefix], 30)
+        self.clock_anchor()
+
+    def clock_anchor(self):
+        before = time.time_ns()
+        monotonic = time.monotonic_ns()
+        after = time.time_ns()
+        self.clocks.append(dict(unix_before_ns=before, monotonic_ns=monotonic,
+                                unix_after_ns=after))
+        (self.directory / "clock-anchors.json").write_text(json.dumps(self.clocks) + "\n")
 
     def close(self, *, startup_failed=False):
         if self.closed:
@@ -55,6 +67,7 @@ class Session:
         self.closed = True
         errors = []
         if self.started:
+            self.clock_anchor()
             self.stops += 1
             try:
                 self.call("stop", timeout=90, cleanup=True)

@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import capture
 import cycles
+import families
 from sqlite_fixture import create
 
 SOURCE = Path(__file__).resolve().parents[4]
@@ -29,6 +30,49 @@ def steps(directory):
 
 
 class Attribution(unittest.TestCase):
+    def test_target_families_partition_exclusive_kernel_charges(self):
+        kernels = {
+            "chain_before_gateup_test_stream_small_v1": 4,
+            "chain_before_down_test_stream_small_v1": 2,
+            "chop_comm_example": 1,
+            "chop_latent_sources_test": 3,
+            "unfamiliar_kernel": 5,
+        }
+        grouped = families.summarize(kernels)
+        self.assertEqual(sum(grouped.values()), 15)
+        self.assertEqual(grouped["MoE gate/up"], 4)
+        self.assertEqual(grouped["Other row, norm and Engram"], 5)
+
+    def test_clock_offset_uses_independent_host_anchors(self):
+        for measured in (True, False):
+            with self.subTest(measured=measured), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                steps(root)
+                create(root/"profile.sqlite", root)
+                db = sqlite3.connect(root/"profile.sqlite")
+                epoch = db.execute("SELECT utcEpochNs FROM TARGET_INFO_SESSION_START_TIME").fetchone()[0]
+                db.execute("ALTER TABLE TARGET_INFO_SESSION_START_TIME ADD COLUMN systemClockNs INTEGER")
+                db.execute("UPDATE TARGET_INFO_SESSION_START_TIME SET utcEpochNs=?,systemClockNs=?",
+                           (epoch-7_000_000_000, 1_000_000))
+                db.commit()
+                db.close()
+                if measured:
+                    (root/"clock-anchors.json").write_text(json.dumps([
+                        dict(unix_before_ns=epoch, unix_after_ns=epoch, monotonic_ns=1_000_000)]))
+                else:
+                    for c in (8, 16):
+                        (root/f"C{c}/summary.json").write_text(json.dumps(dict(host_load=dict(
+                            samples=[dict(at=(epoch+offset)/1e9, uptime_seconds=0.0)
+                                     for offset in (-800_000, 8_900_000)]))))
+                report = cycles.analyze(root/"profile.sqlite", root)
+                alignment = report["clock_alignment"]
+                self.assertGreaterEqual(alignment["anchors"], 30)
+                self.assertLess(abs(alignment["offset_ns"]-7_000_000_000), 1_000_000)
+                for case in report["cases"].values():
+                    for device in case["devices"].values():
+                        self.assertEqual(device["count"], 15)
+                        self.assertAlmostEqual(device["phase_mean_ms"]["target"], .4)
+
     def test_missing_unstarted_session_keeps_the_startup_error(self):
         cases = [(started, failed, missing) for started, failed in (
             (False, True), (False, False), (True, True)) for missing in (False, True)]
@@ -170,7 +214,11 @@ def dry_run(root):
             assert report["case_count"]==4 and report["server_count"]==2 and report["bitwise"]
             assert [s["config"] for s in report["servers"]]==["uniform3","adaptive"]
         sessions=list((stage/"run/fixture-sessions").glob("*.json"))
-        assert len(sessions)==(2 if not fault else 1)
+        captured_both = fault not in ("start", "stop")
+        assert len(sessions) == (2 if captured_both else 1), "post-processing dropped a capture"
+        if captured_both:
+            receipt = json.loads((stage/"run/captures.json").read_text())
+            assert receipt["case_count"] == 4 and receipt["server_count"] == 2
         for session in sessions:
             value=json.loads(session.read_text())
             assert value["closed"] and value["starts"]==value["stops"]==1

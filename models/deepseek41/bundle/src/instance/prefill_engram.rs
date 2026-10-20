@@ -157,14 +157,28 @@ impl Gathers {
                         "prefill Engram upload incomplete at result boundary",
                     ),
                 )?;
-                layers.push(serde_json::json!({"layer":layer.id,"host_ns":stats.host_nanoseconds,"exposed_ns":stats.exposed_nanoseconds}));
+                layers.push(format!(
+                    "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
+                    layer.id, stats.host_nanoseconds, stats.exposed_nanoseconds
+                ));
             }
-            let _ = services.log(serde_json::json!({
-                "phase":"prefill-engram", "mode":"layer-split", "sequence":self.sequence.get(),
-                "rows":self.rows.get(), "start":self.start.get(), "ranks":ranks,
-                "input_bytes":u64::from(self.rows.get())*self.columns as u64*4*self.layers.len() as u64,
-                "waits":ranks*self.layers.len(), "layers":layers
-            }).to_string().as_bytes());
+            let _ = services.log(
+                format!(
+                    concat!(
+                        "{{\"phase\":\"prefill-engram\",\"mode\":\"layer-split\",\"sequence\":{},",
+                        "\"rows\":{},\"start\":{},\"ranks\":{},\"input_bytes\":{},",
+                        "\"waits\":{},\"layers\":[{}]}}"
+                    ),
+                    self.sequence.get(),
+                    self.rows.get(),
+                    self.start.get(),
+                    ranks,
+                    u64::from(self.rows.get()) * self.columns as u64 * 4 * self.layers.len() as u64,
+                    ranks * self.layers.len(),
+                    layers.join(",")
+                )
+                .as_bytes(),
+            );
             Ok(())
         })();
         if result.is_err() {

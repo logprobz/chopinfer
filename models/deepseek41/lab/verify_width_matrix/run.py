@@ -315,7 +315,7 @@ class Runner:
             try:
                 write(self.directory / "process.json", {"pid": self.server.pid})
                 start = time.monotonic()
-                readiness_deadline = start + self.remaining(170)
+                readiness_deadline = start + self.remaining(self.settings.get("startup_timeout", 170))
                 while True:
                     assert self.server.poll() is None, "server exited during startup"
                     if time.monotonic() >= readiness_deadline:

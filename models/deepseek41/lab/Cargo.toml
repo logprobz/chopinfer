@@ -131,3 +131,7 @@ path = "tests/sm120/compact_dense/main.rs"
 [[test]]
 name = "hc_exact_rows"
 path = "tests/sm120/exact_rows/main.rs"
+
+[[example]]
+name = "build_indexer_score_study"
+path = "examples/sm120/build_indexer_score_study.rs"

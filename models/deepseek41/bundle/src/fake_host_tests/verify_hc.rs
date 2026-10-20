@@ -10,6 +10,9 @@ use super::*;
 // 251756544 bytes) on its verify launches; grids and other operands match.
 // Native prefill resources change handle numbers before these fragments;
 // every normalized verify line is identical to the exact expert control.
+// The resident small gate replaces those 160 launches' symbol and grid_x
+// (1128 to 1504) with identical operands. Its module renumbers buffer, stream,
+// event and graph handles at every width; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0xdc91ad4ed589171e)),
     (8, (8992, 0x87e217aaf14ffd6d)),

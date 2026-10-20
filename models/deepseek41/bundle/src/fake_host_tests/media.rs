@@ -352,6 +352,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// allocations match the exact path after handle normalization.
 /// The dedicated prefill arena adds two allocations and releases per rank.
 /// The full journal audit preserves every other operation after handle mapping.
+/// The resident small gate adds one module, two resolves and three releases
+/// per TP4 rank; no launch or allocation changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
     (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),

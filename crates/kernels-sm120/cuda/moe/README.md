@@ -566,6 +566,13 @@ projection's row tile. Grouped down's F32 routed rows take
 `routes x hidden x 4` bytes (1 GiB at 8192 tokens, top 8, hidden 4096); a
 later schedule can sum routes within the down kernel.
 
+`chained::streamed_resident` compiles the small gate/up stage of
+`chained_streamed.cuh` (`chained::streamed`, `Stage::Small`) again under an
+eight-CTA launch bound (`_small_resident8_v1`). Source, operands, chains,
+fold order and partial addresses are the small stage's; only register
+allocation and scheduling may change, and the build rejects spills. It
+accepts the 64-row ABI with at most 32 live rows.
+
 `tests/moe_chained_build.rs` builds every served instance, dense and split
 (but the split's tile pairs, which mark their live fragments with a
 shared-memory `atomicOr`), and checks the audits and SASS (BF16 HMMA with

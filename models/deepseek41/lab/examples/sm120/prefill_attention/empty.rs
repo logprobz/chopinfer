@@ -122,7 +122,45 @@ pub fn build(out: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     Ok(())
 }
+fn fused_plan(
+    entry: &sources::Entry,
+    rows: u32,
+) -> LabResult<Option<kernel_core::contract::LaunchPlan>> {
+    if rows == 0 {
+        return Ok(None);
+    }
+    heads::plan(entry, rows)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+fn validate_partitions() -> LabResult<()> {
+    for entry in topology_entries(4)? {
+        for offset in [0, 8192, 16384, 24576] {
+            for case in cases(offset, false).into_iter().chain(cases(offset, true)) {
+                let first = first_part(case.rows);
+                let mut covered = 0;
+                for rows in [first, case.rows - first] {
+                    if let Some(plan) = fused_plan(&entry, rows)? {
+                        if plan.grid[0] != rows || rows == 0 {
+                            return Err(
+                                "partition plan does not cover its live row interval".into()
+                            );
+                        }
+                        covered += rows;
+                    }
+                }
+                if covered != case.rows {
+                    return Err("partition plans lost query rows".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn snapshot(out: &Path) -> Result<kernel_harness::Cubins, Box<dyn std::error::Error>> {
+    validate_partitions()?;
     let mut specs = super::super::super::specs()?;
     specs.extend(super::super::extra_specs()?);
     let mut all = Vec::new();
@@ -208,6 +246,9 @@ impl Rig {
     ) -> LabResult<()> {
         let r = &self.head;
         let (first, rows) = span;
+        let Some(plan) = fused_plan(&r.entry, rows)? else {
+            return Ok(());
+        };
         let mut args = r.arguments(Candidate::Shared, arm, first, rows, live)?;
         if !audit {
             args[7] = Arg::NullBuffer;
@@ -228,7 +269,7 @@ impl Rig {
         launch::launch_with(
             &self.functions[function],
             stream,
-            launch::config(heads::plan(&r.entry, rows).map_err(|e| e.to_string())?)?,
+            launch::config(plan)?,
             &args,
         )
     }
@@ -424,6 +465,16 @@ pub fn run(sessions: &[Session], lists: &Path, offset: u32, mode: &str) -> LabRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_partition_does_not_plan_a_zero_row_launch() {
+        assert_eq!(first_part(64), 64);
+        validate_partitions().unwrap();
+        for entry in topology_entries(4).unwrap() {
+            assert!(fused_plan(&entry, 0).unwrap().is_none());
+            assert_eq!(fused_plan(&entry, 64).unwrap().unwrap().grid[0], 64);
+        }
+    }
+
     #[test]
     fn routes_cover_the_served_offsets_and_every_retained_count() {
         for offset in [0, 8192, 16384, 24576] {

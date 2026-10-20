@@ -1959,6 +1959,8 @@ class FakeRun:
         (self.checkpoint / 'model.safetensors').write_bytes(b'x' * 8)
         self.install = runner.install_root(self.identity())
         self.commands = []
+        self.exact = base / 'exact.json'
+        runner.write(self.exact, {'text': ['fixture prompt']})
 
     @staticmethod
     def identity():
@@ -2057,13 +2059,25 @@ class FakeRun:
         runner.write(receipts / f"{script.removesuffix('.py')}.json", value)
         return 0
 
+    @contextlib.contextmanager
+    def inputs(self):
+        import common
+        # Fake children and their replays share a fixture input identity.
+        # Production reference authentication has separate tests.
+        real_input_path = common.input_path
+
+        def input_path(name, *args, **kwargs):
+            return self.exact if name == 'exact' else real_input_path(name, *args, **kwargs)
+
+        with patch.object(common, 'input_path', input_path):
+            yield
+
     def run(self, *extra):
         self.prepare()
-        from common import input_path
-        import declaration
-        self.exact_sha256 = runner.sha(input_path('exact', config=declaration.load(declaration.path(self.model))))
+        self.exact_sha256 = runner.sha(self.exact)
         clients = runner.queue_clients(self.facts)
-        with patch.object(runner, 'server', self.server), patch.object(runner, 'call', self.call), \
+        with self.inputs(), \
+                patch.object(runner, 'server', self.server), patch.object(runner, 'call', self.call), \
                 patch.object(runner, 'source', lambda: self.checkout), \
                 inert_gpu_query(), \
                 patch.object(runner, 'queue', lambda url, facts: {
@@ -2672,7 +2686,8 @@ class RescoreTests(unittest.TestCase):
         return fake, code, result
 
     def replay(self, fake, judged=lambda receipt, model, config, check: {'status': 'pass'}):
-        with patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
+        with fake.inputs(), \
+                patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
                 patch.dict(os.environ, {fake.facts['checkpoint']: str(fake.checkpoint)}):
             return self.rescore(fake.base / 'run')
 

@@ -3,8 +3,9 @@
 The `prefill_attention` example compares the current native paired or
 fused route with two candidates: the existing fused head kernel at more
 chunk offsets, and a separate fused kernel that avoids staging and MMA
-for wholly invalid 64-key units. Neither comparison changes serving
-admission or a serving lock.
+for wholly invalid 64-key units. The empty-unit candidate remains
+unselected. The retained serving admission is documented separately in
+[retained prefill output fusion](retained-prefill.md).
 
 The empty-unit kernel retains the original rescale exponentials and
 denominator/output FMAs. An empty contribution can change negative zero
@@ -49,5 +50,7 @@ All buffers belong to one rig and one stream. Reference and candidate
 outputs and partials are disjoint. Each cache producer finishes before
 its consumers; partitioned launches use disjoint output ranges. The new
 kernel adds no global scratch, asynchronous producer or cross-stream
-dependency. CUDA correctness and performance remain unproven until the
-allocated jobs pass. CPU checks alone do not qualify a serving route.
+dependency. The 2026-10-20 pair checks passed all 220 case records.
+Empty-unit skipping saved about 40 us on the cold full mixed32 probe, with
+no consistent later-offset gain, so it remains unselected. CPU checks
+alone do not qualify a serving route.

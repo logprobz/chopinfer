@@ -20,6 +20,9 @@ pub struct Entry {
     pub symbol: String,
     /// Opt-in warp-parallel groups with a barrier before row output.
     pub parallel_groups: bool,
+    /// The parallel groups computed once and kept in registers across the
+    /// row-status barrier (`row/ceil_cached.cuh`); implies `parallel_groups`.
+    pub cached_groups: bool,
     /// Prefill-only warp count, zero for the existing implementations.
     pub prefill_warps: u32,
 }
@@ -35,6 +38,7 @@ impl Entry {
             capacity,
             symbol: symbol.into(),
             parallel_groups: false,
+            cached_groups: false,
             prefill_warps: 0,
         };
         entry.validate()?;
@@ -44,6 +48,15 @@ impl Entry {
     /// Select the parallel implementation for a separately named entry.
     pub fn parallel(mut self) -> Result<Self, Refusal> {
         self.parallel_groups = true;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Select the one-pass parallel implementation for a separately named
+    /// entry: the parallel entry's thread mapping and group arithmetic.
+    pub fn cached(mut self) -> Result<Self, Refusal> {
+        self.parallel_groups = true;
+        self.cached_groups = true;
         self.validate()?;
         Ok(self)
     }
@@ -75,6 +88,16 @@ impl Entry {
         {
             return Err(Refusal(
                 "prefill ceil needs a separate 4, 8 or 16-warp entry",
+            ));
+        }
+        if self.cached_groups
+            && (!self.parallel_groups
+                || self.prefill_warps != 0
+                || !self.query.width.is_multiple_of(32)
+                || self.query.width > 8192)
+        {
+            return Err(Refusal(
+                "cached ceil groups need the parallel decode mapping",
             ));
         }
         if (self.parallel_groups || self.prefill_warps != 0)
@@ -152,6 +175,8 @@ impl Entry {
         }
         let engine = if self.prefill_warps != 0 {
             "block_quantize_prefill"
+        } else if self.cached_groups {
+            "block_quantize_cached"
         } else if self.parallel_groups {
             "block_quantize_parallel"
         } else {
@@ -273,16 +298,31 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec![format!(
-            "#include \"{}\"",
-            if entries.iter().any(|e| e.prefill_warps != 0) {
+        headers: [
+            Some(if entries.iter().any(|e| e.prefill_warps != 0) {
                 "row/ceil_prefill.cuh"
-            } else if entries.iter().any(|e| e.parallel_groups) {
+            } else if entries
+                .iter()
+                .any(|e| e.parallel_groups && !e.cached_groups)
+            {
                 "row/ceil_parallel.cuh"
+            } else if entries.iter().any(|e| e.cached_groups) {
+                "row/ceil_cached.cuh"
             } else {
                 HEADER
-            }
-        )],
+            }),
+            // Cubins without cached entries keep their single header.
+            entries
+                .iter()
+                .any(|e| e.cached_groups)
+                .then_some("row/ceil_cached.cuh"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|h| format!("#include \"{h}\""))
+        .collect(),
         defines: vec![],
         entries: entries.iter().map(Entry::spec).collect(),
     })
@@ -363,5 +403,73 @@ mod prefill_tests {
         let mut fp4 = baseline;
         fp4.query.format = BlockQuantization::E2M1Ceil32;
         assert!(fp4.prefill(8).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cached_tests {
+    use super::*;
+    fn entry(width: u32, input: DType) -> Entry {
+        Entry::new(
+            BlockQuantizeQuery {
+                width,
+                input,
+                format: BlockQuantization::E4M3_CEIL32,
+                output: QuantizeOutput::Codes,
+            },
+            32,
+            format!("q{width}"),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn cached_groups_keep_the_parallel_mapping_and_abi() {
+        for (width, input) in [(8192, DType::Bf16), (2048, DType::F32), (1280, DType::F32)] {
+            let parallel = entry(width, input).parallel().unwrap();
+            let cached = entry(width, input).cached().unwrap();
+            assert_eq!(cached.threads(), parallel.threads());
+            assert_eq!(cached.plan(8).unwrap(), parallel.plan(8).unwrap());
+            let (a, b) = (parallel.spec(), cached.spec());
+            assert_eq!(a.params, b.params);
+            assert!(b.body.starts_with("chop::row::block_quantize_cached::run<"));
+            assert_eq!(
+                a.body
+                    .replace("block_quantize_parallel", "block_quantize_cached"),
+                b.body
+            );
+        }
+        let mut fake = entry(512, DType::Bf16);
+        fake.query.output = QuantizeOutput::Bf16;
+        assert!(fake.cached().is_err());
+        let mut prefill = entry(512, DType::Bf16).prefill(8).unwrap();
+        prefill.cached_groups = true;
+        assert!(prefill.validate().is_err());
+    }
+    #[test]
+    fn existing_cubins_keep_their_single_header() {
+        let headers = |entries: &[Entry]| cubin_spec("m", entries).unwrap().headers;
+        let p = entry(8192, DType::Bf16).parallel().unwrap();
+        let c = entry(2048, DType::F32).cached().unwrap();
+        let mut c2 = c.clone();
+        c2.symbol = "other".into();
+        assert_eq!(
+            headers(std::slice::from_ref(&p)),
+            ["#include \"row/ceil_parallel.cuh\""]
+        );
+        assert_eq!(
+            headers(&[entry(32, DType::Bf16)]),
+            [format!("#include \"{HEADER}\"")]
+        );
+        assert_eq!(
+            headers(std::slice::from_ref(&c)),
+            ["#include \"row/ceil_cached.cuh\""]
+        );
+        assert_eq!(
+            headers(&[p, c2]),
+            [
+                "#include \"row/ceil_cached.cuh\"",
+                "#include \"row/ceil_parallel.cuh\""
+            ]
+        );
     }
 }

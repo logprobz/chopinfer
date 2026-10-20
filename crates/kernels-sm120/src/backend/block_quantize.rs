@@ -280,6 +280,14 @@ mod tests {
                 Box::new(|e| e.parallel_groups = true),
             ),
             (
+                "cached_groups",
+                Class::Launch,
+                Box::new(|e| {
+                    e.parallel_groups = true;
+                    e.cached_groups = true;
+                }),
+            ),
+            (
                 "query",
                 Class::Selects,
                 Box::new(|e| e.query.input = DType::Bf16),
@@ -299,6 +307,7 @@ mod tests {
                 capacity,
                 symbol,
                 parallel_groups,
+                cached_groups,
                 prefill_warps
             }),
             fields,

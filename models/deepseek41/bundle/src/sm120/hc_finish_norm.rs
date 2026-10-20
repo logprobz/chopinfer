@@ -27,13 +27,26 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         .collect()
 }
 
-/// The qualified pair; one-launch boundaries are selected separately.
+/// The qualified pair, joined into one launch at the measured Flash
+/// buckets (`COMPLETION_BUCKETS`).
 pub fn register(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
 ) -> kernels_sm120::backend::Sm120 {
-    register_pair(backend, g)
+    let backend = register_pair(backend, g);
+    if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        backend.with_sinkhorn_finish_norm_completion(
+            super::hc_completion::entry(kernels_sm120::sinkhorn_hc::completion::Layout::Split),
+            COMPLETION_BUCKETS.to_vec(),
+        )
+    } else {
+        backend
+    }
 }
+
+/// Measured (row bucket, warp count) pairs of the one-launch boundary: the
+/// split layout with sixteen warps per chain CTA at C1 and eight at C8.
+pub const COMPLETION_BUCKETS: [(u32, u32); 2] = [(1, 16), (8, 8)];
 
 /// Only measured Flash decode and verify buckets use the 1024-thread tail.
 /// The lab compares one-launch boundaries against exactly this pair.

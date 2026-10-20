@@ -204,6 +204,11 @@ pub(super) fn audit_scratch(lines: &[String]) -> (usize, usize) {
         } else if lines[at - 1].contains("chop_deepseek41_hc_finish_norm_w32_v1") {
             // MLP norms always widen; the fused ABI has ten HC arguments.
             (13, 14, 9)
+        } else if lines[at - 1].contains("_hc_completion_split_w") {
+            // The one-launch boundary binds the pair's fourteen HC roles, the
+            // workspace, then the norm's live count, weight, normed, widened,
+            // codes and scales, status and the ticket.
+            (19, 20, 15)
         } else if [
             "chop_norm_quantize_deepseek41_input_v1",
             "chop_norm_quantize_deepseek41_input_tiles_v1",

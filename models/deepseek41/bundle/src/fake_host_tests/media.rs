@@ -380,6 +380,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// identical config and operands, nothing else.
 /// The one-launch HC boundary module adds ten resolves and eleven releases
 /// per rank; the image fixture's launches and operands are unchanged.
+/// The one-launch HC boundary adds ten resolves and eleven releases per
+/// rank, and its C1 decode joins each of the 77 chain and finish/norm pairs
+/// into one launch with the pair's operands and a zeroed ticket; graph
+/// pieces keep their count and lose those nodes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
     (Ranks::TP4, (56503, 0xbb89aecac848a923)),

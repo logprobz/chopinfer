@@ -122,7 +122,12 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
             count("chop_norm_quantize_deepseek41_input_cached32_v1"),
             3 * ranks
         );
-        assert_eq!(count("chop_deepseek41_hc_finish_norm_w32_v1"), 77 * ranks);
+        // The C1 one-launch boundary carries every finish/norm tail.
+        assert_eq!(count("chop_deepseek41_hc_finish_norm_w32_v1"), 0);
+        assert_eq!(
+            count("chop_deepseek41_hc_completion_split_w16_v1 "),
+            77 * ranks
+        );
         assert_eq!(
             count("chop_norm_quantize_deepseek41_query_v1"),
             layers * ranks

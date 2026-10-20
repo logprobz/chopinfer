@@ -499,13 +499,16 @@ mod tests {
                 _ => "chop_deepseek41_hc_round_expand_mix_partials_v1",
             };
             assert_eq!(standalone[0].symbol, expected);
-            for widened in [
+            for (widened, tickets) in [
                 None,
                 Some(View {
                     handle: 101,
                     bytes: 32 * 5120 * 4,
                 }),
-            ] {
+            ]
+            .into_iter()
+            .flat_map(|w| [(w, None), (w, Some(v(TICKETS)))])
+            {
                 let buffers = SinkhornRoundNormBuffers {
                     hc,
                     norm: RmsNormQuantizeBuffers {
@@ -519,17 +522,38 @@ mod tests {
                         status: v("norm.status"),
                         status_row_offset: 0,
                     },
-                    tickets: None,
+                    tickets,
                 };
-                let chain = tail
-                    .launches(&buffers, workspace, Counts::rows(rows))
-                    .unwrap();
-                if matches!(rows, 1 | 6 | 8 | 32) {
+                let chain = tail.launches(&buffers, workspace, Counts::rows(rows));
+                // Measured C1 and C8 buckets are one launch and need zeroed tickets.
+                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::COMPLETION_BUCKETS
+                    .iter()
+                    .find(|(bucket, _)| *bucket == rows)
+                {
+                    let Some(tickets) = tickets else {
+                        assert!(chain.is_err());
+                        continue;
+                    };
+                    let chain = chain.unwrap();
+                    let completion = crate::sm120::hc_completion::entry(
+                        kernels_sm120::sinkhorn_hc::completion::Layout::Split,
+                    );
+                    assert_eq!(chain.len(), 1);
+                    assert_eq!(chain[0].symbol, completion.symbol(warps));
+                    assert_eq!(chain[0].plan, completion.plan(rows, rows, warps).unwrap());
+                    assert_eq!(
+                        chain[0].arguments.0.last(),
+                        Some(&kernel_core::contract::Argument::DeviceBuffer(
+                            tickets.handle
+                        ))
+                    );
+                    continue;
+                }
+                let chain = chain.unwrap();
+                if matches!(rows, 6 | 32) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
-                    assert!(chain[0].symbol.ends_with(if rows == 1 {
-                        "hc_round_chain_w8_v1"
-                    } else if rows == 32 {
+                    assert!(chain[0].symbol.ends_with(if rows == 32 {
                         "hc_round_rows_r2_v1"
                     } else {
                         "hc_round_chain_w4_v1"

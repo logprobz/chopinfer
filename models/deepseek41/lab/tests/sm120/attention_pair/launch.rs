@@ -54,6 +54,15 @@ pub fn limits() -> LabResult<BTreeMap<String, u32>> {
                 .dynamic_shared_bytes,
         );
     }
+    for entry in grouped_cache::entries(geometry())? {
+        limits.insert(
+            entry.symbol(),
+            entry
+                .plan(4)
+                .map_err(|e| e.to_string())?
+                .dynamic_shared_bytes,
+        );
+    }
     Ok(limits)
 }
 

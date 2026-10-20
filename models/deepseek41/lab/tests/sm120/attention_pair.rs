@@ -20,6 +20,8 @@ mod fixture;
 #[path = "../../../bundle/src/sm120/latent_glue.rs"]
 #[allow(dead_code)]
 mod glue;
+#[path = "attention_pair/grouped_cache.rs"]
+mod grouped_cache;
 #[path = "../../../bundle/src/sm120/latent.rs"]
 #[allow(dead_code)]
 mod latent;
@@ -32,6 +34,8 @@ mod stages;
 mod state_probe;
 #[path = "attention_pair/verify_cache.rs"]
 mod verify_cache;
+#[path = "attention_pair/verify_grouped.rs"]
+mod verify_grouped;
 
 use fixture::{Case, DeviceFixture, Fixture};
 use kernel_core::contract::AttentionPhase;
@@ -339,6 +343,7 @@ fn frozen_modules() {
     specs.push(state_probe::cubin().unwrap());
     specs.push(decode_candidate::cubin(geometry()).unwrap());
     specs.push(cache_catalog::cubin(geometry()).unwrap());
+    specs.push(grouped_cache::cubin(geometry()).unwrap());
     specs.push(kernels_sm120::probes::cubin_spec());
     let records = manifest().unwrap();
     assert_eq!(records.len(), specs.len() + 1);
@@ -353,6 +358,9 @@ fn frozen_modules() {
         let name = record["name"].as_str().unwrap();
         if name == cache_catalog::CUBIN {
             assert_eq!(record["family"].as_str(), Some(cache_catalog::FAMILY));
+        }
+        if name == grouped_cache::CUBIN {
+            assert_eq!(record["family"].as_str(), Some(grouped_cache::FAMILY));
         }
         let expected = record["symbols"]
             .as_array()

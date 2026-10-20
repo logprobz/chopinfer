@@ -560,8 +560,8 @@ fn bf16_prefill_partials_compose_with_native_experts() {
             );
             let journal = host.device.journal.borrow();
             assert!(journal[begin..].iter().all(|line| {
-                !line.contains("chop_moe_native_")
-                    && !(line.starts_with("launch ") && partial_entry(line))
+                !(line.contains("chop_moe_native_")
+                    || line.starts_with("launch ") && partial_entry(line))
             }));
         }
         instance.destroy().unwrap();

@@ -143,3 +143,11 @@ path = "tests/sm120/exact_rows/main.rs"
 [[example]]
 name = "build_indexer_score_study"
 path = "examples/sm120/build_indexer_score_study.rs"
+
+[[example]]
+name = "build_native_moe_prefill"
+path = "examples/sm120/build_native_moe_prefill.rs"
+
+[[test]]
+name = "native_moe_prefill"
+path = "tests/native_moe_prefill/main.rs"

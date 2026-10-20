@@ -38,9 +38,8 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
         &mut Views::default(),
     );
     let lines = host.device.journal.borrow()[start..].to_vec();
-    // The paired gate/up admission and router row classifier are the first
-    // writers in the two branches of every captured MoE fork. Their workspace
-    // views bound every downstream partial/flag use in that branch.
+    // Compare the first backend workspace writes in each MoE branch. The
+    // complete fork audit below also checks later scratch and arrival views.
     let side: Vec<_> = lines
         .iter()
         .filter(|l| {
@@ -57,8 +56,21 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
     );
     let compute: Vec<_> = lines
         .iter()
-        .filter(|l| l.starts_with("launch ") && l.contains(&router_tag))
-        .map(|l| *spans(l).last().unwrap())
+        .filter(|l| {
+            l.starts_with("launch ")
+                && (l.contains(&router_tag)
+                    || l.contains("chop_deepseek41_moe_router_finish_e384_k6_prepare_v1 "))
+        })
+        .map(|l| {
+            let bound = spans(l);
+            if l.contains(&router_tag) {
+                *bound.last().unwrap()
+            } else {
+                // Fused preparation binds input, live count, partials and arrival.
+                assert_eq!(bound.len(), 4);
+                bound[2]
+            }
+        })
         .collect();
     assert_eq!(side.len(), FLASH.layers() as usize * shape.ranks() as usize);
     assert_eq!(compute.len(), side.len());
@@ -70,6 +82,9 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
         .filter(|(_, (a, b))| overlap(**a, **b))
         .map(|(i, _)| i)
         .collect();
+    let (regions, collisions) = shared_overlap::audit_scratch(&lines);
+    assert_eq!(regions, side.len());
+    assert_eq!(collisions, 0, "complete MoE fork scratch overlaps");
     instance.destroy().unwrap();
     assert!(
         conflicts.is_empty(),

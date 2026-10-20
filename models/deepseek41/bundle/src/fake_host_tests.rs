@@ -1216,17 +1216,31 @@ fn every_kv_layout_lowers_every_stage() {
                 0
             }
         );
+        // Native decode replaces each ordered merge with a group/final pair.
+        let hierarchical_groups = launches("_hier_group_v1 ");
+        assert_eq!(launches("_hier_final_v1 "), hierarchical_groups);
+        assert_eq!(
+            hierarchical_groups,
+            if kv.storage == KvStorage::Native {
+                shape.geometry.shape.csa.index_sources.len() * shape.ranks() as usize
+            } else {
+                0
+            }
+        );
         counts.push((
             kv.storage,
-            journal.iter().filter(|l| l.starts_with("launch")).count() - packed - cache_producers,
+            journal.iter().filter(|l| l.starts_with("launch")).count()
+                - packed
+                - cache_producers
+                - hierarchical_groups,
             bf16,
         ));
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
-    // After the validated native query packs and cache producers, both layouts
-    // lower the same stages.
+    // After the validated query packs, cache producers and group/final merges,
+    // both layouts lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

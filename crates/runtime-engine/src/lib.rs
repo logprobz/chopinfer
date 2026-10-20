@@ -2689,6 +2689,14 @@ impl<E: ModelExecutor> Engine<E> {
                 decode_rows,
                 verify_items,
                 verify_rows: rows.verify_rows,
+                verified: verified.iter().flatten().fold(
+                    compatibility::VerifiedTokens::default(),
+                    |total, &(drafted, accepted, _, emitted)| compatibility::VerifiedTokens {
+                        drafted: total.drafted + drafted,
+                        accepted: total.accepted + accepted,
+                        emitted: total.emitted + emitted,
+                    },
+                ),
                 row_capacity: rows.row_capacity,
                 prefill_cap: batch.prefill_cap(),
                 execution_micros,

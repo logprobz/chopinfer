@@ -20,11 +20,6 @@ pub(crate) fn enabled(
 }
 
 #[cfg(test)]
-pub(crate) fn with_enabled<T>(create: impl FnOnce() -> T) -> T {
-    with_override(Some("1"), create)
-}
-
-#[cfg(test)]
 pub(crate) fn with_override<T>(value: Option<&'static str>, create: impl FnOnce() -> T) -> T {
     struct Restore(Option<&'static str>);
     impl Drop for Restore {

@@ -46,6 +46,7 @@ mod prefill_reduce;
 mod prefill_selected;
 mod prefill_skip;
 mod prefill_tma;
+mod prefill_tma_matrix;
 mod producer_epilogues;
 mod projection_reuse;
 mod router_prefill;
@@ -989,6 +990,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// per TP4 rank; no lifecycle launch or allocation changes.
 /// Qualified prefill matrix tiles add one module, 108 resolves, nine
 /// shared-memory configurations and 109 releases per TP4 rank. This
+/// Qualified matrix and TMA tiles add two modules, 138 resolves, ten
+/// shared-memory configurations and 140 releases per TP4 rank. This
 /// short-row lifecycle keeps every allocation, launch and dependency.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (

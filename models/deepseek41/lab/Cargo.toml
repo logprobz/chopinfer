@@ -159,3 +159,11 @@ path = "tests/sm120/projection_zero/main.rs"
 [[example]]
 name = "build_projection_zero"
 path = "examples/sm120/build_projection_zero.rs"
+
+[[example]]
+name = "build_fold_core"
+path = "examples/sm120/build_fold_core.rs"
+
+[[test]]
+name = "fold_core"
+path = "tests/sm120/fold_core/main.rs"

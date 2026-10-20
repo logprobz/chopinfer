@@ -88,7 +88,11 @@ class Runner(width.Runner):
 
 
 def child(pidfile, command):
-    os.setsid()
+    # Nsight can already make the child a group leader, which forbids setsid.
+    # Cleanup needs a private process group, whether inherited or created here.
+    if os.getpgrp() != os.getpid():
+        os.setsid()
+    assert os.getpgrp() == os.getpid()
     width.write(Path(pidfile), dict(pid=os.getpid(), pgid=os.getpgrp(),
                                    start_ticks=width.faults(os.getpid())["start_ticks"]))
     os.execv(command[0], command)

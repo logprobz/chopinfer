@@ -32,7 +32,7 @@ def main():
         pidfile = Path(command[command.index("server-child") + 1])
         state = dict(name=name, directory=str(pidfile.parent), starts=0, stops=0, closed=False)
         path.write_text(json.dumps(state))
-        process = subprocess.Popen(command)
+        process = subprocess.Popen(command, process_group=0)
         return process.wait()
     state = json.loads(path.read_text())
     if action == "start":

@@ -32,6 +32,7 @@ use super::*;
 // Staged-scale resources renumber handles. Verify bodies remain identical;
 // full creation histories differ only by audited short prefill substitutions.
 // The wide gate/up and gate finisher loads modules renumber handles only.
+// Loading the one-launch boundary module shifts their resource ids only.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0x75a52baf1dd3172d)),
     (8, (8992, 0xe1c2093c60c508eb)),

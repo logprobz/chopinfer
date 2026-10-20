@@ -39,6 +39,8 @@ mod engram_hash_rows;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
+#[allow(dead_code, reason = "the bundle selects the one-launch boundary")]
+mod hc_completion;
 #[allow(dead_code)]
 mod hc_expand_mix;
 #[allow(dead_code, reason = "the bundle selects measured fused tails")]
@@ -370,6 +372,7 @@ pub fn selection(
             owners.push((norm_quantize_cached::cubin_name(geometry), geometry.id));
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
+            owners.push((hc_completion::CUBIN.into(), geometry.id));
             owners.push((hc_round_rows::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
@@ -512,6 +515,10 @@ pub fn selection(
             hc_finish_norm::cubins(std::slice::from_ref(geometry))
                 .expect("qualified HC finish norm cubin"),
         );
+        specs.push((
+            hc_completion::FAMILY,
+            hc_completion::cubin().expect("one-launch HC boundary cubin"),
+        ));
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))
                 .expect("qualified rounded chain cubin"),

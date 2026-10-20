@@ -50,6 +50,9 @@ impl Policy {
         } else {
             0
         };
+        if let Some(enabled) = command.miss_fetch {
+            crate::host_rows::fetch::set_for_measurement(enabled);
+        }
         self.mode.store(mode, Ordering::Release);
         Ok(serde_json::json!({
             "schema":"chopinfer.mapped-row-policy.v1", "status":"applied",
@@ -86,6 +89,8 @@ struct Command {
     release_page_tables: bool,
     #[serde(default)]
     replay_rows: Option<Vec<crate::host_rows::resident::replay::Replay>>,
+    #[serde(default)]
+    miss_fetch: Option<bool>,
 }
 
 fn mode(value: &str) -> Result<u8, String> {
@@ -258,6 +263,7 @@ mod tests {
                 reset_cache: false,
                 release_page_tables: false,
                 replay_rows: None,
+                miss_fetch: None,
             };
             let record = advance(&policy, &command, &mut last).unwrap().unwrap();
             assert_eq!(record["epoch"], command.epoch);
@@ -275,6 +281,7 @@ mod tests {
                     reset_cache: false,
                     release_page_tables: false,
                     replay_rows: None,
+                    miss_fetch: None,
                 },
                 &mut last
             )
@@ -318,5 +325,42 @@ mod tests {
         .unwrap();
         assert!(read_command(&path).unwrap().release_page_tables);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn measurement_switch_acknowledges_the_actual_fetch_path() {
+        const CHILD: &str = "MAPPED_FETCH_POLICY_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "host_rows::gather::policy::tests::measurement_switch_acknowledges_the_actual_fetch_path",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("CHOPINFER_MAPPED_MISS_FETCH")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+            return;
+        }
+        let policy = Policy::new(0, true);
+        assert!(crate::host_rows::fetch::enabled());
+        for selected in [Some(false), None, Some(true), None] {
+            let before = crate::host_rows::fetch::enabled();
+            let command: Command = serde_json::from_value(serde_json::json!({
+                "epoch":1, "mode":"off", "reset_cache":false, "miss_fetch":selected,
+            }))
+            .unwrap();
+            let record = policy.apply(&command).unwrap();
+            let expected = selected.unwrap_or(before);
+            assert_eq!(crate::host_rows::fetch::enabled(), expected);
+            assert_eq!(record["miss_fetch"]["enabled"], expected);
+        }
     }
 }

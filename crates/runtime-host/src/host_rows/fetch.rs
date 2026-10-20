@@ -4,7 +4,7 @@ mod pool;
 use super::MappedRowsV1;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const ENV: &str = "CHOPINFER_MAPPED_MISS_FETCH";
 const TILE_BYTES: usize = 4 << 20;
@@ -21,8 +21,17 @@ fn configured(value: Option<std::ffi::OsString>) -> bool {
 }
 
 pub(crate) fn enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| configured(std::env::var_os(ENV)))
+    selection().load(Ordering::Relaxed)
+}
+
+fn selection() -> &'static AtomicBool {
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+    ENABLED.get_or_init(|| AtomicBool::new(configured(std::env::var_os(ENV))))
+}
+
+/// The explicit measurement controller changes this between idle cohorts.
+pub(super) fn set_for_measurement(enabled: bool) {
+    selection().store(enabled, Ordering::Relaxed);
 }
 
 pub(crate) fn snapshot() -> serde_json::Value {

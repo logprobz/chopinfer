@@ -906,7 +906,7 @@ fn catch_up_launches(host: &Host, from: usize) -> usize {
         .filter(|line| {
             line.starts_with("launch ")
                 && line.split_whitespace().nth(2)
-                    == Some("chop_deepseek41_dspark_quantize_w15360_bf16_v1")
+                    == Some("chop_deepseek41_dspark_quantize_w15360_bf16_parallel_v1")
         })
         .count()
 }

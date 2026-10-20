@@ -1,5 +1,7 @@
 //! Exact comparisons of the served serial entries and parallel decode entries.
-use bundle_deepseek41::sm120::{ceil_parallel as registration, fold_cubin_for_symbol};
+use bundle_deepseek41::sm120::{
+    ceil_parallel as registration, dspark_quantize, fold_cubin_for_symbol,
+};
 use kernel_core::contract::{DType, LaunchPlan};
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode, launch};
 use kernels_sm120::row::{block_quantize, silu_mul_quantize};
@@ -87,6 +89,23 @@ fn pairs() -> Vec<[Entry; 2]> {
     }
     pairs.into_values().collect()
 }
+/// The drafter's serial entries and their parallel replacements, which
+/// serve every capacity rather than only decode.
+fn dspark_pairs() -> Vec<[Entry; 2]> {
+    let mut pairs = BTreeMap::new();
+    for g in GEOMETRIES {
+        for new in dspark_quantize::quantizers(g).unwrap() {
+            let mut old = new.clone();
+            old.parallel_groups = false;
+            old.symbol = old.symbol.replace("_parallel_v1", "_v1");
+            pairs.insert(new.symbol.clone(), [Entry::Quant(old), Entry::Quant(new)]);
+        }
+    }
+    pairs.into_values().collect()
+}
+fn compared() -> Vec<[Entry; 2]> {
+    pairs().into_iter().chain(dspark_pairs()).collect()
+}
 fn artifacts() -> PathBuf {
     PathBuf::from(
         std::env::var_os("CHOPINFER_CEIL_ARTIFACTS").expect("frozen ceil artifacts required"),
@@ -94,7 +113,7 @@ fn artifacts() -> PathBuf {
 }
 fn modules() -> BTreeMap<String, (Vec<u8>, Vec<String>)> {
     let mut modules = BTreeMap::<String, (Vec<u8>, Vec<String>)>::new();
-    for pair in pairs() {
+    for pair in compared() {
         for entry in pair {
             let (name, bytes) =
                 fold_cubin_for_symbol(entry.symbol()).expect("served entry must be embedded");
@@ -272,8 +291,8 @@ fn frozen_modules_are_complete() {
             serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        let coverage = json!({"entries": pairs().iter().map(|p| json!({"old":p[0].symbol(),"new":p[1].symbol(),"width":p[0].width()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
-            "bitwise_cases":pairs().len()*ROWS.len()*PATTERNS.len(), "timing_cases":pairs().len()*ROWS.len(), "negative_controls":pairs().len()*ROWS.len()*3});
+        let coverage = json!({"entries": compared().iter().map(|p| json!({"old":p[0].symbol(),"new":p[1].symbol(),"width":p[0].width()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
+            "bitwise_cases":compared().len()*ROWS.len()*PATTERNS.len(), "timing_cases":compared().len()*ROWS.len(), "negative_controls":compared().len()*ROWS.len()*3});
         std::fs::write(
             dir.join("coverage.json"),
             serde_json::to_vec_pretty(&coverage).unwrap(),
@@ -459,7 +478,7 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
         let mut timings = Vec::new();
         let mut bitwise = 0;
         let mut negative = 0;
-        for pair in pairs() {
+        for pair in compared() {
             let loaded = pair.iter().map(|entry| {
                 let (name, _) = fold_cubin_for_symbol(entry.symbol()).unwrap();
                 s.load_cubin(&std::fs::read(artifacts().join(format!("{name}.cubin"))).map_err(|e| e.to_string())?)
@@ -523,8 +542,8 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
                 timings.push(json!({"symbol":pair[0].symbol(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
             }
         }
-        assert_eq!(bitwise,pairs().len()*ROWS.len()*PATTERNS.len());
-        assert_eq!(negative,pairs().len()*ROWS.len()*3);
+        assert_eq!(bitwise,compared().len()*ROWS.len()*PATTERNS.len());
+        assert_eq!(negative,compared().len()*ROWS.len()*3);
         s.receipt("ceil-parallel",BTreeMap::from([("bitwise_cases".into(),json!(bitwise)),("negative_controls".into(),json!(negative)),("timings".into(),json!(timings))]))?;
         eprintln!("CEIL_COMPLETE bitwise={bitwise} negative={negative} timings={}",timings.len());
         Ok(())
@@ -533,8 +552,30 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
 }
 
 #[test]
+fn dspark_pairs_keep_the_serial_query_and_capacity() {
+    let pairs = dspark_pairs();
+    let widths: Vec<_> = pairs.iter().map(|p| p[0].width()).collect();
+    for width in [5120, 15360] {
+        assert!(widths.contains(&width));
+    }
+    for pair in pairs {
+        let [Entry::Quant(old), Entry::Quant(new)] = pair else {
+            unreachable!()
+        };
+        assert!(!old.parallel_groups && new.parallel_groups);
+        assert_eq!((old.query, old.capacity), (new.query, new.capacity));
+        assert_eq!(
+            old.capacity,
+            model_deepseek41_contract::serving::PREFILL_TOKENS
+        );
+        assert!(fold_cubin_for_symbol(&old.symbol).is_some());
+        assert!(fold_cubin_for_symbol(&new.symbol).is_some());
+    }
+}
+
+#[test]
 fn special_block_fixtures_have_the_declared_values() {
-    for pair in pairs() {
+    for pair in compared() {
         let entry = &pair[0];
         let values = |pattern| {
             let bytes = inputs(entry, 2, pattern, 0x195a_dafe);

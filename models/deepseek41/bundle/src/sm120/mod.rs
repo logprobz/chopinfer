@@ -11,6 +11,7 @@ pub mod dspark;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
 pub mod dspark_entries;
+pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
 pub mod hc_expand_mix;
@@ -441,6 +442,7 @@ impl crate::Kernels {
         }
         cubin == host_acceptance_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
+            || cubin == dspark_quantize::cubin_name(g)
             || cubin == engram_hash_entries::CUBIN
             || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)

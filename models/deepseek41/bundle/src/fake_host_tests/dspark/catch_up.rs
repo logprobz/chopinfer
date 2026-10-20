@@ -7,7 +7,7 @@ pub(super) fn captured_catch_up(step: &[String]) -> Vec<String> {
         if line.starts_with("capture ") {
             projects = false;
         } else if line.starts_with("launch ")
-            && line.contains("chop_deepseek41_dspark_quantize_w15360_bf16_v1")
+            && line.contains("chop_deepseek41_dspark_quantize_w15360_bf16_parallel_v1")
         {
             projects = true;
         } else if line.starts_with("captured ") && projects {

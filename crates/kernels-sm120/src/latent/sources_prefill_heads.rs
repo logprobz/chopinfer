@@ -4,6 +4,8 @@ use kernel_core::contract::Validate;
 
 pub const HEADER: &str = "latent/sources_prefill_heads.cuh";
 pub const SHARED_BYTES: u32 = 64 * 512 * 2 + 2 * 4 * 64 * 8 * 4 + 64 * 20;
+#[path = "sources_prefill_heads_async.rs"]
+pub mod asynchronous;
 
 pub fn symbol(reference: &sources::Entry) -> String {
     format!("chop_latent_sources_{}_head_shared_v1", reference.name)

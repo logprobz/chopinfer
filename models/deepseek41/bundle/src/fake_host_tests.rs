@@ -181,7 +181,14 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         (4097, ""),
         (8192, "_wide_m32_n64_v1"),
     ]);
-    for (rows, suffix) in cases {
+    for (rows, measured) in cases {
+        // At four ranks each measured route is also a certified router
+        // bucket, whose zero-component M32 tile replaces that route.
+        let certified = crate::sm120::f32_zero::ROWS
+            .iter()
+            .any(|&r| u64::from(r) == rows);
+        assert_eq!(certified, !measured.is_empty(), "rows={rows}");
+        let suffix = if certified { "_zero_m32_v1" } else { "" };
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 1);
@@ -209,11 +216,14 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
                 .iter()
                 .all(|line| !line.contains("_tiles_n") || !line.contains("_weights"))
         );
-        if suffix.is_empty() {
-            assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
-            assert!(calls.iter().all(|line| !line.contains("_blocked_m")));
-            assert!(calls.iter().all(|line| !line.contains("_wide_m")));
-        }
+        assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
+        assert!(calls.iter().all(|line| !line.contains("_blocked_m")));
+        assert!(calls.iter().all(|line| !line.contains("_wide_m")));
+        assert_eq!(
+            calls.iter().any(|line| line.contains("_zero_prepare_v1")),
+            certified,
+            "rows={rows}"
+        );
         drop(journal);
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();

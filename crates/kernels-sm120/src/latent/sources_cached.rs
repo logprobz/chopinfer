@@ -1,7 +1,9 @@
 //! Decode selected native KV once, keeping all eight numerical source splits.
 use super::{sources, sources_decode};
+mod grouped;
 #[path = "sources_cached/prepared.rs"]
 mod prepared;
+pub use grouped::GroupedEntry;
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, LaunchPlan, Refusal};
@@ -100,6 +102,10 @@ impl Entry {
     }
 
     pub fn spec(&self, decode: Option<bool>) -> Result<EntrySpec, Refusal> {
+        self.spec_group(decode, 0)
+    }
+
+    fn spec_group(&self, decode: Option<bool>, heads: u32) -> Result<EntrySpec, Refusal> {
         self.validate()?;
         let s = sources::shape(self.source.query)?;
         let mut params = self.params()?;
@@ -119,6 +125,11 @@ impl Entry {
         };
         let window = "window_codes,window_scales,window_item_slots,window_keys";
         let strides = "window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget";
+        let group = if heads == 0 {
+            "gridDim.x <= 4 ? 1 : 8".to_owned()
+        } else {
+            heads.to_string()
+        };
         let body = if let Some(wrong) = decode {
             format!(
                 "chop::ptx::griddep_launch_dependents();\nchop::ptx::griddep_wait();\nconst chop::latent::sources_cached::CacheIndex task{{blockIdx.y,blockIdx.x}};\nchop::latent::sources_cached::predecode<{traits},{wrong}>(task,nullptr,decoded,cached_valid,row_batch,live_rows,{window},{second},{strides},{geometry});"
@@ -129,7 +140,7 @@ impl Entry {
                 cxx_type: "uint64_t".into(),
             });
             format!(
-                "chop::ptx::griddep_launch_dependents();\nextern __shared__ __align__(1024) uint8_t arena[];\nchop::ptx::griddep_wait();\nconst uint32_t group = gridDim.x <= 4 ? 1 : 8;\nconst chop::latent::sources_cached::Index task{{blockIdx.x,blockIdx.y*group,blockIdx.z,group}};\nchop::latent::sources_cached::task<{traits},{}>(task,arena,stamps,decoded,cached_valid,q,row_batch,live_rows,{window},{second},workspace,{strides},{geometry},scale_bits);",
+                "chop::ptx::griddep_launch_dependents();\nextern __shared__ __align__(1024) uint8_t arena[];\nchop::ptx::griddep_wait();\nconst uint32_t group = {group};\nconst chop::latent::sources_cached::Index task{{blockIdx.x,blockIdx.y*group,blockIdx.z,group}};\nchop::latent::sources_cached::task<{traits},{}>(task,arena,stamps,decoded,cached_valid,q,row_batch,live_rows,{window},{second},workspace,{strides},{geometry},scale_bits);",
                 self.profile
             )
         };
@@ -253,6 +264,34 @@ mod tests {
                 entry.cache_bytes(rows).unwrap(),
                 (u64::from(rows) * 655360, u64::from(rows) * 2560)
             );
+        }
+        for heads in [1, 2, 4, 8] {
+            let grouped = GroupedEntry {
+                cache: entry.clone(),
+                heads,
+            };
+            for rows in [1, 4, 6, 8, 32] {
+                let mut expected = entry.plan(rows).unwrap();
+                expected.grid[1] = 16 / heads;
+                assert_eq!(grouped.plan(rows).unwrap(), expected);
+            }
+            let mut expected = entry.spec(None).unwrap();
+            expected.symbol = grouped.symbol();
+            expected.body = expected
+                .body
+                .replace("gridDim.x <= 4 ? 1 : 8", &heads.to_string());
+            assert_eq!(
+                format!("{:?}", grouped.spec().unwrap()),
+                format!("{expected:?}")
+            );
+        }
+        for heads in [0, 3, 16] {
+            let grouped = GroupedEntry {
+                cache: entry.clone(),
+                heads,
+            };
+            assert!(grouped.spec().is_err());
+            assert!(grouped.plan(4).is_err());
         }
         assert!(entry.plan(0).is_err());
         assert!(entry.plan(33).is_err());

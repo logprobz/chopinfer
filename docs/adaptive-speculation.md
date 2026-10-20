@@ -38,6 +38,21 @@ slows by more than that margin, the controller probes again after 16 idle
 plans. The controller is independent of model and bundle code; its tests run
 with `cargo test -p runtime-engine --locked --offline`.
 
+Block costs filter the most recent three measurements by their median
+before updating the average. The sequence count stays paired with the
+selected timing. An isolated high or low observation therefore cannot
+replace a warmed cost. Before three observations exist, the lower of two
+avoids carrying a startup stall forward. A faster step with fresh drafters
+can also lower a known steady-cost bound: its whole time already includes
+catch-up, so the steady part cannot cost more.
+
+A fresh probe of a known block cost gets two immediate follow-up probes to
+measure caught-up execution. Their combined time is charged to the next
+probe interval, and persistent losses still back off. The resume margin,
+realized-throughput guard and sampling contract are unchanged. This lets
+new measured times refresh a disabled policy without assigning an
+unmeasured optimistic cost to verification.
+
 With step tracing enabled, each completed step carries an optional
 `speculation` decision captured before that step trains the policy. It
 records the selected branch, planned live and cost-table rows, measured

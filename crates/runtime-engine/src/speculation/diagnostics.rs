@@ -18,6 +18,7 @@ pub(crate) struct PlanTrace {
     realized_draft_tokens_per_us: Option<f64>,
     realized_draft_steps: u32,
     probe_interval: u16,
+    probe_rechecks: u8,
     idle_plans: u16,
     cooldown_plans: u8,
     resume_gain: f64,
@@ -41,6 +42,7 @@ impl PlanTrace {
             "realized_draft_tokens_per_us": self.realized_draft_tokens_per_us,
             "realized_draft_steps": self.realized_draft_steps,
             "probe_interval": self.probe_interval,
+            "probe_rechecks": self.probe_rechecks,
             "idle_plans": self.idle_plans,
             "cooldown_plans": self.cooldown_plans,
             "resume_gain": self.resume_gain,
@@ -94,6 +96,7 @@ impl SpeculationPolicy {
             realized_draft_tokens_per_us: realized.drafting,
             realized_draft_steps: realized.drafting_steps,
             probe_interval: state.probe_interval,
+            probe_rechecks: state.rechecks,
             idle_plans: state.idle,
             cooldown_plans: state.remaining,
             resume_gain: if state.disabled {

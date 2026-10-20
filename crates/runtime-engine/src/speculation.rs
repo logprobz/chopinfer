@@ -10,7 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use runtime_scheduler::{DraftBudget, DraftLimits};
 
 mod balanced;
+mod block_cost;
+use block_cost::BlockStep;
 mod diagnostics;
+#[cfg(test)]
+mod refresh_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
@@ -61,6 +65,8 @@ const FRESH_RUN_STEPS: f64 = 16.0;
 /// Drafting steps a concurrency must realize before its measured throughput
 /// can switch drafting off.
 const REALIZED_STEPS: u32 = 8;
+/// Caught-up measurements after a fresh probe of an already measured block.
+const BLOCK_RECHECKS: u8 = 2;
 /// Exponential weight of one step in a concurrency's realized throughput.
 const REALIZED_WEIGHT: f64 = 1.0 / 8.0;
 /// Cost of one more drafting sequence in a block step of the same row
@@ -93,6 +99,10 @@ struct ZeroDraftState {
     probe_ar_micros: Option<f64>,
     /// The next probe repeats the last one, so the interval stays.
     again: bool,
+    /// Remaining measurements in a bounded refresh of a known block cost.
+    rechecks: u8,
+    /// Total time of that refresh, charged to the next probe interval.
+    recheck_micros: u64,
 }
 
 impl Default for ZeroDraftState {
@@ -106,6 +116,8 @@ impl Default for ZeroDraftState {
             probe_interval: PROBE_INTERVAL,
             probe_ar_micros: None,
             again: false,
+            rechecks: 0,
+            recheck_micros: 0,
         }
     }
 }
@@ -533,17 +545,6 @@ impl DraftCostTable {
     }
 }
 
-/// Measured wall time of a block drafter's steps at one concurrency and row
-/// bucket, as exponential averages of the time and of the drafting
-/// sequences. The bucket fixes the step's target graph: every step in it
-/// runs the same rows. The time includes the draft pass and the catch-up of
-/// caught-up drafters.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct BlockStep {
-    micros: f64,
-    sequences: f64,
-}
-
 /// Block steps keyed by items and row bucket.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct BlockStepTable {
@@ -558,11 +559,8 @@ impl BlockStepTable {
         let sequences = sequences as f64;
         self.steps
             .entry(key)
-            .and_modify(|step| {
-                step.micros += weight * (micros - step.micros);
-                step.sequences += weight * (sequences - step.sequences);
-            })
-            .or_insert(BlockStep { micros, sequences });
+            .and_modify(|step| step.record(micros, sequences, weight))
+            .or_insert_with(|| BlockStep::new(micros, sequences));
     }
 
     fn measured(&self, items: usize, bucket: usize) -> bool {
@@ -827,8 +825,9 @@ impl SpeculationPolicy {
     ///
     /// A step with fresh drafters also paid their catch-up, which a steady
     /// step does not: its time beyond the steady estimate is spread over
-    /// them as catch-up cost, and the steady tables keep only steps without
-    /// fresh drafters. A probe follows long K=0 spells, so all its drafters
+    /// them as catch-up cost. Caught-up steps train the steady tables; a
+    /// faster fresh block step can also lower a known steady-cost bound.
+    /// A probe follows long K=0 spells, so all its drafters
     /// are fresh; it caps the catch-up estimate at its own time beyond AR.
     /// Where neither the bucket's steady time nor the concurrency's
     /// catch-up is known, it probes again with the same shape: the two steps
@@ -852,10 +851,22 @@ impl SpeculationPolicy {
         let key = model.key(items, shape);
         let rows = items + shape.work();
         let bucket = self.bucket(rows);
-        // A probe replaces what it remeasures: the stored value is stale.
+        // A probe refreshes a stale cost from the recent filtered samples.
         let probe = shape.work() > 0 && self.probing.take_if(|probed| *probed == items).is_some();
-        // Every probe step, a first execution's included, spaces the next.
-        let spaced = (PROBE_SPACING * micros as f64 / self.costs.estimate(items))
+        // Charge every step of a refresh, including its caught-up rechecks,
+        // to the interval. Persistent slow drafting still backs off.
+        let mut probe_micros = micros;
+        if probe
+            && let Some(state) = self.zero_draft.get_mut(items)
+            && (state.rechecks > 0 || state.recheck_micros > 0)
+        {
+            state.recheck_micros = state.recheck_micros.saturating_add(micros);
+            probe_micros = state.recheck_micros;
+            if state.rechecks == 0 {
+                state.recheck_micros = 0;
+            }
+        }
+        let spaced = (PROBE_SPACING * probe_micros as f64 / self.costs.estimate(items))
             .clamp(f64::from(PROBE_INTERVAL), f64::from(MAX_PROBE_INTERVAL))
             as u16;
         if probe && let Some(state) = self.zero_draft.get_mut(items) {
@@ -969,6 +980,19 @@ impl SpeculationPolicy {
             if !probe {
                 let steady = self.step_cost(items, shape, 0.0);
                 let sample = ((micros - steady) / fresh as f64).max(0.0);
+                // Even with catch-up included, this time bounds the steady
+                // block cost from above. A rotating set of fresh drafters
+                // must not prevent lower realized times from refreshing it.
+                if model == DraftCostModel::PerBlock
+                    && self
+                        .block_steps
+                        .steps
+                        .get(&(items, bucket))
+                        .is_some_and(|step| micros < step.micros)
+                {
+                    self.block_steps
+                        .record((items, bucket), micros, shape.0[0], 1.0);
+                }
                 self.fresh_costs
                     .entry(items)
                     .and_modify(|previous| *previous += COST_WEIGHT * (sample - *previous))
@@ -1266,6 +1290,7 @@ impl SpeculationPolicy {
         .flatten()
         .filter(|plan| plan.rate() > RESUME_GAIN * items as f64 / self.costs.estimate(items));
         let mut probe = false;
+        let mut rechecking = false;
         let resume_gain = if let Some(state) = self.zero_draft.get_mut(items) {
             if state.disabled {
                 state.idle = state.idle.saturating_add(1);
@@ -1278,7 +1303,12 @@ impl SpeculationPolicy {
                                 .range((items, 0)..(items + 1, 0))
                                 .next()
                                 .is_none()));
-                probe = may_probe && (state.idle >= state.probe_interval || first || slower_ar);
+                rechecking = may_probe && state.rechecks > 0;
+                if rechecking {
+                    state.rechecks -= 1;
+                }
+                probe = may_probe
+                    && (rechecking || state.idle >= state.probe_interval || first || slower_ar);
             }
             if state.remaining > 0 && !probe {
                 state.remaining -= 1;
@@ -1379,13 +1409,29 @@ impl SpeculationPolicy {
                 self.explore_depth(candidates, &mut drafts, remaining);
             }
         }
+        let refresh_known_block = probe
+            && block
+            && !rechecking
+            && drafting
+            && self
+                .block_steps
+                .measured(items, self.bucket(items + drafts.iter().sum::<usize>()))
+            && candidates
+                .iter()
+                .zip(&drafts)
+                .any(|(candidate, &drafts)| candidate.fresh && drafts > 0);
         if let Some(state) = self.zero_draft.get_mut(items) {
             if probe {
+                if refresh_known_block && !state.again {
+                    state.rechecks = BLOCK_RECHECKS;
+                    state.recheck_micros = 0;
+                }
                 // Drafting stays off until a recheck clears the resume margin
                 // on what the probe measured.
                 state.idle = 0;
                 state.remaining = ZERO_DRAFT_RECHECK;
-                if !std::mem::take(&mut state.again) {
+                let again = std::mem::take(&mut state.again);
+                if !rechecking && !again {
                     state.probe_interval = state
                         .probe_interval
                         .saturating_mul(2)
@@ -1757,10 +1803,7 @@ mod tests {
                 let total = policy.costs.estimate(rows) + micros;
                 policy.block_steps.steps.insert(
                     (drafts.len(), rows),
-                    BlockStep {
-                        micros: total,
-                        sequences: shape.0[0] as f64,
-                    },
+                    BlockStep::new(total, shape.0[0] as f64),
                 );
             }
         }
@@ -2151,9 +2194,12 @@ mod tests {
             steps.estimate(16, 128, 16, &ar, sequence),
             ar.estimate(128) + overhead
         );
-        // Observations average; a probe's weight replaces.
+        // A probe refreshes from the recent median, so one high or low
+        // observation cannot replace an established price.
         steps.record((32, 256), 57_000.0, 32, COST_WEIGHT);
-        assert_eq!(steps.estimate(32, 256, 32, &ar, sequence), 54_000.0);
+        assert_eq!(steps.estimate(32, 256, 32, &ar, sequence), 53_000.0);
+        steps.record((32, 256), 50_000.0, 32, 1.0);
+        assert_eq!(steps.estimate(32, 256, 32, &ar, sequence), 53_000.0);
         steps.record((32, 256), 50_000.0, 32, 1.0);
         assert_eq!(steps.estimate(32, 256, 32, &ar, sequence), 50_000.0);
     }
@@ -3605,16 +3651,13 @@ mod tests {
             ((16, 64), 27_500.0, 16.0),
             ((15, 32), 22_500.0, 15.0),
         ] {
-            let step = BlockStep { micros, sequences };
+            let step = BlockStep::new(micros, sequences);
             policy.block_steps.steps.insert(key, step);
         }
         let k7 = DraftShape::from_counts(&[7; 15]);
         assert_eq!(policy.step_cost(15, k7, 0.0), 37_000.0);
         // The nearest measured item count lends it, on either side.
-        let step = BlockStep {
-            micros: 30_000.0,
-            sequences: 10.0,
-        };
+        let step = BlockStep::new(30_000.0, 10.0);
         policy.block_steps.steps.insert((10, 128), step);
         policy.costs.micros.insert(11, 12_000.0);
         let k7 = DraftShape::from_counts(&[7; 11]);

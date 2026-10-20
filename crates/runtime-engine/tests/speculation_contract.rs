@@ -5,7 +5,7 @@
 //! the same requests with speculation and compares each request's events,
 //! token IDs, logprobs, top logprobs and finish reasons, for exact equality.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -124,6 +124,9 @@ struct Model {
     /// per row.
     clock: Option<Arc<AtomicU64>>,
     micros_per_row: u64,
+    /// Controlled whole-step timings for adaptive recovery tests.
+    scripted_verify_costs: Option<VecDeque<u64>>,
+    scripted_phases: Vec<bool>,
     /// When set, the model copies the token this many positions back.
     copy_period: Option<usize>,
     /// (rows, items) of every executed step without prefill that verifies.
@@ -152,6 +155,8 @@ impl Model {
             corrupt_drafts: false,
             clock: None,
             micros_per_row: 1000,
+            scripted_verify_costs: None,
+            scripted_phases: Vec::new(),
             copy_period: None,
             verify_steps: Vec::new(),
             confidence_caps: Vec::new(),
@@ -227,6 +232,21 @@ impl ModelExecutor for Model {
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
         assert!(self.pending.is_empty());
+        if let Some(costs) = self.scripted_verify_costs.as_mut() {
+            let verifies = items
+                .iter()
+                .any(|item| matches!(item.phase(), BatchPhase::Verify { .. }));
+            self.scripted_phases.push(verifies);
+            let micros = if verifies {
+                costs.pop_front().unwrap_or(64_000)
+            } else {
+                90_000
+            };
+            self.clock
+                .as_ref()
+                .expect("controlled clock")
+                .fetch_add(micros, Ordering::Relaxed);
+        }
         if items
             .iter()
             .any(|item| matches!(item.phase(), BatchPhase::Verify { .. }))
@@ -269,7 +289,9 @@ impl ModelExecutor for Model {
                 }
             }
             assert_eq!(inputs.len(), append.additional_tokens());
-            if let Some(clock) = &self.clock {
+            if let Some(clock) = &self.clock
+                && self.scripted_verify_costs.is_none()
+            {
                 clock.fetch_add(self.micros_per_row * inputs.len() as u64, Ordering::Relaxed);
             }
             if let Some(work) = item.sampling() {
@@ -436,7 +458,10 @@ fn run<E: ModelExecutor + HasModel>(engine: &mut Engine<E>, requests: &[EngineRe
             record(&mut outputs, event);
         }
         if status == StepStatus::Idle && pending.len() == 0 {
-            assert_eq!(engine.kv_stats().free_blocks(), KV_BLOCKS);
+            assert_eq!(
+                engine.kv_stats().free_blocks(),
+                engine.kv_stats().block_capacity()
+            );
             assert!(engine.executor().model().kv.is_empty());
             return outputs;
         }
@@ -598,6 +623,73 @@ fn balanced_sampled_batches_preserve_target_draws_and_logprob_bits() {
                         assert!(engine.metrics().snapshot().spec_verify_items > 0);
                     }
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn adaptive_rechecks_keep_sampled_tokens_and_logprob_bits_exact() {
+    for count in [8, 16] {
+        let base = EngineConfig::new(
+            SchedulerConfig::new(count, 64, 128, 4, 1).unwrap(),
+            KvGeometry::new(4, 2048).unwrap(),
+            vocabulary(),
+            256,
+            64,
+        )
+        .unwrap();
+        let requests = (0..count)
+            .map(|index| {
+                EngineRequest::new(
+                    RequestId::new(index as u64 + 1),
+                    vec![1, 2, 3, index as u32],
+                    192,
+                    SamplingParameters::new(1.0)
+                        .unwrap()
+                        .with_top_p(1.0)
+                        .unwrap()
+                        .with_top_logprobs(5)
+                        .unwrap(),
+                    710 + index as u64,
+                    Vec::new(),
+                    vocabulary(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        for rows in [Rows::Logits, Rows::Sampled] {
+            let mut reference = Engine::new(base, Model::new(Drafter::Mostly, rows)).unwrap();
+            let expected = run(&mut reference, &requests);
+            for source in [DraftSource::Host, DraftSource::Bundle] {
+                let clock = Arc::new(AtomicU64::new(1));
+                let mut model = Model::new(Drafter::Mostly, rows);
+                model.clock = Some(Arc::clone(&clock));
+                model.scripted_verify_costs =
+                    Some([210_000, 185_000, 208_000, 64_000, 64_000].into());
+                let mut engine = Engine::new_with_observability(
+                    base.with_speculation(
+                        speculation(1, 32, SpeculationMode::Adaptive, source)
+                            .with_draft_cost_model(runtime_engine::DraftCostModel::PerBlock),
+                    ),
+                    model,
+                    Arc::new(ModelClock(clock)),
+                    EngineMetrics::default(),
+                )
+                .unwrap();
+                let actual = run(&mut engine, &requests);
+                assert_eq!(actual, expected, "{count} {rows:?} {source:?}");
+                assert_eq!(logprob_bits(&actual), logprob_bits(&expected));
+                let phases = &engine.executor().scripted_phases;
+                assert!(
+                    phases.windows(8).any(|w| w.iter().all(|&draft| !draft)),
+                    "no fallback interval"
+                );
+                assert!(
+                    phases.windows(3).any(|w| w.iter().all(|&draft| draft)),
+                    "no caught-up rechecks: {phases:?}"
+                );
+                assert!(engine.executor().verify_steps.len() >= 5);
             }
         }
     }

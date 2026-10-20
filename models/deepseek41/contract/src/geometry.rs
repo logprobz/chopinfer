@@ -45,6 +45,7 @@ pub struct RuntimeValues {
     pub index_topk: u32,
     pub candidate_topk_blocks: u32,
     pub indexer_mma: bool,
+    pub indexer_prefill_tile: bool,
 }
 
 const fn count(length: usize) -> u32 {
@@ -95,6 +96,7 @@ impl Geometry {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
             indexer_mma: self.native_indexer_supported(),
+            indexer_prefill_tile: false,
         }
     }
 
@@ -128,6 +130,15 @@ impl Geometry {
         if mma && !self.native_indexer_supported() {
             return Err("text_config.indexer_mma is unsupported by this geometry".into());
         }
+        let prefill_tile = match values.get("text_config.indexer_prefill_tile") {
+            None => checkpoint.indexer_prefill_tile,
+            Some(value) => value
+                .as_bool()
+                .ok_or("text_config.indexer_prefill_tile requires a boolean")?,
+        };
+        if prefill_tile && (!mma || self != &FLASH) {
+            return Err("text_config.indexer_prefill_tile requires native Flash scoring".into());
+        }
         let mut owned = std::collections::BTreeMap::new();
         for field in self.runtime_fields() {
             let value = match values.get(field.name) {
@@ -142,6 +153,7 @@ impl Geometry {
         }
         let mut runtime = self.runtime_values(|field| owned.get(field.name))?;
         runtime.indexer_mma = mma;
+        runtime.indexer_prefill_tile = prefill_tile;
         Ok(runtime)
     }
 
@@ -155,6 +167,7 @@ impl Geometry {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
             indexer_mma: self.native_indexer_supported(),
+            indexer_prefill_tile: false,
         };
         for field in self.runtime_fields() {
             let value = lookup(&field);
@@ -231,6 +244,11 @@ impl Geometry {
             definition: OptionDefinitionV1::Boolean {
                 default: checkpoint.indexer_mma,
             },
+            default_is_qualified: true,
+        });
+        options.push(ModelOptionV1 {
+            name: "text_config.indexer_prefill_tile".into(),
+            definition: OptionDefinitionV1::Boolean { default: false },
             default_is_qualified: true,
         });
         options.sort_by(|a, b| a.name.cmp(&b.name));
@@ -438,6 +456,43 @@ mod tests {
     }
 
     #[test]
+    fn prefill_tile_requires_explicit_unqualified_native_opt_in() {
+        use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
+        use std::collections::BTreeMap;
+        let defaults = FLASH.runtime_defaults();
+        assert!(!defaults.indexer_prefill_tile);
+        let declaration = ModelOptionsV1 {
+            schema: CAPABILITY.into(),
+            options: FLASH.model_options(defaults),
+        };
+        let resolved = declaration
+            .resolve(&BTreeMap::from([(
+                "text_config.indexer_prefill_tile".into(),
+                "true".into(),
+            )]))
+            .unwrap();
+        assert!(!declaration.is_qualified(&resolved));
+        assert!(
+            FLASH
+                .resolve_model_options(defaults, &resolved)
+                .unwrap()
+                .indexer_prefill_tile
+        );
+        let mut invalid = resolved;
+        invalid.insert("text_config.indexer_mma".into(), false.into());
+        assert!(FLASH.resolve_model_options(defaults, &invalid).is_err());
+        invalid.insert("text_config.indexer_mma".into(), true.into());
+        for value in [
+            serde_json::json!(1),
+            serde_json::json!("true"),
+            serde_json::Value::Null,
+        ] {
+            invalid.insert("text_config.indexer_prefill_tile".into(), value);
+            assert!(FLASH.resolve_model_options(defaults, &invalid).is_err());
+        }
+    }
+
+    #[test]
     fn index_topk_options_are_bounded_by_the_compiled_selection() {
         use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
         use std::collections::BTreeMap;
@@ -445,7 +500,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 5);
+        assert_eq!(options.len(), 6);
         assert_eq!(options[3].name, "text_config.index_topk");
         assert_eq!(options[4].name, "text_config.indexer_mma");
         assert_eq!(

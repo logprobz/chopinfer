@@ -153,6 +153,11 @@ impl Lowering<'_> {
                 || route != Route::Accepted
                     && matches!(phase, Phase::Verify { rows: 32, items: 8 });
         let select = |mut calls| {
+            if phase.prefill()
+                && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions)
+            {
+                calls = crate::Kernels::prefill_tile_scores(calls, reindex).map_err(error)?;
+            }
             if route == Route::Combined && !reindex {
                 calls = crate::Kernels::tiled_indexer_scores(calls).map_err(error)?;
                 calls = crate::Kernels::cached_prefill_indexer_select(calls).map_err(error)?;
@@ -236,7 +241,7 @@ impl Lowering<'_> {
                     )?);
                 }
                 let op = &prepared[&(n, width)];
-                launches.extend(op.select(n, width, &views).map_err(error)?);
+                launches.extend(select(op.select(n, width, &views).map_err(error)?)?);
                 if layer == g.shape.candidates.source {
                     launches.extend(
                         op.produce(

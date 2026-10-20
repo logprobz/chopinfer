@@ -305,7 +305,7 @@ pub(crate) mod tests {
             Some(items),
         );
         bytes.extend_from_slice(&shape.geometry.context_tokens().to_le_bytes());
-        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma});
+        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma, "text_config.indexer_prefill_tile": shape.runtime.indexer_prefill_tile});
         append_options(&mut bytes, &options);
         bytes
     }

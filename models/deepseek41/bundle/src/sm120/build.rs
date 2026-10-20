@@ -118,6 +118,7 @@ mod indexer_hierarchical;
 mod indexer_mma;
 mod indexer_mma_guard;
 mod indexer_mma_guard_fast;
+mod indexer_mma_prefill_tile;
 mod indexer_mma_tile;
 #[path = "indexer_query.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -475,6 +476,8 @@ pub fn selection(
     specs.extend(indexer_hierarchical::cubins(geometries).expect("ordered position merge cubins"));
     specs.extend(indexer_select_cached::cubins(geometries).expect("cached position select cubin"));
     specs.extend(indexer_mma_tile::cubins(geometries).expect("tiled position score cubin"));
+    specs
+        .extend(indexer_mma_prefill_tile::cubins(geometries).expect("prefill position tile cubin"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

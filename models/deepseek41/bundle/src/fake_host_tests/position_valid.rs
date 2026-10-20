@@ -2,6 +2,82 @@
 use super::*;
 
 #[test]
+fn opt_in_prefill_tile_binds_all_four_chunk_offsets() {
+    let mut shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    shape.runtime.indexer_prefill_tile = true;
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.kv_pages.set(1024);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+    let mut instance = api()
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+        .unwrap();
+    for offset in [0, 8192, 16384, 24576] {
+        let first = host.device.journal.borrow().len();
+        instance
+            .execute(
+                &prompt(7, 0, offset, 8192, offset == 24576),
+                &mut Views::default(),
+            )
+            .unwrap();
+        let journal = host.device.journal.borrow();
+        let lines = &journal[first..];
+        let scores: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.starts_with("launch ")
+                    && (line.contains("chop_position_indexer_")
+                        || line.contains("chop_position_blocks_"))
+                    && line.contains("_scores_v3")
+                    && !line.contains("_pack_fp4_")
+            })
+            .collect();
+        assert_eq!(scores.len(), 4 * (3 * 2 + 16 + 4 * 2));
+        for line in scores {
+            let compact = line.contains("chop_position_blocks_");
+            assert!(
+                line.contains(if compact {
+                    "_mma_fp4_prefill_tile_v1 "
+                } else {
+                    "_mma_fp4_tile4_mode0_trace0_v1 "
+                }),
+                "{line}"
+            );
+            let spans = super::shared_overlap::journal_spans(line);
+            let n = spans[0].2 / 8192;
+            assert!(matches!(n, 512 | 4096));
+            assert!(line.contains(&format!("grid_x: 8, grid_y: {n}, grid_z: 1")));
+            let positions = uploaded(&host, spans[6]).unwrap();
+            let positions: Vec<_> = positions
+                .chunks_exact(4)
+                .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+            assert_eq!(positions.len(), n as usize);
+            assert!(
+                positions
+                    .iter()
+                    .all(|&p| p >= offset as i32 && p < offset as i32 + 8192)
+            );
+            assert!(positions.windows(2).all(|p| p[1] == p[0] + 1));
+        }
+        if offset == 0 {
+            let normalized: Vec<_> = lines
+                .iter()
+                .map(|line| {
+                    line.replace("_mma_fp4_tile4_mode0_trace0_v1 ", "_mma_fp4_guard_fast_v1 ")
+                        .replace("grid_x: 8,", "grid_x: 192,")
+                })
+                .collect();
+            audit_batched(&host, &normalized, false).unwrap();
+        }
+        drop(journal);
+        instance.commit().unwrap();
+    }
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn prefill_indexer_blocks_use_live_and_valid_grids() {
     for kv in KV_LAYOUTS {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

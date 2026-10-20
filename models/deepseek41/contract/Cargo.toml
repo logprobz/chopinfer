@@ -183,3 +183,7 @@ path = "examples/sm120/build_position_mma_tile.rs"
 [[example]]
 name = "build_grouped_bf16_serving"
 path = "examples/sm120/build_grouped_bf16_serving.rs"
+
+[[example]]
+name = "build_position_mma_prefill_tile"
+path = "examples/sm120/build_position_mma_prefill_tile.rs"

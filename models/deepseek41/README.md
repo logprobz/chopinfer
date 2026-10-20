@@ -91,6 +91,16 @@ sealed sampled prefill operands and adversarial repair cases. It establishes
 bitwise indexer output equality; integrated served speed remains a separate
 measurement.
 
+`text_config.indexer_prefill_tile=true` enables an unqualified prefill
+candidate; its default is false. It selects eight CTAs per row and a
+128-position score tile in native Flash eager batches of 512 or 4096 rows
+whose positions are below 32K, with top-k 512 and 2048 candidate blocks.
+Each CTA reuses its packed query across more positions. Compact scoring
+uses all four warps for the same ordered head-FMA sum. Guards, SIMT repair,
+score layouts and selectors are retained. Smaller tails and other contexts
+keep the accepted schedule. GPU bitwise, memcheck and timing evidence is
+pending; this option is not a serving default.
+
 On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
 top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
 475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and

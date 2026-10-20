@@ -30,6 +30,30 @@ fn entry(weight: WeightFormat) -> Entry {
     )
     .unwrap()
 }
+
+#[test]
+fn certified_decode_is_opt_in_and_keeps_the_partial_abi() {
+    use kernels_sm120::f32_projection::zero_decode;
+    let e = entry(WeightFormat::Bf16);
+    let cached = e.clone().with_decode();
+    let candidate = zero_decode::entry_spec(&e).unwrap();
+    let reference = cached
+        .entry_specs()
+        .into_iter()
+        .find(|s| s.symbol == cached.stage_symbol("_decode"))
+        .unwrap();
+    assert_eq!(candidate.params, reference.params);
+    for rows in [1, 8, 17] {
+        assert_eq!(
+            zero_decode::plan(&e, rows).unwrap(),
+            cached.decode_plan(rows).unwrap()
+        );
+    }
+    assert!(!cached.runtime_symbols().contains(&candidate.symbol));
+    assert!(zero_decode::plan(&e, 0).is_err());
+    assert!(zero_decode::plan(&e, 18).is_err());
+    assert!(zero_decode::entry_spec(&entry(WeightFormat::F32)).is_err());
+}
 fn operation(e: &Entry) -> OperationSpec {
     let q = e.query();
     let f32_weight = q.weight == WeightFormat::F32;

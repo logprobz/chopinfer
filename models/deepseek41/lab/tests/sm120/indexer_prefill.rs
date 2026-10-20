@@ -1,5 +1,7 @@
 //! Bounded-stride eager batches against the guarded 64-row serving schedule.
 //! Serving keeps its existing schedule until this pair has GPU evidence.
+#[path = "indexer_prefill_tile.rs"]
+mod tile;
 use super::*;
 use kernel_core::position_blocks::{CandidateBlockIds, CandidateBlockIdsBuffers};
 use kernel_harness::{Cubins, eviction::EvictionMode};

@@ -11,6 +11,8 @@ use crate::Profile;
 pub const HEADER: &str = "latent/sources_prefill.cuh";
 pub const PROFILE_WORDS: u64 = 9;
 
+#[path = "sources_prefill_heads.rs"]
+pub mod heads;
 #[derive(Clone, Copy, Debug)]
 pub enum ProfileMode {
     Full,

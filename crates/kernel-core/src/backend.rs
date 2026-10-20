@@ -2388,6 +2388,18 @@ mod tests {
         sinkhorn_mix_collapse: Empty.sinkhorn_mix_collapse(&sinkhorn(), Need::rows(4));
         sinkhorn_expand_mix: Empty.sinkhorn_expand_mix(&expand_mix(), Need::rows(4));
         sinkhorn_round_expand_mix: Empty.sinkhorn_round_expand_mix(&expand_mix(), Need::rows(4));
+        sinkhorn_round_expand_mix_norm: Empty.sinkhorn_round_expand_mix_norm(
+            &crate::sinkhorn_expand_mix::SinkhornRoundNormQuery {
+                mixer: expand_mix(),
+                norm: crate::rmsnorm_quantize::RmsNormQuantizeQuery {
+                    norm: RmsNormRequirement::bf16(
+                        256, 1e-6, RmsNormKind::Plain, false, RmsNormNumerics::TREE_256,
+                    ),
+                    amax_floor_bits: 1e-4_f32.to_bits(),
+                },
+            },
+            Need::rows(4),
+        );
         sinkhorn_lagged_mix_collapse: Empty.sinkhorn_lagged_mix_collapse(&sinkhorn(), Need::rows(4));
         sinkhorn_mix_collapse_norm: Empty.sinkhorn_mix_collapse_norm(&sinkhorn(), Need::rows(4));
         sinkhorn_expand: Empty.sinkhorn_expand(&sinkhorn(), Need::rows(4));

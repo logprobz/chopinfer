@@ -274,7 +274,21 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         false,
     )
     .unwrap();
-    let added = [prefill, decode, cache, selected, shared_heads, async_heads];
+    let finish_heads = kernels_sm120::latent::sources_prefill::heads::next::cubin_spec(
+        latent::profile(flash),
+        &all_heads,
+        kernels_sm120::latent::sources_prefill::heads::next::Mode::Finish,
+    )
+    .unwrap();
+    let added = [
+        prefill,
+        decode,
+        cache,
+        selected,
+        shared_heads,
+        async_heads,
+        finish_heads,
+    ];
     assert_eq!(
         embedded.len(),
         GEOMETRIES

@@ -1,7 +1,8 @@
 //! Full vocabulary shards through the serving F32 entries. The repeating
 //! weight bank bounds CPU oracle work without sampling GPU output columns.
 use bundle_deepseek41::sm120::{
-    f32_head as registration, fold_cubin_for_symbol, register_f32_projections,
+    f32_head as registration, fold_cubin_for_symbol, head_last, projection_reuse,
+    register_f32_projections,
 };
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
@@ -257,7 +258,7 @@ fn registered_heads_prepare_every_row_count() {
             .map(|e| (e.clone(), lab_backend(e))),
     ) {
         let q = entry.query();
-        for rows in [1, 2, DECODE_BATCH, SCORED_ROWS] {
+        for rows in [1, 2, 8, 9, 16, 31, 32, DECODE_BATCH, SCORED_ROWS] {
             let op = backend
                 .projection(
                     &cases::operation(&entry),
@@ -268,11 +269,14 @@ fn registered_heads_prepare_every_row_count() {
                 .handle;
             let view = |handle, bytes| View { handle, bytes };
             let domain_bytes = op.info().bytes_of("scratch.weight_domain");
-            let selected = if domain_bytes.is_some() {
-                entry.clone().with_split_decode().entry_for_rows(rows)
+            let routed = if domain_bytes.is_some() {
+                let split = entry.clone().with_split_decode();
+                head_last::head(&FLASH, 4, projection_reuse::head(&FLASH, 4, split).unwrap())
+                    .unwrap()
             } else {
                 entry.clone()
             };
+            let selected = routed.entry_for_rows(rows);
             let roles = ProjectionBuffers {
                 activation: view(1, u64::from(rows) * u64::from(q.k) * 4),
                 live_rows: view(2, 4),
@@ -295,18 +299,37 @@ fn registered_heads_prepare_every_row_count() {
             let launches = op
                 .launches(&roles, view(7, op.info().workspace), Counts::rows(rows))
                 .unwrap();
-            if domain_bytes.is_some() && rows <= 256 {
+            if let Some(last) = routed.decode_last(rows) {
+                assert_eq!(launches.len(), 2);
+                assert_eq!(launches[0].symbol, last.prepare_symbol());
+                assert_eq!(launches[1].symbol, last.symbol(false));
+                assert_eq!(
+                    [launches[0].plan, launches[1].plan],
+                    last.plans(rows).unwrap()
+                );
+                assert!(op.info().workspace >= last.workspace(rows));
+            } else if domain_bytes.is_some() && rows <= 256 {
                 if rows <= 32 {
                     assert_eq!(launches.len(), 3);
                     assert_eq!(launches[0].symbol, selected.stage_symbol("_rows"));
-                    assert_eq!(launches[1].symbol, selected.stage_symbol("_decode"));
+                    let producer = if routed.uses_decode_reuse(rows) {
+                        kernels_sm120::f32_projection::reuse::symbol(&selected)
+                    } else {
+                        selected.stage_symbol("_decode")
+                    };
+                    assert_eq!(launches[1].symbol, producer);
                     assert_eq!(launches[2].symbol, selected.stage_symbol("_reduce"));
                 } else {
                     assert_eq!(launches.len(), 2);
                     assert_eq!(launches[0].symbol, selected.stage_symbol("_prepare"));
                     assert_eq!(launches[1].symbol, selected.stage_symbol(""));
                 }
-                assert_eq!(launches[1].plan, selected.decode_plan(rows).unwrap());
+                let plan = if routed.uses_decode_reuse(rows) {
+                    kernels_sm120::f32_projection::reuse::plan(&selected, rows).unwrap()
+                } else {
+                    selected.decode_plan(rows).unwrap()
+                };
+                assert_eq!(launches[1].plan, plan);
             } else {
                 assert_eq!(launches.len(), 1);
                 assert_eq!(launches[0].symbol, selected.baseline_symbol());

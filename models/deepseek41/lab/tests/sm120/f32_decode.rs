@@ -1,6 +1,7 @@
 //! Bitwise baseline comparisons and paired cold-weight launch timings.
 use bundle_deepseek41::sm120::{
-    f32_head, f32_prefill, f32_split, fold_cubin_for_symbol, register_f32_projections,
+    f32_head, f32_prefill, f32_split, fold_cubin_for_symbol, head_last, projection_reuse,
+    register_f32_projections,
 };
 use kernel_build::{BuildOptions, CubinSpec, EntryParam, EntrySpec, LockDir, Toolchain};
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
@@ -259,7 +260,15 @@ fn cpu_production_matrix_covers_registered_entries() {
                     fold_cubin_for_symbol(case.old.symbol()).is_some(),
                     "locked baseline is missing"
                 );
-                for symbol in entry.runtime_symbols() {
+                // The split-family matrix keeps its own compiled-entry coverage.
+                // Serving also advertises the independently qualified head variants.
+                let routed = head_last::head(
+                    g,
+                    ranks,
+                    projection_reuse::head(g, ranks, entry.clone()).unwrap(),
+                )
+                .unwrap();
+                for symbol in routed.runtime_symbols() {
                     assert!(
                         fold_cubin_for_symbol(&symbol).is_some(),
                         "registered symbol is missing"
@@ -276,7 +285,7 @@ fn cpu_production_matrix_covers_registered_entries() {
                             .iter()
                             .map(|(symbol, _)| symbol.clone())
                             .collect::<Vec<_>>(),
-                        entry.runtime_symbols()
+                        routed.runtime_symbols()
                     );
                 }
             }

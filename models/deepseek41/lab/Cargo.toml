@@ -84,6 +84,10 @@ path = "tests/sm120/attention_pair.rs"
 name = "hc_prefill_warp"
 path = "tests/sm120/hc_prefill_warp.rs"
 
+[[test]]
+name = "query_prefill"
+path = "tests/sm120/query_prefill/main.rs"
+
 [[example]]
 name = "build_hc_prefill_warp"
 path = "examples/sm120/build_hc_prefill_warp.rs"

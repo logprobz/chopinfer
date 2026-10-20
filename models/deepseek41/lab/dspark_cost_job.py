@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 MATRIX = HERE / "verify_width_matrix"
 sys.path.insert(0, str(MATRIX if MATRIX.exists() else HERE.parent))
 import run as matrix
+from dspark_cost_analysis import capture_hits
 
 GRAPH_HANDLES_PER_RANK = 512
 GRAPH_ALLOCATION_LIMIT = 2 << 30
@@ -43,38 +44,21 @@ def capture_memory(text):
                 bytes_scope="Sum of observed CUDA free-memory deltas at captures, including recaptures; not an allocator upper bound.")
 
 
-def capture_hits(text, concurrency):
-    captures, steps, misses = [], 0, 0
-    for line in text.splitlines():
-        if "{" not in line:
-            continue
-        try:
-            r = json.loads(line[line.index("{"):])
-        except ValueError:
-            continue
-        if r.get("schema") == "chopinfer.graph-cache.v1" and r.get("event") == "capture":
-            captures.append(r)
-        elif r.get("schema") == "chopinfer.step.v1":
-            if not r["prefill_items"] and r["decode_rows"] + r["verify_items"] == concurrency and r["verify_items"]:
-                steps += 1
-                misses += any(g["family"] == "target" for g in captures)
-            captures = []
-    return dict(full_verify_steps=steps, target_capture_steps=misses,
-                hit_rate=None if not steps else 1 - misses / steps)
-
 
 class Runner(matrix.Runner):
     def __init__(self, stage, output, dry=False):
         super().__init__(stage, output, "cost", dry)
         self.settings["startup_timeout"] = 240
         self.chunk = 32
+        self.graph_budget = GRAPH_HANDLES_PER_RANK
+        self.tail_reference = {}
         self.env["CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK"] = str(GRAPH_HANDLES_PER_RANK)
         self.deadline = self.started + (120 if dry else 1140)
 
     def argv(self, config, port):
         argv = super().argv(config, port)
         if not self.dry:
-            argv[argv.index("--verify-warmup") + 1] = "on"
+            argv[argv.index("--verify-warmup") + 1] = "on" if self.graph_budget else "off"
             argv[argv.index("--max-sequences") + 1] = "32"
         return argv
 
@@ -103,18 +87,52 @@ class Runner(matrix.Runner):
                     faults=matrix.fault_delta(before, matrix.faults(self.server.pid))))
         return receipts
 
+    def qualify_tails(self):
+        receipts = []
+        for c in (3, 5, 7, 14, 15):
+            path = self.directory / f"tail-C{c}"
+            path.mkdir()
+            begin = self.log.stat().st_size
+            before = matrix.faults(self.server.pid)
+            waves = [self.wave(c, 32) for _ in range(2)]
+            self.scrape()
+            time.sleep(.02 if self.dry else .2)
+            text = self.log.read_bytes()[begin:].decode()
+            (path / "steps.log").write_text(text)
+            matrix.write(path / "outputs.json", waves)
+            key = str(c)
+            if key not in self.tail_reference:
+                assert self.graph_budget, "graph reference must precede eager qualification"
+                self.tail_reference[key] = waves[0]
+            for wave in waves:
+                assert self.exact.compare({key: self.tail_reference[key]}, {key: wave})["bitwise"]
+            activity = capture_hits(text, c)
+            if not self.dry:
+                assert activity["full_verify_steps"] > 0
+                if self.graph_budget:
+                    assert activity["full_graph_steps"] > 0 and activity["full_eager_steps"] == 0
+                else:
+                    assert activity["full_eager_steps"] == activity["full_verify_steps"]
+            receipt = dict(concurrency=c, repeats=2, tokens=32, bitwise=True,
+                graph_activity=activity, faults=matrix.fault_delta(before, matrix.faults(self.server.pid)))
+            matrix.write(path / "summary.json", receipt)
+            receipts.append(receipt)
+        return receipts
+
     def run(self):
         self.gpu_guard("before", idle=True)
         servers = []
         try:
-            for epoch, (config, chunk) in enumerate([
-                ("adaptive", 32), ("uniform3", 32),
-                ("uniform3", 6), ("adaptive", 6),
+            for epoch, (config, chunk, budget) in enumerate([
+                ("adaptive", 32, GRAPH_HANDLES_PER_RANK), ("uniform3", 32, GRAPH_HANDLES_PER_RANK),
+                ("uniform3", 6, GRAPH_HANDLES_PER_RANK), ("adaptive", 6, GRAPH_HANDLES_PER_RANK),
+                ("uniform3", 6, 0),
             ]):
-                self.chunk, self.policy = chunk, config
+                self.chunk, self.policy, self.graph_budget = chunk, config, budget
+                self.env["CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK"] = str(budget)
                 self.env["CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS"] = str(chunk)
                 marker = self.output / f"draft-check-{epoch}"
-                if chunk == 6:
+                if chunk == 6 and budget:
                     marker.write_text("compare complete five-position blocks during warmup\n")
                     self.env["CHOPINFER_DSPARK_DRAFT_CHECK"] = str(marker)
                 else:
@@ -122,23 +140,25 @@ class Runner(matrix.Runner):
                 with self.serving(config, epoch):
                     matrix.write(self.directory / "policy.json", dict(
                         policy=config, draft_chunk_items=chunk,
-                        graph_handles_per_rank=GRAPH_HANDLES_PER_RANK,
+                        graph_handles_per_rank=budget,
                         graph_allocation_limit_bytes_per_rank=GRAPH_ALLOCATION_LIMIT))
                     startup = self.log.read_text()
                     checks = matrix.records(startup, "chopinfer.dspark-draft-parity.v1")
-                    if chunk == 6 and not self.dry:
+                    if chunk == 6 and budget and not self.dry:
                         assert {8, 16} <= {r["items"] for r in checks}, "missing same-input drafter comparison"
                         assert all(r["bitwise"] and r["positions"] == 5 and r["ranks"] == 4 for r in checks)
                     memory = capture_memory(startup)
                     if not self.dry:
-                        assert memory["memory_samples_by_rank"].keys() == {"0", "1", "2", "3"}
-                        assert memory["capacities"] == [GRAPH_HANDLES_PER_RANK * 4], "configured graph capacity differs"
+                        if budget:
+                            assert memory["memory_samples_by_rank"].keys() == {"0", "1", "2", "3"}
+                        assert memory["capacities"] == [budget * 4], "configured graph capacity differs"
                         assert memory["releases"] == 0, "startup evicted warmed geometries"
                     # Fixed-policy warmup qualifies diverse draft bits without
                     # teaching adaptive's cost estimator the comparison overhead.
                     if config == "adaptive":
                         marker.unlink(missing_ok=True)
-                    preparation = self.prepare()
+                    tails = self.qualify_tails() if epoch in (2, 4) else []
+                    preparation = self.prepare() if budget else []
                     checks = matrix.records(self.log.read_text(), "chopinfer.dspark-draft-parity.v1")
                     marker.unlink(missing_ok=True)
                     prepared_memory = capture_memory(self.log.read_text())
@@ -148,13 +168,17 @@ class Runner(matrix.Runner):
                         c = cohort["concurrency"]
                         text = (self.directory / f"C{c}/timed.log").read_text()
                         cohort["graph_hits"] = capture_hits(text, c)
+                        matrix.write(self.directory / f"C{c}/graph-activity.json", cohort["graph_hits"])
                         if not self.dry:
                             assert cohort["graph_hits"]["target_capture_steps"] == 0, "full-batch target captured during timing"
+                            if budget:
+                                assert cohort["graph_hits"]["full_eager_steps"] == 0, "full-batch target was not warmed"
                     text = self.log.read_text()
                     final_memory = capture_memory(text)
                     assert final_memory["releases"] == 0, "timing evicted warmed geometries"
                     servers.append(dict(policy=config, chunk_items=chunk,
-                        cohorts=cohorts, full_warmup=preparation,
+                        cohorts=cohorts, full_warmup=preparation, tail_parity=tails,
+                        graph_handles_per_rank=budget,
                         drafter_bitwise_checks=checks, startup_graphs=memory,
                         prepared_graphs=prepared_memory, final_graphs=final_memory,
                         resident_cache=matrix.cache_ready(text, required=not self.dry)))
@@ -163,9 +187,10 @@ class Runner(matrix.Runner):
             if self.server is not None:
                 matrix.stop(self.server)
             self.gpu_guard("final")
-        assert len(servers) == 4 and sum(len(s["cohorts"]) for s in servers) == 8
+        assert len(servers) == 5 and sum(len(s["cohorts"]) for s in servers) == 10
+        assert sum(len(s["tail_parity"]) for s in servers) == 10
         result = dict(schema="chopinfer.dspark-cost.v1", status="passed",
-            dry_run=self.dry, server_count=4, case_count=8, bitwise=True,
+            dry_run=self.dry, server_count=5, case_count=10, tail_case_count=10, bitwise=True,
             timing_valid=all(c["host_load"]["idle"] for s in servers for c in s["cohorts"]),
             servers=servers, elapsed_seconds=time.monotonic()-self.started)
         matrix.write(self.output / "summary.json", result)

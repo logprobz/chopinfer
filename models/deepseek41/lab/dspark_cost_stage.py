@@ -22,7 +22,7 @@ def seal(root):
     stage.configure(root)
     destination = root / "harness/cost"
     destination.mkdir(exist_ok=True)
-    for name in ("dspark_cost_stage.py", "dspark_cost_job.py"):
+    for name in ("dspark_cost_stage.py", "dspark_cost_job.py", "dspark_cost_analysis.py"):
         shutil.copyfile(HERE / name, destination / name)
     for directory in (root / "install", root / "harness"):
         for path in [directory, *directory.rglob("*")]:
@@ -50,7 +50,7 @@ exec timeout --signal=TERM --kill-after=15s 1170s python3 -B {shlex.quote(str(sc
     receipt = dict(job=str(job), sha256=digest(job), manifest_sha256=pin,
                    graph_handles_per_rank=512, graph_allocation_limit_bytes_per_rank=2 << 30,
                    native_revision=(root / "NATIVE_REVISION").read_text().strip(),
-                   queued=False, server_count=4, case_count=8, timeout_seconds=1200)
+                   queued=False, server_count=5, case_count=10, tail_case_count=10, timeout_seconds=1200)
     write(root / "staged-job.json", receipt)
     print(json.dumps(receipt, indent=2))
 

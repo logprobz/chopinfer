@@ -572,6 +572,29 @@ shared-memory `atomicOr`), and checks the audits and SASS (BF16 HMMA with
 F32 accumulation, no float atomics). The
 f64 oracle is `kernel_core::gated_mlp_oracle`.
 
+## Native block-scaled prefill tiles
+
+`native_grouped.cuh` (`kernels_sm120::moe::native_grouped`) runs MXFP4
+weights by E4M3/32 UE8M0 activations through
+`mma.sync kind::mxf8f6f4.block_scale` without decoding to BF16, for any
+expert count, top-k, K (a multiple of 32) and N (a multiple of 16). It
+changes bits against the BF16-decoded engines and qualifies on the
+within-bound track: products are exact, each 128-K chain starts from +0
+and is added into the F32 accumulator in ascending K order, and the
+instruction reduces each 32-K group. Lane t of a quad owns K elements
+8t..8t+7 of a group in both operands, a fixed permutation of the
+instruction's K slots shared by every entry; `native_grouped_layout.h`
+holds the operand layout and `tests/native_grouped_layout.cpp` emulates it
+on the host against the PTX fragment layout.
+
+One warp packs the active experts into row tiles of 64 or 128 rows; a
+persistent grid takes (tile, column strip) items from an integer ticket,
+with three cp.async stages of 128 K. Gate/up warps hold one gate and one up
+fragment of 16 columns, down warps two fragments of 32. Admission traps on
+the codes and scales the exact engines trap on, and the gate/up epilogue is
+`chained::before_down`. No catalog selects these entries; DeepSeek binds
+them opt-in (`models/deepseek41/lab/native_moe_prefill.md`).
+
 ## Diagnostics
 
 Kernel-lab MoE switches (`tests/ops/moe.rs`, `tests/ops/moe_prefill.rs`):

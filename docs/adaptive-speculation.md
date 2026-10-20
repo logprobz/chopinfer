@@ -38,6 +38,17 @@ slows by more than that margin, the controller probes again after 16 idle
 plans. The controller is independent of model and bundle code; its tests run
 with `cargo test -p runtime-engine --locked --offline`.
 
+With step tracing enabled, each completed step carries an optional
+`speculation` decision captured before that step trains the policy. It
+records the selected branch, planned live and cost-table rows, measured
+verify costs, AR and candidate estimates, realized rates and probe state.
+`estimated_slower` means no chosen drafting plan beat the AR estimate;
+`realized_slower` means drafting's observed token rate lost to AR after at
+least eight drafting steps. `cooldown` is the seven-plan wait following a
+realized loss or a probe. `await_ar_baseline` is the initial measurement
+requirement. These reasons do not change the selection rule. A caller that
+did not invoke the planner leaves the decision absent.
+
 ## Table mode
 
 `--speculation table` plans each step from a fixed step-cost table instead of

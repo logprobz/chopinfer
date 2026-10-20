@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use runtime_scheduler::{DraftBudget, DraftLimits};
 
 mod balanced;
+mod diagnostics;
+pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
 
@@ -729,6 +731,8 @@ pub(crate) struct SpeculationPolicy {
     /// `MAX_COST_ROWS`: its row bucket.
     step_rows: Vec<usize>,
     draft_cursor: usize,
+    trace_enabled: bool,
+    decision: Option<PlanTrace>,
 }
 
 impl SpeculationPolicy {
@@ -751,6 +755,8 @@ impl SpeculationPolicy {
             executable: [true; MAX_DRAFT_TOKENS + 1],
             step_rows: (0..=MAX_COST_ROWS).collect(),
             draft_cursor: 0,
+            trace_enabled: false,
+            decision: None,
         }
     }
 
@@ -999,6 +1005,16 @@ impl SpeculationPolicy {
         candidates: &[PlanCandidate<'_>],
         budget: DraftBudget,
     ) -> Vec<usize> {
+        self.begin_diagnostics(
+            candidates.len(),
+            budget.spare_draft_tokens().min(budget.spare_rows()),
+        );
+        let drafts = self.plan_inner(candidates, budget);
+        self.finish_diagnostics(&drafts);
+        drafts
+    }
+
+    fn plan_inner(&mut self, candidates: &[PlanCandidate<'_>], budget: DraftBudget) -> Vec<usize> {
         let eligible = candidates
             .iter()
             .filter(|c| c.maximum_draft_tokens > 0)
@@ -1044,24 +1060,31 @@ impl SpeculationPolicy {
     ) -> Vec<usize> {
         let mut drafts = vec![0; candidates.len()];
         let mut remaining = budget.spare_draft_tokens().min(budget.spare_rows());
-        if remaining == 0
-            || candidates
-                .iter()
-                .all(|candidate| candidate.maximum_draft_tokens == 0)
+        if remaining == 0 {
+            self.trace_reason("no_spare_rows");
+            return drafts;
+        }
+        if candidates
+            .iter()
+            .all(|candidate| candidate.maximum_draft_tokens == 0)
         {
+            self.trace_reason("no_eligible_items");
             return drafts;
         }
         match self.config.mode {
             SpeculationMode::Fixed => {
+                self.trace_reason("fixed");
                 for (draft, candidate) in drafts.iter_mut().zip(candidates) {
                     *draft = candidate.maximum_draft_tokens.min(remaining);
                     remaining -= *draft;
                 }
             }
             SpeculationMode::Balanced => {
+                self.trace_reason("balanced");
                 drafts = self.plan_balanced(candidates, remaining);
             }
             SpeculationMode::Adaptive if budget.prefill() => {
+                self.trace_reason("prefill_fresh");
                 // A batch that also prefills is no decode step: its time is
                 // never observed, and a fresh drafter would add its whole
                 // catch-up to the prefill that every waiting request's first
@@ -1089,6 +1112,7 @@ impl SpeculationPolicy {
                 drafts = self.plan_adaptive(candidates, remaining, true);
             }
             SpeculationMode::Table(costs) => {
+                self.trace_reason("table");
                 drafts = self.plan_table(candidates, &costs, remaining);
             }
         }
@@ -1212,6 +1236,7 @@ impl SpeculationPolicy {
         // Obtain a warmed AR baseline at this concurrency before learning
         // drafting overhead. Fixed mode is unchanged.
         if !self.costs.measured(items) {
+            self.trace_reason("await_ar_baseline");
             return vec![0; items];
         }
         // Backoff learned against faster AR can outlive that comparison.
@@ -1257,6 +1282,7 @@ impl SpeculationPolicy {
             }
             if state.remaining > 0 && !probe {
                 state.remaining -= 1;
+                self.trace_reason("cooldown");
                 return vec![0; items];
             }
             if state.disabled { RESUME_GAIN } else { 1.0 }
@@ -1270,6 +1296,7 @@ impl SpeculationPolicy {
                 state.disabled = true;
                 state.remaining = ZERO_DRAFT_RECHECK;
             }
+            self.trace_reason("realized_slower");
             return vec![0; items];
         }
         // A probe pays its fresh drafters' catch-up whole, as drafting
@@ -1291,14 +1318,17 @@ impl SpeculationPolicy {
         let baseline = empty.rate();
         let margin = if probe { 0.0 } else { resume_gain };
         let mut best = self.extend(candidates, &shares, empty, remaining, margin);
-        if let Some(joint) = self.joint(candidates, &shares, remaining, false)
-            && joint.rate() > margin * baseline
-        {
-            let joint = self.extend(candidates, &shares, joint, remaining, 1.0);
-            if joint.rate() > best.rate() {
-                best = joint;
+        if let Some(joint) = self.joint(candidates, &shares, remaining, false) {
+            self.trace_candidate(&joint);
+            if joint.rate() > margin * baseline {
+                let joint = self.extend(candidates, &shares, joint, remaining, 1.0);
+                if joint.rate() > best.rate() {
+                    best = joint;
+                }
             }
         }
+        self.trace_candidate(&best);
+        self.trace_reason("estimated_slower");
         let mut drafts = best.drafts;
         let block = self.config.draft_cost_model == DraftCostModel::PerBlock;
         // Measurement probes run exactly as filled: deeper exploration
@@ -1326,8 +1356,12 @@ impl SpeculationPolicy {
                 .is_some()
         {
             drafts.fill(0);
+            self.trace_reason("sparse_cost");
         }
         let drafting = drafts.iter().any(|&draft| draft > 0);
+        if drafting {
+            self.trace_reason(if probe { "probe" } else { "drafting" });
+        }
         if drafting && !measurement_probe {
             if probe {
                 self.explore = 0;

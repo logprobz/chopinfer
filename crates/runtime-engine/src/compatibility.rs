@@ -733,6 +733,8 @@ pub(crate) struct StepTrace {
     pub(crate) trained: bool,
     /// Where the engine thread spent the step's host time.
     pub(crate) host: HostTiming,
+    /// The selected width policy's inputs and branch before cost training.
+    pub(crate) speculation: Option<crate::speculation::PlanTrace>,
 }
 
 impl StepTrace {
@@ -756,6 +758,7 @@ impl StepTrace {
             "decode_estimate_us": self.decode_estimate_micros,
             "trained": self.trained,
             "host": self.host.record(),
+            "speculation": self.speculation.as_ref().map(|trace| trace.record()),
         })
     }
 }
@@ -942,6 +945,7 @@ mod tests {
     fn step_trace_reports_the_cap_and_assumed_against_actual_time() {
         let trace = StepTrace {
             batch: 9,
+            speculation: None,
             prefill_tokens: 2048,
             prefill_items: 1,
             completed_prompts: vec![(7, 2048)],
@@ -996,7 +1000,7 @@ mod tests {
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());
-        assert_eq!(parsed.as_object().unwrap().len(), 18);
+        assert_eq!(parsed.as_object().unwrap().len(), 19);
         let fixed = StepTrace {
             prefill_cap: None,
             predicted_micros: None,

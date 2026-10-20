@@ -1857,6 +1857,7 @@ impl<E: ModelExecutor> Engine<E> {
             SpeculationPolicy::new(speculation)
                 .with_draft_rounding(|count| executor.round_draft_tokens_v1(count).min(count))
                 .with_step_rows(|rows| executor.step_rows_v1(rows).max(rows))
+                .with_diagnostics(step_trace)
         });
         let offload = executor
             .kv_offload_info_v1()
@@ -2101,6 +2102,9 @@ impl<E: ModelExecutor> Engine<E> {
     }
 
     fn step_scheduled_batch(&mut self) -> Result<StepStatus, EngineError> {
+        if let Some(policy) = self.speculation.as_mut() {
+            policy.clear_diagnostics();
+        }
         let scheduling_timer = profile::PhaseTimer::new(profile::StepPhase::Scheduling);
         let retired_before = self.retire_terminals()?;
         self.preempt()?;
@@ -2698,6 +2702,10 @@ impl<E: ModelExecutor> Engine<E> {
                     .and_then(|estimates| estimates.decode_micros(decode_rows)),
                 trained,
                 host: self.host_clock.executed(),
+                speculation: self
+                    .speculation
+                    .as_ref()
+                    .and_then(SpeculationPolicy::decision),
             };
             self.pending_step_trace = Some(record);
         }

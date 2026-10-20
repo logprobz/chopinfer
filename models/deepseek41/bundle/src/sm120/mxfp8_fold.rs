@@ -16,6 +16,9 @@ use projection_spec::derive::{Topology, rank_selection};
 use std::collections::BTreeMap;
 use std::ops::{Range, RangeInclusive};
 
+#[path = "mxfp8_compact.rs"]
+pub mod compact;
+
 #[path = "mxfp8_fold_routing.rs"]
 mod routing;
 pub use routing::{DecodePath, decode_path};
@@ -151,6 +154,16 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
             backend.with_mxfp8_fold(entry)
         });
     let mut backend = backend;
+    for base in prefill_entries(g, ranks)? {
+        for rows in compact::ROWS {
+            if let Some(stages) = compact::stages(g, base.query, rows) {
+                let entry =
+                    kernels_sm120::gemm::mxfp8_prefill_compact::Entry::new(base.clone(), stages)
+                        .map_err(|e| e.to_string())?;
+                backend = backend.with_mxfp8_prefill_compact(entry, rows);
+            }
+        }
+    }
     // Bind one existing implementation per exact row bucket, independently
     // for single and paired projections. Capacity is a host bound; it is
     // absent from these kernels' template parameters and launch arguments.

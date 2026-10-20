@@ -2,7 +2,7 @@
 use super::*;
 #[test]
 fn prefill_dense_launches_use_staged_tiles() {
-    for rows in [1024, 2048, 8192] {
+    for rows in [128, 512, 1024, 2048, 4096, 8192] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
@@ -13,6 +13,7 @@ fn prefill_dense_launches_use_staged_tiles() {
             .execute(&prompt(7, 0, 0, rows, true), &mut Views::default())
             .unwrap();
         let lines = host.device.journal.borrow();
+        assert_launches_fit_configured_shared(&lines, &shape.topology());
         let dense: Vec<_> = lines
             .iter()
             .filter(|l| {
@@ -30,11 +31,44 @@ fn prefill_dense_launches_use_staged_tiles() {
             dense.iter().filter(|l| l.contains("_admit_v1")).count(),
             4 * 330
         );
+        let entries = crate::sm120::mxfp8_fold::prefill_entries(&FLASH, 4).unwrap();
+        let mut compact_calls = 0;
         for line in dense.iter().filter(|l| !l.contains("_admit_v1")) {
-            assert!(line.contains("_prefill_tma_v1"), "{line}");
-            assert!(line.contains(&format!("grid_y: {},", rows / 128)), "{line}");
-            assert!(line.contains("block_x: 384,"), "{line}");
-            assert!(line.contains("shared_memory_bytes: 66560,"), "{line}");
+            let symbol = line.split_whitespace().nth(2).unwrap();
+            let entry = entries
+                .iter()
+                .find(|e| symbol.starts_with(&e.symbol))
+                .unwrap();
+            if let Some(stages) =
+                crate::sm120::mxfp8_fold::compact::stages(&FLASH, entry.query, rows as u32)
+            {
+                let compact =
+                    kernels_sm120::gemm::mxfp8_prefill_compact::Entry::new(entry.clone(), stages)
+                        .unwrap();
+                let tile = kernels_sm120::gemm::mxfp8_prefill_compact::Entry::tile(rows as u32);
+                assert_eq!(symbol, compact.symbol(tile));
+                assert!(
+                    line.contains(&format!("grid_y: {},", rows / u64::from(tile))),
+                    "{line}"
+                );
+                assert!(
+                    line.contains(&format!(
+                        "shared_memory_bytes: {},",
+                        compact.shared_bytes(tile)
+                    )),
+                    "{line}"
+                );
+                compact_calls += 1;
+            } else {
+                assert!(line.contains("_prefill_tma_v1"), "{line}");
+                assert!(line.contains(&format!("grid_y: {},", rows / 128)), "{line}");
+                assert!(line.contains("block_x: 384,"), "{line}");
+                assert!(line.contains("shared_memory_bytes: 66560,"), "{line}");
+            }
+        }
+        assert_eq!(compact_calls > 0, rows != 1024);
+        if rows == 128 {
+            assert_eq!(compact_calls, 4 * 330);
         }
         if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_PREFILL_JOURNAL_DIR") {
             std::fs::create_dir_all(&dir).unwrap();

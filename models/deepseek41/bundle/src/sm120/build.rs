@@ -229,6 +229,10 @@ pub fn selection(
             ));
             specs.push((family, spec));
         }
+        owners.push((
+            mxfp8_fold::compact::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
     }
 
     for g in geometries
@@ -488,6 +492,7 @@ pub fn selection(
     specs.extend(mxfp8_fold::ticket_cubins(geometries).expect("deepseek41 MXFP8 ticket cubins"));
     specs.extend(mxfp8_fold::prefill_cubins(geometries).expect("MXFP8 prefill cubins"));
     specs.extend(mxfp8_fold::prefill_split_cubins(geometries).expect("MXFP8 split prefill cubins"));
+    specs.extend(mxfp8_fold::compact::cubins(geometries).expect("compact MXFP8 prefill cubins"));
     specs
         .extend(mxfp8_fold::prefetch_cubins(geometries).expect("deepseek41 MXFP8 prefetch cubins"));
     specs.extend(mxfp8_fold_stream::cubins(geometries).expect("MXFP8 packed fold cubins"));

@@ -37,7 +37,7 @@ def timed(c):
 
 
 def selected(memcheck):
-    return {i for i,c in enumerate(cases()) if not memcheck or i<5 or c['kind']>=8}
+    return {i for i,c in enumerate(cases()) if not memcheck or i<5 or c['kind']==3 or c['kind']>=8}
 
 
 def results(logs,memcheck=False):
@@ -155,11 +155,11 @@ def validate(stage_path):
     output=subprocess.check_output([str(root/'snapshot/prefill-tile-tests'),CPU_TEST,'--exact','--nocapture'],text=True,timeout=120)
     assert re.findall(r'test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored',output)==[('ok','1','0','0')]
     assert stage['job_timeout_seconds']==880 and stage['worker_timeout_seconds']==820
-    # Two existing 59-second workload matrices, 240 s for the twenty small
+    # Two existing 59-second workload matrices, 276 s for the 23 small
     # memcheck cases, and 180 s for fixture/setup contention fit the worker.
-    budget=2*59+240+180
+    budget=2*59+23*12+180
     assert budget<stage['worker_timeout_seconds']
-    return dict(profiles=profiles,cases=94,memcheck_cases=20,real_captures=10,real_rows=320,
+    return dict(profiles=profiles,cases=94,memcheck_cases=23,real_captures=10,real_rows=320,
                 timing_pairs=176,raw_samples=1056,conservative_budget_seconds=budget,gpu_launched=False)
 
 

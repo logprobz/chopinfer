@@ -43,7 +43,9 @@ impl Instance {
         let missing = (0..self.ranks.len())
             .filter(|&rank| cached.is_none_or(|cache| !cache.contains(key(rank as u32))))
             .count();
-        let mut reservation = (!ready).then(|| self.graphs.reserve(missing)).flatten();
+        let mut reservation = (!ready)
+            .then(|| self.graphs.reserve_retaining(missing))
+            .flatten();
         let (programs, waits): (Vec<Vec<_>>, Vec<Vec<_>>) = if ready {
             (Vec::new(), Vec::new())
         } else {

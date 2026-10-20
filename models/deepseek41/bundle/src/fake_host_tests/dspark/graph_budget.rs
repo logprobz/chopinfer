@@ -128,7 +128,94 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
 }
 
 #[test]
-fn exact_width_graph_pressure_retires_before_recapture_on_every_topology() {
+fn warmed_full_batch_survives_mixed_tail_admission_and_matches_replay() {
+    let run = |retain: bool| {
+        let (host, mut instance) =
+            create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 32);
+        for slot in 0..16 {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(slot + 1, slot, 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        let mut outputs = Vec::new();
+        // The recorded failure retained 32/16, filled on a mixed 31/14 tail,
+        // then captured 32/16 again. Compare the same sequence with room to
+        // capture the tail. Fake kernels validate metadata and state, while
+        // the served job must establish device arithmetic equality.
+        let tail = [5, 5, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        for (index, depths) in [vec![1; 16], tail.to_vec(), tail.to_vec(), vec![1; 16]]
+            .iter()
+            .enumerate()
+        {
+            if retain && index == 1 {
+                let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+                crate::instance::dspark_graphs_for_test(instance.handle(), Some(stats.live));
+            }
+            let mut items = Vec::new();
+            let mut appends = Vec::new();
+            let mut accepted = Vec::new();
+            for (slot, &depth) in depths.iter().enumerate() {
+                let id = slot as u64 + 1;
+                let start = state(&instance, id).end;
+                let rows = depth + 1;
+                items.push(if depth == 0 {
+                    BatchItemV1::new(id, true, 1, true, vec![7])
+                } else {
+                    accepted.push(kept(id, 1));
+                    BatchItemV1::verify(id, rows, true, vec![7])
+                });
+                appends.push(BatchAppendV1::new(
+                    start,
+                    u64::from(rows),
+                    start + u64::from(rows),
+                    vec![slot as u64 * 8],
+                    None,
+                ));
+            }
+            let batch = BatchRequestV1::new(BatchWireVersionV1::V3, items, appends)
+                .with_state_slots((0..depths.len() as u64).collect())
+                .encode()
+                .unwrap();
+            let begin = host.logs.borrow().len();
+            let sink = execute(&mut instance, &host, &batch);
+            instance.commit_accepted(&accepted).unwrap();
+            outputs.push((
+                sink.draft_tokens(),
+                (1..=16)
+                    .map(|id| state(&instance, id).end)
+                    .collect::<Vec<_>>(),
+            ));
+            let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+            assert_eq!(stats.epoch, 0, "a tail evicted the warmed full batch");
+            assert_eq!(stats.released, 0);
+            assert_eq!(stats.reserved, 0);
+            let logs = host.logs.borrow();
+            let eager = logs[begin..]
+                .iter()
+                .any(|s| s.contains("\"event\":\"target-eager\""));
+            let captured = logs[begin..].iter().any(|s| {
+                s.contains("\"event\":\"capture\"") && s.contains("\"family\":\"target\"")
+            });
+            assert_eq!(eager, retain && (index == 1 || index == 2));
+            if index == 3 || index == 2 {
+                assert!(!captured, "a warmed target was captured again");
+            }
+        }
+        for id in 1..=16 {
+            instance.retire_request(id).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        outputs
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn exact_width_graph_pressure_retains_warm_keys_on_every_topology() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let (host, mut instance) = create(Shape::new(&FLASH, ranks).unwrap());
         let capacity = 8 * ranks.count();
@@ -151,23 +238,17 @@ fn exact_width_graph_pressure_retires_before_recapture_on_every_topology() {
             let journal = host.journal.borrow();
             let step = &journal[begin..];
             assert!(!step.iter().any(|s| s.starts_with("async mapped release")));
-            if let Some(released) = step.iter().position(|s| s.starts_with("release graph")) {
-                assert!(
-                    step[..released]
-                        .iter()
-                        .filter(|s| s.starts_with("synchronize "))
-                        .count()
-                        >= ranks.count()
-                );
-                let capture = step.iter().position(|s| s.starts_with("capture ")).unwrap();
-                assert!(released < capture);
-            }
+            assert!(!step.iter().any(|s| s.starts_with("release graph")));
         }
         let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
-        assert!(stats.denied > 0 && stats.released > 0 && stats.epoch > 0);
+        assert!(stats.denied > 0);
+        assert_eq!(stats.released, 0);
+        assert_eq!(stats.epoch, 0);
+        assert!(!stats.pressure);
         let logs = host.logs.borrow();
         assert!(
-            logs.iter()
+            !logs
+                .iter()
                 .any(|s| s.contains("\"event\":\"eviction-begin\""))
         );
         if let Some(root) = std::env::var_os("CHOPINFER_DSPARK_GRAPH_LOGS") {

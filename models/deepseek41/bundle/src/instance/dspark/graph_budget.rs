@@ -47,7 +47,9 @@ impl Instance {
                 self.indexer_graph_missing(route, key)
             })
             .sum();
-        let admission = self.graphs.reserve(missing);
+        // Completion tails can reach hundreds of exact keys. Keep the
+        // warmed keys when full and lower every rank of a new shape eagerly.
+        let admission = self.graphs.reserve_retaining(missing);
         if admission.is_none() {
             self.graphs.trace(
                 &self.services,

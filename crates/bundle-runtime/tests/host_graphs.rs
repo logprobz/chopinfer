@@ -808,3 +808,47 @@ fn blocked_retirement_keeps_handles_charged_until_the_owner_can_release_them() {
     assert_eq!(cache.stats().released, 1);
     assert_eq!(backend.live_resource_count(), baseline);
 }
+
+#[test]
+fn retaining_admission_preserves_warm_keys_and_outstanding_reservations() {
+    for ranks in rank_counts() {
+        let (table, backend, streams, baseline) = host(ranks);
+        let mut cache = GraphCache::<ExactSteps>::new(ranks);
+        cache.set_capacity(ranks.count()).unwrap();
+        let mut group = cache.reserve_retaining(ranks.count()).unwrap();
+        assert!(cache.reserve_retaining(1).is_none());
+        assert!(!cache.stats().pressure);
+        assert_eq!(cache.stats().reserved, ranks.count());
+        for rank in 0..ranks.get() {
+            cache
+                .capture_reserved::<BundleAbiError>(
+                    table.caller(),
+                    streams[rank as usize],
+                    key(rank, 6, 1),
+                    1,
+                    &mut group,
+                    |_| Ok(()),
+                )
+                .unwrap();
+        }
+        drop(group);
+        assert!(cache.reserve_retaining(1).is_none());
+        assert!(!cache.stats().pressure);
+        assert_eq!(cache.stats().denied, 2);
+        assert_eq!(cache.stats().epoch, 0);
+        assert_eq!(cache.stats().live, ranks.count());
+        assert!(
+            cache
+                .replay_piece_major(table.caller(), &streams, (6, 1), |_| {})
+                .unwrap()
+        );
+        assert!(cache.reserve_retaining(0).is_some());
+        // Ordinary admission still requests retirement. A retaining miss
+        // must never clear pressure already raised by another caller.
+        assert!(cache.reserve(1).is_none());
+        assert!(cache.reserve_retaining(1).is_none());
+        assert!(cache.stats().pressure);
+        cache.release_all(table.caller()).unwrap();
+        assert_eq!(backend.live_resource_count(), baseline);
+    }
+}

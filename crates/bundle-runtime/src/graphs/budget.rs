@@ -80,12 +80,23 @@ impl<G> GraphCache<G> {
     /// Admit a complete capture group across ranks and sibling caches.
     /// None means capacity pressure, before any capture or launch starts.
     pub fn reserve(&self, handles: usize) -> Option<GraphReservation> {
+        self.reserve_group(handles, true)
+    }
+
+    /// Admit a group without asking the owner to retire existing graphs on
+    /// rejection. The caller must run the complete uncached program eagerly.
+    /// This retains warmed keys within the same fixed handle bound.
+    pub fn reserve_retaining(&self, handles: usize) -> Option<GraphReservation> {
+        self.reserve_group(handles, false)
+    }
+
+    fn reserve_group(&self, handles: usize, retire: bool) -> Option<GraphReservation> {
         let mut ledger = self.ledger.borrow_mut();
         let occupied = ledger.graphs.len().checked_add(ledger.budget.reserved);
         let admitted = occupied.and_then(|n| n.checked_add(handles));
         if admitted.is_none_or(|n| ledger.budget.capacity.is_some_and(|limit| n > limit)) {
             ledger.budget.denied += 1;
-            ledger.budget.pressure = true;
+            ledger.budget.pressure |= retire;
             return None;
         }
         ledger.budget.reserved += handles;

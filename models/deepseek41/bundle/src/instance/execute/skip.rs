@@ -267,10 +267,11 @@ impl Plan {
                             &mut program,
                             stage,
                             required(
-                                lowering.stage_with_positions(
+                                lowering.stage_with_prefill_context(
                                     phase,
                                     stage,
                                     &run.inputs.positions[range.start as usize..range.end as usize],
+                                    run.cache,
                                 )?,
                                 stage,
                             )?,

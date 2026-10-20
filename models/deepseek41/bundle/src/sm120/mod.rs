@@ -309,7 +309,10 @@ impl crate::Kernels {
             && latent_decode::loads(cubin, shape.geometry, shape.ranks(), storage)
             && (!matches!(
                 cubin,
-                prefill_cache::CUBIN | prefill_heads::NATIVE_CUBIN | prefill_heads::CACHED_CUBIN
+                prefill_cache::CUBIN
+                    | prefill_heads::NATIVE_CUBIN
+                    | prefill_heads::CACHED_CUBIN
+                    | prefill_heads::FINISH_CUBIN
             ) || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
             && (cubin != latent_cache::CUBIN
                 || latent_cache::eligible(shape.geometry, shape.ranks(), storage))

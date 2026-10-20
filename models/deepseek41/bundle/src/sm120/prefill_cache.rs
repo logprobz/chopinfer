@@ -65,6 +65,10 @@ pub fn prepare(
             heads::asynchronous::symbol(&decoded, false),
             heads::SHARED_BYTES,
         ));
+        info.symbols.push((
+            super::prefill_heads::finish_symbol(&decoded),
+            heads::SHARED_BYTES,
+        ));
     }
     info.symbols.push((cache::CLEAR.into(), 0));
     info.symbols.push((cache::window_symbol(latent), 0));
@@ -220,13 +224,18 @@ impl PreparedOp<Buffers> for Cached {
             }
         }
         if second_fp4_keys {
-            first.symbol = heads::asynchronous::symbol(&self.decoded, false);
-            first.plan = heads::plan(&self.decoded, rows)?;
+            launches.extend(super::prefill_heads::finish(
+                &self.entry,
+                &self.decoded,
+                n,
+                rows,
+                attention,
+            )?);
         } else {
             first.symbol = sources_prefill::reuse_symbol(&self.decoded, 2);
             first.plan = sources_prefill::reuse_plan(&self.decoded, rows, 2)?;
+            launches.extend(attention);
         }
-        launches.extend(attention);
         Ok(launches)
     }
 }

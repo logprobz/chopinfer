@@ -459,9 +459,14 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             decoded_cache: decoded_cache.map(|cache| cache.data),
             native_shared_heads: phase.prefill()
-                && phase.rows() == 8192
-                && self.prefill_row_origin.is_none()
-                && offset.is_some_and(|range| range.offset == 0),
+                && offset.is_some_and(|range| {
+                    qualified_native_finish(
+                        phase.rows(),
+                        self.prefill_row_origin,
+                        range.offset,
+                        ratio,
+                    )
+                }),
             selected_cache: scratch.selected_cache,
             live_rows: self.inputs.live_tokens,
         };
@@ -471,12 +476,63 @@ impl Lowering<'_> {
     }
 }
 
+/// `offset` comes from the admitted single-item, consecutive full chunk.
+/// Parts keep that origin while their query, RoPE and output views are local.
+fn qualified_native_finish(rows: u32, first: Option<u32>, offset: u32, ratio: u32) -> bool {
+    if rows == 8192 && first.is_none() {
+        return offset == 0;
+    }
+    if !matches!(offset, 0 | 24576) {
+        return false;
+    }
+    (rows == 4096 && matches!(first, Some(0 | 4096)))
+        || (ratio == 1
+            && (320..=2496).contains(&rows)
+            && rows % 128 == 64
+            && first.and_then(|first| first.checked_add(rows)) == Some(8192))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bundle_runtime::state::Holder;
     use model_deepseek41_contract::geometry::FLASH;
     use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+
+    #[test]
+    fn native_finish_admits_only_measured_offsets_counts_and_origins() {
+        for offset in [0, 8192, 16384, 24576, 32768] {
+            for ratio in [1, 2] {
+                assert_eq!(
+                    qualified_native_finish(8192, None, offset, ratio),
+                    offset == 0
+                );
+                for first in [0, 4096] {
+                    assert_eq!(
+                        qualified_native_finish(4096, Some(first), offset, ratio),
+                        matches!(offset, 0 | 24576)
+                    );
+                }
+                for rows in (64..=2560).step_by(64) {
+                    assert_eq!(
+                        qualified_native_finish(rows, Some(8192 - rows), offset, ratio),
+                        ratio == 1
+                            && matches!(offset, 0 | 24576)
+                            && (320..=2496).contains(&rows)
+                            && rows % 128 == 64
+                    );
+                }
+            }
+        }
+        for (rows, first) in [
+            (320, None),
+            (320, Some(0)),
+            (4096, Some(1)),
+            (448, Some(u32::MAX)),
+        ] {
+            assert!(!qualified_native_finish(rows, first, 0, 1));
+        }
+    }
 
     /// Each layer's ring views address exactly the pieces the request
     /// state declares for a slot's ring: its codes, then its scales, or

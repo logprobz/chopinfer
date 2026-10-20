@@ -1,8 +1,25 @@
-//! The measured paired schedule retains the reference merge and fallbacks.
+//! Qualified output fusion retains the small-tail and unmeasured fallbacks.
 use super::*;
 
 #[test]
-fn retained_prefill_uses_measured_pairs_and_the_original_merge() {
+fn fused_prefill_writes_output_without_partial_or_merge_launches() {
+    let trace = super::prefill_cache::composed_trace(0, false, true, false);
+    let fused = trace
+        .iter()
+        .filter(|line| line.starts_with("launch ") && line.contains("_head_shared_finish_v1"))
+        .collect::<Vec<_>>();
+    // Cold full mixed32 layers and the eighteen measured retained mixed64
+    // counts. The later native chunk and the two small tails stay unchanged.
+    assert_eq!(fused.len(), 4 * (18 + 18));
+    for line in fused {
+        assert!(line.contains("shared_memory_bytes: 83200,"));
+        assert!(line.contains("NullDevicePointer, ScalarU64("));
+        assert!(line.contains("block_x: 256,"));
+    }
+}
+
+#[test]
+fn retained_prefill_fuses_measured_counts_and_keeps_small_tail_merges() {
     let trace = super::prefill_cache::composed_trace(0, false, true, false);
     let attention = trace
         .iter()
@@ -11,14 +28,15 @@ fn retained_prefill_uses_measured_pairs_and_the_original_merge() {
                 && line.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1")
         })
         .collect::<Vec<_>>();
-    assert_eq!(attention.len(), 2 * 4 * 20);
+    assert_eq!(attention.len(), 4 * (2 + 20));
     for rows in (64..=2496).step_by(128) {
         let grid = format!("grid_x: {}, grid_y: 2,", rows / 2);
         let launches = attention
             .iter()
             .filter(|s| s.contains(&grid))
             .collect::<Vec<_>>();
-        assert_eq!(launches.len(), 8, "retained rows={rows}");
+        let count = if rows < 320 { 8 } else { 4 };
+        assert_eq!(launches.len(), count, "retained rows={rows}");
         assert!(
             launches
                 .iter()
@@ -32,7 +50,7 @@ fn retained_prefill_uses_measured_pairs_and_the_original_merge() {
                     && s.contains("h16_d512_mixed_normalized_s1_r64_prefill_merge_v1")
                     && s.contains(&merge_grid))
                 .count(),
-            8
+            count
         );
     }
 }
@@ -92,7 +110,7 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
             let paired = !shared
                 && (route == 1
                     || (route == 2 && line.contains("_mixed_") && !line.contains("_p32_")));
-            assert_eq!(line.contains("_head_shared_v1"), shared, "{line}");
+            assert_eq!(line.contains("_head_shared_finish_v1"), shared, "{line}");
             assert_eq!(line.contains("_reuse2_v1"), paired, "{line}");
             if shared {
                 assert!(
@@ -120,7 +138,13 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
                     && line.contains("_merge_")
             })
             .collect();
-        assert_eq!(merges.len(), attention.len());
+        assert_eq!(
+            merges.len(),
+            attention
+                .iter()
+                .filter(|line| !line.contains("_finish_v1"))
+                .count()
+        );
         assert!(merges.iter().all(|line| !line.contains("reuse")));
         drop(lines);
         instance.commit().unwrap();

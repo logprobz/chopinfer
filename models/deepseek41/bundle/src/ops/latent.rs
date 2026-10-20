@@ -503,7 +503,7 @@ pub(crate) struct AttentionViews {
     pub output: DeviceBufferSpanV1,
     pub workspace: DeviceBufferSpanV1,
     pub decoded_cache: Option<DeviceBufferSpanV1>,
-    /// One full cold chunk has the measured native head-sharing schedule.
+    /// An admitted native full chunk, part or retained tail uses fused heads.
     pub native_shared_heads: bool,
     pub selected_cache: Option<DeviceBufferSpanV1>,
     pub live_rows: DeviceBufferSpanV1,

@@ -162,7 +162,7 @@ fn decoded_prefill_rebases_high_pages_and_falls_back_for_wide_spans() {
 }
 
 #[test]
-fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
+fn decoded_prefill_routes_winning_offsets_and_fuses_mixed_outputs() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.kv_pages.set(1024);
@@ -202,9 +202,9 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
             let head = !window && offset < 32768;
             let suffix = if head {
                 if offset == 0 {
-                    "_head_shared_v1"
+                    "_head_shared_finish_v1"
                 } else {
-                    "_head_async_v1"
+                    "_head_async_finish_v1"
                 }
             } else {
                 "_reuse2_v1"
@@ -228,7 +228,7 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
             .iter()
             .filter(|l| l.contains("chop_latent_sources_") && l.contains("_merge_"))
             .collect();
-        assert_eq!(merges.len(), attention.len());
+        assert_eq!(merges.len(), if offset < 32768 { 8 } else { 160 });
         assert!(merges.iter().all(|l| !l.contains("_decoded_")));
         if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_JOURNAL_DIR") {
             std::fs::create_dir_all(&dir).unwrap();
@@ -263,6 +263,16 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
 }
 
 pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> {
+    composed_trace_offsets(mode, dma, skip, cached, &[0, 8192])
+}
+
+fn composed_trace_offsets(
+    mode: u8,
+    dma: bool,
+    skip: bool,
+    cached: bool,
+    offsets: &[u64],
+) -> Vec<String> {
     use crate::instance::execute::overlap::with_mode;
     use crate::ops::{with_bf16_gather, with_dma};
     use runtime_bundle_sdk::prefill::{Boundary, encode};
@@ -311,7 +321,7 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
     let cache = crate::instance::prefill_cache_for_test(instance.handle(), cached);
     assert_eq!(cache.len(), 4);
     let mut submitted = Vec::new();
-    for offset in [0, 8192] {
+    for &offset in offsets {
         let from = host.device.journal.borrow().len();
         let original = prompt(7, 0, offset, 8192, true);
         if skip {
@@ -355,7 +365,7 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
         };
         assert_eq!(
             decoded,
-            if cached && full > 0 {
+            if cached && full > 0 && offset < 32768 {
                 4 * if offset == 0 { 2 } else { full }
             } else {
                 0
@@ -364,18 +374,23 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
         );
         if mode == 2 && !skip {
             assert_eq!(attention.len(), 2 * 4 * 40);
-            assert!(
-                attention
-                    .iter()
-                    .all(|s| !s.contains("_decoded_") && s.contains("_reuse2_"))
-            );
+            for line in &attention {
+                let fused = matches!(offset, 0 | 24576) && line.contains("_mixed_");
+                assert!(!line.contains("_decoded_"));
+                assert_eq!(line.contains("_head_shared_finish_v1"), fused);
+                assert_eq!(line.contains("_reuse2_"), !fused);
+            }
         }
         if skip {
             let retained = attention
                 .iter()
                 .filter(|s| s.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1"))
                 .count();
-            assert_eq!(retained, 4 * 20, "retained native-key attention");
+            assert_eq!(
+                retained,
+                4 * if matches!(offset, 0 | 24576) { 2 } else { 20 },
+                "retained native-key attention"
+            );
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
             && s.contains(if dma && !skip {
@@ -407,8 +422,10 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
         if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {
             std::fs::create_dir_all(&root).unwrap();
             let root = std::path::Path::new(&root);
-            let name =
-                format!("mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal");
+            let prefix = if offsets.len() > 2 { "wide-" } else { "" };
+            let name = format!(
+                "{prefix}mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
+            );
             std::fs::write(root.join(&name), lines.join("\n")).unwrap();
             super::decode_attention::export_handles(&host.device, root, &name);
             std::fs::write(root.join(format!("{name}.full")), journal.join("\n")).unwrap();
@@ -419,6 +436,25 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     submitted
+}
+
+#[test]
+fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
+    for (mode, skip, cached, fused) in [
+        (2, false, true, 608),
+        (0, true, true, 432),
+        (2, true, false, 216),
+    ] {
+        let trace =
+            composed_trace_offsets(mode, false, skip, cached, &[0, 8192, 16384, 24576, 32768]);
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|line| line.starts_with("launch ") && line.contains("_finish_v1"))
+                .count(),
+            fused
+        );
+    }
 }
 
 fn compare_composed(mode: u8, dma: bool, skip: bool) {
@@ -433,32 +469,54 @@ fn compare_composed(mode: u8, dma: bool, skip: bool) {
                     || s.starts_with("record ")
                     || s.starts_with("wait "))
                     && !s.contains("chop_latent_prefill_")
-                    && (!s.contains("chop_latent_sources_") || s.contains("_merge_"))
+                    && !s.contains("chop_latent_sources_")
             })
             .collect::<Vec<_>>()
     };
     let attention = |lines: &[String]| {
         lines
             .iter()
-            .filter(|s| {
+            .enumerate()
+            .filter(|(_, s)| {
                 s.starts_with("launch ")
                     && s.contains("chop_latent_sources_")
                     && !s.contains("_merge_")
             })
-            .cloned()
+            .map(|(at, line)| (at, line.clone()))
             .collect::<Vec<_>>()
     };
     let (a, b) = (attention(&old), attention(&new));
     assert_eq!(a.len(), b.len());
-    for (a, b) in a.iter().zip(&b) {
+    for ((at, a), (_, b)) in a.iter().zip(&b) {
         if !b.contains("_decoded_") {
             assert_eq!(a, b);
+        } else if b.contains("_finish_v1") {
+            // A fused decoded call inherits the original final output views.
+            let before = if a.contains("_finish_v1") {
+                a
+            } else {
+                let merge = &old[at + 1];
+                assert!(merge.contains("_merge_v1"));
+                merge
+            };
+            let source = super::shared_overlap::journal_spans(before);
+            let fused = super::shared_overlap::journal_spans(b);
+            let output = if a.contains("_finish_v1") {
+                source[source.len() - 3..].to_vec()
+            } else {
+                assert_eq!(source.len(), 5);
+                // The merge declares output, sinks, RoPE; fusion appends
+                // sinks, RoPE, output after the native attention arguments.
+                vec![source[3], source[4], source[2]]
+            };
+            assert_eq!(output, fused[fused.len() - 3..]);
+            assert!(b.contains("NullDevicePointer, ScalarU64("));
         }
     }
     assert_eq!(
         unchanged(old),
         unchanged(new),
-        "all other launches, merge arguments, events and peer transfers"
+        "all other launches, events and peer transfers"
     );
 }
 

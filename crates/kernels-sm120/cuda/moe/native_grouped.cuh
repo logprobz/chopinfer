@@ -194,15 +194,29 @@ __device__ __forceinline__ uint32_t stage_scales(const uint32_t (&words)[Words],
   else return lay::scale_word(words[0], words[1], int((row * C::groups) & 3));
 }
 
+// Whether any of a stage's `Groups` scale bytes leaves [lo, hi].
+template<int Groups>
+__device__ __forceinline__ bool outside(uint32_t scales, uint32_t lo, uint32_t hi) {
+  bool out = false;
+#pragma unroll
+  for (int q = 0; q < Groups; ++q) {
+    const uint32_t b = (scales >> (8 * q)) & 255;
+    out |= b < lo || b > hi;
+  }
+  return out;
+}
+
 // One 128-K stage of `Groups` 32-K groups: per routed fragment, a chain
 // from +0 over the groups, then one ordered F32 add into the accumulator.
+// The exact engines' admission runs off the MMA path: its slow checks
+// execute only when a scale leaves the range where every code is exact.
 template<class C, class T, int Groups, bool Omit>
 __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int expert, int column,
     int count, ptx::D4 (&sum)[2][T::fragments]) {
-  constexpr int TC = tile_cols<C, T>;
+  constexpr int TC = tile_cols<C, T>, F = T::fragments;
   const auto& st = s.stage[slot];
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, g = lane >> 2, t = lane & 3;
-  const int row_base = (warp / T::col_warps) * T::fragments * 8, col_warp = warp % T::col_warps;
+  const int row_base = (warp / T::col_warps) * F * 8, col_warp = warp % T::col_warps;
   ptx::A4 a[2][Groups];
   uint32_t scale_a[2][Groups];
 #pragma unroll
@@ -216,37 +230,69 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
     for (int q = 0; q < Groups; ++q) {
       const uint32_t lo = lds32(st.weight + lay::weight_load(w + g, q, t));
       const uint32_t hi = lds32(st.weight + lay::weight_load(w + g + 8, q, t));
-      check_weights(lo, (s0 >> (8 * q)) & 255);
-      check_weights(hi, (s1 >> (8 * q)) & 255);
       lay::expand_e2m1x8(lo, a[cf][q].v[0], a[cf][q].v[2]);
       lay::expand_e2m1x8(hi, a[cf][q].v[1], a[cf][q].v[3]);
       scale_a[cf][q] = ((t & 1 ? s1 : s0) >> (8 * q)) & 255;
     }
+    if (outside<Groups>(s0, 0, 252) || outside<Groups>(s1, 0, 252)) {
+#pragma unroll 1
+      for (int q = 0; q < Groups; ++q) {
+        check_weights(lds32(st.weight + lay::weight_load(w + g, q, t)), (s0 >> (8 * q)) & 255);
+        check_weights(lds32(st.weight + lay::weight_load(w + g + 8, q, t)), (s1 >> (8 * q)) & 255);
+      }
+    }
   }
+  // Activation scales of each live fragment row, and the slow admission.
+  uint32_t sb[F];
+  bool slow = false;
+#pragma unroll
+  for (int f = 0; f < F; ++f) {
+    const int r = row_base + f * 8 + g, source = s.sources[r];
+    sb[f] = stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source));
+    slow |= row_base + f * 8 < count && source >= 0 && outside<Groups>(sb[f], 3, 246);
+  }
+  if (__any_sync(0xffffffffu, slow)) {
+#pragma unroll 1
+    for (int f = 0; f < F; ++f) {
+      const int r = row_base + f * 8 + g, source = s.sources[r];
+      if (row_base + f * 8 >= count || source < 0) continue;
+      const uint32_t scales = stage_scales<C>(st.act_scale[r], uint64_t(source));
+#pragma unroll 1
+      for (int q = 0; q < Groups; ++q)
+        check_activations(lds64(st.act + lay::act_load(r, q, t)), (scales >> (8 * q)) & 255);
+    }
+  }
+  // Fragments run in pairs, four independent chains per warp; a pair's
+  // second fragment may be padding, whose zero rows are discarded.
+  static_assert(F % 2 == 0);
   uint32_t nan = 0;
 #pragma unroll
-  for (int f = 0; f < T::fragments; ++f) {
-    if (row_base + f * 8 >= count) continue;  // warp-uniform: only padding remains
-    const int r = row_base + f * 8 + g, source = s.sources[r];
-    const uint32_t sb = stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source));
-    ptx::D4 chain[2] = {};
+  for (int f0 = 0; f0 < F; f0 += 2) {
+    if (row_base + f0 * 8 >= count) continue;  // warp-uniform: only padding remains
+    ptx::D4 chain[2][2] = {};
 #pragma unroll
     for (int q = 0; q < Groups; ++q) {
-      const uint2 codes = lds64(st.act + lay::act_load(r, q, t));
-      const uint32_t scale_b = (sb >> (8 * q)) & 255;
-      nan |= lay::e4m3_nan(codes.x) | lay::e4m3_nan(codes.y);
-      if (source >= 0) check_activations(codes, scale_b);
-      const ptx::B2 b{{codes.x, codes.y}};
 #pragma unroll
-      for (int cf = 0; cf < 2; ++cf)
-        ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
-            chain[cf], a[cf][q], b, scale_a[cf][q], scale_b);
+      for (int p = 0; p < 2; ++p) {
+        const int f = f0 + p, r = row_base + f * 8 + g;
+        const uint2 codes = lds64(st.act + lay::act_load(r, q, t));
+        nan |= lay::e4m3_nan(codes.x) | lay::e4m3_nan(codes.y);
+        const ptx::B2 b{{codes.x, codes.y}};
+        const uint32_t scale_b = (sb[f] >> (8 * q)) & 255;
+#pragma unroll
+        for (int cf = 0; cf < 2; ++cf)
+          ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
+              chain[p][cf], a[cf][q], b, scale_a[cf][q], scale_b);
+      }
     }
     if constexpr (!Omit) {
 #pragma unroll
-      for (int cf = 0; cf < 2; ++cf)
+      for (int p = 0; p < 2; ++p)
 #pragma unroll
-        for (int i = 0; i < 4; ++i) sum[cf][f].v[i] = __fadd_rn(sum[cf][f].v[i], chain[cf].v[i]);
+        for (int cf = 0; cf < 2; ++cf)
+#pragma unroll
+          for (int i = 0; i < 4; ++i)
+            sum[cf][f0 + p].v[i] = __fadd_rn(sum[cf][f0 + p].v[i], chain[p][cf].v[i]);
     }
   }
   if (nan) __trap();

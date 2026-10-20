@@ -157,6 +157,8 @@ mod mxfp8_fold_stream;
 mod own_entries;
 #[allow(dead_code, reason = "the bundle selects measured prefill rows")]
 mod prefill_matrix;
+#[allow(dead_code, reason = "the bundle selects the qualified TMA row bucket")]
+mod prefill_tma_matrix;
 #[allow(dead_code)]
 mod projection_reuse;
 #[path = "reduce.rs"]
@@ -510,6 +512,9 @@ pub fn selection(
     specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
     specs.extend(prefill_matrix::cubins(geometries).expect("qualified prefill matrix cubin"));
+    specs.extend(
+        prefill_tma_matrix::cubins(geometries).expect("qualified prefill TMA matrix cubin"),
+    );
     specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(

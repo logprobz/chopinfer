@@ -764,7 +764,16 @@ mod tests {
                         }
                     );
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
-                    if let Some((tile, stages)) = matrix {
+                    if crate::sm120::prefill_tma_matrix::choice(
+                        &FLASH,
+                        shape.ranks(),
+                        q,
+                        phase.rows(),
+                    ) {
+                        assert!(calls[1].launch.symbol.ends_with("_tma_matrix_s2_v1"));
+                        assert_eq!(calls[1].launch.plan.block, [384, 1, 1]);
+                        assert_eq!(calls[1].launch.plan.dynamic_shared_bytes, 66_560);
+                    } else if let Some((tile, stages)) = matrix {
                         assert!(
                             calls[1]
                                 .launch

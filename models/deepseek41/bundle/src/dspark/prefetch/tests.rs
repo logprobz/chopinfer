@@ -173,7 +173,11 @@ fn terminal_limits_bad_samples_and_stale_acceptance_never_predict() {
     assert!(feedback.plan(&state, 100).unwrap().is_none());
     feedback.packet[sample + 4..sample + 8].fill(0);
     feedback.packet[..8].copy_from_slice(&8_u64.to_le_bytes());
-    assert!(feedback.plan(&state, 100).is_err());
+    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    feedback.packet[..32].fill(0);
+    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    feedback.packet[..32].fill(0xff);
+    assert!(feedback.plan(&state, 100).unwrap().is_none());
 }
 
 #[test]

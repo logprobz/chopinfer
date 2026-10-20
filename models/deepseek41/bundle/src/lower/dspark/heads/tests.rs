@@ -208,6 +208,15 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                     markov.launch.plan.grid,
                     [shape.vocab_rows().div_ceil(128), 1, 1]
                 );
+                // One CTA per row reduces the rank's shard with 1024 threads.
+                let argmax = program
+                    .iter()
+                    .find(|op| op.launch.symbol == "chop_dspark_argmax_f32_wide_v1")
+                    .unwrap();
+                assert_eq!(
+                    (argmax.launch.plan.grid, argmax.launch.plan.block),
+                    ([items, 1, 1], [1024, 1, 1])
+                );
                 let hidden = argument_span(confidence, 0);
                 assert_eq!(hidden.buffer, v.hidden_f32.buffer);
                 assert_eq!(
@@ -250,6 +259,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
         for symbol in [
             "chop_deepseek41_dspark_markov_tiled_v1",
             "chop_deepseek41_dspark_confidence_parallel_v1",
+            "chop_dspark_argmax_f32_wide_v1",
             "chop_dspark_argmax_final_v1",
         ] {
             assert_eq!(

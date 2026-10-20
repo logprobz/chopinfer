@@ -38,6 +38,7 @@ mod dspark_cubin;
 mod dspark_entries;
 use bundle_deepseek41::sm120::confidence_parallel;
 use bundle_deepseek41::sm120::markov_tiled;
+mod dspark_argmax;
 mod dspark_heads;
 mod dspark_ring_gather;
 #[path = "../../../bundle/src/sm120/engram_hash.rs"]

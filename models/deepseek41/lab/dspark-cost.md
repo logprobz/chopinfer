@@ -15,7 +15,9 @@ all reachable widths at the ordinary concurrency waves, the widest key
 at other concurrencies where every request can fit a draft, and witnesses
 for each drafter count. The complete reachable set has 426 keys and would
 need 1,278 target graph handles per rank before other graphs. The existing
-384-handle limit stays in effect. Unselected keys remain lazy.
+384-handle limit stays in effect. Unselected keys remain lazy. Admission retains existing graphs when the
+cache fills and lowers uncached shapes eagerly. Completion tails cannot
+retire the warmed set.
 
 The diagnostic build can compare both drafter implementations on identical
 inputs with `CHOPINFER_DSPARK_DRAFT_CHECK` naming an existing marker file.
@@ -24,8 +26,8 @@ every rank, failing before target verification on any mismatch. Removing
 the marker disables the check permanently at the next chunked forward.
 The comparison reads back outputs and is only for qualification.
 
-`dspark_cost_job.py` uses one server per policy and chunk size, four servers
-and eight C8/C16 sampled cases in total. Production verify warmup is on.
+`dspark_cost_job.py` uses one server per policy and chunk size, then an
+eager reference: five servers and ten C8/C16 sampled cases in total. Production verify warmup is on.
 Candidate startup and the fixed-K3 full-workload warmup check drafter
 equality. Adaptive workload warmup excludes comparison work so its cost
 estimator learns serving times. The marker is removed before timing.
@@ -49,3 +51,18 @@ The memory report distinguishes a fixed graph-handle limit from observed
 CUDA allocation bytes. Driver graph memory has no fixed byte size per
 handle. Fake-host results prove lifecycle, spans and graph coverage; the
 staged served comparison must establish device bitwise equality and speed.
+
+A later workload reached 546 distinct handles per rank, beyond the staged
+512-handle limit, and a 31-row/14-item completion tail triggered retirement.
+The following 32-row/16-item step recaptured a key that startup had already
+warmed. This was capacity pressure, with about 1.19 GiB of observed capture
+allocations per GPU and at least 3.10 GiB free, not a width or bank mismatch.
+Retaining admission preserves warmed keys without increasing either limit.
+
+The job compares graph and eager serving bitwise on two repeated 32-token
+waves at C3, C5, C7, C14 and C15, plus full C8/C16 cohorts. It asserts that
+the reference executed graph steps and the zero-capacity arm executed eager
+steps. These checks also compare the complete selected and top logprob bit
+patterns. The main timing retains the no-target-capture assertion. Eager
+tail counts and their completed whole-step milliseconds are reported per
+cohort; those times include the drafter and host work.

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import dspark_cost_job as job
 import dspark_cost_stage as sealing
+from dspark_cost_analysis import replay_retention
 
 
 class CostJobTests(unittest.TestCase):
@@ -29,6 +30,9 @@ class CostJobTests(unittest.TestCase):
                 assert self.env["CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK"] == "512"
                 return []
 
+            def qualify_tails(self):
+                return [dict(concurrency=c) for c in (3, 5, 7, 14, 15)]
+
             def cohort(self, config, concurrency):
                 assert not list(self.output.glob("draft-check-*"))
                 path = self.directory / f"C{concurrency}"
@@ -41,7 +45,8 @@ class CostJobTests(unittest.TestCase):
             (root / "config.json").write_text(json.dumps(dict(
                 source=str(Path(__file__).resolve().parents[3]))))
             result = Fixture(root, root / "output", dry=True).run()
-            self.assertEqual(result["case_count"], 8)
+            self.assertEqual(result["case_count"], 10)
+            self.assertEqual(result["tail_case_count"], 10)
 
     def test_handle_and_observed_allocation_limits_remain_bounded(self):
         graph = dict(schema="chopinfer.graph-cache.v1", capacity=2048,
@@ -86,6 +91,37 @@ class CostJobTests(unittest.TestCase):
         self.assertEqual(result["peak_handles"], 12)
         with self.assertRaises(AssertionError):
             job.capture_memory(text.replace("5 held", "6 held"))
+
+    def test_retention_replay_preserves_a_warmed_key_after_tail_pressure(self):
+        def graph(event, width, items, epoch=0):
+            return dict(schema="chopinfer.graph-cache.v1", event=event,
+                family="target", rank=0, segment=0, width=width, items=items, epoch=epoch)
+        text = "\n".join(map(json.dumps, [
+            graph("capture", 32, 16), graph("target-eager", 31, 14),
+            graph("eviction-begin", None, None), graph("capture", 31, 14, 1),
+            graph("capture", 32, 16, 1),
+        ]))
+        replay = replay_retention(text, capacity=12)
+        self.assertTrue(replay["protected_32_by_16"])
+        self.assertEqual(replay["retained_handles"], 12)
+        self.assertEqual(replay["avoided_recapture_groups"], 1)
+        self.assertEqual(replay["first_32_by_16"]["epoch"], 0)
+        self.assertEqual(replay["denied"][0]["rows"], 31)
+
+    def test_eager_tail_costs_use_completed_steps_and_preserve_full_capture_guard(self):
+        text = "\n".join(map(json.dumps, [
+            dict(schema="chopinfer.graph-cache.v1", event="target-eager", family="target"),
+            dict(schema="chopinfer.step.v1", prefill_items=0, decode_rows=10, verify_items=4,
+                 row_capacity=31, execution_us=88092),
+            dict(schema="chopinfer.graph-cache.v1", event="capture", family="target", width=32, items=16),
+            dict(schema="chopinfer.step.v1", prefill_items=0, decode_rows=0, verify_items=16, batch=933),
+        ]))
+        result = job.capture_hits(text, 16)
+        self.assertEqual(result["target_capture_steps"], 1)
+        self.assertEqual(result["capture_misses"][0]["batch"], 933)
+        self.assertEqual(result["tail_eager_steps"], 1)
+        self.assertEqual(result["tail_eager_rate"], 1)
+        self.assertEqual(result["tail_eager_mean_ms"], 88.092)
 
     def test_target_misses_belong_to_their_own_completed_step(self):
         records = [

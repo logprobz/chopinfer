@@ -412,21 +412,30 @@ impl Heads {
                 counts,
             ))?);
         }
-        let mut bind = Bind::default();
-        let buffers = GatherByIndexBuffers {
-            source: bind.view(v.block_logits),
-            row_indices: bind.view(v.position_rows),
-            count: bind.view(v.live_items),
-            destination: bind.view(v.position_logits),
+        // Item i's row of this position is block row 5 i + position (the
+        // drafter's fixed `position_rows`). A lone item's row is one
+        // contiguous slice, so its step reads the row in place instead of
+        // copying it first.
+        let row_bytes = u64::from(self.shape.vocab_rows()) * 4;
+        let base = if items == 1 {
+            slice(v.block_logits, u64::from(position) * row_bytes, row_bytes)?
+        } else {
+            let mut bind = Bind::default();
+            let buffers = GatherByIndexBuffers {
+                source: bind.view(v.block_logits),
+                row_indices: bind.view(v.position_rows),
+                count: bind.view(v.live_items),
+                destination: bind.view(v.position_logits),
+            };
+            result.extend(run(bind.launch(&self.logits_row, &buffers, counts))?);
+            v.position_logits
         };
-        result.extend(run(bind.launch(&self.logits_row, &buffers, counts))?);
         let mut bind = Bind::default();
-        let output = bind.view(v.position_logits);
         let buffers = MarkovStepBuffers {
             embedding: bind.view(v.embedding),
             weight: bind.view(v.markov_weight),
-            base: output,
-            output,
+            base: bind.view(base),
+            output: bind.view(v.position_logits),
             live_rows: bind.view(v.live_items),
         };
         result.extend(run(bind.launch(&self.markov, &buffers, counts))?);

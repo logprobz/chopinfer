@@ -685,7 +685,7 @@ mod tests {
             own: Box::new(HcOnly),
             gather_state: [0; 2],
         };
-        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
         assert!(ops.hc.is_some() && ops.rows.is_none());
         let buffers = buffers(&shape, 0);
         let live = DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(999, 1), 0, 4);

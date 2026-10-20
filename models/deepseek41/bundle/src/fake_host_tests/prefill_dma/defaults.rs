@@ -46,6 +46,16 @@ fn capture(
     rows: u32,
 ) -> Vec<String> {
     let host = host();
+    // Report residency as the served host does, so the BF16 gather's phased
+    // reductions are admitted and the upper-skip executor can replace them.
+    host.device.residency.set(Some(BundleRawClusterResidencyV1 {
+        multiprocessor_count: 188,
+        usable_multiprocessors: 188,
+        max_active_clusters: 188,
+        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+        ..BundleRawClusterResidencyV1::unreported()
+    }));
     let record = record(&host, prefill);
     let profile = Profile::read(prefill).unwrap();
     let mut instance = with_bf16_gather(bf16, || {
@@ -123,7 +133,7 @@ fn unset_dma_legacy_create_record_matches_disabled_journals() {
 }
 
 #[test]
-fn package_defaults_do_not_allocate_or_execute_dma() {
+fn package_defaults_select_dma_for_upper_skip_only() {
     let defaults = resolved(None);
     assert_eq!(
         Profile::read(&defaults).unwrap(),
@@ -135,9 +145,25 @@ fn package_defaults_do_not_allocate_or_execute_dma() {
     for name in ["tp4-ar", "tp4-dspark"] {
         assert_eq!(resolved(Some(name)), defaults, "{name}");
     }
+    // The unset default is the explicit transport on the upper-skip
+    // executor: the same streams, events, inbox, copies and sums.
+    let unset = capture(None, true, &defaults, 8192);
+    let explicit = capture(Some("1"), true, &defaults, 8192);
+    assert_eq!(unset, explicit);
+    assert_eq!(
+        unset
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .count(),
+        73 * 24
+    );
+    assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_ne!(unset, capture(Some("0"), true, &defaults, 8192));
+    // Without the BF16 gather it was measured with, the default keeps
+    // the SM transport.
     assert_disabled_journal(
-        &capture(None, true, &defaults, 8192),
-        &capture(Some("0"), true, &defaults, 8192),
+        &capture(None, false, &defaults, 8192),
+        &capture(Some("0"), false, &defaults, 8192),
     );
 }
 

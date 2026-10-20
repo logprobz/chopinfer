@@ -799,7 +799,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::Unsupported
     })?;
-    let ops = Ops::prepare(&kernels, &shape, config.kv.storage);
+    let ops = Ops::prepare(&kernels, &shape, config.kv.storage, config.prefill);
     let dspark = if has_drafter {
         Some(
             crate::dspark::device::Device::new(

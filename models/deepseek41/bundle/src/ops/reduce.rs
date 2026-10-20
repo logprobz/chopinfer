@@ -208,9 +208,14 @@ fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
 #[cfg(test)]
 thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
+/// `Skip` is the unset default: ordered DMA for the negotiated upper-skip
+/// executor only, with the BF16 gather it was measured with. Full-schedule
+/// and two-part executions keep the SM transport unless `1` selects
+/// `Explicit`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,
+    Skip,
     Explicit,
 }
 
@@ -218,11 +223,31 @@ impl PrefillDma {
     fn read(setting: Option<&str>) -> Self {
         match setting {
             Some("1") => Self::Explicit,
+            None => Self::Skip,
             _ => Self::Off,
         }
     }
 
+    /// The policy an instance keeps: `Skip` holds only for a create record
+    /// whose prefill profile negotiates upper-skip chunks and whose BF16
+    /// gather is prepared; otherwise it allocates nothing.
+    pub(crate) fn admit(
+        self,
+        prefill: model_deepseek41_contract::prefill_profile::Profile,
+        bf16_gather: bool,
+    ) -> Self {
+        match self {
+            Self::Skip if !(prefill.skip && prefill.chunk > 0 && bf16_gather) => Self::Off,
+            policy => policy,
+        }
+    }
+
     pub(crate) fn enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Full-schedule and two-part executions require explicit selection.
+    pub(crate) fn serves_full_schedule(self) -> bool {
         self == Self::Explicit
     }
 }
@@ -262,14 +287,35 @@ pub(crate) fn with_dma_setting<T>(setting: Option<&str>, run: impl FnOnce() -> T
 
 #[cfg(test)]
 #[test]
-fn dma_requires_explicit_selection() {
+fn dma_defaults_to_upper_skip_and_keeps_explicit_controls() {
+    use model_deepseek41_contract::prefill_profile::Profile;
+    let skip = Profile {
+        chunk: 8192,
+        skip: true,
+    };
+    let full = Profile::default();
+    let chunked = Profile {
+        chunk: 8192,
+        skip: false,
+    };
     let explicit = PrefillDma::read(Some("1"));
     assert_eq!(explicit, PrefillDma::Explicit);
-    assert!(explicit.enabled());
+    for (prefill, bf16) in [(skip, true), (skip, false), (full, true), (chunked, true)] {
+        assert_eq!(explicit.admit(prefill, bf16), PrefillDma::Explicit);
+    }
+    assert!(explicit.enabled() && explicit.serves_full_schedule());
+    let unset = PrefillDma::read(None);
+    assert_eq!(unset, PrefillDma::Skip);
+    assert_eq!(unset.admit(skip, true), PrefillDma::Skip);
+    assert!(unset.enabled() && !unset.serves_full_schedule());
+    for (prefill, bf16) in [(skip, false), (full, true), (chunked, true)] {
+        assert_eq!(unset.admit(prefill, bf16), PrefillDma::Off);
+    }
     for setting in [Some("0"), Some(""), Some("invalid")] {
         let off = PrefillDma::read(setting);
         assert_eq!(off, PrefillDma::Off);
-        assert!(!off.enabled());
+        assert_eq!(off.admit(skip, true), PrefillDma::Off);
+        assert!(!off.enabled() && !off.serves_full_schedule());
     }
 }
 

@@ -110,8 +110,14 @@ impl Ops {
     }
 
     /// Prepares every op of an instance of `shape` on `kernels` over KV
-    /// pages in `storage`, recording each family they refuse.
-    pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
+    /// pages in `storage`, recording each family they refuse. `prefill` is
+    /// the create record's prefill profile, which admits the default DMA.
+    pub(crate) fn prepare(
+        kernels: &Kernels,
+        shape: &Shape,
+        storage: KvStorage,
+        prefill: model_deepseek41_contract::prefill_profile::Profile,
+    ) -> Ops {
         let mut ops = Self::prepare_set(
             kernels,
             shape,
@@ -145,7 +151,11 @@ impl Ops {
             }
             ops.asked.extend(asks.asked());
         }
-        let dma = reduce::dma_requested();
+        let gather = ops
+            .reduce
+            .as_ref()
+            .is_some_and(reduce::ReduceOps::prefill_prepared);
+        let dma = reduce::dma_requested().admit(prefill, gather);
         if dma.enabled()
             && shape.ranks() == 4
             && shape.geometry == &model_deepseek41_contract::geometry::FLASH
@@ -470,7 +480,7 @@ mod tests {
             own: Box::new(Nothing),
             gather_state: [0; 2],
         };
-        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
         assert!(ops.rows.is_none() && ops.reduce.is_none() && ops.hc.is_none());
         assert!(ops.moe.is_none() && ops.compressor.is_none() && ops.dense.is_none());
         assert!(ops.asked.is_empty());

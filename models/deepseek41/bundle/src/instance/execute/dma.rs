@@ -392,9 +392,18 @@ pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
         && run.inputs.request_ids.len() == 1
 }
 
+/// The full-schedule and two-part executors take DMA only when it was
+/// selected explicitly; the default serves the upper-skip executor alone.
+pub(super) fn eligible_full_schedule(instance: &Instance, run: &Run) -> bool {
+    eligible(instance, run) && instance.ops.prefill_dma.serves_full_schedule()
+}
+
 impl Plan {
     pub(super) fn prepare(instance: &Instance, run: &Run) -> Result<Option<Self>, String> {
-        if !eligible(instance, run) || !instance.overlap.is_empty() || run.phase.rows() < 512 {
+        if !eligible_full_schedule(instance, run)
+            || !instance.overlap.is_empty()
+            || run.phase.rows() < 512
+        {
             return Ok(None);
         }
         let stages = crate::program::stages(instance.config.shape.geometry, run.phase);

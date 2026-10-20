@@ -820,7 +820,8 @@ mod tests {
     fn sm120_attends_at_the_sources_it_registers() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let ops = super::super::Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops =
+            super::super::Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
         assert!(ops.glue.is_some(), "{:?}", ops.missing);
         let ratios: Vec<u32> = ops.attention.iter().map(|ops| ops.ratio).collect();
         assert_eq!(ratios, [0, 1, 2], "{:?}", ops.missing);
@@ -838,7 +839,7 @@ mod tests {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         for storage in [KvStorage::Native, KvStorage::Bf16] {
-            let ops = super::super::Ops::prepare(&kernels, &shape, storage);
+            let ops = super::super::Ops::prepare(&kernels, &shape, storage, Default::default());
             assert!(ops.missing.is_empty(), "{:?}", ops.missing);
             for attention in &ops.attention {
                 for (kind, op) in &attention.ops {

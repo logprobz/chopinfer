@@ -280,7 +280,7 @@ impl Plan {
                         Ok(reduce.launches[at].symbol.as_str())
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                calls.push(if super::dma::eligible(instance, run) {
+                calls.push(if super::dma::eligible_full_schedule(instance, run) {
                     super::dma::Call::prepare(
                         instance,
                         first,

@@ -167,3 +167,7 @@ path = "examples/sm120/build_fold_core.rs"
 [[test]]
 name = "fold_core"
 path = "tests/sm120/fold_core/main.rs"
+
+[[example]]
+name = "build_indexer_prefill_tile"
+path = "examples/sm120/build_indexer_prefill_tile.rs"

@@ -434,8 +434,8 @@ impl crate::Kernels {
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
             && (cubin != moe_grouped_entries::CUBIN
-            || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
-                && shape.ranks() == 4))
+                || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
+                    && shape.ranks() == 4))
             && cubin != kernels_sm120::probes::CUBIN
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)

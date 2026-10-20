@@ -18,13 +18,22 @@ import run as width
 
 from session import Session
 import cycles
+import warmup
 
 
 class Runner(width.Runner):
     def __init__(self, stage, output, dry=False):
         super().__init__(stage, output, "profile", dry)
+        self.policies = tuple(self.settings.get("profile_policies", ("uniform3", "adaptive")))
+        assert self.policies in (("uniform3", "adaptive"), ("adaptive",))
+        self.full_warmup = self.settings.get("full_workload_warmup", False)
+        self.prepared = []
+        if not dry and self.full_warmup:
+            reference = Path(self.settings["comparison_reference"])
+            self.reference = {str(c): json.loads((reference/f"C{c}-outputs.json").read_text())
+                              for c in (8, 16)}
         if not dry:
-            self.deadline = self.started + 1020
+            self.deadline = self.started + (510 if len(self.policies) == 1 else 1020)
         self.session = None
         self.env["X7_PROFILE_FIXTURE"] = "1" if dry else "0"
         self.env["X7_PROFILE_FIXTURE_ROOT"] = str(self.output / "fixture-sessions")
@@ -54,6 +63,7 @@ class Runner(width.Runner):
                 assert identity["pid"] == identity["pgid"]
                 self.server = SimpleNamespace(pid=identity["pid"])
                 try:
+                    self.prepared = warmup.prepare(self, width) if self.full_warmup else []
                     self.session.start()
                     yield
                 finally:
@@ -70,22 +80,25 @@ class Runner(width.Runner):
         servers = []
         captured = []
         try:
-            for epoch, config in enumerate(("uniform3", "adaptive")):
+            for epoch, config in enumerate(self.policies):
                 with self.profiled(config, epoch):
                     cohorts = [self.cohort(config, c) for c in (8, 16)]
                     ready = width.cache_ready(self.log.read_text())
                 assert self.session.starts == self.session.stops == 1
                 servers.append(dict(config=config, cohorts=cohorts, resident_cache=ready,
+                                    full_workload_warmup=self.prepared,
                                     session=self.session.receipt()))
                 captured.append((self.session, self.directory, servers[-1]))
                 width.write(self.directory / "capture.json", servers[-1])
                 self.gpu_guard(f"after-{epoch}", idle=True)
-            assert len(servers) == 2 and sum(len(s["cohorts"]) for s in servers) == 4
+            assert len(servers) == len(self.policies)
+            assert sum(len(s["cohorts"]) for s in servers) == 2*len(self.policies)
         finally:
             self.gpu_guard("final")
         # Preserve both raw captures before any export or analysis can fail.
         width.write(self.output / "captures.json",
-                    dict(status="captured", server_count=2, case_count=4, servers=servers))
+                    dict(status="captured", server_count=len(servers),
+                         case_count=2*len(servers), servers=servers))
         errors = []
         for session, directory, server in captured:
             try:
@@ -102,7 +115,8 @@ class Runner(width.Runner):
         assert not errors, errors
         result = dict(schema="chopinfer.dspark-cycle-profile.v1", status="passed",
                       dry_run=self.dry, native_revision=self.settings["native_revision"],
-                      server_count=2, case_count=4, bitwise=True, servers=servers,
+                      server_count=len(servers), case_count=2*len(servers),
+                      bitwise=True, servers=servers,
                       elapsed_seconds=time.monotonic() - self.started,
                       timing="Instrumented phase attribution, not a throughput benchmark",
                       cpu_acceptance="Host sampling/commit timers are reported separately; they are not GPU phase times.")

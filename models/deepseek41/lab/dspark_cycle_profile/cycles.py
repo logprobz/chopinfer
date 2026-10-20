@@ -36,7 +36,7 @@ def overlap(a, b):
     return total
 
 
-def classify(rows, live_rows, verify_items):
+def classify(rows, capacity, verify_items):
     """Graph markers label complete graphs; eager intervals remain explicit."""
     draft_graphs = {r["graphId"] for r in rows if r["name"] == MARKOV
                     and r["graphId"] is not None}
@@ -45,11 +45,22 @@ def classify(rows, live_rows, verify_items):
     embeddings = [r for r in rows if r["name"] == EMBED]
     assert embeddings, "target embedding missing: incomplete capture or clock mismatch"
     target_begin = embeddings[-1]
-    assert target_begin["gridX"] == live_rows, "target geometry differs from engine trace"
+    # The shared embedding grids a power-of-two bucket and masks device-live
+    # rows. Its CTA count is not the exact graph width.
+    assert 1 <= capacity <= 32, "target exceeds the staged verify-row limit"
+    embedding_grid = 1 << (capacity - 1).bit_length()
+    assert target_begin["gridX"] == embedding_grid, "target embedding grid differs from its row contract"
     heads = [r for r in rows if "head_f32_" in r["name"]
              and r["name"].endswith("_cached_reduce_v1") and r["start"] >= target_begin["start"]]
     assert len(heads) == 1, "target head missing or multiple target forwards in one step"
     target_end = heads[0]["end"]
+    # The cached F32 head's row producer grids Counts::rows exactly.
+    # Check it independently, including widths sharing an embedding bucket.
+    exact = [r for r in rows if "head_f32_" in r["name"]
+             and r["name"].endswith("_cached_rows_v1")
+             and target_begin["start"] <= r["start"] < target_end]
+    assert len(exact) == 1 and exact[0]["gridX"] == capacity, (
+        "exact target row geometry differs from engine trace")
     target_graphs = {r["graphId"] for r in rows
                      if target_begin["start"] <= r["start"] < target_end
                      and r["graphId"] is not None}

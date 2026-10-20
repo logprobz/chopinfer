@@ -40,6 +40,24 @@ def selected(memcheck):
     return {i for i,c in enumerate(cases()) if not memcheck or i<5 or c['kind']==3 or c['kind']>=8}
 
 
+def batch_count(c):
+    """Match contract::indexer::prefill and the compact fixture's row chunks."""
+    rows=c['rows']
+    if c['layer']>=24:return (rows+4095)//4096
+    ratio=1 if c['layer']==20 else 2
+    # Captures and ordinary fixtures end at context - 1. The empty/one
+    # position fixture instead ends at position 1.
+    visible=(2 if c['kind']==6 else c['context'])//ratio
+    page=64//ratio
+    width=(max(1,visible)+page-1)//page*page
+    fit=min((256<<20)//(width*4),rows,512 if c['layer']==20 else 4096)
+    # The contract rounds after limiting by the supplied row count, so
+    # even 65 rows with ample score storage require two dense batches.
+    if fit>=64:fit=fit//64*64
+    assert fit>0
+    return (rows+fit-1)//fit
+
+
 def results(logs,memcheck=False):
     assert len(logs)==2
     seen=[];times=[];guards=[]
@@ -59,7 +77,11 @@ def results(logs,memcheck=False):
             assert c['raw']==4 and c['pipelines']==4 and c['partitions']==1 and c['controls']==2
             assert c['mismatches']==0 and c['memcheck'] is memcheck
             assert c['timed'] is (timed(want) and not memcheck)
-            assert c['batches']==(want['rows']+(512 if want['layer']==20 else 4096)-1)//(512 if want['layer']==20 else 4096)
+            expected_batches=batch_count(want)
+            assert c['batches']==expected_batches, (
+                f"batch count: case={c['id']} layer={want['layer']} context={want['context']} "
+                f"rows={want['rows']} kind={want['kind']} memcheck={memcheck} "
+                f"expected={expected_batches} observed={c['batches']}")
         seen.extend(found);times.extend(records(text,'PREFILL_TILE_TIMING'));guards.extend(records(text,'PREFILL_TILE_GUARDS'))
     wanted={(i,stage,arm) for i,c in enumerate(shapes) if timed(c) and not memcheck
             for stage in ('pack_score','all') for arm in ('coarse','narrow','wide','tile')}

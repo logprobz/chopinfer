@@ -592,8 +592,8 @@ persistent grid takes (tile, column strip) items from an integer ticket,
 with three cp.async stages of 128 K. Gate/up warps hold one gate and one up
 fragment of 16 columns, down warps two fragments of 32. Admission traps on
 the codes and scales the exact engines trap on, and the gate/up epilogue is
-`chained::before_down`. No catalog selects these entries; DeepSeek binds
-them opt-in (`models/deepseek41/lab/native_moe_prefill.md`).
+`chained::before_down`. Bundles select these entries explicitly after
+qualifying their served outputs.
 
 ## Diagnostics
 

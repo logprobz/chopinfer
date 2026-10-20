@@ -49,7 +49,7 @@ fn operand_layout_matches_the_instruction_fragments() {
     );
 }
 
-/// Two expert geometries: DeepSeek Flash TP4 and a small one with a
+/// Two expert geometries: full-width columns and a small one with a
 /// partial column strip and an unaligned scale row.
 fn shapes() -> Vec<(Shape, &'static [native_grouped::Tile])> {
     let clamp = Some((0x40e0_0000, 0x40e0_0000));

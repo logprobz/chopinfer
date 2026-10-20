@@ -115,11 +115,18 @@ Expected, before measurement: gate/up at about 55% of the FP8 reference
 rate (1.7 ms per layer, 68 ms per chunk) and down at about 75% of the
 memory rate (1.3 ms per layer, 53 ms per chunk), about 120 ms per full
 8192-row chunk; the plausible range is 90 to 170 ms. The current serving
-kernels measured 5.15 to 5.62 ms (gate/up with its predecode) and 3.20 to
-3.48 ms (down, with the grouped M128/N128 binding) per layer on captured
-layers 14 and 39, rank 0 (2026-10-20), about 350 ms per
-full chunk, so the expected saving is about 230 ms per full chunk. Upper
-layers skipped at a prompt's last chunk scale both sides. The router, ceil
-and combine are unchanged. These are estimates from the floor model and
-those measurements, not results of this candidate; the timing job measures
-it, and its timings count only after criteria 1 to 6 pass.
+kernels take 137.6 ms for gate/up (89.5, 33.1, 8.8 and 6.2 ms in its four
+stages, including the activation quantizer this candidate keeps) and 97.7
+ms for down per 8192 rows in the GPU-exclusive profile of chunk 0 of a
+cold 32K prompt on the round 7 head (2026-10-20), 235 ms together, so the
+expected saving is about 110 ms per full chunk. Paired lab timings of the
+same kernels on captured layers 14 and 39 (5.15 to 5.62 ms gate/up and
+3.20 to 3.48 ms down per layer) are higher than their profile share and
+are not the baseline here. Another implementation of the same E2M1 x E4M3
+instruction with live-tile queues takes 128 ms for routed experts (gate/up
+76, down 46, activation quantize 5.3) per 8192 rows on this hardware,
+which supports the estimate's order. Upper layers skipped at a prompt's
+last chunk scale both sides. The router, ceil and combine are unchanged.
+These are estimates from the floor model and those measurements, not
+results of this candidate; the timing job measures it, and its timings
+count only after criteria 1 to 6 pass.

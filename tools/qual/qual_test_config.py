@@ -195,6 +195,7 @@ def preview_references(models):
                      if isinstance(entries.get("exact", {}).get("path"), dict)]
         environment = {location["env"]: str(root / "inputs" / location["env"]) for location in locations}
         environment["CHOPINFER_QUAL_MODEL_ROOT"] = str(root)
+        environment["CHOPINFER_LOCAL_ENV"] = str(root / "missing.env")
         with patch.dict(os.environ, environment):
             for location in locations:
                 path = common.declared_path(location, root)

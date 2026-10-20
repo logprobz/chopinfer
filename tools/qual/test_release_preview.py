@@ -2717,8 +2717,12 @@ class RescoreTests(FakeRunTests):
     def test_the_rescore_entry_points_judge_shutdown_evidence_without_pythonpath(self):
         # The test process has the repository on sys.path; the entry points
         # run without it, from outside the checkout and as the package.
+        # A clean copy also excludes the checkout's local.env, which has
+        # precedence over the fixture's selected environment file.
+        from qual_test_config import clean_checkout
         with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'), \
+                clean_checkout() as checkout:
             # A subset whose checks import nothing else from the checkout, as
             # the offload checks do: only the shutdown evidence needs it.
             fake = FakeRun(Path(temporary), model(lambda facts: 'api' in facts['quick']))
@@ -2731,15 +2735,17 @@ class RescoreTests(FakeRunTests):
             runner.write(run / 'default' / arm / 'shutdown.json', {'pid': runner.read(
                 run / 'default' / arm / 'health.json')['process_group'], 'returncode': -9})
             for command, cwd in (
-                    (['bash', str(runner.TOOLS / 'release_preview.sh')], Path(temporary)),
-                    ([sys.executable, '-B', '-m', 'tools.qual', 'preview'], runner.ROOT)):
+                    (['bash', str(checkout / 'tools/qual/release_preview.sh')], Path(temporary)),
+                    ([sys.executable, '-B', '-m', 'tools.qual', 'preview'], checkout)):
                 with self.subTest(command=command[-1]):
                     out = Path(temporary) / f'rescored-{len(command)}.json'
                     done = subprocess.run([*command, 'rescore', str(run), '--json', str(out)], cwd=cwd, env=env,
                                           capture_output=True, text=True, timeout=600, check=False)
                     self.assertNotIn('Traceback', done.stderr, done.stderr[-2000:])
                     self.assertEqual(done.returncode, 1, done.stderr[-2000:])
+                    self.assertTrue(out.is_file(), done.stdout + done.stderr)
                     rows = {row['id']: row for row in runner.read(out)['rows']}
+                    self.assertIn(f'default/{arm}/server', rows, rows)
                     server = rows[f'default/{arm}/server']
                     self.assertEqual(server['status'], 'fail')
                     self.assertIn('nonclean or unconfirmed server shutdown: -9', server['error'])

@@ -1,12 +1,12 @@
 use super::*;
 
 // Six and 32 rows replace 77 five/six-launch chains with two launches and
-// retain all original operands. Eight and 16 rows keep identical journals.
+// retain all original operands. Eight and 16 rows retain the unfused HC path.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (7752, 0x918c99c09d6c7087)),
-    (8, (10240, 0x0f4b2e9d5d7110e1)),
-    (16, (11664, 0x80941a0a21636f31)),
-    (32, (11168, 0x4d6c0b491e3d3c5e)),
+    (6, (8040, 0x5284a6f08d32ff77)),
+    (8, (8996, 0xd75e428f62ea6a6e)),
+    (16, (9964, 0x8c272825b7863700)),
+    (32, (8388, 0xb2f4f958c555723e)),
 ];
 
 #[test]
@@ -103,7 +103,8 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     assert!(line.contains("block_x: 1024, block_y: 1, block_z: 1"));
                 }
                 let (regions, collisions) = shared_overlap::audit_scratch(&lines);
-                assert_eq!(regions, if rows == 6 { 0 } else { 40 * 4 });
+                // Every exact-width target bucket uses the streamed MoE schedule.
+                assert_eq!(regions, 40 * 4);
                 assert_eq!(collisions, 0, "verify shared and routed scratch overlaps");
             }
             let kept_rows: Vec<_> = batch

@@ -333,8 +333,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Qualified direct folds retain the image path and bind the same quantized
 /// operands during text decode.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (20907, 0xd28729a73500a819)),
-    (Ranks::TP4, (46247, 0xff8f54bf09618663)),
+    (Ranks::TP2, (22783, 0x16c27042beff1943)),
+    (Ranks::TP4, (50103, 0x0428427a09488530)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

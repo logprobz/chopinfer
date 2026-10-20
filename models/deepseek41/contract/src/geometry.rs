@@ -91,12 +91,12 @@ impl Geometry {
             && self.shape.candidates.block == 8
     }
 
-    pub const fn runtime_defaults(&self) -> RuntimeValues {
+    pub fn runtime_defaults(&self) -> RuntimeValues {
         RuntimeValues {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
             indexer_mma: self.native_indexer_supported(),
-            indexer_prefill_tile: false,
+            indexer_prefill_tile: self == &FLASH,
         }
     }
 
@@ -136,7 +136,7 @@ impl Geometry {
                 .as_bool()
                 .ok_or("text_config.indexer_prefill_tile requires a boolean")?,
         };
-        if prefill_tile && (!mma || self != &FLASH) {
+        if prefill_tile && self != &FLASH {
             return Err("text_config.indexer_prefill_tile requires native Flash scoring".into());
         }
         let mut owned = std::collections::BTreeMap::new();
@@ -153,7 +153,7 @@ impl Geometry {
         }
         let mut runtime = self.runtime_values(|field| owned.get(field.name))?;
         runtime.indexer_mma = mma;
-        runtime.indexer_prefill_tile = prefill_tile;
+        runtime.indexer_prefill_tile = prefill_tile && mma;
         Ok(runtime)
     }
 
@@ -167,7 +167,7 @@ impl Geometry {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
             indexer_mma: self.native_indexer_supported(),
-            indexer_prefill_tile: false,
+            indexer_prefill_tile: self == &FLASH,
         };
         for field in self.runtime_fields() {
             let value = lookup(&field);
@@ -248,7 +248,9 @@ impl Geometry {
         });
         options.push(ModelOptionV1 {
             name: "text_config.indexer_prefill_tile".into(),
-            definition: OptionDefinitionV1::Boolean { default: false },
+            definition: OptionDefinitionV1::Boolean {
+                default: checkpoint.indexer_prefill_tile,
+            },
             default_is_qualified: true,
         });
         options.sort_by(|a, b| a.name.cmp(&b.name));
@@ -435,6 +437,7 @@ mod tests {
             FLASH.resolve_model_options(defaults, &simt).unwrap(),
             RuntimeValues {
                 indexer_mma: false,
+                indexer_prefill_tile: false,
                 ..defaults
             }
         );
@@ -456,22 +459,17 @@ mod tests {
     }
 
     #[test]
-    fn prefill_tile_requires_explicit_unqualified_native_opt_in() {
+    fn prefill_tile_defaults_to_qualified_native_and_can_be_disabled() {
         use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
         use std::collections::BTreeMap;
         let defaults = FLASH.runtime_defaults();
-        assert!(!defaults.indexer_prefill_tile);
+        assert!(defaults.indexer_prefill_tile);
         let declaration = ModelOptionsV1 {
             schema: CAPABILITY.into(),
             options: FLASH.model_options(defaults),
         };
-        let resolved = declaration
-            .resolve(&BTreeMap::from([(
-                "text_config.indexer_prefill_tile".into(),
-                "true".into(),
-            )]))
-            .unwrap();
-        assert!(!declaration.is_qualified(&resolved));
+        let resolved = declaration.resolve(&BTreeMap::new()).unwrap();
+        assert!(declaration.is_qualified(&resolved));
         assert!(
             FLASH
                 .resolve_model_options(defaults, &resolved)
@@ -480,8 +478,20 @@ mod tests {
         );
         let mut invalid = resolved;
         invalid.insert("text_config.indexer_mma".into(), false.into());
-        assert!(FLASH.resolve_model_options(defaults, &invalid).is_err());
+        assert!(
+            !FLASH
+                .resolve_model_options(defaults, &invalid)
+                .unwrap()
+                .indexer_prefill_tile
+        );
         invalid.insert("text_config.indexer_mma".into(), true.into());
+        invalid.insert("text_config.indexer_prefill_tile".into(), false.into());
+        assert!(
+            !FLASH
+                .resolve_model_options(defaults, &invalid)
+                .unwrap()
+                .indexer_prefill_tile
+        );
         for value in [
             serde_json::json!(1),
             serde_json::json!("true"),

@@ -2,9 +2,9 @@
 use super::*;
 
 #[test]
-fn opt_in_prefill_tile_binds_all_four_chunk_offsets() {
-    let mut shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    shape.runtime.indexer_prefill_tile = true;
+fn qualified_prefill_tile_binds_all_four_chunk_offsets() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    assert!(shape.runtime.indexer_prefill_tile);
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.kv_pages.set(1024);
     let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
@@ -60,14 +60,7 @@ fn opt_in_prefill_tile_binds_all_four_chunk_offsets() {
             assert!(positions.windows(2).all(|p| p[1] == p[0] + 1));
         }
         if offset == 0 {
-            let normalized: Vec<_> = lines
-                .iter()
-                .map(|line| {
-                    line.replace("_mma_fp4_tile4_mode0_trace0_v1 ", "_mma_fp4_guard_fast_v1 ")
-                        .replace("grid_x: 8,", "grid_x: 192,")
-                })
-                .collect();
-            audit_batched(&host, &normalized, false).unwrap();
+            audit_batched(&host, lines, false).unwrap();
         }
         drop(journal);
         instance.commit().unwrap();
@@ -78,9 +71,57 @@ fn opt_in_prefill_tile_binds_all_four_chunk_offsets() {
 }
 
 #[test]
+fn prefill_tile_keeps_unmeasured_batch_sizes_on_the_previous_route() {
+    for rows in [32, 65, 512, 4096, 8191] {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+        let mut instance = api()
+            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+            .unwrap();
+        instance
+            .execute(&prompt(7, 0, 0, rows, true), &mut Views::default())
+            .unwrap();
+        let journal = host.device.journal.borrow();
+        let mut checked = 0;
+        for line in journal.iter().filter(|line| {
+            line.starts_with("launch ")
+                && (line.contains("chop_position_indexer_")
+                    || line.contains("chop_position_blocks_"))
+                && line.contains("_scores_v3")
+                && !line.contains("_pack_fp4_")
+        }) {
+            let n = super::shared_overlap::journal_spans(line)[0].2 / 8192;
+            let compact = line.contains("chop_position_blocks_");
+            let expected = n
+                == if compact || line.contains("_r2_") {
+                    4096
+                } else {
+                    512
+                };
+            let tiled = line.contains("_mma_fp4_prefill_tile_v1 ")
+                || line.contains("_mma_fp4_tile4_mode0_trace0_v1 ");
+            assert_eq!(tiled, expected, "rows={rows}: {line}");
+            assert!(line.contains(&format!(
+                "grid_x: {}, grid_y: {n}, grid_z: 1",
+                if expected { 8 } else { 192 }
+            )));
+            checked += 1;
+        }
+        assert!(checked >= 4 * 8);
+        drop(journal);
+        instance.commit().unwrap();
+        instance.retire_request(7).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
 fn prefill_indexer_blocks_use_live_and_valid_grids() {
     for kv in KV_LAYOUTS {
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let mut shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        shape.runtime.indexer_prefill_tile = false;
         let host = FakeHost::new(shape, kv);
         let record = crate::config::tests::record(&shape, kv, 1, false);
         let mut instance = api()
@@ -205,12 +246,24 @@ pub(super) fn audit_batched(host: &Host, journal: &[String], skip: bool) -> Resu
     for (at, line) in journal.iter().enumerate().filter(|(_, line)| {
         line.starts_with("launch ")
             && line.contains("chop_position_indexer_")
-            && line.contains("_scores_v3_live_v1_mma_fp4_guard_fast_v1 ")
+            && (line.contains("_scores_v3_live_v1_mma_fp4_guard_fast_v1 ")
+                || line.contains("_scores_v3_live_v1_mma_fp4_tile4_mode0_trace0_v1 "))
     }) {
         let b = spans(line);
         let n = b[0].2 / 8192;
         let local = b[0].1 / 8192;
         let ratio = if line.contains("_r2_") { 2 } else { 1 };
+        let tiled = line.contains("_mma_fp4_tile4_mode0_trace0_v1 ");
+        let expected_tile =
+            host.shape.runtime.indexer_prefill_tile && n == if ratio == 2 { 4096 } else { 512 };
+        require(tiled == expected_tile, "wrong prefill score route")?;
+        require(
+            line.contains(&format!(
+                "grid_x: {}, grid_y: {n}, grid_z: 1",
+                if tiled { 8 } else { 192 }
+            )),
+            "wrong prefill score grid",
+        )?;
         let origin = if skip && ratio == 1 { 5696 } else { 0 };
         require(n > 0 && b[0].1.is_multiple_of(8192), "query row stride")?;
         require(

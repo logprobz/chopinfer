@@ -1,4 +1,4 @@
-//! The opt-in prefill module retains the exact lab entry inventory.
+//! The qualified prefill module retains the exact lab entry inventory.
 use super::indexer;
 use kernel_build::CubinSpec;
 use kernels_sm120::pooled_indexer::{

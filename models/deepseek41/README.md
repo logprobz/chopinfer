@@ -91,15 +91,26 @@ sealed sampled prefill operands and adversarial repair cases. It establishes
 bitwise indexer output equality; integrated served speed remains a separate
 measurement.
 
-`text_config.indexer_prefill_tile=true` enables an unqualified prefill
-candidate; its default is false. It selects eight CTAs per row and a
-128-position score tile in native Flash eager batches of 512 or 4096 rows
-whose positions are below 32K, with top-k 512 and 2048 candidate blocks.
+`text_config.indexer_prefill_tile` defaults to true for native Flash eager
+prefill with top-k 512 and 2048 candidate blocks. It selects eight score
+CTAs per row for 4096-row ratio-2 and compact batches, and 512-row
+layer-20 batches, when every position is below 32K. Compact scoring uses
+a 128-position tile.
 Each CTA reuses its packed query across more positions. Compact scoring
 uses all four warps for the same ordered head-FMA sum. Guards, SIMT repair,
 score layouts and selectors are retained. Smaller tails and other contexts
-keep the accepted schedule. GPU bitwise, memcheck and timing evidence is
-pending; this option is not a serving default.
+keep the accepted schedule. Set the option to false for the previous
+schedule; disabling native MMA also disables this route.
+
+On 2026-10-20 at 250 W, 94 paired cases and 23 memcheck cases passed
+bitwise, including ten real captures, poisoned buffers, finite SIMT
+packing fallbacks and chunk partitions. Across 8192-row synthetic chunks
+at offsets 0, 8192, 16384 and 24576, the score-and-selection pipeline
+projected across all eight indexer layers fell from 71.580/109.273/143.251/
+160.122 ms to 37.154/71.434/102.156/116.954 ms per rank. The four-full-chunk
+saving is 156.527 ms; upper-skip reduces the number of rows and the
+available saving. The ten real 32-row cases were slower and retain their
+previous route. Integrated served latency remains a separate measurement.
 
 On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
 top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:

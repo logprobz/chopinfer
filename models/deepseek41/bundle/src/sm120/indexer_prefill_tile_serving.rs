@@ -1,4 +1,4 @@
-//! Opt-in eager prefill scoring. Qualification and timing are still pending.
+//! Qualified eager prefill scoring at the measured full-batch sizes.
 use crate::{ops::Lowered, shape::Shape};
 use kernel_core::contract::Refusal;
 use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
@@ -29,7 +29,12 @@ impl crate::Kernels {
             if !call.launch.symbol.ends_with("_mma_fp4_guard_fast_v1") {
                 continue;
             }
-            if !matches!(call.launch.rows, 512 | 4096) {
+            let rows = if compact || call.launch.symbol.contains("_r2_") {
+                4096
+            } else {
+                512
+            };
+            if call.launch.rows != rows {
                 return Ok(calls);
             }
             if call.collective
@@ -61,20 +66,21 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
 
     #[test]
-    fn prefill_tile_admission_is_explicit_and_bounded() {
+    fn prefill_tile_admission_is_bounded_and_can_be_disabled() {
         let mut shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let positions = [0, 8191, 32767];
+        assert!(crate::Kernels::prefill_tile_enabled(
+            &shape,
+            KvStorage::Native,
+            Some(&positions)
+        ));
+        shape.runtime.indexer_prefill_tile = false;
         assert!(!crate::Kernels::prefill_tile_enabled(
             &shape,
             KvStorage::Native,
             Some(&positions)
         ));
         shape.runtime.indexer_prefill_tile = true;
-        assert!(crate::Kernels::prefill_tile_enabled(
-            &shape,
-            KvStorage::Native,
-            Some(&positions)
-        ));
         assert!(!crate::Kernels::prefill_tile_enabled(
             &shape,
             KvStorage::Bf16,

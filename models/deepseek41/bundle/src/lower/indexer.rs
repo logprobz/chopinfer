@@ -152,6 +152,10 @@ impl Lowering<'_> {
             crate::Kernels::hierarchical_indexer_enabled(self.shape, self.kv.storage, phase)
                 || route != Route::Accepted
                     && matches!(phase, Phase::Verify { rows: 32, items: 8 });
+        // The fused publisher was qualified beside the bounded scoring tiles,
+        // under the same admission.
+        let fused_candidates = phase.prefill()
+            && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions);
         let select = |mut calls| {
             if phase.prefill()
                 && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions)
@@ -243,8 +247,8 @@ impl Lowering<'_> {
                 let op = &prepared[&(n, width)];
                 launches.extend(select(op.select(n, width, &views).map_err(error)?)?);
                 if layer == g.shape.candidates.source {
-                    launches.extend(
-                        op.produce(
+                    let calls = op
+                        .produce(
                             n,
                             width,
                             &views,
@@ -252,8 +256,12 @@ impl Lowering<'_> {
                             row_tags,
                             candidates,
                         )
-                        .map_err(error)?,
-                    );
+                        .map_err(error)?;
+                    launches.extend(if fused_candidates {
+                        crate::Kernels::cached_prefill_candidates(calls).map_err(error)?
+                    } else {
+                        calls
+                    });
                 }
                 continue;
             }

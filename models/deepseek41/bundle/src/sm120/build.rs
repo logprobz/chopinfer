@@ -119,6 +119,7 @@ mod head_last;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer;
+mod indexer_candidates_cached;
 mod indexer_hierarchical;
 mod indexer_mma;
 mod indexer_mma_guard;
@@ -362,6 +363,7 @@ pub fn selection(
             owners.push((indexer_select_cached::CUBIN.into(), geometry.id));
             owners.push((indexer_mma_tile::CUBIN.into(), geometry.id));
             owners.push((indexer_mma_prefill_tile::CUBIN.into(), geometry.id));
+            owners.push((indexer_candidates_cached::CUBIN.into(), geometry.id));
         }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),
@@ -504,6 +506,9 @@ pub fn selection(
     specs.extend(indexer_mma_tile::cubins(geometries).expect("tiled position score cubin"));
     specs
         .extend(indexer_mma_prefill_tile::cubins(geometries).expect("prefill position tile cubin"));
+    specs.extend(
+        indexer_candidates_cached::cubins(geometries).expect("fused candidate publisher cubin"),
+    );
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

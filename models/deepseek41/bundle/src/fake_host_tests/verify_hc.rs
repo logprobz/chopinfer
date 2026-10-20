@@ -16,6 +16,8 @@ use super::*;
 // The prefill matrix module changes resource IDs only in these verify
 // bodies. Full creation histories and typed handles are audited separately.
 // The prefill matrix modules change resource IDs only in these verify
+// The fused candidate publisher's create-time module and resolve (one
+// each per rank) renumber later handles; every line is otherwise equal.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0xdc91ad4ed589171e)),
     (8, (8992, 0x87e217aaf14ffd6d)),

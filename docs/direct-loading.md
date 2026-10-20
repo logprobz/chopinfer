@@ -74,12 +74,12 @@ before the call returns. The page-locked memory is a 64 MiB ring per stream
 behind its copy completes; a gather larger than the ring, or one that wraps
 onto copies still queued, waits for them. Gathers of a megabyte or more read
 on up to eight threads, so the page faults of a cold mapping overlap. With
-`CHOPINFER_MAPPED_READ_AHEAD=1` (off by default, since its effect on served
-decode has not been measured on its own), every
-gather reads the clock after each 16th row; the first rows found slower than
+`CHOPINFER_MAPPED_READ_AHEAD=1` (off by default), every gather reads the clock after each 16th row; the first rows found slower than
 2.5 us each on average (40 us per 16) ask the kernel to read every later row
 of the gather ahead (`MADV_WILLNEED` on the pages each row touches), once per
-gather, and copying continues in the same order. Over the 203 GB table pair
+gather, and copying continues in the same order. On 2026-10-20, at TP4 and
+250 W with the resident Engram cache on, a served ABBA showed no repeatable
+decode gain from sync or async read-ahead. Over the 203 GB table pair
 on 2026-10-19, 768 random 256-byte rows took 48 to 60 ms cold read serially,
 6.7 ms on eight threads and 3.3 to 3.5 ms with this read-ahead; warm, they
 took 0.002 ms serially, 0.14 ms on eight threads and 0.007 ms with it. A

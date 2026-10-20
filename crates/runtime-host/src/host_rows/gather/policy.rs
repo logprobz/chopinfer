@@ -39,6 +39,11 @@ impl Policy {
         if command.reset_cache {
             crate::host_rows::resident::reset_for_measurement()?;
         }
+        let replay = command
+            .replay_rows
+            .as_deref()
+            .map(crate::host_rows::resident::replay::run)
+            .transpose()?;
         let released_mapping_bytes = if command.release_page_tables {
             crate::host_rows::release_page_tables_for_measurement()
                 .map_err(|error| format!("release mapped row page tables: {error}"))?
@@ -50,6 +55,7 @@ impl Policy {
             "schema":"chopinfer.mapped-row-policy.v1", "status":"applied",
             "epoch":command.epoch, "mode":command.mode, "reset_cache":command.reset_cache,
             "released_mapping_bytes":released_mapping_bytes,
+            "replay":replay,
             "sync":self.snapshot(0), "async":self.snapshot(1),
             "cache":crate::host_rows::resident::measurement_snapshot(),
         }))
@@ -77,6 +83,8 @@ struct Command {
     reset_cache: bool,
     #[serde(default)]
     release_page_tables: bool,
+    #[serde(default)]
+    replay_rows: Option<Vec<crate::host_rows::resident::replay::Replay>>,
 }
 
 fn mode(value: &str) -> Result<u8, String> {
@@ -248,6 +256,7 @@ mod tests {
                 mode: name.into(),
                 reset_cache: false,
                 release_page_tables: false,
+                replay_rows: None,
             };
             let record = advance(&policy, &command, &mut last).unwrap().unwrap();
             assert_eq!(record["epoch"], command.epoch);
@@ -264,6 +273,7 @@ mod tests {
                     mode: "both".into(),
                     reset_cache: false,
                     release_page_tables: false,
+                    replay_rows: None,
                 },
                 &mut last
             )

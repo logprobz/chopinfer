@@ -4,7 +4,7 @@ use std::fs::File;
 #[path = "../gather/cache_tests.rs"]
 mod gather_cache;
 
-fn registry(sets: usize) -> Registry {
+pub(super) fn registry(sets: usize) -> Registry {
     let set_bytes = HEADER_BYTES + SHARDS * super::super::page_bytes_v1();
     Registry {
         config: Config {
@@ -21,7 +21,7 @@ fn registry(sets: usize) -> Registry {
         allocation_unavailable: AtomicBool::new(false),
     }
 }
-fn mapping(label: &str, bytes: &[u8], identity: u8) -> Arc<MappedRowsV1> {
+pub(super) fn mapping(label: &str, bytes: &[u8], identity: u8) -> Arc<MappedRowsV1> {
     let path = std::env::temp_dir().join(format!("resident-{label}-{}", std::process::id()));
     std::fs::write(&path, bytes).unwrap();
     let file = File::open(&path).unwrap();
@@ -31,12 +31,18 @@ fn mapping(label: &str, bytes: &[u8], identity: u8) -> Arc<MappedRowsV1> {
     std::fs::remove_file(path).unwrap();
     mapping
 }
-fn source(rows: usize, width: usize) -> Vec<u8> {
+pub(super) fn source(rows: usize, width: usize) -> Vec<u8> {
     (0..rows * width)
         .map(|i| ((i * 31) ^ (i / 251) ^ (i / 4093)) as u8)
         .collect()
 }
-fn copy(mapping: &MappedRowsV1, width: usize, row: u32, within: usize, length: usize) -> Vec<u8> {
+pub(super) fn copy(
+    mapping: &MappedRowsV1,
+    width: usize,
+    row: u32,
+    within: usize,
+    length: usize,
+) -> Vec<u8> {
     let mut output = vec![0xa5; length];
     mapping
         .resident_plane(width)

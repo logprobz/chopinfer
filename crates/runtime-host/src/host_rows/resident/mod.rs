@@ -1,4 +1,5 @@
 //! Bounded resident copies of authenticated mapped rows, shared across ranks.
+pub(crate) mod replay;
 mod storage;
 
 use super::{MappedRowsV1, RowsKeyV1};

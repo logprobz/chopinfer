@@ -439,8 +439,9 @@ mod tests {
 
     #[test]
     fn measurement_releases_only_authenticated_mapping_page_tables() {
-        use std::io::{Read, Seek, SeekFrom};
-        let present = |rows: &MappedRowsV1| {
+        #[cfg(target_os = "linux")]
+        fn present(rows: &MappedRowsV1) -> bool {
+            use std::io::{Read, Seek, SeekFrom};
             let mut file = File::open("/proc/self/pagemap").unwrap();
             file.seek(SeekFrom::Start(
                 rows.base as u64 / page_bytes_v1() as u64 * 8,
@@ -449,13 +450,15 @@ mod tests {
             let mut entry = [0; 8];
             file.read_exact(&mut entry).unwrap();
             u64::from_ne_bytes(entry) & (1 << 63) != 0
-        };
+        }
         let bytes: Vec<u8> = (0..40_000_u32).map(|i| (i * 13 + 5) as u8).collect();
         let (_temp, file) = file("release-page-tables", &bytes);
         let rows = map_authenticated_rows_v1(&file, 300, 39_000, [7; 32]).unwrap();
         assert_eq!(rows.bytes(), &bytes[300..39_300]);
+        #[cfg(target_os = "linux")]
         assert!(present(&rows));
         assert_eq!(release_page_tables(&[Arc::clone(&rows)]).unwrap(), 39_000);
+        #[cfg(target_os = "linux")]
         assert!(!present(&rows));
         assert_eq!(rows.bytes(), &bytes[300..39_300]);
         let plain = map_rows_v1(&file, 300, 39_000).unwrap();

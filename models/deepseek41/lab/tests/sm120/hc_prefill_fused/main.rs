@@ -34,6 +34,16 @@ const PATTERNS: [&str; 8] = [
     "cancellation",
     "sticky",
 ];
+/// A start marker with seconds since the first marker, so a killed worker
+/// still names the case it was running and how long earlier cases took.
+fn progress(event: &str, label: &str) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    eprintln!(
+        "HC_PREFILL_FUSED_PROGRESS {}",
+        json!({"event":event,"case":label,"elapsed_s":start.elapsed().as_secs_f64()})
+    );
+}
 fn compare(a: &[Vec<u8>], b: &[Vec<u8>]) -> LabResult<()> {
     fusion_checks::compare_roles(&ROLES, a, b)
 }
@@ -48,6 +58,7 @@ fn check(
     memcheck: bool,
     failures: &mut fusion_checks::Failures,
 ) -> LabResult<Value> {
+    progress("case", label);
     let before = failures.len();
     let graphs = (0..2)
         .map(|arm| d.s.capture(|stream| d.launch(arm, stream)))
@@ -94,6 +105,7 @@ fn check(
     Ok(record)
 }
 fn timing(d: &Device<'_>, label: &str) -> LabResult<Vec<Value>> {
+    progress("timing", label);
     let mut records = vec![];
     d.set_live(d.rows)?;
     for arm in 0..2 {
@@ -209,6 +221,7 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
             if memcheck && rows != 8192 {
                 continue;
             }
+            progress("fixture", &format!("{}:rows={rows}", site.id));
             let f = Fixture::new(site, rows, 17 + site_index as u64, "finite");
             for e in catalog::entries() {
                 for widen in [false, true] {
@@ -246,7 +259,9 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
                 }
             }
         }
+        progress("invariances", &sites[0].id);
         invariance_count = invariances(s, &sites[0], &mut failures)?;
+        progress("controls", &sites[1].id);
         let f = Fixture::new(&sites[1], 64, 97, "finite");
         for e in catalog::controls() {
             let d = Device::new(s, &e, &f, true, false)?;
@@ -344,5 +359,66 @@ fn memcheck_seeded_8k_on_gpu() {
         kernel_harness::gpu_test_with(artifacts::probes(), 1 << 30, |s| run(s, true))
             .unwrap()
             .is_some()
+    );
+}
+/// Host-side cost of one full-8K case outside the GPU: seeded fixture
+/// generation, the poisoned upload images and readback copies of both arms
+/// for both replays, the comparisons, guard scans and the output digest. The
+/// dry run scales it to the whole matrix before a worker timeout is accepted.
+#[test]
+#[ignore = "requires a staged directory named by CHOPINFER_HC_PREFILL_FUSED"]
+fn host_budget_on_cpu() {
+    artifacts::verify().unwrap();
+    let sites = artifacts::corpus().unwrap();
+    let rows = 8192_u32;
+    let clock = std::time::Instant::now();
+    let fixture = Fixture::new(&sites[0], rows, 17, "finite");
+    let fixture_s = clock.elapsed().as_secs_f64();
+    assert_eq!(fixture.rows, rows);
+    let n = rows as usize;
+    let sizes = STRIDES
+        .iter()
+        .map(|stride| stride * n)
+        .chain([(n + OFFSET + 2) * 4])
+        .collect::<Vec<_>>();
+    let clock = std::time::Instant::now();
+    let mut previous: Option<Vec<Vec<u8>>> = None;
+    for replay in 0..2 {
+        let mut arms = Vec::new();
+        for _ in 0..2 {
+            let poison = sizes.iter().map(|&n| vec![0xa5; n]).collect::<Vec<_>>();
+            let mut copy = sizes.iter().map(|&n| vec![0; n]).collect::<Vec<_>>();
+            for (out, image) in copy.iter_mut().zip(&poison) {
+                out.copy_from_slice(image);
+            }
+            let status = copy.last_mut().unwrap();
+            for (index, word) in status.chunks_exact_mut(4).enumerate() {
+                let value = if index < OFFSET || index >= OFFSET + n {
+                    0x1357_2468u32
+                } else {
+                    0
+                };
+                word.copy_from_slice(&value.to_ne_bytes());
+            }
+            arms.push(copy);
+        }
+        compare(&arms[0], &arms[1]).unwrap();
+        for arm in &arms {
+            fusion_checks::guards(&ROLES, arm, rows, rows, &[6], OFFSET, false).unwrap();
+        }
+        if let Some(previous) = &previous {
+            compare(previous, &arms[1]).unwrap();
+        }
+        if replay == 1 {
+            std::hint::black_box(kernel_build::digest(
+                &arms[1].iter().flatten().copied().collect::<Vec<_>>(),
+            ));
+        }
+        previous = Some(arms.swap_remove(0));
+    }
+    let case_s = clock.elapsed().as_secs_f64();
+    println!(
+        "HC_PREFILL_FUSED_HOST_BUDGET {}",
+        json!({"rows":rows,"bytes_per_row":sizes.iter().sum::<usize>()/n,"fixture_s":fixture_s,"case_host_s":case_s})
     );
 }

@@ -41,11 +41,37 @@ def markers(text, marker):
     return records
 
 
-def parse(text, memcheck):
+def progress(text):
+    """Start markers in log order, with the seconds each one ran until the
+    next marker. The last entry names the work a killed worker was doing."""
+    events = markers(text, "HC_PREFILL_FUSED_PROGRESS")
+    elapsed = [e["elapsed_s"] for e in events]
+    require(all(isinstance(t, (int, float)) and math.isfinite(t) and t >= 0 for t in elapsed)
+            and elapsed == sorted(elapsed), "progress clock is not monotonic")
+    return [dict(e, seconds=(elapsed[i + 1] - e["elapsed_s"]) if i + 1 < len(events) else None)
+            for i, e in enumerate(events)]
+
+
+def last_started(text):
+    """The last case a worker began, from progress markers or, for logs
+    written before them, the case after the last completed one."""
+    events = progress(text)
+    if events:
+        return events[-1]
+    done = markers(text, "HC_PREFILL_FUSED_CASE")
+    return {"event": "after", "case": done[-1]["case"] if done else None, "elapsed_s": None}
+
+
+def parse(text, memcheck, require_progress=True):
     require(re.findall(r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text)
             == [("ok", "1", "0", "0")], "one executed passing test required")
     cases = markers(text, "HC_PREFILL_FUSED_CASE")
     expected = identities(memcheck)
+    events = progress(text)
+    if require_progress:
+        started = [e["case"] for e in events if e["event"] == "case"]
+        require(len(started) == len(expected) and set(started) == expected,
+                "every case needs one start marker")
     require(len(cases) == len(expected) and {c["case"] for c in cases} == expected,
             "executed case identities differ")
     for case in cases:
@@ -67,7 +93,10 @@ def parse(text, memcheck):
         require(row["rows"] == int(row["case"].split(":rows=")[1].split(":")[0]), "timing rows differ")
         require(all(isinstance(row[k], (int, float)) and math.isfinite(row[k]) and row[k] > 0
                     for k in ("old_us", "new_us", "ratio")), "invalid event interval")
-    return {"cases": cases, "timings": timings}
+    durations = [e["seconds"] for e in events if e["event"] in ("case", "timing") and e["seconds"] is not None]
+    return {"cases": cases, "timings": timings,
+            "longest_step_seconds": max(durations) if durations else None,
+            "last_marker_seconds": events[-1]["elapsed_s"] if events else None}
 
 
 def analyze(root):
@@ -80,6 +109,8 @@ def analyze(root):
     require({c["case"]: c["output_sha256"] for c in results[0]["cases"]}
             == {c["case"]: c["output_sha256"] for c in results[1]["cases"]}, "peer bits differ")
     return {"passed": True, "cases_per_gpu": 192, "memcheck_cases_per_gpu": 6,
+            "matrix_seconds": [r["last_marker_seconds"] for r in results],
+            "longest_step_seconds": [r["longest_step_seconds"] for r in results],
             "timings": [dict(row, gpu=gpu, saving_us=row["old_us"] - row["new_us"])
                         for gpu, result in enumerate(results) for row in result["timings"]],
             "scope": "Checkpoint weights and seeded prefill streams. Whole-chain kernel events, no serving timing claim."}

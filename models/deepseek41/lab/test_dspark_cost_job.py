@@ -15,6 +15,7 @@ class CostJobTests(unittest.TestCase):
 
             @contextlib.contextmanager
             def serving(self, config, epoch):
+                self.fixture_policy = config
                 self.directory = self.output / f"{epoch}-{config}"
                 self.directory.mkdir()
                 self.log = self.directory / "server.log"
@@ -23,7 +24,8 @@ class CostJobTests(unittest.TestCase):
 
             def prepare(self):
                 markers = list(self.output.glob("draft-check-*"))
-                assert len(markers) == int(self.env["CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS"] == "6")
+                expected = self.env["CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS"] == "6" and self.fixture_policy == "uniform3"
+                assert len(markers) == int(expected)
                 assert self.env["CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK"] == "512"
                 return []
 

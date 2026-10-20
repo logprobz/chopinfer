@@ -8,6 +8,9 @@ use kernels_sm120::latent::{sources, sources_prefill};
 use model_deepseek41_contract::geometry::FLASH;
 use std::path::Path;
 
+#[cfg(test)]
+#[path = "prefill_attention/head_sharing_design.rs"]
+mod head_sharing_design;
 #[path = "prefill_attention/probe.rs"]
 mod probe;
 #[path = "prefill_attention/timing.rs"]
@@ -128,15 +131,171 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .first()
         .ok_or("usage: prefill_attention build|check|run|run-reuse|decision-check|decision-time|ablation|traffic OUT [VARIANT]")?;
     let out = Path::new(args.get(1).ok_or("missing OUT")?);
+    if mode == "heads-next-source" {
+        use sources_prefill::heads::next::{Mode, source};
+        for (mode, file) in [
+            (Mode::Profile, "sources_prefill_heads_profile.cuh"),
+            (Mode::Finish, "sources_prefill_heads_finish.cuh"),
+        ] {
+            std::fs::write(out.join(file), source(mode).map_err(|e| e.to_string())?)?;
+        }
+        std::fs::write(
+            out.join("sources_prefill_pair_clock.cuh"),
+            probe::cache::heads::next::pair_source().map_err(|e| e.to_string())?,
+        )?;
+        return Ok(());
+    }
     if mode == "build" {
         return build(out);
     }
     if mode == "cache-build" {
         return probe::cache::build(out);
     }
+    if mode == "heads-next-build" {
+        return probe::cache::heads::next::build(out);
+    }
+    if mode == "heads-next-snapshot" {
+        probe::cache::heads::next::snapshot(out)?;
+        println!("PASS head_finish_snapshot hashes=true probe_sm120=true");
+        return Ok(());
+    }
+    if ["heads-next-check", "heads-next-time", "heads-next-profile"].contains(&mode.as_str()) {
+        use probe::cache::heads::next::{Phase, run, snapshot};
+        if args.len() != 4 {
+            return Err("usage: heads-next-mode OUT LISTS OFFSET".into());
+        }
+        let phase = match mode.as_str() {
+            "heads-next-check" => Phase::Check,
+            "heads-next-time" => Phase::Time,
+            _ => Phase::Profile,
+        };
+        let cubins = snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            run(
+                sessions,
+                Path::new(&args[2]),
+                args[3]
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
+                phase,
+            )
+        })?
+        .is_none()
+        {
+            return Err("epilogue GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
+    if mode == "heads-build" {
+        return probe::cache::heads::build(out);
+    }
+    if mode == "heads-snapshot" {
+        probe::cache::heads::snapshot(out)?;
+        println!("PASS head_staging_snapshot hashes=true probe_sm120=true");
+        return Ok(());
+    }
+    if ["heads-check", "heads-time"].contains(&mode.as_str()) {
+        if args.len() != 4 {
+            return Err("usage: heads-mode OUT LISTS OFFSET".into());
+        }
+        let cubins = probe::cache::heads::snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::cache::heads::run(
+                sessions,
+                Path::new(&args[2]),
+                args[3]
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
+                mode == "heads-time",
+            )
+        })?
+        .is_none()
+        {
+            return Err("head staging GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
+    if mode == "stages-build" {
+        return probe::cache::stages::build(out);
+    }
+    if mode == "stages-source" {
+        print!("{}", sources_prefill::profiling::source()?);
+        return Ok(());
+    }
+    if mode == "stages-snapshot" {
+        probe::cache::stages::snapshot(out)?;
+        println!("PASS paired_stages_snapshot hashes=true probe_sm120=true");
+        return Ok(());
+    }
+    if ["stages-check", "stages-time"].contains(&mode.as_str()) {
+        if args.len() != 4 {
+            return Err("usage: stages-mode OUT LISTS OFFSET".into());
+        }
+        let cubins = probe::cache::stages::snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::cache::stages::run(
+                sessions,
+                Path::new(&args[2]),
+                args[3]
+                    .parse()
+                    .map_err(|e: std::num::ParseIntError| e.to_string())?,
+                mode == "stages-time",
+            )
+        })?
+        .is_none()
+        {
+            return Err("paired profiling GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
     if mode == "cache-check" {
         probe::cache::snapshot(out)?;
         println!("PASS prefill_cache_snapshot hashes=true");
+        return Ok(());
+    }
+    if ["split-table", "split-inputs", "split-check", "split-time"].contains(&mode.as_str()) {
+        if args.len() != 4 {
+            return Err("usage: split-mode OUT LISTS OFFSET".into());
+        }
+        let lists = Path::new(&args[2]);
+        let offset = args[3].parse()?;
+        if mode == "split-table" {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&probe::cache::split::table(offset)?)?
+            );
+            return Ok(());
+        }
+        if mode == "split-inputs" {
+            return probe::cache::split::check_inputs(lists, offset).map_err(Into::into);
+        }
+        let cubins = probe::cache::snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::cache::split::run(sessions, lists, offset, mode == "split-time")
+        })?
+        .is_none()
+        {
+            return Err("split GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
+    if ["retained-inputs", "retained-check", "retained-time"].contains(&mode.as_str()) {
+        if args.len() != 4 {
+            return Err("usage: retained-mode OUT LISTS OFFSET".into());
+        }
+        let lists = Path::new(&args[2]);
+        let offset = args[3].parse()?;
+        if mode == "retained-inputs" {
+            return probe::retained::check_inputs(lists, offset).map_err(Into::into);
+        }
+        let cubins = snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::retained::run(sessions, lists, offset, mode == "retained-time")
+        })?
+        .is_none()
+        {
+            return Err("retained GPU phase did not execute".into());
+        }
         return Ok(());
     }
     if ["cache-sample-check", "cache-list-check"].contains(&mode.as_str()) {

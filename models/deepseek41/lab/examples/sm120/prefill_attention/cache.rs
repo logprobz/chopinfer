@@ -7,6 +7,13 @@ use std::path::Path;
 
 const MODULE: &str = "latent_sources_prefill_cache_deepseek41_sm120";
 
+#[path = "heads.rs"]
+pub(crate) mod heads;
+#[path = "split.rs"]
+pub(crate) mod split;
+#[path = "stages.rs"]
+pub(crate) mod stages;
+
 fn specs() -> LabResult<Vec<kernel_build::CubinSpec>> {
     let mut specs = crate::specs()?
         .into_iter()
@@ -59,9 +66,14 @@ pub fn build(out: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn snapshot(out: &Path) -> Result<kernel_harness::Cubins, Box<dyn std::error::Error>> {
+    snapshot_with(out, specs()?)
+}
+fn snapshot_with(
+    out: &Path,
+    specs: Vec<kernel_build::CubinSpec>,
+) -> Result<kernel_harness::Cubins, Box<dyn std::error::Error>> {
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(out.join("snapshot.json"))?)?;
-    let specs = specs()?;
     let mut bytes = Vec::new();
     let mut names = Vec::new();
     for spec in specs {
@@ -252,6 +264,9 @@ impl Cached {
         }
     }
     fn audit(&self) -> LabResult<()> {
+        self.audit_with(&[])
+    }
+    fn audit_with(&self, extra: &[&DeviceBuffer]) -> LabResult<()> {
         let i = &self.rig.inputs;
         let mut buffers = vec![
             &i.q,
@@ -271,6 +286,7 @@ impl Cached {
         for arm in &self.rig.arms {
             buffers.extend([&arm.workspace, &arm.output]);
         }
+        buffers.extend_from_slice(extra);
         let mut spans = buffers
             .into_iter()
             .map(|b| {
@@ -334,7 +350,7 @@ impl Cached {
     }
 }
 
-struct Lists {
+pub(super) struct Lists {
     rows: u32,
     positions: Vec<u32>,
     selected: Vec<u8>,
@@ -374,21 +390,35 @@ fn read_file(root: &Path, value: &serde_json::Value) -> LabResult<Vec<u8>> {
     Ok(bytes)
 }
 fn lists(path: &Path, selected: &str, offset: u32, samples: bool) -> LabResult<Lists> {
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-    if manifest["schema"] != "chopinfer.prefill-cache-lists.v1" || manifest["samples"] != samples {
-        return Err("wrong selected-list capture schema or mode".into());
-    }
-    let records = manifest["records"]
-        .as_array()
-        .ok_or("missing list records")?;
     let layer = match selected {
         "window" => 0,
         "mixed32" => 2,
         "mixed64" => 20,
         _ => return Err("invalid cache variant".into()),
     };
+    layer_lists(path, layer, offset, samples)
+}
+
+pub(super) fn layer_lists(path: &Path, layer: u32, offset: u32, samples: bool) -> LabResult<Lists> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    layer_lists_in(path, &manifest, layer, offset, samples)
+}
+
+pub(super) fn layer_lists_in(
+    path: &Path,
+    manifest: &serde_json::Value,
+    layer: u32,
+    offset: u32,
+    samples: bool,
+) -> LabResult<Lists> {
+    if manifest["schema"] != "chopinfer.prefill-cache-lists.v1" || manifest["samples"] != samples {
+        return Err("wrong selected-list capture schema or mode".into());
+    }
+    let records = manifest["records"]
+        .as_array()
+        .ok_or("missing list records")?;
     let record = records
         .iter()
         .find(|r| r["offset"] == offset && r["layer"] == layer)
@@ -459,7 +489,25 @@ fn lists(path: &Path, selected: &str, offset: u32, samples: bool) -> LabResult<L
     })
 }
 impl Lists {
-    fn install(&self, s: &Session, input: &Inputs, live: u32) -> LabResult<()> {
+    pub(super) fn slice(&self, first: u32, rows: u32) -> LabResult<Self> {
+        let end = first.checked_add(rows).ok_or("list slice overflow")?;
+        if rows == 0 || end > self.rows {
+            return Err("list slice exceeds captured rows".into());
+        }
+        let slice = |bytes: &[u8], stride: usize| {
+            bytes[first as usize * stride..end as usize * stride].to_vec()
+        };
+        let selected = slice(&self.selected, 512 * 4);
+        Ok(Self {
+            rows,
+            positions: self.positions[first as usize..end as usize].to_vec(),
+            hash: kernel_build::digest(&selected),
+            selected,
+            window: self.window.as_ref().map(|w| slice(w, WINDOW as usize * 4)),
+        })
+    }
+
+    pub(super) fn install(&self, s: &Session, input: &Inputs, live: u32) -> LabResult<()> {
         input
             .compressed_keys
             .copy_from_bytes(&self.selected, &s.stream)
@@ -684,6 +732,30 @@ pub fn check_lists(path: &Path, variant: &str, offset: u32, samples: bool) -> La
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_list_slices_preserve_original_key_coordinates() {
+        let data = Lists {
+            rows: 4,
+            positions: vec![24576, 24577, 24578, 24579],
+            selected: (0..4)
+                .flat_map(|r: i32| r.to_le_bytes().repeat(512))
+                .collect(),
+            window: Some(
+                (100..104)
+                    .flat_map(|r: i32| r.to_le_bytes().repeat(128))
+                    .collect(),
+            ),
+            hash: String::new(),
+        };
+        let part = data.slice(2, 2).unwrap();
+        assert_eq!(part.positions, [24578, 24579]);
+        assert_eq!(&part.selected[..4], &2_i32.to_le_bytes());
+        assert_eq!(&part.window.unwrap()[..4], &102_i32.to_le_bytes());
+        for (first, rows) in [(0, 0), (3, 2), (u32::MAX, 1)] {
+            assert!(data.slice(first, rows).is_err());
+        }
+    }
+
     #[test]
     fn native_decode_preserves_consumer_plan_and_partial_abi() {
         for entry in entries().unwrap() {

@@ -20,8 +20,11 @@ fn integers(values: impl Iterator<Item = i32>) -> Vec<u8> {
     values.flat_map(i32::to_le_bytes).collect()
 }
 pub fn query(rows: u32, seed: u32) -> Vec<u8> {
+    query_with_heads(rows, HEADS, seed)
+}
+pub fn query_with_heads(rows: u32, heads: usize, seed: u32) -> Vec<u8> {
     bf16_bytes(
-        &(0..rows as usize * HEADS * WIDTH)
+        &(0..rows as usize * heads * WIDTH)
             .map(|i| {
                 let x = (i as u32)
                     .wrapping_mul(1664525)
@@ -53,6 +56,8 @@ pub struct Inputs {
     pub page: u32,
     pub pages: u32,
     pub compressed_budget: u32,
+    pub capacity: u32,
+    pub heads: usize,
 }
 
 impl Inputs {
@@ -68,6 +73,19 @@ impl Inputs {
     }
 
     pub fn new(s: &Session, page: u32, second: bool, seed: u32) -> LabResult<Self> {
+        Self::with_shape(s, page, second, seed, HEADS, ROWS)
+    }
+    pub fn with_shape(
+        s: &Session,
+        page: u32,
+        second: bool,
+        seed: u32,
+        heads: usize,
+        rows: u32,
+    ) -> LabResult<Self> {
+        if rows < 2 || ![16, 32, 64].contains(&heads) {
+            return Err("unsupported lab head/row shape".into());
+        }
         let pages = CONTEXT / page;
         let stride = page as usize * (WIDTH / 2 + WIDTH / 16);
         let codes = [0x00, 0x80, 0x38, 0xb8, 0x40, 0xc0, 0x18, 0xb4];
@@ -88,23 +106,25 @@ impl Inputs {
             }
         }
         let inputs = Self {
-            q: upload(s, &query(ROWS, seed))?,
-            row_batch: upload(s, &vec![0; ROWS as usize * 4])?,
-            live: upload(s, &ROWS.to_le_bytes())?,
+            q: upload(s, &query_with_heads(rows, heads, seed))?,
+            row_batch: upload(s, &vec![0; rows as usize * 4])?,
+            live: upload(s, &rows.to_le_bytes())?,
             window_codes: upload(s, &window_codes)?,
             window_scales: upload(s, &window_scales)?,
             item_slots: upload(s, &0_i32.to_le_bytes())?,
-            window_keys: upload(s, &vec![0; ROWS as usize * WINDOW as usize * 4])?,
+            window_keys: upload(s, &vec![0; rows as usize * WINDOW as usize * 4])?,
             compressed_pool: upload(s, &compressed_pool)?,
-            compressed_keys: upload(s, &vec![0; ROWS as usize * 512 * 4])?,
+            compressed_keys: upload(s, &vec![0; rows as usize * 512 * 4])?,
             tables: upload(s, &integers((0..pages as i32).rev()))?,
-            sinks: s.upload_f32(&(0..HEADS).map(|i| i as f32 * 0.125).collect::<Vec<_>>())?,
-            cos_sin: s.upload_f32(&[0.6, 0.8].repeat(ROWS as usize * 32))?,
+            sinks: s.upload_f32(&(0..heads).map(|i| i as f32 * 0.125).collect::<Vec<_>>())?,
+            cos_sin: s.upload_f32(&[0.6, 0.8].repeat(rows as usize * 32))?,
             page,
             pages,
             compressed_budget: if second { 512 } else { 0 },
+            capacity: rows,
+            heads,
         };
-        inputs.set_case(s, seed, false, ROWS)?;
+        inputs.set_case(s, seed, false, rows)?;
         Ok(inputs)
     }
 
@@ -116,7 +136,7 @@ impl Inputs {
         };
         // Row zero is deliberately all holes in adversarial cases. Change a
         // live nonempty query too, so replay checks cannot reuse old Q bits.
-        write(&self.q, &query(2, seed))?;
+        write(&self.q, &query_with_heads(2, self.heads, seed))?;
         write(&self.live, &live.to_le_bytes())?;
         write(
             &self.item_slots,
@@ -129,7 +149,7 @@ impl Inputs {
         )?;
         write(
             &self.row_batch,
-            &integers((0..ROWS).map(|r| {
+            &integers((0..self.capacity).map(|r| {
                 if adversarial && r % 31 == 2 {
                     -1
                 } else if adversarial && r % 31 == 3 {
@@ -142,13 +162,13 @@ impl Inputs {
         write(
             &self.window_keys,
             &integers(
-                (0..ROWS)
+                (0..self.capacity)
                     .flat_map(|row| (0..WINDOW).map(move |key| window_key(row, key, adversarial))),
             ),
         )?;
         write(
             &self.compressed_keys,
-            &integers((0..ROWS).flat_map(|row| {
+            &integers((0..self.capacity).flat_map(|row| {
                 (0..512).map(move |key| compressed_key(row, key, seed, adversarial))
             })),
         )?;

@@ -1,6 +1,9 @@
 use super::*;
 use std::fs::File;
 
+#[path = "../gather/cache_tests.rs"]
+mod gather_cache;
+
 fn registry(sets: usize) -> Registry {
     let set_bytes = HEADER_BYTES + SHARDS * super::super::page_bytes_v1();
     Registry {

@@ -1,6 +1,20 @@
 //! Adaptive read-ahead for checked host-mapped row copies.
 mod policy;
 
+/// Large streaming gathers use the authenticated mapping directly. Count
+/// complete row IDs, not bytes, so all planes of a row set choose one route.
+/// Smaller decode and verification gathers retain the resident cache.
+pub(crate) fn use_resident(rows: usize) -> bool {
+    const LARGE_GATHER_ROWS: usize = 65_536;
+    if rows < LARGE_GATHER_ROWS {
+        return true;
+    }
+    static CACHE_LARGE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE_LARGE.get_or_init(|| {
+        std::env::var_os("CHOPINFER_MAPPED_LARGE_GATHER_CACHE").is_some_and(|value| value == "1")
+    })
+}
+
 /// Rows a gather copies between clock reads, and how long that many rows
 /// may take before the rest of the gather is read ahead. A row the page cache
 /// does not hold faults from the file in roughly 60 to 110 us on the
@@ -104,6 +118,9 @@ pub(crate) fn gather_span_v1(
     out: &mut [u8],
     ahead: &ReadAhead<'_>,
 ) {
+    // `rows` names the full gather even when `out` is one upload-slot or
+    // worker fragment. Bypassing changes neither ordering nor copied bytes.
+    let resident = ahead.resident.filter(|_| use_resident(rows.len()));
     let mut written = 0;
     let mut group = ahead.probe.now();
     let mut finished: u32 = 0;
@@ -112,7 +129,7 @@ pub(crate) fn gather_span_v1(
         let (index, within) = (position / row_bytes, position % row_bytes);
         let take = (row_bytes - within).min(out.len() - written);
         let source = rows[index] as usize * row_bytes + within;
-        if let Some(resident) = ahead.resident {
+        if let Some(resident) = resident {
             resident.copy(
                 table,
                 rows[index],

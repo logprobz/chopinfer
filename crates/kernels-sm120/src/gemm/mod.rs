@@ -3327,3 +3327,5 @@ mod tests {
         assert_eq!(a4_launch.grid[0], 188);
     }
 }
+
+pub mod mxfp8_fold_tiled;

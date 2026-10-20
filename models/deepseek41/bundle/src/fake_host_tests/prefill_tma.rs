@@ -42,11 +42,10 @@ fn prefill_dense_launches_use_staged_tiles() {
             if let Some(stages) =
                 crate::sm120::mxfp8_fold::compact::stages(&FLASH, entry.query, rows as u32)
             {
-                let compact =
-                    kernels_sm120::gemm::mxfp8_prefill_compact::Entry::new(entry.clone(), stages)
-                        .unwrap();
-                let tile = kernels_sm120::gemm::mxfp8_prefill_compact::Entry::tile(rows as u32);
-                assert_eq!(symbol, compact.symbol(tile));
+                let (expected, plan) =
+                    crate::sm120::mxfp8_fold::compact::launch_shape(entry, rows as u32, stages);
+                let tile = crate::sm120::mxfp8_fold::compact::tile(rows as u32);
+                assert_eq!(symbol, expected);
                 assert!(
                     line.contains(&format!("grid_y: {},", rows / u64::from(tile))),
                     "{line}"
@@ -54,7 +53,7 @@ fn prefill_dense_launches_use_staged_tiles() {
                 assert!(
                     line.contains(&format!(
                         "shared_memory_bytes: {},",
-                        compact.shared_bytes(tile)
+                        plan.dynamic_shared_bytes
                     )),
                     "{line}"
                 );

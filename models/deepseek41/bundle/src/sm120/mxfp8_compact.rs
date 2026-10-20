@@ -67,6 +67,24 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 
 #[cfg(test)]
+pub fn tile(rows: u32) -> u32 {
+    Entry::tile(rows)
+}
+
+#[cfg(test)]
+pub fn launch_shape(
+    base: &kernels_sm120::gemm::mxfp8_fold::Entry,
+    rows: u32,
+    stages: u32,
+) -> (String, kernel_core::contract::LaunchPlan) {
+    let entry = Entry::new(base.clone(), stages).unwrap();
+    (
+        entry.symbol(Entry::tile(rows)),
+        entry.plan(rows, Entry::tile(rows)).unwrap(),
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use kernel_core::backend::{Backend, Counts, Need, View};

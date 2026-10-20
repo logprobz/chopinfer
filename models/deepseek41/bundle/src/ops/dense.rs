@@ -743,8 +743,7 @@ mod tests {
                     );
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
                     if let Some(stages) = compact {
-                        let tile =
-                            kernels_sm120::gemm::mxfp8_prefill_compact::Entry::tile(phase.rows());
+                        let tile = crate::sm120::mxfp8_fold::compact::tile(phase.rows());
                         assert!(
                             calls[1]
                                 .launch

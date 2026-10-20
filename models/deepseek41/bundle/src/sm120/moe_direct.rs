@@ -57,6 +57,7 @@ pub(super) fn prepare_set(
                 prepare(
                     &entry,
                     rows,
+                    phase,
                     scaling,
                     super::moe_router_finish::qualified(set, phase, rows),
                 )?,
@@ -68,6 +69,7 @@ pub(super) fn prepare_set(
 fn prepare(
     entry: &Entry,
     rows: u32,
+    phase: ExecutionPhase,
     scaling: u32,
     fused_router: bool,
 ) -> Result<Prepared, Refused> {
@@ -131,7 +133,22 @@ fn prepare(
             },
         ));
     }
-    for (stage, spec, plan) in stages {
+    for (stage, spec, mut plan) in stages {
+        // TP4, 250 W, 2026-10-20: full captured graphs passed bitwise on
+        // both GPUs and all four logical ranks. Matching the 80-register
+        // small gate's six-CTA residency saves 0.60 ms at AR8, 1.14 ms at
+        // AR32 and 0.94..1.17 ms at verify32 across 40 backbone layers.
+        // Keep the locked cubin, operands, K128 chains and partial ABI.
+        // Other phase/row pairs and the drafter bank retain their prior grid.
+        if stage == Some(Stage::GateSmall)
+            && entry.experts() == 384
+            && matches!(
+                (phase, rows),
+                (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
+            )
+        {
+            plan.grid[0] = plan.grid[0].min(kernels_sm120::moe::SM_COUNT * 6);
+        }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
         }
@@ -299,6 +316,54 @@ mod tests {
                             "{phase:?} rows={rows} experts={}",
                             set.count
                         );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gate_grid_selects_only_measured_backbone_buckets() {
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
+            for (phase, rows, op) in prepare_set(&shape, set).unwrap() {
+                let workspace = DeviceBufferSpanV1::new(
+                    BundleDeviceBufferHandleV1 { raw: 1 },
+                    0,
+                    op.info.workspace,
+                );
+                for point in [Point::Gate, Point::Down] {
+                    for call in op
+                        .launch(point, workspace, |_| {
+                            Ok(DeviceBufferSpanV1::new(
+                                BundleDeviceBufferHandleV1 { raw: 2 },
+                                0,
+                                1 << 32,
+                            ))
+                        })
+                        .unwrap()
+                    {
+                        if call.launch.symbol.contains("_small_") {
+                            let resident = if set.count == 384
+                                && matches!(
+                                    (phase, rows),
+                                    (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
+                                )
+                                && point == Point::Gate
+                            {
+                                6
+                            } else {
+                                8
+                            };
+                            let items = set.count.min(rows * set.top_k)
+                                * if point == Point::Gate { 9 * 40 } else { 80 * 5 };
+                            assert_eq!(
+                                call.launch.plan.grid,
+                                [items.min(188 * resident), 1, 1],
+                                "{} rows={rows}",
+                                call.launch.symbol
+                            );
+                        }
                     }
                 }
             }

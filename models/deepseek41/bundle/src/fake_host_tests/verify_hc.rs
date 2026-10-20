@@ -2,16 +2,19 @@ use super::*;
 
 // Six and 32 rows replace 77 five/six-launch chains with two launches and
 // retain all original operands. Eight and 16 rows retain the unfused HC path.
+// The measured MoE grid changes only 160 small-gate grid_x fields at 32
+// verify rows (four ranks, 40 layers); all other journal lines stay identical.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0xfb6a4f817b0b2149)),
     (8, (8992, 0xea10427872fd2fbd)),
     (16, (9964, 0x6d88a8c8d24c043f)),
-    (32, (8384, 0x177a8b57184fc800)),
+    (32, (8384, 0x4f86626b609e2718)),
 ];
 
 #[test]
 fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
     let mut missing = Vec::new();
+    let mut journal_mismatches = Vec::new();
     for rows in [6u32, 8, 16, 32] {
         // DSpark supports the trained native KV layout only.
         for kv in KV_LAYOUTS
@@ -39,20 +42,6 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             instance.execute(&verify(&batch), &mut views).unwrap();
             assert_eq!(views.rows(), rows);
             let lines = host.device.journal.borrow()[start..].to_vec();
-            let expected = JOURNALS.iter().find(|(r, _)| *r == rows).unwrap().1;
-            bundle_runtime::fake_host::check_journal(
-                &lines,
-                expected,
-                &format!("verify-hc-{rows}.journal"),
-            )
-            .unwrap();
-            let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
-            let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
-            let qualified = matches!(rows, 6 | 32);
-            let pairs = if qualified { 77 * 4 } else { 0 };
-            if count("hc_finish_norm_w32_v1") != pairs {
-                missing.push((rows, kv.storage, count("hc_finish_norm_w32_v1"), pairs));
-            }
             // Save complete before/after journals even when the admission
             // assertion fails, so the launch and binding delta is auditable.
             if let Some(dir) = std::env::var_os("CHOPINFER_VERIFY_HC_JOURNALS") {
@@ -63,6 +52,21 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     lines.join("\n"),
                 )
                 .unwrap();
+            }
+            let expected = JOURNALS.iter().find(|(r, _)| *r == rows).unwrap().1;
+            if let Err(error) = bundle_runtime::fake_host::check_journal(
+                &lines,
+                expected,
+                &format!("verify-hc-{rows}.journal"),
+            ) {
+                journal_mismatches.push((rows, error));
+            }
+            let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
+            let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
+            let qualified = matches!(rows, 6 | 32);
+            let pairs = if qualified { 77 * 4 } else { 0 };
+            if count("hc_finish_norm_w32_v1") != pairs {
+                missing.push((rows, kv.storage, count("hc_finish_norm_w32_v1"), pairs));
             }
             eprintln!(
                 "VERIFY_HC_LAUNCHES rows={rows} kv={:?} per_rank={} tails={} producers={}",
@@ -131,6 +135,7 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             assert_eq!(host.acquired.get(), host.released.get());
         }
     }
+    assert!(journal_mismatches.is_empty(), "{journal_mismatches:#?}");
     assert!(
         missing.is_empty(),
         "qualified verify tails absent: {missing:?}"

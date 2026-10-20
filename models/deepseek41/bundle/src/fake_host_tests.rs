@@ -1022,6 +1022,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// journals do not. The gate finisher loads module adds one module, 2
 /// resolves and 3 releases per TP4 rank. Each was audited against the
 /// combined journals before it: exactly these lines differ.
+/// The one-launch HC boundary module adds ten resolves and eleven releases
+/// per rank; these fixtures launch no C1 or C8 boundary.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1031,7 +1033,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17219, 0xf008fc2d9b8b05ca),
+        (17240, 0x38cae358060b8a9d),
     ),
     (
         "deepseek41-flash-tp2",
@@ -1041,7 +1043,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34625, 0xf4943a0baf57d616),
+        (34667, 0x77231ca9a7bdd240),
     ),
     (
         "deepseek41-flash-tp4",
@@ -1199,6 +1201,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// and rename the prefill selectors, as in the native default. The gate
 /// finisher loads module adds only its resolves and releases here (one
 /// module, 2 resolves per rank).
+/// Opting out retains the audited exact expert path and its resources.
+/// The HC boundary, cached ceil, prefill expand-mix and cached query norm
+/// modules change it exactly as they change the default-era TP4 lifecycle.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

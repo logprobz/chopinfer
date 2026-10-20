@@ -479,8 +479,7 @@ impl crate::Kernels {
             && (cubin != moe_pipeline_vector::CUBIN
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (cubin != moe_native::CUBIN
-                || (moe_native::requested()
-                    && moe_native::eligible(shape.geometry, shape.ranks())))
+                || (moe_native::requested() && moe_native::eligible(shape.geometry, shape.ranks())))
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))

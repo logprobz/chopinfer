@@ -101,7 +101,12 @@ pub fn gather_plane_v1(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), String> {
-    if crate::host_rows::fetch::enabled() {
+    // Apply the complete gather's cache policy before queued resident lookups.
+    // Invalid widths still reach the checked mapped path and are refused.
+    if crate::host_rows::fetch::enabled()
+        && plane.row_bytes != 0
+        && crate::host_rows::gather::use_resident(output.len() / plane.row_bytes)
+    {
         let ids = checked_ids(plane, input, output.len())?;
         // Keep the existing gather counters. Queued descriptor reads supply
         // the misses directly, so this path needs no mmap read-ahead hint.

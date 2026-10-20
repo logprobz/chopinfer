@@ -73,3 +73,45 @@ fn large_gathers_bypass_resident_metadata_but_preserve_every_byte() {
         );
     }
 }
+
+#[test]
+fn asynchronous_gathers_preserve_large_row_cache_admission() {
+    let cache_large =
+        std::env::var_os("CHOPINFER_MAPPED_LARGE_GATHER_CACHE").is_some_and(|value| value == "1");
+    let registry = registry(1);
+    for width in [8, 256] {
+        let mapping = mapping(
+            &format!("async-large-gather-{width}"),
+            &source(100, width),
+            32,
+        );
+        attach(&registry, vec![(Arc::clone(&mapping), width)]).unwrap();
+        let cache = &mapping.resident.get().unwrap().cache;
+        let plane = gather_plane(Arc::clone(&mapping), width, 0);
+        for count in [24, 65_535, 65_536, 196_608, 192] {
+            let rows: Vec<u32> = (0..count).map(|i| ((i * 37) % 100) as u32).collect();
+            let input: Vec<u8> = rows.iter().flat_map(|row| row.to_le_bytes()).collect();
+            let expected: Vec<u8> = rows
+                .iter()
+                .flat_map(|&row| {
+                    mapping.bytes()[row as usize * width..][..width]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            let mut output = vec![0xa5; expected.len()];
+            let before = cache.copies.load(Ordering::Relaxed);
+            crate::device::mapped_gather::gather_plane_v1(&plane, &input, &mut output).unwrap();
+            assert_eq!(output, expected);
+            let copies = cache.copies.load(Ordering::Relaxed) - before;
+            if count >= 65_536 && !cache_large {
+                assert_eq!(copies, 0, "large asynchronous gather used resident lookup");
+            } else {
+                assert!(
+                    copies > 0,
+                    "small or explicitly cached gather bypassed lookup"
+                );
+            }
+        }
+    }
+}

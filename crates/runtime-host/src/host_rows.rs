@@ -19,6 +19,7 @@
 // SAFETY-REVIEWED: this module contains the mmap, madvise and munmap calls.
 #![allow(unsafe_code)]
 
+pub(crate) mod fetch;
 pub(crate) mod gather;
 pub(crate) mod resident;
 
@@ -63,6 +64,7 @@ pub struct MappedRowsV1 {
     lead: usize,
     length: usize,
     key: RowsKeyV1,
+    source: Option<Arc<File>>,
     resident: std::sync::OnceLock<resident::Plane>,
 }
 
@@ -341,6 +343,7 @@ fn map_rows_inner(
         lead,
         length,
         key,
+        source: file.try_clone().ok().map(Arc::new),
         resident: std::sync::OnceLock::new(),
     });
     mapping.advise(RowAdviceV1::Random)?;

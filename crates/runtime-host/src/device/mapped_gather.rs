@@ -101,6 +101,13 @@ pub fn gather_plane_v1(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), String> {
+    if crate::host_rows::fetch::enabled() {
+        let ids = checked_ids(plane, input, output.len())?;
+        // Keep the existing gather counters. Queued descriptor reads supply
+        // the misses directly, so this path needs no mmap read-ahead hint.
+        let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
+        return crate::host_rows::fetch::copy_rows(&plane.mapping, plane.row_bytes, &ids, output);
+    }
     let probe = MappedProbe::asynchronous(&plane.mapping, plane.row_bytes);
     gather_plane_with_probe(
         plane,
@@ -118,10 +125,27 @@ fn gather_plane_with_probe(
     probe: &dyn GatherProbe,
     read_ahead: bool,
 ) -> Result<(), String> {
-    if plane.row_bytes == 0 || !output.len().is_multiple_of(plane.row_bytes) {
+    let ids = checked_ids(plane, input, output.len())?;
+    let table = plane.mapping.bytes();
+    let ahead = if read_ahead {
+        ReadAhead::new(probe)
+    } else {
+        ReadAhead::disabled(probe)
+    };
+    let ahead = ahead.with_resident(plane.mapping.resident_plane(plane.row_bytes));
+    gather_span_v1(table, plane.row_bytes, &ids, 0, output, &ahead);
+    Ok(())
+}
+
+fn checked_ids(
+    plane: &MappedGatherPlaneV1,
+    input: &[u8],
+    output_length: usize,
+) -> Result<Vec<u32>, String> {
+    if plane.row_bytes == 0 || !output_length.is_multiple_of(plane.row_bytes) {
         return Err("mapped gather output differs from its row width".into());
     }
-    let rows = output.len() / plane.row_bytes;
+    let rows = output_length / plane.row_bytes;
     let bytes = rows
         .checked_mul(4)
         .ok_or("mapped gather index length overflows")?;
@@ -143,16 +167,7 @@ fn gather_plane_with_probe(
     if ids.iter().any(|&row| row as usize >= limit) {
         return Err("mapped gather device index is outside the table".into());
     }
-    // The CUDA host callback stays serial. Only the mapping's read-ahead
-    // policy is shared with the synchronous service, after every ID is checked.
-    let ahead = if read_ahead {
-        ReadAhead::new(probe)
-    } else {
-        ReadAhead::disabled(probe)
-    };
-    let ahead = ahead.with_resident(plane.mapping.resident_plane(plane.row_bytes));
-    gather_span_v1(table, plane.row_bytes, &ids, 0, output, &ahead);
-    Ok(())
+    Ok(ids)
 }
 
 #[cfg(test)]

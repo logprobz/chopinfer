@@ -58,6 +58,7 @@ impl Policy {
             "replay":replay,
             "sync":self.snapshot(0), "async":self.snapshot(1),
             "cache":crate::host_rows::resident::measurement_snapshot(),
+            "miss_fetch":crate::host_rows::fetch::snapshot(),
         }))
     }
 

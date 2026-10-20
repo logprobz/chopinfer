@@ -176,6 +176,35 @@ fn code_and_scale_planes_keep_exact_bits_and_share_one_charge() {
 }
 
 #[test]
+fn fetched_planes_publish_exact_bytes_and_the_next_batch_hits() {
+    let registry = registry(1);
+    let codes = mapping("fetched-codes", &source(1000, 256), 30);
+    let scales = mapping("fetched-scales", &source(1000, 8), 30);
+    attach(
+        &registry,
+        vec![(Arc::clone(&codes), 256), (Arc::clone(&scales), 8)],
+    )
+    .unwrap();
+    let rows = [0, 17, 999, 17];
+    let cache = &codes.resident.get().unwrap().cache;
+    for mapping in [&codes, &scales, &codes, &scales] {
+        let width = mapping.resident.get().unwrap().width;
+        let mut out = vec![0xa5; rows.len() * width];
+        super::super::fetch::copy_rows(mapping, width, &rows, &mut out).unwrap();
+        for (position, &row) in rows.iter().enumerate() {
+            assert_eq!(
+                &out[position * width..][..width],
+                &mapping.bytes()[row as usize * width..][..width]
+            );
+        }
+    }
+    assert_eq!(cache.copies.load(Ordering::Relaxed), 16);
+    assert_eq!(cache.misses.load(Ordering::Relaxed), 6);
+    assert_eq!(cache.hits.load(Ordering::Relaxed), 10);
+    assert_eq!(cache.evictions.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn partial_plane_copy_never_publishes_unwritten_bytes() {
     let registry = registry(1);
     let mapping = mapping("partial", &source(100, 97), 2);

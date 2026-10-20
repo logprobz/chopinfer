@@ -136,3 +136,61 @@ fn disabled_async_read_ahead_copies_without_advice() {
     assert_eq!(output, expected(&plane, &ids));
     assert!(probe.asked.lock().unwrap().is_empty());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn default_dispatch_uses_descriptor_reads_and_zero_restores_mapping_access() {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHILD: &str = "MAPPED_FETCH_DISPATCH_TEST";
+    if let Some(mode) = std::env::var_os(CHILD) {
+        let plane = plane("dispatch");
+        let ids = [0, 17, 256, 0];
+        let wanted = expected(&plane, &ids);
+        plane
+            .mapping
+            .advise(crate::host_rows::RowAdviceV1::DontNeed)
+            .unwrap();
+        let present = || {
+            let address = plane.mapping.bytes().as_ptr() as u64;
+            let mut file = std::fs::File::open("/proc/self/pagemap").unwrap();
+            file.seek(SeekFrom::Start(
+                address / crate::host_rows::page_bytes_v1() as u64 * 8,
+            ))
+            .unwrap();
+            let mut entry = [0; 8];
+            file.read_exact(&mut entry).unwrap();
+            u64::from_ne_bytes(entry) & (1 << 63) != 0
+        };
+        assert!(!present());
+        let mut output = vec![0xa5; wanted.len()];
+        gather_plane_v1(&plane, &input(&ids), &mut output).unwrap();
+        assert_eq!(output, wanted);
+        assert_eq!(
+            present(),
+            mode == "legacy",
+            "dispatch must use the selected source"
+        );
+        return;
+    }
+    for mode in ["default", "legacy"] {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args([
+            "--exact",
+            "device::mapped_gather::tests::default_dispatch_uses_descriptor_reads_and_zero_restores_mapping_access",
+            "--nocapture",
+        ]).env(CHILD, mode);
+        if mode == "legacy" {
+            command.env("CHOPINFER_MAPPED_MISS_FETCH", "0");
+        } else {
+            command.env_remove("CHOPINFER_MAPPED_MISS_FETCH");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+    }
+}

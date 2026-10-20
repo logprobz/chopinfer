@@ -1,5 +1,6 @@
 //! Bounded resident copies of authenticated mapped rows, shared across ranks.
 mod batch;
+mod publish;
 pub(crate) mod replay;
 mod storage;
 
@@ -346,40 +347,7 @@ impl Plane {
             let source = row as usize * width + within;
             out.copy_from_slice(&table[source..source + out.len()]);
             if within == 0 && out.len() == width {
-                if let Ok(mut shard) = cache.shards[shard].try_lock() {
-                    shard.clock = shard.clock.saturating_add(1);
-                    let clock = shard.clock;
-                    let bytes = shard.memory.bytes();
-                    let same = (0..WAYS).find(|&way| word(bytes, bucket + way * ENTRY_META) == tag);
-                    let way = same.unwrap_or_else(|| {
-                        (0..WAYS)
-                            .min_by_key(|&way| {
-                                let at = bucket + way * ENTRY_META;
-                                if word(bytes, at) == 0 {
-                                    0
-                                } else {
-                                    word(bytes, at + 8)
-                                }
-                            })
-                            .expect("cache ways")
-                    });
-                    let meta = bucket + way * ENTRY_META;
-                    if same.is_none() {
-                        if word(bytes, meta) != 0 {
-                            cache.evictions.fetch_add(1, Ordering::Relaxed);
-                        }
-                        put(bytes, meta, tag);
-                        put(bytes, meta + 16, 0);
-                    }
-                    let to = bucket + WAYS * ENTRY_META + way * cache.row_bytes + offset;
-                    bytes[to..to + width].copy_from_slice(out);
-                    put(bytes, meta + 8, clock);
-                    let valid = word(bytes, meta + 16);
-                    put(bytes, meta + 16, valid | bit);
-                    cache.insertions.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    cache.contention.fetch_add(1, Ordering::Relaxed);
-                }
+                self.store_full_row(row, out);
             }
         }
         if cache.copies.fetch_add(1, Ordering::Relaxed) % 65536 == 65535 {

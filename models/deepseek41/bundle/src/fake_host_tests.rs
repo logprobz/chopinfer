@@ -1087,9 +1087,14 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
 /// 40 layers launch the gate/up and down pack and tile entries on each rank
 /// (four resolves per rank) in place of the exact expert launches. These
 /// are the pins a default flip moves `FLASH_JOURNALS`' TP4 entries to.
+/// Against those entries, with buffer handles and event, stream and
+/// resolve numbers normalized, the only differences are the 800 column
+/// gate/up and 800 column down launches each replaced by a native pack and
+/// tile launch, 16 resolves and 20 releases (four symbols and the module
+/// per rank), and four fewer shared-memory configures: 1632 lines.
 const NATIVE_MOE_PREFILL_JOURNALS: [(KvStorage, (usize, u64)); 2] = [
-    (KvStorage::Native, (76571, 0xce62ea1b88021749)),
-    (KvStorage::Bf16, (74523, 0x254b4ba1e1ce17bc)),
+    (KvStorage::Native, (76699, 0x0b4afe51e1e5460e)),
+    (KvStorage::Bf16, (74583, 0x3ba9fbf1cc78ee9f)),
 ];
 
 #[test]

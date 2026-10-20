@@ -392,7 +392,7 @@ fn prefill_only_partials_keep_small_rows_and_original_decode_fusion() {
             assert!(
                 journal
                     .iter()
-                    .any(|s| s.contains("chop_deepseek41_hc_round_expand_mix_finish_v1"))
+                    .any(|s| s.contains("chop_deepseek41_hc_finish_norm_w32_v1"))
             );
             assert_no_protocol_zero(&journal, &spans);
         }
@@ -476,7 +476,7 @@ fn unset_bf16_partials_select_prefill_and_keep_decode_f32() {
     assert!(
         journal
             .iter()
-            .any(|line| line.contains("chop_deepseek41_hc_round_expand_mix_finish_v1"))
+            .any(|line| line.contains("chop_deepseek41_hc_finish_norm_w32_v1"))
     );
     drop(journal);
     instance.destroy().unwrap();

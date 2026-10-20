@@ -139,14 +139,19 @@ Both overlap modes remain explicit experiments.
 
 ## Ordered DMA transport
 
-DMA is opt-in. An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA`, `0`, or any value
-other than `1` keeps the existing reduction path and allocates no DMA inbox,
-owner stream or events. This also applies to legacy create records without
-prefill options and to the explicit full-prefill profile. Package defaults
-remain 8192-row chunks with upper-layer skip enabled. Negotiated skip uses
-its own executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the
-original F32 transport when DMA is off. Overlap remains off by default,
-and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` retains sequential work.
+An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA` selects DMA for the negotiated
+upper-skip executor only (see [sparse DMA admission](#sparse-dma-admission)):
+the create record's prefill profile must negotiate upper-skip chunks and the
+BF16 gather must be prepared. Package defaults are 8192-row chunks with
+upper-layer skip, so they take it. Legacy create records without prefill
+options, the explicit full-prefill profile, chunked profiles without skip and
+DSpark instances allocate no DMA inbox, owner stream or events. Full-schedule
+and two-part executions keep the SM transport unless `1` is set. `0`, or any
+value other than `1`, turns DMA off everywhere. Negotiated skip uses its own
+executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the original
+F32 transport when DMA is off, and also turns off the upper-skip default.
+Overlap remains off by default, and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0`
+retains sequential work.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
 text-request Flash TP4 autoregressive prefills. It applies to sequential
@@ -292,9 +297,11 @@ The GPU-time route decision does not establish a quiet-host TTFT gain.
 
 ### Sparse DMA admission
 
-`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` also admits the exact upper-skip
-schedule for native Flash TP4, single-request AR text prefill with overlap
-disabled. Unset and `0` retain the SM transport. The adapter recognizes only
+The exact upper-skip schedule takes DMA for native Flash TP4, single-request
+AR text prefill with overlap disabled, both by default and with
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1`; `0` retains the SM transport. Under
+package defaults the unset and explicit settings produce the same create,
+execute and release journal. The adapter recognizes only
 the F32-partial, BF16-result phased contract and the BF16-partial two-shot
 and turns entries, and carries their payload. It validates every rank's
 original input and output row interval before substituting a DMA call.
@@ -319,7 +326,14 @@ The earlier isolated sparse qualification on 2026-10-19 passed all 40 raw
 state artifacts and served token/logprob bits. At offset 0, communication
 exclusive time fell from 316.15 to 200.90 ms and the GPU envelope from
 1361.82 to 1278.20 ms. These are historical measurements on a different
-integration. A fresh state comparison and TTFT ABBA are required for this
-port. The trace analyzer checks owner sums against incoming scatter copies
-and outgoing gather copies on all ranks; independent outgoing scatters can
-legally overlap an owner's sum.
+integration. The trace analyzer checks owner sums against incoming scatter
+copies and outgoing gather copies on all ranks; independent outgoing
+scatters can legally overlap an owner's sum.
+
+On 2026-10-20 at 250 W, this port on round 7 passed the raw-state comparison
+of DMA=1 against DMA=0: all 40 artifacts (8 full-vocabulary F32 logit rows,
+16 rank snapshots and 16 committed KV files at 8192, 24576, 32767 and 32768
+tokens, including restored continuations) were byte-identical, with no live
+resources left and no Xids. That job stopped at its first served arm on a
+pinned KV page count, so the TTFT ABBA and Nsight profiles of this port
+remain to be measured, now against the unset default.

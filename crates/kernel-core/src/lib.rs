@@ -26,6 +26,7 @@ pub mod latent_attention;
 pub mod latent_attention_oracle;
 pub mod latent_glue;
 pub mod latent_glue_oracle;
+pub mod latent_sources_cache;
 pub mod latent_staged_window_keys;
 pub mod latent_visibility;
 pub mod latent_window_stage;

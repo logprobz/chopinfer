@@ -34,6 +34,16 @@ class Runner(width.Runner):
         self.session = Session(self, config)
         return self.session.launch(command)
 
+    def close_session(self):
+        primary = sys.exception()
+        try:
+            self.session.close(startup_failed=primary is not None)
+        except BaseException as error:
+            if primary is None:
+                raise
+            width.write(self.directory / "cleanup-error.json",
+                        dict(primary=str(primary), cleanup=str(error)))
+
     @contextlib.contextmanager
     def profiled(self, config, epoch):
         try:
@@ -48,12 +58,12 @@ class Runner(width.Runner):
                     yield
                 finally:
                     try:
-                        self.session.close()
+                        self.close_session()
                     finally:
                         self.server = launcher
         finally:
             if self.session is not None:
-                self.session.close()
+                self.close_session()
 
     def run(self):
         self.gpu_guard("before", idle=True)

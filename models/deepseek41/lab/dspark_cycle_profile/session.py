@@ -28,7 +28,7 @@ class Session:
                             "--cuda-graph-trace=node", "--cuda-flush-interval=100",
                             "--wait=all", *owned]
 
-    def call(self, action, extra=(), timeout=90, cleanup=False):
+    def call(self, action, extra=(), timeout=90, cleanup=False, missing_ok=False):
         args = self.tool + [action]
         if action != "export":
             args += ["--session", self.name]
@@ -36,7 +36,10 @@ class Session:
         result = subprocess.run(args, env=self.runner.env, capture_output=True, text=True,
                                 timeout=timeout if cleanup else self.runner.remaining(timeout))
         (self.runner.directory / f"nsys-{action}.log").write_text(result.stdout + result.stderr)
-        assert result.returncode == 0, (action, result.returncode, result.stderr[-2000:])
+        missing = (result.stdout + result.stderr).strip() in (
+            "There are no active sessions.", f"Session is not found: {self.name}")
+        assert result.returncode == 0 or (missing_ok and action == "shutdown" and missing), (
+            action, result.returncode, result.stderr[-2000:])
         return result
 
     def start(self):
@@ -46,7 +49,7 @@ class Session:
         self.started = True
         self.call("start", ["--sample=none", "--cpuctxsw=none", "--output", self.prefix], 30)
 
-    def close(self):
+    def close(self, *, startup_failed=False):
         if self.closed:
             return
         self.closed = True
@@ -69,7 +72,9 @@ class Session:
             except FileNotFoundError:
                 pass
         try:
-            self.call("shutdown", ["--kill=sigkill"], timeout=15, cleanup=True)
+            # A failed child launch can remove its session before collection starts.
+            self.call("shutdown", ["--kill=sigkill"], timeout=15, cleanup=True,
+                      missing_ok=startup_failed and not self.started)
         except BaseException as error:
             errors.append(str(error))
         if self.pidfile.is_file():

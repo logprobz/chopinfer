@@ -515,7 +515,15 @@ impl crate::Kernels {
 
     /// The SM120 backend over the entries the build compiles for `shape`,
     /// and the model's own kernels.
+    #[cfg(test)]
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
+        Self::new_for_kv(shape, model_deepseek41_contract::state::KvStorage::Native)
+    }
+
+    pub(crate) fn new_for_kv(
+        shape: &crate::shape::Shape,
+        storage: model_deepseek41_contract::state::KvStorage,
+    ) -> Result<Self, String> {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
         let sm120 = norm_quantize::register(sm120, shape.geometry)?;
         let sm120 = if shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id {
@@ -529,12 +537,12 @@ impl crate::Kernels {
         let sm120 = query_prefill::register(sm120, shape.geometry)?;
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
-        let sm120 = if crate::ops::bf16_partials_requested(shape) {
+        let sm120 = if crate::ops::bf16_partials_requested(shape, storage) {
             if crate::ops::dma_requested().enabled() {
                 return Err("BF16 partials require CHOPINFER_DEEPSEEK41_PREFILL_DMA=0".into());
             }
             // Create admits every resident grid before preparing or running
-            // any graph. A failed admission refuses the opt-in instance.
+            // any graph. A failed admission refuses the selected instance.
             sm120.with_phased_bf16_all_reduce()
         } else {
             sm120

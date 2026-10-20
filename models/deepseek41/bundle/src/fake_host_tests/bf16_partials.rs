@@ -438,3 +438,82 @@ fn assert_no_protocol_zero(journal: &[String], spans: &[DeviceBufferSpanV1]) {
         }
     }
 }
+
+#[test]
+fn unset_bf16_partials_select_prefill_and_keep_decode_f32() {
+    let host = host(true);
+    let mut instance = with_partial_setting(None, || create(&host, 1));
+    host.device.journal.borrow_mut().clear();
+    step(
+        &mut instance,
+        &prompt(7, 0, 0, 63, true),
+        &mut Views::default(),
+    );
+    assert!(
+        host.device
+            .journal
+            .borrow()
+            .iter()
+            .any(|line| line.starts_with("launch ") && partial_entry(line))
+    );
+    host.device.journal.borrow_mut().clear();
+    step(
+        &mut instance,
+        &decode(&[(7, 0, 63, 9)]),
+        &mut Views::default(),
+    );
+    let journal = host.device.journal.borrow();
+    assert!(
+        !journal
+            .iter()
+            .any(|line| line.starts_with("launch ") && partial_entry(line))
+    );
+    assert!(
+        journal
+            .iter()
+            .any(|line| line.contains("chop_comm_reduce_scatter_f32_v1"))
+    );
+    assert!(
+        journal
+            .iter()
+            .any(|line| line.contains("chop_deepseek41_hc_round_expand_mix_finish_v1"))
+    );
+    drop(journal);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
+fn unset_bf16_partials_keep_other_kv_on_f32() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
+    assert_eq!(host.kv.storage, KvStorage::Bf16);
+    let mut instance = with_partial_setting(None, || create(&host, 1));
+    assert!(
+        !host
+            .device
+            .journal
+            .borrow()
+            .iter()
+            .any(|line| partial_entry(line))
+    );
+    host.device.journal.borrow_mut().clear();
+    step(
+        &mut instance,
+        &prompt(7, 0, 0, 63, true),
+        &mut Views::default(),
+    );
+    let journal = host.device.journal.borrow();
+    assert!(
+        !journal
+            .iter()
+            .any(|line| line.starts_with("launch ") && partial_entry(line))
+    );
+    assert!(
+        journal
+            .iter()
+            .any(|line| line.contains("chop_comm_reduce_scatter_f32_v1"))
+    );
+    drop(journal);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}

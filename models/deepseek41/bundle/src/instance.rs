@@ -781,7 +781,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(BundleStatusV1::Unsupported.into());
     }
     // Every op, prepared once on the target's kernels.
-    let kernels = crate::Kernels::new(&shape).map_err(|error| {
+    let kernels = crate::Kernels::new_for_kv(&shape, config.kv.storage).map_err(|error| {
         log(&error);
         BundleStatusV1::Unsupported
     })?;

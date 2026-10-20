@@ -121,7 +121,7 @@ impl Ops {
                 top_k: shape.geometry.shape.moe.top_k,
             },
         );
-        if reduce::prefill_only_partials(shape) {
+        if reduce::prefill_only_partials(shape, storage) {
             let asks = Asks::default();
             if let Some(reduce) = &mut ops.reduce
                 && let Err(error) = reduce.prepare_prefill(kernels.backend.as_ref(), shape, &asks)
@@ -130,7 +130,7 @@ impl Ops {
             }
             ops.asked.extend(asks.asked());
         }
-        if !reduce::bf16_partials_requested(shape)
+        if !reduce::bf16_partials_requested(shape, storage)
             && reduce::requested(shape)
             && shape.ranks() == 4
             && shape.dims().hidden.is_multiple_of(1024)
@@ -213,6 +213,7 @@ impl Ops {
                 kernels.backend.as_ref(),
                 kernels.own.as_ref(),
                 shape,
+                storage,
                 &asks,
             ),
         );

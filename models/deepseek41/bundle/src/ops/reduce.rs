@@ -4,8 +4,10 @@
 //! `model.py:271-278`), and the embedding's BF16 shard rows widened into F32
 //! partials (an own op) and reduced the same way, which gives back each
 //! row's bits as one rank holds it.
-//! The explicit BF16-partial experiment uses the separate BF16 AllReduce
+//! Native Flash TP4 prefills default to the separate BF16 AllReduce
 //! contract, rounding each completed local partial before transport.
+//! Decode and verification retain F32 partials; the explicit zero switch
+//! keeps F32 partials in every phase.
 //!
 //! Each rank's op keeps comm state regions (`OpInfo::state`) that its
 //! peers write; every rank allocates the same regions, zeroed at create.
@@ -16,6 +18,7 @@ use kernel_core::contract::{CommQuery, DType, Refusal};
 use model_deepseek41_contract::own_ops::OwnOps;
 use model_deepseek41_contract::own_ops::widen::{WidenRows, WidenRowsBuffers};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
+use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
@@ -29,43 +32,47 @@ enum Partials {
     Prefill,
 }
 
-fn partials_selected(shape: &Shape, setting: Option<&str>) -> Partials {
+fn partials_selected(shape: &Shape, storage: KvStorage, setting: Option<&str>) -> Partials {
     if shape.ranks() != 4 || shape.geometry != &model_deepseek41_contract::geometry::FLASH {
         return Partials::Off;
     }
     match setting {
         Some("1") => Partials::All,
         Some("prefill") => Partials::Prefill,
+        None if storage == KvStorage::Native => Partials::Prefill,
         _ => Partials::Off,
     }
 }
 
-fn partials_mode(shape: &Shape) -> Partials {
+fn partials_mode(shape: &Shape, storage: KvStorage) -> Partials {
     #[cfg(test)]
-    return partials_selected(shape, PARTIALS_IN_TESTS.get());
+    return partials_selected(shape, storage, PARTIALS_IN_TESTS.get());
     #[cfg(not(test))]
-    partials_selected(
-        shape,
-        std::env::var("CHOPINFER_DEEPSEEK41_BF16_PARTIALS")
-            .ok()
-            .as_deref(),
-    )
+    {
+        let setting = std::env::var("CHOPINFER_DEEPSEEK41_BF16_PARTIALS");
+        let value = match &setting {
+            Ok(value) => Some(value.as_str()),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => Some(""),
+        };
+        partials_selected(shape, storage, value)
+    }
 }
 
-pub(crate) fn bf16_partials_requested(shape: &Shape) -> bool {
-    partials_mode(shape) != Partials::Off
+pub(crate) fn bf16_partials_requested(shape: &Shape, storage: KvStorage) -> bool {
+    partials_mode(shape, storage) != Partials::Off
 }
 
-pub(crate) fn prefill_only_partials(shape: &Shape) -> bool {
-    partials_mode(shape) == Partials::Prefill
+pub(crate) fn prefill_only_partials(shape: &Shape, storage: KvStorage) -> bool {
+    partials_mode(shape, storage) == Partials::Prefill
 }
 
 #[cfg(test)]
-thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
+thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) }; }
 
 #[cfg(test)]
 pub(crate) fn with_bf16_partials<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    with_partial_setting(enabled.then_some("1"), run)
+    with_partial_setting(Some(if enabled { "1" } else { "0" }), run)
 }
 
 #[cfg(test)]
@@ -82,7 +89,7 @@ pub(crate) fn with_partial_setting<T>(setting: Option<&'static str>, run: impl F
 
 #[cfg(test)]
 #[test]
-fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
+fn bf16_partials_default_only_to_qualified_prefill_and_keep_controls() {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
     for geometry in GEOMETRIES {
@@ -90,12 +97,23 @@ fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
             let Ok(shape) = Shape::new(geometry, ranks) else {
                 continue;
             };
-            for setting in [None, Some("0"), Some(""), Some("invalid")] {
-                assert_eq!(partials_selected(&shape, setting), Partials::Off);
+            for setting in [Some("0"), Some(""), Some("invalid")] {
+                assert_eq!(
+                    partials_selected(&shape, KvStorage::Native, setting),
+                    Partials::Off
+                );
             }
             let selected = geometry == &FLASH && ranks == Ranks::TP4;
             assert_eq!(
-                partials_selected(&shape, Some("1")),
+                partials_selected(&shape, KvStorage::Native, None),
+                if selected {
+                    Partials::Prefill
+                } else {
+                    Partials::Off
+                }
+            );
+            assert_eq!(
+                partials_selected(&shape, KvStorage::Native, Some("1")),
                 if selected {
                     Partials::All
                 } else {
@@ -103,7 +121,19 @@ fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
                 }
             );
             assert_eq!(
-                partials_selected(&shape, Some("prefill")),
+                partials_selected(&shape, KvStorage::Native, Some("prefill")),
+                if selected {
+                    Partials::Prefill
+                } else {
+                    Partials::Off
+                }
+            );
+            assert_eq!(
+                partials_selected(&shape, KvStorage::Bf16, None),
+                Partials::Off
+            );
+            assert_eq!(
+                partials_selected(&shape, KvStorage::Bf16, Some("prefill")),
                 if selected {
                     Partials::Prefill
                 } else {
@@ -111,16 +141,20 @@ fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
                 }
             );
             assert!(matches!(
-                with_partial_setting(Some("prefill"), || query(&shape)),
+                with_partial_setting(None, || query(&shape, KvStorage::Native)),
                 CommQuery::AllReduceRounded { .. }
             ));
             assert!(matches!(
-                with_bf16_partials(false, || query(&shape)),
+                with_partial_setting(Some("prefill"), || query(&shape, KvStorage::Native)),
+                CommQuery::AllReduceRounded { .. }
+            ));
+            assert!(matches!(
+                with_bf16_partials(false, || query(&shape, KvStorage::Native)),
                 CommQuery::AllReduceRounded { .. }
             ));
             assert_eq!(
                 matches!(
-                    with_bf16_partials(true, || query(&shape)),
+                    with_bf16_partials(true, || query(&shape, KvStorage::Native)),
                     CommQuery::AllReduce {
                         dtype: DType::Bf16,
                         fused_residual: false,
@@ -232,7 +266,7 @@ fn dma_requires_explicit_selection() {
     let explicit = PrefillDma::read(Some("1"));
     assert_eq!(explicit, PrefillDma::Explicit);
     assert!(explicit.enabled());
-    for setting in [None, Some("0"), Some(""), Some("invalid")] {
+    for setting in [Some("0"), Some(""), Some("invalid")] {
         let off = PrefillDma::read(setting);
         assert_eq!(off, PrefillDma::Off);
         assert!(!off.enabled());
@@ -274,10 +308,14 @@ pub(crate) struct ReduceOps {
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
 /// in rank order from zero and rounded once to BF16. The opt-in candidate
 /// declares its additional input rounding through the BF16 query.
-pub(crate) fn query(shape: &Shape) -> CommQuery {
-    if partials_mode(shape) == Partials::All {
+pub(crate) fn query(shape: &Shape, storage: KvStorage) -> CommQuery {
+    if partials_mode(shape, storage) == Partials::All {
         return partial_query(shape);
     }
+    rounded_query(shape)
+}
+
+fn rounded_query(shape: &Shape) -> CommQuery {
     CommQuery::AllReduceRounded {
         ranks: shape.ranks(),
         elements: u64::from(shape.dims().hidden),
@@ -325,11 +363,12 @@ impl ReduceOps {
         backend: &dyn Backend,
         own: &dyn OwnOps,
         shape: &Shape,
+        storage: KvStorage,
         asks: &Asks,
     ) -> Result<ReduceOps, Refused> {
         // Every phase reduces its sublayers.
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
-        let query = query(shape);
+        let query = query(shape, storage);
         let reduces = (0..shape.ranks())
             .map(|rank| {
                 asks.ask(format!("reduce.all_reduce rank {rank}"), need, |need| {
@@ -356,7 +395,7 @@ impl ReduceOps {
             )
         })?;
         Ok(ReduceOps {
-            bf16_partials: partials_mode(shape),
+            bf16_partials: partials_mode(shape, storage),
             reduces,
             widen,
             state,
@@ -377,7 +416,7 @@ impl ReduceOps {
         let query = if self.bf16_partials == Partials::Prefill {
             partial_query(shape)
         } else {
-            query(shape)
+            rounded_query(shape)
         };
         let reduces = (0..shape.ranks())
             .map(|rank| {

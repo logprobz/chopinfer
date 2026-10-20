@@ -1,5 +1,11 @@
 # Prefill communication
 
+Native Flash TP4 now defaults to BF16 input partials for prefill only; see
+[communication-partials.md](communication-partials.md). Set
+`CHOPINFER_DEEPSEEK41_BF16_PARTIALS=0` to retain the F32-partial arithmetic
+described below or to use the explicit F32 DMA transport. Overlap remains
+off by default and must be bitwise against its selected sequential path.
+
 The optional attention schedule splits the final output projection into two
 row ranges for chunks of at least 1024 rows. The first range is aligned to
 16 rows. The full-chunk quantizer runs first. Each range keeps the prepared

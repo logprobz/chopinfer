@@ -410,7 +410,7 @@ fn composed_trace_capacity(
                 .count();
             assert_eq!(
                 retained,
-                4 * if matches!(offset, 0 | 24576) { 2 } else { 20 },
+                4 * if offset < 32768 { 0 } else { 20 },
                 "retained native-key attention"
             );
         }
@@ -450,8 +450,8 @@ fn composed_trace_capacity(
 fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
     for (mode, skip, cached, fused) in [
         (2, false, true, 608),
-        (0, true, true, 432),
-        (2, true, false, 216),
+        (0, true, true, 608),
+        (2, true, false, 392),
     ] {
         let trace =
             composed_trace_offsets(mode, false, skip, cached, &[0, 8192, 16384, 24576, 32768]);

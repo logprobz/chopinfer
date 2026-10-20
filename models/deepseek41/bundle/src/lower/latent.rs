@@ -487,12 +487,12 @@ fn qualified_native_finish(rows: u32, first: Option<u32>, offset: u32, ratio: u3
     if rows == 8192 && first.is_none() {
         return offset == 0;
     }
-    if !matches!(offset, 0 | 24576) {
+    if !matches!(offset, 0 | 8192 | 16384 | 24576) {
         return false;
     }
-    (rows == 4096 && matches!(first, Some(0 | 4096)))
+    (matches!(offset, 0 | 24576) && rows == 4096 && matches!(first, Some(0 | 4096)))
         || (ratio == 1
-            && (320..=2496).contains(&rows)
+            && (64..=2496).contains(&rows)
             && rows % 128 == 64
             && first.and_then(|first| first.checked_add(rows)) == Some(8192))
 }
@@ -522,8 +522,8 @@ mod tests {
                     assert_eq!(
                         qualified_native_finish(rows, Some(8192 - rows), offset, ratio),
                         ratio == 1
-                            && matches!(offset, 0 | 24576)
-                            && (320..=2496).contains(&rows)
+                            && matches!(offset, 0 | 8192 | 16384 | 24576)
+                            && (64..=2496).contains(&rows)
                             && rows % 128 == 64
                     );
                 }

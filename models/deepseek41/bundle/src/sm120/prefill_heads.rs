@@ -116,7 +116,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Shared {
     ) -> Result<Vec<Launch>, Refusal> {
         let launches = self.reference.launches(buffers, workspace, counts)?;
         let full_or_part = matches!(counts.rows, 8192 | 4096);
-        let retained = (320..=2496).contains(&counts.rows)
+        let retained = (64..=2496).contains(&counts.rows)
             && counts.rows % 128 == 64
             && matches!(
                 self.entry.query,

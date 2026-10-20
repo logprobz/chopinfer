@@ -11,7 +11,12 @@ def logs(memcheck=False):
         for i,c in enumerate(job.cases()):
             if i%2!=shard or i not in job.selected(memcheck):continue
             count+=1
-            batches=(c['rows']+(512 if c['layer']==20 else 4096)-1)//(512 if c['layer']==20 else 4096)
+            # Fixed expectations from the executed matrix, independent of the
+            # parser's planner calculation. Dense 65-row cases split at 64.
+            counts={32:1,65:1,2496:1,8191:2,8192:2}
+            if c['layer']<24:counts[65]=2
+            if c['layer']==20:counts.update({2496:5,8191:16,8192:16})
+            batches=counts[c['rows']]
             row=dict(c,id=i,live=c['rows']-int(c['kind']==12),kept=31 if c['kind']==11 else 512,
                      batches=batches,raw=4,pipelines=4,reuse_pipelines=1,partitions=1,controls=2,mismatches=0,
                      timed=job.timed(c) and not memcheck,memcheck=memcheck)
@@ -30,6 +35,47 @@ def logs(memcheck=False):
 
 
 class Parser(unittest.TestCase):
+    def test_batch_planner_boundaries(self):
+        # rows, dense ratio 2, dense layer 20, compact retained candidates
+        for rows,r2,r1,compact in [
+            (32,1,1,1),(63,1,1,1),(64,1,1,1),(65,2,2,1),
+            (127,2,2,1),(128,1,1,1),(511,2,2,1),(512,1,1,1),
+            (513,2,2,1),(2496,1,5,1),(4033,2,8,1),(4096,1,8,1),
+            (4097,2,9,2),(8191,2,16,2),(8192,2,16,2),
+        ]:
+            for layer,expected in ((2,r2),(8,r2),(14,r2),(20,r1),(24,compact)):
+                for context in (8192,16384,24576,32768):
+                    for kind in (0,6,12):
+                        c=dict(rows=rows,layer=layer,context=context,kind=kind)
+                        with self.subTest(**c):
+                            self.assertEqual(job.batch_count(c),expected)
+
+    def test_partial_dense_rows_use_two_batches(self):
+        value=job.results(logs())
+        # The same 65-row shape executes as 64 + 1 for dense scoring, and
+        # as one compact batch. Cover all offsets and poisoned variants.
+        partial=[c for c in value['records'] if c['rows']==65]
+        self.assertEqual(len(partial),48)
+        self.assertEqual({c['batches'] for c in partial if c['layer']<24},{2})
+        self.assertEqual({c['batches'] for c in partial if c['layer']==24},{1})
+
+    def test_wrong_batch_count_fails_with_case_details(self):
+        for layer,wrong in ((2,1),(20,1),(24,2)):
+            for memcheck in (False,True):
+                text=logs(memcheck)
+                for shard in (0,1):
+                    lines=text[shard].splitlines()
+                    for n,line in enumerate(lines):
+                        if 'PREFILL_TILE_CASE ' not in line:continue
+                        c=json.loads(line.split('PREFILL_TILE_CASE ',1)[1])
+                        if c['layer']==layer and c['rows']==65:
+                            c['batches']=wrong
+                            lines[n]='PREFILL_TILE_CASE '+json.dumps(c)
+                            text[shard]='\n'.join(lines)
+                            break
+                with self.assertRaisesRegex(AssertionError,'batch count'):
+                    job.results(text,memcheck)
+
     def test_complete_counts_and_prefixed_markers(self):
         value=job.results(logs())
         self.assertEqual((value['cases'],value['raw'],value['timing_pairs']),(94,376,176))

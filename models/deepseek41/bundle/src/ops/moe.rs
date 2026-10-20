@@ -191,6 +191,9 @@ impl MoeOps {
                     } else {
                         op
                     };
+                    // Opt-in and within-bound: every prefill kind, so chunking
+                    // never changes a row's arithmetic.
+                    let op = crate::Kernels::native_moe_prefill(shape, set, kind, usage, op)?;
                     asks.record(
                         format!("moe.experts {kind:?} {:?}", usage.phase),
                         need,

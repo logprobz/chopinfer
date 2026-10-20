@@ -10,6 +10,34 @@ pub(super) struct Pair {
 }
 
 impl Instance {
+    /// Count uncaptured pieces in the bank that will execute this run. All
+    /// banks share the same ledger, but their cached keys are independent.
+    pub(super) fn indexer_graph_missing(&self, route: Route, key: GraphKey) -> usize {
+        if route == self.indexer_route {
+            usize::from(!self.graphs.contains(key))
+                + self.dspark.as_ref().map_or(0, |device| {
+                    device
+                        .cycle
+                        .layers
+                        .iter()
+                        .filter(|layer| !layer.graphs.contains(key))
+                        .count()
+                })
+        } else if let Some(pair) = self.indexer_banks.get(&route) {
+            usize::from(!pair.target.contains(key))
+                + pair
+                    .layers
+                    .iter()
+                    .filter(|(_, graphs)| !graphs.contains(key))
+                    .count()
+        } else {
+            1 + self
+                .dspark
+                .as_ref()
+                .map_or(0, |device| device.cycle.layers.len())
+        }
+    }
+
     pub(super) fn indexer_graph_contains(&self, route: Route, key: GraphKey) -> bool {
         if route == self.indexer_route {
             self.graphs.contains(key)

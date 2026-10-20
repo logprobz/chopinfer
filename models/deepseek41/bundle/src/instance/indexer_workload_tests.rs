@@ -172,11 +172,20 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
         ] {
             let fresh = !expected.contains_key(&route);
             assert_eq!(live.indexer_graph_contains(route, key), !fresh);
+            let missing = if fresh { 3 } else { 0 };
+            assert_eq!(live.indexer_graph_missing(route, key), missing);
+            let reservation = live.reserve_dspark_target((32, 8), route).unwrap();
+            assert_eq!(live.graphs.stats().reserved, missing);
+            drop(reservation);
             live.activate_indexer_graphs(route);
             let stream = live.ranks[0].2;
             live.graphs
                 .capture::<BundleAbiError>(&live.services, stream, key, 1, |_| Ok(()))
                 .unwrap();
+            assert_eq!(
+                live.indexer_graph_missing(route, key),
+                if fresh { 2 } else { 0 }
+            );
             let layers = &mut live.dspark.as_mut().unwrap().cycle.layers;
             assert!(!layers.is_empty());
             let mut pair = vec![live.graphs.cached(&[key]).unwrap()[0][0]];

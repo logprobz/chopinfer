@@ -424,9 +424,11 @@ impl Instance {
         media: Option<PrefillMedia>,
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
+        let indexer_route =
+            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
         let capture = if self.dspark.is_some() {
             graph.and_then(|key| {
-                let reservation = self.reserve_dspark_target(key);
+                let reservation = self.reserve_dspark_target(key, indexer_route);
                 if reservation.is_none() {
                     // Decide before lowering, so no cached rank leaves an
                     // empty program in an eager fallback. Keep exact widths.
@@ -448,8 +450,6 @@ impl Instance {
             ));
             return Err(BundleStatusV1::Unsupported);
         }
-        let indexer_route =
-            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
         let lower = self.missing_ranks(graph, indexer_route);
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);

@@ -1,6 +1,7 @@
 //! Bound graphs across target pieces, drafts and catch-up without releasing
 //! request state or mapped-gather resources.
 use super::Instance;
+use crate::indexer_workloads::Route;
 use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
@@ -33,8 +34,9 @@ impl Instance {
     pub(crate) fn reserve_dspark_target(
         &self,
         (bucket, items): (u32, u32),
+        route: Route,
     ) -> Option<GraphReservation> {
-        let device = self.dspark.as_ref()?;
+        self.dspark.as_ref()?;
         let missing = (0..self.ranks.len())
             .map(|rank| {
                 let key = GraphKey {
@@ -42,13 +44,7 @@ impl Instance {
                     bucket,
                     items,
                 };
-                usize::from(!self.graphs.contains(key))
-                    + device
-                        .cycle
-                        .layers
-                        .iter()
-                        .filter(|layer| !layer.graphs.contains(key))
-                        .count()
+                self.indexer_graph_missing(route, key)
             })
             .sum();
         let admission = self.graphs.reserve(missing);

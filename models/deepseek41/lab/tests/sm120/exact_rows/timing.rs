@@ -5,7 +5,7 @@ use super::{
 use kernel_harness::{LabResult, eviction::EvictionMode};
 use serde_json::json;
 #[test]
-#[ignore = "requires frozen modules and real captured operands on an idle GPU"]
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_ROWS_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn paired_cold_hot_current_path_on_gpu() {
     let cubins = artifacts::timing_cubins().unwrap();
     let result = kernel_harness::gpu_test_with(cubins, 1024 * 1024 * 1024, |s| -> LabResult<()> {

@@ -126,13 +126,13 @@ fn captured_partials_preserve_row_strides_and_full_scratch_checks() {
     );
 }
 #[test]
-#[ignore = "requires frozen modules and real captured operands on an idle GPU"]
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_ROWS_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn real_inputs_bitwise_invariances_and_controls_on_gpu() {
     run(&VARIANTS);
 }
 
 #[test]
-#[ignore = "requires authenticated real operands and an idle GPU"]
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_ROWS_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn served_kernels_bitwise_invariances_and_controls_on_gpu() {
     run(&["served"]);
 }

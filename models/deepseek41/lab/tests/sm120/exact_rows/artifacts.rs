@@ -162,7 +162,7 @@ pub fn cases() -> LabResult<(Vec<corpus::Case>, String)> {
     Ok((selected, sha))
 }
 #[test]
-#[ignore = "requires frozen candidate, probe and authenticated real corpus"]
+#[ignore = "requires staged CHOPINFER_HC_ROWS_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn frozen_modules_and_cases_on_cpu() {
     let export = std::env::var("CHOPINFER_HC_ROWS_EXPORT").as_deref() == Ok("1");
     let images = images().unwrap();

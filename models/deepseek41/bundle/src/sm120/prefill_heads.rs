@@ -115,14 +115,14 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Shared {
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         let launches = self.reference.launches(buffers, workspace, counts)?;
-        if !matches!(counts.rows, 8192 | 4096)
-            && !((320..=2496).contains(&counts.rows)
-                && counts.rows % 128 == 64
-                && matches!(
-                    self.entry.query,
-                    LatentAttentionQuery::Attention { page_size: 64, .. }
-                ))
-        {
+        let full_or_part = matches!(counts.rows, 8192 | 4096);
+        let retained = (320..=2496).contains(&counts.rows)
+            && counts.rows % 128 == 64
+            && matches!(
+                self.entry.query,
+                LatentAttentionQuery::Attention { page_size: 64, .. }
+            );
+        if !(full_or_part || retained) {
             return Err(Refusal("unqualified fused prefill row count"));
         }
         finish(&self.entry, &self.entry, buffers, counts.rows, launches)

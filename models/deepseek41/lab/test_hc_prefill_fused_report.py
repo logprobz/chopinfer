@@ -8,7 +8,9 @@ import hc_prefill_fused_report as report
 
 def recording(memcheck):
     lines = ["test result: ok. 1 passed; 0 failed; 0 ignored;"]
-    for case in sorted(report.identities(memcheck)):
+    for index, case in enumerate(sorted(report.identities(memcheck))):
+        lines.append("HC_PREFILL_FUSED_PROGRESS " + json.dumps({
+            "event": "case", "case": case, "elapsed_s": float(index)}))
         lines.append("test prefix ... HC_PREFILL_FUSED_CASE " + json.dumps({
             "case": case, "rows": int(case.split(":rows=")[1].split(":")[0]),
             "passed": True, "output_sha256": "a" * 64}))
@@ -53,9 +55,24 @@ class Parser(unittest.TestCase):
             text.replace('"old_us": 100.0', '"old_us": 0.0', 1),
             text.replace('"rows": 8192', '"rows": 8191', 1),
             text + "\n" + next(line for line in text.splitlines() if "HC_PREFILL_FUSED_CASE " in line),
+            "\n".join(l for l in text.splitlines() if "_PROGRESS" not in l),
+            text.replace('"elapsed_s": 5.0', '"elapsed_s": 0.5', 1),
         ]:
             with self.assertRaises(ValueError):
                 report.parse(broken, False)
+
+
+class Diagnostics(unittest.TestCase):
+    def test_last_started_names_the_running_case(self):
+        text = recording(False)
+        lines = text.splitlines()
+        cut = next(i for i, l in enumerate(lines) if '"elapsed_s": 7.0' in l)
+        partial = "\n".join(lines[:cut + 1])
+        self.assertEqual(report.last_started(partial)["elapsed_s"], 7.0)
+        with self.assertRaises(ValueError):
+            report.parse(partial, False)
+        legacy = "\n".join(l for l in lines[:cut] if "_PROGRESS" not in l)
+        self.assertEqual(report.last_started(legacy)["event"], "after")
 
 
 if __name__ == "__main__":

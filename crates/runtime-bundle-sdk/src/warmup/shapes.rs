@@ -37,8 +37,10 @@ fn bucket(count: usize) -> usize {
 }
 
 /// Rounded keys use the smallest wave that reaches each shape. Exact keys
-/// cover every reachable width at the concurrency waves, plus one wave for
-/// each reachable drafter count. Other exact keys remain lazy. A step's rows are one
+/// cover every reachable width at the concurrency waves, the widest shape
+/// where the row budget can draft for every request, and each reachable
+/// drafter count. Other exact keys
+/// remain lazy. A step's rows are one
 /// per decoding request plus its drafts; at least one request verifies, the
 /// rows stay within `step_rows`, and at most `drafting_items` draft.
 pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape> {
@@ -53,9 +55,6 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
     let mut shapes = BTreeMap::new();
     let waves = super::waves(sequences);
     for requests in 1..=sequences {
-        if warmup.exact_graphs && !waves.contains(&requests) {
-            continue;
-        }
         let Some(room) = warmup.step_rows.checked_sub(requests) else {
             break;
         };
@@ -71,12 +70,29 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
                 .filter_map(|&extra| fewest[total - extra].map(|(count, _)| (count + 1, extra)))
                 .min();
         }
+        let widest = fewest
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, reach)| reach.is_some_and(|(count, _)| count <= drafting))
+            .map(|(total, _)| total)
+            .unwrap_or(0);
         for (total, reach) in fewest.iter().enumerate().skip(1) {
             let Some((count, _)) = *reach else {
                 continue;
             };
             if count > drafting {
                 continue;
+            }
+            if warmup.exact_graphs && !waves.contains(&requests) {
+                let all_fit = extras.first().is_some_and(|extra| {
+                    requests
+                        .checked_mul(extra + 1)
+                        .is_some_and(|rows| rows <= warmup.step_rows)
+                });
+                if !all_fit || total != widest {
+                    continue;
+                }
             }
             // Keyed by items first, so the waves grow.
             let key = if warmup.exact_graphs {
@@ -156,7 +172,7 @@ mod tests {
 
     #[test]
     fn exact_widths_cover_concurrency_waves_and_every_drafter_count() {
-        for (sequences, count) in [(1, 5), (8, 63), (16, 86), (32, 86)] {
+        for (sequences, count) in [(1, 5), (8, 67), (16, 97), (32, 97)] {
             let warmup = VerifyWarmup {
                 item_rows: (2..=6).collect(),
                 maximum_draft_tokens: 5,
@@ -174,6 +190,9 @@ mod tests {
             for drafting in 1..=sequences.min(16) {
                 assert!(shapes.iter().any(|s| s.drafts == vec![1; drafting]));
             }
+            for requests in 1..=sequences.min(16) {
+                assert!(keys(&shapes).contains(&((requests * 6).min(32), requests)));
+            }
             for shape in shapes {
                 assert_eq!(shape.item_bucket, shape.drafts.len());
                 assert_eq!(
@@ -183,6 +202,39 @@ mod tests {
                 assert!(shape.row_bucket <= 32);
             }
         }
+    }
+
+    #[test]
+    fn exact_selection_bounds_the_complete_adaptive_geometry_set() {
+        let warmup = VerifyWarmup {
+            item_rows: (2..=6).collect(),
+            maximum_draft_tokens: 5,
+            step_rows: 32,
+            drafting_items: None,
+            exact_graphs: true,
+        };
+        let selected = verify_shapes(32, &warmup);
+        let mut complete = std::collections::BTreeSet::new();
+        // Independent reachable-sum enumeration permits every per-item
+        // depth, including zero for AR items in a mixed step.
+        let mut sums = std::collections::BTreeSet::from([0]);
+        for items in 1..=32 {
+            sums = sums
+                .iter()
+                .flat_map(|sum| (0..=5).map(move |draft| sum + draft))
+                .filter(|sum| items + sum <= 32)
+                .collect();
+            for &drafts in sums.iter().filter(|&&sum| sum != 0) {
+                complete.insert((items + drafts, items));
+            }
+        }
+        assert_eq!(complete.len(), 426);
+        assert_eq!(selected.len(), 97);
+        assert!(keys(&selected).iter().all(|key| complete.contains(key)));
+        // Three target pieces per rank would require 1278 handles for the
+        // complete set, before any draft, AR or catch-up graph.
+        assert_eq!(complete.len() * 3, 1278);
+        assert_eq!(selected.len() * 3, 291);
     }
 
     #[test]
@@ -204,6 +256,8 @@ mod tests {
                 }
             }
         }
+        // Non-wave concurrency also warms its widest reachable shape.
+        expected.insert((3, 3 + 7 + 3));
         assert_eq!(
             keys(&shapes),
             expected

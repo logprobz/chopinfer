@@ -483,3 +483,28 @@ contract and lowering changes. A two-launch split with redundant Sinkhorn
 finalization could preserve the chains, but would need its own exactness
 and timing evidence. A Gram-matrix norm fold changes the reduction and is
 not used here.
+
+## Prefill expansion then mixing
+
+`prefill_expand_mix.cuh` holds `prefill_expand_mix::run<M, Rows, Chains,
+Mutation>`: the F32 expand and the prefill pipeline mixer in one launch,
+with output bits equal to `expand_f32` followed by
+`mix_collapse_prefill_pipeline` at every row count. Its planner is
+`src/sinkhorn_hc/prefill_expand_mix.rs`; it is lab-only until a pair
+measures it.
+
+| Entry | Grid | Parameters |
+| --- | --- | --- |
+| `run` | `(ceil(rows / Rows))`, 256 threads | `x`, `y`, `post_in`, `comb_in` (the expand's operands), `expanded`, then the lagged mixer's `fn`, `base`, `scale`, `pre_in`, `collapsed`, `pre`, `post`, `comb`, `live_rows` |
+
+Each CTA expands its own rows once (8-column packs, two packs per thread
+in flight, `expand_f32`'s expression per element), fences and
+synchronizes, then runs the unchanged pipeline over `expanded`, whose
+`cp.async.cg` staging and collapse read the rows it just wrote. The
+projection consumes the flat row in ascending K order, which is
+stream-major, so the expansion cannot be interleaved per column block
+without rereading every input stream for each output stream. Every
+coefficient read of a row finishes before that barrier, so `post` and
+`comb` may alias `post_in` and `comb_in`. `expanded` must not alias `x`.
+Tiles are 4 or 8 rows with 4- or 8-chain panels; the in-flight expanded
+rows per CTA (40 KiB each at 4 x 5120) should stay within L2.

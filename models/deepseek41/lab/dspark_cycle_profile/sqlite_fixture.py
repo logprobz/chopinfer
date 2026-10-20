@@ -33,8 +33,17 @@ def create(path, directory, *, eager=False):
              "target_middle", "target_tail", "chop_sampling_filtered_finish_f32_v1",
              "chop_dspark_argmax_f32_v1"]
     db.executemany("INSERT INTO StringIds VALUES(?,?)", enumerate(names, 1))
+    previous = None
     for step in steps:
-        origin = step["completed_unix_ns"] - epoch - 900_000
+        completed = step["completed_unix_ns"]
+        # The HTTP fixture can finish steps faster on an idle CPU. Keep
+        # every fabricated kernel within half of the observed step period.
+        gap = completed - previous if previous is not None else 1_800_000
+        assert gap > 0
+        span = min(900_000, gap // 2)
+        origin = completed - epoch - span
+        at = lambda offset: origin + offset * span // 900_000
+        previous = completed
         width = step["row_capacity"]
         for device in range(4):
             target, draft, catch = 100 + device*10, 200 + device, 300 + device
@@ -54,12 +63,12 @@ def create(path, directory, *, eager=False):
             if os.environ.get("X7_PROFILE_FAIL") == "geometry":
                 rows[0] = (*rows[0][:3], width+1, 1)
             db.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES(?,?,?,?,?,?)",
-                [(origin+a, origin+b, device, None if eager else graph, grid, name)
+                [(at(a), at(b), device, None if eager else graph, grid, name)
                  for a, b, graph, grid, name in rows])
             db.execute("INSERT INTO CUPTI_ACTIVITY_KIND_MEMCPY VALUES(?,?,?)",
-                       (origin+230_000, origin+250_000, device))
+                       (at(230_000), at(250_000), device))
         db.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES(?,?)",
-                   (origin+220_000, origin+300_000))
-        db.execute("INSERT INTO OSRT_API VALUES(?,?)", (origin+230_000, origin+260_000))
+                   (at(220_000), at(300_000)))
+        db.execute("INSERT INTO OSRT_API VALUES(?,?)", (at(230_000), at(260_000)))
     db.commit()
     db.close()

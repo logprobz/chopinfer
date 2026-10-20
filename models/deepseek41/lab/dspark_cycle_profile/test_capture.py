@@ -27,6 +27,22 @@ def steps(directory):
 
 
 class Attribution(unittest.TestCase):
+    def test_fast_http_steps_do_not_create_overlapping_fake_cycles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);steps(root)
+            for c in (8,16):
+                path=root/f"C{c}/steps.jsonl"
+                rows=[json.loads(l) for l in path.read_text().splitlines()]
+                for i,r in enumerate(rows):
+                    r["completed_unix_ns"]=10**18+c*10**9+i*500_000
+                path.write_text("".join(json.dumps(r)+"\n" for r in rows))
+            create(root/"profile.sqlite",root)
+            report=cycles.analyze(root/"profile.sqlite",root)
+            for case in report["cases"].values():
+                for device in case["devices"].values():
+                    self.assertEqual(device["count"],15)
+                    self.assertAlmostEqual(device["mean_cycle_ms"],.5)
+
     def test_three_target_pieces_overlap_and_host_gaps(self):
         for eager in (False, True):
             with tempfile.TemporaryDirectory() as tmp:

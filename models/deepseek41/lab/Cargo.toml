@@ -151,3 +151,11 @@ path = "examples/sm120/build_native_moe_prefill.rs"
 [[test]]
 name = "native_moe_prefill"
 path = "tests/sm120/native_moe_prefill/main.rs"
+
+[[test]]
+name = "projection_zero"
+path = "tests/sm120/projection_zero/main.rs"
+
+[[example]]
+name = "build_projection_zero"
+path = "examples/sm120/build_projection_zero.rs"

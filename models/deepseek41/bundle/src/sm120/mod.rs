@@ -125,6 +125,7 @@ pub(crate) mod moe_direct_kernels;
 #[allow(dead_code, reason = "the build script uses the entry declarations")]
 mod moe_grouped_entries;
 pub mod moe_grouped_prefill;
+pub mod moe_native_entries;
 pub mod moe_pipeline;
 #[allow(dead_code)]
 mod moe_pipeline_entries;
@@ -476,6 +477,7 @@ impl crate::Kernels {
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (cubin != moe_pipeline_vector::CUBIN
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && cubin != moe_native_entries::CUBIN
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))

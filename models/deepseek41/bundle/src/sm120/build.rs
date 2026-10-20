@@ -141,6 +141,8 @@ mod moe_direct_kernels;
 #[allow(dead_code)]
 mod moe_grouped_entries;
 #[allow(dead_code)]
+mod moe_native_entries;
+#[allow(dead_code)]
 mod moe_pipeline_entries;
 #[allow(dead_code)]
 mod moe_pipeline_vector;
@@ -241,6 +243,15 @@ pub fn selection(
             model_deepseek41_contract::geometry::FLASH.id,
         ));
         specs.push((moe_grouped_entries::FAMILY, spec));
+        specs.extend(
+            moe_native_entries::cubins()
+                .into_iter()
+                .map(|s| (moe_native_entries::FAMILY, s)),
+        );
+        owners.push((
+            moe_native_entries::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
         let spec = prefill_cache::cubin().expect("decoded prefill cubin");
         owners.push((
             spec.name.clone(),

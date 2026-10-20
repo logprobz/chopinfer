@@ -35,6 +35,7 @@ mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
 mod prefill_cache;
+mod prefill_cache_capacity;
 mod prefill_dma;
 mod prefill_gate_journal;
 mod prefill_micro;
@@ -1007,6 +1008,8 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
+        // One dedicated data arena and table per rank, reserved before KV.
+        // The full journal audit retains every other operation exactly.
         (76699, 0x0b4afe51e1e5460e),
     ),
     (

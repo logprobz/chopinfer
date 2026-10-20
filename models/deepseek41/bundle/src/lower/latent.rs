@@ -443,6 +443,7 @@ impl Lowering<'_> {
                 );
                 c.pages = range.pages;
                 c.tables = cache.tables;
+                c.sequences = 1;
             }
         }
         let views = AttentionViews {
@@ -450,7 +451,11 @@ impl Lowering<'_> {
             row_batch: self.inputs.token_batch,
             ring,
             item_slots,
-            items: self.kv.sequences,
+            items: if decoded_cache.is_some() {
+                1
+            } else {
+                self.kv.sequences
+            },
             window_keys: self.carried(phase, scratch.window_keys)?,
             compressed,
             sinks: self.buffers.view(&layer_view(layer, "attn.attn_sink"))?,

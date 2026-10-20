@@ -58,6 +58,24 @@ fn same_rows(a: &Values, b: &Values, map: &[usize], rows: usize) -> bool {
                 .collect::<Vec<_>>()
     })
 }
+/// A part of a case runs as serving runs a partial batch: in the smallest
+/// qualified bucket (1 or the case's rows) that holds it, its rows first and
+/// live, padded with the case's other rows. Other row counts have no
+/// one-launch boundary.
+fn bucketed(part: &[usize], rows: usize) -> (Vec<usize>, usize) {
+    let bucket = if part.len() == 1 { 1 } else { rows };
+    let mut padded = part.to_vec();
+    padded.extend((0..rows).filter(|r| !part.contains(r)));
+    padded.truncate(bucket);
+    (padded, bucket)
+}
+/// The first `live` of `rows` rows of every output role.
+fn live_rows(values: &Values, live: usize, rows: usize) -> Values {
+    values
+        .iter()
+        .map(|(role, data)| (role.clone(), data[..data.len() / rows * live].to_vec()))
+        .collect()
+}
 fn digest(values: &Values) -> String {
     kernel_build::digest(&values.values().flatten().copied().collect::<Vec<_>>())
 }
@@ -167,14 +185,19 @@ fn controls(
     let map = (0..rows).collect::<Vec<_>>();
     for chunk in [1, 3] {
         for (index, part) in map.chunks(chunk).enumerate() {
-            let moved = Input::new(s, case, part)?;
-            let out = Output::new(s, part.len())?;
-            let t = Tickets::new(s, part.len())?;
+            let (padded, bucket) = bucketed(part, rows);
+            let moved = Input::new(s, case, &padded)?;
+            moved
+                .live
+                .copy_from_bytes(&(part.len() as u32).to_ne_bytes(), &s.stream)
+                .map_err(|e| e.to_string())?;
+            let out = Output::new(s, bucket)?;
+            let t = Tickets::new(s, bucket)?;
             let (values, zero) = run.eager(&moved, &out, &t, variant, widen, alias, 0)?;
             run.check(
                 label,
                 &format!("chunk{chunk}:{index}"),
-                zero && same_rows(&values, actual, part, rows),
+                zero && same_rows(&live_rows(&values, part.len(), bucket), actual, part, rows),
             );
         }
     }
@@ -421,6 +444,32 @@ fn comparison_rejects_changed_values_and_row_positions() {
     assert!(captured_matches("partials", &full, &captured, 2));
     full[4096 * 4] ^= 1;
     assert!(!captured_matches("partials", &full, &captured, 2));
+}
+
+#[test]
+fn chunk_parts_run_in_qualified_buckets() {
+    let views = (1..=22)
+        .map(|handle| kernel_core::backend::View {
+            handle,
+            bytes: 1 << 30,
+        })
+        .collect::<Vec<_>>();
+    let pair = |rows: usize| super::served::plans(rows as u32, &views, false).unwrap();
+    // A three-row part has no qualified boundary; the served op unfuses it.
+    assert_eq!(pair(3).len(), 3);
+    for rows in [1, 8] {
+        let map = (0..rows).collect::<Vec<_>>();
+        for chunk in [1, 3] {
+            for part in map.chunks(chunk) {
+                let (padded, bucket) = bucketed(part, rows);
+                assert_eq!(&padded[..part.len()], part);
+                assert_eq!(padded.iter().collect::<BTreeSet<_>>().len(), bucket);
+                assert_eq!(pair(bucket).len(), 2);
+            }
+        }
+    }
+    let values = BTreeMap::from([("value".into(), (0..16).collect::<Vec<u8>>())]);
+    assert_eq!(live_rows(&values, 3, 8)["value"], [0, 1, 2, 3, 4, 5]);
 }
 
 #[test]

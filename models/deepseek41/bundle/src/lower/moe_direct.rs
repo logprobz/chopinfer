@@ -385,6 +385,7 @@ mod tests {
                                 max_pages: 1,
                             },
                             head_rows: 1,
+                            prefill_hc_fusion: true,
                         };
                         crate::program::moe(0)
                             .into_iter()

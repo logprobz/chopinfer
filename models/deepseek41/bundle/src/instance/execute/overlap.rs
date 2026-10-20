@@ -181,6 +181,7 @@ impl Plan {
                     rank: rank as u32,
                     kv: instance.kv_extent(),
                     head_rows: run.head_rows,
+                    prefill_hc_fusion: true,
                 };
                 let mut rank_parts = Vec::new();
                 for (part, first) in [0, rows[0]].into_iter().enumerate() {

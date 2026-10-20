@@ -298,6 +298,7 @@ fn dspark_full_block_journal_at_each_topology() {
                     rank: rank as u32,
                     kv,
                     head_rows: 3,
+                    prefill_hc_fusion: true,
                 };
                 let k = u64::from(g.shape.hidden) * g.shape.dspark.targets.len() as u64;
                 let main =
@@ -405,6 +406,7 @@ fn dspark_full_block_journal_at_each_topology() {
                     rank: rank as u32,
                     kv,
                     head_rows: 5,
+                    prefill_hc_fusion: true,
                 };
                 let mut program = if stage == 0 {
                     dspark::initialize(&base, phase).unwrap()

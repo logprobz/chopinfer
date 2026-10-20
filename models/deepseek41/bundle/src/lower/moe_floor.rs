@@ -189,6 +189,7 @@ mod tests {
                         max_pages: 1,
                     },
                     head_rows: 1,
+                    prefill_hc_fusion: true,
                 };
                 let mut stages = Vec::new();
                 let mut program = Vec::new();

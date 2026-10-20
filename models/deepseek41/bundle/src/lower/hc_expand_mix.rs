@@ -30,8 +30,18 @@ impl Lowering<'_> {
                 && (matches!(phase, Phase::Decode(_)) || ops.has_finish_norm(phase))
         })
     }
+    /// A measured prefill row count on a lowering that keeps every
+    /// sublayer's mixer at the rows of the expansion before it.
+    fn has_prefill_expand_mix(&self, phase: Phase) -> bool {
+        self.prefill_hc_fusion
+            && self
+                .ops
+                .hc
+                .as_ref()
+                .is_some_and(|ops| ops.has_prefill_expand_mix(self.shape.geometry, phase))
+    }
     pub(super) fn mix_was_fused(&self, phase: Phase, layer: u32, sublayer: Sublayer) -> bool {
-        if !self.has_expand_mix(phase) {
+        if !self.has_expand_mix(phase) && !self.has_prefill_expand_mix(phase) {
             return false;
         }
         let previous = match sublayer {
@@ -81,7 +91,8 @@ impl Lowering<'_> {
         {
             return Ok(Some(Vec::new()));
         }
-        if !self.has_expand_mix(phase) {
+        let prefill = self.has_prefill_expand_mix(phase);
+        if !self.has_expand_mix(phase) && !prefill {
             return Ok(None);
         }
         let Some((next_layer, next_sublayer)) = successor(self.shape.geometry, layer, sublayer)
@@ -90,7 +101,9 @@ impl Lowering<'_> {
         };
         let s = &self.buffers.scratch;
         let index = sublayer_index(layer, sublayer);
-        let row = |span| rows(span, phase.rows());
+        // Carried row planes keep a prefill part's global origin, as in the
+        // separate expansion and mixer; decode rows start at zero either way.
+        let row = |span| self.carried(phase, span);
         let weight = |name: &str| {
             self.buffers.view(&layer_view(
                 next_layer,
@@ -98,28 +111,29 @@ impl Lowering<'_> {
             ))
         };
         let buffers = SinkhornExpandMixBuffers {
-            x: row(streams(s, index)),
-            y: row(s.reduced),
-            post_in: row(s.post),
-            comb_in: row(s.comb),
-            expanded: row(streams(s, index + 1)),
+            x: row(streams(s, index))?,
+            y: row(s.reduced)?,
+            post_in: row(s.post)?,
+            comb_in: row(s.comb)?,
+            expanded: row(streams(s, index + 1))?,
             fn_: weight("fn")?,
             base: weight("base")?,
             scale: weight("scale")?,
-            pre_in: row(pre(s, index)),
-            collapsed: row(s.collapsed),
-            pre: row(pre(s, index + 1)),
-            post: row(s.post),
-            comb: row(s.comb),
+            pre_in: row(pre(s, index))?,
+            collapsed: rows(s.collapsed, phase.rows()),
+            pre: row(pre(s, index + 1))?,
+            post: row(s.post)?,
+            comb: row(s.comb)?,
             live_rows: self.inputs.live_tokens,
         };
-        self.ops
-            .hc
-            .as_ref()
-            .unwrap()
-            .expand_mix(phase.rows(), buffers, self.buffers.workspace)
-            .map(Some)
-            .map_err(|e| format!("expand and next lagged mixer: {e}"))
+        let hc = self.ops.hc.as_ref().unwrap();
+        if prefill {
+            hc.prefill_expand_mix(phase.rows(), buffers)
+        } else {
+            hc.expand_mix(phase.rows(), buffers, self.buffers.workspace)
+        }
+        .map(Some)
+        .map_err(|e| format!("expand and next lagged mixer: {e}"))
     }
 
     pub(super) fn round_expand_with_next_mix(
@@ -201,7 +215,16 @@ mod tests {
     use model_deepseek41_contract::geometry::FLASH;
     #[test]
     fn fused_boundaries_follow_the_program_and_stop_at_engram_and_head() {
-        let program = stages(&FLASH, Phase::Decode(1));
+        for phase in [
+            Phase::Decode(1),
+            Phase::Prefill { rows: 64 },
+            Phase::Prefill { rows: 8192 },
+        ] {
+            boundaries(phase);
+        }
+    }
+    fn boundaries(phase: Phase) {
+        let program = stages(&FLASH, phase);
         let mut count = 0;
         for (at, stage) in program.iter().enumerate() {
             let Stage::HcExpand(l, s) = *stage else {

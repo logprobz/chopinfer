@@ -212,6 +212,7 @@ mod tests {
                     max_pages: 1,
                 },
                 head_rows,
+                prefill_hc_fusion: true,
             }
         }
     }

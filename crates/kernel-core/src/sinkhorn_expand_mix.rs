@@ -98,5 +98,10 @@ crate::scratch_record! {
         /// input and live_rows must equal hc.collapsed and hc.live_rows.
         /// Every additional norm role is distinct from HC roles/workspace.
         pub norm: record(RmsNormQuantizeBuffers),
+        /// One u32 per row, distinct from every other role, zeroed once
+        /// before the first launch. A backend that joins the producer and
+        /// tail in one launch elects each row's tail with it and leaves it
+        /// zeroed; a backend that does not ignores it.
+        pub tickets: option,
     }
 }

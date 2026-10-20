@@ -179,7 +179,11 @@ impl Lowering<'_> {
             let norm = self.input_norm_views(phase, next_layer, next_sublayer)?;
             hc.round_expand_mix_norm(
                 phase,
-                SinkhornRoundNormBuffers { hc: buffers, norm },
+                SinkhornRoundNormBuffers {
+                    hc: buffers,
+                    norm,
+                    tickets: self.buffers.mix_tickets,
+                },
                 self.buffers.workspace,
             )
         } else {

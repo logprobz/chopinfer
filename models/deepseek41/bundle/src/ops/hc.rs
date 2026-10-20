@@ -267,9 +267,19 @@ impl HcOps {
                 .find(|(path, _)| path == role)
                 .map(|&(_, bytes)| bytes)
         };
+        // A one-launch finish/norm boundary elects its tail with the same
+        // zeroed tickets; every use runs on the main stream and leaves them
+        // zeroed, so one allocation covers both.
+        let tail = self.finish_norm.as_ref().and_then(|op| {
+            op.info()
+                .bytes
+                .iter()
+                .find(|(path, _)| path == TICKETS)
+                .map(|&(_, bytes)| bytes)
+        });
         MixScratchBytes {
             partials: bytes(PARTIALS),
-            tickets: bytes(TICKETS),
+            tickets: bytes(TICKETS).max(tail),
         }
     }
 
@@ -509,6 +519,7 @@ mod tests {
                         status: v("norm.status"),
                         status_row_offset: 0,
                     },
+                    tickets: None,
                 };
                 let chain = tail
                     .launches(&buffers, workspace, Counts::rows(rows))

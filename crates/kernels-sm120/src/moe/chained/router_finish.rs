@@ -117,3 +117,71 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
             .collect(),
     )
 }
+
+/// Lab variants of the finish with the same bits (`router_finish_r2.cuh`):
+/// bit 1 issues all chain loads first, bit 2 scans counts in every expert
+/// warp, bit 4 scores experts in parallel. Variant 0 is the served body,
+/// built only with stamps. Stamped entries take a trailing `stamps` buffer
+/// of eight words per CTA.
+pub fn r2_symbol(e: &Entry, variant: u32, stamped: bool) -> String {
+    symbol(e, Stage::Finish).replace(
+        "_finish_v1",
+        &format!(
+            "_finish_r2v{variant}{}_v1",
+            if stamped { "_stamped" } else { "" }
+        ),
+    )
+}
+
+pub fn r2_entry(e: &Entry, variant: u32, stamped: bool) -> EntrySpec {
+    assert!(variant < 8 && (variant > 0 || stamped));
+    let mut s = entry(e, Stage::Finish);
+    s.symbol = r2_symbol(e, variant, stamped);
+    if stamped {
+        s.params.push(ptr("stamps", "uint64_t"));
+    }
+    let from = format!(
+        "chop::moe::router_finish::finish<{},{},{}>(",
+        e.experts(),
+        e.top_k(),
+        e.hidden()
+    );
+    assert_eq!(s.body.matches(&from).count(), 1);
+    s.body = s.body.replace(
+        &from,
+        &format!(
+            "chop::moe::router_finish_r2::finish<{},{},{},{variant},{stamped}>(",
+            e.experts(),
+            e.top_k(),
+            e.hidden()
+        ),
+    );
+    assert_eq!(s.body.matches("gate_tickets,arrived);").count(), 1);
+    s.body = s.body.replace(
+        "gate_tickets,arrived);",
+        if stamped {
+            "gate_tickets,arrived,stamps);"
+        } else {
+            "gate_tickets,arrived,nullptr);"
+        },
+    );
+    s
+}
+
+/// Unstamped `variants` and stamped `[0] + variants` for every entry.
+pub fn r2_cubin_spec(name: &str, entries: &[Entry], variants: &[u32]) -> CubinSpec {
+    super::spec(
+        name.into(),
+        "router_finish_r2.cuh",
+        entries
+            .iter()
+            .flat_map(|e| {
+                variants.iter().map(|&v| r2_entry(e, v, false)).chain(
+                    std::iter::once(0)
+                        .chain(variants.iter().copied())
+                        .map(|v| r2_entry(e, v, true)),
+                )
+            })
+            .collect(),
+    )
+}

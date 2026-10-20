@@ -7,7 +7,7 @@ use kernel_core::{
 use kernels_sm120::{
     Profile, ProfileNames,
     sinkhorn_hc::{
-        Geometry, lagged, lagged_tiled, prefill_expand_mix,
+        Geometry, lagged, lagged_tiled, prefill_expand_mix, prefill_expand_mix_norm,
         prefill_fused::{self, Entry, Mutation},
         prefill_warp,
     },
@@ -104,6 +104,56 @@ pub fn expand_mix_specs() -> Vec<CubinSpec> {
         .unwrap(),
     ]
 }
+pub const EXPAND_MIX_NORM_FAMILY: &str = "hc_prefill_expand_mix_norm";
+pub const EXPAND_MIX_NORM_MODULE: &str = "hc_prefill_expand_mix_norm_sm120";
+/// The served expansion-then-mix tiles (r4c4 at 64 and 320 rows, r8c8 at
+/// 8192) with the input norm and ceil quantizer folded into their CTA.
+pub fn expand_mix_norm_entries() -> Vec<prefill_expand_mix_norm::Entry> {
+    [(4, 4), (8, 8)]
+        .into_iter()
+        .map(|(tile_rows, chains)| prefill_expand_mix_norm::Entry {
+            query: SinkhornRoundNormQuery {
+                mixer: SinkhornExpandMixQuery {
+                    mix: hc::mix(&FLASH),
+                },
+                norm: rows::norm_quantizers(&FLASH)[0],
+            },
+            capacity: PREFILL_TOKENS,
+            tile_rows,
+            chains,
+            symbol: format!("chop_hc_prefill_expand_mix_norm_r{tile_rows}_c{chains}_v1"),
+            mutation: prefill_expand_mix_norm::Mutation::None,
+        })
+        .collect()
+}
+pub fn expand_mix_norm_controls() -> Vec<prefill_expand_mix_norm::Entry> {
+    use prefill_expand_mix_norm::Mutation as M;
+    [
+        (M::ReverseExpansion, "reverse_expansion"),
+        (M::RoundBeforeWeight, "round_before_weight"),
+        (M::ClearStatus, "clear_status"),
+    ]
+    .into_iter()
+    .map(|(mutation, name)| {
+        let mut e = expand_mix_norm_entries().remove(1);
+        e.mutation = mutation;
+        e.symbol = format!("chop_hc_prefill_expand_mix_norm_{name}_v1");
+        e
+    })
+    .collect()
+}
+pub fn expand_mix_norm_specs() -> Vec<CubinSpec> {
+    vec![
+        prefill_expand_mix_norm::cubin_spec(
+            EXPAND_MIX_NORM_MODULE,
+            &expand_mix_norm_entries()
+                .into_iter()
+                .chain(expand_mix_norm_controls())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap(),
+    ]
+}
 fn profile() -> Profile {
     Profile::synthetic(ProfileNames {
         name: "deepseek41",
@@ -162,18 +212,22 @@ pub const ROWS: [u32; 8] = [1, 7, 64, 192, 320, 2496, 8191, 8192];
 pub enum Candidate {
     Fused(Entry),
     ExpandMix(prefill_expand_mix::Entry),
+    /// The expansion-then-mix tile with the norm folded in: one launch.
+    ExpandMixNorm(prefill_expand_mix_norm::Entry),
 }
 impl Candidate {
     pub fn symbol(&self) -> &str {
         match self {
             Candidate::Fused(e) => &e.symbol,
             Candidate::ExpandMix(e) => &e.symbol,
+            Candidate::ExpandMixNorm(e) => &e.symbol,
         }
     }
     pub fn plan(&self, rows: u32, live: u32) -> Result<LaunchPlan, kernel_core::contract::Refusal> {
         match self {
             Candidate::Fused(e) => e.plan(rows, live),
             Candidate::ExpandMix(e) => e.plan(rows, live),
+            Candidate::ExpandMixNorm(e) => e.plan(rows, live),
         }
     }
     /// The case-label token of the arm's tile.
@@ -181,34 +235,38 @@ impl Candidate {
         match self {
             Candidate::Fused(e) => format!("r{}", e.tile_rows),
             Candidate::ExpandMix(e) => format!("r{}c{}", e.tile_rows, e.chains),
+            Candidate::ExpandMixNorm(e) => format!("r{}c{}n", e.tile_rows, e.chains),
         }
     }
     /// Launches of the candidate arm for one boundary.
     pub fn launches(&self) -> u32 {
         match self {
-            Candidate::Fused(_) => 1,
+            Candidate::Fused(_) | Candidate::ExpandMixNorm(_) => 1,
             Candidate::ExpandMix(_) => 2,
         }
     }
     /// A mutation that only shows over a sticky prior row status.
     pub fn needs_sticky(&self) -> bool {
         matches!(self, Candidate::Fused(e) if e.mutation == Mutation::ClearStatus)
+            || matches!(self, Candidate::ExpandMixNorm(e)
+                if e.mutation == prefill_expand_mix_norm::Mutation::ClearStatus)
     }
 }
-/// The matrix's arms and controls, and the staged module that holds them.
+/// The matrix's arms and controls, and the staged module that holds them:
+/// the folded norm on the served tiles.
 pub fn candidates() -> Vec<Candidate> {
-    expand_mix_entries()
+    expand_mix_norm_entries()
         .into_iter()
-        .map(Candidate::ExpandMix)
+        .map(Candidate::ExpandMixNorm)
         .collect()
 }
 pub fn candidate_controls() -> Vec<Candidate> {
-    expand_mix_controls()
+    expand_mix_norm_controls()
         .into_iter()
-        .map(Candidate::ExpandMix)
+        .map(Candidate::ExpandMixNorm)
         .collect()
 }
-pub const CANDIDATE_MODULE: &str = EXPAND_MIX_MODULE;
+pub const CANDIDATE_MODULE: &str = EXPAND_MIX_NORM_MODULE;
 /// The served input norm's epsilon, which both arms pass.
 pub fn norm_eps_bits() -> u32 {
     rows::norm_quantizers(&FLASH)[0].norm.epsilon_bits

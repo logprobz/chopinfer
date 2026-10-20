@@ -1,20 +1,24 @@
 # Exact prefill HC composition
 
-The matrix now qualifies the prefill expansion-then-mix entries
-(`kernels_sm120::sinkhorn_hc::prefill_expand_mix`, lab family
-`hc_prefill_expand_mix`, tiles r4c4, r8c4 and r8c8) followed by the served
-input norm/ceil, against the served expand, mixer and norm chain. Each CTA
-expands its own rows once with the F32 expand's expressions into the
-expanded output, then runs the unchanged prefill pipeline over those rows
-while they are still in L2. The projection consumes the flat row in
-ascending K order, which is stream-major, so an exact schedule cannot
-interleave output streams per column block; the earlier composition below
-regenerated each panel from all four input streams and lost at full chunks
-(d2-0451a). Its controls reverse the stream sum, contract `post * y` into
-the add, and round the stream sum to BF16 first. The candidate arm has two
-launches against the chain's three. Case labels name the tile as
-`r{rows}c{chains}`; the case, invariance, control and timing counts are
-unchanged.
+The matrix now qualifies the served expansion-then-mix tiles with the input
+norm and ceil quantizer folded into the same CTA
+(`kernels_sm120::sinkhorn_hc::prefill_expand_mix_norm`, lab family
+`hc_prefill_expand_mix_norm`, tiles r4c4 and r8c8, one launch) against the
+served expand, mixer and norm chain (three launches). Case labels name the
+tile as `r{rows}c{chains}n`. Its controls reverse the stream sum, round the
+normalized value to BF16 before the weight multiply, and clear the prior
+row status. The counts scale with the tiles: 64 cases, 4 invariances and
+24 timing records per tile, two memcheck cases per tile, three controls.
+
+The previous matrix qualified the expansion-then-mix entries
+(`prefill_expand_mix`, lab family `hc_prefill_expand_mix`, tiles r4c4, r8c4
+and r8c8, two launches with the served norm). Each CTA expands its own
+rows once with the F32 expand's expressions into the expanded output, then
+runs the unchanged prefill pipeline over those rows while they are still in
+L2. The projection consumes the flat row in ascending K order, which is
+stream-major, so an exact schedule cannot interleave output streams per
+column block; the earlier composition below regenerated each panel from
+all four input streams and lost at full chunks (d2-0451a).
 
 ## Earlier composition (lab only, not in the matrix)
 

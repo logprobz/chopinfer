@@ -275,7 +275,12 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
             negatives += 1;
         }
     }
-    let expected = if memcheck { 6 } else { 192 };
+    // Per candidate and widening: 24 site cases (3 sites x 8 row counts; one
+    // 8192-row site under memcheck), 8 edge patterns and 12 timing records
+    // (6 timed cases, cold and hot); 4 invariances per candidate and one
+    // control per mutation.
+    let arms = catalog::candidates().len();
+    let expected = if memcheck { 2 * arms } else { 64 * arms };
     failures.require(
         "coverage",
         reports.len() == expected,
@@ -283,17 +288,22 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
     );
     failures.require(
         "invariance coverage",
-        invariance_count == if memcheck { 0 } else { 12 },
+        invariance_count == if memcheck { 0 } else { 4 * arms },
         "invariance count differs",
     );
     failures.require(
         "control coverage",
-        negatives == if memcheck { 0 } else { 3 },
+        negatives
+            == if memcheck {
+                0
+            } else {
+                catalog::candidate_controls().len()
+            },
         "negative count differs",
     );
     failures.require(
         "timing coverage",
-        timings.len() == if memcheck { 0 } else { 72 },
+        timings.len() == if memcheck { 0 } else { 24 * arms },
         "timing count differs",
     );
     let value = json!({"schema":"chopinfer.hc-prefill-fused-result.v1","memcheck":memcheck,"reports":reports,
@@ -309,7 +319,7 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
     )?;
     eprintln!(
         "HC_PREFILL_FUSED_COMPLETE memcheck={memcheck} cases={expected} invariances={invariance_count} negatives={negatives} timings={} passed={}",
-        if memcheck { 0 } else { 72 },
+        if memcheck { 0 } else { 24 * arms },
         failures.len() == 0
     );
     failures.finish()

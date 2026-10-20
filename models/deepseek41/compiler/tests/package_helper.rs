@@ -330,6 +330,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "text_config.index_topk": override_top_k.unwrap_or(top_k),
                 "text_config.candidate_topk_blocks": blocks,
                 "text_config.indexer_mma": true,
+                "text_config.indexer_prefill_tile": true,
             });
             assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);
             let host_config = runtime_host::HostInstanceConfigV1::new(

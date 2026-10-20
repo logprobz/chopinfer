@@ -19,7 +19,7 @@ pub fn eligible(g: &Geometry, ranks: u32, storage: KvStorage) -> bool {
 pub fn rows(phase: AttentionPhase) -> &'static [u32] {
     match phase {
         AttentionPhase::Decode => &[1, 8],
-        AttentionPhase::Verify => &[6, 32],
+        AttentionPhase::Verify => &[4, 6, 32],
         _ => &[],
     }
 }

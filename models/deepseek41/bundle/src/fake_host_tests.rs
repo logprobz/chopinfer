@@ -1841,3 +1841,4 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
 }
 
 mod norm_prefill;
+mod prefill_engram;

@@ -44,6 +44,7 @@ const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
 struct Run {
+    prefill_engram: Option<super::prefill_engram::Plan>,
     dma: Option<dma::Plan>,
     skip: Option<skip::Plan>,
     overlap: Option<overlap::Plan>,
@@ -474,6 +475,7 @@ impl Instance {
         let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs);
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
+            prefill_engram: None,
             dma: None,
             skip: None,
             overlap: None,
@@ -521,6 +523,31 @@ impl Instance {
                     })?;
                 }
             }
+        }
+        // Alternate communication schedules keep their existing upload path.
+        // Upper-skip and ordinary eager programs retain their exact launches.
+        let eligible = run.phase.prefill()
+            && run.media.is_none()
+            && run.engram.is_some()
+            && run.dma.is_none()
+            && run.micro.is_none()
+            && run.overlap.is_none()
+            && !self.taps.text();
+        if let Some(gathers) = self.prefill_engram.as_ref().filter(|_| eligible) {
+            let (programs, flags, stages) = if let Some(skip) = &run.skip {
+                let body = skip.body();
+                (&body.0, &body.1, &body.2)
+            } else {
+                (&run.programs, &run.collectives, &run.stages)
+            };
+            run.prefill_engram = Some(
+                super::prefill_engram::Plan::new(gathers, programs, flags, stages).map_err(
+                    |error| {
+                        self.log(&error);
+                        BundleStatusV1::InternalError
+                    },
+                )?,
+            );
         }
         Ok(run)
     }
@@ -650,9 +677,11 @@ impl Instance {
                         upload_bytes(&self.services, stream, span, &bytes)?;
                     }
                 }
-                if let (Some(engram), Some(hashed), Some(image)) =
-                    (&self.engram, &run.engram, self.image)
-                {
+                if let (Some(engram), Some(hashed), Some(image)) = (
+                    &self.engram,
+                    run.engram.as_ref().filter(|_| run.prefill_engram.is_none()),
+                    self.image,
+                ) {
                     engram
                         .gather(
                             &self.services,
@@ -707,7 +736,7 @@ impl Instance {
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
         if let Some(plan) = &run.skip {
-            return plan.execute(self);
+            return plan.execute(self, run.prefill_engram.as_ref());
         }
         if let Some(plan) = &run.dma {
             return plan
@@ -722,6 +751,11 @@ impl Instance {
         if let Some(plan) = &run.overlap {
             return plan
                 .execute(self, run)
+                .map_err(|error| self.dispatch_failed(error));
+        }
+        if let Some(plan) = &run.prefill_engram {
+            return plan
+                .execute(self, &run.programs, &run.collectives)
                 .map_err(|error| self.dispatch_failed(error));
         }
         let streams = self
@@ -1126,6 +1160,13 @@ impl Instance {
         if self.ledger.step().is_some() {
             return BundleStatusV1::InvalidState;
         }
+        if self
+            .prefill_engram
+            .as_ref()
+            .is_some_and(|gathers| !gathers.idle())
+        {
+            return BundleStatusV1::InvalidState;
+        }
         // Taps a failed execute left are removed, never published.
         #[cfg(feature = "diagnostic-taps")]
         if let Err(error) = self.taps.abandon() {
@@ -1261,6 +1302,17 @@ impl Instance {
         };
         for run in runs.iter_mut() {
             self.upload(run)?;
+            if run.prefill_engram.is_some() {
+                self.prefill_engram
+                    .as_ref()
+                    .expect("prepared prefill gather")
+                    .begin(
+                        &self.services,
+                        self.ranks[0].2,
+                        run.engram.as_ref().expect("prefill hashes"),
+                        run.inputs.positions.first().copied().unwrap_or(0),
+                    )?;
+            }
             self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
                 .map_err(|error| {
                     self.log(&error);
@@ -1276,6 +1328,12 @@ impl Instance {
             if ready_epoch.is_none() {
                 self.check_index_status(run)?;
                 self.check_row_status(run)?;
+                if run.prefill_engram.is_some() {
+                    self.prefill_engram
+                        .as_ref()
+                        .expect("prepared prefill gather")
+                        .finish(&self.services, self.ranks.len())?;
+                }
             }
         }
         let device_results = self
@@ -1307,6 +1365,12 @@ impl Instance {
                 for run in runs.iter() {
                     self.check_index_status(run)?;
                     self.check_row_status(run)?;
+                    if run.prefill_engram.is_some() {
+                        self.prefill_engram
+                            .as_ref()
+                            .expect("prepared prefill gather")
+                            .finish(&self.services, self.ranks.len())?;
+                    }
                 }
             }
             Ok(())

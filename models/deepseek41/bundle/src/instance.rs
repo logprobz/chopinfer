@@ -23,6 +23,7 @@ mod fold_stream;
 mod media;
 pub(crate) mod prefill;
 mod prefill_cache;
+pub(crate) mod prefill_engram;
 mod prefill_reduce;
 mod prefix;
 
@@ -113,6 +114,7 @@ pub struct Instance {
     dma: Vec<execute::dma::Rank>,
     layer_overlap: bool,
     prefill_reduce_runs: u64,
+    prefill_engram: Option<prefill_engram::Gathers>,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -849,6 +851,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         dma: Vec::new(),
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
+        prefill_engram: None,
         partial,
         taps,
         engram,
@@ -867,6 +870,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!(
             "create failed preparing DSpark device cycle: {error}"
         ));
+        return Err(Failed::releasing(instance, status(error)));
+    }
+    if let Err(error) = instance.prepare_prefill_engram() {
+        instance.log(&format!("create failed preparing prefill Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
     }
     instance.log(&format!(
@@ -895,6 +902,9 @@ impl Bundle for Instance {
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
         execute::dma::drain(self)?;
         self.graphs.release_all(&self.services)?;
+        if let Some(gathers) = &mut self.prefill_engram {
+            gathers.release(&self.services)?;
+        }
         if let Some(device) = &mut self.dspark {
             while let Some(layer) = device.cycle.layers.last() {
                 self.services.release_mapped_gather(layer.gather)?;

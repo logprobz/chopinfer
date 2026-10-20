@@ -347,11 +347,22 @@ impl Plan {
         Ok(Self { body, head, copies })
     }
 
-    pub(super) fn execute(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    pub(super) fn body(&self) -> &Programs {
+        &self.body
+    }
+
+    pub(super) fn execute(
+        &self,
+        instance: &Instance,
+        gathers: Option<&crate::instance::prefill_engram::Plan>,
+    ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
-        instance
-            .launch_eager(&streams, &self.body.0, &self.body.1)
-            .map_err(|e| instance.dispatch_failed(e))?;
+        if let Some(gathers) = gathers {
+            gathers.execute(instance, &self.body.0, &self.body.1)
+        } else {
+            instance.launch_eager(&streams, &self.body.0, &self.body.1)
+        }
+        .map_err(|e| instance.dispatch_failed(e))?;
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
                 instance

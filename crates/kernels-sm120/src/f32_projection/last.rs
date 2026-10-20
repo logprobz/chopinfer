@@ -63,7 +63,10 @@ impl Candidate {
         let q = self.entry.query();
         let mut compute = self.entry.decode_plan(rows)?;
         compute.grid = [
-            q.n.div_ceil(16) * rows.div_ceil(self.tile_rows) * q.k.div_ceil(128).div_ceil(4),
+            q.n.div_ceil(16)
+                .checked_mul(rows.div_ceil(self.tile_rows))
+                .and_then(|tiles| tiles.checked_mul(q.k.div_ceil(128).div_ceil(4)))
+                .ok_or(Refusal("last-producer flattened grid overflows"))?,
             1,
             1,
         ];
@@ -72,6 +75,8 @@ impl Candidate {
             grid: [rows, 1, 1],
             ..compute
         };
+        crate::backend::check_plan(&compute)?;
+        crate::backend::check_plan(&prepare)?;
         Ok([prepare, compute])
     }
 
@@ -121,6 +126,46 @@ impl Candidate {
             result.push(compute);
         }
         result
+    }
+}
+
+impl Entry {
+    /// Route only explicitly qualified row counts through the ordered reducer.
+    pub fn with_decode_last(mut self, mut rows: Vec<u32>) -> Result<Self, Refusal> {
+        rows.sort_unstable();
+        if rows.is_empty() || rows.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Refusal(
+                "last-producer routing needs distinct measured row buckets",
+            ));
+        }
+        self.last_rows = rows;
+        for &row in &self.last_rows {
+            self.decode_last(row).expect("selected bucket").plans(row)?;
+        }
+        Ok(self)
+    }
+
+    pub fn decode_last(&self, rows: u32) -> Option<Candidate> {
+        self.last_rows.binary_search(&rows).ok().map(|_| Candidate {
+            entry: self.entry_for_rows(rows),
+            tile_rows: if rows <= 8 { 8 } else { 32 },
+            split_fast: true,
+            prefetch: 1,
+        })
+    }
+
+    /// The partial-plane layout stays fixed; only selected buckets need counters.
+    pub fn runtime_workspace_bytes(&self, capacity: u32) -> u64 {
+        self.last_rows
+            .iter()
+            .copied()
+            .filter(|&rows| rows <= capacity)
+            .map(|rows| {
+                self.decode_last(rows)
+                    .expect("selected bucket")
+                    .workspace(rows)
+            })
+            .fold(self.decode_workspace_bytes(capacity), u64::max)
     }
 }
 

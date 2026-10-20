@@ -104,7 +104,7 @@ pub(super) fn prepare(
                 .ok_or(Refused::Rule("F32 reduction grid overflows".into()))?;
             entry.stage_plan([elements.div_ceil(128), 1, 1])?;
         }
-        info.workspace = entry.decode_workspace_bytes(need.capacity);
+        info.workspace = entry.runtime_workspace_bytes(need.capacity);
         info.bytes
             .push(("scratch.weight_domain".into(), entry.weight_domain_bytes()));
     }
@@ -179,6 +179,49 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.live_rows.covers(4)?;
         if entry.uses_cached_weights() {
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            if let Some(candidate) = entry.decode_last(rows) {
+                let flags = self.weight_domain(b)?;
+                workspace.covers(candidate.workspace(rows))?;
+                if [b.activation, b.weights.codes, b.output, b.live_rows, flags]
+                    .iter()
+                    .any(|v| v.handle == workspace.handle)
+                {
+                    return Err(Refusal("last-producer workspace aliases an operand"));
+                }
+                let plans = candidate.plans(rows)?;
+                let mut calls = vec![
+                    Self::stage(
+                        &entry,
+                        "_rows",
+                        rows,
+                        plans[0],
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(workspace),
+                        ],
+                    ),
+                    Self::stage(
+                        &entry,
+                        "_decode",
+                        rows,
+                        plans[1],
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.weights.codes),
+                            ptr(workspace),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(flags),
+                            ptr(b.output),
+                        ],
+                    ),
+                ];
+                calls[0].symbol = candidate.prepare_symbol();
+                calls[1].symbol = candidate.symbol(false);
+                return Ok(calls);
+            }
             if entry.uses_prefill_tiles() {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(entry.prefill_workspace_bytes(rows))?;

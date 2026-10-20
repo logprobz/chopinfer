@@ -58,6 +58,16 @@ impl Entry {
         if let Some(&rows) = self.reuse_rows.first() {
             symbols.push(super::reuse::symbol(&self.entry_for_rows(rows)));
         }
+        for &rows in &self.last_rows {
+            let candidate = self
+                .decode_last(rows)
+                .expect("validated last-producer bucket");
+            for symbol in [candidate.prepare_symbol(), candidate.symbol(false)] {
+                if !symbols.contains(&symbol) {
+                    symbols.push(symbol);
+                }
+            }
+        }
         symbols
     }
 

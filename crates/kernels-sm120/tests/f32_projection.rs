@@ -801,3 +801,130 @@ fn decode_reuse_changes_only_qualified_compute_launches() {
             .is_err()
     );
 }
+
+#[test]
+fn last_producer_buckets_preserve_unselected_launches_and_bound_counters() {
+    let seed = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        m_capacity: 256,
+        ..seed.query()
+    };
+    let usage = OperationUse {
+        capacity: 256,
+        ..seed.usage()
+    };
+    let old = Entry::new(q, usage, "last_route")
+        .unwrap()
+        .with_split_decode()
+        .with_decode_reuse((9..=32).collect())
+        .unwrap();
+    let new = old.clone().with_decode_last(vec![1, 8, 32]).unwrap();
+    let bind = |entry: &Entry, capacity| {
+        backend(vec![entry.clone()])
+            .projection(&operation(entry), usage, Need::rows(capacity))
+            .unwrap()
+            .handle
+    };
+    let before = bind(&old, 256);
+    let after = bind(&new, 256);
+    let mut b = buffers(&new);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: new.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: after.info().workspace,
+    };
+    assert_eq!(
+        before.initialize(&b).unwrap(),
+        after.initialize(&b).unwrap()
+    );
+    assert_eq!(before.info().guarantees, after.info().guarantees);
+    for rows in 1..=256 {
+        let original = before.launches(&b, work, Counts::rows(rows)).unwrap();
+        let actual = after.launches(&b, work, Counts::rows(rows)).unwrap();
+        let Some(candidate) = new.decode_last(rows) else {
+            assert_eq!(original, actual, "unselected rows={rows}");
+            continue;
+        };
+        assert_eq!(original.len(), 3);
+        assert_eq!(actual.len(), 2);
+        assert_eq!(actual[0].arguments, original[0].arguments);
+        let mut arguments = original[1].arguments.clone();
+        arguments.0.push(original[2].arguments.0[1].clone());
+        assert_eq!(actual[1].arguments, arguments);
+        assert_eq!(actual[0].symbol, candidate.prepare_symbol());
+        assert_eq!(actual[1].symbol, candidate.symbol(false));
+        assert_eq!(
+            [actual[0].plan, actual[1].plan],
+            candidate.plans(rows).unwrap()
+        );
+        assert!(
+            after
+                .launches(
+                    &b,
+                    View {
+                        bytes: candidate.workspace(rows) - 1,
+                        ..work
+                    },
+                    Counts::rows(rows)
+                )
+                .is_err()
+        );
+        for operand in [
+            b.activation,
+            b.weights.codes,
+            b.output,
+            b.live_rows,
+            b.scratch.weight_domain.unwrap(),
+        ] {
+            assert!(
+                after
+                    .launches(
+                        &b,
+                        View {
+                            handle: operand.handle,
+                            ..work
+                        },
+                        Counts::rows(rows)
+                    )
+                    .is_err()
+            );
+        }
+        let small = bind(&new, rows);
+        assert!(small.info().workspace >= candidate.workspace(rows));
+        assert!(candidate.counter_offset(rows) >= candidate.entry.decode_workspace_bytes(rows));
+    }
+    for rows in [vec![], vec![0], vec![2], vec![9], vec![33], vec![8, 8]] {
+        assert!(old.clone().with_decode_last(rows).is_err());
+    }
+    assert!(
+        entry(WeightFormat::F32)
+            .with_decode()
+            .with_decode_last(vec![1])
+            .is_err()
+    );
+    let mut available: std::collections::BTreeSet<_> = new.runtime_symbols().into_iter().collect();
+    available.remove(&new.decode_last(32).unwrap().symbol(false));
+    let missing = Sm120::new().with_f32_projections(
+        F32ProjectionOffers::new(vec![new.clone()], available, "0".repeat(64)).unwrap(),
+    );
+    assert!(
+        missing
+            .projection(&operation(&new), usage, Need::rows(256))
+            .is_err()
+    );
+    let huge = Entry::new(
+        GemmQuery {
+            n: 1 << 30,
+            k: 1 << 24,
+            ..q
+        },
+        usage,
+        "large_last",
+    )
+    .unwrap()
+    .with_decode();
+    assert!(huge.with_decode_last(vec![1]).is_err());
+}

@@ -144,6 +144,7 @@ mod sinkhorn_expand_mix;
 mod sinkhorn_finish_norm;
 mod sinkhorn_lagged;
 mod sinkhorn_prefill;
+mod sinkhorn_prefill_expand_mix;
 mod sinkhorn_round_expand_mix;
 
 pub use attention::AttentionEntries;
@@ -241,6 +242,7 @@ pub struct Sm120 {
     norm_tiles: Vec<(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)>,
     norm_cached: Vec<rmsnorm_quantize::Cached>,
     expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
+    prefill_expand_mix: Vec<sinkhorn_prefill_expand_mix::Registered>,
     round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
     round_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     finish_norm: Vec<(crate::sinkhorn_hc::finish_norm::Entry, Vec<u32>)>,
@@ -386,6 +388,17 @@ impl Sm120 {
         entry: crate::sinkhorn_hc::expand_mix::Entry,
     ) -> Self {
         self.expand_mix.push(entry);
+        self
+    }
+
+    /// Select a measured prefill expansion-then-mixer tile for explicit row
+    /// buckets. An expand-mix need no decode entry holds takes these.
+    pub fn with_sinkhorn_prefill_expand_mix(
+        mut self,
+        entry: crate::sinkhorn_hc::prefill_expand_mix::Entry,
+        buckets: Vec<u32>,
+    ) -> Self {
+        self.prefill_expand_mix.push((entry, buckets));
         self
     }
 
@@ -1659,7 +1672,17 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::sinkhorn_expand_mix::SinkhornExpandMixBuffers<View>>, Refused>
     {
-        sinkhorn_expand_mix::prepare(&self.expand_mix, op, need)
+        let decode = self
+            .expand_mix
+            .iter()
+            .any(|e| e.query == *op && !e.probe && e.capacity >= need.capacity);
+        if decode {
+            sinkhorn_expand_mix::prepare(&self.expand_mix, op, need)
+        } else if sinkhorn_prefill_expand_mix::serves(&self.prefill_expand_mix, op) {
+            sinkhorn_prefill_expand_mix::prepare(&self.prefill_expand_mix, op, need)
+        } else {
+            Err(Refused::Unsupported)
+        }
     }
 
     fn sinkhorn_round_expand_mix(

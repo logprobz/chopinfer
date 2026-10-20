@@ -73,6 +73,10 @@ name = "build_candidate_cached"
 path = "examples/sm120/build_candidate_cached.rs"
 
 [[example]]
+name = "build_select_early"
+path = "examples/sm120/build_select_early.rs"
+
+[[example]]
 name = "build_indexer_prefill"
 path = "examples/sm120/build_indexer_prefill.rs"
 

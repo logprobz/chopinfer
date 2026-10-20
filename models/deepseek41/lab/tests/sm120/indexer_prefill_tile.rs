@@ -1,4 +1,6 @@
 //! Compare bounded prefill scoring with the public and coarse guarded paths.
+#[path = "indexer_prefill_select_early.rs"]
+mod early;
 #[path = "indexer_prefill_tile_fixture.rs"]
 mod fixture;
 #[path = "indexer_prefill_publish.rs"]
@@ -116,6 +118,8 @@ impl Arm {
 fn module(symbol: &str) -> LabResult<&'static str> {
     if symbol.starts_with("chop_candidate_block_ids_") && symbol.ends_with("_cached4_v1") {
         Ok(publish::CUBIN)
+    } else if symbol.ends_with("_early_v1") {
+        Ok(early::CUBIN)
     } else if symbol.contains("_counts_v1") || symbol.contains("_mma_fp4_prefill_tile_v1") {
         Ok(tile::CUBIN)
     } else {
@@ -128,7 +132,7 @@ fn load(m: &Memory<'_>, modules: &mut BTreeMap<String, Module>, calls: &[Launch]
     for call in calls {
         let name = module(&call.symbol)?;
         if let std::collections::btree_map::Entry::Vacant(slot) = modules.entry(name.into()) {
-            let data = if name == tile::CUBIN {
+            let data = if name == tile::CUBIN || name == early::CUBIN {
                 bytes(&artifact().join(format!("{name}.cubin")))?
             } else if let Some((_, data)) =
                 bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)

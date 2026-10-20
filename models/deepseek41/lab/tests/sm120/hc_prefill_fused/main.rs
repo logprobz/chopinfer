@@ -131,7 +131,7 @@ fn timing(d: &Device<'_>, label: &str) -> LabResult<Vec<Value>> {
                 |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()),
             )
         })?;
-        let record = json!({"case":label,"rows":d.rows,"hot":hot,"old_launches":3,"new_launches":1,
+        let record = json!({"case":label,"rows":d.rows,"hot":hot,"old_launches":3,"new_launches":d.entry.launches(),
             "old_us":value.arms[0].median_ms*1000.,"new_us":value.arms[1].median_ms*1000.,"ratio":value.paired_ratio});
         eprintln!("HC_PREFILL_FUSED_TIMING {record}");
         records.push(record);
@@ -145,7 +145,7 @@ fn invariances(
 ) -> LabResult<usize> {
     let mut count = 0;
     let f = Fixture::new(site, 64, 197, "finite");
-    for e in catalog::entries() {
+    for e in catalog::candidates() {
         let d = Device::new(s, &e, &f, true, false)?;
         let expected = active(d.once(0, false)?, 64);
         let mut joined = vec![vec![]; 10];
@@ -159,7 +159,10 @@ fn invariances(
                 out.extend(bytes);
             }
         }
-        failures.record(&format!("{}:chunk", e.symbol), compare(&expected, &joined));
+        failures.record(
+            &format!("{}:chunk", e.symbol()),
+            compare(&expected, &joined),
+        );
         count += 1;
         let reversed = f.select(&(0..64).rev().collect::<Vec<_>>());
         let moved = Device::new(s, &e, &reversed, true, false)?;
@@ -170,7 +173,7 @@ fn invariances(
             .map(|(b, stride)| b.chunks_exact(stride).rev().flatten().copied().collect())
             .collect::<Vec<Vec<u8>>>();
         failures.record(
-            &format!("{}:position", e.symbol),
+            &format!("{}:position", e.symbol()),
             compare(&expected, &restored),
         );
         count += 1;
@@ -184,11 +187,11 @@ fn invariances(
         other.synchronize().map_err(|e| e.to_string())?;
         s.stream.synchronize().map_err(|e| e.to_string())?;
         failures.record(
-            &format!("{}:concurrent-first", e.symbol),
+            &format!("{}:concurrent-first", e.symbol()),
             compare(&expected, &active(d.outputs[1].read(s)?, 64)),
         );
         failures.record(
-            &format!("{}:concurrent-second", e.symbol),
+            &format!("{}:concurrent-second", e.symbol()),
             compare(&actual, &active(moved.outputs[1].read(s)?, 64)),
         );
         count += 1;
@@ -197,11 +200,11 @@ fn invariances(
         let old = alias.once(0, false)?;
         let new = alias.once(1, false)?;
         failures.record(
-            &format!("{}:coefficient-alias", e.symbol),
+            &format!("{}:coefficient-alias", e.symbol()),
             compare(&old, &new),
         );
         failures.record(
-            &format!("{}:alias-guards", e.symbol),
+            &format!("{}:alias-guards", e.symbol()),
             alias.guards(&new, 63, false),
         );
         count += 1;
@@ -223,13 +226,11 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
             }
             progress("fixture", &format!("{}:rows={rows}", site.id));
             let f = Fixture::new(site, rows, 17 + site_index as u64, "finite");
-            for e in catalog::entries() {
+            for e in catalog::candidates() {
                 for widen in [false, true] {
                     let d = Device::new(s, &e, &f, widen, false)?;
-                    let label = format!(
-                        "{}:rows={rows}:finite:r{}:widen={widen}",
-                        site.id, e.tile_rows
-                    );
+                    let label =
+                        format!("{}:rows={rows}:finite:{}:widen={widen}", site.id, e.label());
                     reports.push(check(&d, &label, false, memcheck, &mut failures)?);
                     if !memcheck
                         && (rows == 8192 || (site_index == 0 && [64, 320, 2496].contains(&rows)))
@@ -245,10 +246,10 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
     if !memcheck {
         for pattern in PATTERNS {
             let f = Fixture::new(&sites[0], 7, 173, pattern);
-            for e in catalog::entries() {
+            for e in catalog::candidates() {
                 for widen in [false, true] {
                     let d = Device::new(s, &e, &f, widen, false)?;
-                    let label = format!("edge:rows=7:{pattern}:r{}:widen={widen}", e.tile_rows);
+                    let label = format!("edge:rows=7:{pattern}:{}:widen={widen}", e.label());
                     reports.push(check(
                         &d,
                         &label,
@@ -263,12 +264,11 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
         invariance_count = invariances(s, &sites[0], &mut failures)?;
         progress("controls", &sites[1].id);
         let f = Fixture::new(&sites[1], 64, 97, "finite");
-        for e in catalog::controls() {
+        for e in catalog::candidate_controls() {
             let d = Device::new(s, &e, &f, true, false)?;
-            let sticky =
-                e.mutation == kernels_sm120::sinkhorn_hc::prefill_fused::Mutation::ClearStatus;
+            let sticky = e.needs_sticky();
             failures.require(
-                &e.symbol,
+                e.symbol(),
                 compare(&d.once(0, sticky)?, &d.once(1, sticky)?).is_err(),
                 "mutation escaped equality gate",
             );
@@ -316,7 +316,7 @@ fn run(s: &Session, memcheck: bool) -> LabResult<()> {
 }
 #[test]
 fn reject_impossible_parameters_and_shared_scratch_on_cpu() {
-    for e in catalog::entries() {
+    for e in catalog::candidates() {
         for rows in catalog::ROWS {
             for live in fusion_checks::live_counts(rows) {
                 assert_eq!(e.plan(rows, live).unwrap().workspace_bytes, 0);

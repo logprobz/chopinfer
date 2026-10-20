@@ -7,6 +7,9 @@ fn projection(line: &str) -> bool {
             || line.contains("head_f32_") && line.contains("_decode_v1"))
 }
 fn run_case(reference: bool) -> Vec<String> {
+    crate::sm120::head_last::with_reference(|| run_without_last(reference))
+}
+fn run_without_last(reference: bool) -> Vec<String> {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.speculation.set(Some((5, 48)));

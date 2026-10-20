@@ -21,6 +21,7 @@ mod hc_prefill;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
 pub mod hc_round_rows;
+pub mod head_last;
 pub mod latent;
 #[allow(
     dead_code,
@@ -178,12 +179,14 @@ pub fn register_f32_projections(
         .map(|entry| {
             f32_prefill::serving_entry(geometry, entry)
                 .and_then(|entry| projection_reuse::head(geometry, ranks, entry))
+                .and_then(|entry| head_last::head(geometry, ranks, entry))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let cubins = [
         f32_split::cubin_name(geometry),
         f32_decode::cubin_name(geometry),
         projection_reuse::HEAD_CUBIN.into(),
+        head_last::CUBIN.into(),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),
@@ -419,7 +422,12 @@ impl crate::Kernels {
     /// an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
-        (![projection_reuse::FOLD_CUBIN, projection_reuse::HEAD_CUBIN].contains(&cubin)
+        (![
+            projection_reuse::FOLD_CUBIN,
+            projection_reuse::HEAD_CUBIN,
+            head_last::CUBIN,
+        ]
+        .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
             && cubin != kernels_sm120::probes::CUBIN
             && cubin != acceptance_entries::CUBIN

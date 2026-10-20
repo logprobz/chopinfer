@@ -107,6 +107,8 @@ mod f32_prefill;
 #[allow(dead_code)]
 mod f32_split;
 mod f32_wide;
+#[allow(dead_code)]
+mod head_last;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer;
@@ -362,6 +364,7 @@ pub fn selection(
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
+            owners.push((head_last::CUBIN.into(), geometry.id));
         }
         owners.push((f32_split::cubin_name(geometry), geometry.id));
         for features in f32_prefill::TILE_FEATURES {
@@ -473,6 +476,7 @@ pub fn selection(
     specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
     specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
+    specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(
         f32_prefill::cubins(geometries)
@@ -649,6 +653,7 @@ fn main() {
                     || cubin.name == f32_wide::cubin_name(g)
                     || cubin.name == f32_decode::cubin_name(g)
                     || cubin.name == projection_reuse::HEAD_CUBIN
+                    || cubin.name == head_last::CUBIN
                     || cubin.name == f32_head::cubin_name(g)
                     || cubin.name == f32_dense::cubin_name(g)
                     || cubin.name == dspark_router::cubin_name(g)

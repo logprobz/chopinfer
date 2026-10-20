@@ -942,7 +942,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (16260, 0xdfa1ed3db03cd3e0),
+        (16300, 0xb8c35afcf2f76875),
     ),
     (
         "deepseek41-flash-tp1",
@@ -952,7 +952,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (32947, 0x364579e8cf5ee736),
+        (33027, 0xe4b41569be84f5f2),
     ),
     (
         "deepseek41-flash-tp2",

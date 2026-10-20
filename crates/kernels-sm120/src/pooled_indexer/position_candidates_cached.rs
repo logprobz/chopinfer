@@ -29,7 +29,9 @@ pub fn spec(entry: &CandidateEntry) -> Result<EntrySpec, Refusal> {
 pub fn remap(entry: &CandidateEntry, calls: &[Launch]) -> Result<Launch, Refusal> {
     entry.validate()?;
     let [scores, local, merge] = calls else {
-        return Err(Refusal("cached candidates require the three-stage valid producer"));
+        return Err(Refusal(
+            "cached candidates require the three-stage valid producer",
+        ));
     };
     let runtime = match merge.arguments.0.len() {
         12 => false,
@@ -122,7 +124,10 @@ mod tests {
             None => backend.indexer_candidate_block_ids(&entry.query, width, need),
         }
         .unwrap();
-        let view = |handle| View { handle, bytes: 1 << 32 };
+        let view = |handle| View {
+            handle,
+            bytes: 1 << 32,
+        };
         let buffers = CandidateBlockIdsBuffers {
             scores: view(1),
             visible_positions: view(2),

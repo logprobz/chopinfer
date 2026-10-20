@@ -14,6 +14,10 @@ pub fn entry(layout: Layout) -> Entry {
         mutation: Mutation::None,
     }
 }
+/// The served layout at `hc_finish_norm::COMPLETION_BUCKETS`.
+pub fn served() -> Entry {
+    entry(Layout::Split)
+}
 /// Lab controls: each must differ from the served pair on real rows.
 pub fn controls() -> Vec<Entry> {
     [

@@ -36,7 +36,7 @@ pub fn register(
     let backend = register_pair(backend, g);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         backend.with_sinkhorn_finish_norm_completion(
-            super::hc_completion::entry(kernels_sm120::sinkhorn_hc::completion::Layout::Split),
+            super::hc_completion::served(),
             COMPLETION_BUCKETS.to_vec(),
         )
     } else {

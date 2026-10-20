@@ -84,7 +84,8 @@ def seal(root, plan):
 def dry_run(root, plan, phase, variant, out):
     seal(root, plan)
     env = environment(root, phase, variant)
-    tests = ['cpu_catalog', 'data::row_replication_keeps_complete_rows', 'data::captured_inputs_match_shapes']
+    tests = ['cpu_catalog', 'data::row_replication_keeps_complete_rows', 'data::captured_inputs_match_shapes',
+             'data::synthetic_rows_are_distinct_across_tile_boundaries']
     for index, test in enumerate(tests):
         result = subprocess.run([str(root/'bin/fold-core-tests'), test, '--exact', '--include-ignored', '--nocapture'],
                                 env=env, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180)
@@ -129,7 +130,7 @@ def dry_run(root, plan, phase, variant, out):
     budget = plan['budgets'][phase]
     if sum(budget[k] for k in ('memcheck', 'timing', 'overhead')) > 1150:
         raise ValueError('invalid timeout budget')
-    (out/'dry-run.json').write_text(json.dumps(dict(phase=phase, variant=variant, cpu_tests=3,
+    (out/'dry-run.json').write_text(json.dumps(dict(phase=phase, variant=variant, cpu_tests=4,
         cases_per_device=len(expected(catalog, inputs, variant, False)),
         memcheck_per_device=len(expected(catalog, inputs, variant, True)),
         gpu_launched=False, budget=budget), indent=2)+'\n')

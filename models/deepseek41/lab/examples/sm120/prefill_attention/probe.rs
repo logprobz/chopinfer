@@ -16,6 +16,8 @@ mod ablations;
 pub(super) mod cache;
 #[path = "fixture.rs"]
 mod fixture;
+#[path = "retained.rs"]
+pub(super) mod retained;
 pub use ablations::run as ablation;
 use fixture::{HEADS, Inputs, ROWS, SLOTS, WIDTH, WINDOW};
 
@@ -61,6 +63,7 @@ struct Arm {
     candidate: bool,
 }
 struct Rig {
+    rows: u32,
     entry: sources::Entry,
     inputs: Inputs,
     arms: [Arm; 2],
@@ -126,6 +129,7 @@ impl Rig {
             })
         };
         Ok(Self {
+            rows: ROWS,
             arms: [make_arm(&reference, false)?, make_arm(&candidate, true)?],
             inputs: Inputs::new(s, page_size, second_fp4_keys, seed)?,
             merge: reference
@@ -186,9 +190,9 @@ impl Rig {
         let selected = &self.arms[arm];
         let args = self.arguments(arm, WINDOW, self.inputs.compressed_budget);
         let plan = if selected.candidate {
-            self.schedule.plan(&self.entry, ROWS)
+            self.schedule.plan(&self.entry, self.rows)
         } else {
-            self.entry.plan(ROWS)
+            self.entry.plan(self.rows)
         }
         .map_err(|e| e.to_string())?;
         launch::launch_with(&selected.attention, stream, launch::config(plan)?, &args)
@@ -198,7 +202,11 @@ impl Rig {
         launch::launch_with(
             &self.merge,
             stream,
-            launch::config(self.entry.merge_plan(ROWS).map_err(|e| e.to_string())?)?,
+            launch::config(
+                self.entry
+                    .merge_plan(self.rows)
+                    .map_err(|e| e.to_string())?,
+            )?,
             &[
                 Arg::Buffer(&self.arms[arm].workspace),
                 Arg::Buffer(&self.inputs.live),
@@ -215,13 +223,17 @@ impl Rig {
     }
 
     fn poison(&self, s: &Session) -> LabResult<()> {
-        let poison = vec![0xa5; self.arms[0].workspace.byte_len()];
+        let checked_rows = self.rows.saturating_add(1).min(ROWS);
+        let poison = vec![0xa5; self.entry.workspace_bytes(checked_rows) as usize];
         for arm in &self.arms {
             arm.workspace
                 .copy_from_bytes(&poison, &s.stream)
                 .map_err(|e| e.to_string())?;
             arm.output
-                .copy_from_bytes(&poison[..arm.output.byte_len()], &s.stream)
+                .copy_from_bytes(
+                    &poison[..checked_rows as usize * HEADS * WIDTH * 2],
+                    &s.stream,
+                )
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
@@ -240,31 +252,45 @@ impl Rig {
                 HEADS * WIDTH * 2,
             ),
         ] {
-            let mut first = vec![0; buffers[0].byte_len()];
-            let mut second = vec![0; buffers[1].byte_len()];
+            let bytes = (self.rows.saturating_add(1).min(ROWS) as usize * stride)
+                .min(buffers[0].byte_len());
+            let mut first = vec![0; bytes];
+            let mut second = vec![0; bytes];
             buffers[0]
                 .copy_to_bytes(&mut first, &s.stream)
                 .map_err(|e| e.to_string())?;
             buffers[1]
                 .copy_to_bytes(&mut second, &s.stream)
                 .map_err(|e| e.to_string())?;
-            if let Some(at) = first.iter().zip(&second).position(|(a, b)| a != b) {
-                return Err(format!(
-                    "{} {name} differs at byte {at}: old={} new={}",
-                    self.entry.symbol(),
-                    first[at],
-                    second[at]
-                ));
-            }
-            if first[live as usize * stride..]
-                .iter()
-                .any(|&byte| byte != 0xa5)
-            {
-                return Err(format!("{name}: inactive rows overwritten at live={live}"));
-            }
+            compare_host_bytes(name, &first, &second, live as usize * stride)?;
         }
         Ok(())
     }
+}
+
+fn compare_host_bytes(name: &str, first: &[u8], second: &[u8], active: usize) -> LabResult<()> {
+    if first.len() != second.len() || active > first.len() {
+        return Err(format!("{name}: invalid comparison extent"));
+    }
+    // Slice equality uses the optimized byte comparison for the passing path.
+    // Locate the first differing byte only when producing a failure diagnostic.
+    if first != second {
+        let at = first.iter().zip(second).position(|(a, b)| a != b).unwrap();
+        return Err(format!(
+            "{name} differs at byte {at}: old={} new={}",
+            first[at], second[at]
+        ));
+    }
+    const POISON: [u8; 4096] = [0xa5; 4096];
+    if first[active..]
+        .chunks(POISON.len())
+        .any(|chunk| chunk != &POISON[..chunk.len()])
+    {
+        return Err(format!(
+            "{name}: inactive bytes overwritten after byte {active}"
+        ));
+    }
+    Ok(())
 }
 
 // Adapt only the lab launch geometry. The reference still validates all
@@ -628,6 +654,25 @@ pub fn decision(sessions: &[Session], selected: &str, check: bool) -> LabResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn byte_comparison_checks_every_live_and_inactive_byte() {
+        let bytes = vec![0xa5; 8195];
+        for active in [0, 1, 4095, 4096, 4097, bytes.len()] {
+            compare_host_bytes("test", &bytes, &bytes, active).unwrap();
+            for at in [0, 4095, 4096, 4097, bytes.len() - 1] {
+                let mut other = bytes.clone();
+                other[at] ^= 1;
+                assert!(compare_host_bytes("test", &bytes, &other, active).is_err());
+                assert_eq!(
+                    compare_host_bytes("test", &other, &other, active).is_err(),
+                    at >= active
+                );
+            }
+        }
+        assert!(compare_host_bytes("test", &bytes, &bytes[..8194], 0).is_err());
+        assert!(compare_host_bytes("test", &bytes, &bytes, bytes.len() + 1).is_err());
+    }
+
     #[test]
     fn served_prefill_cases_cover_every_layer_and_preserve_the_merge() {
         let entries = entries().unwrap();

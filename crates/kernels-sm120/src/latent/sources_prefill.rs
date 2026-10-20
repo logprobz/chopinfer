@@ -13,6 +13,9 @@ pub const PROFILE_WORDS: u64 = 9;
 
 #[path = "sources_prefill_heads.rs"]
 pub mod heads;
+#[path = "sources_prefill_profile.rs"]
+pub mod profiling;
+
 #[derive(Clone, Copy, Debug)]
 pub enum ProfileMode {
     Full,

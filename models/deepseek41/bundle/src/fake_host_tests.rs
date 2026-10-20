@@ -938,6 +938,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// Retained launches keep their argument lists and numerical contracts.
 /// Decode uses the qualified four-group ordered position merge and disjoint
 /// score-tail lists. Prefill and verify retain their original merge.
+/// Measured router epilogues add one module. These two-item captures retain
+/// their original router launches; the one-item media capture audits fusion.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -967,7 +969,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (68991, 0xb30cfe7f85e4e8cd),
+        (69027, 0xcbf122f5cb3cbe60),
     ),
 ];
 

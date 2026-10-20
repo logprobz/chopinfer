@@ -328,6 +328,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases per rank. The finish/norm module adds two resolves and three
 /// releases per rank; C1 contracts 77 pairs per rank with exact arguments,
 /// unchanged allocation sizes and audited capture node reductions.
+/// One-row TP4 decode fuses router reduction, selection and metadata, with
+/// the cached producer unchanged and disjoint routed scratch offsets.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (20907, 0xd28729a73500a819)),
     (Ranks::TP4, (46247, 0xff8f54bf09618663)),

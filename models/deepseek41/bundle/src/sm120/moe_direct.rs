@@ -16,11 +16,11 @@ use model_deepseek41_contract::moe::Experts;
 // Drafter C1/C8: 61.65/126.51 -> 47.22/112.38 us against the qualified path.
 // Prefetch loses at larger dispersed buckets. No unmeasured rows are inferred.
 // Verify 1/2/4/5/8/16/32 also passed complete bitwise graphs on both GPUs.
-// Their paired direct gains span 3.1..18.3% across three route patterns.
-// The host was busy, so those timings are informational until the separate
-// idle-host confirmation passes. Verify-8 All: 279.26 -> 249.71 us for
-// the backbone and 124.13 -> 111.66 us for the drafter. No local folds or
-// route-fusion entries are selected; their gains did not hold over direct.
+// Quiet-host confirmation at 250 W passed all 84 newly admitted cases;
+// direct/previous time spans 0.79625..0.95890 across three route patterns.
+// Full graphs, poisoned replays and clean eager/graph memcheck preserve
+// the result. Local-fold candidates remain unselected. A separate measured
+// router epilogue may fuse projection reduction, selection and metadata.
 fn buckets(set: Experts) -> Vec<(ExecutionPhase, u32)> {
     use ExecutionPhase::{Decode, Verify};
     let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();

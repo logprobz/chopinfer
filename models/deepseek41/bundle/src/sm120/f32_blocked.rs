@@ -11,8 +11,13 @@ pub const SERVING_FAMILY: &str = "f32_blocked_serving";
 
 pub fn selected_rows(n: u32, k: u32) -> &'static [u32] {
     match (n, k) {
-        (384 | 512, 5120) => &[512, 2048, 4096, 8191, 8192],
-        (32 | 128, 5120) => &[512, 2048, 8191, 8192],
+        (384, 5120) => &[
+            320, 448, 512, 576, 704, 832, 960, 1088, 1216, 1344, 1472, 1600, 1728, 1856, 1984,
+            2048, 2112, 2240, 2368, 2496, 4096, 8191, 8192,
+        ],
+        (512, 5120) => &[512, 2048, 4096, 8191, 8192],
+        (32, 5120) => &[448, 512, 960, 1472, 1984, 2048, 2496, 8191, 8192],
+        (128, 5120) => &[512, 2048, 8191, 8192],
         (128, 512) => &[2048, 8191, 8192],
         _ => &[],
     }
@@ -89,11 +94,12 @@ mod tests {
                 assert_eq!(
                     entry.blocked_prefill_rows() != 0,
                     selected_rows(q.n, q.k).contains(&rows)
+                        && !super::super::f32_wide::selected(q.n, q.k, rows)
                 );
             }
             count += routed.blocked_prefill_buckets().len();
         }
-        assert_eq!(count, 21);
+        assert_eq!(count, 44);
         assert!(!selected_rows(128, 512).contains(&512));
         assert!(selected_rows(32, 5120).contains(&2048));
         let cubins = serving_cubins(&[FLASH]).unwrap();

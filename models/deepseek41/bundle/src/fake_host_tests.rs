@@ -147,15 +147,23 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
 
 #[test]
 fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
-    for (rows, suffix) in [
+    let mut cases: Vec<_> = (320..=2496)
+        .step_by(128)
+        .map(|rows| (rows, "_blocked_m32_v1"))
+        .collect();
+    cases.extend([
+        (319, ""),
+        (321, ""),
+        (2497, ""),
         (512, "_blocked_m32_v1"),
         (2048, "_blocked_m32_v1"),
         (4094, ""),
         (4095, "_tiles_n64_v1"),
         (4096, "_blocked_m32_v1"),
         (4097, ""),
-        (8192, "_blocked_m32_v1"),
-    ] {
+        (8192, "_wide_m32_n64_v1"),
+    ]);
+    for (rows, suffix) in cases {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 1);
@@ -186,6 +194,7 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         if suffix.is_empty() {
             assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
             assert!(calls.iter().all(|line| !line.contains("_blocked_m")));
+            assert!(calls.iter().all(|line| !line.contains("_wide_m")));
         }
         drop(journal);
         instance.retire_request(7).unwrap();

@@ -446,13 +446,19 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
         return Ok(entry);
     }
     let q = entry.query();
-    let buckets = BUCKETS
+    let mut buckets: Vec<_> = BUCKETS
         .iter()
         .filter(|bucket| (bucket.n, bucket.k) == (q.n, q.k))
         .map(|bucket| (bucket.rows, bucket.features))
         .collect();
+    for &rows in super::f32_blocked::selected_rows(q.n, q.k) {
+        if !buckets.iter().any(|&(r, _)| r == rows) {
+            buckets.push((rows, 32));
+        }
+    }
     let entry = entry
         .with_prefill_buckets(buckets)
         .map_err(|e| e.to_string())?;
-    super::f32_blocked::serving_entry(g, entry)
+    let entry = super::f32_blocked::serving_entry(g, entry)?;
+    super::f32_wide::serving_entry(g, entry)
 }

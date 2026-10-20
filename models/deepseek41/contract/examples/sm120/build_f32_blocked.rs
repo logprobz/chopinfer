@@ -14,6 +14,9 @@ mod f32_head;
 #[path = "../../../bundle/src/sm120/f32_prefill.rs"]
 #[allow(dead_code)]
 mod f32_prefill;
+#[path = "../../../bundle/src/sm120/f32_wide.rs"]
+#[allow(dead_code)]
+mod f32_wide;
 #[path = "../../../bundle/src/sm120/routed_sum.rs"]
 #[allow(dead_code)]
 mod routed_sum;

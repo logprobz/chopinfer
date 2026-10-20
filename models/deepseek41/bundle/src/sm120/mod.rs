@@ -74,6 +74,7 @@ mod f32_dense;
 pub mod f32_head;
 pub mod f32_prefill;
 pub mod f32_split;
+pub mod f32_wide;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
 pub mod host_acceptance_entries;
@@ -164,6 +165,7 @@ pub fn register_f32_projections(
         f32_prefill::cubin_name(geometry, 32),
         f32_prefill::cubin_name(geometry, 64),
         f32_blocked::serving_cubin_name(geometry),
+        f32_wide::cubin_name(geometry),
     ];
     let available = crate::CUBINS
         .iter()

@@ -151,3 +151,7 @@ path = "examples/sm120/build_position_mma_guard.rs"
 [[example]]
 name = "build_position_mma_guard_probe"
 path = "examples/sm120/build_position_mma_guard_probe.rs"
+
+[[example]]
+name = "build_f32_wide"
+path = "examples/sm120/build_f32_wide.rs"

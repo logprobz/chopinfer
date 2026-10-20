@@ -210,7 +210,17 @@ fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
                         tiled.prefill_workspace_bytes(rows),
                         previous.prefill_workspace_bytes(rows)
                     );
-                    if tiled.blocked_prefill_rows() == 0 {
+                    if tiled.wide_prefill_features() != 0 {
+                        assert_eq!(
+                            tiled.prefill_plan(rows).unwrap(),
+                            kernels_sm120::f32_projection::wide::plan(
+                                &old,
+                                tiled.wide_prefill_features(),
+                                rows
+                            )
+                            .unwrap()
+                        );
+                    } else if tiled.blocked_prefill_rows() == 0 {
                         assert_eq!(tiled, previous);
                     }
                     assert!(op.handle.info().symbols.contains(&(

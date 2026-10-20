@@ -55,11 +55,29 @@ def dist(values):
                 p95=ordered[round(.95*(len(ordered)-1))], minimum=ordered[0], maximum=ordered[-1])
 
 def coverage(steps, a):
+    # Native engines omit the entire counter family until their first verify.
+    # Accept that omission only when the completed trace independently proves
+    # that this window did no verification. Keep available=False in receipts.
+    if a.get('available') is False:
+        assert all(s['verify_items'] == 0 and s['verify_rows'] == 0 and not s['blocks'] for s in steps), "missing speculation counters despite verification"
+        for field in ('verify_items', 'draft_tokens', 'accepted_tokens', 'emitted_tokens', 'rows'):
+            assert a.get(field, 0) == 0, "nonzero unavailable speculation counters"
+            a[field] = 0
+        for field in ('accepted_positions', 'drafted_positions'):
+            assert not any(a.get(field, {}).values())
+            a[field] = {}
+        a['zero_basis'] = 'Counter family absent; completed trace and row histogram prove no verification.'
+        a['acceptance_rate'] = None
+        a['mean_acceptance_length'] = None
+        a['per_position'] = []
     for field in ('accepted_positions','drafted_positions'):
-        a[field] = {str(k):v for k,v in a[field].items()}
+        positions = {str(k):v for k,v in a[field].items()}
+        assert all(k.isdecimal() and 1 <= int(k) <= 16 and type(v) is int and v >= 0 for k,v in positions.items())
+        a[field] = {str(j): positions.get(str(j), 0) for j in range(1, 17)}
     pure = [s for s in steps if s['prefill_items'] == 0 and s['decode_rows'] + s['verify_rows']]
     expected = collections.Counter((s['decode_rows'], s['verify_rows'], s['row_capacity']) for s in pure)
     hist = a['step_rows']
+    assert hist.get('available', True), 'step-row counters unavailable'
     actual = {(b['decode_rows'], b['verify_rows'], b['row_capacity']):b['steps'] for b in hist['bins']}
     assert hist['dropped'] == 0 and expected == actual, (expected, actual)
     blocks = [b for s in steps for b in s['blocks']]

@@ -58,10 +58,12 @@ def records(text, schema):
     return result
 
 
-def cache_ready(text):
+def cache_ready(text, *, required=True):
     rows = records(text, "chopinfer.mapped-row-cache.v1")
     assert not any(r["phase"] == "budget-skip" for r in rows), "resident cache budget skipped"
     ready = [r for r in rows if r["phase"] == "ready"]
+    if not ready and not required:
+        return []
     assert len(ready) == 2 and len({r["cache_id"] for r in ready}) == 2, "both resident sets required"
     for r in ready:
         assert r["charged_bytes"] == 1 << 30 and r["budget_bytes"] == 2 << 30
@@ -390,22 +392,33 @@ class Runner:
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
 
-    def scrape(self):
-        return self.metrics.snapshot(self.query("/metrics", raw=True), "chopinfer", MODEL)
+    def scrape(self, path=None):
+        text = self.query("/metrics", raw=True)
+        if path is not None:
+            Path(path).with_suffix('.prom').write_text(text)
+        snapshot = self.metrics.snapshot(text, "chopinfer", MODEL)
+        if path is not None:
+            write(Path(path).with_suffix('.snapshot.json'), snapshot)
+        return snapshot
 
     def cohort(self, config, concurrency):
         path = self.directory / f"C{concurrency}"
         path.mkdir()
-        warm_before = self.scrape()
+        warm_before = self.scrape(path / "warm-before")
         warm_begin = self.log.stat().st_size
         warm = self.wave(concurrency, WARM_TOKENS)
         # A settled scrape and drained log establish the exact measurement boundary.
-        before = self.scrape()
+        write(path / "warm-outputs.json", warm)
+        before = self.scrape(path / "warm-after")
         time.sleep(.02 if self.dry else .2)
-        assert before == self.scrape(), "warmup counters did not settle"
+        assert before == self.scrape(path / "warm-settled"), "warmup counters did not settle"
         begin = self.log.stat().st_size
-        warm_steps = analysis.parse(self.log.read_bytes()[warm_begin:begin].decode(), require_phase=config != "k0")
+        warm_text = self.log.read_bytes()[warm_begin:begin].decode()
+        (path / "warmup.log").write_text(warm_text)
+        write(path / "warm-boundary.json", dict(start_bytes=warm_begin, end_bytes=begin))
         warm_delta = self.metrics.difference(warm_before, before)
+        write(path / "warm-metrics.json", dict(before=warm_before, after=before, delta=warm_delta))
+        warm_steps = analysis.parse(warm_text, require_phase=config != "k0")
         warm_coverage = analysis.coverage(warm_steps, warm_delta)
         assert warm_coverage["per_item_exact"]
         warm_fallback = fallback_report(warm_steps, config, concurrency)
@@ -415,13 +428,18 @@ class Runner:
         process_before = faults(self.server.pid)
         load_before = self.common.host_load_sample()
         requests = self.wave(concurrency, TOKENS)
-        after = self.scrape()
+        write(path / "outputs.json", requests)
+        after = self.scrape(path / "timed-after")
         time.sleep(.02 if self.dry else .2)
-        assert after == self.scrape(), "measurement counters did not settle"
+        assert after == self.scrape(path / "timed-settled"), "measurement counters did not settle"
         process_after = faults(self.server.pid)
         load_after = self.common.host_load_sample()
         text = self.log.read_bytes()[begin:].decode()
+        (path / "timed.log").write_text(text)
+        write(path / "timed-boundary.json", dict(start_bytes=begin, end_bytes=self.log.stat().st_size))
+        write(path / "faults.json", {"before": process_before, "after": process_after})
         delta = self.metrics.difference(before, after)
+        write(path / "metrics.json", {"before": before, "after": after, "delta": delta})
         audit, steps = audit_window(text, delta, config, concurrency)
         for a, b in zip(warm, requests):
             for field in ("token_ids", "tokens", "selected_bits", "top_bits"):
@@ -431,9 +449,6 @@ class Runner:
             self.reference[key] = requests
         parity = self.exact.compare({key: self.reference[key]}, {key: requests})
         assert parity["bitwise"], parity
-        write(path / "outputs.json", requests)
-        write(path / "metrics.json", {"before": before, "after": after, "delta": delta})
-        write(path / "faults.json", {"before": process_before, "after": process_after})
         (path / "steps.jsonl").write_text("".join(json.dumps(s) + "\n" for s in steps))
         result = dict(label=case_label(config, concurrency), concurrency=concurrency,
                       sampling={"temperature": 1.0, "top_p": 1.0}, request_count=len(requests),
@@ -452,7 +467,10 @@ class Runner:
             configurations = ORDER
             winner_meta = None
         else:
-            pointer = json.loads((self.stage / "matrix-result.json").read_text())
+            pointer_path = self.stage / "matrix-result.json"
+            if not pointer_path.is_file():
+                raise ValueError("confirmation requires a completed passing matrix; run the matrix job first")
+            pointer = json.loads(pointer_path.read_text())
             matrix_path = Path(pointer["path"])
             assert matrix_path.resolve().is_relative_to((self.stage / "runs").resolve())
             assert digest(matrix_path) == pointer["sha256"]
@@ -472,8 +490,11 @@ class Runner:
                     # room for both cohorts. Alternate the cohort order.
                     order = (8, 16) if epoch % 2 == 0 else (16, 8)
                     cohorts = [self.cohort(config, c) for c in order]
-                    ready = cache_ready(self.log.read_text())
-                    servers.append(dict(config=config, epoch=epoch, cohorts=cohorts, resident_cache=ready))
+                    all_text = self.log.read_text()
+                    verified = any(s["verify_items"] > 0 for s in records(all_text, "chopinfer.step.v1"))
+                    ready = cache_ready(all_text, required=verified)
+                    servers.append(dict(config=config, epoch=epoch, cohorts=cohorts, resident_cache=ready,
+                                        resident_cache_status="active" if ready else "enabled-unused-no-verification"))
                 self.gpu_guard(f"after-{epoch}")
             expected = 7 if self.mode == "matrix" else 4
             assert len(servers) == expected and sum(len(s["cohorts"]) for s in servers) == expected*2

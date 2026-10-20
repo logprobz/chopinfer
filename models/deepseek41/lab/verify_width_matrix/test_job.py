@@ -46,6 +46,8 @@ def fixture(config="balanced", concurrency=8, count=12):
                  accepted_tokens=0,rows=r*count,drafted_positions=positions,
                  accepted_positions={str(j):0 for j in range(1,6)},
                  step_rows={"dropped":0,"bins":[dict(decode_rows=d,verify_rows=r,row_capacity=capacity,steps=count)]})
+    if config == 'k0':
+        metrics = dict(available=False, step_rows=metrics['step_rows'])
     return lines,metrics
 
 
@@ -65,6 +67,40 @@ class JobTests(unittest.TestCase):
                 audit,_=run.audit_window(encode(records),metrics,config,c)
                 self.assertEqual(audit['full_steps'],12)
                 self.assertEqual(sum(g['steps'] for g in audit['full']),8)
+    def test_absent_counters_require_trace_and_histogram_proof(self):
+        for c in (8,16):
+            rows,metrics=fixture('k0',c)
+            self.assertNotIn('accepted_positions',metrics)
+            audit,_=run.audit_window(encode(rows),metrics,'k0',c)
+            self.assertTrue(audit['coverage']['per_item_exact'])
+            self.assertFalse(metrics['available'])
+            self.assertEqual(metrics['draft_tokens'],0)
+            self.assertEqual(metrics['accepted_positions'],dict.fromkeys(map(str,range(1,17)),0))
+            rows,metrics=fixture('balanced',c)
+            unavailable=dict(available=False,step_rows=metrics['step_rows'])
+            with self.assertRaisesRegex(AssertionError,'missing speculation counters'):
+                run.audit_window(encode(rows),unavailable,'balanced',c)
+        rows,metrics=fixture('k0',8)
+        metrics['step_rows']['available']=False
+        with self.assertRaisesRegex(AssertionError,'step-row counters unavailable'):
+            run.audit_window(encode(rows),metrics,'k0',8)
+
+    def test_empty_position_maps_are_zero_only_when_totals_agree(self):
+        rows,metrics=fixture('uniform1',8)
+        metrics['accepted_positions']={}
+        run.audit_window(encode(rows),metrics,'uniform1',8)
+        rows,metrics=fixture('uniform1',8)
+        metrics['drafted_positions']={}
+        with self.assertRaises(AssertionError):run.audit_window(encode(rows),metrics,'uniform1',8)
+
+    def test_zero_draft_adaptive_without_counters_is_reportable(self):
+        rows,metrics=fixture('k0',8)
+        steps=run.analysis.parse(encode(rows),require_phase=False)
+        for step in steps:
+            step['speculation']=dict(mode='adaptive',reason='await_ar_baseline',planned_drafts=0)
+        self.assertTrue(run.analysis.coverage(steps,metrics)['per_item_exact'])
+        self.assertEqual(run.fallback_report(steps,'adaptive',8)['actual_zero_verify_rate'],1)
+
     def test_missing_packet_or_duplicate_diagnostic_fails(self):
         records,metrics=fixture()
         broken=[r for r in records if r['schema']!='chopinfer.device-results.v1']
@@ -147,6 +183,8 @@ class JobTests(unittest.TestCase):
     def test_cache_requires_both_budgeted_sets(self):
         rows=[dict(schema='chopinfer.mapped-row-cache.v1',phase='ready',cache_id=i,
                    charged_bytes=1<<30,budget_bytes=2<<30,locked_bytes=1024,process_charged_bytes=i*(1<<30)) for i in (1,2)]
+        self.assertEqual(run.cache_ready('',required=False),[])
+        with self.assertRaises(AssertionError):run.cache_ready('')
         self.assertEqual(len(run.cache_ready(encode(rows))),2)
         with self.assertRaises(AssertionError):run.cache_ready(encode(rows[:1]))
         rows.append(dict(schema='chopinfer.mapped-row-cache.v1',phase='budget-skip'))
@@ -184,6 +222,41 @@ def replay(root):
     audit,_=run.audit_window(text,summary['acceptance'],'fixed5',8,exact_geometry=False,diagnostics=False)
     assert audit['full_steps']==42 and audit['coverage']['verify_items']==452
     print('RECORDED_REPLAY_OK',audit['full_steps'],audit['coverage']['verify_items'])
+
+
+def replay_failed_k0(root, output):
+    root=Path(root);output=Path(output);output.mkdir(parents=True,exist_ok=True)
+    arm=root/'0-k0'
+    startup=json.loads((arm/'startup.json').read_text())
+    assert startup['health']['serving']['profile']['speculation']['tokens']==0
+    argv=json.loads((arm/'command.json').read_text())
+    assert argv[argv.index('--speculative-tokens')+1]=='0'
+    text=(arm/'server.log').read_text()
+    marker='startup readiness:'
+    assert text.count(marker)==1
+    # Startup resets engine batch IDs. The retained readiness line separates
+    # startup steps from the only completed workload, C8 warmup.
+    warm=text.split(marker,1)[1].split('\n',1)[1]
+    steps=run.analysis.parse(warm,require_phase=False)
+    hist=collections.Counter((s['decode_rows'],s['verify_rows'],s['row_capacity'])
+                             for s in steps if not s['prefill_items'])
+    metrics=dict(available=False,step_rows=dict(available=True,dropped=0,bins=[
+        dict(decode_rows=d,verify_rows=v,row_capacity=c,steps=n) for (d,v,c),n in sorted(hist.items())]))
+    # The original run saved no scrapes before its assertion. This is a
+    # reconstructed metric input, not an independent recorded histogram.
+    run.write(output/'reconstructed-delta.json',metrics)
+    audit,parsed=run.audit_window(warm,metrics,'k0',8)
+    assert len(parsed)==65 and audit['full_steps']==62
+    assert sum(s['decode_rows']+s['prompt_completions'] for s in steps)==512
+    assert not run.cache_ready(text,required=False)
+    (output/'warmup.log').write_text(warm)
+    report=dict(passed=True,arm='k0-C8 warmup',startup_seconds=startup['seconds'],
+                completed_steps=len(steps),full_C8_steps=audit['full_steps'],output_tokens_from_steps=512,
+                verify_items=0,resident_ready_sets=0,coverage=audit,
+                metric_input='Reconstructed from the native absent-family contract and recorded steps. Original Prometheus scrapes and response bodies were not saved before failure.',
+                saved_receipts=str(root),timed_cohort_started=False)
+    run.write(output/'replay.json',report)
+    print('FAILED_K0_REPLAY_OK',len(steps),audit['full_steps'],512)
 
 
 def native_preflight(stage):
@@ -224,11 +297,16 @@ def dry_run(output, faults=()):
             if fault:
                 assert result.returncode != 0,(fault,result.stdout)
                 assert not (path/'summary.json').exists(),fault
+                assert (path/'6-balanced/C8/warm-after.prom').exists(),fault
+                assert (path/'6-balanced/C8/warm-outputs.json').exists(),fault
             else:
                 assert result.returncode==0,(mode,result.stdout,result.stderr)
                 receipt=json.loads((path/'summary.json').read_text())
                 assert receipt['status']=='passed' and receipt['dry_run']
                 assert receipt['case_count']==(14 if mode=='matrix' else 8)
+                if mode=='matrix':
+                    assert receipt['servers'][0]['resident_cache_status']=='enabled-unused-no-verification'
+                    assert all(not c['positional_acceptance']['available'] for c in receipt['servers'][0]['cohorts'])
             for pidfile in path.glob('*/process.json'):
                 pid=json.loads(pidfile.read_text())['pid']
                 try:os.kill(pid,0)
@@ -240,6 +318,7 @@ def dry_run(output, faults=()):
 
 if __name__=='__main__':
     if len(sys.argv)>1 and sys.argv[1]=='--replay':replay(Path(sys.argv[2]))
+    elif len(sys.argv)>1 and sys.argv[1]=='--replay-k0':replay_failed_k0(Path(sys.argv[2]),Path(sys.argv[3]))
     elif len(sys.argv)>1 and sys.argv[1]=='--native':native_preflight(Path(sys.argv[2]))
     elif len(sys.argv)>1 and sys.argv[1]=='--dry-run':dry_run(sys.argv[2],sys.argv[3:])
     else:unittest.main(verbosity=2)

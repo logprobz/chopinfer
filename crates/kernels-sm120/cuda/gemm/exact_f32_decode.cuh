@@ -47,7 +47,7 @@ __device__ __forceinline__ void copy16(void* dst, const void* src, bool valid) {
 // Four warps compute four consecutive 128-K chains independently. Each
 // warp retains the original MMA lane mapping, component split, and eight
 // k16 steps. No subtotal combines chains before the final ordered sum.
-template<int N, int K, bool F32Weight>
+template<int N, int K, bool F32Weight, bool SkipZero = false, bool ForceZero = false>
 __device__ void decode(const float* activation,
     const typename std::conditional<F32Weight, float, uint16_t>::type* weight,
     float* partial, const uint32_t* live_rows, uint32_t rows,
@@ -104,6 +104,16 @@ __device__ void decode(const float* activation,
     SeparateChains accum{};
     if constexpr (!F32Weight) {
       if (tensor) {
+        // Certification is local to this warp's 128-K fold and eight
+        // token rows. Ineligible and inactive rows already staged zeros.
+        // General F32 tiles keep all three original component chains.
+        bool single = false;
+        if constexpr (SkipZero) {
+          bool exact = true;
+          for (int at = lane; at < 8 * 128; at += 32)
+            exact &= (__float_as_uint(x[warp][at / 128][at % 128]) & 65535u) == 0;
+          single = __all_sync(0xffffffffu, exact) || ForceZero;
+        }
 #pragma unroll
         for (int step = 0; step < 8; ++step) {
           ptx::A4 a;
@@ -117,14 +127,23 @@ __device__ void decode(const float* activation,
 #pragma unroll
           for (int h = 0; h < 2; ++h) {
             const int k = step * 16 + (lane & 3) * 2 + h * 8;
-            uint16_t first[3], second[3];
-            Components::split(x[warp][lane >> 2][k], first);
-            Components::split(x[warp][lane >> 2][k+1], second);
+            if (single) {
+              b[0].v[h] = (__float_as_uint(x[warp][lane >> 2][k]) >> 16)
+                  | (__float_as_uint(x[warp][lane >> 2][k+1]) & 0xffff0000u);
+            } else {
+              uint16_t first[3], second[3];
+              Components::split(x[warp][lane >> 2][k], first);
+              Components::split(x[warp][lane >> 2][k+1], second);
 #pragma unroll
-            for (int c = 0; c < 3; ++c)
-              b[c].v[h] = uint32_t(first[c]) | (uint32_t(second[c]) << 16);
+              for (int c = 0; c < 3; ++c)
+                b[c].v[h] = uint32_t(first[c]) | (uint32_t(second[c]) << 16);
+            }
           }
-          accum.step(a, b);
+          if (single) {
+            ptx::mma_bf16(accum.partial[0], a, b[0]);
+          } else {
+            accum.step(a, b);
+          }
         }
       }
     }

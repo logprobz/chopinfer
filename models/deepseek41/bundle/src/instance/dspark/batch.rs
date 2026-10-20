@@ -7,6 +7,14 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 
 impl Instance {
     pub(super) fn dspark_draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
+        // A reused successor already holds every item's draft; no chunk runs.
+        if self
+            .dspark
+            .as_mut()
+            .is_some_and(|device| std::mem::take(&mut device.prefetch.reused))
+        {
+            return Ok(());
+        }
         // Validate the complete batch before any chunk can mutate staging.
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         crate::lower::dspark::metadata(

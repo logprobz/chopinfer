@@ -415,13 +415,6 @@ impl Instance {
         &mut self,
         inputs: &[crate::dspark::execution::DraftInput],
     ) -> Result<(), String> {
-        if self
-            .dspark
-            .as_mut()
-            .is_some_and(|device| std::mem::take(&mut device.prefetch.reused))
-        {
-            return Ok(());
-        }
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let g = device.shape.geometry;
         let meta = dspark::metadata(g, inputs, DraftMode::Greedy)?;

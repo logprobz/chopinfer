@@ -68,10 +68,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(specs)
 }
 
-/// Measured widths serve the cached twin (`ceil_cached`) instead.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in quantizers(g, ranks)? {
-        backend = backend.with_block_quantize(super::ceil_cached::cached(&entry).unwrap_or(entry));
+        backend = backend.with_block_quantize(entry);
     }
     Ok(backend.with_silu_mul_quantize(activation(g, ranks)?))
 }

@@ -49,6 +49,11 @@ impl BundlePrefillPolicyV1 {
 }
 
 pub type BundleDescribePrefillFnV1 = extern "C" fn(BundleHandleV1) -> BundlePrefillPolicyV1;
+/// The caller must retain the native module while calling its getter and
+/// reading its immutable table. The export must provide a readable, aligned
+/// table header; the loader checks its size and ABI before reading callbacks.
+// SAFETY-REVIEWED: this declares the C getter contract; it executes no unsafe
+// operation. The loader retains the module and validates the returned table.
 pub type BundleGetPrefillApiFnV1 = unsafe extern "C" fn() -> *const BundlePrefillApiV1;
 
 #[repr(C)]

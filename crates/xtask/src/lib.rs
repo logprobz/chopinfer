@@ -28,6 +28,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-host/tests/host_mapped_rows_cost.rs",
     "crates/runtime-bundle/src/atomic_publish.rs",
     "crates/runtime-bundle-abi/src/loader.rs",
+    "crates/runtime-bundle-abi/src/prefill.rs",
     "crates/runtime-bundle-abi/src/trampoline.rs",
     "crates/runtime-bundle-abi/tests/native_loader.rs",
     "crates/runtime-bundle-abi/tests/abi_contract.rs",
@@ -109,11 +110,20 @@ fn audit_unsafe_file(path: &Path) -> TaskResult {
     }
     let source =
         fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    audit_unsafe_source(path, &source)
+}
+
+fn audit_unsafe_source(path: &Path, source: &str) -> TaskResult {
     let path_text = path.to_string_lossy();
     let reviewed = REVIEWED_UNSAFE_FILES.iter().any(|item| *item == path_text);
     let lines: Vec<_> = source.lines().collect();
     for (index, line) in lines.iter().enumerate() {
-        let callback_type = callback_type_declaration(path, &lines, index);
+        let trimmed = line.trim_start();
+        let callback_type = path == Path::new("crates/runtime-bundle-abi/src/lib.rs")
+            && (trimmed.starts_with("pub type ")
+                || (trimmed.starts_with("unsafe extern \"C\" fn(")
+                    && index > 0
+                    && lines[index - 1].trim_end().ends_with('=')));
         if callback_type {
             continue;
         }
@@ -141,45 +151,43 @@ fn audit_unsafe_file(path: &Path) -> TaskResult {
     Ok(())
 }
 
-// Callback type declarations require unsafe callers but execute no operation.
-fn callback_type_declaration(path: &Path, lines: &[&str], index: usize) -> bool {
-    let abi_types = [
-        "crates/runtime-bundle-abi/src/lib.rs",
-        "crates/runtime-bundle-abi/src/device_results/sink.rs",
-        "crates/runtime-bundle-abi/src/prefill.rs",
-    ];
-    let trimmed = lines[index].trim_start();
-    abi_types.iter().any(|name| path == Path::new(name))
-        && (trimmed.starts_with("pub type ")
-            || (trimmed.starts_with("unsafe extern \"C\" fn(")
-                && index > 0
-                && lines[index - 1].trim_end().ends_with('=')))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn callback_aliases_do_not_exempt_unsafe_function_bodies() {
-        let inline = ["pub type Callback = unsafe extern \"C\" fn();"];
-        let split = ["pub type Callback =", "    unsafe extern \"C\" fn();"];
-        let body = ["unsafe extern \"C\" fn callback() {}"];
-        for name in [
-            "crates/runtime-bundle-abi/src/lib.rs",
-            "crates/runtime-bundle-abi/src/device_results/sink.rs",
-            "crates/runtime-bundle-abi/src/prefill.rs",
-        ] {
-            let path = Path::new(name);
-            assert!(callback_type_declaration(path, &inline, 0));
-            assert!(callback_type_declaration(path, &split, 1));
-            assert!(!callback_type_declaration(path, &body, 0));
-        }
-        assert!(!callback_type_declaration(
-            Path::new("other.rs"),
-            &inline,
-            0
-        ));
-        assert!(!callback_type_declaration(Path::new("other.rs"), &split, 1));
+    fn prefill_getter_has_a_reviewed_contract() {
+        audit_unsafe_source(
+            Path::new("crates/runtime-bundle-abi/src/prefill.rs"),
+            include_str!("../../runtime-bundle-abi/src/prefill.rs"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn reviewed_files_still_require_a_nearby_review() {
+        let path = Path::new("crates/runtime-bundle-abi/src/loader.rs");
+        assert!(audit_unsafe_source(path, "unsafe { call() }").is_err());
+        assert!(
+            audit_unsafe_source(path, "// SAFETY-REVIEWED: fixture.\nunsafe { call() }").is_ok()
+        );
+        assert!(
+            audit_unsafe_source(
+                path,
+                "// SAFETY-REVIEWED: fixture.\n\n\n\nunsafe { call() }"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn review_markers_do_not_admit_unreviewed_files() {
+        assert!(
+            audit_unsafe_source(
+                Path::new("crates/unreviewed/src/lib.rs"),
+                "// SAFETY-REVIEWED: fixture.\nunsafe { call() }"
+            )
+            .is_err()
+        );
     }
 }

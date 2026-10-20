@@ -602,6 +602,15 @@ the codes and scales the exact engines trap on, and the gate/up epilogue is
 `chained::before_down`. Bundles select these entries explicitly after
 qualifying their served outputs.
 
+`native_ceil.cuh` (`native_grouped::Ceil`) moves the intermediate E4M3/32
+ceil quantizer (`row/block_quantize.cuh`) into the gate/up tiles: each
+tile stages its BF16 outputs in the freed operand stages, quantizes every
+32-column group with the quantizer's arithmetic, writes codes and scales as
+if the token's row were clean and ORs the group's flags into the token's
+status; a fixup launch then rewrites every live token whose status is set
+to zero codes and scale 127, as the quantizer does for a flagged row. Codes,
+scales and status are the separate quantizer's bit for bit.
+
 ## Diagnostics
 
 Kernel-lab MoE switches (`tests/ops/moe.rs`, `tests/ops/moe_prefill.rs`):

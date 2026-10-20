@@ -1,9 +1,31 @@
 import json
+from pathlib import Path
+import tempfile
 import unittest
 import dspark_cost_job as job
+import dspark_cost_stage as sealing
 
 
 class CostJobTests(unittest.TestCase):
+    def test_seal_removes_write_permissions_from_root_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "install/src").mkdir(parents=True)
+            (root / "install/cache/p").mkdir(parents=True)
+            (root / "install/src/.commit").write_text("0" * 40)
+            (root / "NATIVE_REVISION").write_text("0" * 40)
+            (root / "install/CHECKPOINT").write_text(str(root / "checkpoint"))
+            (root / "install/PACKAGE").write_text(str(root / "install/cache/p"))
+            for name in ("cpu-validation", "native-preflight", "timeout-audit", "config"):
+                path = root / f"{name}.json"
+                path.write_text(json.dumps(dict(passed=True)))
+                path.chmod(0o666)
+            sealing.seal(root)
+            receipt = json.loads((root / "staged-job.json").read_text())
+            sealing.stage.verify(root, receipt["manifest_sha256"])
+            for path in sealing.stage.files(root):
+                self.assertFalse(path.stat().st_mode & 0o022)
+
     def test_memory_reports_allocations_without_calling_them_a_bound(self):
         text = "\n".join([
             "graph capture memory rank 0: 100 bytes free before, 60 after, 40 held",

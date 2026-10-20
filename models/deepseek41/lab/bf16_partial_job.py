@@ -130,10 +130,11 @@ def fault_delta(samples):
 class Budget:
     def __init__(self):
         self.start = time.monotonic()
+        self.limit = WORK_SECONDS
 
     @contextlib.contextmanager
     def phase(self, seconds):
-        left = min(seconds, WORK_SECONDS-(time.monotonic()-self.start))
+        left = min(seconds, self.limit-(time.monotonic()-self.start))
         require(left > 0, 'global deadline exhausted')
         signal.setitimer(signal.ITIMER_REAL, left)
         try:
@@ -196,6 +197,16 @@ def request(p, server, ids, count, salt, timeout, output):
     return result
 
 
+def speculation(delta):
+    """An adaptive window can contain only ordinary decode steps."""
+    require(delta.get('available') is True, 'DSpark speculation metrics unavailable')
+    for name in ('verify_items', 'draft_tokens', 'accepted_tokens'):
+        require(type(delta.get(name)) is int and delta[name] >= 0, 'invalid speculation counter: '+name)
+    return dict(verify_items=delta['verify_items'], draft_tokens=delta['draft_tokens'],
+                accepted_tokens=delta['accepted_tokens'], zero_draft_window=delta['draft_tokens'] == 0,
+                verification_observed=delta['verify_items'] > 0)
+
+
 def benchmark(p, common, server, ids, prompts, label):
     captures, timings = {}, {}
     for rows, timeout in [(8192, 25), (32768, 50)]:
@@ -225,8 +236,9 @@ def benchmark(p, common, server, ids, prompts, label):
                      cohort=p.bench.cohort([r['arrivals'] for r in rows]),
                      metrics=p.spec_metrics.difference(before, p.metrics(server, f'c{concurrency}-after')))
         if server.profile == 'tp4-dspark':
-            require(timed['metrics'].get('verify_items', 0) > 0, 'DSpark did not execute verification')
+            timed['speculation'] = speculation(timed['metrics'])
         captures[f'decode-c{concurrency}'] = rows
+        p.write(server.directory/'benchmark.json', dict(captures=captures, timings=timings))
     return captures, timings
 
 
@@ -284,6 +296,81 @@ def verify_seal(stage):
     return seal
 
 
+def oracle_coverage(value):
+    require(value['status'] == 'passed' and value['real_cases'] == 249 and value['chunk_cases'] == 13
+            and value['real_executions'] == 1992 and value['chunk_executions'] == 52, 'GPU fixture coverage differs')
+
+
+def reuse_ar(stage, seal, baseline, common):
+    """Reuse complete AR arms only with authenticated, identical executables.
+
+    The prior enclosing job may have failed later in DSpark. Its AR repeat
+    gates, absolute and paired accuracy, and GPU oracle must all have passed.
+    Every reused receipt is also part of this stage's immutable file seal.
+    """
+    if not seal.get('reuse_ar'):
+        return None
+    root = stage/'reuse'
+    source_seal = read(root/'source-manifest.json')
+    require(digest(root/'source-manifest.json') == seal['reuse_ar']['manifest_sha256'], 'reuse source seal differs')
+    prior = read(root/'summary.json')
+    require(prior['seal'] == source_seal and source_seal['revision'] == seal['revision'], 'reuse binary revision differs')
+    require(source_seal['baseline_manifest_sha256'] == digest(baseline/'SHA256SUMS'), 'reuse baseline differs')
+    require(prior['controls'] == dict(DMA=0, overlap=0, partials=list(ORDER)), 'reuse controls differ')
+    binaries = {name: sha for name, sha in source_seal['files'].items()
+                if name.startswith('assets/install-integrated/') or name == 'assets/partial-tests'}
+    require(set(binaries) == {'assets/install-integrated/bin/'+name for name in
+            ('chopinfer', 'chopinfer-host', 'chopinfer-model-deepseek41')} |
+            {'assets/install-integrated/lib/libbundle_deepseek41.so', 'assets/partial-tests'}, 'reuse binary inventory differs')
+    for name, sha in binaries.items():
+        require(seal['files'].get(name) == sha and digest(stage/name) == sha, 'reuse requires byte-identical binaries: '+name)
+    for name in ('models/deepseek41/profiles.json', 'models/deepseek41/qual.json',
+                 'models/deepseek41/qual-references.lock.json', 'tools/qual/paired_teacher.py'):
+        path = 'assets/source-integrated/'+name
+        require(seal['files'][path] == source_seal['files'][path], 'reuse policy differs: '+name)
+    require(seal['files']['assets/tokens32k.json'] == source_seal['files']['assets/tokens32k.json'], 'reuse prompt differs')
+    for when in ('before', 'after'):
+        telemetry = prior[when]
+        require(telemetry['journal_checked'] and not telemetry['xids'] and
+                telemetry['power_limits_w'] == [250.0]*4, 'reuse telemetry failed')
+    oracle = read(root/'gpu-oracle.json')
+    oracle_coverage(oracle)
+    require(re.search(r'test result: ok\. 1 passed; 0 failed; 0 ignored;',
+                     (root/'gpu-oracle.log').read_text()), 'reused GPU test did not execute')
+    arms = [a for a in prior['arms'] if a['profile'] == 'tp4-ar']
+    require([(a['index'], a['partials'], a['status']) for a in arms] ==
+            [(i, arm, 'passed') for i, arm in enumerate(ORDER)], 'reuse needs four passed AR arms in ABBA order')
+    captures = {}
+    for arm in arms:
+        index = arm['index']
+        directory = root/f"tp4-ar-{index}-{arm['partials']}"/'tp4-ar'
+        rows = read(directory/'captures.json')
+        expected = {'prefill-8192':(1,1), 'prefill-32768':(1,1),
+                    'decode-c1':(1,OUTPUT_TOKENS), 'decode-c8':(8,OUTPUT_TOKENS)}
+        require(rows.keys() == expected.keys(), 'reuse capture cases differ')
+        for name, (requests, tokens) in expected.items():
+            require(len(rows[name]) == requests and all(len(r['canonical']['token_ids']) == tokens for r in rows[name]), 'reuse capture counts differ')
+        require(read(directory/'ready.json')['health']['serving']['source_commit'] == seal['revision'], 'reused server revision differs')
+        captures['tp4-ar', index] = rows
+        arm['reused_from'] = seal['reuse_ar']['source_run']
+    for first, second in ((0,3), (1,2)):
+        require(compare(captures['tp4-ar', first], captures['tp4-ar', second])['bitwise'], 'reused AR repeats differ')
+    directory = root/'tp4-ar-1-1/tp4-ar'
+    absolute = validate_accuracy(directory, baseline, 'tp4-ar', common)
+    receipts = list((directory/'paired').glob('*-paired_teacher.json'))
+    require(len(receipts) == 1, 'reused paired receipt missing or duplicated')
+    paired = read(receipts[0])
+    require(paired.get('passed') is True and not paired.get('mechanics_only') and not paired.get('skipped'), 'reused paired gate failed')
+    for name, path in (('accepted', baseline/'tp4-ar/teacher.json'), ('candidate', directory/'eval/records/teacher.json')):
+        require(json.dumps(paired['arms'][name], sort_keys=True, allow_nan=False) ==
+                json.dumps(read(path), sort_keys=True, allow_nan=False), 'reused paired inputs differ')
+    accuracy = dict(absolute=absolute, paired_passed=True, paired_receipt=str(receipts[0]),
+                    reused_from=seal['reuse_ar']['source_run'])
+    prompts = read(root/'decode-prompts.json')
+    require(len(prompts) == 8 and all(ids and all(type(i) is int for i in ids) for ids in prompts), 'reused decode prompts differ')
+    return dict(arms=arms, captures=captures, oracle=oracle, accuracy=accuracy, prompts=prompts)
+
+
 def run(stage, output):
     os.environ['CHOPINFER_EVAL'] = str(stage/'assets/install-integrated/bin/chopinfer')
     source = stage/'assets/source-integrated'
@@ -304,6 +391,10 @@ def run(stage, output):
     failure = None
     try:
         result['seal'] = verify_seal(stage)
+        limit = result['seal'].get('work_seconds', WORK_SECONDS)
+        require(type(limit) is int and 0 < limit <= WORK_SECONDS, 'invalid staged work deadline')
+        budget.limit = limit
+        result['limits']['work_seconds'] = limit
         require(os.environ.get('CUDA_VISIBLE_DEVICES') == '0,1,2,3', 'whole-machine GPU selection missing')
         result['before'] = p.telemetry(output, 'before', False, since)
         require(not result['before']['xids'], 'Xid before work')
@@ -311,24 +402,36 @@ def run(stage, output):
         for line in (baseline/'SHA256SUMS').read_text().splitlines():
             sha, name = line.split(maxsplit=1)
             require(digest(baseline/name.lstrip('*')) == sha, 'baseline checksum differs')
-        env = preview.environment(gpu=True)
-        env.update(CHOPINFER_KERNEL_GPUS='0,1,2,3', CHOPINFER_KERNEL_REQUIRE='1',
-                   CHOPINFER_BF16_PARTIAL_INPUTS=str(stage/'real-inputs'),
-                   CHOPINFER_BF16_PARTIAL_REPORT=str(output/'gpu-oracle.json'), CHOPINFER_KERNEL_TIMEOUT_SECS='230')
-        with budget.phase(LAB_SECONDS) as seconds:
-            p.command([stage/'assets/partial-tests', '--exact', 'real_partials_replays_and_chunks_on_gpu',
-                       '--include-ignored', '--nocapture'], output/'gpu-oracle.log', seconds=seconds, env=env)
-        text = (output/'gpu-oracle.log').read_text()
-        require(re.search(r'test result: ok\. 1 passed; 0 failed; 0 ignored;', text), 'GPU test did not execute')
-        oracle = result['gpu_oracle'] = read(output/'gpu-oracle.json')
-        require(oracle['status'] == 'passed' and oracle['real_cases'] == 249 and oracle['chunk_cases'] == 13
-                and oracle['real_executions'] == 1992 and oracle['chunk_executions'] == 52, 'GPU fixture coverage differs')
+        reused = reuse_ar(stage, result['seal'], baseline, common)
+        result['execution_counts'] = dict(new_servers=0, reused_servers=4 if reused else 0,
+                                         new_gpu_oracle_cases=0 if reused else 262, reused_gpu_oracle_cases=262 if reused else 0)
+        if reused:
+            result['gpu_oracle'] = reused['oracle']
+            result['accuracy']['tp4-ar'] = reused['accuracy']
+            result['arms'].extend(reused['arms'])
+            result['reuse_ar'] = result['seal']['reuse_ar']
+        else:
+            env = preview.environment(gpu=True)
+            env.update(CHOPINFER_KERNEL_GPUS='0,1,2,3', CHOPINFER_KERNEL_REQUIRE='1',
+                       CHOPINFER_BF16_PARTIAL_INPUTS=str(stage/'real-inputs'),
+                       CHOPINFER_BF16_PARTIAL_REPORT=str(output/'gpu-oracle.json'), CHOPINFER_KERNEL_TIMEOUT_SECS='230')
+            with budget.phase(LAB_SECONDS) as seconds:
+                p.command([stage/'assets/partial-tests', '--exact', 'real_partials_replays_and_chunks_on_gpu',
+                           '--include-ignored', '--nocapture'], output/'gpu-oracle.log', seconds=seconds, env=env)
+            text = (output/'gpu-oracle.log').read_text()
+            require(re.search(r'test result: ok\. 1 passed; 0 failed; 0 ignored;', text), 'GPU test did not execute')
+            result['gpu_oracle'] = read(output/'gpu-oracle.json')
+        oracle_coverage(result['gpu_oracle'])
         ids = read(stage/'assets/tokens32k.json')
         require(len(ids) == 32768 and all(type(i) is int for i in ids), 'wrong frozen long prompt')
-        all_captures = {}
-        prompts = None
+        all_captures = reused['captures'] if reused else {}
+        prompts = reused['prompts'] if reused else None
+        if prompts is not None:
+            p.write(output/'decode-prompts.json', prompts)
         for profile in PROFILES:
             for index, arm in enumerate(ORDER):
+                if (profile, index) in all_captures:
+                    continue
                 label = f'{profile}-{index}-{arm}'
                 folder = output/label
                 folder.mkdir()
@@ -346,6 +449,7 @@ def run(stage, output):
                 try:
                     with budget.phase(STARTUP_SECONDS):
                         server.start()
+                    result['execution_counts']['new_servers'] += 1
                     record['startup_seconds'] = server.readiness
                     health = read(server.directory/'ready.json')['health']['serving']
                     require(health['source_commit'] == result['seal']['revision'], 'live source differs')
@@ -356,10 +460,12 @@ def run(stage, output):
                         prompts = [json.loads(p.http(server.url, '/tokenize', dict(model=p.MODEL,
                             prompt=p.bench.stream_prompt('diverse', i), add_special_tokens=False)))['tokens'] for i in range(8)]
                         p.write(output/'decode-prompts.json', prompts)
+                    before_arm = p.metrics(server, 'arm-before') if profile == 'tp4-dspark' else None
                     with budget.phase(300):
                         captures, record['timings'] = benchmark(p, common, server, ids, prompts, label)
                     all_captures[profile, index] = captures
                     p.write(server.directory/'captures.json', captures)
+                    save()
                     if index == 1:
                         try:
                             result['accuracy'][profile] = accuracy(p, common, budget, stage, server, baseline)
@@ -369,6 +475,12 @@ def run(stage, output):
                             # that rejection into a successful job status.
                             result['accuracy'][profile] = dict(error=repr(error), paired_passed=False)
                     record['status'] = 'passed'
+                    if before_arm is not None:
+                        record['arm_metrics'] = p.spec_metrics.difference(before_arm, p.metrics(server, 'arm-after'))
+                        record['speculation'] = speculation(record['arm_metrics'])
+                        record['speculation']['scope'] = 'whole arm after startup, including warmups and accuracy'
+                        if not record['speculation']['verification_observed']:
+                            record.update(status='failed', error='DSpark arm did not execute verification')
                 finally:
                     server.stop()
                 save()
@@ -385,6 +497,7 @@ def run(stage, output):
                       scored_positions=sum(v['positions'] for a in result['accuracy'].values() for v in a.get('absolute', {}).values()),
                       paired_profiles=len(result['accuracy']))
         result['counts'] = counts
+        require(all(a['status'] == 'passed' for a in result['arms']), 'one or more DSpark arms did not execute verification')
         require(all(a.get('paired_passed') for a in result['accuracy'].values()), 'one or more accuracy gates failed')
         require(counts == dict(servers=8, cold_ttft=16, decode_cohorts=16, scored_positions=18488, paired_profiles=2), 'job coverage differs')
         result.update(status='passed', counts=counts)

@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -55,9 +56,33 @@ class Parser(unittest.TestCase):
         samples[-1]['3:20']['minor']=0
         with self.assertRaises(ValueError):job.fault_delta(samples)
 
+    def test_benchmark_allows_an_adaptive_zero_draft_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            server=SimpleNamespace(profile='tp4-dspark',directory=Path(directory))
+            snapshots=iter([0,2,18,18])
+            def delta(a,b):
+                return dict(available=True,verify_items=b-a,draft_tokens=b-a,accepted_tokens=0)
+            def request(p,server,ids,count,*args):
+                result=capture();result['canonical']['token_ids']=[7]*count
+                result['arrivals']=[(1.,count)];result['ttft_seconds']=1.
+                return result
+            p=SimpleNamespace(metrics=lambda *args:next(snapshots),spec_metrics=SimpleNamespace(difference=delta),
+                bench=SimpleNamespace(steady=lambda *args,**kwargs:{},cohort=lambda *args:{}),write=lambda *args:None)
+            with (patch.object(job,'request',request),
+                  patch.object(job,'measured',lambda *args:contextlib.nullcontext())):
+                captures,timings=job.benchmark(p,None,server,[1]*32768,[[1]]*8,'arm')
+            self.assertEqual(len(captures['decode-c8']),8)
+            self.assertEqual(timings['decode-c8']['metrics']['verify_items'],0)
+            self.assertTrue(timings['decode-c8']['speculation']['zero_draft_window'])
+            self.assertEqual(timings['decode-c1']['speculation']['verify_items'],2)
+
+    def test_missing_or_reset_speculation_metrics_still_fail(self):
+        for value in [{},dict(available=False),dict(available=True,verify_items=-1,draft_tokens=0,accepted_tokens=0)]:
+            with self.assertRaises(ValueError):job.speculation(value)
+
 
 class Workflow(unittest.TestCase):
-    def exercise(self, bad_repeat=False, failed_accuracy=False, zero_lab=False):
+    def exercise(self, bad_repeat=False, failed_accuracy=False, zero_lab=False, no_verification=False, reuse=False):
         with tempfile.TemporaryDirectory() as temporary:
             stage=Path(temporary);assets=stage/'assets';(assets/'logs').mkdir(parents=True)
             (assets/'logs/prepare.json').write_text(json.dumps(dict(bundle='cpu-only')))
@@ -90,17 +115,28 @@ class Workflow(unittest.TestCase):
             def accuracy(*args):
                 if failed_accuracy:raise ValueError('synthetic gate rejection')
                 return dict(paired_passed=True,absolute={k:dict(texts=t,positions=n) for k,(t,n) in job.EXPECTED.items()})
+            def reused(*args):
+                if not reuse:return None
+                arms=[dict(profile='tp4-ar',index=i,partials=arm,status='passed',
+                    timings={name:{} for name in ['prefill-8192','prefill-32768','decode-c1','decode-c8']},reused_from='cpu-fixture')
+                    for i,arm in enumerate(job.ORDER)]
+                captures={('tp4-ar',i):{name:[capture(8 if arm else 7)] for name in arms[i]['timings']}
+                    for i,arm in enumerate(job.ORDER)}
+                return dict(arms=arms,captures=captures,prompts=[[1]]*8,accuracy=accuracy(),
+                    oracle=dict(status='passed',real_cases=249,chunk_cases=13,real_executions=1992,chunk_executions=52))
             p=SimpleNamespace(Server=Server,write=write,command=command,MODEL='fixture',SOURCE=assets/'source-integrated',
                 INSTALL=assets/'install-integrated',telemetry=lambda *args:dict(power_limits_w=[250]*4,xids=[]),
                 interrupted=lambda *args:None,http=lambda *args,**kwargs:'{"tokens":[1,2]}',
-                bench=SimpleNamespace(stream_prompt=lambda *args:'prompt'))
+                bench=SimpleNamespace(stream_prompt=lambda *args:'prompt'),metrics=lambda *args:0,
+                spec_metrics=SimpleNamespace(difference=lambda *args:dict(available=True,
+                    verify_items=0 if no_verification else 12,draft_tokens=0 if no_verification else 50,accepted_tokens=0)))
             saved={sig:signal.getsignal(sig) for sig in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP,signal.SIGALRM)}
             try:
                 with (patch.dict(os.environ,dict(CUDA_VISIBLE_DEVICES='0,1,2,3',CHOPINFER_DATA=str(stage),CHOPINFER_DEEPSEEK_CHECKPOINT='fixture')),
                       patch.dict(sys.modules,dict(perf_runner=p,common=SimpleNamespace(),release_preview=SimpleNamespace(environment=lambda **kwargs:{}))),
-                      patch.object(job,'verify_seal',return_value=dict(revision='frozen')),
-                      patch.object(job,'benchmark',benchmark),patch.object(job,'accuracy',accuracy)):
-                    if bad_repeat or failed_accuracy or zero_lab:
+                      patch.object(job,'verify_seal',return_value=dict(revision='frozen',reuse_ar={'source_run':'cpu-fixture'} if reuse else None)),
+                      patch.object(job,'benchmark',benchmark),patch.object(job,'accuracy',accuracy),patch.object(job,'reuse_ar',reused)):
+                    if bad_repeat or failed_accuracy or zero_lab or no_verification:
                         with self.assertRaises(ValueError):job.run(stage,stage/'run')
                     else:job.run(stage,stage/'run')
                 result=json.loads((stage/'run/summary.json').read_text())
@@ -129,6 +165,82 @@ class Workflow(unittest.TestCase):
 
     def test_zero_lab_tests_are_not_evidence(self):
         self.assertEqual(self.exercise(zero_lab=True)['arms'],[])
+
+    def test_an_entire_non_speculating_arm_fails_after_accuracy(self):
+        result=self.exercise(no_verification=True)
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(len(result['accuracy']),2)
+        self.assertEqual(len(result['arms']),8)
+        self.assertTrue(all(a['status']=='failed' for a in result['arms'] if a['profile']=='tp4-dspark'))
+
+    def test_reuse_runs_four_new_dspark_arms_and_keeps_both_accuracy_gates(self):
+        result=self.exercise(reuse=True)
+        self.assertEqual(result['status'],'passed')
+        self.assertEqual(result['execution_counts'],dict(new_servers=4,reused_servers=4,new_gpu_oracle_cases=0,reused_gpu_oracle_cases=262))
+        self.assertEqual(len(result['accuracy']),2)
+        self.assertEqual(len(result['comparisons']),12)
+
+
+class Reuse(unittest.TestCase):
+    def fixture(self,root):
+        def write(path,value):
+            path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value))
+        baseline=root/'baseline';baseline.mkdir();(baseline/'SHA256SUMS').write_text('baseline identity')
+        inputs=dict(accepted=dict(scored=3974,example='accepted'),candidate=dict(scored=3974,example='candidate'))
+        write(baseline/'tp4-ar/teacher.json',inputs['accepted'])
+        files={}
+        binaries=['assets/install-integrated/bin/'+name for name in ('chopinfer','chopinfer-host','chopinfer-model-deepseek41')]
+        binaries+=['assets/install-integrated/lib/libbundle_deepseek41.so','assets/partial-tests']
+        for name in binaries:
+            path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(('fixture '+name).encode());files[name]=job.digest(path)
+        for name in ('models/deepseek41/profiles.json','models/deepseek41/qual.json','models/deepseek41/qual-references.lock.json','tools/qual/paired_teacher.py'):
+            files['assets/source-integrated/'+name]='policy-identity'
+        files['assets/tokens32k.json']='prompt-identity'
+        source=dict(revision='frozen',files=files,baseline_manifest_sha256=job.digest(baseline/'SHA256SUMS'))
+        reused=root/'reuse';write(reused/'source-manifest.json',source)
+        seal=dict(revision='frozen',files=files,reuse_ar=dict(source_run='recorded-run',manifest_sha256=job.digest(reused/'source-manifest.json')))
+        arms=[]
+        for index,arm in enumerate(job.ORDER):
+            arms.append(dict(index=index,partials=arm,profile='tp4-ar',status='passed'))
+            directory=reused/f'tp4-ar-{index}-{arm}/tp4-ar';captures={}
+            for name,n,count in [('prefill-8192',1,1),('prefill-32768',1,1),('decode-c1',1,128),('decode-c8',8,128)]:
+                rows=[]
+                for _ in range(n):
+                    row=capture(8 if arm else 7)
+                    row['canonical']={key:values*count for key,values in row['canonical'].items()};rows.append(row)
+                captures[name]=rows
+            write(directory/'captures.json',captures)
+            write(directory/'ready.json',dict(health=dict(serving=dict(source_commit='frozen'))))
+        telemetry=dict(journal_checked=True,xids=[],power_limits_w=[250.]*4)
+        write(reused/'summary.json',dict(seal=source,controls=dict(DMA=0,overlap=0,partials=list(job.ORDER)),arms=arms,before=telemetry,after=telemetry))
+        write(reused/'gpu-oracle.json',dict(status='passed',real_cases=249,chunk_cases=13,real_executions=1992,chunk_executions=52))
+        (reused/'gpu-oracle.log').write_text('test result: ok. 1 passed; 0 failed; 0 ignored;')
+        write(reused/'decode-prompts.json',[[1,2]]*8)
+        directory=reused/'tp4-ar-1-1/tp4-ar'
+        write(directory/'eval/records/teacher.json',inputs['candidate'])
+        write(directory/'paired/fixture-paired_teacher.json',dict(passed=True,arms=inputs))
+        return seal,baseline
+
+    def test_reuse_requires_identical_executables_and_passing_receipts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);seal,baseline=self.fixture(root)
+            with patch.object(job,'validate_accuracy',return_value={}):
+                result=job.reuse_ar(root,seal,baseline,None)
+                self.assertEqual(len(result['arms']),4)
+                self.assertTrue(result['accuracy']['paired_passed'])
+                binary=root/'assets/install-integrated/bin/chopinfer';saved=binary.read_bytes();binary.write_bytes(b'changed')
+                with self.assertRaisesRegex(ValueError,'byte-identical'):job.reuse_ar(root,seal,baseline,None)
+                binary.write_bytes(saved)
+                path=root/'reuse/tp4-ar-1-1/tp4-ar/paired/fixture-paired_teacher.json';value=json.loads(path.read_text());value['passed']=False;path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError,'paired gate failed'):job.reuse_ar(root,seal,baseline,None)
+
+    def test_incomplete_arms_or_changed_baseline_cannot_be_reused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);seal,baseline=self.fixture(root)
+            path=root/'reuse/summary.json';value=json.loads(path.read_text());value['arms'].pop();path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError,'four passed AR'):job.reuse_ar(root,seal,baseline,None)
+            (baseline/'SHA256SUMS').write_text('changed baseline')
+            with self.assertRaisesRegex(ValueError,'baseline differs'):job.reuse_ar(root,seal,baseline,None)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

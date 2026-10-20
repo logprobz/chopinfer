@@ -25,11 +25,31 @@ and 255, wide spreads, and extreme products all use SIMT. Invalid inputs and
 intermediate overflow retain the SIMT failure propagation.
 
 The proof does not assume a particular tensor-core pairing or rounding mode.
-The [PTX MMA specification](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma)
-guarantees at least single-precision accumulation but leaves its order,
-rounding and subnormal handling unspecified. The accepted domain requires no
-rounding and no subnormal arithmetic. The 9-bit spread is deliberately more
-conservative than a magnitude-dependent test near 11 bits.
+The instruction is `mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::2X`
+with shape `m16n8k64`, E2M1 operands, UE8M0 scales and F32 input/output
+accumulators. Two K64 operations share the same F32 accumulator. The
+[CUDA 13.2 PTX MMA specification](https://docs.nvidia.com/cuda/archive/13.2.0/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma)
+explicitly includes E2M1 in its at-least-single-precision accumulation rule.
+Order, rounding and subnormal-input handling remain unspecified. The
+[block-scaling definition](https://docs.nvidia.com/cuda/archive/13.2.0/parallel-thread-execution/index.html#warp-level-matrix-instructions-block-scaling)
+applies scales to operands before multiplication.
+
+Exact scaled E2M1 products are the proof's separate premise. Their integer
+significands fit in F32, but the specification does not name an intermediate
+product format, and raw E2M1 magnitude 0.5 is subnormal even when its scaled
+value is normal. GPU probes therefore include every pair of E2M1 codes at
+the scale edges, including both signs of 0.5. This is a hardware qualification
+obligation, not an additional guarantee inferred from the accumulation rule.
+
+The unguarded `2^25 + 1 - 2^25` witness is outside this domain. Reordering
+full-F32 additions can produce either zero or one, so the witness does not
+demonstrate reduced accumulator width. Within this domain no such rounding
+is needed. Edge probes use a positive single-head dot with unit effective
+weight, compare its raw F32 word to an integer/f64 oracle, and assert that
+accepted cases do not use SIMT repair. Spreads 7, 8 and 9 test the admitted
+boundary; adjacent rejected scales test repair. A separate spread-10 probe
+whose coefficient fits in 24 bits tests the accumulator premise without
+expanding serving admission. The nine-bit bound remains unchanged.
 
 Only new symbols and a new lock family use this source. The old native entry
 remains available to the lab as the negative control and timing baseline.

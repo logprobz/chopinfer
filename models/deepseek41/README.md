@@ -52,22 +52,40 @@ revision binds all 96,085 tensors, each claimed once
 (`compiler/tests/checkpoint_binding.rs`).
 
 `text_config.indexer_mma` defaults to `true` for Flash. Native MXFP4 index
-keys use the qualified FP4 tensor-core scorer in prefill and decode; setting
+keys use the guarded FP4 tensor-core scorer in prefill and decode; setting
 `--model-option text_config.indexer_mma=false` keeps the SIMT scorer for
-comparison. BF16 key storage retains SIMT. Selection, candidate production,
-provenance checks and failure publication keep their existing kernels.
-Queries that cannot be repacked exactly take the SIMT path for that row.
+comparison. BF16 key storage retains SIMT. A coarse scale certificate admits
+safe native scores; otherwise each head's four scale sums are checked. The
+fine certificate requires sums in [130, 369], a spread of at most nine, and
+individual scale bytes in [2, 252]. Rejected slots use the original SIMT
+operation order. Queries that cannot be repacked exactly use SIMT for the
+whole row. Ordered selection, candidate provenance and failure publication
+retain their contracts.
+
+Native Flash decode buckets 1-32 use the ordered hierarchical merge. Eager
+prefill uses cached local selection only when the rounded context extent is
+128K, the prepared batch has at least 32 rows, and k is 512. That band keeps
+the coarse scorer and original final merge. Other prefill extents retain
+their previous selector; the four-row shared-key scorer remains unselected.
 
 On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
 top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
 475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and
 maximum error 1.1509e-6. Both MMA paths had zero score-bit differences from
-SIMT across 24,772,608 compared words, including tails. This qualified the
-native scorer for promotion under the operator's accuracy rule. It is not
-a general bitwise replacement: the synthetic cancellation witness still
-loses a contribution preserved by SIMT, and randomized selections can differ.
-The served A/B checks round three, the new default and selectable SIMT on
-identical 8K, 32K and 128K prompts, including every published logprob bit.
+SIMT across 24,772,608 compared words, including tails. These measurements
+qualified the original unguarded scorer on those captures. The later guard
+repaired the synthetic mismatches; no repair was needed in 17.7 million
+real slots. Unguarded MMA remains a lab control, not the serving default.
+
+The unguarded cancellation witness is consistent with a different full-F32
+addition order: `(2^25 + 1) - 2^25` can lose the unit that SIMT preserves by
+cancelling the large terms first. It is outside the guard's scale domain.
+It does not establish reduced accumulator precision. PTX specifies at least
+single-precision accumulation for this E2M1 instruction, but leaves order,
+rounding and subnormal-input handling unspecified. The guard's integer proof
+requires exact decoded products; domain-edge and individual-code GPU probes
+check this premise on SM120 before a stronger hardware-wide claim. See the
+[guard argument](../../crates/kernels-sm120/cuda/pooled_indexer/position_mma_guard.md).
 
 ## Reference
 

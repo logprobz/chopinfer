@@ -36,6 +36,7 @@ pub mod mix_norm_exact;
 pub mod mix_norm_tree;
 pub mod mixer_probe;
 pub mod prefill_expand_mix;
+pub mod prefill_expand_mix_norm;
 pub mod prefill_fused;
 pub mod prefill_warp;
 pub mod round_chain_partials;

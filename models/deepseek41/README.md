@@ -120,6 +120,22 @@ saving is 156.527 ms; upper-skip reduces the number of rows and the
 available saving. The ten real 32-row cases were slower and retain their
 previous route. Integrated served latency remains a separate measurement.
 
+Under the same admission, layer 20 publishes its candidate blocks with one
+fused launch per batch instead of the block-maxima, local-gather and merge
+launches. It reads the selector's scores directly, keeps block keys in
+registers, resolves ties toward the lower block index and leaves the public
+outputs, tags, visible counts and status on their previous spans. The serving
+cubin is built from the lab recipe and gated by the lab's lock records. On
+2026-10-20 at 250 W, 198 cases (two real layer-20 captures, offsets 0, 8192,
+16384 and 24576, runtime budgets 1, 31 and 2048, ties, holes, bad counts,
+invalid scores and inactive tails) gave 1152 bitwise comparisons and 396
+rejected negative controls, and 36 memcheck cases passed. At budget 2048 the
+complete layer-20 pipeline on its 2496-row upper-skip suffix fell from
+2.518/4.061/7.333/9.148 ms to 1.726/3.235/6.326/8.034 ms at those offsets,
+about 3.7 ms per cold 32K prompt per rank. The reference arm was the
+runtime-count producer; at the compiled count it runs the same gather
+template as the served producer.
+
 On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
 top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
 475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and

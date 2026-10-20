@@ -2,6 +2,7 @@
 
 mod cycle;
 mod features;
+mod graph_budget;
 pub(crate) use features::PrefillFeatureRange;
 mod graphs;
 mod launch;

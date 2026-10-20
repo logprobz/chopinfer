@@ -97,12 +97,14 @@ impl Instance {
             let gather = self
                 .services
                 .create_mapped_gather(self.ranks[0].2, indices, &planes)?;
+            let mut graphs = GraphCache::sharing(&self.graphs);
+            graphs.label("target", None, index as u32 + 1);
             device.cycle.layers.push(LayerGather {
                 layer: device.shape.geometry.shape.engram.layers[index],
                 gather,
                 indices,
                 destinations: planes.iter().map(|plane| plane.destination).collect(),
-                graphs: GraphCache::sharing(&self.graphs),
+                graphs,
             });
         }
         Ok(())

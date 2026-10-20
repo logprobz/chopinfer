@@ -40,6 +40,10 @@ impl Instance {
         let ready = cached.is_some_and(|cache| {
             (0..self.ranks.len()).all(|rank| cache.contains(key(rank as u32)))
         });
+        let missing = (0..self.ranks.len())
+            .filter(|&rank| cached.is_none_or(|cache| !cache.contains(key(rank as u32))))
+            .count();
+        let mut reservation = (!ready).then(|| self.graphs.reserve(missing)).flatten();
         let (programs, waits): (Vec<Vec<_>>, Vec<Vec<_>>) = if ready {
             (Vec::new(), Vec::new())
         } else {
@@ -72,6 +76,20 @@ impl Instance {
         let cache = caches
             .entry(count)
             .or_insert_with(|| GraphCache::sharing(&self.graphs));
+        cache.label(
+            match program {
+                Program::Draft => "draft",
+                Program::CatchUp => "catch-up",
+            },
+            Some(count),
+            0,
+        );
+        if !ready && reservation.is_none() {
+            cache.trace(&self.services, "eager", Some(key(0)), missing, 0);
+            return self
+                .launch_eager(&streams, &programs, &waits)
+                .map_err(|e| format!("DSpark eager program: {e:?}"));
+        }
         for (rank, &stream) in streams.iter().enumerate() {
             if cache.contains(key(rank as u32)) {
                 continue;
@@ -79,14 +97,21 @@ impl Instance {
             // A single capture unit contains the whole program, including
             // byte gathers. Metadata uploads and status reads stay outside.
             cache
-                .capture::<DispatchError>(&self.services, stream, key(rank as u32), 1, |_| {
-                    pipeline::launch_all(
-                        &self.services,
-                        stream,
-                        &self.symbols[rank],
-                        &programs[rank],
-                    )
-                })
+                .capture_reserved::<DispatchError>(
+                    &self.services,
+                    stream,
+                    key(rank as u32),
+                    1,
+                    reservation.as_mut().expect("missing graphs were admitted"),
+                    |_| {
+                        pipeline::launch_all(
+                            &self.services,
+                            stream,
+                            &self.symbols[rank],
+                            &programs[rank],
+                        )
+                    },
+                )
                 .map_err(|e| format!("DSpark graph capture: {e:?}"))?;
         }
         let _unwinding = PoisonOnUnwind(&self.collectives);

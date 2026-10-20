@@ -877,6 +877,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!("create failed preparing prefill Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
     }
+    if let Err(error) = instance.configure_dspark_graphs() {
+        instance.log(&format!("create failed configuring DSpark graphs: {error}"));
+        return Err(Failed::releasing(instance, status(error)));
+    }
     instance.log(&format!(
         "{} KV pages per rank, {} items; ops prepared on {} and {}",
         instance.kv_pages,
@@ -1156,5 +1160,20 @@ pub(crate) fn prefill_cache_for_test(
                 Some(cache.data)
             })
             .collect()
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn dspark_graphs_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    capacity: Option<usize>,
+) -> bundle_runtime::graphs::GraphStats {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        if let Some(capacity) = capacity {
+            instance.graphs.set_capacity(capacity).unwrap();
+        }
+        instance.graphs.stats()
     })
 }

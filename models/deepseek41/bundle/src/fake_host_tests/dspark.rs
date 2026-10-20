@@ -5,6 +5,7 @@ use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod catch_up;
+mod graph_budget;
 pub(super) mod host;
 mod layers;
 #[cfg(test)]
@@ -671,8 +672,18 @@ fn records(host: &Host) -> Vec<serde_json::Value> {
 
 #[test]
 fn instance_partial_acceptance_ar_wrap_cancel_restore_and_slot_reuse() {
+    graph_lifecycle(None);
+}
+
+#[test]
+fn graph_pressure_preserves_partial_acceptance_cancel_restore_and_slot_reuse() {
+    graph_lifecycle(Some(8 * Ranks::TP4.count()));
+}
+
+fn graph_lifecycle(capacity: Option<usize>) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let (host, mut instance) = create(shape);
+    crate::instance::dspark_graphs_for_test(instance.handle(), capacity);
     let prompt_rows = 141;
     let ids = (0..prompt_rows as u32).collect::<Vec<_>>();
     execute(
@@ -735,6 +746,12 @@ fn instance_partial_acceptance_ar_wrap_cancel_restore_and_slot_reuse() {
         );
         assert!(labels[accepted..].iter().all(|v| *v == "unknown"));
         assert_eq!(pair[1]["completion"], "cancelled");
+    }
+    if let Some(capacity) = capacity {
+        let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+        assert!(stats.denied > 0 && stats.released > 0);
+        assert!(stats.peak <= capacity);
+        assert_eq!(stats.reserved, 0);
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());

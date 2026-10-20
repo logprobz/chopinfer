@@ -8,7 +8,7 @@
 //! (`Instance::partial`) to drive the step through the ledger.
 
 use bundle_runtime::dispatch::DispatchError;
-use bundle_runtime::graphs::GraphKey;
+use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use bundle_runtime::inputs::{PackedStep, PhaseInputs};
 use bundle_runtime::ledger::Item;
 use bundle_runtime::logits;
@@ -58,6 +58,7 @@ struct Run {
     /// A decode or verify phase's graph bucket: (tokens, items), items 0
     /// for decode. An eager prefill has none.
     graph: Option<(u32, u32)>,
+    capture: Option<GraphReservation>,
     /// Each rank's launches and whether each waits for its peers: empty
     /// for a rank whose graph of the bucket was captured when the step was
     /// planned, which replays it instead.
@@ -413,7 +414,20 @@ impl Instance {
         inputs: PhaseInputs,
         media: Option<PrefillMedia>,
     ) -> Result<Run, BundleStatusV1> {
-        let (phase, arena, layout, graph) = self.phase_of(&inputs)?;
+        let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
+        let capture = if self.dspark.is_some() {
+            graph.and_then(|key| {
+                let reservation = self.reserve_dspark_target(key);
+                if reservation.is_none() {
+                    // Decide before lowering, so no cached rank leaves an
+                    // empty program in an eager fallback. Keep exact widths.
+                    graph = None;
+                }
+                reservation
+            })
+        } else {
+            None
+        };
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
@@ -490,6 +504,7 @@ impl Instance {
             layout,
             head_rows,
             graph,
+            capture,
             programs,
             collectives,
             stages,
@@ -779,6 +794,7 @@ impl Instance {
                 .launch_dspark_target(
                     &streams,
                     run.graph,
+                    run.capture.as_mut(),
                     &run.stages,
                     &live_tokens,
                     programs,
@@ -1177,6 +1193,10 @@ impl Instance {
             Ok(step) => step,
             Err(error) => return error,
         };
+        if let Err(error) = self.maintain_dspark_graphs() {
+            self.log(&format!("DSpark graph retirement: {error}"));
+            return status(error);
+        }
         if !step.prefill.request_ids.is_empty()
             && let Err(error) = self.quiesce_prefill_reduce()
         {

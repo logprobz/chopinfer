@@ -3,17 +3,19 @@ mod audit;
 use super::Instance;
 use crate::program::Stage;
 use bundle_runtime::dispatch::DispatchError;
-use bundle_runtime::graphs::GraphKey;
+use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use bundle_runtime::pipeline::{self, PoisonOnUnwind, PreparedLaunch, Unit};
 use runtime_bundle_abi::{
     BundleAbiError, BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1,
 };
 
 impl Instance {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn launch_dspark_target(
         &mut self,
         streams: &[BundleStreamHandleV1],
         graph: Option<(u32, u32)>,
+        mut reservation: Option<&mut GraphReservation>,
         stages: &[Vec<Stage>],
         live_tokens: &[DeviceBufferSpanV1],
         programs: Vec<Vec<PreparedLaunch>>,
@@ -154,7 +156,16 @@ impl Instance {
                             .layers[piece - 1]
                             .graphs
                     };
-                    cache.capture::<DispatchError>(&self.services, stream, key, 1, issue)?;
+                    cache.capture_reserved::<DispatchError>(
+                        &self.services,
+                        stream,
+                        key,
+                        1,
+                        reservation
+                            .as_deref_mut()
+                            .ok_or(DispatchError::InvalidPlan)?,
+                        issue,
+                    )?;
                 }
             }
         }

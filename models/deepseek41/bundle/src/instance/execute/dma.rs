@@ -55,6 +55,10 @@ pub(crate) fn drain(instance: &Instance) -> Result<(), BundleAbiError> {
     if instance.dma.is_empty() {
         return Ok(());
     }
+    drain_streams(instance)
+}
+
+pub(crate) fn drain_streams(instance: &Instance) -> Result<(), BundleAbiError> {
     // Peer-copy owner joins cover DMA, not subsequent compute reads. Establish
     // completion even after a nonpoisoned step error before any graph or
     // privately owned buffer can be released. The shared entry layer refuses

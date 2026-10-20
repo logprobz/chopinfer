@@ -8,11 +8,13 @@ use super::*;
 // before verify renumber handles in these fragments. The certified router
 // rows also widen the router projection's workspace view (251691008 to
 // 251756544 bytes) on its verify launches; grids and other operands match.
+// Native prefill resources change handle numbers before these fragments;
+// every normalized verify line is identical to the exact expert control.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0xcaaf9f73ad78a93a)),
-    (8, (8992, 0x06f1e9b3092dd4ca)),
-    (16, (9964, 0x381d1ab8ce464722)),
-    (32, (8384, 0xcb1620a7c991de4c)),
+    (6, (8040, 0xdc91ad4ed589171e)),
+    (8, (8992, 0x87e217aaf14ffd6d)),
+    (16, (9964, 0x5320812fc0eb315d)),
+    (32, (8384, 0x3067459b622060d9)),
 ];
 
 #[test]

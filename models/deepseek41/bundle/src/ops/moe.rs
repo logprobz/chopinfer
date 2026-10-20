@@ -512,6 +512,11 @@ mod tests {
 
     #[test]
     fn measured_crossover_survives_phase_wide_preparation() {
+        crate::sm120::moe_native::with_native(false, check_exact_crossover);
+    }
+
+    // Opting out retains the measured exact expert buckets at every phase.
+    fn check_exact_crossover() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();

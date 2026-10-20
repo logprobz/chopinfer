@@ -9,9 +9,13 @@ Each 128-K chain starts from +0 and is added into the F32 accumulator in
 ascending K order, the same fold structure as the exact BF16 engine; inside
 a 32-K group the instruction does its own reduction. Routing, the gate/up
 epilogue (clamp, SiLU, route weight, BF16), the intermediate ceil quantizer
-and the routed sum are unchanged. It is opt-in
-(`CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`) and qualifies on the
-within-bound track of docs/numerics.md, "A speedup that changes bits".
+and the routed sum are unchanged. Native MoE prefill is the default for
+Flash TP4 when `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` is unset. Set it
+to `0` for the exact BF16 expert path, or `1` to select native explicitly.
+Other explicit values still select the exact path. Decode, verify, the
+drafter and other topologies keep their existing expert paths. This
+change qualifies on the within-bound track of docs/numerics.md,
+"A speedup that changes bits".
 
 The kernels are model-neutral (`kernels_sm120::moe::native_grouped`): any
 expert count, top-k, K and N (K and N multiples of 32 and 16), with an

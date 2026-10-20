@@ -1,6 +1,6 @@
-//! Opt-in native block-scaled MoE prefill, a within-bound candidate that
+//! Default native block-scaled MoE prefill, a within-bound path that
 //! changes bits (models/deepseek41/lab/native_moe_prefill.md). With
-//! `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`, Flash TP4's target expert
+//! `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` unset or `1`, Flash TP4's target expert
 //! bank runs its gate/up and down tiles through native MXFP4 x MXFP8 MMA
 //! in every prefill step, whatever its row count, so a prompt row's
 //! arithmetic still does not depend on the chunking. Routing, the gate/up
@@ -24,22 +24,23 @@ pub const CUBIN: &str = entries::CUBIN;
 const QUANTIZER: &str = "_moe_ceil_";
 
 fn selected(setting: Option<&str>) -> bool {
-    setting == Some("1")
+    matches!(setting, None | Some("1"))
 }
 
-/// Whether the instance was asked for native MoE prefill.
+/// Whether the instance selects native MoE prefill, on by default.
 pub fn requested() -> bool {
     #[cfg(test)]
     return IN_TESTS.get();
     #[cfg(not(test))]
     match std::env::var(SWITCH) {
         Ok(value) => selected(Some(&value)),
+        Err(std::env::VarError::NotPresent) => selected(None),
         Err(_) => false,
     }
 }
 
 #[cfg(test)]
-thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
 
 #[cfg(test)]
 pub(crate) fn with_native<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
@@ -283,13 +284,16 @@ mod tests {
     use model_deepseek41_contract::moe;
 
     #[test]
-    fn switch_requires_an_explicit_one() {
+    fn switch_defaults_on_and_keeps_the_explicit_opt_out() {
+        assert!(selected(None));
         assert!(selected(Some("1")));
-        for value in [None, Some("0"), Some(""), Some("true")] {
+        for value in [Some("0"), Some(""), Some("true")] {
             assert!(!selected(value));
         }
-        assert!(!requested());
+        assert!(requested());
+        assert!(!with_native(false, requested));
         assert!(with_native(true, requested));
+        assert!(requested());
     }
 
     #[test]

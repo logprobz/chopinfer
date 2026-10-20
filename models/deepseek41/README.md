@@ -33,6 +33,14 @@ CPU checks that read the checkpoint take it from
 HF corpus `tokenizer_goldens.py corpus` writes, named by
 `$CHOPINFER_DEEPSEEK_TOKENIZER_CORPUS`.
 
+Flash TP4 prefill uses native block-scaled expert tiles by default.
+`CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=0` selects the exact BF16 expert
+path; unset or `1` selects native. Other explicit values retain the exact
+path. The native tiles use the trained operand grids and change the F32
+accumulation order within each 32-K group. Decode, verify and draft experts
+keep their existing paths. See [native MoE prefill qualification](lab/native_moe_prefill.md)
+for the numerical contract and fixed gates.
+
 ## Checkpoint and geometry
 
 `checkpoint-files.json` pins every file of the official revision, for

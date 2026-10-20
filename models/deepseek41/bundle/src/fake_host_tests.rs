@@ -979,6 +979,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// releases per rank. At four ranks the router projection's workspace view
 /// grows from 251691008 to 251756544 bytes on its own launches; no launch
 /// count, grid or allocation changes, and no short-row count selects them.
+/// TP4 defaults to native MoE prefill. Against the exact expert path,
+/// the audited lifecycle replaces 800 column gate/up and 800 column down
+/// launches with native pack and tile launches, adds 16 resolves and 20
+/// releases, and removes four shared-memory configures: 1632 lines.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1003,12 +1007,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (75067, 0xcb0b0da8284a39ee),
+        (76699, 0x0b4afe51e1e5460e),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (72951, 0xbfe081704a05bca6),
+        (74583, 0x3ba9fbf1cc78ee9f),
     ),
 ];
 
@@ -1079,24 +1083,14 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-/// The Flash TP4 journals with the opt-in native MoE prefill switch
+/// The Flash TP4 journals with the explicit native MoE prefill switch
 /// (`sm120::moe_native`, `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`): the
 /// native module loads, every prefill expert projection launches the
 /// native tiles within their configured shared memory, decode keeps its
 /// experts, and the lifecycle releases everything. Every prefill step's
 /// 40 layers launch the gate/up and down pack and tile entries on each rank
-/// (four resolves per rank) in place of the exact expert launches. These
-/// are the pins a default flip moves `FLASH_JOURNALS`' TP4 entries to.
-/// Against those entries, with buffer handles and event, stream and
-/// resolve numbers normalized, the only differences are the 800 column
-/// gate/up and 800 column down launches each replaced by a native pack and
-/// tile launch, 16 resolves and 20 releases (four symbols and the module
-/// per rank), and four fewer shared-memory configures: 1632 lines.
-const NATIVE_MOE_PREFILL_JOURNALS: [(KvStorage, (usize, u64)); 2] = [
-    (KvStorage::Native, (76699, 0x0b4afe51e1e5460e)),
-    (KvStorage::Bf16, (74583, 0x3ba9fbf1cc78ee9f)),
-];
-
+/// (four resolves per rank) in place of the exact expert launches. The
+/// explicit setting and the default must produce the same pinned journals.
 #[test]
 fn native_moe_prefill_switch_runs_the_tp4_journal() {
     let shape = crate::shape::topologies()
@@ -1127,9 +1121,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
         // Gate/up and down, each a pack and a tile launch.
         assert!(native > 0 && native % 4 == 0, "{native} native launches");
         let layout = format!("{:?}", kv.storage).to_lowercase();
-        let (_, expected) = NATIVE_MOE_PREFILL_JOURNALS
+        let (_, _, expected) = FLASH_JOURNALS
             .iter()
-            .find(|(storage, _)| *storage == kv.storage)
+            .find(|(id, storage, _)| *id == "deepseek41-flash-tp4" && *storage == kv.storage)
             .unwrap();
         if let Err(observed) = bundle_runtime::fake_host::check_journal(
             &lines,
@@ -1140,6 +1134,36 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
         }
     }
     assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
+/// Opting out retains the audited exact expert path and its resources.
+#[test]
+fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
+    crate::sm120::moe_native::with_native(false, || {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for (kv, expected) in KV_LAYOUTS
+            .into_iter()
+            .zip([(75067, 0xcb0b0da8284a39ee), (72951, 0xbfe081704a05bca6)])
+        {
+            let host = FakeHost::new(shape, kv);
+            journal_steps(&host);
+            assert_eq!(host.acquired.get(), host.released.get());
+            assert!(
+                !host
+                    .device
+                    .module_cubins
+                    .borrow()
+                    .values()
+                    .any(|c| *c == crate::sm120::moe_native::CUBIN)
+            );
+            bundle_runtime::fake_host::check_journal(
+                &host.device.journal.borrow(),
+                expected,
+                "exact-tp4-journal",
+            )
+            .unwrap();
+        }
+    });
 }
 
 /// Every launch of `lines` fits its entry's dynamic shared memory: the

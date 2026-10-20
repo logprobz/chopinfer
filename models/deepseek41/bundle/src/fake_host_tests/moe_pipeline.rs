@@ -17,6 +17,11 @@ fn spans(line: &str) -> Vec<(u64, u64, u64)> {
 }
 #[test]
 fn prefill_gate_and_down_routes_keep_qualified_shapes_and_scratch() {
+    crate::sm120::moe_native::with_native(false, check_exact_prefill_routes);
+}
+
+// The opt-out keeps the measured exact gate/up and down implementations.
+fn check_exact_prefill_routes() {
     let serving_rows = u64::from(model_deepseek41_contract::serving::PREFILL_TOKENS);
     assert_eq!(
         serving_rows, 8192,

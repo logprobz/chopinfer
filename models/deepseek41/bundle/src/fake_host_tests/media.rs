@@ -346,9 +346,13 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// resolves, one configure and three releases per rank. The certified router
 /// rows add one module, two resolves and three releases per rank, and at four
 /// ranks widen only the router projection's workspace view.
+/// Default native MoE prefill replaces 320 column gate/up and 320 column
+/// down launches with native pack and tile pairs. It adds 16 resolves and
+/// 20 releases and removes four net configures; retained launches and
+/// allocations match the exact path after handle normalization.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
-    (Ranks::TP4, (50947, 0xf0c9e76ea79ee9b8)),
+    (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -1,4 +1,5 @@
 //! Adaptive read-ahead for checked host-mapped row copies.
+mod policy;
 
 /// Rows a gather copies between clock reads, and how long that many rows
 /// may take before the rest of the gather is read ahead. A row the page cache
@@ -19,6 +20,7 @@ pub(crate) struct MappedProbe<'a> {
     mapping: &'a crate::host_rows::MappedRowsV1,
     row_bytes: usize,
     origin: std::time::Instant,
+    asynchronous: bool,
 }
 
 impl<'a> MappedProbe<'a> {
@@ -27,6 +29,14 @@ impl<'a> MappedProbe<'a> {
             mapping,
             row_bytes,
             origin: std::time::Instant::now(),
+            asynchronous: false,
+        }
+    }
+
+    pub(crate) fn asynchronous(mapping: &'a super::MappedRowsV1, row_bytes: usize) -> Self {
+        Self {
+            asynchronous: true,
+            ..Self::new(mapping, row_bytes)
         }
     }
 }
@@ -37,6 +47,7 @@ impl GatherProbe for MappedProbe<'_> {
     }
 
     fn read_ahead(&self, rows: &[u32]) {
+        policy::advise(self.asynchronous, rows.len());
         self.mapping.will_need_rows(self.row_bytes, rows);
     }
 }
@@ -139,8 +150,11 @@ pub(crate) fn gather_span_v1(
 pub const MAPPED_READ_AHEAD_ENV_V1: &str = "CHOPINFER_MAPPED_READ_AHEAD";
 
 pub(crate) fn mapped_read_ahead_v1() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var_os(MAPPED_READ_AHEAD_ENV_V1).is_some_and(|value| value == "1")
-    })
+    policy::gather(false);
+    policy::enabled(false)
+}
+
+pub(crate) fn mapped_async_read_ahead_v1() -> bool {
+    policy::gather(true);
+    policy::enabled(true)
 }

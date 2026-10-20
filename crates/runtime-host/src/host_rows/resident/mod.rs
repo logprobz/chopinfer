@@ -185,6 +185,42 @@ fn put(bytes: &mut [u8], at: usize, value: u64) {
 }
 
 impl Cache {
+    fn reset_for_measurement(&self) -> Result<(), String> {
+        for shard in &self.shards {
+            let mut shard = shard.lock().map_err(|_| "resident row shard is poisoned")?;
+            let bytes = shard.memory.bytes();
+            for bucket in 0..self.buckets_per_shard {
+                let begin = bucket * self.bucket_bytes;
+                bytes[begin..begin + WAYS * ENTRY_META].fill(0);
+            }
+            shard.clock = 0;
+        }
+        for counter in [
+            &self.hits,
+            &self.misses,
+            &self.insertions,
+            &self.evictions,
+            &self.contention,
+            &self.copies,
+        ] {
+            counter.store(0, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn measurement_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "cache_id":self.id, "row_bytes":self.row_bytes,
+            "capacity_rows":SHARDS*self.buckets_per_shard*WAYS,
+            "locked_bytes":self.locked_bytes, "charged_bytes":self.charge.bytes,
+            "hits":self.hits.load(Ordering::Relaxed), "misses":self.misses.load(Ordering::Relaxed),
+            "insertions":self.insertions.load(Ordering::Relaxed),
+            "evictions":self.evictions.load(Ordering::Relaxed),
+            "contention":self.contention.load(Ordering::Relaxed),
+            "copies":self.copies.load(Ordering::Relaxed),
+        })
+    }
+
     fn new(key: Key, charge: Charge) -> Result<Self, String> {
         Self::allocate(key, charge, LockedBytes::new)
     }
@@ -524,3 +560,43 @@ fn memory_permits(registry: &Registry, available: u64) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The explicit measurement controller clears tags under the copy-path locks.
+/// It neither changes row bytes nor releases any memory, mapping or device work.
+pub(super) fn reset_for_measurement() -> Result<(), String> {
+    let Some(Ok(Some(registry))) = REGISTRY.get() else {
+        return Err("no resident row registry to reset".into());
+    };
+    let caches = registry
+        .caches
+        .lock()
+        .map_err(|_| "resident registry is poisoned")?
+        .values()
+        .filter_map(Weak::upgrade)
+        .collect::<Vec<_>>();
+    if caches.is_empty() {
+        return Err("no resident row sets to reset".into());
+    }
+    for cache in caches {
+        cache.reset_for_measurement()?;
+    }
+    Ok(())
+}
+
+pub(super) fn measurement_snapshot() -> serde_json::Value {
+    let Some(Ok(Some(registry))) = REGISTRY.get() else {
+        return serde_json::json!({"enabled":false,"sets":[]});
+    };
+    let Ok(caches) = registry.caches.lock() else {
+        return serde_json::json!({"enabled":false,"sets":[],"reason":"registry poisoned"});
+    };
+    let sets = caches
+        .values()
+        .filter_map(Weak::upgrade)
+        .map(|cache| cache.measurement_snapshot())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "enabled":true, "sets":sets,
+        "allocation_unavailable":registry.allocation_unavailable.load(Ordering::Relaxed),
+    })
+}

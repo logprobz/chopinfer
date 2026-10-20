@@ -207,6 +207,24 @@ fn mapped_identity_separates_checkpoint_authentication() {
 }
 
 #[test]
+fn measurement_reset_discards_tags_and_keeps_the_same_allocation_and_bytes() {
+    let registry = registry(1);
+    let mapping = mapping("measurement-reset", &source(100, 8), 23);
+    attach(&registry, vec![(Arc::clone(&mapping), 8)]).unwrap();
+    let cache = &mapping.resident.get().unwrap().cache;
+    let charge = registry.budget.used.load(Ordering::Relaxed);
+    let first = copy(&mapping, 8, 17, 0, 8);
+    assert_eq!(copy(&mapping, 8, 17, 0, 8), first);
+    assert_eq!(cache.hits.load(Ordering::Relaxed), 1);
+    cache.reset_for_measurement().unwrap();
+    assert_eq!(registry.budget.used.load(Ordering::Relaxed), charge);
+    assert_eq!(cache.copies.load(Ordering::Relaxed), 0);
+    assert_eq!(copy(&mapping, 8, 17, 0, 8), first);
+    assert_eq!(cache.misses.load(Ordering::Relaxed), 1);
+    assert_eq!(cache.hits.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn cache_is_on_by_default_and_disabled_budgets_are_not_parsed() {
     let default = Config::parse(|_| None).unwrap().unwrap();
     assert_eq!((default.set_bytes, default.total_bytes), (1 << 30, 2 << 30));

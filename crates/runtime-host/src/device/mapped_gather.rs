@@ -101,13 +101,13 @@ pub fn gather_plane_v1(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), String> {
-    let probe = MappedProbe::new(&plane.mapping, plane.row_bytes);
+    let probe = MappedProbe::asynchronous(&plane.mapping, plane.row_bytes);
     gather_plane_with_probe(
         plane,
         input,
         output,
         &probe,
-        crate::host_rows::gather::mapped_read_ahead_v1(),
+        crate::host_rows::gather::mapped_async_read_ahead_v1(),
     )
 }
 

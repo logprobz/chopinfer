@@ -19,7 +19,7 @@ import stage as freezing
 from run import digest, write
 
 
-def seal(root):
+def seal(root, adaptive_only=False):
     for name in ("cpu-validation", "native-preflight", "timeout-audit"):
         assert json.loads((root / f"{name}.json").read_text())["passed"], name
     freezing.configure(root)
@@ -29,6 +29,11 @@ def seal(root):
     version = subprocess.run([nsys, "--version"], check=True, capture_output=True, text=True).stdout.strip()
     settings.update(nsys_path=nsys, nsys_version=version,
                     profile_store=str(Path("/tmp") / "chopinfer-x7-cycle-captures"))
+    if adaptive_only:
+        reference = root / "install/reference"
+        assert all((reference / f"C{c}-outputs.json").is_file() for c in (8, 16))
+        settings.update(profile_policies=["adaptive"], full_workload_warmup=True,
+                        comparison_reference=str(reference))
     write(root / "config.json", settings)
     destination = root / "harness/profile"
     destination.mkdir(exist_ok=True)
@@ -43,22 +48,27 @@ def seal(root):
     manifest.write_text("".join(f"{digest(p)}  {p.relative_to(root)}\n" for p in selected))
     manifest.chmod(0o644)
     pin = digest(manifest)
-    job = root / "x7-cycle-profile.job"
-    job.write_text(f'''# timeout 1200
+    job = root / ("x7-adaptive-cycle-profile.job" if adaptive_only else "x7-cycle-profile.job")
+    timeout = 600 if adaptive_only else 1200
+    outer = timeout - 30
+    job.write_text(f'''# timeout {timeout}
 # Whole-machine DSpark profiling, TP4, 250 W on every GPU.
 set -euo pipefail
 source "$HOME/.config/chopinfer/local.env"
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export PYTHONDONTWRITEBYTECODE=1
 unset CHOPINFER_KERNEL_GPU CHOPINFER_KERNEL_GPUS CHOPINFER_KERNEL_REQUIRE
-exec timeout --signal=TERM --kill-after=15s 1170s python3 -B {shlex.quote(str(destination / "stage_profile.py"))} {shlex.quote(str(root))} --execute --manifest {pin}
+exec timeout --signal=TERM --kill-after=15s {outer}s python3 -B {shlex.quote(str(destination / "stage_profile.py"))} {shlex.quote(str(root))} --execute --manifest {pin}
 ''')
     job.chmod(0o644)
     subprocess.run(["bash", "-n", str(job)], check=True)
     freezing.verify(root, pin)
     receipt = dict(job=str(job), sha256=digest(job), manifest_sha256=pin, queued=False,
-                   native_revision=settings["native_revision"], cases=4, sessions=2,
-                   order=["K3 C8", "K3 C16", "fixed adaptive C8", "fixed adaptive C16"])
+                   native_revision=settings["native_revision"],
+                   cases=2 if adaptive_only else 4, sessions=1 if adaptive_only else 2,
+                   order=(["fixed adaptive C8", "fixed adaptive C16"] if adaptive_only else
+                          ["K3 C8", "K3 C16", "fixed adaptive C8", "fixed adaptive C16"]),
+                   full_workload_warmup=adaptive_only, queue_timeout=timeout)
     write(root / "staged-job.json", receipt)
     print(json.dumps(receipt, indent=2))
 
@@ -89,10 +99,11 @@ def main():
     group.add_argument("--verify", action="store_true")
     group.add_argument("--execute", action="store_true")
     parser.add_argument("--manifest")
+    parser.add_argument("--adaptive-only", action="store_true")
     args = parser.parse_args()
     root = args.root.resolve()
     if args.seal:
-        seal(root)
+        seal(root, args.adaptive_only)
     elif args.verify:
         freezing.verify(root, args.manifest)
     else:

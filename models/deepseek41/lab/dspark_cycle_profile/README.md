@@ -47,6 +47,11 @@ Exclusive kernel charges advance the overlap frontier before grouping.
 Target kernel charges are also retained by name and live row count. Their
 sum must equal target time, so later family grouping cannot double count
 overlapping launches or mix 16-row and 32-row target forwards.
+Geometry checks use each step's recorded capacity. The embedding kernel's
+CTA grid rounds that count to a shared row bucket and masks device-live
+rows. The cached F32 head's row producer grids the exact count. Both must
+match their respective contracts; a wrong exact width in the same embedding
+bucket still fails. The embedding grid alone is not an exact-width witness.
 
 Each cycle reports target, drafter, catch-up, sampling, other device work
 and no-recorded-kernel time. Drafter sampling kernels belong to sampling.
@@ -83,3 +88,12 @@ and has a 1200-second limit. The shared work deadline is 1020 seconds,
 leaving cleanup time before the outer 1170-second timeout. Large captures
 stay under a unique root-volume path recorded with the results. Sealing
 does not queue the job.
+
+Sealing with `--adaptive-only` keeps one server, one collection and C8/C16.
+Its queue limit is 600 seconds, with a 510-second work deadline. It requires
+pinned K3 outputs under the installation's `reference` directory. Before
+collection starts, it replays the full sampled 192-token workload twice at
+each concurrency, checks output bits against K3, and records faults for
+every warmup wave. The timed cohorts retain their own warmup, fault samples
+and equality checks. This warms the exercised Engram working set; recorded
+faults remain necessary evidence of residual misses or host pressure.

@@ -13,7 +13,7 @@ from unittest.mock import patch
 import capture
 import cycles
 import families
-from sqlite_fixture import create
+from sqlite_fixture import create, HEAD_ROWS
 
 SOURCE = Path(__file__).resolve().parents[4]
 
@@ -30,6 +30,34 @@ def steps(directory):
 
 
 class Attribution(unittest.TestCase):
+    def test_adaptive_widths_keep_exact_row_witnesses_with_padded_embeddings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            steps(root)
+            for c in (8, 16):
+                path = root/f"C{c}/steps.jsonl"
+                rows = [json.loads(line) for line in path.read_text().splitlines()]
+                widths = (c, 20, 24, 32)
+                for index, row in enumerate(rows):
+                    width = widths[index % len(widths)]
+                    verify = min(c, width-c)
+                    row.update(live_rows=width, row_capacity=width,
+                               verify_items=verify, decode_rows=c-verify)
+                path.write_text("".join(json.dumps(r)+"\n" for r in rows))
+            create(root/"profile.sqlite", root)
+            result = cycles.analyze(root/"profile.sqlite", root)
+            for c, case in result["cases"].items():
+                for device in case["devices"].values():
+                    self.assertEqual(set(device["target_by_rows"]), {c, "20", "24", "32"})
+            # A wrong exact width in the same embedding bucket must fail.
+            db = sqlite3.connect(root/"profile.sqlite")
+            name, = db.execute("SELECT id FROM StringIds WHERE value=?", (HEAD_ROWS,)).fetchone()
+            db.execute("UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET gridX=21 WHERE shortName=? AND gridX=20", (name,))
+            db.commit()
+            db.close()
+            with self.assertRaisesRegex(AssertionError, "exact target row"):
+                cycles.analyze(root/"profile.sqlite", root)
+
     def test_target_families_partition_exclusive_kernel_charges(self):
         kernels = {
             "chain_before_gateup_test_stream_small_v1": 4,
@@ -42,6 +70,9 @@ class Attribution(unittest.TestCase):
         self.assertEqual(sum(grouped.values()), 15)
         self.assertEqual(grouped["MoE gate/up"], 4)
         self.assertEqual(grouped["Other row, norm and Engram"], 5)
+        self.assertEqual(families.family("chop_deepseek41_moe_bandwidth_direct_e384_k6_gate_small_v1"), "MoE gate/up")
+        self.assertEqual(families.family("chop_deepseek41_moe_floor_e384_k6_down_finish_v1"), "MoE down")
+        self.assertEqual(families.family("chop_deepseek41_hc_round_chain_w4_v1"), "HC")
 
     def test_clock_offset_uses_independent_host_anchors(self):
         for measured in (True, False):
@@ -229,6 +260,30 @@ def dry_run(root):
     print("PROFILE_DRY_RUN_OK cases=4 sessions=2 faults=5")
 
 
+def adaptive_dry_run(root):
+    root.mkdir()
+    config = dict(source=str(SOURCE), binary="unused", package="unused", checkpoint="unused",
+                  native_revision="0"*40, profile_policies=["adaptive"], full_workload_warmup=True)
+    (root/"config.json").write_text(json.dumps(config))
+    process = subprocess.run(
+        [sys.executable, "-B", capture.__file__, str(root), str(root/"run"), "--dry-run"],
+        capture_output=True, text=True, timeout=100)
+    (root/"driver.log").write_text(process.stdout+process.stderr)
+    assert process.returncode == 0, process.stdout+process.stderr
+    result = json.loads((root/"run/summary.json").read_text())
+    assert result["server_count"] == 1 and result["case_count"] == 2
+    server, = result["servers"]
+    assert server["config"] == "adaptive"
+    assert server["session"]["starts"] == server["session"]["stops"] == 1
+    warm = server["full_workload_warmup"]
+    assert len(warm) == 4
+    assert [(w["concurrency"], w["repeat"]) for w in warm] == [(8, 0), (8, 1), (16, 0), (16, 1)]
+    assert all(w["tokens_per_request"] == 192 and w["bitwise"]["bitwise"]
+               and not w["collected_by_nsight"] and "majflt" in w["faults"] for w in warm)
+    assert {c["concurrency"] for c in server["cohorts"]} == {8, 16}
+    print("ADAPTIVE_PROFILE_DRY_RUN_OK cases=2 sessions=1 full_warm_waves=4")
+
+
 def replay(sqlite, log, output):
     db=sqlite3.connect(Path(sqlite).resolve().as_uri()+"?mode=ro&immutable=1",uri=True)
     epoch=db.execute("SELECT utcEpochNs FROM TARGET_INFO_SESSION_START_TIME").fetchone()[0]
@@ -253,6 +308,8 @@ def replay(sqlite, log, output):
 if __name__ == "__main__":
     if len(sys.argv)>1 and sys.argv[1]=="--dry-run":
         dry_run(Path(sys.argv[2]))
+    elif len(sys.argv)>1 and sys.argv[1]=="--adaptive-dry-run":
+        adaptive_dry_run(Path(sys.argv[2]))
     elif len(sys.argv)>1 and sys.argv[1]=="--replay":
         replay(*sys.argv[2:])
     else:

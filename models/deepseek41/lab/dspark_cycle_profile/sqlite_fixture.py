@@ -7,6 +7,7 @@ import sqlite3
 from cycles import EMBED, MARKOV
 
 HEAD = "chop_deepseek41_head_f32_test_cached_reduce_v1"
+HEAD_ROWS = HEAD.replace("_reduce_v1", "_rows_v1")
 ACCEPT = "chop_deepseek41_dspark_host_acceptance_u32_v1"
 
 
@@ -31,7 +32,7 @@ def create(path, directory, *, eager=False):
     names = [EMBED, MARKOV, HEAD, ACCEPT, "chop_deepseek41_dspark_quantize_w15360_bf16_v1",
              "chop_deepseek41_mxfp8_ticket_n5120_k15360_g1_f32_v2",
              "target_middle", "target_tail", "chop_sampling_filtered_finish_f32_v1",
-             "chop_dspark_argmax_f32_v1"]
+             "chop_dspark_argmax_f32_v1", HEAD_ROWS]
     db.executemany("INSERT INTO StringIds VALUES(?,?)", enumerate(names, 1))
     previous = None
     for step in steps:
@@ -45,12 +46,14 @@ def create(path, directory, *, eager=False):
         at = lambda offset: origin + offset * span // 900_000
         previous = completed
         width = step["row_capacity"]
+        embedding_grid = 1 << (width - 1).bit_length()
         for device in range(4):
             target, draft, catch = 100 + device*10, 200 + device, 300 + device
-            rows = [(300_000, 310_000, target, width, 1),
+            rows = [(300_000, 310_000, target, embedding_grid, 1),
                     (310_000, 410_000, target, 1, 7),
                     (400_000, 620_000, target+1, 1, 7),
                     (600_000, 680_000, target+2, 1, 8),
+                    (650_000, 660_000, target+2, width, 11),
                     (680_000, 700_000, target+2, 1, 3)]
             if step["verify_items"]:
                 rows += [(10_000, 20_000, catch, 1, 5), (20_000, 100_000, catch, 1, 6),
@@ -61,7 +64,7 @@ def create(path, directory, *, eager=False):
             if os.environ.get("X7_PROFILE_FAIL") != "missing-acceptance" or sample != 4:
                 rows.append((720_000, 780_000, None, 1, sample))
             if os.environ.get("X7_PROFILE_FAIL") == "geometry":
-                rows[0] = (*rows[0][:3], width+1, 1)
+                rows[0] = (*rows[0][:3], embedding_grid+1, 1)
             db.executemany("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES(?,?,?,?,?,?)",
                 [(at(a), at(b), device, None if eager else graph, grid, name)
                  for a, b, graph, grid, name in rows])

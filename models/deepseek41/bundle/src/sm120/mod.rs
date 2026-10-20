@@ -41,6 +41,7 @@ mod prefill_attention;
 pub(crate) mod prefill_cache;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod prefill_heads;
+pub mod projection_reuse;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -168,11 +169,15 @@ pub fn register_f32_projections(
 ) -> Result<Sm120, String> {
     let entries = f32_split::entries(geometry, ranks)?
         .into_iter()
-        .map(|entry| f32_prefill::serving_entry(geometry, entry))
+        .map(|entry| {
+            f32_prefill::serving_entry(geometry, entry)
+                .and_then(|entry| projection_reuse::head(geometry, ranks, entry))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let cubins = [
         f32_split::cubin_name(geometry),
         f32_decode::cubin_name(geometry),
+        projection_reuse::HEAD_CUBIN.into(),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),
@@ -405,7 +410,9 @@ impl crate::Kernels {
     /// an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
-        cubin != kernels_sm120::probes::CUBIN
+        (![projection_reuse::FOLD_CUBIN, projection_reuse::HEAD_CUBIN].contains(&cubin)
+            || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            && cubin != kernels_sm120::probes::CUBIN
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
@@ -493,6 +500,7 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

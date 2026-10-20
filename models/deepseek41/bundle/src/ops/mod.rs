@@ -123,10 +123,10 @@ impl Ops {
         );
         if reduce::prefill_only_partials(shape) {
             let asks = Asks::default();
-            if let Some(reduce) = &mut ops.reduce {
-                if let Err(error) = reduce.prepare_prefill(kernels.backend.as_ref(), shape, &asks) {
-                    ops.missing.push(format!("prefill BF16 partials: {error}"));
-                }
+            if let Some(reduce) = &mut ops.reduce
+                && let Err(error) = reduce.prepare_prefill(kernels.backend.as_ref(), shape, &asks)
+            {
+                ops.missing.push(format!("prefill BF16 partials: {error}"));
             }
             ops.asked.extend(asks.asked());
         }

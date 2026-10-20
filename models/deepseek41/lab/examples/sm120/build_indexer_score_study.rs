@@ -34,35 +34,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("CUDA compilation is required".into());
     }
     let locks = root.join("kernels.lock.d");
-    let mut records = Vec::new();
-    for (family, spec) in [("position_mma_tile", position_mma_tile::cubin_spec(scores))] {
-        // A partial build can initialize the second new family later. Any
-        // family already on disk is always checked without lock updates.
-        let new_family = initialize && !locks.join(format!("{family}.lock")).exists();
-        let built = kernel_build::build_in_families(
-            &toolchain,
-            std::slice::from_ref(&spec),
-            &out,
-            &LockDir::new(&locks).family(family, [&spec.name]),
-            BuildOptions {
-                lock_update: new_family,
-                emit_cargo_directives: false,
-                profile_line_info: false,
-            },
-            None,
-        )?;
-        if built.len() != 1 {
-            return Err("missing candidate cubin".into());
-        }
-        let audit = kernel_build::audit_cubin(&toolchain, &spec, &built[0].path)?;
-        if audit.len() != spec.entries.len() {
-            return Err("incomplete candidate audit".into());
-        }
-        let bytes = std::fs::read(&built[0].path)?;
-        std::fs::write(out.join(format!("{}.cubin", spec.name)), &bytes)?;
-        records.push(serde_json::json!({"family":family,"module":spec.name,
-            "sha256":kernel_build::digest(&bytes),"symbols":spec.entries.iter().map(|e|&e.symbol).collect::<Vec<_>>() }));
+    let (family, spec) = ("position_mma_tile", position_mma_tile::cubin_spec(scores));
+    // An existing family is always checked without lock updates.
+    let new_family = initialize && !locks.join(format!("{family}.lock")).exists();
+    let built = kernel_build::build_in_families(
+        &toolchain,
+        std::slice::from_ref(&spec),
+        &out,
+        &LockDir::new(&locks).family(family, [&spec.name]),
+        BuildOptions {
+            lock_update: new_family,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+        None,
+    )?;
+    if built.len() != 1 {
+        return Err("missing candidate cubin".into());
     }
+    let audit = kernel_build::audit_cubin(&toolchain, &spec, &built[0].path)?;
+    if audit.len() != spec.entries.len() {
+        return Err("incomplete candidate audit".into());
+    }
+    let bytes = std::fs::read(&built[0].path)?;
+    std::fs::write(out.join(format!("{}.cubin", spec.name)), &bytes)?;
+    let records = [serde_json::json!({"family":family,"module":spec.name,
+        "sha256":kernel_build::digest(&bytes),"symbols":spec.entries.iter().map(|e|&e.symbol).collect::<Vec<_>>() })];
     std::fs::write(
         out.join("candidate-modules.json"),
         serde_json::to_vec_pretty(&records)?,

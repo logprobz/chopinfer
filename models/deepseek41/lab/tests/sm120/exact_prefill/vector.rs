@@ -126,6 +126,21 @@ fn vector_cpu_matrix() {
                 .iter()
                 .map(|o| o.symbol.clone())
                 .collect::<Vec<_>>();
+            // Serving binds the separately qualified grouped down at this
+            // shape; this arm keeps its column down as the gate reference.
+            if bundle_deepseek41::sm120::moe_grouped_prefill::selected(
+                &FLASH, 4, case.set, kind, usage,
+            ) {
+                assert_eq!(kind, GatedMlpProjection::Down);
+                assert_eq!(expected.len(), 2);
+                assert!(expected[0].ends_with("_group_m128n128s2c1_pack_v1"));
+                assert!(expected[1].ends_with("_group_m128n128s2c1_v1"));
+                assert!(actual.iter().all(|s| !s.contains("_group_")));
+                selections.push(serde_json::json!({
+                    "case": case.label(), "part": part, "symbols": actual, "serving": expected
+                }));
+                continue;
+            }
             assert_eq!(actual, expected);
             selections.push(serde_json::json!({
                 "case": case.label(), "part": part, "symbols": actual

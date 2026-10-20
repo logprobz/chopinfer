@@ -22,6 +22,7 @@ pub(crate) mod logits;
 pub(crate) mod moe;
 pub(crate) mod norm_prefill;
 pub(crate) mod norm_quantize;
+pub(crate) mod query_prefill;
 mod reduce;
 mod row_buckets;
 mod rows;
@@ -64,6 +65,7 @@ pub struct Ops {
     pub(crate) rows: Option<rows::RowOps>,
     pub(crate) norm_quantize: Option<norm_quantize::NormQuantizeOps>,
     pub(crate) norm_prefill: Option<norm_prefill::NormPrefillOps>,
+    pub(crate) query_prefill: Option<query_prefill::QueryPrefillOps>,
     pub(crate) reduce: Option<reduce::ReduceOps>,
     pub(crate) hc: Option<hc::HcOps>,
     pub(crate) moe: Option<moe::MoeOps>,
@@ -176,6 +178,16 @@ impl Ops {
                 &names,
                 "prefill fused norm",
                 norm_prefill::NormPrefillOps::prepare(kernels.backend.as_ref(), &asks),
+            )
+        } else {
+            None
+        };
+        let query_prefill = if shape.geometry == &model_deepseek41_contract::geometry::FLASH {
+            family(
+                &mut missing,
+                &names,
+                "prefill query norm",
+                query_prefill::QueryPrefillOps::prepare(kernels.backend.as_ref(), &asks),
             )
         } else {
             None
@@ -311,6 +323,7 @@ impl Ops {
             rows,
             norm_quantize,
             norm_prefill,
+            query_prefill,
             reduce,
             hc,
             moe,
@@ -452,6 +465,7 @@ mod tests {
         );
         assert!(ops.norm_quantize.is_none());
         assert!(ops.norm_prefill.is_none());
+        assert!(ops.query_prefill.is_none());
         assert!(
             ops.missing[2].starts_with(
                 "nothing and nothing own refuse DeepSeek V4.1's prefill fused norm ops"

@@ -41,6 +41,10 @@ path = "tests/sm120/kernel_mxfp8_fold.rs"
 workspace = true
 
 [[example]]
+name = "build_query_prefill"
+path = "examples/sm120/build_query_prefill.rs"
+
+[[example]]
 name = "build_window_bf16"
 path = "examples/sm120/build_window_bf16.rs"
 

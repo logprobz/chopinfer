@@ -46,6 +46,7 @@ pub(crate) mod prefill_cache;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod prefill_heads;
 pub mod projection_reuse;
+pub mod query_prefill;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -497,6 +498,7 @@ impl crate::Kernels {
         };
         let sm120 = norm_quantize_cached::register(sm120, shape.geometry);
         let sm120 = norm_prefill::register(sm120, shape.geometry)?;
+        let sm120 = query_prefill::register(sm120, shape.geometry)?;
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);

@@ -52,6 +52,11 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     lines.join("\n"),
                 )
                 .unwrap();
+                decode_attention::export_handles(
+                    &host.device,
+                    &dir,
+                    &format!("verify.tp4.r{rows}.{:?}.journal", kv.storage),
+                );
             }
             let expected = JOURNALS.iter().find(|(r, _)| *r == rows).unwrap().1;
             if let Err(error) = bundle_runtime::fake_host::check_journal(

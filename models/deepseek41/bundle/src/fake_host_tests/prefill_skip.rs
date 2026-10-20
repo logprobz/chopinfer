@@ -28,7 +28,7 @@ fn bounded_indexer_keeps_upper_skip_query_and_candidate_origins() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
+pub(super) fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())

@@ -21,6 +21,7 @@ mod moe_floor;
 mod norm_prefill;
 mod norm_quantize;
 mod overlap;
+mod query_prefill;
 
 pub use compressor::{TailUpload, tail_upload};
 
@@ -190,6 +191,9 @@ impl Lowering<'_> {
     }
 
     fn stage_inner(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
+        if let Some(launches) = self.prefill_query_stage(phase, stage)? {
+            return Ok(Some(launches));
+        }
         if let Some(launches) = self.prefill_norm_stage(phase, stage)? {
             return Ok(Some(launches));
         }

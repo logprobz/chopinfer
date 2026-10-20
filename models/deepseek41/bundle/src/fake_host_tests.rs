@@ -956,36 +956,38 @@ fn journal_steps(host: &Rc<Host>) {
 /// active output/merge substitutions are audited in full prefill lifetimes.
 /// The ordered head adds 24 resolves and 25 releases per rank. Sixteen
 /// one-row heads replace three launches with two; allocations are unchanged.
+/// The full-chunk query norm adds two resolves and three releases per rank.
+/// These short-row lifecycles retain every launch, operand and dependency.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17334, 0x796ed0dea273c656),
+        (17339, 0x9bfdf379b70f6ae9),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17209, 0x9c1299f6d405c33b),
+        (17214, 0x1a7b59adfbdaf1ce),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34855, 0xbd6e19dbc724cc4b),
+        (34865, 0x4f8a86437af302f1),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34605, 0xc4fd08f2c39fe6a3),
+        (34615, 0x7a48b66d8e2b1826),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (74935, 0x98afd6f58ff6204a),
+        (74955, 0x65066986a1282b7c),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (72887, 0xcc86eaa4f2b28458),
+        (72907, 0xedff0dfd99638809),
     ),
 ];
 
@@ -1909,3 +1911,4 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
 
 mod norm_prefill;
 mod prefill_engram;
+mod query_prefill;

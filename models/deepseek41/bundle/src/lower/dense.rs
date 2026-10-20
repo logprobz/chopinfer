@@ -56,7 +56,15 @@ impl Lowering<'_> {
                 rows_of(scratch.shared_codes),
                 rows_of(scratch.shared_scales),
             ),
-            Input::Query if id == "attention.q-b" && matches!(phase, Phase::Decode(_)) => {
+            Input::Query
+                if id == "attention.q-b"
+                    && (matches!(phase, Phase::Decode(_))
+                        || (self.ops.query_prefill.is_some()
+                            && crate::ops::query_prefill::eligible(
+                                self.shape.geometry,
+                                phase,
+                            ))) =>
+            {
                 (rows_of(scratch.query_codes), rows_of(scratch.query_scales))
             }
             Input::Query => quantized(

@@ -79,6 +79,8 @@ mod prefill_cache;
 #[allow(dead_code, reason = "the bundle prepares the qualified head schedules")]
 mod prefill_heads;
 #[allow(dead_code)]
+mod query_prefill;
+#[allow(dead_code)]
 mod replicated_embedding;
 mod ring_gather_cubin;
 mod ring_gather_entries;
@@ -282,6 +284,7 @@ pub fn selection(
         owners.push((norm_quantize::cubin_name(geometry), geometry.id));
         if geometry == &model_deepseek41_contract::geometry::FLASH {
             owners.push((norm_prefill::CUBIN.into(), geometry.id));
+            owners.push((query_prefill::CUBIN.into(), geometry.id));
         }
         if hc_prefill::qualified(geometry) {
             owners.push((hc_prefill::CUBIN.into(), geometry.id));
@@ -416,6 +419,7 @@ pub fn selection(
     }
     specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
     specs.extend(norm_prefill::cubins(geometries).expect("prefill fused norm cubins"));
+    specs.extend(query_prefill::cubins(geometries).expect("prefill query norm cubins"));
     specs.extend(hc_expand_mix::cubins(geometries).expect("fused expansion mixer cubins"));
     specs.extend(hc_round_expand_mix::cubins(geometries).expect("fused rounded expansion cubins"));
     for geometry in geometries

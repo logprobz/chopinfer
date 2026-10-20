@@ -163,3 +163,7 @@ path = "examples/sm120/build_position_mma_guard_fast.rs"
 [[example]]
 name = "build_position_hierarchical"
 path = "examples/sm120/build_position_hierarchical.rs"
+
+[[example]]
+name = "build_position_select_cached"
+path = "examples/sm120/build_position_select_cached.rs"

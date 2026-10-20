@@ -16,6 +16,7 @@ pub(crate) struct Factory {
 pub(crate) struct BatchOps {
     select: Prepared<PositionSelectBuffers<View>>,
     producer: Option<Prepared<CandidateBlockIdsBuffers<View>>>,
+    cached: bool,
 }
 
 impl Factory {
@@ -97,18 +98,38 @@ impl Factory {
         {
             return Err("bounded prefill exceeds the existing indexer workspace".into());
         }
-        Ok(BatchOps { select, producer })
+        let cached = crate::Kernels::cached_prefill_indexer_enabled(
+            self.geometry.compress_ratio(layer),
+            width,
+            rows,
+            self.top_k,
+        );
+        Ok(BatchOps {
+            select,
+            producer,
+            cached,
+        })
     }
 }
 
 impl BatchOps {
+    #[cfg(test)]
+    pub(crate) fn uses_cached_selection(&self) -> bool {
+        self.cached
+    }
+
     pub(crate) fn select(
         &self,
         rows: u32,
         width: u32,
         views: &SelectViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        SelectOps::select_prepared(&self.select, rows, width, views)
+        let calls = SelectOps::select_prepared(&self.select, rows, width, views)?;
+        if self.cached && rows >= 32 {
+            crate::Kernels::cached_prefill_indexer_select(calls)
+        } else {
+            Ok(calls)
+        }
     }
 
     pub(crate) fn produce(
@@ -136,3 +157,7 @@ impl BatchOps {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "prefill_tests.rs"]
+mod tests;

@@ -112,6 +112,7 @@ mod indexer_mma_guard_fast;
 mod indexer_query;
 #[allow(dead_code)]
 mod indexer_query_parallel;
+mod indexer_select_cached;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_glue;
 #[allow(dead_code)]
@@ -299,6 +300,9 @@ pub fn selection(
             owners.push((indexer_mma_guard_fast::cubin_name(geometry), geometry.id));
             owners.push((indexer_hierarchical::cubin_name(geometry), geometry.id));
         }
+        if geometry == &model_deepseek41_contract::geometry::FLASH {
+            owners.push((indexer_select_cached::CUBIN.into(), geometry.id));
+        }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),
             geometry.id,
@@ -423,6 +427,7 @@ pub fn selection(
         indexer_mma_guard_fast::cubins(geometries).expect("coarse guarded MMA position cubins"),
     );
     specs.extend(indexer_hierarchical::cubins(geometries).expect("ordered position merge cubins"));
+    specs.extend(indexer_select_cached::cubins(geometries).expect("cached position select cubin"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

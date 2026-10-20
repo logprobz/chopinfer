@@ -1079,6 +1079,64 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
+/// The Flash TP4 journals with the opt-in native MoE prefill switch
+/// (`sm120::moe_native`, `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`): the
+/// native module loads, every prefill expert projection launches the
+/// native tiles within their configured shared memory, decode keeps its
+/// experts, and the lifecycle releases everything. Every prefill step's
+/// 40 layers launch the gate/up and down pack and tile entries on each rank
+/// (four resolves per rank) in place of the exact expert launches. These
+/// are the pins a default flip moves `FLASH_JOURNALS`' TP4 entries to.
+const NATIVE_MOE_PREFILL_JOURNALS: [(KvStorage, (usize, u64)); 2] = [
+    (KvStorage::Native, (76571, 0xce62ea1b88021749)),
+    (KvStorage::Bf16, (74523, 0x254b4ba1e1ce17bc)),
+];
+
+#[test]
+fn native_moe_prefill_switch_runs_the_tp4_journal() {
+    let shape = crate::shape::topologies()
+        .into_iter()
+        .find(|s| s.topology() == "deepseek41-flash-tp4")
+        .unwrap();
+    let mut mismatches = Vec::new();
+    for kv in KV_LAYOUTS {
+        let host = crate::sm120::moe_native::with_native(true, || {
+            let host = FakeHost::new(shape, kv);
+            journal_steps(&host);
+            host
+        });
+        assert_eq!(host.acquired.get(), host.released.get(), "{:?}", kv.storage);
+        assert!(
+            host.device
+                .module_cubins
+                .borrow()
+                .values()
+                .any(|c| *c == crate::sm120::moe_native::CUBIN)
+        );
+        let lines = host.device.journal.borrow().clone();
+        assert_launches_fit_configured_shared(&lines, "deepseek41-flash-tp4");
+        let native = lines
+            .iter()
+            .filter(|l| l.starts_with("launch ") && l.contains("chop_moe_native_"))
+            .count();
+        // Gate/up and down, each a pack and a tile launch.
+        assert!(native > 0 && native % 4 == 0, "{native} native launches");
+        let layout = format!("{:?}", kv.storage).to_lowercase();
+        let (_, expected) = NATIVE_MOE_PREFILL_JOURNALS
+            .iter()
+            .find(|(storage, _)| *storage == kv.storage)
+            .unwrap();
+        if let Err(observed) = bundle_runtime::fake_host::check_journal(
+            &lines,
+            *expected,
+            &format!("deepseek41-flash-tp4.native-moe.{layout}.journal"),
+        ) {
+            mismatches.push(format!("{layout}: {observed}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
 /// Every launch of `lines` fits its entry's dynamic shared memory: the
 /// default without a configure, else the bytes its resolved symbol was
 /// configured for. CUDA refuses a launch past either.

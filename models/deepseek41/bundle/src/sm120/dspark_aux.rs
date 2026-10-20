@@ -161,7 +161,12 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
             backend = backend.with_block_quantize(entry);
         }
     }
-    for entry in selection() {
+    // The wide partial replaces the 256-thread one with the same pairs.
+    for entry in selection()
+        .into_iter()
+        .filter(|entry| entry.pattern == argmax::Pattern::Final)
+        .chain([super::dspark_argmax::partial()])
+    {
         backend = backend.with_row_argmax(entry);
     }
     Ok(backend.with_sinkhorn(feature_entries(g)))

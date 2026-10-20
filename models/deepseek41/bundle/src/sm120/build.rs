@@ -18,6 +18,7 @@ mod ceil_parallel;
 #[allow(dead_code)]
 mod ceil_prefill;
 mod confidence_parallel;
+mod dspark_argmax;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
 mod dspark_aux;
 mod dspark_cubin;
@@ -197,6 +198,7 @@ pub fn selection(
         confidence_parallel::cubin_spec(manifest),
     ));
     specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
+    specs.push((dspark_argmax::FAMILY, dspark_argmax::cubin_spec()));
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),

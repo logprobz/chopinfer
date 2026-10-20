@@ -73,9 +73,7 @@ fn decode_fuses_77_hc_boundaries() {
 
                 assert_eq!(count("input_local_v1"), 0);
                 if let Some(warps) = fused {
-                    let entry = crate::sm120::hc_completion::entry(
-                        kernels_sm120::sinkhorn_hc::completion::Layout::Split,
-                    );
+                    let entry = crate::sm120::hc_completion::served();
                     let symbol = format!("{} ", entry.symbol(warps));
                     let mut tickets = std::collections::BTreeSet::new();
                     for line in launches.iter().filter(|l| l.contains("_hc_completion_")) {

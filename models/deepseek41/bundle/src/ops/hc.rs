@@ -535,9 +535,7 @@ mod tests {
                         continue;
                     };
                     let chain = chain.unwrap();
-                    let completion = crate::sm120::hc_completion::entry(
-                        kernels_sm120::sinkhorn_hc::completion::Layout::Split,
-                    );
+                    let completion = crate::sm120::hc_completion::served();
                     assert_eq!(chain.len(), 1);
                     assert_eq!(chain[0].symbol, completion.symbol(warps));
                     assert_eq!(chain[0].plan, completion.plan(rows, rows, warps).unwrap());

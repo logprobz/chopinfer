@@ -117,6 +117,10 @@ name = "build_hc_prefill_expand_mix"
 path = "examples/sm120/build_hc_prefill_expand_mix.rs"
 
 [[example]]
+name = "build_hc_prefill_expand_mix_norm"
+path = "examples/sm120/build_hc_prefill_expand_mix_norm.rs"
+
+[[example]]
 name = "build_ceil_cached"
 path = "examples/sm120/build_ceil_cached.rs"
 

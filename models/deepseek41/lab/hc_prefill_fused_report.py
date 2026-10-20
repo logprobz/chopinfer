@@ -1,7 +1,8 @@
 """Require the complete HC prefill matrix, memcheck and peer parity.
 
-The arms are the prefill expansion-then-mix entries (one launch, then the
-served norm) against the served expand, mixer and norm chain."""
+The arms are the served expansion-then-mix tiles with the input norm and
+ceil quantizer folded in (one launch) against the served expand, mixer and
+norm chain."""
 import argparse
 import json
 import math
@@ -10,8 +11,17 @@ import re
 
 ROWS = (1, 7, 64, 192, 320, 2496, 8191, 8192)
 PATTERNS = ("zero", "tiny", "maximum", "nan", "inf", "weight_nan", "cancellation", "sticky")
-VARIANTS = ("r4c4", "r8c4", "r8c8")
-OLD_LAUNCHES, NEW_LAUNCHES = 3, 2
+VARIANTS = ("r4c4n", "r8c8n")
+OLD_LAUNCHES, NEW_LAUNCHES = 3, 1
+NEGATIVES = 3
+
+
+def coverage():
+    """Per variant: 64 cases, 2 memcheck cases, 4 invariances and 24 timing
+    records; one control per mutation."""
+    n = len(VARIANTS)
+    return {"cases": 64 * n, "memcheck_cases": 2 * n, "invariances": 4 * n,
+            "negatives": NEGATIVES, "timings": 24 * n}
 
 
 def identities(memcheck):
@@ -86,10 +96,13 @@ def parse(text, memcheck, require_progress=True):
     require("HC_PREFILL_FUSED_MISMATCH" not in text, "mismatch marker present")
     summary = re.findall(r"HC_PREFILL_FUSED_COMPLETE memcheck=(true|false) cases=(\d+) "
                          r"invariances=(\d+) negatives=(\d+) timings=(\d+) passed=(true|false)", text)
-    require(summary == [("true", "6", "0", "0", "0", "true") if memcheck else
-                        ("false", "192", "12", "3", "72", "true")], "completion coverage differs")
+    c = coverage()
+    require(summary == [("true", str(c["memcheck_cases"]), "0", "0", "0", "true") if memcheck else
+                        ("false", str(c["cases"]), str(c["invariances"]), str(c["negatives"]),
+                         str(c["timings"]), "true")],
+            "completion coverage differs")
     timings = markers(text, "HC_PREFILL_FUSED_TIMING")
-    require(len(timings) == (0 if memcheck else 72), "timing count differs")
+    require(len(timings) == (0 if memcheck else c["timings"]), "timing count differs")
     if not memcheck:
         require({(r["case"], r["hot"]) for r in timings}
                 == {(c, h) for c in timing_cases() for h in (False, True)}, "timing identities differ")
@@ -114,7 +127,8 @@ def analyze(root):
         results.append(parse((root / f"matrix-{gpu}.log").read_text(), False))
     require({c["case"]: c["output_sha256"] for c in results[0]["cases"]}
             == {c["case"]: c["output_sha256"] for c in results[1]["cases"]}, "peer bits differ")
-    return {"passed": True, "cases_per_gpu": 192, "memcheck_cases_per_gpu": 6,
+    return {"passed": True, "cases_per_gpu": coverage()["cases"],
+            "memcheck_cases_per_gpu": coverage()["memcheck_cases"],
             "matrix_seconds": [r["last_marker_seconds"] for r in results],
             "longest_step_seconds": [r["longest_step_seconds"] for r in results],
             "timings": [dict(row, gpu=gpu, saving_us=row["old_us"] - row["new_us"])

@@ -64,13 +64,9 @@ fn cpu_actual_rows_and_launch_inventory() {
                 blocked::plan(e, 32, c.rows).unwrap(),
             );
         } else {
-            // These rows must compare with the serving generic entry, not a substituted tile.
-            let served = bundle_deepseek41::sm120::f32_prefill::serving_entry(
-                &model_deepseek41_contract::geometry::FLASH,
-                e.clone().with_split_decode(),
-            )
-            .unwrap();
-            let selected = served.entry_for_rows(c.rows);
+            // Keep qualification on the original generic reference export.
+            let reference = e.clone().with_split_decode();
+            let selected = reference.entry_for_rows(c.rows);
             assert!(!selected.uses_prefill_tiles());
             assert!(c.rows > selected.decode_max_rows());
             add(

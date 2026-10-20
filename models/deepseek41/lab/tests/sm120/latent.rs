@@ -224,7 +224,57 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         &prefill_entries,
     )
     .unwrap();
-    let added = [prefill, decode, cache];
+    let selected_entries = bundle_deepseek41::sm120::latent_scheduled::entries(flash, 4)
+        .unwrap()
+        .into_iter()
+        .filter(|source| !source.name.ends_with("_draft_block"))
+        .flat_map(|source| {
+            [false, true].map(
+                move |profile| kernels_sm120::latent::sources_cached::Entry {
+                    source: source.clone(),
+                    profile,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected = kernels_sm120::latent::sources_cached::cubin_spec(
+        "latent_decode_cache_deepseek41_sm120",
+        &selected_entries,
+    )
+    .unwrap();
+    let native_heads = [1, 2, 4]
+        .into_iter()
+        .flat_map(|ranks| latent::entries(flash, ranks).unwrap())
+        .filter(|entry| {
+            matches!(
+                entry.query,
+                kernel_core::latent_attention::LatentAttentionQuery::Attention {
+                    phase: kernel_core::contract::AttentionPhase::Prefill,
+                    second_fp4_keys: true,
+                    ..
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    let decoded_heads = native_heads
+        .iter()
+        .map(kernels_sm120::latent::sources_prefill_cache::decoded_entry)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let mut all_heads = native_heads;
+    all_heads.extend(decoded_heads.iter().cloned());
+    let shared_heads = kernels_sm120::latent::sources_prefill::heads::cubin_spec(
+        latent::profile(flash),
+        &all_heads,
+    )
+    .unwrap();
+    let async_heads = kernels_sm120::latent::sources_prefill::heads::asynchronous::cubin_spec(
+        latent::profile(flash),
+        &decoded_heads,
+        false,
+    )
+    .unwrap();
+    let added = [prefill, decode, cache, selected, shared_heads, async_heads];
     assert_eq!(
         embedded.len(),
         GEOMETRIES

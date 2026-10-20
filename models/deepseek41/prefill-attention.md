@@ -470,3 +470,68 @@ The binding adds two immutable modules and their shared-memory attributes.
 It adds no workspace region, producer, cross-stream use or row split.
 Native key arguments, decoded-cache producers and spans, original row
 origins, transfers and the reference merge retain their existing ownership.
+
+## Fuse the qualified mixed output epilogue
+
+The shared-head body now computes the one-split merge in its existing shared
+tile after the final PV chain. It preserves the ordered sink contribution,
+F32 FMA and division, BF16 rounding, and adjacent-pair RoPE. The production
+launch passes a null partial pointer and writes the original final output
+view. The separate global partial store and merge launch are removed.
+The reference still validates all input, workspace and output spans first.
+
+The native Flash TP4 route admits these measured shapes only:
+
+| Source | Rows | Original chunk offset | Row origin |
+| --- | ---: | --- | --- |
+| Native mixed32/mixed64 | 8192 | 0 | No part |
+| Existing decoded mixed cache | 8192 | 8192, 16384, 24576 | No part |
+| Native mixed32/mixed64 | 4096 | 0, 24576 | 0 or 4096 |
+| Native mixed64 retained tail | 320, 448, ..., 2496 | 0, 24576 | 8192 minus rows |
+
+The admitted chunk is one eager item with consecutive positions. Full
+decoded chunks retain the existing page-range and cache bounds. Parts
+carry that validated chunk context without enabling overlap or decoding
+into the full-chunk cache. Window layers, 64/192-row tails, intermediate
+retained counts, other offsets, BF16 KV and other topologies retain their
+previous routes.
+
+On two SM120 GPUs at 250 W on 2026-10-20, qualification passed 132 cases,
+528 partial-audit replays, 528 output replays, 132 partition comparisons,
+32 empty replays and poisoned input/output guards. The fixed body and
+intermediate states also passed 96 probe and 96 intermediate replays.
+Actual serving selections were used with synthetic Q/KV operands.
+The timing retry was bound by hashes to that completed exactness evidence
+and produced all 112 interleaved timing records.
+
+Milliseconds per full 8192-row layer, including cache construction when
+used, attention and output, compared directly with shared heads:
+
+| Offset | Variant | Shared heads A/B | Fused A/B |
+| ---: | --- | ---: | ---: |
+| 0 | mixed32 | 3.587 / 3.524 | 3.459 / 3.399 |
+| 0 | mixed64 | 3.627 / 3.574 | 3.490 / 3.441 |
+| 8192 | mixed32 | 2.838 / 2.750 | 2.617 / 2.549 |
+| 8192 | mixed64 | 3.299 / 3.211 | 3.081 / 3.006 |
+| 16384 | mixed32 | 2.796 / 2.713 | 2.572 / 2.508 |
+| 16384 | mixed64 | 3.221 / 3.131 | 2.998 / 2.930 |
+| 24576 | mixed32 | 2.756 / 2.677 | 2.536 / 2.475 |
+| 24576 | mixed64 | 3.108 / 3.024 | 2.882 / 2.821 |
+
+All sixteen 4096-row part comparisons improved, with aggregate savings
+of 2.0-2.4% against shared heads. The admitted retained counts improved
+on both devices at both offsets. A 192-row later tail regressed by 1.14%;
+64-row gains were negligible, so both counts keep their prior route.
+With upper skipping, the incremental epilogue saving projects to
+2.39-2.45 ms per cold chunk and 3.76-4.08 ms at offset 24576. This excludes
+the separately measured gain from moving parts and tails from paired rows
+to shared heads. Lab sums do not establish served latency.
+
+The immutable serving cubin is byte-identical to the qualified artifact,
+SHA-256 `1bf1f483bd2f4c40b2b86634e7a8474629032402b031ce6eb861f402a59d33c3`.
+Its 83,200-byte dynamic shared-memory attribute is set before launch.
+The epilogue reuses 33,024 bytes of the dead key tile, adds no device
+allocation and leaves the existing partial workspace reserved for fallback.
+Every query, live count, selected-key list, sink, RoPE and output view keeps
+its prior row origin. Cache producers stay on the owning main stream;
+part reductions and side-stream work retain their prior fork/join order.

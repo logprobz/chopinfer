@@ -103,12 +103,50 @@ pub(super) fn prepare(
     }
     symbols.extend(norm.info().symbols.clone());
     symbols.push((entry.symbols()[1].clone(), 0));
+    let mut completion = None;
+    for (candidate, tiles) in backend
+        .finish_norm_completions
+        .iter()
+        .filter(|(e, _)| e.reference.mixer.query == query.mixer)
+    {
+        candidate.validate()?;
+        if tiles.is_empty()
+            || tiles.windows(2).any(|p| p[0].0 >= p[1].0)
+            || candidate.reference.symbols() != entry.symbols()
+            || candidate.reference.mixer.symbol != entry.mixer.symbol
+            || candidate.reference.mixer.capacity != entry.mixer.capacity
+            || candidate.mutation != crate::sinkhorn_hc::completion::Mutation::None
+        {
+            return Err(Refusal("invalid HC completion buckets").into());
+        }
+        if completion.is_some() {
+            return Err(Refusal("ambiguous HC completion entries").into());
+        }
+        for &(rows, warps) in tiles {
+            if !buckets.contains(&rows)
+                || row_tiles
+                    .as_ref()
+                    .is_some_and(|(_, t)| t.iter().any(|&(r, _)| r == rows))
+            {
+                return Err(Refusal("HC completion bucket lacks a chain-producer tail").into());
+            }
+            candidate.plan(rows, rows, warps)?;
+            let symbol = (candidate.symbol(warps), 0);
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+        completion = Some((candidate.clone(), tiles.clone()));
+    }
     let mut info = OpInfo::new(
         "sm120.sinkhorn.round-expand-mix.norm-tree256.ceil32.v1",
         guarantees,
         symbols,
     );
     info.workspace = hc.info().workspace;
+    let tickets = completion
+        .as_ref()
+        .map(|_| ("scratch.tickets".to_owned(), u64::from(need.capacity) * 4));
     info.bytes = hc
         .info()
         .bytes
@@ -120,6 +158,7 @@ pub(super) fn prepare(
                 .iter()
                 .map(|(n, b)| (format!("norm.{n}"), *b)),
         )
+        .chain(tickets)
         .collect();
     need.check(&info)?;
     Ok(Box::new(Op {
@@ -128,6 +167,7 @@ pub(super) fn prepare(
         entry: entry.clone(),
         buckets: buckets.clone(),
         row_tiles,
+        completion,
         info,
     }))
 }
@@ -137,6 +177,7 @@ struct Op {
     entry: Entry,
     buckets: Vec<u32>,
     row_tiles: Option<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
+    completion: Option<(crate::sinkhorn_hc::completion::Entry, Vec<(u32, u32)>)>,
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
@@ -214,6 +255,24 @@ impl PreparedOp<Buffers<View>> for Op {
             collective: false,
             persistent: false,
         });
+        // The one-launch boundary is composed from the validated pair; its
+        // ticket must be distinct from every role and the workspace.
+        if let Some((entry, warps)) = self.completion.as_ref().and_then(|(e, tiles)| {
+            tiles
+                .iter()
+                .find(|(rows, _)| *rows == counts.rows)
+                .map(|&(_, warps)| (e, warps))
+        }) {
+            let tickets = b
+                .tickets
+                .ok_or(Refusal("HC completion needs zeroed tickets"))?;
+            if tickets.handle == workspace.handle {
+                return Err(Refusal("HC completion tickets alias the workspace"));
+            }
+            let tail = hc.pop().unwrap();
+            let producer = hc.pop().unwrap();
+            hc.push(entry.compose(&producer, &tail, tickets, warps)?);
+        }
         Ok(hc)
     }
 }

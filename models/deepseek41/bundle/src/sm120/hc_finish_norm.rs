@@ -27,8 +27,17 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         .collect()
 }
 
-/// Only measured Flash decode and verify buckets use the 1024-thread tail.
+/// The qualified pair; one-launch boundaries are selected separately.
 pub fn register(
+    backend: kernels_sm120::backend::Sm120,
+    g: &Geometry,
+) -> kernels_sm120::backend::Sm120 {
+    register_pair(backend, g)
+}
+
+/// Only measured Flash decode and verify buckets use the 1024-thread tail.
+/// The lab compares one-launch boundaries against exactly this pair.
+pub fn register_pair(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
 ) -> kernels_sm120::backend::Sm120 {

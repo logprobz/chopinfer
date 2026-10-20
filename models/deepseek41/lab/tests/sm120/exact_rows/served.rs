@@ -63,6 +63,7 @@ fn plans(rows: u32, views: &[View], widen: bool) -> LabResult<Vec<Launch>> {
                 status: v(20),
                 status_row_offset: 0,
             },
+            tickets: None,
         },
         v(21),
         Counts::rows(rows),

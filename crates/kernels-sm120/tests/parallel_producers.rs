@@ -254,6 +254,7 @@ fn finish_buffers()
             status: v(19),
             status_row_offset: 3,
         },
+        tickets: None,
     }
 }
 #[test]

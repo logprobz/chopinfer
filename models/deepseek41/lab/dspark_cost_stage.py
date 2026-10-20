@@ -21,6 +21,8 @@ def seal(root):
         for path in [directory, *directory.rglob("*")]:
             path.chmod(path.stat().st_mode & ~0o022)
     selected = stage.files(root)
+    for path in [root, *selected]:
+        path.chmod(path.stat().st_mode & ~0o022)
     manifest = root / "SHA256SUMS"
     manifest.write_text("".join(f"{digest(p)}  {p.relative_to(root)}\n" for p in selected))
     pin = digest(manifest)

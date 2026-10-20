@@ -20,6 +20,7 @@ pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 pub mod blocked;
 mod decode;
 mod prefill;
+pub mod reuse;
 mod split;
 pub mod wide;
 

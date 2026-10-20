@@ -52,7 +52,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
     )?;
     assert_eq!(built.len(), 1);
-    assert_eq!(kernel_build::audit_cubin(&toolchain, &spec, &built[0].path)?.len(), 1);
+    assert_eq!(
+        kernel_build::audit_cubin(&toolchain, &spec, &built[0].path)?.len(),
+        1
+    );
     let bytes = std::fs::read(&built[0].path)?;
     std::fs::write(out.join(format!("{}.cubin", spec.name)), &bytes)?;
     std::fs::write(

@@ -958,11 +958,13 @@ fn journal_steps(host: &Rc<Host>) {
 /// one-row heads replace three launches with two; allocations are unchanged.
 /// The full-chunk query norm adds two resolves and three releases per rank.
 /// These short-row lifecycles retain every launch, operand and dependency.
+/// Qualified prefill scoring adds one module, eight resolves and nine
+/// releases per native rank. These small-row launches remain unchanged.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17339, 0x9bfdf379b70f6ae9),
+        (17351, 0xd8c949546bed2ab7),
     ),
     (
         "deepseek41-flash-tp1",
@@ -972,7 +974,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34865, 0x4f8a86437af302f1),
+        (34889, 0xab1bccdcf810db1b),
     ),
     (
         "deepseek41-flash-tp2",
@@ -982,7 +984,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (74955, 0x65066986a1282b7c),
+        (75003, 0x81e2b36f5e5fe4fd),
     ),
     (
         "deepseek41-flash-tp4",

@@ -340,9 +340,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// one-row heads replace three launches with two; allocations are unchanged.
 /// Full-chunk query norm resources add two resolves and three releases per
 /// rank; this shorter image fixture retains every launch and operand.
+/// Qualified prefill scoring adds one module, eight resolves and nine
+/// releases per rank; the small image/text launches remain unchanged.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22927, 0xe4427707745dbb81)),
-    (Ranks::TP4, (50835, 0x64dc31af78edb791)),
+    (Ranks::TP2, (22951, 0x2137cc0f0a836698)),
+    (Ranks::TP4, (50883, 0x2caf0054a1973388)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

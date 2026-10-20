@@ -134,6 +134,10 @@ class Runner(matrix.Runner):
                         assert memory["memory_samples_by_rank"].keys() == {"0", "1", "2", "3"}
                         assert memory["capacities"] == [GRAPH_HANDLES_PER_RANK * 4], "configured graph capacity differs"
                         assert memory["releases"] == 0, "startup evicted warmed geometries"
+                    # Fixed-policy warmup qualifies diverse draft bits without
+                    # teaching adaptive's cost estimator the comparison overhead.
+                    if config == "adaptive":
+                        marker.unlink(missing_ok=True)
                     preparation = self.prepare()
                     checks = matrix.records(self.log.read_text(), "chopinfer.dspark-draft-parity.v1")
                     marker.unlink(missing_ok=True)

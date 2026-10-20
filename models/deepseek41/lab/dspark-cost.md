@@ -26,8 +26,10 @@ The comparison reads back outputs and is only for qualification.
 
 `dspark_cost_job.py` uses one server per policy and chunk size, four servers
 and eight C8/C16 sampled cases in total. Production verify warmup is on.
-Candidate startup and full-workload warmup check drafter equality; the
-marker is removed before timing. Served IDs and logprobs also compare
+Candidate startup and the fixed-K3 full-workload warmup check drafter
+equality. Adaptive workload warmup excludes comparison work so its cost
+estimator learns serving times. The marker is removed before timing.
+Served IDs and logprobs also compare
 bitwise. The job records graph hits, capture-memory deltas, major/minor
 faults, power and host-idle receipts. Timing is informational when the
 host-idle rule fails.

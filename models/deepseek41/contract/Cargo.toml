@@ -191,3 +191,7 @@ path = "examples/sm120/build_position_mma_prefill_tile.rs"
 [[example]]
 name = "build_router_zero_serving"
 path = "examples/sm120/build_router_zero_serving.rs"
+
+[[example]]
+name = "build_hc_completion"
+path = "examples/sm120/build_hc_completion.rs"

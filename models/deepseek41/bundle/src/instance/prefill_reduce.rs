@@ -1,4 +1,4 @@
-//! Admission and quiescent epoch reset for the optional prefill transport.
+//! Admission and quiescent epoch reset for optional collective transports.
 use bundle_runtime::residency::{self, Verdict};
 use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
@@ -7,6 +7,32 @@ use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 const RESET_RUNS: u64 = (1 << 30) / 1024;
 
 impl super::Instance {
+    pub(super) fn admit_bf16_partials(&self) -> Result<(), String> {
+        if !self
+            .ops
+            .reduce
+            .as_ref()
+            .is_some_and(|ops| ops.bf16_partials())
+        {
+            return Ok(());
+        }
+        for (entry, plan) in crate::Kernels::bf16_partial_plans()? {
+            for (rank, symbols) in self.symbols.iter().enumerate() {
+                let symbol = symbols
+                    .get(entry)
+                    .ok_or_else(|| format!("rank {rank} lacks BF16-partial entry {entry}"))?;
+                let report = residency::query(&self.services, *symbol, plan)
+                    .map_err(|error| error.to_string())?;
+                let sharing = residency::ranks_on_device(&self.config.create.ordinals, rank);
+                if residency::check(&plan, sharing, &report) != Verdict::Fits {
+                    return Err(format!("rank {rank} cannot admit {entry}'s resident grid"));
+                }
+            }
+        }
+        self.log("BF16 partials admitted: rank-ordered F32 sum of rounded partials");
+        Ok(())
+    }
+
     pub(super) fn admit_prefill_reduce(&mut self) {
         if !self
             .ops

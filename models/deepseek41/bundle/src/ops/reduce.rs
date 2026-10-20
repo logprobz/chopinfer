@@ -4,13 +4,15 @@
 //! `model.py:271-278`), and the embedding's BF16 shard rows widened into F32
 //! partials (an own op) and reduced the same way, which gives back each
 //! row's bits as one rank holds it.
+//! The explicit BF16-partial experiment uses the separate BF16 AllReduce
+//! contract, rounding each completed local partial before transport.
 //!
 //! Each rank's op keeps comm state regions (`OpInfo::state`) that its
 //! peers write; every rank allocates the same regions, zeroed at create.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::collective::{AllReduceBuffers, RankViews};
-use kernel_core::contract::{CommQuery, Refusal};
+use kernel_core::contract::{CommQuery, DType, Refusal};
 use model_deepseek41_contract::own_ops::OwnOps;
 use model_deepseek41_contract::own_ops::widen::{WidenRows, WidenRowsBuffers};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
@@ -19,6 +21,74 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use crate::shape::Shape;
+
+fn partials_selected(shape: &Shape, setting: Option<&str>) -> bool {
+    setting == Some("1")
+        && shape.ranks() == 4
+        && shape.geometry == &model_deepseek41_contract::geometry::FLASH
+}
+
+pub(crate) fn bf16_partials_requested(shape: &Shape) -> bool {
+    #[cfg(test)]
+    return partials_selected(shape, PARTIALS_IN_TESTS.get().then_some("1"));
+    #[cfg(not(test))]
+    partials_selected(
+        shape,
+        std::env::var("CHOPINFER_DEEPSEEK41_BF16_PARTIALS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+#[cfg(test)]
+thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_bf16_partials<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PARTIALS_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(PARTIALS_IN_TESTS.replace(enabled));
+    run()
+}
+
+#[cfg(test)]
+#[test]
+fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+    for geometry in GEOMETRIES {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let Ok(shape) = Shape::new(geometry, ranks) else {
+                continue;
+            };
+            for setting in [None, Some("0"), Some(""), Some("invalid")] {
+                assert!(!partials_selected(&shape, setting));
+            }
+            let selected = geometry == &FLASH && ranks == Ranks::TP4;
+            assert_eq!(partials_selected(&shape, Some("1")), selected);
+            assert!(matches!(
+                with_bf16_partials(false, || query(&shape)),
+                CommQuery::AllReduceRounded { .. }
+            ));
+            assert_eq!(
+                matches!(
+                    with_bf16_partials(true, || query(&shape)),
+                    CommQuery::AllReduce {
+                        dtype: DType::Bf16,
+                        fused_residual: false,
+                        fused_rmsnorm: None,
+                        ..
+                    }
+                ),
+                selected
+            );
+        }
+    }
+}
 
 fn selected(shape: &Shape, setting: Option<&str>) -> bool {
     match setting {
@@ -145,6 +215,7 @@ struct Prefill {
 
 /// The all-reduces of an instance, each prepared for a prefill's rows.
 pub(crate) struct ReduceOps {
+    bf16_partials: bool,
     /// Each rank's rounded all-reduce of hidden rows, in rank order.
     reduces: Vec<Prepared<AllReduceBuffers<View>>>,
     /// The embedding's widening into F32 partials.
@@ -157,8 +228,18 @@ pub(crate) struct ReduceOps {
 }
 
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
-/// in rank order from zero and rounded once to BF16.
+/// in rank order from zero and rounded once to BF16. The opt-in candidate
+/// declares its additional input rounding through the BF16 query.
 pub(crate) fn query(shape: &Shape) -> CommQuery {
+    if bf16_partials_requested(shape) {
+        return CommQuery::AllReduce {
+            ranks: shape.ranks(),
+            elements: u64::from(shape.dims().hidden),
+            dtype: DType::Bf16,
+            fused_residual: false,
+            fused_rmsnorm: None,
+        };
+    }
     CommQuery::AllReduceRounded {
         ranks: shape.ranks(),
         elements: u64::from(shape.dims().hidden),
@@ -227,6 +308,7 @@ impl ReduceOps {
             )
         })?;
         Ok(ReduceOps {
+            bf16_partials: bf16_partials_requested(shape),
             reduces,
             widen,
             state,
@@ -272,6 +354,10 @@ impl ReduceOps {
         self.prefill.is_some()
     }
 
+    pub(crate) fn bf16_partials(&self) -> bool {
+        self.bf16_partials
+    }
+
     pub(crate) fn admit_prefill(&mut self, admitted: bool) {
         if let Some(prefill) = &mut self.prefill {
             prefill.admitted = admitted;
@@ -279,6 +365,9 @@ impl ReduceOps {
     }
 
     pub(crate) fn prefill_state(&self) -> Option<std::ops::Range<usize>> {
+        if self.bf16_partials {
+            return Some(0..self.state.len());
+        }
         self.prefill
             .as_ref()
             .filter(|p| p.admitted)

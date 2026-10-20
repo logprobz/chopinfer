@@ -1,0 +1,10 @@
+[
+  {
+    "name": "comm_bf16_partials_deepseek41_sm120",
+    "source_closure_sha256": "2084343c70515d44b931d5c33e7d9edb9c3158861d131f27312d04acf0a594b0"
+  },
+  {
+    "name": "comm_bf16_partials_turns_deepseek41_sm120",
+    "source_closure_sha256": "1f7a23de5d6d4b0384afc54179e38ab0efa8fcf8ed435a3dbe7aa9a4ca7def04"
+  }
+]

@@ -18,6 +18,7 @@ use runtime_bundle_abi::*;
 use crate::config::{KV_LAYOUTS, KvLayout};
 
 mod batch_limits;
+mod bf16_partials;
 mod conformance;
 mod decode_attention;
 mod device_results;

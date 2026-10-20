@@ -33,7 +33,10 @@ pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
 #[cfg(test)]
 pub(crate) use reduce::with_bf16_gather;
+#[cfg(test)]
+pub(crate) use reduce::with_bf16_partials;
 pub(crate) use reduce::{PeerViews, PrefillDma, ReduceViews, WidenViews};
+pub(crate) use reduce::{bf16_partials_requested, dma_requested};
 #[cfg(test)]
 pub(crate) use reduce::{with_dma, with_dma_setting};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
@@ -118,7 +121,8 @@ impl Ops {
                 top_k: shape.geometry.shape.moe.top_k,
             },
         );
-        if reduce::requested(shape)
+        if !reduce::bf16_partials_requested(shape)
+            && reduce::requested(shape)
             && shape.ranks() == 4
             && shape.dims().hidden.is_multiple_of(1024)
             && shape.geometry.layers() < 256

@@ -532,6 +532,14 @@ impl Instance {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
                 })
                 .filter(|cubin| {
+                    !cubin.name.starts_with("comm_bf16_partials_")
+                        || self
+                            .ops
+                            .reduce
+                            .as_ref()
+                            .is_some_and(|ops| ops.bf16_partials())
+                })
+                .filter(|cubin| {
                     self.dspark.is_some()
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
@@ -876,6 +884,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, result));
     }
     instance.admit_prefill_reduce();
+    if let Err(error) = instance.admit_bf16_partials() {
+        instance.log(&error);
+        return Err(Failed::releasing(instance, BundleStatusV1::Unsupported));
+    }
     if let Err(error) = instance.prepare_dspark_cycle() {
         instance.log(&format!(
             "create failed preparing DSpark device cycle: {error}"

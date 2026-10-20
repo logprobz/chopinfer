@@ -1205,7 +1205,12 @@ impl Instance {
             self.log(&format!("DSpark graph retirement: {error}"));
             return status(error);
         }
-        if !step.prefill.request_ids.is_empty()
+        if (self
+            .ops
+            .reduce
+            .as_ref()
+            .is_some_and(|ops| ops.bf16_partials())
+            || !step.prefill.request_ids.is_empty())
             && let Err(error) = self.quiesce_prefill_reduce()
         {
             self.log(&format!("prefill reduction reset: {error}"));

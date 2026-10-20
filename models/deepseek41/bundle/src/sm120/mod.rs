@@ -529,6 +529,16 @@ impl crate::Kernels {
         let sm120 = query_prefill::register(sm120, shape.geometry)?;
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
+        let sm120 = if crate::ops::bf16_partials_requested(shape) {
+            if crate::ops::dma_requested().enabled() {
+                return Err("BF16 partials require CHOPINFER_DEEPSEEK41_PREFILL_DMA=0".into());
+            }
+            // Create admits every resident grid before preparing or running
+            // any graph. A failed admission refuses the opt-in instance.
+            sm120.with_phased_bf16_all_reduce()
+        } else {
+            sm120
+        };
         let sm120 = hc::register(sm120, shape.geometry);
         let sm120 = hc_prefill::register(sm120, shape.geometry);
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
@@ -608,6 +618,11 @@ impl crate::Kernels {
     pub(crate) fn prefill_reduction_plans()
     -> Result<Vec<(&'static str, kernel_core::contract::LaunchPlan)>, String> {
         kernels_sm120::backend::rounded_phased_admission_plans().map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn bf16_partial_plans()
+    -> Result<Vec<(&'static str, kernel_core::contract::LaunchPlan)>, String> {
+        kernels_sm120::backend::bf16_phased_admission_plans().map_err(|error| error.to_string())
     }
 
     pub(crate) fn prefill_dma_sum_info() -> kernel_core::backend::OpInfo {

@@ -113,6 +113,10 @@ impl Host {
                         };
                         let value = if c.kind == 3 && row == 0 && group == 0 && lane == 0 {
                             f32::NAN
+                        } else if c.kind == 3 && row == 1 && group == 0 && lane == 0 {
+                            // Finite BF16 outside the trained FP4 grid must
+                            // retain the SIMT score, not become a refused row.
+                            f32::from_bits(0x3f810000)
                         } else {
                             value
                         };

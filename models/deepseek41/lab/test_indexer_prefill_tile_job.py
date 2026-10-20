@@ -33,7 +33,7 @@ class Parser(unittest.TestCase):
     def test_complete_counts_and_prefixed_markers(self):
         value=job.results(logs())
         self.assertEqual((value['cases'],value['raw'],value['timing_pairs']),(94,376,176))
-        self.assertEqual(job.results(logs(True),True)['cases'],20)
+        self.assertEqual(job.results(logs(True),True)['cases'],23)
 
     def test_missing_or_duplicate_case_fails(self):
         for duplicate in (False,True):

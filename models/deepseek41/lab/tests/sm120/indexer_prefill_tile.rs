@@ -458,6 +458,9 @@ fn cpu_prefill_tiles_preserve_abi_fallback_and_chunk_offsets() {
         };
         let h = Host::new(fixture).unwrap();
         assert_eq!(h.q.len(), fixture.rows as usize * 8192);
+        if c.kind == 3 {
+            assert_eq!(&h.q[8192..8194], &0x3f81_u16.to_le_bytes());
+        }
         let positions: Vec<_> = (c.context - c.rows..c.context).map(|p| p as i32).collect();
         let p = parts(c, &positions);
         assert_eq!(p.first().unwrap().rows.start, 0);
@@ -491,7 +494,7 @@ fn gpu_prefill_tiles_real_edges_partitions_and_timing() {
         let mut modules=BTreeMap::new();
         let probe=session.load_cubin(&bytes(&artifact().join("indexer_prefill_probe.cubin"))?)?;
         let mut completed=0;
-        for (id,c) in cases().into_iter().enumerate().filter(|(i,c)|i%2==shard && (!memcheck || *i<5 || c.kind>=8)) {
+        for (id,c) in cases().into_iter().enumerate().filter(|(i,c)|i%2==shard && (!memcheck || *i<5 || c.kind==3 || c.kind>=8)) {
             let mut m=Memory{session,buffers:Vec::new(),views:Vec::new()};
             let h=Host::new(c)?;
             let input=Input::upload(&mut m,c,&h)?;
@@ -521,6 +524,10 @@ fn gpu_prefill_tiles_real_edges_partitions_and_timing() {
             let first_status=m.slice(a.status,0,4);
             if matches!(c.kind,3..=5) || c.layer>=24 && matches!(c.kind,8..=10) {
                 assert_eq!(m.read(first_status)?,1_i32.to_le_bytes());
+            }
+            if c.kind==3 {
+                let finite_fallback=m.slice(a.status,4,4);
+                assert_eq!(m.read(finite_fallback)?,0_i32.to_le_bytes());
             }
             if c.kind==1 {
                 let first_ids=m.slice(a.ids,0,512*4);

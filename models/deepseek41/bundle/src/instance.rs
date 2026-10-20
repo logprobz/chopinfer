@@ -411,13 +411,13 @@ impl Instance {
                 .as_ref()
                 .map_or(4, |ops| ops.table_bytes());
             let table = allocate_span(services, pool, stream, table, held)?;
-            // Reserve the bounded cache before the host sizes its KV pool.
-            let prefill_cache = if items.get() == 1
-                && crate::Kernels::prefill_cache_eligible(
-                    shape.geometry,
-                    shape.ranks(),
-                    self.config.kv.storage,
-                ) {
+            // One admitted eager item uses this arena at any serving capacity.
+            // Reserve it before the host sizes its KV pool.
+            let prefill_cache = if crate::Kernels::prefill_cache_eligible(
+                shape.geometry,
+                shape.ranks(),
+                self.config.kv.storage,
+            ) {
                 let bytes = crate::Kernels::prefill_cache_layout(
                     crate::buffers::staged_slots(&shape),
                     64,

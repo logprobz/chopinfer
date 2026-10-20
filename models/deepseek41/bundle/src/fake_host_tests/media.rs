@@ -350,6 +350,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// down launches with native pack and tile pairs. It adds 16 resolves and
 /// 20 releases and removes four net configures; retained launches and
 /// allocations match the exact path after handle normalization.
+/// The dedicated prefill arena adds two allocations and releases per rank.
+/// The full journal audit preserves every other operation after handle mapping.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
     (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),

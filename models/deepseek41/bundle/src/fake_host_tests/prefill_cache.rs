@@ -4,8 +4,14 @@ use bundle_runtime::fake_host::conformance::ObservedHost;
 
 #[test]
 fn decoded_prefill_cache_allocation_failures_release_prior_resources() {
+    for capacity in [1, 32] {
+        allocation_failures(capacity);
+    }
+}
+
+fn allocation_failures(capacity: u32) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], capacity, false);
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let mut instance = api()
         .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
@@ -49,7 +55,7 @@ fn decoded_prefill_cache_allocation_failures_release_prior_resources() {
     }
 }
 
-fn high_pages(previous: u64, stride: u64) -> Vec<u8> {
+fn high_pages(previous: u64, stride: u64, slot: u64) -> Vec<u8> {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     let end = previous + 8192;
     BatchRequestV1::new(
@@ -69,26 +75,30 @@ fn high_pages(previous: u64, stride: u64) -> Vec<u8> {
             None,
         )],
     )
-    .with_state_slots(vec![0])
+    .with_state_slots(vec![slot])
     .encode()
     .unwrap()
 }
 
 #[test]
 fn decoded_prefill_rebases_high_pages_and_falls_back_for_wide_spans() {
-    for stride in [1, 8] {
+    for (capacity, slot, stride) in [(1, 0, 1), (1, 0, 8), (32, 31, 1), (32, 31, 8)] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         host.kv_pages.set(219355);
-        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], capacity, false);
         let mut instance = api()
             .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
             .unwrap();
-        step(&mut instance, &high_pages(0, stride), &mut Views::default());
+        step(
+            &mut instance,
+            &high_pages(0, stride, slot),
+            &mut Views::default(),
+        );
         let from = host.device.journal.borrow().len();
         step(
             &mut instance,
-            &high_pages(8192, stride),
+            &high_pages(8192, stride, slot),
             &mut Views::default(),
         );
         let lines = host.device.journal.borrow();
@@ -273,6 +283,18 @@ fn composed_trace_offsets(
     cached: bool,
     offsets: &[u64],
 ) -> Vec<String> {
+    composed_trace_capacity(mode, dma, skip, cached, offsets, 1, 0)
+}
+
+fn composed_trace_capacity(
+    mode: u8,
+    dma: bool,
+    skip: bool,
+    cached: bool,
+    offsets: &[u64],
+    capacity: u32,
+    slot: u64,
+) -> Vec<String> {
     use crate::instance::execute::overlap::with_mode;
     use crate::ops::{with_bf16_gather, with_dma};
     use runtime_bundle_sdk::prefill::{Boundary, encode};
@@ -291,7 +313,7 @@ fn composed_trace_offsets(
         .ordinary_symbols
         .borrow_mut()
         .insert("chop_comm_owned_sum_round_f32_v1".into());
-    let mut record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+    let mut record = crate::config::tests::record(&shape, KV_LAYOUTS[0], capacity, false);
     if skip {
         let at = record
             .windows(MODEL_OPTIONS_TAG_V1.len())
@@ -323,7 +345,7 @@ fn composed_trace_offsets(
     let mut submitted = Vec::new();
     for &offset in offsets {
         let from = host.device.journal.borrow().len();
-        let original = prompt(7, 0, offset, 8192, true);
+        let original = prompt(7, slot, offset, 8192, true);
         if skip {
             let request = encode(
                 &original,
@@ -398,31 +420,17 @@ fn composed_trace_offsets(
             } else {
                 "chop_comm_allreduce_phased_round_f32_v1"
             })));
-        let cache_ids = cache
-            .iter()
-            .map(|s| s.buffer.raw)
-            .collect::<std::collections::BTreeSet<_>>();
-        let mains = host.device.rank_streams.borrow();
-        for line in lines
-            .iter()
-            .filter(|s| s.starts_with("launch ") || s.starts_with("peer-copy "))
-        {
-            let has_cache = super::shared_overlap::journal_spans(line)
-                .iter()
-                .any(|s| cache_ids.contains(&s.0));
-            if has_cache {
-                let stream: u32 = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-                assert!(
-                    cached && mains.values().any(|&main| main == stream),
-                    "cache on a side stream: {line}"
-                );
-                assert!(line.contains("chop_latent_prefill_") || line.contains("_decoded_"));
-            }
-        }
+        super::prefill_cache_capacity::assert_arena_streams(&host, &cache, lines, cached);
         if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {
             std::fs::create_dir_all(&root).unwrap();
             let root = std::path::Path::new(&root);
-            let prefix = if offsets.len() > 2 { "wide-" } else { "" };
+            let prefix = if capacity == 32 {
+                "capacity32-"
+            } else if offsets.len() > 2 {
+                "wide-"
+            } else {
+                ""
+            };
             let name = format!(
                 "{prefix}mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
             );
@@ -460,6 +468,10 @@ fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
 fn compare_composed(mode: u8, dma: bool, skip: bool) {
     let old = composed_trace(mode, dma, skip, false);
     let new = composed_trace(mode, dma, skip, true);
+    compare_traces(old, new);
+}
+
+fn compare_traces(old: Vec<String>, new: Vec<String>) {
     let unchanged = |lines: Vec<String>| {
         lines
             .into_iter()
@@ -531,5 +543,23 @@ fn decoded_prefill_composes_with_overlap_bf16_and_dma() {
 fn decoded_prefill_keeps_skipped_row_parts_on_native_attention() {
     for mode in [0, 2] {
         compare_composed(mode, false, true);
+    }
+}
+
+#[test]
+fn capacity32_decoded_prefill_composes_with_overlap_and_retained_rows() {
+    for (mode, dma, skip) in [
+        (0, false, false),
+        (1, false, false),
+        (2, false, false),
+        (0, true, false),
+        (2, true, false),
+        (0, false, true),
+        (2, false, true),
+    ] {
+        let trace = |cached| {
+            composed_trace_capacity(mode, dma, skip, cached, &[0, 8192, 16384, 24576], 32, 31)
+        };
+        compare_traces(trace(false), trace(true));
     }
 }

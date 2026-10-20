@@ -74,7 +74,8 @@ before the call returns. The page-locked memory is a 64 MiB ring per stream
 behind its copy completes; a gather larger than the ring, or one that wraps
 onto copies still queued, waits for them. Gathers of a megabyte or more read
 on up to eight threads, so the page faults of a cold mapping overlap. With
-`CHOPINFER_MAPPED_READ_AHEAD=1` (off by default), every gather reads the clock after each 16th row; the first rows found slower than
+`CHOPINFER_MAPPED_READ_AHEAD=1` (off by default), every gather reads the
+clock after each 16th row; the first rows found slower than
 2.5 us each on average (40 us per 16) ask the kernel to read every later row
 of the gather ahead (`MADV_WILLNEED` on the pages each row touches), once per
 gather, and copying continues in the same order. On 2026-10-20, at TP4 and
@@ -85,6 +86,16 @@ on 2026-10-19, 768 random 256-byte rows took 48 to 60 ms cold read serially,
 took 0.002 ms serially, 0.14 ms on eight threads and 0.007 ms with it. A
 capturing stream is refused, since a graph would replay a copy of rows the
 host read once.
+
+When a mapped table has a resident row cache, gathers with fewer than
+65,536 row IDs use it. Larger gathers copy directly from the authenticated
+mapping, avoiding cache lookup and insertion costs for streaming prefill.
+The threshold counts the complete gather's row IDs, so code and scale
+planes take the same route even when their byte widths differ or an upload
+slot splits a row. Small decode and verification gathers keep their cached
+rows. `CHOPINFER_MAPPED_LARGE_GATHER_CACHE=1` restores cache lookup for large
+gathers; zero or absence keeps the bypass. Copy order, source validation and
+buffer ownership are unchanged.
 
 A step launches the work that does not need the rows, gathers them meanwhile,
 and the work after the gather on the same stream reads them. Gathering on a

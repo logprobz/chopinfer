@@ -57,7 +57,7 @@ def main():
     source=a.root/'source.tar'
     subprocess.run(['git','archive','--format=tar','--output',str(source),head],cwd=repo,check=True)
     stage=dict(head=head,profiles=profiles,job_timeout_seconds=880,worker_timeout_seconds=820,
-               source_sha256=digest(source),cases=94,memcheck_cases=23,timing_pairs=176,raw_samples=1056,
+               source_sha256=digest(source),cases=94,reuse_pipelines=94,memcheck_cases=23,timing_pairs=176,raw_samples=1056,
                input_scope='10 sealed captures of 32 sampled prefill rows; full 8192-row matrices use seeded synthetic operands',
                serving_option='text_config.indexer_prefill_tile=true (unqualified; default false)',
                offsets=[0,8192,16384,24576],sha256={})

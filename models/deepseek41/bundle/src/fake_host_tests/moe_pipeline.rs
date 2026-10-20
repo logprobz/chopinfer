@@ -16,7 +16,7 @@ fn spans(line: &str) -> Vec<(u64, u64, u64)> {
         .collect()
 }
 #[test]
-fn prefill_gate_pipeline_preserves_down_and_bounds_decoded_storage() {
+fn prefill_gate_and_down_routes_keep_qualified_shapes_and_scratch() {
     let serving_rows = u64::from(model_deepseek41_contract::serving::PREFILL_TOKENS);
     assert_eq!(
         serving_rows, 8192,
@@ -46,8 +46,45 @@ fn prefill_gate_pipeline_preserves_down_and_bounds_decoded_storage() {
                 .collect::<Vec<_>>();
             assert_eq!(
                 down.len(),
-                4 * 40 * if rows == 2048 || rows == 4096 { 4 } else { 1 }
+                4 * 40
+                    * if rows == 2048 || rows == 4096 {
+                        4
+                    } else if rows == 8192 {
+                        2
+                    } else {
+                        1
+                    }
             );
+            if rows == 8192 {
+                for pair in down.chunks_exact(2) {
+                    assert!(pair[0].contains("_group_m128n128s2c1_pack_v1 "));
+                    assert!(pair[1].contains("_group_m128n128s2c1_v1 "));
+                    assert!(pair[0].contains("grid_x: 1,"));
+                    assert!(pair[0].contains("block_x: 32,"));
+                    assert!(pair[0].contains("shared_memory_bytes: 0,"));
+                    assert!(pair[1].contains("grid_x: 376,"));
+                    assert!(pair[1].contains("block_x: 1024,"));
+                    assert!(pair[1].contains("shared_memory_bytes: 96784,"));
+                    let pack = spans(pair[0]);
+                    let compute = spans(pair[1]);
+                    assert_eq!((pack.len(), compute.len()), (6, 9));
+                    assert_eq!(pack[3..6], compute[5..8]);
+                    let queue = pack[5];
+                    for operand in pack[..5]
+                        .iter()
+                        .chain(compute[..7].iter())
+                        .chain(compute[8..].iter())
+                    {
+                        assert!(
+                            operand.0 != queue.0
+                                || operand.1 + operand.2 <= queue.1
+                                || operand.1 >= queue.1 + queue.2
+                        );
+                    }
+                }
+            } else {
+                assert!(down.iter().all(|line| !line.contains("_group_")));
+            }
             for group in candidate.chunks_exact(6) {
                 assert!(
                     group

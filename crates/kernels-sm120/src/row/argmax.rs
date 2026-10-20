@@ -71,19 +71,51 @@ impl Pattern {
     }
 }
 
-/// An argmax entry a build compiles: its pattern, under `symbol`.
+/// An argmax entry a build compiles: its pattern, under `symbol`, with
+/// `threads` per CTA.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
     pub pattern: Pattern,
     pub symbol: String,
+    pub threads: u32,
 }
 
 impl Entry {
     pub fn new(pattern: Pattern, symbol: impl Into<String>) -> Self {
+        let threads = match pattern {
+            Pattern::PartialF32 | Pattern::PartialBf16 => PARTIAL_THREADS,
+            Pattern::Final => FINAL_THREADS,
+        };
         Self {
             pattern,
             symbol: symbol.into(),
+            threads,
         }
+    }
+
+    /// A partial with `threads` per CTA, a multiple of 32 up to 1024. The
+    /// key order is total, so every width picks the same pair; a wider CTA
+    /// only keeps more loads of a row in flight.
+    pub fn with_threads(mut self, threads: u32) -> Result<Self, Refusal> {
+        if self.pattern == Pattern::Final {
+            return Err(Refusal("an SM120 argmax final has a fixed CTA"));
+        }
+        if threads == 0 || threads % 32 != 0 || threads > 1024 {
+            return Err(Refusal(
+                "an SM120 argmax partial uses 32 to 1024 threads in whole warps",
+            ));
+        }
+        self.threads = threads;
+        Ok(self)
+    }
+
+    /// The plan of a launch of `rows` rows: one CTA of the entry's threads
+    /// per row.
+    pub fn plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
+        let mut plan = plan(self.pattern, rows)?;
+        plan.block = [self.threads, 1, 1];
+        plan.validate()?;
+        Ok(plan)
     }
 
     /// The entry's code under its symbol.
@@ -101,7 +133,7 @@ impl Entry {
                     partial_params(&format!("const {logit}")),
                     "chop::row::argmax::partial(logits,scores,ids,live_rows,live_width,vocab,vocab_offset);"
                         .into(),
-                    PARTIAL_THREADS,
+                    self.threads,
                     1,
                 )
             }
@@ -334,6 +366,38 @@ mod tests {
                 .unwrap()
                 .0[5..],
             [Argument::U32(64), Argument::U32(128)]
+        );
+    }
+
+    #[test]
+    fn a_wider_partial_keeps_the_body_and_plans_its_threads() {
+        let default = Entry::new(Pattern::PartialF32, "chop_row_argmax_narrow_v1");
+        let wide = default.clone().with_threads(1024).unwrap();
+        assert_eq!(default.threads, PARTIAL_THREADS);
+        assert_eq!(default.spec().max_threads, PARTIAL_THREADS);
+        assert_eq!(wide.spec().max_threads, 1024);
+        assert_eq!(wide.spec().body, default.spec().body);
+        assert_eq!(wide.spec().params, default.spec().params);
+        assert_eq!(wide.plan(3).unwrap().block, [1024, 1, 1]);
+        assert_eq!(wide.plan(3).unwrap().grid, [3, 1, 1]);
+        assert_eq!(
+            default.plan(3).unwrap(),
+            plan(Pattern::PartialF32, 3).unwrap()
+        );
+        assert!(wide.plan(0).is_err());
+        for threads in [0, 48, 1056] {
+            assert!(default.clone().with_threads(threads).is_err());
+        }
+        assert!(
+            Entry::new(Pattern::Final, FINAL_SYMBOL)
+                .with_threads(64)
+                .is_err()
+        );
+        assert!(!entries().contains(&wide));
+        assert!(
+            entries()
+                .iter()
+                .all(|e| e.plan(1).unwrap() == plan(e.pattern, 1).unwrap())
         );
     }
 }

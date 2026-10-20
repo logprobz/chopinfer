@@ -643,7 +643,7 @@ impl SharedOp {
     /// `entry`, claiming `guarantees`.
     fn new(entry: argmax::Entry, guarantees: Invariance, need: Need) -> Result<Self, Refused> {
         served(need)?;
-        check_plan(&argmax::plan(entry.pattern, need.capacity)?)?;
+        check_plan(&entry.plan(need.capacity)?)?;
         let implementation = match entry.pattern {
             argmax::Pattern::PartialF32 => "sm120.row.argmax.partial-f32.v1",
             argmax::Pattern::PartialBf16 => "sm120.row.argmax.partial-bf16.v1",
@@ -670,7 +670,7 @@ impl SharedOp {
         Ok(vec![Launch {
             symbol: self.entry.symbol.clone(),
             rows,
-            plan: argmax::plan(self.entry.pattern, rows)?,
+            plan: self.entry.plan(rows)?,
             arguments,
             collective: false,
             persistent: false,

@@ -472,7 +472,12 @@ mod tests {
             )
         );
         assert!(
-            ops.missing[3]
+            ops.missing[3].starts_with(
+                "nothing and nothing own refuse DeepSeek V4.1's prefill query norm ops"
+            )
+        );
+        assert!(
+            ops.missing[4]
                 .starts_with("nothing and nothing own refuse DeepSeek V4.1's all-reduce ops")
         );
     }

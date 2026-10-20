@@ -23,6 +23,7 @@
 //! nothing: they serve no op.
 
 pub mod breakdown;
+pub mod completion;
 pub mod expand_mix;
 pub mod finish_norm;
 pub mod lagged;

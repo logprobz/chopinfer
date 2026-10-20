@@ -11,6 +11,7 @@ pub(super) mod host;
 mod layers;
 #[cfg(test)]
 mod native_package;
+mod prefetch;
 mod results;
 mod round_trips;
 pub(super) use host::MappedHost;

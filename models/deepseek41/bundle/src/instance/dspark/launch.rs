@@ -30,6 +30,24 @@ fn words(values: impl IntoIterator<Item = u32>) -> Vec<u8> {
 }
 
 impl Instance {
+    fn upload_drafter_metadata(
+        &self,
+        rank: usize,
+        updates: Vec<(Span, Vec<u8>)>,
+    ) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark absent")?;
+        let stream = self.ranks[rank].2;
+        if device.prefetch.enabled {
+            let (span, bytes) = crate::dspark::upload::pack(device.ranks[rank].metadata, &updates)?;
+            upload(&self.services, stream, span, &bytes)
+        } else {
+            for (span, bytes) in updates {
+                upload(&self.services, stream, span, &bytes)?;
+            }
+            Ok(())
+        }
+    }
+
     fn drafter_launch(&self, lowered: Vec<Vec<Lowered>>, live: u32) -> Result<(), String> {
         let (programs, waits): (Vec<Vec<_>>, Vec<Vec<_>>) = lowered
             .into_iter()
@@ -170,12 +188,33 @@ impl Instance {
                 runtime.state().batch_rows()
             });
         for batch in transfers::batched_projection(config, passes, batch_rows)? {
-            self.project_batch(&batch)?;
+            self.project_batch(&batch, None)?;
         }
         Ok(())
     }
 
-    fn project_batch(&mut self, batch: &transfers::BatchLaunch) -> Result<(), String> {
+    pub(super) fn project_successor(
+        &mut self,
+        plan: &crate::dspark::prefetch::Plan,
+    ) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let rows = device
+            .runtime
+            .as_ref()
+            .ok_or("DSpark lifecycle borrowed")?
+            .state()
+            .batch_rows();
+        for batch in transfers::batched_projection(device.config, &plan.projections, rows)? {
+            self.project_batch(&batch, Some(&plan.retain))?;
+        }
+        Ok(())
+    }
+
+    fn project_batch(
+        &mut self,
+        batch: &transfers::BatchLaunch,
+        preview: Option<&CommitPlan>,
+    ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let mut positions = Vec::with_capacity(batch.rows as usize);
         let mut slots = Vec::with_capacity(batch.rows as usize);
@@ -199,20 +238,54 @@ impl Instance {
                 stored.packed,
             )?;
             for segment in &batch.segments {
-                let copy = features.gather(*segment)?;
+                let mut copy = features.gather(*segment)?;
+                if let Some(plan) = preview {
+                    // Accepted raw rows already exist in target staging.
+                    // Reading them here leaves committed raw history untouched.
+                    let mut offset = u64::from(DECODE_BASE);
+                    let item = plan
+                        .items()
+                        .iter()
+                        .find(|item| {
+                            if item.rows.slot == segment.slot {
+                                true
+                            } else {
+                                offset += u64::from(
+                                    item.rows.kind.target_rows().expect("validated rows"),
+                                );
+                                false
+                            }
+                        })
+                        .ok_or("DSpark successor projection has no target item")?;
+                    let within = segment
+                        .position
+                        .checked_sub(item.rows.start)
+                        .ok_or("DSpark successor projection precedes target rows")?;
+                    if within + u64::from(segment.rows) > u64::from(item.kept) {
+                        return Err(
+                            "DSpark successor projection exceeds accepted target rows".into()
+                        );
+                    }
+                    let width = device.features.row_bytes();
+                    copy.source = slice(
+                        stored.packed,
+                        (offset + within) * width,
+                        u64::from(segment.rows) * width,
+                    )?;
+                }
                 self.services
                     .copy_device_to_device(stream, copy.destination, copy.source)
                     .map_err(|e| format!("DSpark catch-up gather: {e:?}"))?;
             }
-            upload(
-                &self.services,
-                stream,
-                stored.inputs.live_tokens,
-                &batch.rows.to_le_bytes(),
+            self.upload_drafter_metadata(
+                rank,
+                vec![
+                    (stored.inputs.live_tokens, batch.rows.to_le_bytes().to_vec()),
+                    (stored.inputs.positions, positions.clone()),
+                    (stored.inputs.token_batch, slots.clone()),
+                    (stored.last, last.clone()),
+                ],
             )?;
-            upload(&self.services, stream, stored.inputs.positions, &positions)?;
-            upload(&self.services, stream, stored.inputs.token_batch, &slots)?;
-            upload(&self.services, stream, stored.last, &last)?;
             self.services
                 .zero_device_buffer(stream, rows(buffers.scratch.row_status, batch.rows))
                 .map_err(|e| format!("DSpark status clear: {e:?}"))?;
@@ -342,6 +415,13 @@ impl Instance {
         &mut self,
         inputs: &[crate::dspark::execution::DraftInput],
     ) -> Result<(), String> {
+        if self
+            .dspark
+            .as_mut()
+            .is_some_and(|device| std::mem::take(&mut device.prefetch.reused))
+        {
+            return Ok(());
+        }
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let g = device.shape.geometry;
         let meta = dspark::metadata(g, inputs, DraftMode::Greedy)?;
@@ -349,7 +429,7 @@ impl Instance {
         let live = items * BLOCK_ROWS;
         for (rank, stored) in device.ranks.iter().enumerate() {
             let stream = self.ranks[rank].2;
-            let arrays = [
+            let mut arrays = vec![
                 (stored.inputs.token_ids, words(meta.tokens.iter().copied())),
                 (
                     stored.inputs.positions,
@@ -375,21 +455,9 @@ impl Instance {
                     words(inputs.iter().map(|input| input.bonus)),
                 ),
             ];
-            for (span, bytes) in arrays {
-                upload(&self.services, stream, span, &bytes)?;
-            }
-            upload(
-                &self.services,
-                stream,
-                stored.inputs.live_tokens,
-                &live.to_le_bytes(),
-            )?;
-            upload(
-                &self.services,
-                stream,
-                stored.live_items,
-                &items.to_le_bytes(),
-            )?;
+            arrays.push((stored.inputs.live_tokens, live.to_le_bytes().to_vec()));
+            arrays.push((stored.live_items, items.to_le_bytes().to_vec()));
+            self.upload_drafter_metadata(rank, arrays)?;
             upload(
                 &self.services,
                 stream,

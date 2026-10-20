@@ -10,6 +10,7 @@ mod graph_budget;
 pub(crate) use features::PrefillFeatureRange;
 mod graphs;
 mod launch;
+pub(crate) mod prefetch;
 mod results;
 #[cfg(feature = "diagnostic-taps")]
 mod state_capture;
@@ -273,6 +274,17 @@ impl Instance {
                 return BundleStatusV1::InvalidArgument;
             }
         };
+        if let Err(error) = self.consume_dspark_prefetch(&inputs) {
+            if let Some(runtime) = self
+                .dspark
+                .as_mut()
+                .and_then(|device| device.runtime.as_mut())
+            {
+                runtime.poison();
+            }
+            self.log(&error);
+            return BundleStatusV1::BundleError;
+        }
         if let Err(error) = self.begin_dspark_results(sink, &inputs, &step) {
             self.log(&error);
             return BundleStatusV1::InvalidArgument;
@@ -303,7 +315,7 @@ impl Instance {
             .iter()
             .filter(|input| input.rows.kind.drafts() > 0)
             .count();
-        let result = self.dspark_with(
+        let mut result = self.dspark_with(
             |runtime, host| {
                 runtime
                     .execute(host, &inputs)
@@ -316,6 +328,18 @@ impl Instance {
             text,
             &mut times,
         );
+        if result.is_ok()
+            && let Err(error) = self.queue_dspark_prefetch()
+        {
+            self.dspark
+                .as_mut()
+                .expect("drafter")
+                .runtime
+                .as_mut()
+                .expect("lifecycle")
+                .poison();
+            result = Err(error);
+        }
         self.dspark
             .as_mut()
             .expect("drafter retained")

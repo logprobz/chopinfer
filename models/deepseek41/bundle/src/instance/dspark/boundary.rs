@@ -11,7 +11,9 @@ impl Instance {
         let Some(pending) = &device.cycle.pending else {
             return Ok(false);
         };
-        if !device.cycle.boundary_enabled || pending.inputs.len() != 1 || pending.drafts.len() != 1
+        if !device.cycle.boundary_enabled
+            || (!device.prefetch.enabled
+                && (pending.inputs.len() != 1 || pending.drafts.len() != 1))
         {
             return Ok(false);
         }
@@ -27,13 +29,27 @@ impl Instance {
             .iter()
             .map(|rank| rank.status.pending())
             .collect::<Result<Vec<_>, _>>()?;
-        let diagnostic_bytes = u64::from(BLOCK_ROWS) * 8;
+        let diagnostic_bytes = pending.drafts.len() as u64 * u64::from(BLOCK_ROWS) * 8;
+        let feedback = device
+            .results
+            .metadata
+            .as_ref()
+            .filter(|_| device.prefetch.enabled)
+            .map(|metadata| {
+                let rows: u64 = metadata
+                    .items
+                    .iter()
+                    .map(|item| u64::from(item.acceptance.draft_tokens) + 1)
+                    .sum();
+                (metadata, crate::dspark::results::SAMPLE_OFFSET + rows * 256)
+            });
         let status_bytes = sources.iter().try_fold(0_u64, |sum, span| {
             sum.checked_add(span.length)
                 .ok_or("DSpark status extent overflow")
         })?;
         let length = status_bytes
             .checked_add(diagnostic_bytes)
+            .and_then(|length| length.checked_add(feedback.map_or(0, |(_, bytes)| bytes)))
             .ok_or("DSpark boundary extent overflow")?;
         if length > packet.length {
             // Long catch-up validation retains the original bounded reads.
@@ -88,6 +104,19 @@ impl Instance {
                 )
                 .map_err(|e| e.to_string())?;
         }
+        if let Some((_, bytes)) = feedback {
+            let memory = device
+                .results
+                .memory
+                .ok_or("DSpark successor results are absent")?;
+            self.services
+                .copy_device_to_device(
+                    stream,
+                    slice(packet, status_bytes + diagnostic_bytes, bytes)?,
+                    slice(memory.packet, 0, bytes)?,
+                )
+                .map_err(|e| e.to_string())?;
+        }
         let mut output = vec![0; length as usize];
         self.services
             .copy_device_to_host(stream, &mut output, slice(packet, 0, length)?)
@@ -97,6 +126,14 @@ impl Instance {
             let end = at + source.length as usize;
             device.ranks[rank].status.validate(rank, &output[at..end])?;
             at = end;
+        }
+        if let Some((metadata, _)) = feedback {
+            let packet = output.split_off(at + diagnostic_bytes as usize);
+            *pending.feedback.borrow_mut() = Some(crate::dspark::prefetch::Feedback {
+                metadata: metadata.clone(),
+                inputs: pending.inputs.clone(),
+                packet,
+            });
         }
         *pending.packed_diagnostics.borrow_mut() = Some(output.split_off(at));
         Ok(true)

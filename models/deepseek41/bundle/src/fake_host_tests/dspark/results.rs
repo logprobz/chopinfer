@@ -140,6 +140,126 @@ fn metadata(items: u32, k: u32, epoch: u64) -> DeviceCycleMetadataV1 {
 }
 
 #[test]
+fn c8_device_feedback_queues_a_successor_after_current_completion() {
+    let items = 8;
+    let (host, mut instance) = crate::dspark::prefetch::with_enabled(true, || {
+        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), items, 32)
+    });
+    let prompt = BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        (1..=items)
+            .map(|request| BatchItemV1::new(u64::from(request), false, 3, true, vec![7; 3]))
+            .collect(),
+        (0..items)
+            .map(|slot| BatchAppendV1::new(0, 3, 3, vec![u64::from(slot)], None))
+            .collect(),
+    )
+    .with_state_slots((0..items).map(u64::from).collect())
+    .encode()
+    .unwrap();
+    execute(&mut instance, &host, &prompt);
+    instance.commit().unwrap();
+    for cycle in 0..2 {
+        let epoch = cycle + 1;
+        let projected = if cycle == 0 { items * 3 } else { items * 4 };
+        let status: usize = (0..4)
+            .map(|rank| {
+                let indexes = if rank == 0 {
+                    FLASH.shape.csa.index_sources.len()
+                } else {
+                    0
+                };
+                4 * (2 * (projected as usize + items as usize * 5)
+                    + items as usize * 4 * (indexes + 2))
+            })
+            .sum();
+        let mut bytes = vec![0; status + items as usize * 40];
+        let offset = bytes.len();
+        bytes.resize(
+            offset + crate::dspark::results::SAMPLE_OFFSET as usize + items as usize * 4 * 256,
+            0,
+        );
+        for index in 0..items as usize {
+            let accepted = BundleAcceptanceResultV1 {
+                cycle_epoch: epoch,
+                accepted_drafts: 3,
+                emitted_rows: 4,
+                flags: 0,
+                status: 0,
+                failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
+                reserved: 0,
+            };
+            bytes[offset + index * 32..offset + (index + 1) * 32]
+                .copy_from_slice(&accepted.to_le_bytes());
+            let sample =
+                offset + crate::dspark::results::SAMPLE_OFFSET as usize + (index * 4 + 3) * 256;
+            bytes[sample..sample + 4].copy_from_slice(&7_u32.to_le_bytes());
+        }
+        host.injected.replace(Some(bytes));
+        let begin = host.journal.borrow().len();
+        let mut sink = DeviceSink {
+            host: Rc::clone(&host),
+            metadata: Some(metadata(items, 3, epoch)),
+            legacy: Sink::default(),
+            drafts: Vec::new(),
+            samples: Vec::new(),
+            completion: None,
+        };
+        instance
+            .execute(&batch(items, 3 + cycle * 4, 3), &mut sink)
+            .unwrap();
+        assert!(
+            host.injected.borrow().is_none(),
+            "feedback packet length must match the real boundary"
+        );
+        assert!(sink.completion.is_some());
+        let journal = host.journal.borrow();
+        let step = &journal[begin..];
+        let complete = step
+            .iter()
+            .position(|s| s == "device completion readback")
+            .unwrap();
+        let download = step
+            .iter()
+            .position(|s| s.starts_with("download "))
+            .unwrap();
+        assert!(complete < download);
+        assert_eq!(
+            step.iter().filter(|s| s.starts_with("download ")).count(),
+            1
+        );
+        assert_eq!(
+            step[download + 1..]
+                .iter()
+                .filter(|s| s.starts_with("replay "))
+                .count(),
+            8,
+            "private projection and draft queue after current result collection"
+        );
+        if cycle == 1 {
+            let hash = step
+                .iter()
+                .position(|s| s.contains(crate::sm120::engram_hash_entries::SYMBOL))
+                .unwrap();
+            assert!(!step[..hash].iter().any(|s| s.starts_with("replay ")));
+        }
+        drop(journal);
+        instance
+            .commit_accepted(
+                &(1..=items)
+                    .map(|id| kept(u64::from(id), 4))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+    }
+    for request in 1..=items {
+        instance.retire_request(u64::from(request)).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn default_device_results_activate_and_zero_restores_legacy_dspark_journals() {
     fn run(value: Option<&'static str>, legacy_host: bool) -> (Vec<String>, bool) {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

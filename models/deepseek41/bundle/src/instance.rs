@@ -1118,6 +1118,8 @@ pub(crate) fn dspark_context(
 
 #[cfg(test)]
 pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
+#[cfg(test)]
+pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
 
 #[cfg(all(test, feature = "diagnostic-taps"))]
 pub(crate) fn capture_dspark_state_for_test(

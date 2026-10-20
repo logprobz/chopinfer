@@ -16,6 +16,31 @@ pub(crate) struct Status {
 }
 
 impl Status {
+    pub fn discard(&self) {
+        self.parts.borrow_mut().clear();
+        self.bytes.set(0);
+    }
+
+    pub fn append(
+        &self,
+        services: &HostServicesV1,
+        stream: BundleStreamHandleV1,
+        source: &Self,
+    ) -> Result<(), String> {
+        let mut at = 0;
+        for &(length, kind) in source.parts.borrow().iter() {
+            self.save(
+                services,
+                stream,
+                super::device::slice(source.buffer, at, length)?,
+                kind,
+            )?;
+            at += length;
+        }
+        source.discard();
+        Ok(())
+    }
+
     pub fn new(buffer: DeviceBufferSpanV1) -> Self {
         Self {
             buffer,

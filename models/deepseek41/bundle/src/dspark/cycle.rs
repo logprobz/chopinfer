@@ -16,6 +16,7 @@ pub(crate) struct Pending {
     pub text: Vec<u8>,
     pub result: Option<DeviceTarget>,
     pub packed_diagnostics: std::cell::RefCell<Option<Vec<u8>>>,
+    pub feedback: std::cell::RefCell<Option<super::prefetch::Feedback>>,
 }
 
 pub(crate) struct Cycle {

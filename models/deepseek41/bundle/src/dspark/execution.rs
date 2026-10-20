@@ -139,6 +139,25 @@ impl Runtime {
         &self.state
     }
 
+    /// The private preview completed these exact projections on every rank.
+    /// A real host commit must first produce the identical committed state.
+    pub(crate) fn adopt_projections(
+        &mut self,
+        expected: &State,
+        passes: &[state::RowProjection],
+    ) -> state::Result<()> {
+        if &self.state != expected || self.state.is_pending() {
+            return Err("DSpark successor commit differs");
+        }
+        let mut projected = self.state.clone();
+        for pass in passes {
+            projected.skip_unread(pass.request)?;
+            projected.projected_rows(*pass)?;
+        }
+        self.state = projected;
+        Ok(())
+    }
+
     fn host_result<T, E>(&mut self, result: Result<T, E>) -> Result<T, Error<E>> {
         result.map_err(|error| {
             self.state.poison();

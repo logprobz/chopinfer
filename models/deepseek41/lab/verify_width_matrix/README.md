@@ -79,6 +79,10 @@ checks the time budget against a prior recorded startup and C8 cohort;
 `--seal` requires passing CPU and timeout receipts, hashes the installation
 and harness, and writes the matrix and confirmation job files. It does not
 submit them. The confirmation refuses a missing, modified or failed matrix.
+The frozen inventory excludes generated `__pycache__/*.pyc` files. Recorded
+outputs, provisional reports and the consumed matrix pointer live outside
+the frozen directories. Added or changed source files and binaries still fail
+verification, with the inventory difference reported.
 
 The failed-K0 replay reads the saved native startup identity and post-readiness
 steps. That original run wrote no metric scrapes or response bodies before

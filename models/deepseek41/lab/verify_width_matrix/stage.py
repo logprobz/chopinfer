@@ -37,6 +37,10 @@ def files(root):
     for directory in ('install', 'harness'):
         for path in (root / directory).rglob('*'):
             assert not path.is_symlink(), path
+            # Offline imports can create bytecode after sealing. Source files
+            # remain frozen; run outputs and result pointers live outside here.
+            if '__pycache__' in path.relative_to(root / directory).parts and path.suffix == '.pyc':
+                continue
             if path.is_file():
                 paths.append(path)
     return sorted(paths)
@@ -93,7 +97,11 @@ def verify(root, pin):
         assert not path.stat().st_mode & 0o022, path
         assert digest(path) == sha, f'sealed file changed: {name}'
         expected.add(path)
-    assert expected == set(files(root)), 'frozen file inventory changed'
+    actual = set(files(root))
+    assert expected == actual, (
+        'frozen file inventory changed: '
+        f'added={sorted(str(p.relative_to(root)) for p in actual - expected)}, '
+        f'removed={sorted(str(p.relative_to(root)) for p in expected - actual)}')
 
 
 def execute(root, mode, pin):

@@ -56,6 +56,17 @@ impl Status {
         services
             .copy_device_to_host(stream, &mut bytes, source)
             .map_err(|e| e.to_string())?;
+        self.validate(rank, &bytes)
+    }
+
+    pub fn pending(&self) -> Result<DeviceBufferSpanV1, String> {
+        super::device::slice(self.buffer, 0, self.bytes.get())
+    }
+
+    pub fn validate(&self, rank: usize, bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() as u64 != self.bytes.get() {
+            return Err("DSpark saved status length differs".into());
+        }
         let mut at = 0;
         for &(length, kind) in self.parts.borrow().iter() {
             let end = at + length as usize;

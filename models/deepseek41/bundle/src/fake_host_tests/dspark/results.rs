@@ -233,7 +233,8 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                     .unwrap();
                 let timing: serde_json::Value = serde_json::from_str(timing).unwrap();
                 assert_eq!(timing["device_results"], true);
-                assert_eq!(timing["bundle_readbacks"], shape.ranks() + 3);
+                let downloads = if items == 1 { 1 } else { shape.ranks() + 1 };
+                assert_eq!(timing["bundle_readbacks"], downloads + 2);
                 assert_eq!(timing["explicit_bundle_syncs"], 0);
                 drop(log);
                 let packet = sink.completion.unwrap();
@@ -253,7 +254,7 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                     step.iter()
                         .filter(|line| line.starts_with("download "))
                         .count(),
-                    shape.ranks() as usize + 1
+                    downloads as usize
                 );
                 let completed = step
                     .iter()
@@ -269,7 +270,7 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                 );
                 println!(
                     "{}",
-                    serde_json::json!({"ranks":shape.ranks(),"items":items,"k":k,"epoch":epoch,"explicit_syncs":0,"physical_readbacks":shape.ranks()+3,"completion_readbacks":1})
+                    serde_json::json!({"ranks":shape.ranks(),"items":items,"k":k,"epoch":epoch,"explicit_syncs":0,"physical_readbacks":downloads+2,"completion_readbacks":1})
                 );
                 drop(journal);
                 if epoch < 3 {

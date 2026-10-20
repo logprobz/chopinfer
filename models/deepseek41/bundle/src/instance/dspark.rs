@@ -3,6 +3,7 @@
 mod batch;
 #[cfg(feature = "diagnostic-taps")]
 mod batch_check;
+pub(crate) mod boundary;
 mod cycle;
 mod features;
 mod graph_budget;

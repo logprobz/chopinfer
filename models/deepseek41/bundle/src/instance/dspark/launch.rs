@@ -64,6 +64,9 @@ impl Instance {
     }
 
     pub(in crate::instance) fn check_dspark_status(&self) -> Result<(), String> {
+        if self.check_dspark_boundary()? {
+            return Ok(());
+        }
         if let Some(device) = &self.dspark {
             for (rank, stored) in device.ranks.iter().enumerate() {
                 stored

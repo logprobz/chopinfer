@@ -73,6 +73,9 @@ impl Instance {
             let event = self.services.create_event(context)?;
             self.held.push(Held::Event(event));
             device.cycle.draft_done.push(event);
+            let event = self.services.create_event(context)?;
+            self.held.push(Held::Event(event));
+            device.cycle.boundary_ready.push(event);
         }
         let joined = self.services.create_event(self.ranks[0].0)?;
         self.held.push(Held::Event(joined));
@@ -165,6 +168,7 @@ impl Instance {
             history: history.to_vec(),
             text: text.to_vec(),
             result: None,
+            packed_diagnostics: Default::default(),
         });
         self.emit_dspark_device_drafts(sink)?;
         let status = self.execute_packed(request, sink, step);
@@ -337,22 +341,28 @@ impl Instance {
             .ok_or("DSpark diagnostic packet is absent")?;
         let bytes = pending.drafts.len() as u64 * u64::from(BLOCK_ROWS) * 4;
         let stream = self.ranks[0].2;
-        for (offset, source) in [
-            (0, device.ranks[0].draft_ids),
-            (bytes, device.ranks[0].confidence),
-        ] {
-            self.services
-                .copy_device_to_device(
-                    stream,
-                    slice(packet, offset, bytes)?,
-                    slice(source, 0, bytes)?,
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        let mut output = vec![0; bytes as usize * 2];
-        self.services
-            .copy_device_to_host(stream, &mut output, slice(packet, 0, bytes * 2)?)
-            .map_err(|e| e.to_string())?;
+        let (output, boundary_reads) =
+            if let Some(output) = pending.packed_diagnostics.borrow_mut().take() {
+                (output, 1)
+            } else {
+                for (offset, source) in [
+                    (0, device.ranks[0].draft_ids),
+                    (bytes, device.ranks[0].confidence),
+                ] {
+                    self.services
+                        .copy_device_to_device(
+                            stream,
+                            slice(packet, offset, bytes)?,
+                            slice(source, 0, bytes)?,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+                let mut output = vec![0; bytes as usize * 2];
+                self.services
+                    .copy_device_to_host(stream, &mut output, slice(packet, 0, bytes * 2)?)
+                    .map_err(|e| e.to_string())?;
+                (output, self.ranks.len() + 1)
+            };
         let words = |data: &[u8]| {
             data.chunks_exact(BLOCK_ROWS as usize * 4)
                 .map(|row| {
@@ -400,7 +410,7 @@ impl Instance {
             host_ns,
             exposed_ns,
             device.results.metadata.is_some(),
-            self.ranks.len() + 1 + device.cycle.layers.len(),
+            boundary_reads + device.cycle.layers.len(),
             layers.join(","),
         );
         let _ = self.services.log(message.as_bytes());

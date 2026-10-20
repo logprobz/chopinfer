@@ -27,7 +27,9 @@ counts, and both 4096-row parts.
 Build the example with locked, offline Cargo, then run `empty-build OUT`
 to add the candidate to an external qualified snapshot. `empty-snapshot
 OUT` verifies its complete module inventory, including the harness probe
-and the unchanged reference cubins. `empty-check OUT LISTS OFFSET` and
+and the unchanged reference cubins. Snapshot validation also plans every
+partition on CPU, including the empty second interval of a 64-row case.
+Empty intervals produce no CUDA launch. `empty-check OUT LISTS OFFSET` and
 `empty-time OUT LISTS OFFSET` consume full captured selections. The
 allocated pair jobs run checks before timing and reject missing,
 duplicate, skipped or mislabelled cases. CPU parser controls read an

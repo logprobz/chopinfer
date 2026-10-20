@@ -96,6 +96,14 @@ path = "tests/sm120/hc_prefill_warp.rs"
 name = "query_prefill"
 path = "tests/sm120/query_prefill/main.rs"
 
+[[test]]
+name = "hc_prefill_fused"
+path = "tests/sm120/hc_prefill_fused/main.rs"
+
+[[example]]
+name = "build_hc_prefill_fused"
+path = "examples/sm120/build_hc_prefill_fused.rs"
+
 [[example]]
 name = "build_hc_prefill_warp"
 path = "examples/sm120/build_hc_prefill_warp.rs"

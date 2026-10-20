@@ -1,0 +1,771 @@
+[
+  {
+    "name": "hc_prefill_fused_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_hc_prefill_fused_r1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_r4_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_r8_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_reverse_expansion_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_round_before_weight_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_clear_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "expanded",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "fn",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "base",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre_in",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "collapsed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pre",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "post",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "comb",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "widened",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "norm_eps_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "16c83915245ac92d9eb502d0e7271022be482040cb8745f9ed20683c93e1d753",
+    "resources": [
+      {
+        "symbol": "chop_hc_prefill_fused_r1_v1",
+        "registers": 80,
+        "shared_static_bytes": 16624,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_r4_v1",
+        "registers": 80,
+        "shared_static_bytes": 16672,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_r8_v1",
+        "registers": 110,
+        "shared_static_bytes": 19232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_reverse_expansion_v1",
+        "registers": 80,
+        "shared_static_bytes": 16672,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_round_before_weight_v1",
+        "registers": 80,
+        "shared_static_bytes": 16672,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_hc_prefill_fused_clear_status_v1",
+        "registers": 80,
+        "shared_static_bytes": 16672,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

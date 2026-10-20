@@ -90,6 +90,8 @@ pub mod f32_head;
 pub mod f32_prefill;
 pub mod f32_split;
 pub mod f32_wide;
+#[allow(dead_code, reason = "the build script compiles the serving family")]
+pub mod f32_zero;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
 pub mod host_acceptance_entries;
@@ -135,6 +137,7 @@ pub mod ring_gather;
 pub mod ring_gather_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod routed_sum;
+pub(crate) mod router_prefill;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -215,6 +218,25 @@ pub fn register_f32_projections(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    pub(crate) fn prefill_router(
+        shape: &crate::shape::Shape,
+        experts: u32,
+        base: kernel_core::backend::Prepared<
+            kernel_core::precision::buffers::ProjectionBuffers<kernel_core::backend::View>,
+        >,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            kernel_core::precision::buffers::ProjectionBuffers<kernel_core::backend::View>,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        if f32_zero::selected(shape.geometry, shape.ranks(), experts) {
+            router_prefill::prepare(base)
+        } else {
+            Ok(base)
+        }
+    }
+
     // SM120 TP4, 250 W, 2026-10-19: the complete 128/top-3 Decode-1
     // graph is bitwise and wins all three routing patterns, 198.13..198.16
     // -> 60.88..60.94 us. Other buckets retain their measured selections.

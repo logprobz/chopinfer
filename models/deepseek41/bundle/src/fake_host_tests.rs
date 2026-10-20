@@ -44,6 +44,7 @@ mod prefill_skip;
 mod prefill_tma;
 mod producer_epilogues;
 mod projection_reuse;
+mod router_prefill;
 mod selected_cache;
 mod shared_overlap;
 mod verify_hc;

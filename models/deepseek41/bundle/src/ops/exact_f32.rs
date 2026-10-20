@@ -324,6 +324,11 @@ impl ExactF32Ops {
                 }
                 let op = operation(dense.id, dense.tensor, query(dense.n, dense.k))?;
                 let prepared = backend.projection(&op, USE, every)?.handle;
+                let prepared = if dense.id == "moe.router" {
+                    crate::Kernels::prefill_router(shape, experts, prepared)?
+                } else {
+                    prepared
+                };
                 asks.record(format!("f32.{}", dense.id), every, prepared.info());
                 Ok((dense, prepared))
             })

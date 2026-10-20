@@ -110,6 +110,8 @@ mod f32_prefill;
 mod f32_split;
 mod f32_wide;
 #[allow(dead_code)]
+mod f32_zero;
+#[allow(dead_code)]
 mod head_last;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -386,6 +388,7 @@ pub fn selection(
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((f32_blocked::serving_cubin_name(geometry), geometry.id));
             owners.push((f32_wide::cubin_name(geometry), geometry.id));
+            owners.push((f32_zero::CUBIN.into(), geometry.id));
         }
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
@@ -512,6 +515,12 @@ pub fn selection(
             .expect("wide prefill F32 cubins")
             .into_iter()
             .map(|s| (f32_wide::FAMILY, s)),
+    );
+    specs.extend(
+        f32_zero::cubins(geometries)
+            .expect("certified router prefill cubins")
+            .into_iter()
+            .map(|s| (f32_zero::FAMILY, s)),
     );
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));

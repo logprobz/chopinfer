@@ -47,8 +47,65 @@ def require(condition, message):
     if not condition: raise ValueError(message)
 
 
-def audit(before, after, rows):
-    old, new = launches(before), launches(after)
+def align_streams(before, after):
+    """Match opaque stream/event IDs using unchanged dependency edges."""
+    tags = {'record', 'wait', 'synchronize'}
+    left = [parts for line in before.splitlines()
+            if (parts := line.split()) and parts[0] in tags]
+    right = [parts for line in after.splitlines()
+             if (parts := line.split()) and parts[0] in tags]
+    require(len(left) == len(right), 'dependency count changed')
+    forward, reverse = {}, {}
+    def bind(kind, old, new):
+        key, value = (kind, old), (kind, new)
+        require(forward.setdefault(key, value) == value and
+                reverse.setdefault(value, key) == key, 'dependency identity changed')
+    for old, new in zip(left, right):
+        require(old[0] == new[0] and len(old) == len(new), 'dependency order changed')
+        bind('stream', old[1], new[1])
+        if old[0] in {'record', 'wait'}:
+            bind('event', old[2], new[2])
+        else:
+            require(old[2:] == new[2:], 'synchronize arguments changed')
+    old_streams = set(launches(before))
+    new_streams = set(launches(after))
+    for stream in new_streams:
+        if ('stream', stream) not in reverse:
+            require(stream in old_streams, 'unanchored stream renumbering')
+            bind('stream', stream, stream)
+    require({reverse['stream', s][1] for s in new_streams} == old_streams,
+            'stream set changed')
+    result = []
+    for line in after.splitlines():
+        if line.startswith('launch '):
+            _, stream, rest = line.split(' ', 2)
+            line = 'launch ' + reverse['stream', stream][1] + ' ' + rest
+        result.append(line)
+    return '\n'.join(result)
+
+
+def align_buffers(before_meta, after_meta, after):
+    """Use captured allocation order, rank and byte extent as buffer identity."""
+    old, new = before_meta['buffers'], after_meta['buffers']
+    require(len(old) == len(new) and len(set(old)) == len(old) and
+            len(set(new)) == len(new), 'allocation count or identity changed')
+    inverse = {}
+    for a, b in zip(old, new):
+        require(before_meta['ranks'][str(a)] == after_meta['ranks'][str(b)],
+                'allocation rank, extent or order changed')
+        inverse[(1 << 32) + b] = (1 << 32) + a
+    return re.sub(r'raw: (\d+)',
+                  lambda m: 'raw: ' + str(inverse.get(int(m[1]), int(m[1]))), after)
+
+
+def config(grid_x, grid_y, block_x):
+    return (f'LaunchConfigV1 {{ flags: 1, grid_x: {grid_x}, grid_y: {grid_y}, grid_z: 1, '
+            f'block_x: {block_x}, block_y: 1, block_z: 1, shared_memory_bytes: 0, '
+            'cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } }')
+
+
+def audit(before, after, rows, row_tiles=False):
+    old, new = launches(before), launches(align_streams(before, after))
     require(old.keys() == new.keys(), 'stream set changed')
     total, widened, warps = 0, 0, 0
     for stream in old:
@@ -63,7 +120,12 @@ def audit(before, after, rows):
                 require(entry['config'] == a[match]['config'], 'warp mixer launch geometry changed')
                 removed_a.add(match); removed_b.add(at); warps += 1
             if entry['symbol'] != TAIL: continue
-            require(at > 0 and b[at-1]['symbol'] == PARTIAL, 'tail is not adjacent to its producer')
+            producer = 'chop_deepseek41_hc_round_rows_r2_v1' if row_tiles else PARTIAL
+            require(at > 0 and b[at-1]['symbol'] == producer, 'tail is not adjacent to its producer')
+            require(b[at-1]['config'] == config(160, rows//2 if row_tiles else rows,
+                                              256 if row_tiles else 128),
+                    'producer geometry differs from qualification')
+            require(entry['config'] == config(1, rows, 1024), 'tail geometry differs from qualification')
             p, t = b[at-1]['args'], entry['args']
             require(len(p) == 9 and len(t) == 18, 'fused ABI changed')
             mix_at = sites.get(t[1])
@@ -97,9 +159,13 @@ def audit(before, after, rows):
             if widen_at is not None: members.add(widen_at)
             require(not members & removed_a, 'original launch consumed twice')
             removed_a.update(members); removed_b.update([at-1, at]); total += 1
-        require([e for i,e in enumerate(a) if i not in removed_a] == [e for i,e in enumerate(b) if i not in removed_b],
-                'an unrelated launch, argument or order changed on stream ' + stream)
-    expected = rows in (6, 32)
+        kept_a = [e for i,e in enumerate(a) if i not in removed_a]
+        kept_b = [e for i,e in enumerate(b) if i not in removed_b]
+        if kept_a != kept_b:
+            first = next(((x, y) for x, y in zip(kept_a, kept_b) if x != y), None)
+            raise ValueError(f'unrelated launch changed on stream {stream}: '
+                             f'counts {len(kept_a)}/{len(kept_b)}, first {first}')
+    expected = rows == 32 if row_tiles else rows in (6, 32)
     require(total == (77*4 if expected else 0), 'wrong fused boundary count')
     require(widened == (47*4 if expected else 0), 'wrong widened boundary count')
     require(warps == (3*4 if expected else 0), 'wrong standalone warp count')
@@ -116,19 +182,27 @@ if __name__ == '__main__':
     parser.add_argument('--before', type=Path, required=True)
     parser.add_argument('--after', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--row-tiles', action='store_true')
     args = parser.parse_args()
     records = []
     for rows in (6, 8, 16, 32):
         name = f'verify.tp4.r{rows}.Native.journal'
         before, after = args.before/name, args.after/name
-        record = audit(before.read_text(), after.read_text(), rows)
+        before_text, after_text = before.read_text(), after.read_text()
+        before_meta = before.with_name(name + '.handles.json')
+        after_meta = after.with_name(name + '.handles.json')
+        require(before_meta.exists() == after_meta.exists(), 'missing allocation identities')
+        if before_meta.exists():
+            after_text = align_buffers(json.loads(before_meta.read_text()),
+                                       json.loads(after_meta.read_text()), after_text)
+        record = audit(before_text, after_text, rows, args.row_tiles)
         record['sha256'] = {label:hashlib.sha256(path.read_bytes()).hexdigest() for label,path in [('before',before),('after',after)]}
-        if rows in (6,32):
-            text = after.read_text()
+        if rows == 32 or (rows == 6 and not args.row_tiles):
+            text = after_text
             line = next(l for l in text.splitlines() if TAIL in l and l.startswith('launch '))
             changed = re.sub(r'ScalarU32\(\d+\)\]$', 'ScalarU32(0)]', line)
             require(changed != line, 'epsilon negative control did not change the journal')
-            try: audit(before.read_text(), text.replace(line,changed,1), rows)
+            try: audit(before.read_text(), text.replace(line,changed,1), rows, args.row_tiles)
             except ValueError: record['changed_epsilon_rejected'] = True
             else: raise ValueError('journal auditor accepted a changed epsilon')
         records.append(record)

@@ -127,3 +127,7 @@ path = "examples/sm120/build_compact_dense.rs"
 [[test]]
 name = "compact_dense"
 path = "tests/sm120/compact_dense/main.rs"
+
+[[test]]
+name = "hc_exact_rows"
+path = "tests/sm120/exact_rows/main.rs"

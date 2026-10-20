@@ -627,7 +627,7 @@ impl crate::Kernels {
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());
-        let sm120 = ceil_parallel::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = ceil_cached::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_bf16::register(sm120);

@@ -2,7 +2,7 @@
 //! The parallel cubin keeps every entry so its identity stays fixed; the
 //! cached entries replace their parallel twins only at the measured widths.
 use kernel_build::CubinSpec;
-use kernels_sm120::row::block_quantize;
+use kernels_sm120::{backend::Sm120, row::block_quantize};
 use model_deepseek41_contract::{admission::SUPPORTED_RANKS, geometry::Geometry};
 
 pub const FAMILY: &str = "ceil_cached";
@@ -51,4 +51,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         }
     }
     Ok(specs)
+}
+
+/// `ceil_parallel::register` with each measured width's cached twin in place
+/// of its parallel entry.
+pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    for entry in super::ceil_parallel::quantizers(g, ranks)? {
+        backend = backend.with_block_quantize(cached(&entry).unwrap_or(entry));
+    }
+    Ok(backend.with_silu_mul_quantize(super::ceil_parallel::activation(g, ranks)?))
 }

@@ -324,6 +324,7 @@ pub fn selection(
         }
         if geometry == &model_deepseek41_contract::geometry::FLASH {
             owners.push((indexer_select_cached::CUBIN.into(), geometry.id));
+            owners.push((indexer_mma_tile::CUBIN.into(), geometry.id));
         }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),

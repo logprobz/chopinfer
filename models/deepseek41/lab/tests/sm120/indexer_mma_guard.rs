@@ -1,4 +1,6 @@
 //! Guarded serving entries, the unguarded negative control and sealed operands.
+#[path = "indexer_mma_guard_edges.rs"]
+mod edges;
 use super::*;
 use kernel_harness::{Cubins, eviction::EvictionMode};
 

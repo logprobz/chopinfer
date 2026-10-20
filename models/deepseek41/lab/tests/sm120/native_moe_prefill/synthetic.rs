@@ -317,14 +317,12 @@ pub fn run(session: &Session) -> LabResult<()> {
                 json["invariance"] = inv;
                 passed &= ok;
             }
-            if !memcheck() {
-                if timing() {
-                    json["timing"] = serde_json::json!({
-                        "gate_up": super::timing::graphs(&mut runner, &a, &p.exact.gate, &p.native.gate)?,
-                        "down": super::timing::graphs(&mut runner, &a, &p.exact.down, &p.native.down)?,
-                        "both": super::timing::graphs(&mut runner, &a, &p.exact.launches(), &p.native.launches())?,
-                    });
-                }
+            if !memcheck() && timing() {
+                json["timing"] = serde_json::json!({
+                    "gate_up": super::timing::graphs(&mut runner, &a, &p.exact.gate, &p.native.gate)?,
+                    "down": super::timing::graphs(&mut runner, &a, &p.exact.down, &p.native.down)?,
+                    "both": super::timing::graphs(&mut runner, &a, &p.exact.launches(), &p.native.launches())?,
+                });
             }
             json["case"] = serde_json::json!(case.label());
             json["experts"] = serde_json::json!(set.count);

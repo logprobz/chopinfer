@@ -1,6 +1,7 @@
 //! The f64 oracle over exact decoded operands, the per-element bound of
 //! docs/numerics.md and the report-only error statistics.
 use kernel_core::codec::{SmallFloat, decode_ue8m0_f64};
+use std::cmp::Ordering;
 
 pub fn e4m3_table() -> [f64; 256] {
     std::array::from_fn(|c| SmallFloat::E4M3.decode_f64(c as u8))
@@ -73,7 +74,11 @@ pub fn check_row(y: &[f32], reference: &[(f64, f64)], k: usize) -> RowCheck {
             f64::INFINITY
         };
         let b = bound(k, s);
-        if !(error <= b) {
+        // NaN fails, as every comparison with it is false.
+        if !matches!(
+            error.partial_cmp(&b),
+            Some(Ordering::Less | Ordering::Equal)
+        ) {
             c.failures += 1;
         }
         c.worst_ratio = c.worst_ratio.max(error / b);
@@ -129,7 +134,10 @@ impl Stage {
         self.rmse = (self.squared / self.elements.max(1) as f64).sqrt();
         self.max_abs = self.max_abs.max(c.max_abs);
         self.min_cosine = self.min_cosine.min(c.cosine);
-        self.cosine_failures += u64::from(!(c.cosine >= 0.9999));
+        self.cosine_failures += u64::from(!matches!(
+            c.cosine.partial_cmp(&0.9999),
+            Some(Ordering::Greater | Ordering::Equal)
+        ));
     }
     pub fn passes(&self) -> bool {
         self.rows > 0 && self.failures == 0 && self.cosine_failures == 0

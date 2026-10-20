@@ -46,9 +46,15 @@ impl GatherProbe for MappedProbe<'_> {
 pub(crate) struct ReadAhead<'a> {
     probe: &'a dyn GatherProbe,
     started: std::sync::atomic::AtomicBool,
+    resident: Option<&'a super::resident::Plane>,
 }
 
 impl<'a> ReadAhead<'a> {
+    pub(crate) fn with_resident(mut self, resident: Option<&'a super::resident::Plane>) -> Self {
+        self.resident = resident;
+        self
+    }
+
     pub(crate) fn configured(probe: &'a dyn GatherProbe) -> Self {
         if mapped_read_ahead_v1() {
             Self::new(probe)
@@ -60,6 +66,7 @@ impl<'a> ReadAhead<'a> {
     pub(crate) fn disabled(probe: &'a dyn GatherProbe) -> Self {
         Self {
             probe,
+            resident: None,
             started: std::sync::atomic::AtomicBool::new(true),
         }
     }
@@ -67,6 +74,7 @@ impl<'a> ReadAhead<'a> {
     pub(crate) fn new(probe: &'a dyn GatherProbe) -> Self {
         Self {
             probe,
+            resident: None,
             started: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -93,7 +101,16 @@ pub(crate) fn gather_span_v1(
         let (index, within) = (position / row_bytes, position % row_bytes);
         let take = (row_bytes - within).min(out.len() - written);
         let source = rows[index] as usize * row_bytes + within;
-        out[written..written + take].copy_from_slice(&table[source..source + take]);
+        if let Some(resident) = ahead.resident {
+            resident.copy(
+                table,
+                rows[index],
+                within,
+                &mut out[written..written + take],
+            );
+        } else {
+            out[written..written + take].copy_from_slice(&table[source..source + take]);
+        }
         written += take;
         if within + take < row_bytes {
             continue;

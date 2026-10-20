@@ -150,6 +150,7 @@ fn gather_plane_with_probe(
     } else {
         ReadAhead::disabled(probe)
     };
+    let ahead = ahead.with_resident(plane.mapping.resident_plane(plane.row_bytes));
     gather_span_v1(table, plane.row_bytes, &ids, 0, output, &ahead);
     Ok(())
 }

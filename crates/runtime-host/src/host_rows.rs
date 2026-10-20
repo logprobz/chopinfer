@@ -20,6 +20,7 @@
 #![allow(unsafe_code)]
 
 pub(crate) mod gather;
+pub(crate) mod resident;
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -46,6 +47,7 @@ pub enum RowAdviceV1 {
 /// Which bytes a mapping holds: the file (device and inode) and the range.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RowsKeyV1 {
+    identity: Option<[u8; 32]>,
     device: u64,
     inode: u64,
     offset: u64,
@@ -61,6 +63,7 @@ pub struct MappedRowsV1 {
     lead: usize,
     length: usize,
     key: RowsKeyV1,
+    resident: std::sync::OnceLock<resident::Plane>,
 }
 
 // SAFETY-REVIEWED: the mapping is read-only memory no one writes through, so
@@ -80,6 +83,10 @@ impl std::fmt::Debug for MappedRowsV1 {
 }
 
 impl MappedRowsV1 {
+    pub(crate) fn resident_plane(&self, row_bytes: usize) -> Option<&resident::Plane> {
+        self.resident.get().filter(|plane| plane.width == row_bytes)
+    }
+
     /// The mapped bytes.
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
@@ -261,6 +268,26 @@ static REGISTRY: Mutex<BTreeMap<RowsKeyV1, Weak<MappedRowsV1>>> = Mutex::new(BTr
 /// The caller has checked that the range is the tensor bytes it names; this
 /// refuses an empty range and one past the file's current end.
 pub fn map_rows_v1(file: &File, offset: u64, length: u64) -> io::Result<Arc<MappedRowsV1>> {
+    map_rows_inner(file, offset, length, None)
+}
+
+/// Map a range after the direct loader has authenticated its checkpoint and
+/// checked its source tensor against the immutable shard header.
+pub(crate) fn map_authenticated_rows_v1(
+    file: &File,
+    offset: u64,
+    length: u64,
+    identity: [u8; 32],
+) -> io::Result<Arc<MappedRowsV1>> {
+    map_rows_inner(file, offset, length, Some(identity))
+}
+
+fn map_rows_inner(
+    file: &File,
+    offset: u64,
+    length: u64,
+    identity: Option<[u8; 32]>,
+) -> io::Result<Arc<MappedRowsV1>> {
     use std::os::unix::fs::MetadataExt;
     let metadata = file.metadata()?;
     if length == 0
@@ -271,6 +298,7 @@ pub fn map_rows_v1(file: &File, offset: u64, length: u64) -> io::Result<Arc<Mapp
         return Err(io::Error::other("mapped rows lie outside the file"));
     }
     let key = RowsKeyV1 {
+        identity,
         device: metadata.dev(),
         inode: metadata.ino(),
         offset,
@@ -313,6 +341,7 @@ pub fn map_rows_v1(file: &File, offset: u64, length: u64) -> io::Result<Arc<Mapp
         lead,
         length,
         key,
+        resident: std::sync::OnceLock::new(),
     });
     mapping.advise(RowAdviceV1::Random)?;
     registry.insert(key, Arc::downgrade(&mapping));

@@ -1169,15 +1169,19 @@ impl PlannedImageV1 {
         for (rank, view, source, prewarm) in mapped_sources {
             let shard = &checkpoint.shards[source.shard];
             shard.verify_unchanged()?;
-            let rows =
-                crate::host_rows::map_rows_v1(&shard.file, source.file_offset, source.byte_length)
-                    .map_err(|e| {
-                        format!(
-                            "map {} for view {}: {e}",
-                            shard.name,
-                            String::from_utf8_lossy(&view)
-                        )
-                    })?;
+            let rows = crate::host_rows::map_authenticated_rows_v1(
+                &shard.file,
+                source.file_offset,
+                source.byte_length,
+                checkpoint.identity(),
+            )
+            .map_err(|e| {
+                format!(
+                    "map {} for view {}: {e}",
+                    shard.name,
+                    String::from_utf8_lossy(&view)
+                )
+            })?;
             if prewarm && !prewarmed.iter().any(|known| Arc::ptr_eq(known, &rows)) {
                 prewarmed.push(Arc::clone(&rows));
             }

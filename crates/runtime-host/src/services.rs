@@ -3933,6 +3933,10 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             planes: resolved,
         };
         plan.validate()?;
+        crate::host_rows::resident::register(&plan.planes).map_err(|error| {
+            eprintln!("host resident mapped rows: {error}");
+            BundleStatusV1::InvalidArgument
+        })?;
         let object = state.device.create_mapped_gather(plan)?;
         let order = match state.order.acquire() {
             Ok(order) => order,
@@ -4061,7 +4065,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             return Err(BundleStatusV1::InvalidArgument);
         }
         let probe = MappedProbe::new(&mapping, row_bytes);
-        let ahead = ReadAhead::configured(&probe);
+        let ahead = ReadAhead::configured(&probe).with_resident(mapping.resident_plane(row_bytes));
         state
             .device
             .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| {

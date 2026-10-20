@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 import run
+import stage as freezing
 
 SOURCE = Path(__file__).resolve().parents[4]
 
@@ -60,6 +61,36 @@ def settings(stage):
 
 
 class JobTests(unittest.TestCase):
+    def test_frozen_inventory_survives_analysis_and_run_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'install').mkdir()
+            (root/'harness').mkdir()
+            for name in ('config.json', 'cpu-validation.json', 'timeout-audit.json',
+                         'install/binary', 'harness/analysis.py'):
+                path = root/name
+                path.write_text('{}')
+                path.chmod(0o644)
+            manifest = root/'SHA256SUMS'
+            manifest.write_text(''.join(f'{run.digest(p)}  {p.relative_to(root)}\n'
+                                       for p in freezing.files(root)))
+            pin = run.digest(manifest)
+            freezing.verify(root, pin)
+            for name in ('runs/result.json', 'runs/provisional-analysis.md', 'matrix-result.json',
+                         'harness/__pycache__/analysis.cpython-312.pyc'):
+                path = root/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('generated')
+            freezing.verify(root, pin)
+            extra = root/'harness/added.py'
+            extra.write_text('new source')
+            with self.assertRaisesRegex(AssertionError, 'added.py'):
+                freezing.verify(root, pin)
+            extra.unlink()
+            (root/'harness/analysis.py').write_text('changed source')
+            with self.assertRaisesRegex(AssertionError, 'sealed file changed'):
+                freezing.verify(root, pin)
+
     def test_all_fourteen_cases_have_positive_full_batch_coverage(self):
         for config in run.CONFIGS:
             for c in (8,16):

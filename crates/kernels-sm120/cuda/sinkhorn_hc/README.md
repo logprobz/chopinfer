@@ -490,8 +490,9 @@ not used here.
 Mutation>`: the F32 expand and the prefill pipeline mixer in one launch,
 with output bits equal to `expand_f32` followed by
 `mix_collapse_prefill_pipeline` at every row count. Its planner is
-`src/sinkhorn_hc/prefill_expand_mix.rs`; it is lab-only until a pair
-measures it.
+`src/sinkhorn_hc/prefill_expand_mix.rs`. A pair measured it bitwise against
+the served chain; the backend serves registered row buckets through
+`Sm120::with_sinkhorn_prefill_expand_mix`.
 
 | Entry | Grid | Parameters |
 | --- | --- | --- |
@@ -508,3 +509,15 @@ coefficient read of a row finishes before that barrier, so `post` and
 `comb` may alias `post_in` and `comb_in`. `expanded` must not alias `x`.
 Tiles are 4 or 8 rows with 4- or 8-chain panels; the in-flight expanded
 rows per CTA (40 KiB each at 4 x 5120) should stay within L2.
+
+`prefill_expand_mix_norm.cuh` holds `prefill_expand_mix_norm::run<M, Rows,
+Chains, FloorBits, Mutation>` (planner `src/sinkhorn_hc/prefill_expand_mix_norm.rs`,
+lab-only): `prefill_expand_mix::run`, then, in the same CTA, the BF16 input
+norm and ceil quantizer of the rows it mixed, with `prefill_fused`'s
+22-parameter ABI. After a barrier the tail reads its collapsed rows back,
+row by row: each lane keeps its 8-column chunks (columns 8t + 2048k) in
+registers, the RMS sum runs `sum_cta` over the 256 lanes, the norm and the
+optional widened copy use `rmsnorm`'s expressions, and the quantizer reads
+the stored norm row with `quantize_group` and stages only its codes and
+scales in shared memory until `row_status` publishes the row. The arena
+adds about 5.4 KiB to the pipeline's.

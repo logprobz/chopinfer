@@ -34,7 +34,7 @@ def qualified(live, oracle):
 
 
 def synthetic_log(memcheck, oracle, timed, probe):
-    lines = ["running 1 test"]
+    lines = ["running 1 test", "test synthetic::native_moe_synthetic_gpu ... "]
     if probe:
         lines.append("native_moe_probe " + json.dumps({"executed_outputs": 4 * 32 * 128 + 8 * 128, "failures": 0}))
     lives = job.MEMCHECK_LIVES if memcheck else (8192,)
@@ -67,7 +67,7 @@ def captured_log(worker, oracle, timed):
                 if timed and rows == 8192:
                     tiles = [{"kind": "GateUp", "tile": str(i), "serving_tile": i in (0, 3), "timing": timing()} for i in range(5)]
                     row["timing"] = {**{p: timing() for p in ("gate_up", "down", "both")}, "tiles": tiles}
-                lines.append(("test native_moe_captured_gpu ... " if n == 0 else "") + "native_moe_captured " + json.dumps(row))
+                lines.append(("test captured::native_moe_captured_gpu ... " if n == 0 else "") + "native_moe_captured " + json.dumps(row))
                 n += 1
     lines.append("native_moe_captured_done " + json.dumps({"worker": worker, "cases": n, "failed": 0}))
     lines.append("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out")
@@ -84,6 +84,51 @@ def mutate(text, marker, change):
             line = head + marker + " " + json.dumps(row)
         out.append(line)
     return "\n".join(out)
+
+
+# `native-moe-test --list` of the binary sealed in the first staged snapshot.
+SEALED_LIST = [
+    "captured::native_moe_captured_cpu_admission",
+    "captured::native_moe_captured_gpu",
+    "oracle::tests::bound_and_cosine_reject_a_dropped_chain",
+    "oracle::tests::dot_matches_a_naive_decode",
+    "oracle::tests::ordered_sum_adds_routes_in_order_then_the_addend",
+    "probe::probe_cases_isolate_one_product_and_cover_the_domain",
+    "samples_cover_first_and_last",
+    "synthetic::cpu_plan",
+    "synthetic::native_moe_synthetic_gpu",
+]
+
+
+def libtest_list(argv):
+    """libtest's --list under a filter: --exact keeps whole-name matches."""
+    binary = argv.index("/staged/bin/native-moe-test")
+    args = argv[binary + 1:]
+    name = next(a for a in args if not a.startswith("--"))
+    names = [n for n in SEALED_LIST if (n == name if "--exact" in args else name in n)]
+    return "".join(f"{n}: test\n" for n in names) + f"\n{len(names)} test{'' if len(names) == 1 else 's'}, 0 benchmarks\n"
+
+
+class Filters(unittest.TestCase):
+    def test_every_command_selects_exactly_its_test(self):
+        from pathlib import Path
+        plan = {"sanitizer": "/sanitizer"}
+        for phase, tests in job.PHASE_TESTS.items():
+            for test in tests:
+                argv = job.command(Path("/staged"), plan, phase, test)
+                job.check_listed(libtest_list(argv), job.TESTS[test])
+        for name in job.CPU_TESTS:
+            job.check_listed(libtest_list(job.test_args(Path("/staged"), name)), name)
+
+    def test_rejects_a_filter_that_selects_nothing_or_more(self):
+        with self.assertRaises(ValueError):
+            job.check_listed("\n0 tests, 0 benchmarks\n", "synthetic::native_moe_synthetic_gpu")
+        bare = libtest_list(["/staged/bin/native-moe-test", "native_moe_synthetic_gpu", "--exact"])
+        with self.assertRaises(ValueError):
+            job.check_listed(bare, "native_moe_synthetic_gpu")
+        loose = libtest_list(["/staged/bin/native-moe-test", "native_moe"])
+        with self.assertRaises(ValueError):
+            job.check_listed(loose, "native_moe")
 
 
 class Analyzers(unittest.TestCase):

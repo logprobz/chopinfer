@@ -27,10 +27,14 @@ MEMCHECK_LIVES = (1, 65, 513, 2048)
 LAYERS = (0, 13, 14, 39)
 CHUNKS = (("input-0", 0, 8192), ("input-1", 8192, 65), ("input-2", 8192, 257))
 VARIANTS = 3  # two other gate/up tiles and one other down tile
+# Full libtest paths: the commands pass --exact, which matches whole names.
 TESTS = {
-    "synthetic": "native_moe_synthetic_gpu",
-    "captured": "native_moe_captured_gpu",
+    "synthetic": "synthetic::native_moe_synthetic_gpu",
+    "captured": "captured::native_moe_captured_gpu",
 }
+CPU_TESTS = ("synthetic::cpu_plan", "captured::native_moe_captured_cpu_admission",
+             "probe::probe_cases_isolate_one_product_and_cover_the_domain",
+             "oracle::tests::bound_and_cosine_reject_a_dropped_chain")
 
 
 def sha(path):
@@ -50,6 +54,15 @@ def libtest(text, count):
     results = re.findall(r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored", text)
     if results != [("ok", str(count), "0", "0")]:
         raise ValueError(f"expected {count} passing test(s), got {results}")
+
+
+def check_listed(text, name):
+    """The sealed binary's --list output under a command's filter must name
+    exactly that test, so a filter that selects nothing fails before a GPU run."""
+    names = re.findall(r"^(\S+): test$", text, re.M)
+    counts = re.findall(r"^(\d+) tests?, (\d+) benchmarks?$", text, re.M)
+    if names != [name] or counts != [("1", "0")]:
+        raise ValueError(f"filter {name!r} lists {names} ({counts})")
 
 
 def unique(rows, key, expected, label):
@@ -235,8 +248,12 @@ def environment(root, plan, phase, worker=None):
 PHASE_TESTS = {"memcheck": ("synthetic",), "oracle": ("synthetic", "captured"), "timing": ("synthetic", "captured")}
 
 
+def test_args(root, name):
+    return [str(root / "bin/native-moe-test"), name, "--exact", "--include-ignored", "--nocapture"]
+
+
 def command(root, plan, phase, test):
-    cmd = [str(root / "bin/native-moe-test"), TESTS[test], "--exact", "--include-ignored", "--nocapture", "--test-threads=1"]
+    cmd = [*test_args(root, TESTS[test]), "--test-threads=1"]
     if phase == "memcheck":
         cmd = [plan["sanitizer"], "--tool", "memcheck", "--error-exitcode", "86", "--require-cuda-init", "yes",
                "--destroy-on-device-error", "context", *cmd]
@@ -276,22 +293,33 @@ def run_phase(root, plan, phase, out):
 def dry_run(root, plan, out):
     seal(root, plan)
     env = environment(root, plan, "oracle")
-    tests = ["synthetic::cpu_plan", "captured::native_moe_captured_cpu_admission", "probe::probe_cases_isolate_one_product_and_cover_the_domain",
-             "oracle::tests::bound_and_cosine_reject_a_dropped_chain"]
-    for i, t in enumerate(tests):
-        r = subprocess.run([str(root / "bin/native-moe-test"), t, "--exact", "--include-ignored", "--nocapture"], env=env,
+    def listing(argv, name, log):
+        r = subprocess.run([*argv, "--list"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+        (out / log).write_text(r.stdout)
+        if r.returncode:
+            raise ValueError(f"dry-run listing failed: {name}")
+        check_listed(r.stdout, name)
+
+    for i, t in enumerate(CPU_TESTS):
+        listing(test_args(root, t), t, f"cpu-{i}.list")
+        r = subprocess.run(test_args(root, t), env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
         (out / f"cpu-{i}.log").write_text(r.stdout)
         if r.returncode:
             raise ValueError(f"dry-run test failed: {t}")
         libtest(r.stdout, 1)
+    listed = []
     for phase in PHASE_TESTS:
         for test in PHASE_TESTS[phase]:
-            for worker in (0, 1):
-                cmd = command(root, plan, phase, test)
-                if not Path(cmd[0]).is_file():
-                    raise ValueError(f"missing executable {cmd[0]}")
-    (out / "dry-run.json").write_text(json.dumps({"cpu_tests": len(tests), "gpu_launched": False}, indent=2) + "\n")
+            cmd = command(root, plan, phase, test)
+            if not Path(cmd[0]).is_file():
+                raise ValueError(f"missing executable {cmd[0]}")
+            # The job's own argv from the test binary on, with its filter and flags.
+            argv = cmd[cmd.index(str(root / "bin/native-moe-test")):]
+            listing(argv, TESTS[test], f"{phase}-{test}.list")
+            listed.append({"phase": phase, "test": TESTS[test], "listed": 1})
+    (out / "dry-run.json").write_text(json.dumps({"cpu_tests": len(CPU_TESTS), "gpu_commands_listed": listed,
+                                                  "gpu_launched": False}, indent=2) + "\n")
 
 
 def main():

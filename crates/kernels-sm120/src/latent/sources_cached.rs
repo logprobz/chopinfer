@@ -1,8 +1,11 @@
 //! Decode selected native KV once, keeping all eight numerical source splits.
 use super::{sources, sources_decode};
+#[path = "sources_cached/prepared.rs"]
+mod prepared;
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, LaunchPlan, Refusal};
+pub use prepared::{Buffers, Layout, prepare};
 
 #[derive(Clone, Debug)]
 pub struct Entry {

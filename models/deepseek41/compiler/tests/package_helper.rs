@@ -113,6 +113,24 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
     result
 }
 
+#[test]
+fn dspark_profiles_keep_adaptive_full_block_drafting() {
+    let document = profiles(&FLASH, &[4]).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&document).unwrap();
+    for name in [
+        "tp4-dspark",
+        "tp4-dspark-full-prefill",
+        "tp4-dspark-upper-skip-2048",
+    ] {
+        let speculation = &file["profiles"][name]["speculation"];
+        assert_eq!(speculation["mode"], "adaptive");
+        assert_eq!(speculation["tokens"], 5);
+        assert_eq!(speculation["draft_cost"], "per-block");
+        assert_eq!(speculation["drafter"], "dspark");
+        host_admits(&document, name).unwrap();
+    }
+}
+
 /// Every geometry's package profiles pass the host's admission, and the
 /// helper selects the package's own entry for the requested rank count.
 #[test]

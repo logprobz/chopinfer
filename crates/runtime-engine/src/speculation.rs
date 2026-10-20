@@ -14,6 +14,8 @@ mod block_cost;
 use block_cost::BlockStep;
 mod diagnostics;
 #[cfg(test)]
+mod low_concurrency_tests;
+#[cfg(test)]
 mod refresh_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;

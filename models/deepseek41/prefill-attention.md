@@ -263,10 +263,11 @@ mixed32 and twenty mixed64 layers predicts about 11-21 ms saved per later
 8K chunk and 50 ms per 32K prompt. These are kernel projections; the serving
 binding and its table upload still require an integrated GPU measurement.
 
-The route requires native Flash TP4, a one-item instance, and an eager
-8192-row prefill with consecutive positions at one of the measured offsets.
-Other row counts, offsets, topologies, BF16 KV, multiple-item instances,
-decode, verify and draft attention keep their existing routes. Every decoded
+The route requires native Flash TP4 and one live item in an eager 8192-row
+prefill with consecutive positions at one of the measured offsets. It uses
+one arena per rank independently of the instance's serving capacity. Other
+row counts, offsets, topologies, BF16 KV, multiple live items, decode, verify
+and draft attention keep their existing routes. Every decoded
 consumer uses the measured paired body and 85,504 dynamic shared bytes. Its
 64-key units, QK chains, softmax/PV order and original merge are unchanged.
 
@@ -280,12 +281,32 @@ of that fallback.
 
 Each admitted rank owns a separate 75,632,640-byte data allocation and one
 full page-table row. Both are reserved before the host sizes its KV pool.
+The 65,536-byte table brings the total to 72.19140625 MiB per rank. An admitted
+call describes its compressed table, staged ring and window items as one
+sequence, even when the persistent state slot is nonzero. Native fallback
+retains the original capacity. The profile memory fraction and 1024-page
+physical-span bound are unchanged.
 The data allocation holds guarded, aligned window, compressed and mark
 regions. Each layer uses its own bounded layout inside that allocation;
 32-position pages fit inside the allocation sized for 64-position pages.
 The cache is disjoint from native KV, activations, F32 partials, output,
 collective buffers and side-stream workspace. A lowering-time check rejects
 aliasing with any live attention view.
+
+Capacity-32 fake-host coverage alternates requests in nonzero slots, reuses
+retired slots, checks multi-item and wide-span fallback, and injects allocation
+failures. Cache-on/off composition checks preserve every other launch, event
+and peer transfer across overlap, DMA and retained-row modes. Every arena
+producer and consumer stays on its rank's main stream; side streams never
+receive its buffers. The arena is reused only after the preceding ordered
+consumer. Capacity-32 served equality and timing require separate GPU evidence.
+
+`lab/audit_prefill_arena.py` compares all eight geometry and media lifecycle
+journals before accepting updated pins. Native TP4 adds eight allocations
+and eight releases across four ranks. Every retained operation must match
+after a bijective handle mapping; the six other journals must match exactly.
+The audit rejects altered allocations, ownership, launch arguments and release
+counts.
 
 The rebased table is uploaded once before the eager chunk. Every layer
 clears marks, marks selected physical pages, decodes the window and marked

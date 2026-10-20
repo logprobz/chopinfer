@@ -1,0 +1,704 @@
+//! Native block-scaled MXFP4 x MXFP8 expert tiles for prefill
+//! (`cuda/moe/native_grouped.cuh`), in any expert geometry.
+//!
+//! These entries change bits against the BF16-decoded engines and qualify
+//! on the within-bound track (docs/numerics.md, "A speedup that changes
+//! bits"): every product is exact and the 128-K chains fold in ascending K
+//! order as before, but the instruction reduces each 32-K group itself.
+//! No catalog or backend selects them; a model binds them explicitly.
+//!
+//! A projection is two launches: one warp packs the active experts into
+//! row tiles of [`Tile::rows`], then a persistent grid takes (tile, column
+//! strip) items from a ticket. A row's arithmetic depends only on its own
+//! routes and data, never on the tile, the item order or the grid.
+use crate::moe::{SM_COUNT, ptr};
+use kernel_build::{CubinSpec, EntrySpec};
+use kernel_core::backend::Launch;
+use kernel_core::contract::{
+    ActivationFormat, Argument, ArgumentList, DType, LaunchPlan, OutputQuantization, Refusal,
+    SwigluColumns, Validate, WeightFormat,
+};
+use kernel_core::gated_mlp::{GatedMlpProjection, RouteWeightPoint};
+use kernel_core::moe_chained::ChainedMlpProjectionQuery;
+use std::path::PathBuf;
+
+/// SM120's opt-in dynamic shared memory per block.
+pub const MAX_SHARED_BYTES: u32 = 101_376;
+/// Shared memory per SM, for the resident-CTA estimate of the grid.
+const SM_SHARED_BYTES: u32 = 102_400;
+const QUEUE_HEADER: u64 = 4;
+
+/// One projection's dimensions: `n` output columns per half (gate/up has a
+/// gate and an up half over the same columns), reduction `k`, and the
+/// token capacity of the routes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shape {
+    pub experts: u32,
+    pub top_k: u32,
+    pub k: u32,
+    pub n: u32,
+    pub gate_up: bool,
+    pub capacity: u32,
+    /// Gate maximum and up limit bits of the SwiGLU clamp (gate/up only).
+    pub clamp: Option<(u32, u32)>,
+}
+
+impl Shape {
+    pub fn new(
+        experts: u32,
+        top_k: u32,
+        k: u32,
+        n: u32,
+        gate_up: bool,
+        capacity: u32,
+        clamp: Option<(u32, u32)>,
+    ) -> Result<Self, Refusal> {
+        let shape = Self {
+            experts,
+            top_k,
+            k,
+            n,
+            gate_up,
+            capacity,
+            clamp,
+        };
+        shape.validate()?;
+        Ok(shape)
+    }
+
+    /// The shape of a chained MXFP4 / ceil-MXFP8 projection whose routes
+    /// are weighted before down, as the exact prefill engines read it.
+    pub fn from_query(query: &ChainedMlpProjectionQuery, capacity: u32) -> Result<Self, Refusal> {
+        query.validate()?;
+        let p = query.projection;
+        let g = p.gemm;
+        let grouped = g
+            .grouped
+            .ok_or(Refusal("native tiles need grouped experts"))?;
+        let gate_up = p.projection == GatedMlpProjection::GateUp;
+        let expected = if gate_up {
+            (
+                DType::Bf16,
+                Some(SwigluColumns::ConcatenatedHalves),
+                Some(OutputQuantization::Mxfp8),
+            )
+        } else {
+            (DType::F32, None, None)
+        };
+        if g.weight != WeightFormat::Mxfp4
+            || g.activation != ActivationFormat::Mxfp8
+            || (
+                g.output,
+                g.epilogues.swiglu,
+                g.epilogues.output_quantization,
+            ) != expected
+            || p.route_weight != Some(RouteWeightPoint::BeforeDown)
+            || query.k.stored != g.k
+            || (!gate_up && p.swiglu_clamp.is_some())
+        {
+            return Err(Refusal(
+                "native tiles serve MXFP4 x ceil-MXFP8 projections weighted before down",
+            ));
+        }
+        if u64::from(capacity) * u64::from(grouped.top_k) > u64::from(g.m_capacity) {
+            return Err(Refusal("native tiles need the routes' total rows"));
+        }
+        Self::new(
+            grouped.experts,
+            grouped.top_k,
+            g.k,
+            if gate_up { g.n / 2 } else { g.n },
+            gate_up,
+            capacity,
+            p.swiglu_clamp.map(|c| (c.gate_max_bits, c.up_limit_bits)),
+        )
+    }
+
+    pub fn halves(&self) -> u32 {
+        if self.gate_up { 2 } else { 1 }
+    }
+
+    fn tag(&self) -> String {
+        let clamp = self
+            .clamp
+            .map_or(String::new(), |(g, u)| format!("_clamp{g:08x}{u:08x}"));
+        format!(
+            "{}_e{}k{}_n{}_k{}_t{}{clamp}",
+            if self.gate_up { "gateup" } else { "down" },
+            self.experts,
+            self.top_k,
+            self.n,
+            self.k,
+            self.capacity
+        )
+    }
+
+    fn config(&self) -> String {
+        let clamp = self.clamp.map_or_else(
+            || "chop::moe::clamp::SwigluClamp<false,0u,0u>".into(),
+            |(g, u)| format!("chop::moe::clamp::SwigluClamp<true,{g:#x}u,{u:#x}u>"),
+        );
+        format!(
+            "chop::moe::native_grouped::Config<{},{},{},{},{},{},{clamp}>",
+            self.experts,
+            self.top_k,
+            self.k,
+            self.n,
+            self.halves(),
+            self.capacity
+        )
+    }
+}
+
+impl Validate for Shape {
+    fn validate(&self) -> Result<(), Refusal> {
+        let routes = u64::from(self.capacity) * u64::from(self.top_k);
+        if self.experts == 0
+            || self.experts > 4096
+            || self.top_k == 0
+            || self.top_k > 32
+            || self.capacity == 0
+            || routes >= 1 << 31
+            || self.k == 0
+            || !self.k.is_multiple_of(32)
+            || self.n == 0
+            || !self.n.is_multiple_of(16)
+            || u64::from(self.experts) * u64::from(self.halves()) * u64::from(self.n) >= 1 << 31
+            || (self.clamp.is_some() && !self.gate_up)
+        {
+            return Err(Refusal(
+                "native expert tile shape outside its compiled domain",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A CTA's warp grid: `row_warps` of 64 routed rows by `col_warps` of 16
+/// (gate/up, gate and up halves) or 32 (down) output columns, with
+/// `stages` 128-K operand stages in flight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tile {
+    pub row_warps: u32,
+    pub col_warps: u32,
+    pub stages: u32,
+}
+
+impl Tile {
+    pub fn rows(&self) -> u32 {
+        self.row_warps * 64
+    }
+    pub fn threads(&self) -> u32 {
+        self.row_warps * self.col_warps * 32
+    }
+    pub fn cols(&self, shape: &Shape) -> u32 {
+        self.col_warps * if shape.gate_up { 16 } else { 32 }
+    }
+    pub fn strips(&self, shape: &Shape) -> u32 {
+        shape.n.div_ceil(self.cols(shape))
+    }
+    fn name(&self) -> String {
+        format!("r{}w{}s{}", self.row_warps, self.col_warps, self.stages)
+    }
+    fn check(&self, shape: &Shape) -> Result<(), Refusal> {
+        shape.validate()?;
+        if !(1..=4).contains(&self.row_warps)
+            || self.col_warps == 0
+            || self.threads() > 1024
+            || !(2..=4).contains(&self.stages)
+            || shared_bytes(shape, self) > MAX_SHARED_BYTES
+        {
+            return Err(Refusal("native expert tile exceeds its CTA limits"));
+        }
+        Ok(())
+    }
+}
+
+/// Gate/up tiles measured against each other in the lab.
+pub const GATE_UP_TILES: [Tile; 3] = [
+    Tile {
+        row_warps: 2,
+        col_warps: 4,
+        stages: 3,
+    },
+    Tile {
+        row_warps: 1,
+        col_warps: 6,
+        stages: 3,
+    },
+    Tile {
+        row_warps: 2,
+        col_warps: 6,
+        stages: 3,
+    },
+];
+/// Down tiles measured against each other in the lab.
+pub const DOWN_TILES: [Tile; 2] = [
+    Tile {
+        row_warps: 2,
+        col_warps: 4,
+        stages: 3,
+    },
+    Tile {
+        row_warps: 1,
+        col_warps: 8,
+        stages: 3,
+    },
+];
+
+/// `sizeof(Shared<C, T>)`, which each compute entry asserts.
+pub fn shared_bytes(shape: &Shape, tile: &Tile) -> u32 {
+    let words = if (shape.k / 32).is_multiple_of(4) {
+        1
+    } else {
+        2
+    };
+    let weight_rows = shape.halves() * tile.cols(shape);
+    let stage = (tile.rows() * 128 + weight_rows * 64 + (tile.rows() + weight_rows) * 4 * words)
+        .next_multiple_of(16);
+    (tile.stages * stage + tile.rows() * 8 + 4).next_multiple_of(16)
+}
+
+pub fn queue_slots(shape: &Shape, tile: &Tile) -> u64 {
+    (u64::from(shape.capacity) * u64::from(shape.top_k)).div_ceil(u64::from(tile.rows()))
+        + u64::from(shape.experts)
+}
+
+/// The queue's bytes: its header and one (expert, first, rows) per tile.
+pub fn workspace_bytes(shape: &Shape, tile: &Tile) -> u64 {
+    ((QUEUE_HEADER + 3 * queue_slots(shape, tile)) * 4).next_multiple_of(256)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Pack,
+    Compute,
+}
+
+/// A compute entry's lab variant. Serving binds only [`Variant::Serving`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Variant {
+    Serving,
+    /// Drops the first 128-K chain: a negative control.
+    OmitFirst,
+    /// Gate/up only: also writes the F32 gate and up sums for the oracle.
+    Raw,
+}
+
+pub fn symbol(shape: &Shape, tile: &Tile, stage: Stage, variant: Variant) -> String {
+    format!(
+        "chop_moe_native_{}_{}_{}{}_v1",
+        shape.tag(),
+        tile.name(),
+        match stage {
+            Stage::Pack => "pack",
+            Stage::Compute => "tiles",
+        },
+        match variant {
+            Variant::Serving => "",
+            Variant::OmitFirst => "_omit_first",
+            Variant::Raw => "_raw",
+        }
+    )
+}
+
+/// The lab's single-instruction probe (`native_grouped::probe`).
+pub const PROBE: &str = "chop_moe_native_mma_probe_v1";
+
+/// The pack and compute entries; `lab` adds the lab variants.
+pub fn entries(shape: &Shape, tile: &Tile, lab: bool) -> Result<Vec<EntrySpec>, Refusal> {
+    tile.check(shape)?;
+    let c = shape.config();
+    let t = format!(
+        "chop::moe::native_grouped::Tile<{},{},{}>",
+        tile.row_warps, tile.col_warps, tile.stages
+    );
+    let dependency = "chop::ptx::griddep_launch_dependents(); chop::ptx::griddep_wait();";
+    let mut entries = vec![EntrySpec::new(
+        symbol(shape, tile, Stage::Pack, Variant::Serving),
+        vec![
+            ptr("counts", "const int"),
+            ptr("offsets", "const int"),
+            ptr("active", "const int"),
+            ptr("live", "const int"),
+            ptr("scratch", "int"),
+        ],
+        format!(
+            "{dependency} chop::moe::native_grouped::pack<{c},{t}>(counts,offsets,active,live,scratch);"
+        ),
+        32,
+        1,
+    )];
+    let mut variants = vec![Variant::Serving];
+    if lab {
+        variants.push(Variant::OmitFirst);
+        if shape.gate_up {
+            variants.push(Variant::Raw);
+        }
+    }
+    for variant in variants {
+        let mut params = vec![
+            ptr("input", "const uint8_t"),
+            ptr("weight", "const uint8_t"),
+            ptr("weight_scales", "const uint8_t"),
+            ptr("activation_scales", "const uint8_t"),
+            ptr("sorted", "const int"),
+            ptr("padded", "const int"),
+            ptr("live", "const int"),
+            ptr("scratch", "int"),
+            ptr("route_weights", "const float"),
+            ptr("output", "void"),
+        ];
+        let raw = variant == Variant::Raw;
+        if raw {
+            params.push(ptr("raw", "float"));
+        }
+        entries.push(EntrySpec::new(
+            symbol(shape, tile, Stage::Compute, variant),
+            params,
+            format!(
+                "static_assert(sizeof(chop::moe::native_grouped::Shared<{c},{t}>) == {}); \
+                 extern __shared__ __align__(16) uint8_t arena[]; {dependency} \
+                 chop::moe::native_grouped::compute<{c},{t},{},{raw}>(arena,input,weight,\
+                 weight_scales,activation_scales,sorted,padded,live,scratch,route_weights,output{});",
+                shared_bytes(shape, tile),
+                variant == Variant::OmitFirst,
+                if raw { ",raw" } else { "" }
+            ),
+            tile.threads(),
+            1,
+        ));
+    }
+    Ok(entries)
+}
+
+/// One cubin of `instances`; `lab` adds the lab variants and the probe.
+pub fn cubin_spec(
+    name: &str,
+    instances: &[(Shape, Tile)],
+    lab: bool,
+) -> Result<CubinSpec, Refusal> {
+    let mut entries = Vec::new();
+    for (shape, tile) in instances {
+        entries.extend(self::entries(shape, tile, lab)?);
+    }
+    if lab {
+        entries.push(EntrySpec::new(
+            PROBE.into(),
+            vec![
+                ptr("a", "const uint32_t"),
+                ptr("b", "const uint32_t"),
+                ptr("scales", "const uint32_t"),
+                ptr("d", "float"),
+            ],
+            "chop::moe::native_grouped::probe(a,b,scales,d);".into(),
+            32,
+            1,
+        ));
+    }
+    Ok(CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: Vec::new(),
+        headers: vec!["#include \"moe/native_grouped.cuh\"".into()],
+        defines: Vec::new(),
+        entries,
+    })
+}
+
+/// The persistent grid: as many CTAs as shared memory lets each SM hold,
+/// at most two. Extra CTAs only take later tickets.
+pub fn grid(shape: &Shape, tile: &Tile) -> u32 {
+    let per_sm = if 2 * (shared_bytes(shape, tile) + 1024) <= SM_SHARED_BYTES {
+        2
+    } else {
+        1
+    };
+    SM_COUNT * per_sm
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Buffers {
+    pub input: u64,
+    pub weights: u64,
+    pub weight_scales: u64,
+    pub activation_scales: u64,
+    pub offsets: u64,
+    pub sorted_rows: u64,
+    pub padded_rows: u64,
+    pub live_tokens: u64,
+    pub route_weights: u64,
+    pub output: u64,
+    pub counts: u64,
+    pub active: u64,
+    pub scratch: u64,
+    pub raw: u64,
+}
+
+/// The pack and compute launches of a step of `rows` tokens.
+/// Device handles of one projection. `route_weights` may be zero for down,
+/// and `raw` is read only by [`Variant::Raw`].
+pub fn launches(
+    shape: &Shape,
+    tile: &Tile,
+    rows: u32,
+    b: &Buffers,
+    variant: Variant,
+) -> Result<Vec<Launch>, Refusal> {
+    tile.check(shape)?;
+    if rows == 0 || rows > shape.capacity {
+        return Err(Refusal("native expert launch exceeds its token capacity"));
+    }
+    let required = [
+        b.input,
+        b.weights,
+        b.weight_scales,
+        b.activation_scales,
+        b.offsets,
+        b.sorted_rows,
+        b.padded_rows,
+        b.live_tokens,
+        b.output,
+        b.counts,
+        b.active,
+        b.scratch,
+    ];
+    if required.contains(&0)
+        || (shape.gate_up && b.route_weights == 0)
+        || (variant == Variant::Raw) != (b.raw != 0)
+        || (variant == Variant::Raw && !shape.gate_up)
+    {
+        return Err(Refusal("native expert launch is missing a buffer"));
+    }
+    let arguments = |handles: Vec<u64>| -> Result<ArgumentList, Refusal> {
+        let list = ArgumentList(
+            handles
+                .into_iter()
+                .map(|h| {
+                    if h == 0 {
+                        Argument::NullDevicePointer
+                    } else {
+                        Argument::DeviceBuffer(h)
+                    }
+                })
+                .collect(),
+        );
+        list.validate()?;
+        Ok(list)
+    };
+    let plan = |grid: u32, threads: u32, shared: u32| -> Result<LaunchPlan, Refusal> {
+        let plan = LaunchPlan {
+            grid: [grid, 1, 1],
+            block: [threads, 1, 1],
+            dynamic_shared_bytes: shared,
+            workspace_bytes: workspace_bytes(shape, tile),
+            cluster: [1, 1, 1],
+            pdl: true,
+        };
+        plan.validate()?;
+        Ok(plan)
+    };
+    Ok(vec![
+        Launch {
+            symbol: symbol(shape, tile, Stage::Pack, Variant::Serving),
+            rows,
+            plan: plan(1, 32, 0)?,
+            arguments: arguments(vec![
+                b.counts,
+                b.offsets,
+                b.active,
+                b.live_tokens,
+                b.scratch,
+            ])?,
+            collective: false,
+            persistent: false,
+        },
+        Launch {
+            symbol: symbol(shape, tile, Stage::Compute, variant),
+            rows,
+            plan: plan(grid(shape, tile), tile.threads(), shared_bytes(shape, tile))?,
+            arguments: arguments(
+                [
+                    b.input,
+                    b.weights,
+                    b.weight_scales,
+                    b.activation_scales,
+                    b.sorted_rows,
+                    b.padded_rows,
+                    b.live_tokens,
+                    b.scratch,
+                    b.route_weights,
+                    b.output,
+                ]
+                .into_iter()
+                .chain((variant == Variant::Raw).then_some(b.raw))
+                .collect(),
+            )?,
+            collective: false,
+            persistent: false,
+        },
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flash(gate_up: bool) -> Shape {
+        if gate_up {
+            Shape::new(
+                384,
+                6,
+                5120,
+                576,
+                true,
+                8192,
+                Some((0x40e0_0000, 0x40e0_0000)),
+            )
+            .unwrap()
+        } else {
+            Shape::new(384, 6, 576, 5120, false, 8192, None).unwrap()
+        }
+    }
+
+    #[test]
+    fn tiles_fit_shared_memory_and_cover_the_columns() {
+        for (shape, tiles) in [
+            (flash(true), &GATE_UP_TILES[..]),
+            (flash(false), &DOWN_TILES[..]),
+        ] {
+            for tile in tiles {
+                tile.check(&shape).unwrap();
+                assert!(shared_bytes(&shape, tile) <= MAX_SHARED_BYTES);
+                assert!(tile.strips(&shape) * tile.cols(&shape) >= shape.n);
+                let lab = if shape.gate_up { 4 } else { 3 };
+                assert_eq!(entries(&shape, tile, true).unwrap().len(), lab);
+                assert_eq!(entries(&shape, tile, false).unwrap().len(), 2);
+            }
+        }
+        // Gate/up's 576 columns split evenly at 64 and 96; down's 5120 at 128 and 256.
+        assert_eq!(GATE_UP_TILES.map(|t| t.strips(&flash(true))), [9, 6, 6]);
+        assert_eq!(DOWN_TILES.map(|t| t.strips(&flash(false))), [40, 20]);
+        // Down's 18 scale bytes per row take two words when a row is unaligned.
+        assert_eq!(
+            shared_bytes(&flash(false), &DOWN_TILES[0]),
+            3 * (128 * 128 + 128 * 64 + 256 * 8) + 1024 + 16
+        );
+        assert_eq!(
+            shared_bytes(&flash(true), &GATE_UP_TILES[0]),
+            3 * (128 * 128 + 128 * 64 + 256 * 4) + 1024 + 16
+        );
+    }
+
+    #[test]
+    fn launches_plan_the_queue_and_refuse_missing_buffers() {
+        let b = Buffers {
+            input: 1,
+            weights: 2,
+            weight_scales: 3,
+            activation_scales: 4,
+            offsets: 5,
+            sorted_rows: 6,
+            padded_rows: 7,
+            live_tokens: 8,
+            route_weights: 9,
+            output: 10,
+            counts: 11,
+            active: 12,
+            scratch: 13,
+            raw: 0,
+        };
+        let shape = flash(true);
+        let tile = GATE_UP_TILES[0];
+        let ops = launches(&shape, &tile, 8192, &b, Variant::Serving).unwrap();
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].plan.grid, [1, 1, 1]);
+        assert_eq!(ops[1].plan.block, [256, 1, 1]);
+        assert_eq!(ops[1].plan.grid, [SM_COUNT, 1, 1]);
+        assert_eq!(
+            ops[1].plan.dynamic_shared_bytes,
+            shared_bytes(&shape, &tile)
+        );
+        // 8192 * 6 / 128 full tiles plus at most one tail per expert.
+        assert_eq!(queue_slots(&shape, &tile), 384 + 384);
+        assert_eq!(
+            workspace_bytes(&shape, &tile),
+            ((4 + 3 * 768) * 4_u64).next_multiple_of(256)
+        );
+        assert!(ops[1].symbol.ends_with("_tiles_v1"));
+        assert!(
+            launches(&shape, &tile, 8192, &b, Variant::OmitFirst).unwrap()[1]
+                .symbol
+                .ends_with("_omit_first_v1")
+        );
+        // The raw variant needs its buffer and an extra argument, and only gate/up has it.
+        assert!(launches(&shape, &tile, 8192, &b, Variant::Raw).is_err());
+        let raw = Buffers { raw: 14, ..b };
+        assert!(launches(&shape, &tile, 8192, &raw, Variant::Serving).is_err());
+        assert_eq!(
+            launches(&shape, &tile, 8192, &raw, Variant::Raw).unwrap()[1]
+                .arguments
+                .0
+                .len(),
+            11
+        );
+        assert!(launches(&flash(false), &DOWN_TILES[0], 8192, &raw, Variant::Raw).is_err());
+        assert!(launches(&shape, &tile, 0, &b, Variant::Serving).is_err());
+        assert!(launches(&shape, &tile, 8193, &b, Variant::Serving).is_err());
+        for field in 0..13 {
+            let mut bad = b;
+            let slot = match field {
+                0 => &mut bad.input,
+                1 => &mut bad.weights,
+                2 => &mut bad.weight_scales,
+                3 => &mut bad.activation_scales,
+                4 => &mut bad.offsets,
+                5 => &mut bad.sorted_rows,
+                6 => &mut bad.padded_rows,
+                7 => &mut bad.live_tokens,
+                8 => &mut bad.route_weights,
+                9 => &mut bad.output,
+                10 => &mut bad.counts,
+                11 => &mut bad.active,
+                _ => &mut bad.scratch,
+            };
+            *slot = 0;
+            assert!(launches(&shape, &tile, 8192, &bad, Variant::Serving).is_err());
+            // Down reads no route weights.
+            assert_eq!(
+                launches(&flash(false), &DOWN_TILES[0], 8192, &bad, Variant::Serving).is_ok(),
+                field == 8
+            );
+        }
+    }
+
+    #[test]
+    fn shapes_refuse_their_unsupported_domain() {
+        assert!(Shape::new(384, 6, 5120, 576, true, 8192, None).is_ok());
+        assert!(Shape::new(384, 6, 5136, 576, true, 8192, None).is_err());
+        assert!(Shape::new(384, 6, 5120, 584, true, 8192, None).is_err());
+        assert!(Shape::new(384, 6, 576, 5120, false, 8192, Some((1, 1))).is_err());
+        assert!(Shape::new(0, 6, 576, 5120, false, 8192, None).is_err());
+        assert!(Shape::new(384, 0, 576, 5120, false, 8192, None).is_err());
+        let tile = Tile {
+            row_warps: 4,
+            col_warps: 8,
+            stages: 4,
+        };
+        assert!(tile.check(&flash(true)).is_err());
+        assert_ne!(
+            symbol(
+                &flash(true),
+                &GATE_UP_TILES[0],
+                Stage::Compute,
+                Variant::Serving
+            ),
+            symbol(
+                &flash(true),
+                &GATE_UP_TILES[1],
+                Stage::Compute,
+                Variant::Serving
+            )
+        );
+    }
+}

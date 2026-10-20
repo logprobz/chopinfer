@@ -1,0 +1,366 @@
+#pragma once
+
+#include "chained_experts.cuh"
+#include "native_grouped_layout.h"
+
+// Native block-scaled expert tiles for prefill: MXFP4 weights by the
+// trained E4M3/32 ceil-UE8M0 activations through mma.sync kind::mxf8f6f4
+// block_scale, with no decode to BF16. This is a within-bound path, not a
+// bitwise one: every product is exact, each 128-K chain starts from +0 and
+// is added into the F32 accumulator in ascending K order as in the exact
+// BF16 engine, and only the instruction's own reduction inside a 32-K
+// group differs. Admission traps on the codes and scales the exact engine
+// traps on, and the gate/up epilogue is the exact engine's.
+//
+// One launch packs the active experts into row tiles; a persistent launch
+// takes (tile, column strip) items from an atomic ticket. Which CTA runs an
+// item never changes its arithmetic.
+namespace chop::moe::native_grouped {
+namespace lay = layout;
+
+template<int Experts, int TopK, int K, int N, int Halves, int Capacity, class Clamp>
+struct Config {
+  static constexpr int experts = Experts, top_k = TopK, k = K, n = N, halves = Halves;
+  static constexpr int capacity = Capacity;
+  static constexpr bool gate_up = Halves == 2;
+  using clamp = Clamp;
+  static constexpr int weight_rows = Halves * N;  // gate rows, then up rows
+  static constexpr int groups = K / lay::GroupK;   // scale bytes per row
+  static constexpr int blocks = (K + lay::StageK - 1) / lay::StageK;
+  static constexpr int tail_groups = (K % lay::StageK) / lay::GroupK;
+  // Rows whose scale bytes do not start on a word take two words.
+  static constexpr int scale_words = groups % 4 ? 2 : 1;
+  static_assert(K > 0 && K % lay::GroupK == 0 && N > 0 && N % 16 == 0);
+  static_assert(Halves == 1 || Halves == 2);
+  static_assert(gate_up || !Clamp::enabled, "the clamp belongs to gate/up");
+  static_assert(int64_t(Capacity) * TopK < (int64_t(1) << 31));
+};
+
+template<int RowWarps, int ColWarps, int Stages>
+struct Tile {
+  static constexpr int row_warps = RowWarps, col_warps = ColWarps, stages = Stages;
+  static constexpr int fragments = 8;  // routed fragments of eight rows per warp
+  static constexpr int rows = RowWarps * fragments * 8;
+  static constexpr int threads = RowWarps * ColWarps * 32;
+  static_assert(RowWarps >= 1 && ColWarps >= 1 && Stages >= 2 && Stages <= 4);
+};
+
+// Gate/up warps own 16 output columns (one gate and one up fragment),
+// down warps 32 (two fragments). Either way a warp holds two A fragments.
+template<class C> constexpr int warp_cols = C::gate_up ? 16 : 32;
+template<class C, class T> constexpr int tile_cols = T::col_warps * warp_cols<C>;
+template<class C, class T> constexpr int tile_weight_rows = C::halves * tile_cols<C, T>;
+template<class C, class T> constexpr int strips = (C::n + tile_cols<C, T> - 1) / tile_cols<C, T>;
+
+// table[0] tiles, table[1] the item ticket, then (expert, first, rows).
+template<class C, class T> struct Queue {
+  static constexpr int header = 4;
+  static constexpr int slots = (C::capacity * C::top_k + T::rows - 1) / T::rows + C::experts;
+  static constexpr int words = header + 3 * slots;
+};
+
+template<class C, class T> struct Shared {
+  struct alignas(16) Stage {
+    uint8_t act[T::rows * lay::ActRowBytes];
+    uint8_t weight[tile_weight_rows<C, T> * lay::WeightRowBytes];
+    uint32_t act_scale[T::rows][C::scale_words];
+    uint32_t weight_scale[tile_weight_rows<C, T>][C::scale_words];
+  } stage[T::stages];
+  int routes[T::rows];
+  int sources[T::rows];
+  int item;
+};
+
+__device__ __forceinline__ void copy16(void* dst, const void* src, bool valid) {
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;"
+    :: "r"(ptx::shared_address(dst)), "l"(src), "r"(valid ? 16 : 0) : "memory");
+}
+// The aligned word `word` of a row's stage scales; bytes past `total`
+// are zero filled.
+__device__ __forceinline__ void copy_scale(uint32_t* dst, const uint8_t* scales,
+                                         uint64_t at, int word, uint64_t total, bool valid) {
+  const uint64_t aligned = (at & ~uint64_t(3)) + 4 * uint64_t(word);
+  const int size = valid && aligned < total ? int(min(uint64_t(4), total - aligned)) : 0;
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;"
+    :: "r"(ptx::shared_address(dst)), "l"(scales + (size ? aligned : 0)), "r"(size) : "memory");
+}
+__device__ __forceinline__ void commit() { asm volatile("cp.async.commit_group;" ::: "memory"); }
+template<int Pending> __device__ __forceinline__ void wait() {
+  asm volatile("cp.async.wait_group %0;" :: "n"(Pending) : "memory");
+}
+__device__ __forceinline__ uint32_t lds32(const uint8_t* p) {
+  return *reinterpret_cast<const uint32_t*>(p);
+}
+__device__ __forceinline__ uint2 lds64(const uint8_t* p) {
+  return *reinterpret_cast<const uint2*>(p);
+}
+
+// The exact engine's MXFP4 admission (streamed::check) over eight codes.
+__device__ __forceinline__ void check_weights(uint32_t codes, uint32_t scale) {
+  if (scale == 255) __trap();
+  if (scale > 252) {
+    const uint32_t bad = scale == 254 ? codes : codes & (codes << 1);
+    if (bad & 0x44444444u) __trap();
+  }
+}
+// The exact engine's E4M3 admission: NaN codes always, and the exact BF16
+// product check at scales outside 3..246.
+__device__ __forceinline__ void check_activations(uint2 codes, uint32_t scale) {
+  if (scale < 3 || scale > 246) {
+    (void)chained::scaled_e4m3x2(uint16_t(codes.x), uint8_t(scale));
+    (void)chained::scaled_e4m3x2(uint16_t(codes.x >> 16), uint8_t(scale));
+    (void)chained::scaled_e4m3x2(uint16_t(codes.y), uint8_t(scale));
+    (void)chained::scaled_e4m3x2(uint16_t(codes.y >> 16), uint8_t(scale));
+  }
+}
+
+// One warp's packed active experts. A warp prefix sum keeps expert order
+// without atomic arrival order; the ticket restarts at zero.
+template<class C, class T>
+__device__ void pack(const int* counts, const int* offsets, const int* active,
+                     const int* live_tokens, int* table) {
+  using Q = Queue<C, T>;
+  const int lane = threadIdx.x, live = *live_tokens, total = active[0];
+  if (blockDim.x != 32 || gridDim.x != 1 || live < 0 || live > C::capacity ||
+      total < 0 || total > C::experts || total > live * C::top_k) __trap();
+  int carry = 0;
+  for (int base = 0; base < total; base += 32) {
+    const bool valid = base + lane < total;
+    const int expert = valid ? active[base + lane + 1] : 0;
+    if (expert < 0 || expert >= C::experts) __trap();
+    const int count = valid ? counts[expert] : 0, first = valid ? offsets[expert] : 0;
+    if (valid && (count <= 0 || count > live || first < 0 || first % 64)) __trap();
+    const int tiles = valid ? lay::tiles(count, T::rows) : 0;
+    int prefix = tiles;
+#pragma unroll
+    for (int d = 1; d < 32; d *= 2) {
+      const int previous = __shfl_up_sync(0xffffffffu, prefix, d);
+      if (lane >= d) prefix += previous;
+    }
+    const int begin = carry + prefix - tiles;
+    if (begin + tiles > Q::slots) __trap();
+    for (int tile = 0; tile < tiles; ++tile) {
+      const int at = Q::header + 3 * (begin + tile);
+      table[at] = expert;
+      table[at + 1] = first + tile * T::rows;
+      table[at + 2] = min(T::rows, count - tile * T::rows);
+    }
+    carry += __shfl_sync(0xffffffffu, prefix, 31);
+  }
+  if (lane < Q::header) table[lane] = lane == 0 ? carry : 0;
+}
+
+template<class C, class T>
+__device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int expert,
+    int column, uint64_t act_scale_bytes, const uint8_t* input, const uint8_t* weight,
+    const uint8_t* weight_scales, const uint8_t* activation_scales) {
+  constexpr int WR = tile_weight_rows<C, T>, TC = tile_cols<C, T>;
+  auto& st = s.stage[slot];
+  const int k0 = block * lay::StageK;
+  for (int v = threadIdx.x; v < T::rows * 8; v += T::threads) {
+    const int r = v >> 3, c = v & 7, source = s.sources[r], k = k0 + c * 16;
+    const bool valid = source >= 0 && k < C::k;
+    copy16(st.act + lay::act_store(r, c),
+           input + (valid ? uint64_t(source) * C::k + k : 0), valid);
+  }
+  for (int v = threadIdx.x; v < WR * 4; v += T::threads) {
+    const int w = v >> 2, q = v & 3, col = column + w % TC, byte = k0 / 2 + q * 16;
+    const bool valid = col < C::n && byte < C::k / 2;
+    const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
+    copy16(st.weight + lay::weight_store(w, q),
+           weight + (valid ? row * (C::k / 2) + byte : 0), valid);
+  }
+  constexpr int SW = C::scale_words;
+  constexpr uint64_t weight_scale_bytes = uint64_t(C::experts) * C::weight_rows * C::groups;
+  for (int v = threadIdx.x; v < (T::rows + WR) * SW; v += T::threads) {
+    const int r = v / SW, word = v % SW;
+    if (r < T::rows) {
+      const int source = s.sources[r];
+      const uint64_t at = uint64_t(source < 0 ? 0 : source) * C::groups + k0 / lay::GroupK;
+      copy_scale(&st.act_scale[r][word], activation_scales, at, word, act_scale_bytes, source >= 0);
+    } else {
+      const int w = r - T::rows, col = column + w % TC;
+      const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
+      copy_scale(&st.weight_scale[w][word], weight_scales, row * C::groups + k0 / lay::GroupK,
+                 word, weight_scale_bytes, col < C::n);
+    }
+  }
+}
+
+// The row's four group scales of the stage, from its copied words.
+template<class C, int Words>
+__device__ __forceinline__ uint32_t stage_scales(const uint32_t (&words)[Words], uint64_t row) {
+  if constexpr (Words == 1) return words[0];
+  else return lay::scale_word(words[0], words[1], int((row * C::groups) & 3));
+}
+
+// One 128-K stage of `Groups` 32-K groups: per routed fragment, a chain
+// from +0 over the groups, then one ordered F32 add into the accumulator.
+template<class C, class T, int Groups, bool Omit>
+__device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int expert, int column,
+    int count, ptx::D4 (&sum)[2][T::fragments]) {
+  constexpr int TC = tile_cols<C, T>;
+  const auto& st = s.stage[slot];
+  const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, g = lane >> 2, t = lane & 3;
+  const int row_base = (warp / T::col_warps) * T::fragments * 8, col_warp = warp % T::col_warps;
+  ptx::A4 a[2][Groups];
+  uint32_t scale_a[2][Groups];
+#pragma unroll
+  for (int cf = 0; cf < 2; ++cf) {
+    const int w = C::gate_up ? cf * TC + col_warp * 16 : col_warp * 32 + cf * 16;
+    const int col = column + (C::gate_up ? col_warp * 16 : col_warp * 32 + cf * 16);
+    const uint64_t row = uint64_t(expert) * C::weight_rows + (C::gate_up ? cf * C::n : 0) + col;
+    const uint32_t s0 = stage_scales<C>(st.weight_scale[w + g], row + g);
+    const uint32_t s1 = stage_scales<C>(st.weight_scale[w + g + 8], row + g + 8);
+#pragma unroll
+    for (int q = 0; q < Groups; ++q) {
+      const uint32_t lo = lds32(st.weight + lay::weight_load(w + g, q, t));
+      const uint32_t hi = lds32(st.weight + lay::weight_load(w + g + 8, q, t));
+      check_weights(lo, (s0 >> (8 * q)) & 255);
+      check_weights(hi, (s1 >> (8 * q)) & 255);
+      lay::expand_e2m1x8(lo, a[cf][q].v[0], a[cf][q].v[2]);
+      lay::expand_e2m1x8(hi, a[cf][q].v[1], a[cf][q].v[3]);
+      scale_a[cf][q] = ((t & 1 ? s1 : s0) >> (8 * q)) & 255;
+    }
+  }
+  uint32_t nan = 0;
+#pragma unroll
+  for (int f = 0; f < T::fragments; ++f) {
+    if (row_base + f * 8 >= count) continue;  // warp-uniform: only padding remains
+    const int r = row_base + f * 8 + g, source = s.sources[r];
+    const uint32_t sb = stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source));
+    ptx::D4 chain[2] = {};
+#pragma unroll
+    for (int q = 0; q < Groups; ++q) {
+      const uint2 codes = lds64(st.act + lay::act_load(r, q, t));
+      const uint32_t scale_b = (sb >> (8 * q)) & 255;
+      nan |= lay::e4m3_nan(codes.x) | lay::e4m3_nan(codes.y);
+      if (source >= 0) check_activations(codes, scale_b);
+      const ptx::B2 b{{codes.x, codes.y}};
+#pragma unroll
+      for (int cf = 0; cf < 2; ++cf)
+        ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
+            chain[cf], a[cf][q], b, scale_a[cf][q], scale_b);
+    }
+    if constexpr (!Omit) {
+#pragma unroll
+      for (int cf = 0; cf < 2; ++cf)
+#pragma unroll
+        for (int i = 0; i < 4; ++i) sum[cf][f].v[i] = __fadd_rn(sum[cf][f].v[i], chain[cf].v[i]);
+    }
+  }
+  if (nan) __trap();
+}
+
+// The persistent tile loop. Lab-only variants: `Omit` drops the first
+// 128-K chain, a negative control the oracle checks must reject, and
+// `Raw` also writes gate/up's F32 gate and up sums to `raw` (route rows of
+// n gate then n up columns) for the oracle.
+template<class C, class T, bool Omit = false, bool Raw = false>
+__device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight,
+    const uint8_t* weight_scales, const uint8_t* activation_scales, const int* sorted_rows,
+    const int* padded_rows, const int* live_tokens, int* table, const float* route_weights,
+    void* output, float* raw = nullptr) {
+  static_assert(!Raw || C::gate_up, "down's output is already its F32 sum");
+  using Q = Queue<C, T>;
+  constexpr int S = T::stages, TC = tile_cols<C, T>, Strips = strips<C, T>;
+  auto& s = *static_cast<Shared<C, T>*>(arena);
+  const int live = *live_tokens, padded = *padded_rows, tiles = table[0];
+  if (blockDim.x != T::threads || live < 0 || live > C::capacity || tiles < 0 ||
+      tiles > Q::slots || padded < 0 || padded % 64 ||
+      padded > C::capacity * C::top_k + C::experts * 64) __trap();
+  const uint64_t act_scale_bytes = uint64_t(live) * (C::gate_up ? 1 : C::top_k) * C::groups;
+  const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, g = lane >> 2, t = lane & 3;
+  const int row_base = (warp / T::col_warps) * T::fragments * 8, col_warp = warp % T::col_warps;
+  const int items = tiles * Strips;
+  for (;;) {
+    __syncthreads();  // the previous item's stages and routes are consumed
+    if (threadIdx.x == 0) s.item = atomicAdd(table + 1, 1);
+    __syncthreads();
+    const int item = s.item;
+    if (item >= items) break;
+    const int column = (item % Strips) * TC, at = Q::header + 3 * (item / Strips);
+    const int expert = table[at], first = table[at + 1], count = table[at + 2];
+    if (expert < 0 || expert >= C::experts || first < 0 || first % 64 || count <= 0 ||
+        count > T::rows || count > live * C::top_k || first + count > padded) __trap();
+    for (int r = threadIdx.x; r < T::rows; r += T::threads) {
+      const int route = r < count ? sorted_rows[first + r] : -1;
+      if (r < count && (route < 0 || route >= live * C::top_k)) __trap();
+      s.routes[r] = route;
+      s.sources[r] = route < 0 ? -1 : (C::gate_up ? route / C::top_k : route);
+    }
+    __syncthreads();
+    ptx::D4 sum[2][T::fragments] = {};
+#pragma unroll
+    for (int b = 0; b < S - 1; ++b) {
+      if (b < C::blocks)
+        issue(s, b, b, expert, column, act_scale_bytes, input, weight, weight_scales,
+              activation_scales);
+      commit();
+    }
+#pragma unroll 1
+    for (int b = 0; b < C::blocks; ++b) {
+      wait<S - 2>();
+      __syncthreads();
+      // The slot of block b - 1, which every thread has finished reading.
+      if (b + S - 1 < C::blocks)
+        issue(s, (b + S - 1) % S, b + S - 1, expert, column, act_scale_bytes, input, weight,
+              weight_scales, activation_scales);
+      commit();  // empty groups keep wait_group's count exact at the tail
+      const bool omit = Omit && b == 0;
+      if (C::tail_groups == 0 || b + 1 < C::blocks) {
+        if (omit) block<C, T, 4, true>(s, b % S, expert, column, count, sum);
+        else block<C, T, 4, false>(s, b % S, expert, column, count, sum);
+      } else {
+        constexpr int G = C::tail_groups == 0 ? 4 : C::tail_groups;
+        if (omit) block<C, T, G, true>(s, b % S, expert, column, count, sum);
+        else block<C, T, G, false>(s, b % S, expert, column, count, sum);
+      }
+    }
+    wait<0>();
+#pragma unroll
+    for (int f = 0; f < T::fragments; ++f) {
+      if (row_base + f * 8 >= count) continue;
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        const int route = s.routes[row_base + f * 8 + lay::d_route(t, i)];
+        if (route < 0) continue;
+        if constexpr (C::gate_up) {
+          const int col = column + col_warp * 16 + lay::d_weight_row(g, i);
+          if (col >= C::n) continue;
+          static_cast<uint16_t*>(output)[uint64_t(route) * C::n + col] = convert::bf16_from_f32(
+              chained::before_down<typename C::clamp>(sum[0][f].v[i], sum[1][f].v[i],
+                                                       route_weights[route]));
+          if constexpr (Raw) {
+            raw[uint64_t(route) * 2 * C::n + col] = sum[0][f].v[i];
+            raw[uint64_t(route) * 2 * C::n + C::n + col] = sum[1][f].v[i];
+          }
+        } else {
+#pragma unroll
+          for (int cf = 0; cf < 2; ++cf) {
+            const int col = column + col_warp * 32 + cf * 16 + lay::d_weight_row(g, i);
+            if (col < C::n)
+              static_cast<float*>(output)[uint64_t(route) * C::n + col] = sum[cf][f].v[i];
+          }
+        }
+      }
+    }
+  }
+}
+
+// Lab probe of one instruction from +0: lane l passes A registers
+// a[4l..4l+3], B registers b[2l..2l+1] and scales scales[2l] (A) and
+// scales[2l+1] (B), and writes its accumulators to d[4l..4l+3].
+__device__ void probe(const uint32_t* a, const uint32_t* b, const uint32_t* scales, float* d) {
+  const int lane = threadIdx.x;
+  if (blockDim.x != 32 || gridDim.x != 1) __trap();
+  const ptx::A4 af{{a[4 * lane], a[4 * lane + 1], a[4 * lane + 2], a[4 * lane + 3]}};
+  const ptx::B2 bf{{b[2 * lane], b[2 * lane + 1]}};
+  ptx::D4 acc{};
+  ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
+      acc, af, bf, scales[2 * lane], scales[2 * lane + 1]);
+#pragma unroll
+  for (int i = 0; i < 4; ++i) d[4 * lane + i] = acc.v[i];
+}
+
+} // namespace chop::moe::native_grouped

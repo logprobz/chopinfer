@@ -175,11 +175,24 @@ fn reference(
             state: None,
         });
     }
+    prefill_reference(a, base, b, rows)
+}
+fn prefill_reference(
+    a: &mut Arena<'_>,
+    base: &mxfp8_fold::Entry,
+    b: &Buffers<View>,
+    rows: u32,
+) -> LabResult<Calls> {
+    let backend = backend();
     let mut q = base.query;
     q.m_capacity = 8192;
-    let op = backend
-        .mxfp8_prefill_gemm(&q, Need::rows(rows))
-        .map_err(|e| e.to_string())?;
+    // DenseOps::project keeps the general fold below 128 prefill rows.
+    let op = if rows < 128 {
+        backend.mxfp8_fold_gemm(&q, Need::rows(rows))
+    } else {
+        backend.mxfp8_prefill_gemm(&q, Need::rows(rows))
+    }
+    .map_err(|e| e.to_string())?;
     let work = a.filled(op.info().workspace.max(4), 0)?;
     Ok(Calls {
         init: vec![],
@@ -552,4 +565,40 @@ fn cpu_catalog() {
         "FOLD_CORE_CATALOG {}",
         json!({"family":family::FAMILY,"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans})
     );
+}
+
+#[test]
+fn prefill_reference_keeps_small_rows_on_the_served_fold() {
+    // Exercise the GPU pair's prefill builder without opening CUDA.
+    for base in family::bases() {
+        for rows in [64, 65, 127, 128, 129, 192] {
+            let mut arena = Arena::new(None);
+            let input = data::empty(&base, rows);
+            let b = common(&mut arena, &base, rows, &input).unwrap();
+            let actual = prefill_reference(&mut arena, &base, &b, rows).unwrap();
+            let mut query = base.query;
+            query.m_capacity = 8192;
+            let op = if rows < 128 {
+                backend().mxfp8_fold_gemm(&query, Need::rows(rows))
+            } else {
+                backend().mxfp8_prefill_gemm(&query, Need::rows(rows))
+            }
+            .unwrap();
+            let symbols: Vec<_> = actual.run.iter().map(|call| &call.symbol).collect();
+            assert!(!symbols.is_empty());
+            assert!(
+                symbols
+                    .iter()
+                    .all(|symbol| op.info().symbols.iter().any(|(s, _)| s == *symbol))
+            );
+            assert_eq!(
+                actual
+                    .run
+                    .iter()
+                    .any(|call| call.symbol.contains("_prefill_")
+                        || call.symbol.contains("_compact_")),
+                rows >= 128
+            );
+        }
+    }
 }

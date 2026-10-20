@@ -38,6 +38,7 @@ mod prefill_cache;
 mod prefill_cache_capacity;
 mod prefill_dma;
 mod prefill_gate_journal;
+mod prefill_matrix;
 mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
@@ -986,6 +987,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// releases, and removes four shared-memory configures: 1632 lines.
 /// The resident small gate adds one module, two resolves and three releases
 /// per TP4 rank; no lifecycle launch or allocation changes.
+/// Qualified prefill matrix tiles add one module, 108 resolves, nine
+/// shared-memory configurations and 109 releases per TP4 rank. This
+/// short-row lifecycle keeps every allocation, launch and dependency.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

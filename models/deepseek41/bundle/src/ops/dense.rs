@@ -746,13 +746,16 @@ mod tests {
                             }))
                     );
                 } else if phase.prefill() && phase.rows() >= 128 {
+                    let matrix = (shape.ranks() == 4)
+                        .then(|| crate::sm120::prefill_matrix::choice(q, phase.rows()))
+                        .flatten();
                     let split =
                         crate::sm120::mxfp8_fold::prefill_tail_policy(q).splits(phase.rows());
                     let compact =
                         crate::sm120::mxfp8_fold::compact::stages(&FLASH, q, phase.rows());
                     assert_eq!(
                         calls.len(),
-                        if compact.is_some() {
+                        if matrix.is_some() || compact.is_some() {
                             2
                         } else if split {
                             3
@@ -761,7 +764,14 @@ mod tests {
                         }
                     );
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
-                    if let Some(stages) = compact {
+                    if let Some((tile, stages)) = matrix {
+                        assert!(
+                            calls[1]
+                                .launch
+                                .symbol
+                                .ends_with(&format!("_matrix_m{tile}_n128_s{stages}_v1"))
+                        );
+                    } else if let Some(stages) = compact {
                         let tile = crate::sm120::mxfp8_fold::compact::tile(phase.rows());
                         assert!(
                             calls[1]
@@ -777,7 +787,7 @@ mod tests {
                         }));
                     }
                     assert_eq!(calls[1].launch.plan.grid[0], q.n.div_ceil(128));
-                    if split && compact.is_none() {
+                    if split && compact.is_none() && matrix.is_none() {
                         assert!(calls[2].launch.symbol.ends_with("_split_tail_v1"));
                         assert_eq!(calls[2].launch.plan.grid[0], q.n.div_ceil(32));
                     }

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use storage::LockedBytes;
 
 const SHARDS: usize = 64;
-const WAYS: usize = 4;
+const WAYS: usize = 8;
 const ENTRY_META: usize = 24; // Row tag, last use and valid-plane mask, all U64.
 const HEADER_BYTES: usize = 64 * 1024;
 const MAX_PLANES: usize = 64;

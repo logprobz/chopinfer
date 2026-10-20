@@ -99,9 +99,9 @@ fn repeated_misses_evict_but_never_mix_rows() {
     let bucket = cache.bucket(0);
     let collisions = (0..4000)
         .filter(|&r| cache.bucket(r) == bucket)
-        .take(8)
+        .take(WAYS + 4)
         .collect::<Vec<_>>();
-    assert_eq!(collisions.len(), 8);
+    assert_eq!(collisions.len(), WAYS + 4);
     for _ in 0..3 {
         for &row in &collisions {
             copy(&mapping, 264, row, 0, 264);

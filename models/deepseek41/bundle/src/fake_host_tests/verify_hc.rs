@@ -13,6 +13,8 @@ use super::*;
 // The resident small gate replaces those 160 launches' symbol and grid_x
 // (1128 to 1504) with identical operands. Its module renumbers buffer, stream,
 // event and graph handles at every width; no other line changes.
+// The prefill matrix module changes resource IDs only in these verify
+// bodies. Full creation histories and typed handles are audited separately.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0xdc91ad4ed589171e)),
     (8, (8992, 0x87e217aaf14ffd6d)),
@@ -66,6 +68,11 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     &dir,
                     &format!("verify.tp4.r{rows}.{:?}.journal", kv.storage),
                 );
+                std::fs::write(
+                    dir.join(format!("verify.tp4.r{rows}.{:?}.journal.full", kv.storage)),
+                    host.device.journal.borrow().join("\n"),
+                )
+                .unwrap();
             }
             let expected = JOURNALS.iter().find(|(r, _)| *r == rows).unwrap().1;
             if let Err(error) = bundle_runtime::fake_host::check_journal(

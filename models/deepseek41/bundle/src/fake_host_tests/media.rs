@@ -354,6 +354,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The full journal audit preserves every other operation after handle mapping.
 /// The resident small gate adds one module, two resolves and three releases
 /// per TP4 rank; no launch or allocation changes.
+/// Prefill matrix tiles add the same TP4 module resources as the text
+/// lifecycle. Every image allocation, launch and dependency is retained.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
     (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),

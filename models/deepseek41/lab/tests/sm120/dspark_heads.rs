@@ -246,6 +246,20 @@ fn head_cpu_markov_checks_spans_aliases_and_all_vocab_shards() {
         assert!(launch[0].plan.pdl);
         assert_eq!(launch[0].symbol, crate::markov_tiled::SYMBOL);
         assert_eq!(launch[0].plan.grid, [vocab.div_ceil(128), 1, 1]);
+        // One row reads the weights once either way; the per-row step is faster.
+        let single = prepared.launches(&b, View::EMPTY, Counts::rows(1)).unwrap();
+        assert_eq!(single[0].symbol, MARKOV);
+        assert_eq!(single[0].plan.grid, [vocab.div_ceil(128), 1, 1]);
+        assert_eq!(single[0].arguments, launch[0].arguments);
+        let two = prepared.launches(&b, View::EMPTY, Counts::rows(2)).unwrap();
+        assert_eq!(two[0].symbol, crate::markov_tiled::SYMBOL);
+        let symbols: Vec<_> = prepared
+            .info()
+            .symbols
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .collect();
+        assert_eq!(symbols, [crate::markov_tiled::SYMBOL, MARKOV]);
         let alias = MarkovStepBuffers {
             output: b.base,
             ..b

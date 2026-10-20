@@ -1,7 +1,7 @@
 //! Own-op preparation for the model's Markov and confidence heads.
 
 use super::confidence_parallel;
-use super::dspark_entries::THREADS;
+use super::dspark_entries::{MARKOV, THREADS};
 use super::markov_tiled;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
@@ -15,6 +15,11 @@ use model_deepseek41_contract::own_ops::dspark::{
 // Both heads launch through `launch`, which uses the shared block size.
 const _: () = assert!(markov_tiled::THREADS == THREADS);
 
+/// The tiled Markov step stages each weight tile once for up to eight rows;
+/// a single row reads the weights faster through the per-row step. Both
+/// compute every logit with the same chain, so the choice keeps the bits.
+const TILED_MIN_ROWS: u32 = 2;
+
 pub fn markov(
     geometry: &Geometry,
     op: &MarkovStep,
@@ -26,7 +31,8 @@ pub fn markov(
             "sm120 DSpark Markov rank or grid capacity is unsupported".into(),
         ));
     }
-    let info = info(markov_tiled::SYMBOL, MARKOV_CONTRACT, need)?;
+    let mut info = info(markov_tiled::SYMBOL, MARKOV_CONTRACT, need)?;
+    info.symbols.push((MARKOV.into(), 0));
     Ok(Box::new(Markov {
         op: *op,
         capacity: need.capacity,
@@ -131,10 +137,18 @@ impl PreparedOp<MarkovStepBuffers<View>> for Markov {
         b.output.covers(bytes)?;
         b.live_rows.covers(4)?;
         distinct(b.output, &[b.embedding, b.weight, b.live_rows])?;
+        let (symbol, grid) = if rows >= TILED_MIN_ROWS {
+            (
+                markov_tiled::SYMBOL,
+                [op.vocab_rows.div_ceil(THREADS), 1, 1],
+            )
+        } else {
+            (MARKOV, [op.vocab_rows.div_ceil(THREADS), rows, 1])
+        };
         Ok(launch(
-            markov_tiled::SYMBOL,
+            symbol,
             rows,
-            [op.vocab_rows.div_ceil(markov_tiled::THREADS), 1, 1],
+            grid,
             vec![
                 Argument::DeviceBuffer(b.embedding.handle),
                 Argument::DeviceBuffer(b.weight.handle),

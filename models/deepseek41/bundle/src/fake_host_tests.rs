@@ -922,6 +922,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// The qualified finish/norm module adds two resolves and three releases
 /// per rank. C1/C8 replaces 77 adjacent finish/norm pairs with one exact
 /// tail each, preserving all constituent arguments and capture dependencies.
+/// Full mixed prefill head staging adds two immutable modules per TP4 rank,
+/// eighteen resolves, four shared-memory configurations and twenty releases.
+/// Every launch retains its argument list and numerical contract.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -946,7 +949,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (70247, 0xa3ce18af30a1b9d5),
+        (70415, 0x78e525f3f18392d8),
     ),
     (
         "deepseek41-flash-tp4",

@@ -500,6 +500,8 @@ pub(crate) struct AttentionViews {
     pub output: DeviceBufferSpanV1,
     pub workspace: DeviceBufferSpanV1,
     pub decoded_cache: Option<DeviceBufferSpanV1>,
+    /// One full cold chunk has the measured native head-sharing schedule.
+    pub native_shared_heads: bool,
     pub live_rows: DeviceBufferSpanV1,
 }
 
@@ -509,6 +511,7 @@ pub(crate) struct AttentionOps {
     pub ratio: u32,
     ops: Vec<(Kind, Prepared<LatentSourcesBuffers<View>>)>,
     cached: Option<Prepared<model_deepseek41_contract::own_ops::prefill_cache::Buffers>>,
+    shared_heads: Option<Prepared<LatentSourcesBuffers<View>>>,
 }
 
 /// The attention query of the layers of compress ratio `ratio` in `phase`:
@@ -568,7 +571,24 @@ impl AttentionOps {
             } else {
                 None
             };
-        Ok(AttentionOps { ratio, ops, cached })
+        let shared_heads = if ratio > 0 && cached.is_some() {
+            let query =
+                attention_query(shape, ratio, AttentionPhase::Prefill).map_err(Refused::Rule)?;
+            let need = exact::need(PREFILL_TOKENS, exact::PREFILL);
+            Some(
+                asks.ask(format!("attention.shared-heads r{ratio}"), need, |need| {
+                    kernels.prepare_prefill_heads(&query, need)
+                })?,
+            )
+        } else {
+            None
+        };
+        Ok(AttentionOps {
+            ratio,
+            ops,
+            cached,
+            shared_heads,
+        })
     }
 
     /// The partial results of the widest prepared phase. Attention names
@@ -673,6 +693,11 @@ impl AttentionOps {
             };
             bind.launch(op, &cached, Counts::rows(rows))
         } else {
+            let op = if views.native_shared_heads {
+                self.shared_heads.as_ref().unwrap_or(op)
+            } else {
+                op
+            };
             bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
         }
     }

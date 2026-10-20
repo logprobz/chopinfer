@@ -199,8 +199,30 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
             if line.contains("_decoded_") != cached {
                 mismatches.push(format!("offset {offset}: {line}"));
             }
-            assert!(line.contains("_reuse2_v1"), "{line}");
-            assert!(line.contains("shared_memory_bytes: 85504,"), "{line}");
+            let head = !window && offset < 32768;
+            let suffix = if head {
+                if offset == 0 {
+                    "_head_shared_v1"
+                } else {
+                    "_head_async_v1"
+                }
+            } else {
+                "_reuse2_v1"
+            };
+            assert!(line.contains(suffix), "{line}");
+            let shared = if head { 83200 } else { 85504 };
+            assert!(
+                line.contains(&format!("shared_memory_bytes: {shared},")),
+                "{line}"
+            );
+            assert!(
+                line.contains(if head {
+                    "grid_x: 8192, grid_y: 1, grid_z: 1,"
+                } else {
+                    "grid_x: 4096, grid_y: 2, grid_z: 1,"
+                }),
+                "{line}"
+            );
         }
         let merges: Vec<_> = launches
             .iter()
@@ -385,9 +407,8 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
         if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {
             std::fs::create_dir_all(&root).unwrap();
             let root = std::path::Path::new(&root);
-            let name = format!(
-                "mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
-            );
+            let name =
+                format!("mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal");
             std::fs::write(root.join(&name), lines.join("\n")).unwrap();
             super::decode_attention::export_handles(&host.device, root, &name);
             std::fs::write(root.join(format!("{name}.full")), journal.join("\n")).unwrap();

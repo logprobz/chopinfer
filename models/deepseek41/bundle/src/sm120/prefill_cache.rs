@@ -7,7 +7,9 @@ use kernel_core::contract::{Argument as A, ArgumentList, Refusal};
 use kernel_core::latent_attention::{
     LatentAttentionQuery, LatentSourcesBuffers, LatentWindowStorage,
 };
-use kernels_sm120::latent::{sources, sources_prefill, sources_prefill_cache as cache};
+use kernels_sm120::latent::{
+    sources, sources_prefill, sources_prefill::heads, sources_prefill_cache as cache,
+};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 use model_deepseek41_contract::own_ops::prefill_cache::Buffers;
 use model_deepseek41_contract::state::KvStorage;
@@ -58,6 +60,12 @@ pub fn prepare(
     let mut info = reference.info().clone();
     info.symbols
         .push((sources_prefill::reuse_symbol(&decoded, 2), 85504));
+    if second_fp4_keys {
+        info.symbols.push((
+            heads::asynchronous::symbol(&decoded, false),
+            heads::SHARED_BYTES,
+        ));
+    }
     info.symbols.push((cache::CLEAR.into(), 0));
     info.symbols.push((cache::window_symbol(latent), 0));
     if second_fp4_keys {
@@ -117,7 +125,10 @@ impl PreparedOp<Buffers> for Cached {
             return Err(Refusal("decoded prefill requires one full staged chunk"));
         }
         let LatentAttentionQuery::Attention {
-            latent, page_size, ..
+            latent,
+            page_size,
+            second_fp4_keys,
+            ..
         } = self.entry.query
         else {
             unreachable!()
@@ -208,8 +219,13 @@ impl PreparedOp<Buffers> for Cached {
                 _ => (),
             }
         }
-        first.symbol = sources_prefill::reuse_symbol(&self.decoded, 2);
-        first.plan = sources_prefill::reuse_plan(&self.decoded, rows, 2)?;
+        if second_fp4_keys {
+            first.symbol = heads::asynchronous::symbol(&self.decoded, false);
+            first.plan = heads::plan(&self.decoded, rows)?;
+        } else {
+            first.symbol = sources_prefill::reuse_symbol(&self.decoded, 2);
+            first.plan = sources_prefill::reuse_plan(&self.decoded, rows, 2)?;
+        }
         launches.extend(attention);
         Ok(launches)
     }

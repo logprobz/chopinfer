@@ -66,6 +66,8 @@ mod own_cubin;
 mod prefill_attention;
 #[allow(dead_code, reason = "the bundle prepares the decoded schedule")]
 mod prefill_cache;
+#[allow(dead_code, reason = "the bundle prepares the qualified head schedules")]
+mod prefill_heads;
 #[allow(dead_code)]
 mod replicated_embedding;
 mod ring_gather_cubin;
@@ -212,6 +214,13 @@ pub fn selection(
             model_deepseek41_contract::geometry::FLASH.id,
         ));
         specs.push((prefill_cache::FAMILY, spec));
+        for (family, spec) in prefill_heads::cubins().expect("shared-head prefill cubins") {
+            owners.push((
+                spec.name.clone(),
+                model_deepseek41_contract::geometry::FLASH.id,
+            ));
+            specs.push((family, spec));
+        }
     }
 
     for g in geometries

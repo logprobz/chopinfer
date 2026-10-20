@@ -32,6 +32,8 @@ pub mod norm_quantize_tiles;
 mod prefill_attention;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 pub(crate) mod prefill_cache;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod prefill_heads;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -261,6 +263,19 @@ impl crate::Kernels {
         latent_decode::prepare(reference, geometry, ranks, query, need)
     }
 
+    pub(crate) fn prepare_prefill_heads(
+        &self,
+        query: &kernel_core::latent_attention::LatentAttentionQuery,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            kernel_core::latent_attention::LatentSourcesBuffers<kernel_core::backend::View>,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        prefill_heads::prepare(self.backend.as_ref(), query, need)
+    }
+
     pub(crate) fn loads_latent_attention(
         cubin: &str,
         shape: &crate::shape::Shape,
@@ -268,8 +283,10 @@ impl crate::Kernels {
     ) -> bool {
         prefill_attention::loads(cubin, shape.geometry, shape.ranks(), storage)
             && latent_decode::loads(cubin, shape.geometry, shape.ranks(), storage)
-            && (cubin != prefill_cache::CUBIN
-                || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
+            && (!matches!(
+                cubin,
+                prefill_cache::CUBIN | prefill_heads::NATIVE_CUBIN | prefill_heads::CACHED_CUBIN
+            ) || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
     }
 
     pub(crate) fn prepare_prefill_cache(

@@ -88,9 +88,20 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
             .collect();
         assert_eq!(attention.len(), shape.ranks() as usize * 40);
         for line in &attention {
-            let paired =
-                route == 1 || (route == 2 && line.contains("_mixed_") && !line.contains("_p32_"));
+            let shared = route == 1 && rows == 8192 && line.contains("_mixed_");
+            let paired = !shared
+                && (route == 1
+                    || (route == 2 && line.contains("_mixed_") && !line.contains("_p32_")));
+            assert_eq!(line.contains("_head_shared_v1"), shared, "{line}");
             assert_eq!(line.contains("_reuse2_v1"), paired, "{line}");
+            if shared {
+                assert!(
+                    line.contains("grid_x: 8192, grid_y: 1, grid_z: 1,"),
+                    "{line}"
+                );
+                assert!(line.contains("block_x: 256,"), "{line}");
+                assert!(line.contains("shared_memory_bytes: 83200,"), "{line}");
+            }
             if paired {
                 assert!(
                     line.contains(&format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows / 2)),

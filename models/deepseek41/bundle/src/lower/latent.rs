@@ -458,6 +458,10 @@ impl Lowering<'_> {
             output: rows(scratch.attention, phase.rows()),
             workspace: self.buffers.workspace,
             decoded_cache: decoded_cache.map(|cache| cache.data),
+            native_shared_heads: phase.prefill()
+                && phase.rows() == 8192
+                && self.prefill_row_origin.is_none()
+                && offset.is_some_and(|range| range.offset == 0),
             live_rows: self.inputs.live_tokens,
         };
         ops.attend(Kind::from(phase), phase.rows(), &views)

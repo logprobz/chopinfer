@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import copy
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 import sys
@@ -173,3 +174,43 @@ def fixture_evidence(config, key, path):
     value["inputs"][key] = str(path)
     with fixture_lock(value):
         refs.verify_input(value, key, path)
+
+
+@contextmanager
+def preview_references(models):
+    """Private references for fake-server orchestration, including CLI replays.
+
+    Repository fixtures keep their byte pins. External exact inputs get small
+    synthetic bytes and matching private locks; no production lock is changed.
+    The ordinary input loader still authenticates every read.
+    """
+    import refs
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        shutil.copytree(common.ROOT / "fixtures", root / "fixtures")
+        locks = {model: json.loads(refs.lock_path(model, common.ROOT).read_text()) for model in models}
+        locations = [entries["exact"]["path"] for lock in locks.values()
+                     for entries in [lock["entries"], *(value.get("entries", {})
+                                     for value in lock.get("configurations", {}).values())]
+                     if isinstance(entries.get("exact", {}).get("path"), dict)]
+        environment = {location["env"]: str(root / "inputs" / location["env"]) for location in locations}
+        environment["CHOPINFER_QUAL_MODEL_ROOT"] = str(root)
+        with patch.dict(os.environ, environment):
+            for location in locations:
+                path = common.declared_path(location, root)
+                assert path.resolve().is_relative_to(root), "synthetic reference escaped its fixture root"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"schema":"synthetic-preview-exact/v1"}\n')
+                sha = refs.digest(path)
+                for lock in locks.values():
+                    for entries in [lock["entries"], *(value.get("entries", {})
+                                    for value in lock.get("configurations", {}).values())]:
+                        for entry in entries.values():
+                            if entry.get("path") == location:
+                                entry.update(directory=False, members={".": sha})
+                                lock["objects"][sha] = {"schema": "synthetic-preview-exact/v1"}
+            for model, lock in locks.items():
+                path = refs.lock_path(model, root)
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps(lock))
+            yield root

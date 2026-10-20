@@ -1959,8 +1959,6 @@ class FakeRun:
         (self.checkpoint / 'model.safetensors').write_bytes(b'x' * 8)
         self.install = runner.install_root(self.identity())
         self.commands = []
-        self.exact = base / 'exact.json'
-        runner.write(self.exact, {'text': ['fixture prompt']})
 
     @staticmethod
     def identity():
@@ -2059,25 +2057,13 @@ class FakeRun:
         runner.write(receipts / f"{script.removesuffix('.py')}.json", value)
         return 0
 
-    @contextlib.contextmanager
-    def inputs(self):
-        import common
-        # Fake children and their replays share a fixture input identity.
-        # Production reference authentication has separate tests.
-        real_input_path = common.input_path
-
-        def input_path(name, *args, **kwargs):
-            return self.exact if name == 'exact' else real_input_path(name, *args, **kwargs)
-
-        with patch.object(common, 'input_path', input_path):
-            yield
-
     def run(self, *extra):
         self.prepare()
-        self.exact_sha256 = runner.sha(self.exact)
+        from common import input_path
+        import declaration
+        self.exact_sha256 = runner.sha(input_path('exact', config=declaration.load(declaration.path(self.model))))
         clients = runner.queue_clients(self.facts)
-        with self.inputs(), \
-                patch.object(runner, 'server', self.server), patch.object(runner, 'call', self.call), \
+        with patch.object(runner, 'server', self.server), patch.object(runner, 'call', self.call), \
                 patch.object(runner, 'source', lambda: self.checkout), \
                 inert_gpu_query(), \
                 patch.object(runner, 'queue', lambda url, facts: {
@@ -2088,12 +2074,35 @@ class FakeRun:
         return code, runner.read(self.base / 'run/results.json')
 
 
-class RunTests(unittest.TestCase):
+class FakeRunTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from qual_test_config import preview_references
+        super().setUpClass()
+        cls.reference_root = cls.enterClassContext(preview_references(MODELS))
+
+
+class RunTests(FakeRunTests):
     @contextlib.contextmanager
     def validation(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
             yield Path(temporary)
+
+    def test_fake_run_references_remain_private_and_authenticated(self):
+        from common import input_path
+        for name in MODELS:
+            with self.subTest(model=name):
+                config = declaration.load(declaration.path(name))
+                path = input_path('exact', config=config)
+                self.assertTrue(path.is_relative_to(self.reference_root))
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(original + b' ')
+                    with self.assertRaisesRegex(ValueError, 'lock entry exact: sha256 differs'):
+                        input_path('exact', config=config)
+                finally:
+                    path.write_bytes(original)
 
     def test_a_failed_gpu_query_refuses_before_any_server_starts(self):
         # The run records the GPUs it ran on. A query that cannot run, fails,
@@ -2614,7 +2623,7 @@ class FailedChild(FakeRun):
         return code
 
 
-class CheckFailureTests(unittest.TestCase):
+class CheckFailureTests(FakeRunTests):
     def test_a_failed_timed_out_or_receiptless_check_child_fails_its_row_and_the_run(self):
         name = model(lambda facts: 'teacher' in facts['quick'])
         for mode, error in (('error', 'checks.py exited 17'), ('timeout', 'checks.py exited 124'),
@@ -2673,7 +2682,7 @@ class CheckFailureTests(unittest.TestCase):
                              'informational')
 
 
-class RescoreTests(unittest.TestCase):
+class RescoreTests(FakeRunTests):
     @staticmethod
     def rescore(root):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -2686,8 +2695,7 @@ class RescoreTests(unittest.TestCase):
         return fake, code, result
 
     def replay(self, fake, judged=lambda receipt, model, config, check: {'status': 'pass'}):
-        with fake.inputs(), \
-                patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
+        with patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
                 patch.dict(os.environ, {fake.facts['checkpoint']: str(fake.checkpoint)}):
             return self.rescore(fake.base / 'run')
 
@@ -2898,7 +2906,7 @@ class RescoreTests(unittest.TestCase):
             self.assertEqual(self.rescore(root)[0], 2)
 
 
-class PromotionTests(unittest.TestCase):
+class PromotionTests(FakeRunTests):
     def full_pass(self, base, checkout, install, main, configs=None, name=None, feature_source=..., observed_envs=None,
                   checks=(), values=()):
         """A full run of the install with every input no record produces

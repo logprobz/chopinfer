@@ -451,8 +451,14 @@ mod tests {
                 .starts_with("nothing and nothing own refuse DeepSeek V4.1's fused norm ops")
         );
         assert!(ops.norm_quantize.is_none());
+        assert!(ops.norm_prefill.is_none());
         assert!(
-            ops.missing[2]
+            ops.missing[2].starts_with(
+                "nothing and nothing own refuse DeepSeek V4.1's prefill fused norm ops"
+            )
+        );
+        assert!(
+            ops.missing[3]
                 .starts_with("nothing and nothing own refuse DeepSeek V4.1's all-reduce ops")
         );
     }

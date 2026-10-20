@@ -92,13 +92,14 @@ fn prefill_dense_launches_use_staged_tiles() {
                     && !l.contains("_prepare_v1")
             })
             .collect();
-        // Decode selects only the qualified packed, ticket and split-fold buckets.
+        // Decode selects the qualified direct, packed, ticket and split-fold buckets.
         // Each paired shared gate/up replaces two individual projections.
         let completed = dense
             .iter()
             .filter(|line| {
                 let symbol = line.split_whitespace().nth(2).unwrap();
                 symbol.contains("mxfp8_stream_")
+                    || symbol.contains("mxfp8_direct_")
                     || ((symbol.contains("mxfp8_ticket_") || symbol.contains("mxfp8_prefetch_"))
                         && !symbol.contains("_initialize_"))
                     || (symbol.contains("mxfp8_decode_")

@@ -547,14 +547,22 @@ mod tests {
     fn expect_split(ranks: u32, projection: &str, rows: u32) -> bool {
         match (ranks, projection) {
             (2, "attention.q-b") => matches!(rows, 1..=4 | 7..=11),
-            (4, "attention.q-b") => matches!(rows, 1..=2 | 5..=12 | 16),
+            (4, "attention.q-b") => matches!(rows, 1..=2 | 5..=8 | 16),
             (2, "moe.shared-down") => matches!(rows, 1..=2 | 9..=16),
             (4, "moe.shared-down") => matches!(rows, 1..=28),
             _ => false,
         }
     }
 
-    fn expected_family(query: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> &'static str {
+    fn expected_family(
+        ranks: u32,
+        query: Mxfp8FoldGemmQuery,
+        rows: u32,
+        paired: bool,
+    ) -> &'static str {
+        if ranks == 4 && !paired && crate::sm120::projection_reuse::choice(query, rows).is_some() {
+            return "_reuse32_";
+        }
         use crate::sm120::mxfp8_fold::{DecodePath, decode_path};
         match decode_path(&FLASH, query, rows, paired) {
             DecodePath::Split => "mxfp8_decode_",
@@ -630,7 +638,7 @@ mod tests {
                     op.info()
                         .symbols
                         .iter()
-                        .all(|(s, _)| s.contains(expected_family(q, *rows, false)))
+                        .all(|(s, _)| s.contains(expected_family(shape.ranks(), q, *rows, false)))
                 );
             }
             assert_eq!(ops.decode.len(), projections(&shape).len() * 64);
@@ -721,9 +729,20 @@ mod tests {
                         calls
                             .iter()
                             .all(|call| call.launch.symbol.contains(if packed {
-                                "mxfp8_stream_"
+                                if crate::sm120::mxfp8_fold_direct::selected(
+                                    &FLASH,
+                                    q,
+                                    phase.rows(),
+                                    false,
+                                )
+                                .is_some()
+                                {
+                                    "mxfp8_direct_"
+                                } else {
+                                    "mxfp8_stream_"
+                                }
                             } else {
-                                expected_family(q, phase.rows(), false)
+                                expected_family(shape.ranks(), q, phase.rows(), false)
                             }))
                     );
                 } else if phase.prefill() && phase.rows() >= 128 {
@@ -780,9 +799,12 @@ mod tests {
                     assert_eq!(calls.len(), 2);
                     assert!(calls.iter().all(|c| {
                         c.launch.symbol.contains("_pair_f32_")
-                            && c.launch
-                                .symbol
-                                .contains(expected_family(q, phase.rows(), true))
+                            && c.launch.symbol.contains(expected_family(
+                                shape.ranks(),
+                                q,
+                                phase.rows(),
+                                true,
+                            ))
                     }));
                 }
             }

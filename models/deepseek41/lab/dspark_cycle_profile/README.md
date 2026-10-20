@@ -32,6 +32,9 @@ Graph IDs are discovered from kernel markers within each cycle. All target
 pieces between embedding and the final head are included. Eager projection
 families are recognized explicitly; other device kernels remain separate.
 Exclusive kernel charges advance the overlap frontier before grouping.
+Target kernel charges are also retained by name and live row count. Their
+sum must equal target time, so later family grouping cannot double count
+overlapping launches or mix 16-row and 32-row target forwards.
 
 Each cycle reports target, drafter, catch-up, sampling, other device work
 and no-recorded-kernel time. Drafter sampling kernels belong to sampling.
@@ -48,6 +51,9 @@ A real HTTP fixture exercises both server lifecycles and verifies cleanup
 after start, stop, export, geometry and acceptance failures. It cannot run
 unless the explicit CPU dry-run flag selects it. Staged GPU launchers never
 set that flag.
+The launcher regression covers ordinary children, process-group leaders
+and session leaders. An existing private group is retained because calling
+`setsid` again on its leader fails before the server can start.
 
 Use the shared CPU admission wrapper for these checks:
 

@@ -90,6 +90,7 @@ def charge(rows, begin, end, phase):
     frontier = begin
     totals = dict.fromkeys(PHASES, 0)
     names = collections.Counter()
+    target_names = collections.Counter()
     busy = []
     for row in rows:
         a, b = max(begin, row["start"]), min(end, row["end"])
@@ -101,6 +102,8 @@ def charge(rows, begin, end, phase):
         totals[category] += amount
         if category == "other_device":
             names[row["name"]] += amount
+        if category == "target":
+            target_names[row["name"]] += amount
         busy.append((a, b))
     busy = union(busy)
     assert sum(totals.values()) == sum(b-a for a, b in busy)
@@ -114,7 +117,8 @@ def charge(rows, begin, end, phase):
         gaps.append((frontier, end))
     totals["no_recorded_kernel"] = sum(b-a for a, b in gaps)
     assert sum(totals.values()) == end-begin
-    return {k: v/1e6 for k, v in totals.items()}, gaps, names
+    assert sum(target_names.values()) == totals["target"]
+    return {k: v/1e6 for k, v in totals.items()}, gaps, names, target_names
 
 
 def analyze(path, directory, *, historical=False):
@@ -164,7 +168,7 @@ def analyze(path, directory, *, historical=False):
                 phase = classify(current, capacity, step["verify_items"])
                 if not historical and device == 0 and step["verify_items"]:
                     assert any("dspark_" in r["name"] and "acceptance_" in r["name"] for r in current), "device acceptance kernel missing"
-                amounts, gaps, names = charge(current, begin, end, phase)
+                amounts, gaps, names, target_names = charge(current, begin, end, phase)
                 copy_ms = overlap(gaps, copies.get(device, []))/1e6
                 cycles.append(dict(batch=step["batch"], rows=step["live_rows"], verify_items=step["verify_items"],
                     catch_up_rows=step.get("phase", {}).get("catch_up_rows"),
@@ -173,8 +177,19 @@ def analyze(path, directory, *, historical=False):
                     copy_or_memset_overlap_with_gaps_ms=copy_ms,
                     no_recorded_device_activity_ms=amounts["no_recorded_kernel"]-copy_ms,
                     host_timers_us=step.get("host", {}),
+                    target_kernels_ms={name: value/1e6 for name, value in target_names.items()},
                     other_kernels={name: value/1e6 for name, value in names.items()}))
+            target_by_rows = {}
+            for width in sorted({c["rows"] for c in cycles}):
+                selected = [c for c in cycles if c["rows"] == width]
+                names = {name for c in selected for name in c["target_kernels_ms"]}
+                target_by_rows[str(width)] = dict(
+                    count=len(selected),
+                    mean_ms=statistics.mean(c["phase_ms"]["target"] for c in selected),
+                    kernels_mean_ms={name: statistics.mean(
+                        c["target_kernels_ms"].get(name, 0) for c in selected) for name in sorted(names)})
             devices[str(device)] = dict(cycles=cycles, count=len(cycles),
+                target_by_rows=target_by_rows,
                 mean_cycle_ms=statistics.mean(c["elapsed_ms"] for c in cycles),
                 phase_mean_ms={k: statistics.mean(c["phase_ms"][k] for c in cycles) for k in cycles[0]["phase_ms"]})
         cases[str(concurrency)] = dict(devices=devices)

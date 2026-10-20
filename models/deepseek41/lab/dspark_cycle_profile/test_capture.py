@@ -27,6 +27,21 @@ def steps(directory):
 
 
 class Attribution(unittest.TestCase):
+    def test_server_wrapper_owns_its_group_under_each_launcher_state(self):
+        for options in ({}, {"process_group": 0}, {"start_new_session": True}):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as tmp:
+                pidfile = Path(tmp) / "server-group.json"
+                result = subprocess.run(
+                    [sys.executable, "-B", capture.__file__, "server-child", str(pidfile),
+                     sys.executable, "-c",
+                     "import json,os; print(json.dumps([os.getpid(),os.getpgrp()]))"],
+                    capture_output=True, text=True, timeout=10, **options)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                identity = json.loads(pidfile.read_text())
+                self.assertEqual(identity["pid"], identity["pgid"])
+                self.assertEqual(json.loads(result.stdout), [identity["pid"], identity["pgid"]])
+                self.assertGreater(identity["start_ticks"], 0)
+
     def test_fast_http_steps_do_not_create_overlapping_fake_cycles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);steps(root)
@@ -59,6 +74,10 @@ class Attribution(unittest.TestCase):
                         self.assertAlmostEqual(phase["catch_up"], .09)
                         self.assertAlmostEqual(phase["sampling"], .08)
                         self.assertAlmostEqual(sum(phase.values()), 2)
+                        target = device["target_by_rows"]["32"]
+                        self.assertEqual(target["count"], 15)
+                        self.assertAlmostEqual(target["mean_ms"], .4)
+                        self.assertAlmostEqual(sum(target["kernels_mean_ms"].values()), .4)
                         row = device["cycles"][0]
                         self.assertAlmostEqual(row["host_api_overlap_with_gaps_ms"]["OSRT_API"], .03)
                         self.assertAlmostEqual(row["copy_or_memset_overlap_with_gaps_ms"], .02)

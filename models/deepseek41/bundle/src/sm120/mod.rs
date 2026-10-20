@@ -4,6 +4,7 @@
 //! here. Generic code names nothing in this module beyond constructing the
 //! backend and the own ops.
 
+pub mod ceil_cached;
 pub mod ceil_parallel;
 pub mod ceil_prefill;
 pub mod confidence_parallel;

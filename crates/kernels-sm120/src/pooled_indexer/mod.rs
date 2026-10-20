@@ -952,6 +952,7 @@ pub mod position_mma;
 pub mod position_mma_guard;
 pub mod position_mma_guard_fast;
 pub mod position_mma_prefill;
+pub mod position_mma_prefill_tile;
 pub mod position_mma_tile;
 pub mod position_select_cached;
 

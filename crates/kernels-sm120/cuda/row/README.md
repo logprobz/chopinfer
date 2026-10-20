@@ -23,6 +23,16 @@ scales, MXFP8, MXFP4 and NVFP4 entries. NVFP4 uses row maxima and a global
 scale reduction before element encoding. Its fused variant requires the
 caller to supply the global scale for the completed norm output.
 
+`ceil_cached.cuh` is a one-pass form of the warp-parallel decode ceil
+E4M3/32 quantizer (`ceil_parallel.cuh`, unchanged). The parallel entry
+computes each group twice, for the row status and then for its outputs,
+in serial loops. The cached entry prefetches every group's operands into
+L1, computes each group once with the same `quantize_group`, keeps its
+codes and scale code in one register across the row-status barriers and
+stores them, so its outputs equal the parallel entry's. It serves widths
+up to 8192 (eight groups per warp); wider rows keep the parallel entry.
+`block_quantize::Entry::cached` selects it for a separately named entry.
+
 ## Exact ordered sum
 
 `ordered_sum.cuh` computes the HF form's ordered F32 sum (from +0, one

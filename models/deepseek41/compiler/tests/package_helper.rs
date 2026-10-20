@@ -394,6 +394,12 @@ fn the_manifest_declares_each_topology_s_resources() {
         for capability in CAPABILITIES {
             assert!(capabilities.contains(&capability), "{capability}");
         }
+        assert_eq!(
+            capabilities.contains(
+                &runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1
+            ),
+            ranks == 4,
+        );
         let kv = topology.kv_layout();
         assert_eq!(kv.id().as_str().as_bytes(), KV_LAYOUT_NATIVE);
         assert_eq!(kv.page_bytes(), page_bytes);

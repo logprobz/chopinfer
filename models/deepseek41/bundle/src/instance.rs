@@ -228,7 +228,7 @@ impl Instance {
         let (image, indexes) =
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
-        if self.dspark.is_none() && crate::device_results::enabled() {
+        if self.dspark.is_none() && crate::device_results::enabled(shape, self.config.kv.storage) {
             for &(context, _, _) in &ranks {
                 let event = services.create_event(context)?;
                 held.push(Held::Event(event));

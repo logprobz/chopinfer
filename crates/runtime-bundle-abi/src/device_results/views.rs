@@ -6,6 +6,32 @@ use crate::{
 };
 
 pub const DEVICE_RESULTS_CAPABILITY_V1: &str = "chop.device-results.v1";
+/// Select device results by default for the declaring topology's preferred KV layout.
+pub const DEVICE_RESULTS_DEFAULT_CAPABILITY_V1: &str = "chop.device-results-default.v1";
+
+/// An explicit zero keeps the legacy path; bundles without a qualified
+/// default still require an explicit one.
+pub fn device_results_selected_v1(default: bool, value: Option<&std::ffi::OsStr>) -> bool {
+    value.map_or(default, |value| value == "1")
+}
+
+#[cfg(test)]
+mod default_tests {
+    use super::device_results_selected_v1;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn explicit_zero_restores_legacy_selection_for_every_default() {
+        for qualified in [false, true] {
+            assert_eq!(device_results_selected_v1(qualified, None), qualified);
+            assert!(!device_results_selected_v1(
+                qualified,
+                Some(OsStr::new("0"))
+            ));
+            assert!(device_results_selected_v1(qualified, Some(OsStr::new("1"))));
+        }
+    }
+}
 pub const DEVICE_RESULTS_HOST_VALUES_V1: u32 = 0;
 pub const DEVICE_RESULTS_DEVICE_FEEDBACK_V1: u32 = 1;
 pub const DEVICE_SAMPLE_RECORD_BYTES_V1: u64 = 256;

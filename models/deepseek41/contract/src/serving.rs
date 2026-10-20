@@ -36,6 +36,11 @@ const _: () = assert!(SCORED_ROWS >= DECODE_BATCH);
 pub const KV_LAYOUT_NATIVE: &[u8] = b"deepseek41.csa2-paged-native.v1";
 pub const KV_LAYOUT_BF16: &[u8] = b"deepseek41.csa2-paged-bf16.v1";
 
+/// Served device-result parity is qualified on Flash at TP4.
+pub fn default_device_results(geometry: &crate::geometry::Geometry, ranks: u32) -> bool {
+    geometry.id == crate::geometry::FLASH.id && ranks == 4
+}
+
 /// The per-item state layout (`state_layout` under
 /// `chop.state-per-item.v1`): every window ring and compressor tail, and
 /// with DSpark its rings and retained rows (`crate::state`).

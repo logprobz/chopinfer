@@ -646,7 +646,10 @@ impl InstalledBundleHostV1 {
         let configuration = config.encode_v1(topology_id.as_bytes());
         let backend = Rc::new(HostServicesV1Backend::new(device, config));
         let table = HostServicesTableV1::new(Rc::clone(&backend));
-        let instance = if crate::executor::device_results_selected(self.manifest()) {
+        let selected = self.manifest().for_topology(topology_id)?;
+        let preferred_kv =
+            served_kv_layout_v1(&selected, kv_dtype)?.id() == selected.kv_layout().id();
+        let instance = if crate::executor::device_results_selected(&selected, preferred_kv) {
             self.library
                 .create_device_results_v1(table, &configuration)?
         } else {

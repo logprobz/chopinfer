@@ -1,25 +1,37 @@
-//! Explicit selection of the AR readiness bridge. Tests use thread-local
+//! Qualified defaults for the AR readiness bridge. Tests use thread-local
 //! settings so journal tests do not depend on the process environment.
 #[cfg(test)]
 thread_local! {
-    static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static OVERRIDE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) };
 }
 
-pub(crate) fn enabled() -> bool {
+pub(crate) fn enabled(
+    shape: crate::shape::Shape,
+    kv: model_deepseek41_contract::state::KvStorage,
+) -> bool {
+    let default =
+        model_deepseek41_contract::serving::default_device_results(shape.geometry, shape.ranks())
+            && kv == model_deepseek41_contract::state::KvStorage::Native;
     #[cfg(test)]
-    return ENABLED.get();
+    let value = OVERRIDE.get().map(std::ffi::OsString::from);
     #[cfg(not(test))]
-    std::env::var_os("CHOPINFER_DEVICE_RESULTS").is_some_and(|value| value == "1")
+    let value = std::env::var_os("CHOPINFER_DEVICE_RESULTS");
+    runtime_bundle_abi::device_results::device_results_selected_v1(default, value.as_deref())
 }
 
 #[cfg(test)]
 pub(crate) fn with_enabled<T>(create: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
+    with_override(Some("1"), create)
+}
+
+#[cfg(test)]
+pub(crate) fn with_override<T>(value: Option<&'static str>, create: impl FnOnce() -> T) -> T {
+    struct Restore(Option<&'static str>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            ENABLED.set(self.0);
+            OVERRIDE.set(self.0);
         }
     }
-    let _restore = Restore(ENABLED.replace(true));
+    let _restore = Restore(OVERRIDE.replace(value));
     create()
 }

@@ -59,7 +59,7 @@ impl LogitsRowSinkV1 for ReadySink {
     }
 }
 fn create_ready(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
-    crate::device_results::with_enabled(|| {
+    crate::device_results::with_override(None, || {
         let record = crate::config::tests::record(&host.shape, host.kv, items, false);
         crate::instance::PARTIAL.with(|partial| partial.set(true));
         let result = api()
@@ -71,7 +71,7 @@ fn create_ready(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
     })
 }
 #[test]
-fn ar_readiness_precedes_status_waits_and_releases_every_event() {
+fn default_ar_readiness_precedes_status_waits_and_releases_every_event() {
     for count in [1, 8, 32] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         let mut instance = create_ready(&host, count);
@@ -156,4 +156,33 @@ fn invalid_status_after_ready_submission_still_refuses_the_step() {
     assert!(host.injected.borrow().is_none());
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
+fn zero_device_results_restores_the_legacy_journals() {
+    crate::device_results::with_override(Some("0"), || {
+        super::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle();
+    });
+}
+
+#[test]
+fn default_device_results_only_select_qualified_topologies_and_kv() {
+    for shape in crate::shape::topologies() {
+        for kv in [KvStorage::Native, KvStorage::Bf16] {
+            let expected =
+                shape.geometry.id == FLASH.id && shape.ranks() == 4 && kv == KvStorage::Native;
+            assert_eq!(
+                crate::device_results::with_override(None, || crate::device_results::enabled(
+                    shape, kv
+                )),
+                expected
+            );
+            assert!(!crate::device_results::with_override(Some("0"), || {
+                crate::device_results::enabled(shape, kv)
+            }));
+            assert!(crate::device_results::with_override(Some("1"), || {
+                crate::device_results::enabled(shape, kv)
+            }));
+        }
+    }
 }

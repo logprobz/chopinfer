@@ -5285,6 +5285,9 @@ impl ArgumentsV1 {
                 runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
+                runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
                 runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
@@ -8011,6 +8014,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1,
+                runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
                 runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
                 runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
@@ -8052,6 +8056,10 @@ mod tests {
             vec![
                 &BundleOpaqueId::new(runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1)
                     .unwrap(),
+                &BundleOpaqueId::new(
+                    runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1
+                )
+                .unwrap(),
                 &BundleOpaqueId::new(
                     runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
                 )

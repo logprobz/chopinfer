@@ -339,6 +339,11 @@ fn topology_draft(
         .iter()
         .map(|capability| id(*capability))
         .collect::<Result<Vec<_>, _>>()?;
+    if model_deepseek41_contract::serving::default_device_results(geometry, ranks) {
+        capabilities.push(id(
+            runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
+        )?);
+    }
     if media {
         capabilities.push(id(model_deepseek41_contract::encoder::MEDIA_CAPABILITY)?);
     }

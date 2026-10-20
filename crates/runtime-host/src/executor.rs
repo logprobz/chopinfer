@@ -36,19 +36,25 @@ use runtime_engine::{
 use runtime_kv::{BlockId, PreparedAppendBatch};
 use runtime_scheduler::BatchPhase;
 
-/// Explicit runtime selection of a bundle's declared device-result API.
+/// Runtime override of a bundle's declared device-result default.
 pub const DEVICE_RESULTS: &str = "CHOPINFER_DEVICE_RESULTS";
 
-pub(crate) fn device_results_selected(manifest: &BundleManifestV1) -> bool {
-    std::env::var_os(DEVICE_RESULTS).is_some_and(|value| value == "1")
-        && manifest
-            .resource_requirements()
-            .required_capabilities()
+pub(crate) fn device_results_selected(manifest: &BundleManifestV1, preferred_kv: bool) -> bool {
+    use runtime_bundle_abi::device_results::{
+        DEVICE_RESULTS_CAPABILITY_V1, DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
+        device_results_selected_v1,
+    };
+    let capabilities = manifest.resource_requirements().required_capabilities();
+    let has = |name| {
+        capabilities
             .iter()
-            .any(|capability| {
-                capability.as_str()
-                    == runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
-            })
+            .any(|capability| capability.as_str() == name)
+    };
+    has(DEVICE_RESULTS_CAPABILITY_V1)
+        && device_results_selected_v1(
+            preferred_kv && has(DEVICE_RESULTS_DEFAULT_CAPABILITY_V1),
+            std::env::var_os(DEVICE_RESULTS).as_deref(),
+        )
 }
 
 /// The fixed prefix of one encoded batch request.

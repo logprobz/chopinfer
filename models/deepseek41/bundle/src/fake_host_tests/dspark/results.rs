@@ -140,6 +140,54 @@ fn metadata(items: u32, k: u32, epoch: u64) -> DeviceCycleMetadataV1 {
 }
 
 #[test]
+fn default_device_results_activate_and_zero_restores_legacy_dspark_journals() {
+    fn run(value: Option<&'static str>, legacy_host: bool) -> (Vec<String>, bool) {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let (host, mut instance) = create_with_limits(shape, 1, 32);
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(1, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        let enabled = !legacy_host
+            && crate::device_results::with_override(value, || {
+                crate::device_results::enabled(shape, KvStorage::Native)
+            });
+        let mut packet = false;
+        if enabled {
+            let mut sink = DeviceSink {
+                host: Rc::clone(&host),
+                metadata: Some(metadata(1, 5, 1)),
+                legacy: Sink::default(),
+                drafts: Vec::new(),
+                samples: Vec::new(),
+                completion: None,
+            };
+            instance.execute(&batch(1, 3, 5), &mut sink).unwrap();
+            packet = sink.completion.is_some();
+            assert!(sink.legacy.draft_tokens().is_empty());
+        } else {
+            let sink = execute(&mut instance, &host, &batch(1, 3, 5));
+            assert_eq!(sink.draft_tokens().len(), 1);
+        }
+        instance.commit_accepted(&[kept(1, 1)]).unwrap();
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        let journal = host.journal.borrow().clone();
+        (journal, packet)
+    }
+    let (default, active) = run(None, false);
+    assert!(active);
+    let (disabled, active) = run(Some("0"), false);
+    assert!(!active);
+    let (legacy, active) = run(None, true);
+    assert!(!active);
+    assert_eq!(disabled, legacy);
+    assert_ne!(default, legacy);
+}
+
+#[test]
 fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
     for shape in crate::shape::topologies() {
         for (items, k) in [(1_u32, 5_u32), (8, 3)] {

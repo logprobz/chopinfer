@@ -67,8 +67,10 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
             symbols.push(names);
             let (reduce, gather) = heads.state();
             let embedding = alloc(u64::from(items) * dim * 2);
+            let embedding_weight = alloc(vocab * dim * 2);
             let gathered = alloc(u64::from(DECODE_BATCH * 2 * shape.ranks()) * 4);
             peers.push(Peer {
+                embedding_weight,
                 embedding,
                 reduce_state: reduce.iter().map(|&n| alloc(n)).collect(),
                 gathered,
@@ -127,10 +129,11 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
             programs.push(program);
             views.push(PositionViews {
                 predecessor_ids: alloc(u64::from(items) * 4),
-                embedding_weight: alloc(vocab * dim * 2),
+                embedding_weight,
                 embedding_partial: alloc(u64::from(items) * dim * 2),
                 embedding_wide: alloc(u64::from(items) * dim * 4),
                 embedding,
+                embedding_copy: alloc(u64::from(items) * dim * 2),
                 block_logits,
                 position_rows: alloc(u64::from(items) * 4),
                 position_logits: alloc(u64::from(items) * vocab * 4),
@@ -217,6 +220,30 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                     (argmax.launch.plan.grid, argmax.launch.plan.block),
                     ([items, 1, 1], [1024, 1, 1])
                 );
+                // One launch reads each owner's shard through every rank's
+                // table, with no cross-rank wait.
+                let lookup = program
+                    .iter()
+                    .find(|op| op.launch.symbol == peer_symbol(&shape))
+                    .unwrap();
+                assert_eq!(lookup.launch.plan.grid, [items, 1, 1]);
+                assert!(!lookup.collective);
+                let kernel_core::contract::Argument::DevicePointerArray(tables) =
+                    &lookup.launch.arguments.0[0]
+                else {
+                    panic!("expected the peer tables");
+                };
+                let tables = tables
+                    .iter()
+                    .map(|&id| lookup.launch.bindings.get(id).unwrap())
+                    .collect::<Vec<_>>();
+                let weights = peers.iter().map(|p| p.embedding_weight).collect::<Vec<_>>();
+                assert_eq!(tables, weights);
+                assert!(
+                    program.iter().all(
+                        |op| !op.collective || op.launch.symbol == "chop_comm_allgather_f32_v1"
+                    )
+                );
                 let hidden = argument_span(confidence, 0);
                 assert_eq!(hidden.buffer, v.hidden_f32.buffer);
                 assert_eq!(
@@ -257,6 +284,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
         .unwrap();
         let journal = host.journal.borrow();
         for symbol in [
+            peer_symbol(&shape).as_str(),
             "chop_deepseek41_dspark_markov_tiled_v1",
             "chop_deepseek41_dspark_confidence_parallel_v1",
             "chop_dspark_argmax_f32_wide_v1",
@@ -281,6 +309,14 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
         );
         eprintln!("DSpark head journal: {}", shape.topology());
     }
+}
+
+fn peer_symbol(shape: &Shape) -> String {
+    format!(
+        "chop_{}_dspark_markov_replicated_tp{}_v1",
+        shape.geometry.kernel_tag,
+        shape.ranks()
+    )
 }
 
 fn hidden_width(shape: &Shape) -> u64 {

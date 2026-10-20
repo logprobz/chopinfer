@@ -566,16 +566,20 @@ impl Instance {
         for (rank, program) in all.iter_mut().zip(programs) {
             rank.extend(program);
         }
-        let peers = device
-            .ranks
+        let peers = self
+            .buffers
             .iter()
-            .map(|stored| Peer {
-                embedding: stored.embedding,
-                reduce_state: stored.reduce_state.clone(),
-                gathered: stored.gathered,
-                gather_state: stored.gather_state.clone(),
+            .zip(&device.ranks)
+            .map(|(buffers, stored)| {
+                Ok(Peer {
+                    embedding_weight: buffers.view(&format!("{stem}.markov_head.embed.weight"))?,
+                    embedding: stored.embedding,
+                    reduce_state: stored.reduce_state.clone(),
+                    gathered: stored.gathered,
+                    gather_state: stored.gather_state.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, String>>()?;
         for position in 0..BLOCK_ROWS {
             let programs = self
                 .buffers
@@ -594,6 +598,7 @@ impl Instance {
                             embedding_partial: stored.embedding_partial,
                             embedding_wide: stored.embedding_wide,
                             embedding: stored.embedding,
+                            embedding_copy: stored.embedding_copy,
                             block_logits: stored.block_logits,
                             position_rows: stored.position_rows[position as usize],
                             position_logits: stored.position_logits,

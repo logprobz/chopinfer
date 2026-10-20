@@ -410,6 +410,11 @@ impl ReduceOps {
         self.bf16_partials != Partials::Off
     }
 
+    /// Decode and verify share the BF16 protocol only in all-phase mode.
+    pub(crate) fn decode_partials(&self) -> bool {
+        self.bf16_partials == Partials::All
+    }
+
     pub(crate) fn prefill_only_partials(&self) -> bool {
         self.bf16_partials == Partials::Prefill
     }

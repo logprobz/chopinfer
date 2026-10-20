@@ -3,7 +3,7 @@ use crate::ops::{with_bf16_gather, with_bf16_partials, with_dma, with_partial_se
 
 const PREFIX: &str = "chop_comm_allreduce_phased_";
 
-fn host(admitted: bool) -> Rc<Host> {
+pub(super) fn host(admitted: bool) -> Rc<Host> {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
     if admitted {
         host.device.residency.set(Some(BundleRawClusterResidencyV1 {
@@ -290,7 +290,7 @@ fn check_draft_reductions(mode: &'static str) {
                 );
             }
         }
-        if let Some(spans) = reset {
+        if let Some(spans) = reset.as_ref().filter(|_| mode == "1") {
             // Only the three main protocol spans on each rank are reset.
             // Draft blocks alias them; the Markov embedding owns separate
             // F32 state that must not be added to this reset.
@@ -313,6 +313,11 @@ fn check_draft_reductions(mode: &'static str) {
                     .iter()
                     .all(|s| s.starts_with("synchronize "))
             );
+        }
+        if mode == "prefill"
+            && let Some(spans) = reset
+        {
+            assert_no_protocol_zero(&host.device.journal.borrow(), &spans);
         }
         instance
             .commit_accepted(
@@ -337,7 +342,7 @@ fn prefill_only_partials_keep_small_rows_and_original_decode_fusion() {
     use bundle_runtime::entry::Bundle;
     for rows in [1, 63, 8191] {
         let host = host(true);
-        let mut instance = with_partial_setting(Some("prefill"), || create(&host, 1));
+        let mut instance = with_partial_setting(Some("prefill"), || create(&host, 2));
         host.device.journal.borrow_mut().clear();
         step(
             &mut instance,
@@ -389,6 +394,18 @@ fn prefill_only_partials_keep_small_rows_and_original_decode_fusion() {
                     .iter()
                     .any(|s| s.contains("chop_deepseek41_hc_round_expand_mix_finish_v1"))
             );
+            assert_no_protocol_zero(&journal, &spans);
+        }
+        // Decode must leave the pending prefill reset alone. The next
+        // prefill drains and clears only its own protocol spans.
+        host.device.journal.borrow_mut().clear();
+        step(
+            &mut instance,
+            &prompt(8, 1, 0, 1, true),
+            &mut Views::default(),
+        );
+        {
+            let journal = host.device.journal.borrow();
             let first = journal.iter().position(|s| s.starts_with("zero ")).unwrap();
             let actual = journal[first..first + spans.len()]
                 .iter()
@@ -404,5 +421,20 @@ fn prefill_only_partials_keep_small_rows_and_original_decode_fusion() {
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+fn assert_no_protocol_zero(journal: &[String], spans: &[DeviceBufferSpanV1]) {
+    for line in journal.iter().filter(|s| s.starts_with("zero ")) {
+        for (raw, offset, length) in super::shared_overlap::journal_spans(line) {
+            assert!(
+                !spans.iter().any(|span| {
+                    span.buffer.raw == raw
+                        && span.offset < offset + length
+                        && offset < span.offset + span.length
+                }),
+                "decode cleared prefill protocol: {line}"
+            );
+        }
     }
 }

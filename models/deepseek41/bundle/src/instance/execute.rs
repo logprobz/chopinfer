@@ -1209,7 +1209,7 @@ impl Instance {
             .ops
             .reduce
             .as_ref()
-            .is_some_and(|ops| ops.bf16_partials())
+            .is_some_and(|ops| ops.decode_partials())
             || !step.prefill.request_ids.is_empty())
             && let Err(error) = self.quiesce_prefill_reduce()
         {

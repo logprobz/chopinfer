@@ -1,10 +1,10 @@
 //! A selected-key cache around the validated native source and ordered merge.
-use super::Entry;
+use super::{Entry, GroupedEntry};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
 use kernel_core::latent_attention::LatentSourcesBuffers;
 pub use kernel_core::latent_sources_cache::Layout;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 pub type Buffers = kernel_core::latent_sources_cache::Buffers<View>;
 
 /// Only listed, GPU-qualified row counts may use this prepared cache.
@@ -14,9 +14,32 @@ pub fn prepare(
     need: Need,
     rows: &[u32],
 ) -> Result<Prepared<Buffers>, Refused> {
+    prepare_grouped(reference, entry, need, rows, &[])
+}
+
+/// Override the cached head group only at explicitly admitted row counts.
+/// Other rows retain the original cached entry and every row keeps its merge.
+pub fn prepare_grouped(
+    reference: Prepared<LatentSourcesBuffers<View>>,
+    entry: Entry,
+    need: Need,
+    rows: &[u32],
+    head_groups: &[(u32, u32)],
+) -> Result<Prepared<Buffers>, Refused> {
     entry.validate()?;
     need.check(reference.info())?;
     let selected: BTreeSet<_> = rows.iter().copied().collect();
+    let groups: BTreeMap<_, _> = head_groups.iter().copied().collect();
+    if groups.len() != head_groups.len() || groups.keys().any(|r| !selected.contains(r)) {
+        return Err(Refusal("cached head groups require unique admitted rows").into());
+    }
+    for &heads in groups.values() {
+        GroupedEntry {
+            cache: entry.clone(),
+            heads,
+        }
+        .validate()?;
+    }
     if entry.profile
         || selected.is_empty()
         || selected.len() != rows.len()
@@ -43,7 +66,22 @@ pub fn prepare(
         (entry.symbol(), entry.plan(maximum)?.dynamic_shared_bytes),
         (entry.source.merge_symbol(), 0),
     ];
-    let digest = kernel_build::digest(format!("{entry:?}/{selected:?}").as_bytes());
+    for heads in groups.values().copied().collect::<BTreeSet<_>>() {
+        let grouped = GroupedEntry {
+            cache: entry.clone(),
+            heads,
+        };
+        info.symbols.push((
+            grouped.symbol(),
+            grouped.plan(maximum)?.dynamic_shared_bytes,
+        ));
+    }
+    let identity = if groups.is_empty() {
+        format!("{entry:?}/{selected:?}")
+    } else {
+        format!("{entry:?}/{selected:?}/{groups:?}")
+    };
+    let digest = kernel_build::digest(identity.as_bytes());
     info.implementation
         .push_str(&format!(":selected-cache#{}", &digest[..16]));
     need.check(&info)?;
@@ -51,6 +89,7 @@ pub fn prepare(
         reference,
         entry,
         selected,
+        groups,
         info,
     }))
 }
@@ -59,6 +98,7 @@ struct Cached {
     reference: Prepared<LatentSourcesBuffers<View>>,
     entry: Entry,
     selected: BTreeSet<u32>,
+    groups: BTreeMap<u32, u32>,
     info: OpInfo,
 }
 
@@ -87,7 +127,15 @@ impl PreparedOp<Buffers> for Cached {
                 "selected cache requires the original ordered merge",
             ));
         }
-        let mut calls = self.entry.launches(&old[0], b.decoded, b.valid, None)?;
+        let mut calls = if let Some(&heads) = self.groups.get(&counts.rows) {
+            GroupedEntry {
+                cache: self.entry.clone(),
+                heads,
+            }
+            .launches(&old[0], b.decoded, b.valid, None)?
+        } else {
+            self.entry.launches(&old[0], b.decoded, b.valid, None)?
+        };
         calls.push(old[1].clone());
         Ok(calls)
     }
@@ -193,6 +241,56 @@ mod tests {
         for rows in [0, 2, 6, 16, 32] {
             assert!(op.launches(&b, View::EMPTY, Counts::rows(rows)).is_err());
         }
+    }
+
+    #[test]
+    fn prepared_groups_change_only_the_selected_consumer_grid_and_symbol() {
+        let e = entry();
+        let b = buffers(&e);
+        let baseline = prepare(reference(&e), e.clone(), Need::rows(32), &[1, 4, 8]).unwrap();
+        let grouped = GroupedEntry {
+            cache: e.clone(),
+            heads: 8,
+        };
+        let candidate = prepare_grouped(
+            reference(&e),
+            e.clone(),
+            Need::rows(32),
+            &[1, 4, 8],
+            &[(4, 8)],
+        )
+        .unwrap();
+        assert_eq!(candidate.info().bytes, baseline.info().bytes);
+        assert_eq!(
+            &candidate.info().symbols[..3],
+            baseline.info().symbols.as_slice()
+        );
+        assert_eq!(candidate.info().symbols[3], (grouped.symbol(), 73984));
+        for rows in [1, 4, 8] {
+            let mut old = baseline
+                .launches(&b, View::EMPTY, Counts::rows(rows))
+                .unwrap();
+            let new = candidate
+                .launches(&b, View::EMPTY, Counts::rows(rows))
+                .unwrap();
+            if rows == 4 {
+                old[1].symbol = grouped.symbol();
+                old[1].plan = grouped.plan(rows).unwrap();
+                assert_eq!(new[1].plan.grid, [4, 2, 8]);
+            }
+            assert_eq!(new, old);
+        }
+        for groups in [&[(4, 0)][..], &[(4, 3)], &[(2, 8)], &[(4, 4), (4, 8)]] {
+            assert!(
+                prepare_grouped(reference(&e), e.clone(), Need::rows(32), &[1, 4, 8], groups)
+                    .is_err()
+            );
+        }
+        assert!(
+            candidate
+                .launches(&b, View::EMPTY, Counts::rows(2))
+                .is_err()
+        );
     }
 
     #[test]

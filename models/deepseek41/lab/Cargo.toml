@@ -92,6 +92,10 @@ path = "tests/sm120/query_prefill/main.rs"
 name = "build_hc_prefill_warp"
 path = "examples/sm120/build_hc_prefill_warp.rs"
 
+[[test]]
+name = "bf16_partials"
+path = "tests/sm120/bf16_partials.rs"
+
 [[example]]
 name = "build_acceptance"
 path = "examples/sm120/build_acceptance.rs"

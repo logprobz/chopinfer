@@ -113,6 +113,7 @@ mod mxfp8_fold_direct;
 mod mxfp8_fold_stream;
 mod mxfp8_fold_ticket;
 mod mxfp8_prefill;
+mod mxfp8_prefill_compact;
 mod mxfp8_rows;
 pub mod own;
 mod pooled_indexer;
@@ -244,6 +245,7 @@ pub struct Sm120 {
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
+    mxfp8_prefill_compacts: Vec<(crate::gemm::mxfp8_prefill_compact::Entry, u32)>,
     mxfp8_prefill_splits: Vec<(
         crate::gemm::mxfp8_fold::Entry,
         crate::gemm::mxfp8_prefill_split::TailPolicy,
@@ -270,6 +272,17 @@ impl Sm120 {
         policy: crate::gemm::mxfp8_prefill_split::TailPolicy,
     ) -> Self {
         self.mxfp8_prefill_splits.push((entry, policy));
+        self
+    }
+
+    /// Opt one exact host row count into compact tiles; all other rows keep
+    /// the separately registered prefill implementation. No scratch is added.
+    pub fn with_mxfp8_prefill_compact(
+        mut self,
+        entry: crate::gemm::mxfp8_prefill_compact::Entry,
+        rows: u32,
+    ) -> Self {
+        self.mxfp8_prefill_compacts.push((entry, rows));
         self
     }
 
@@ -1324,9 +1337,16 @@ impl Backend for Sm120 {
                 );
             }
             let entries: Vec<_> = candidates.iter().map(|(e, _)| e.clone()).collect();
-            return mxfp8_prefill::prepare_with_tail(&entries, op, need, Some(*policy));
+            let fallback = mxfp8_prefill::prepare_with_tail(&entries, op, need, Some(*policy))?;
+            return mxfp8_prefill_compact::prepare(
+                fallback,
+                &self.mxfp8_prefill_compacts,
+                op,
+                need,
+            );
         }
-        mxfp8_prefill::prepare(&self.mxfp8_prefills, op, need)
+        let fallback = mxfp8_prefill::prepare(&self.mxfp8_prefills, op, need)?;
+        mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)
     }
 
     fn mxfp8_fold_gemm_pair(

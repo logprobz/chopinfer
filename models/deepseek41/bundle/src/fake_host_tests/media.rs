@@ -336,6 +336,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases per rank. This lifecycle keeps every launch and allocation;
 /// only resource identities move. Larger-row projection graphs are audited
 /// separately with the same loaded catalog in reference and serving modes.
+/// The ordered head adds 24 resolves and 25 releases per rank. Twelve
+/// one-row heads replace three launches with two; allocations are unchanged.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22917, 0x71af93528d62b2fc)),
     (Ranks::TP4, (50631, 0xb735eca9b0a1e6cb)),

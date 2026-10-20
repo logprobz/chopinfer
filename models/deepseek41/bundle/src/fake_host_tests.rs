@@ -23,6 +23,7 @@ mod decode_attention;
 mod device_results;
 mod dspark;
 mod fold_stream;
+mod head_last;
 mod index_mma;
 mod index_query;
 pub(crate) mod indexer_workloads;
@@ -953,6 +954,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// Qualified HC row tiles and prefill mixers retain their exact operands.
 /// Fused prefill heads add only their declared module resources here; their
 /// active output/merge substitutions are audited in full prefill lifetimes.
+/// The ordered head adds 24 resolves and 25 releases per rank. Sixteen
+/// one-row heads replace three launches with two; allocations are unchanged.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

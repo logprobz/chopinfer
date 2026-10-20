@@ -41,6 +41,9 @@ pub fn prepare(
     usage: OperationUse,
     base: Box<dyn PreparedExperts>,
 ) -> Result<Box<dyn PreparedExperts>, Refused> {
+    if super::moe_grouped_prefill::selected(g, ranks, set, kind, usage) {
+        return super::moe_grouped_prefill::prepare(base);
+    }
     if !selected(g, ranks, set, kind, usage) {
         return Ok(base);
     }

@@ -116,6 +116,9 @@ pub(crate) mod moe;
 mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 pub(crate) mod moe_direct_kernels;
+#[allow(dead_code, reason = "the build script uses the entry declarations")]
+mod moe_grouped_entries;
+pub mod moe_grouped_prefill;
 pub mod moe_pipeline;
 #[allow(dead_code)]
 mod moe_pipeline_entries;
@@ -429,6 +432,9 @@ impl crate::Kernels {
         ]
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            && (cubin != moe_grouped_entries::CUBIN
+            || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
+                && shape.ranks() == 4))
             && cubin != kernels_sm120::probes::CUBIN
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)

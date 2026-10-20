@@ -1116,6 +1116,9 @@ pub(crate) fn dspark_context(
     })
 }
 
+#[cfg(test)]
+pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
+
 #[cfg(all(test, feature = "diagnostic-taps"))]
 pub(crate) fn capture_dspark_state_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,

@@ -7,12 +7,15 @@ use super::execution::{DraftInput, Input};
 use super::staging::DeviceTarget;
 use crate::ops::engram_hash::{HashDevice, HashMemory};
 
+pub(crate) const BOUNDARY_BYTES: u64 = 64 * 1024;
+
 pub(crate) struct Pending {
     pub inputs: Vec<Input>,
     pub drafts: Vec<DraftInput>,
     pub history: Vec<i64>,
     pub text: Vec<u8>,
     pub result: Option<DeviceTarget>,
+    pub packed_diagnostics: std::cell::RefCell<Option<Vec<u8>>>,
 }
 
 pub(crate) struct Cycle {
@@ -23,6 +26,8 @@ pub(crate) struct Cycle {
     pub gathering: bool,
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
+    pub boundary_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
+    pub boundary_enabled: bool,
     pub pending: Option<Pending>,
 }
 
@@ -44,6 +49,9 @@ impl Cycle {
             gathering: false,
             draft_done: Vec::new(),
             draft_joined: None,
+            boundary_ready: Vec::new(),
+            boundary_enabled: std::env::var_os("CHOPINFER_DSPARK_BOUNDARY_PACKET")
+                .is_none_or(|value| value == "1"),
             pending: None,
         }
     }

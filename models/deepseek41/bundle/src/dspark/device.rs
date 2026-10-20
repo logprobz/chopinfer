@@ -311,7 +311,9 @@ impl Device {
                 services,
                 pool,
                 stream,
-                u64::from(DECODE_BATCH * BLOCK_ROWS) * 8,
+                u64::from(DECODE_BATCH * BLOCK_ROWS)
+                    .saturating_mul(8)
+                    .max(super::cycle::BOUNDARY_BYTES),
                 held,
             )?);
         }

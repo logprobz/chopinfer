@@ -4,6 +4,7 @@ use super::*;
 use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
+mod boundary;
 mod catch_up;
 mod graph_budget;
 pub(super) mod host;

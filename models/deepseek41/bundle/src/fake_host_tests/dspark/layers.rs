@@ -26,7 +26,7 @@ fn layer_gathers_join_only_at_their_own_consumers() {
             assert_eq!(timing["layers"][0]["layer"], 1);
             assert_eq!(timing["layers"][1]["layer"], 14);
             assert_eq!(timing["layers"].as_array().unwrap().len(), 2);
-            assert_eq!(timing["bundle_readbacks"], ranks.get() + 3);
+            assert_eq!(timing["bundle_readbacks"], 3);
             drop(logs);
             if cycle == 1 {
                 let journal = host.journal.borrow();

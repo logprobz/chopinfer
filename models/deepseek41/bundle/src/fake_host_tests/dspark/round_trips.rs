@@ -160,14 +160,15 @@ fn warm_cycle_host_boundary_inventory() {
                     "warm DSpark needs no explicit stream drain"
                 );
                 assert_eq!(
-                    totals["device_to_host"], 5,
-                    "four final rank checks and one ID/confidence packet"
+                    totals["device_to_host"],
+                    if items == 1 { 1 } else { 5 },
+                    "C1 joins status and diagnostics in one packet"
                 );
                 assert_eq!(
                     totals["async_device_to_host"], 2,
                     "disjoint ID slices feed the two layer gathers"
                 );
-                assert_eq!(totals["physical_readbacks"], 7);
+                assert_eq!(totals["physical_readbacks"], if items == 1 { 3 } else { 7 });
                 assert_eq!(totals["mapped_waits"], 8);
                 assert_eq!(
                     totals["graph_replays"],
@@ -227,7 +228,7 @@ fn saved_catch_up_and_index_failures_refuse_target_logits() {
         // the full five-row draft adds its two planes afterward.
         let prior_rows = 2 * (3 + 5);
         let total_rows = prior_rows + 6 * (FLASH.shape.csa.index_sources.len() + 2);
-        let mut status = vec![0; total_rows * 4];
+        let mut status = vec![0; total_rows * 4 + 40];
         status[if index_failure { prior_rows * 4 } else { 0 }] = 1;
         host.injected.replace(Some(status));
         let mut sink = Sink::default();

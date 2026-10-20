@@ -314,3 +314,111 @@ fn cached_norm_selects_only_qualified_buckets_and_retains_alias_refusals() {
             .is_err()
     );
 }
+
+#[test]
+fn cached_f32_norm_keeps_the_bf16_spec_and_selects_only_qualified_buckets() {
+    let cached = |input| kernels_sm120::row::rmsnorm_quantize_cached::Entry {
+        reference: Entry::new(query(input), 32, "norm_reference").unwrap(),
+        prefix: "norm_cache".into(),
+    };
+    let bf16 = cached(DType::Bf16).cubin_spec("bf16").unwrap();
+    assert_eq!(
+        bf16.headers,
+        ["#include \"row/rmsnorm_quantize_cached.cuh\""]
+    );
+    let f32 = cached(DType::F32);
+    let spec = f32.cubin_spec("f32").unwrap();
+    assert_eq!(
+        spec.headers,
+        ["#include \"row/rmsnorm_quantize_cached_f32.cuh\""]
+    );
+    assert_eq!(spec.entries.len(), 3);
+    for (entry, threads) in spec.entries.iter().zip([256, 512, 1024]) {
+        assert_eq!(entry.params, f32.reference.spec().params);
+        assert!(entry.body.contains(&format!("blockDim.x!={threads}")));
+        assert!(entry.body.contains("run<1280,"));
+    }
+    for width in [1290, 2080] {
+        let mut wide = f32.clone();
+        wide.reference.query.norm.width = width;
+        assert!(wide.validate().is_err(), "{width}");
+    }
+    let q = query(DType::F32);
+    let entry = f32.reference.clone();
+    let old = Sm120::new()
+        .with_rmsnorm_quantize(entry.clone())
+        .rmsnorm_quantize(&q, Need::rows(32))
+        .unwrap();
+    let op = Sm120::new()
+        .with_rmsnorm_quantize(entry.clone())
+        .with_rmsnorm_quantize_cached(f32.clone(), vec![(1, 8), (8, 16)])
+        .rmsnorm_quantize(&q, Need::rows(32))
+        .unwrap();
+    assert_eq!(op.info().implementation, old.info().implementation);
+    assert_eq!(op.info().bytes, old.info().bytes);
+    let mut b = buffers();
+    b.widened = None;
+    for rows in [1, 2, 8, 32] {
+        let reference = old.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
+        let actual = op.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
+        assert_eq!(actual[0].arguments, reference[0].arguments);
+        let (symbol, block) = match rows {
+            1 => (f32.symbols()[0].clone(), 256),
+            8 => (f32.symbols()[1].clone(), 512),
+            _ => (entry.symbol.clone(), 256),
+        };
+        assert_eq!(actual[0].symbol, symbol);
+        assert_eq!(actual[0].plan.block, [block, 1, 1]);
+        assert!(actual[0].plan.pdl);
+        // F32 rows are never widened.
+        assert!(
+            op.launches(&buffers(), View::EMPTY, Counts::rows(rows))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn cached_f32_norm_compiles_without_spills_or_stack() {
+    let root = std::env::temp_dir().join(format!("norm-cached-f32-build-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut specs = Vec::new();
+    for width in [1280, 2048] {
+        let mut q = query(DType::F32);
+        q.norm.width = width;
+        specs.push(
+            kernels_sm120::row::rmsnorm_quantize_cached::Entry {
+                reference: Entry::new(q, 32, "norm_reference").unwrap(),
+                prefix: format!("norm_cache_{width}"),
+            }
+            .cubin_spec(&format!("norm_cached_f32_{width}"))
+            .unwrap(),
+        );
+    }
+    let toolchain = kernel_build::Toolchain::detect().unwrap();
+    assert!(!toolchain.skipped);
+    let built = kernel_build::build(
+        &toolchain,
+        &specs,
+        &root.join("out"),
+        &root.join("lock"),
+        kernel_build::BuildOptions {
+            lock_update: true,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+    )
+    .unwrap();
+    for module in &built {
+        assert_eq!(module.entries.len(), 3);
+        for entry in &module.entries {
+            assert_eq!(
+                (entry.local_bytes, entry.stack_bytes),
+                (0, 0),
+                "{}",
+                entry.symbol
+            );
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

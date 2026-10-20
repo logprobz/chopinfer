@@ -102,7 +102,13 @@ pub fn gather_plane_v1(
     output: &mut [u8],
 ) -> Result<(), String> {
     let probe = MappedProbe::new(&plane.mapping, plane.row_bytes);
-    gather_plane_with_probe(plane, input, output, &probe, crate::host_rows::gather::mapped_read_ahead_v1())
+    gather_plane_with_probe(
+        plane,
+        input,
+        output,
+        &probe,
+        crate::host_rows::gather::mapped_read_ahead_v1(),
+    )
 }
 
 fn gather_plane_with_probe(
@@ -139,7 +145,11 @@ fn gather_plane_with_probe(
     }
     // The CUDA host callback stays serial. Only the mapping's read-ahead
     // policy is shared with the synchronous service, after every ID is checked.
-    let ahead = if read_ahead { ReadAhead::new(probe) } else { ReadAhead::disabled(probe) };
+    let ahead = if read_ahead {
+        ReadAhead::new(probe)
+    } else {
+        ReadAhead::disabled(probe)
+    };
     gather_span_v1(table, plane.row_bytes, &ids, 0, output, &ahead);
     Ok(())
 }

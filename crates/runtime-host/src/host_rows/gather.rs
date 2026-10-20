@@ -50,11 +50,18 @@ pub(crate) struct ReadAhead<'a> {
 
 impl<'a> ReadAhead<'a> {
     pub(crate) fn configured(probe: &'a dyn GatherProbe) -> Self {
-        if mapped_read_ahead_v1() { Self::new(probe) } else { Self::disabled(probe) }
+        if mapped_read_ahead_v1() {
+            Self::new(probe)
+        } else {
+            Self::disabled(probe)
+        }
     }
 
     pub(crate) fn disabled(probe: &'a dyn GatherProbe) -> Self {
-        Self { probe, started: std::sync::atomic::AtomicBool::new(true) }
+        Self {
+            probe,
+            started: std::sync::atomic::AtomicBool::new(true),
+        }
     }
 
     pub(crate) fn new(probe: &'a dyn GatherProbe) -> Self {

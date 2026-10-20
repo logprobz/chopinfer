@@ -717,6 +717,10 @@ pub(crate) struct StepTrace {
     pub(crate) decode_rows: usize,
     pub(crate) verify_items: usize,
     pub(crate) verify_rows: usize,
+    /// Over verify items: proposals verified, proposals accepted and
+    /// tokens emitted (accepted proposals plus the bonus, unless a stop or
+    /// the length limit ended the run first).
+    pub(crate) verified: VerifiedTokens,
     pub(crate) row_capacity: Option<usize>,
     pub(crate) prefill_cap: Option<usize>,
     pub(crate) execution_micros: u64,
@@ -749,6 +753,9 @@ impl StepTrace {
             "decode_rows": self.decode_rows,
             "verify_items": self.verify_items,
             "verify_rows": self.verify_rows,
+            "drafted_tokens": self.verified.drafted,
+            "accepted_tokens": self.verified.accepted,
+            "verify_emitted_tokens": self.verified.emitted,
             "live_rows": self.decode_rows + self.verify_rows,
             "row_capacity": self.row_capacity,
             "prefill_cap": self.prefill_cap,
@@ -761,6 +768,14 @@ impl StepTrace {
             "speculation": self.speculation.as_ref().map(|trace| trace.record()),
         })
     }
+}
+
+/// Token counts summed over one step's verify items.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct VerifiedTokens {
+    pub(crate) drafted: usize,
+    pub(crate) accepted: usize,
+    pub(crate) emitted: usize,
 }
 
 /// Host time of one executed step on the engine thread, in microseconds.
@@ -952,6 +967,7 @@ mod tests {
             decode_rows: 31,
             verify_items: 0,
             verify_rows: 0,
+            verified: VerifiedTokens::default(),
             row_capacity: None,
             prefill_cap: Some(2048),
             execution_micros: 175_300,
@@ -1000,7 +1016,8 @@ mod tests {
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());
-        assert_eq!(parsed.as_object().unwrap().len(), 19);
+        assert_eq!(parsed["accepted_tokens"], 0);
+        assert_eq!(parsed.as_object().unwrap().len(), 22);
         let fixed = StepTrace {
             prefill_cap: None,
             predicted_micros: None,

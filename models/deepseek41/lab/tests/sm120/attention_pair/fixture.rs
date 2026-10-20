@@ -54,6 +54,7 @@ impl Case {
     }
 }
 
+#[derive(Clone)]
 pub struct Fixture {
     pub case: Case,
     pub data: BTreeMap<&'static str, Vec<u8>>,
@@ -69,6 +70,11 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new(case: Case, entry: &Entry) -> Self {
+        Self::with_compressed_keys(case, entry, None)
+    }
+
+    /// Preserve each captured row's selected-key order while seeding its KV.
+    pub fn with_compressed_keys(case: Case, entry: &Entry, captured: Option<&[u32]>) -> Self {
         assert!(case.context > 0 && case.inactive <= case.rows());
         let kernel_core::latent_attention::LatentAttentionQuery::Attention {
             heads,
@@ -97,6 +103,11 @@ impl Fixture {
         let scale_stride = SLOTS * WIDTH / 32 + if case.holes { 3 } else { 0 };
         let mut rng = Rng(0x6bcd_48a2_1994_5119 ^ case.context as u64);
         let mut window_keys = vec![u32::MAX; rows * 128];
+        if let Some(keys) = captured {
+            assert_eq!(keys.len(), rows * budget);
+            assert!(keys.iter().all(|&key| key == u32::MAX
+                || (key as usize) < (case.context + case.per_sequence()) / case.ratio.max(1)));
+        }
         let mut compressed_keys = vec![u32::MAX; rows * budget];
         let mut window_live = BTreeSet::new();
         let mut compressed_live = BTreeSet::new();
@@ -104,7 +115,7 @@ impl Fixture {
         let mut compressed_reads = BTreeSet::new();
         let mut row_kv_bytes = 0;
         for sequence in 0..case.sequences {
-            // Retain one sparse prefix selection across a six-row verify block.
+            // Retain one sparse prefix selection across a verify block.
             let visible = case.context / case.ratio.max(1);
             let count = visible.min(budget);
             let selected = (0..count)
@@ -128,10 +139,15 @@ impl Fixture {
                         window_reads.insert((sequence, absolute % SLOTS));
                     }
                 }
-                for (j, &position) in selected.iter().enumerate() {
-                    if case.holes && (j / 64 % 3 == 1 || j % 19 == 0) {
+                let row_keys: Vec<_> = match captured {
+                    Some(keys) => keys[row * budget..(row + 1) * budget].to_vec(),
+                    None => selected.iter().map(|&position| position as u32).collect(),
+                };
+                for (j, &position) in row_keys.iter().enumerate() {
+                    if position == u32::MAX || (case.holes && (j / 64 % 3 == 1 || j % 19 == 0)) {
                         continue;
                     }
+                    let position = position as usize;
                     compressed_keys[row * budget + j] = position as u32;
                     compressed_live.insert((sequence, position));
                     if row < case.live() {

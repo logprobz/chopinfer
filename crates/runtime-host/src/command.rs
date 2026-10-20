@@ -1999,9 +1999,16 @@ fn verify_rows_v1(
 
 use runtime_bundle_sdk::warmup::served_verify_rows as served_verify_rows_v1;
 
-/// The row buckets of steps with at most `rows` rows. The shared SM120
-/// bundle runtime captures one decode or verify graph per power of two rows
-/// (`bundle_runtime::graphs`), so a step runs its next power of two.
+fn exact_verify_graphs_v1(manifest: &BundleManifestV1) -> bool {
+    manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|id| id.as_str() == runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1)
+}
+
+/// Decode graph buckets. Packages with exact verify graphs price and
+/// report their live verify width separately through the executor.
 fn step_buckets_v1(rows: usize) -> Vec<usize> {
     std::iter::successors(Some(1_usize), |bucket| bucket.checked_mul(2))
         .take_while(|&bucket| bucket < rows.max(1).saturating_mul(2))
@@ -2435,14 +2442,7 @@ fn serve_v1(
             maximum_draft_tokens: speculation.maximum_draft_tokens(),
             step_rows: speculation.maximum_verify_tokens(),
             drafting_items: speculation.maximum_draft_items(),
-            exact_graphs: package
-                .manifest()
-                .resource_requirements()
-                .required_capabilities()
-                .iter()
-                .any(|id| {
-                    id.as_str() == runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1
-                }),
+            exact_graphs: exact_verify_graphs_v1(package.manifest()),
         });
     let policy = deployment
         .policy()
@@ -3005,6 +3005,7 @@ impl ServedEngineV1 {
         } else {
             &[]
         })
+        .with_exact_verify_rows(exact_verify_graphs_v1(loaded.manifest()))
         .with_step_buckets(&step_buckets_v1(
             self.speculation
                 .map_or(0, |speculation| speculation.maximum_verify_tokens())
@@ -7385,6 +7386,27 @@ mod tests {
             .to_string()
             .contains("requires a bundle speculation declaration")
         );
+    }
+
+    #[test]
+    fn exact_verify_cost_geometry_uses_the_same_capability_as_warmup() {
+        for enabled in [false, true] {
+            let capabilities = if enabled {
+                vec![id(
+                    runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1,
+                )]
+            } else {
+                Vec::new()
+            };
+            let manifest = manifest_requiring(
+                vec![topology("tp1", 1)],
+                8,
+                DECLARED_ROWS_V1,
+                &"0".repeat(64),
+                capabilities,
+            );
+            assert_eq!(super::exact_verify_graphs_v1(&manifest), enabled);
+        }
     }
 
     /// The drafting-items bound comes from the bundle's declaration; a

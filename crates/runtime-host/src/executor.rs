@@ -1323,6 +1323,7 @@ pub struct BundleModelExecutorV1<E: BundleExecutionV1 = LoadedBundleInstanceV1> 
     view_sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
     row_buckets: Vec<usize>,
     step_buckets: Vec<usize>,
+    exact_verify_rows: bool,
     state_slots: Option<crate::recurrent::StateSlotPoolV1>,
     in_place_state: bool,
     position_axes: bool,
@@ -1359,6 +1360,7 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
             view_sampler: None,
             row_buckets: Vec::new(),
             step_buckets: Vec::new(),
+            exact_verify_rows: false,
             state_slots: None,
             in_place_state: false,
             position_axes: false,
@@ -1424,12 +1426,20 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
         self
     }
 
-    /// The row counts the instance's captured decode and verify graphs run,
-    /// in increasing order; a step pads to the smallest that holds it.
+    /// The row counts the instance's decode graphs run, in increasing order.
+    /// Verify uses these too unless the package declares exact verify rows.
     #[must_use]
     pub fn with_step_buckets(mut self, buckets: &[usize]) -> Self {
         self.step_buckets = buckets.to_vec();
         self.step_buckets.sort_unstable();
+        self
+    }
+
+    /// Price and report the live width of a package's exact verify graphs.
+    /// Ordinary decode steps retain their declared execution buckets.
+    #[must_use]
+    pub fn with_exact_verify_rows(mut self, enabled: bool) -> Self {
+        self.exact_verify_rows = enabled;
         self
     }
 
@@ -1448,10 +1458,22 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
             .iter()
             .map(|item| item.phase().appended_tokens())
             .sum();
-        self.step_buckets
+        let capacity = self
+            .step_buckets
             .iter()
             .copied()
-            .find(|&bucket| bucket >= rows)
+            .find(|&bucket| bucket >= rows)?;
+        Some(
+            if self.exact_verify_rows
+                && items
+                    .iter()
+                    .any(|item| matches!(item.phase(), BatchPhase::Verify { .. }))
+            {
+                rows
+            } else {
+                capacity
+            },
+        )
     }
 
     /// Reports whether the loaded execution exposes the retirement callback.
@@ -1602,6 +1624,9 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
     }
 
     fn step_rows_v1(&self, rows: usize) -> usize {
+        if self.exact_verify_rows {
+            return rows;
+        }
         self.step_buckets
             .iter()
             .copied()
@@ -3943,6 +3968,38 @@ mod tests {
         assert_eq!(executor.step_rows_v1(17), 32);
         assert_eq!(executor.step_rows_v1(33), 64);
         assert_eq!(executor.step_rows_v1(65), 65);
+    }
+
+    #[test]
+    fn exact_verify_widths_keep_distinct_costs_and_preserve_ar_buckets() {
+        let executor = BundleModelExecutorV1::new(FakeExecutionV1::emitting(Vec::new()), 3, 32)
+            .with_step_buckets(&[1, 2, 4, 8, 16, 32])
+            .with_exact_verify_rows(true);
+        let item = |phase| ModelBatchItem::new(RequestId::new(1), phase, vec![0], true);
+        for rows in [6, 13, 18, 23, 28, 32] {
+            assert_eq!(executor.step_rows_v1(rows), rows);
+            let items = [
+                item(BatchPhase::Verify { draft_tokens: 1 }),
+                item(BatchPhase::Verify {
+                    draft_tokens: rows - 3,
+                }),
+            ];
+            assert_eq!(executor.executed_row_capacity(&items), Some(rows));
+        }
+        let mixed = [
+            item(BatchPhase::Verify { draft_tokens: 3 }),
+            item(BatchPhase::Decode),
+            item(BatchPhase::Decode),
+        ];
+        assert_eq!(executor.executed_row_capacity(&mixed), Some(6));
+        let ar = (0..3).map(|_| item(BatchPhase::Decode)).collect::<Vec<_>>();
+        assert_eq!(executor.executed_row_capacity(&ar), Some(4));
+        let mut prefill = mixed.to_vec();
+        prefill.push(item(BatchPhase::Prefill { tokens: 1 }));
+        assert_eq!(executor.executed_row_capacity(&prefill), None);
+        let bucketed = executor.with_exact_verify_rows(false);
+        assert_eq!(bucketed.step_rows_v1(18), 32);
+        assert_eq!(bucketed.executed_row_capacity(&mixed), Some(8));
     }
 
     #[test]

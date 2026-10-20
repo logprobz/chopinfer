@@ -130,3 +130,49 @@ last chunk scale both sides. The router, ceil and combine are unchanged.
 These are estimates from the floor model and those measurements, not
 results of this candidate; the timing job measures it, and its timings
 count only after criteria 1 to 6 pass.
+
+## Results (2026-10-20, r4)
+
+Flash TP4 lab on one GPU pair at 250 W, no Xids; every case below ran on
+both workers and the executed counts match the plan.
+
+- **1, instruction exactness:** 17,408 probe outputs per run, 0 failures,
+  in both the memcheck and oracle runs. Report only: 88 of 128 small-sum
+  outputs round to nearest.
+- **2, f64 oracle bound:** 0 failures of 52,101,120 down elements and
+  11,722,752 gate/up elements over 10,176 sampled route rows (3 synthetic
+  cases and 24 captured cases per worker, all captured cases authenticated
+  against the capture). Worst bound ratio 0.00013 (gate/up) and 0.0016
+  (down and chain down); minimum cosine above 0.9999999999999.
+- **3, serving entries:** the serving gate/up equals the raw entry and all
+  three other tile variants are bitwise equal in every case.
+- **4, invariance:** prefixes 4097, 65 and 1, graph replay and poisoned
+  repeat bitwise for all three synthetic cases on both workers.
+- **5, negative control:** the omit-first entry failed the bound in 54 of
+  54 cases (at least 490,300 failing elements each).
+- **6, memory safety:** "ERROR SUMMARY: 0 errors" on both workers over the
+  12 synthetic cases (three routings at 1, 65, 513 and 2048 live rows), the
+  tile variants and the probe.
+- **7, report only:** native down's RMSE is never larger than the exact
+  down's (54 of 54 cases, ratio 0.85 to 1.0); the ordered top-k sum with
+  the shared addend is no larger in 44 of 54 cases (largest RMSE ratio
+  1.000062, no larger maximum error), the rounding noise the decision above
+  anticipated.
+
+Timing (paired, 5 rounds of 3 samples, captured 8192-row chunks of layers
+0, 13, 14 and 39 on all ranks): exact 5.58 ms gate/up and 4.14 ms down per
+layer, native 2.83 and 1.77 ms (median ratios 0.51 and 0.43; both together
+10.48 to 5.07 ms, ratio 0.48). Over 40 full 8192-row layers that is 419 ms
+against 203 ms. The other gate/up tile r2w6s3 is about 5% faster than the
+serving r2w4s3 and bitwise equal; the serving tiles are unchanged.
+
+The 40-layer figures are not a served chunk. In the round 7 profile, chunk
+0 runs 20 MoE layers on all 8192 rows and 19 upper-skip layers on 192 to
+2496 rows. Its full-row layers match the lab's exact arm (gate/up with its
+decode prepare 5.64 ms per layer, down about 4.1 ms), so the estimate above
+compared native over 40 full layers with a baseline of 20 full and 19
+partial layers; the native estimate was also low by about 1.7 times. Served
+projection: 20 full layers save 5.41 ms each, 108 ms, plus up to about
+25 ms on the upper-skip layers if their ratio holds (timed only at 8192
+rows), so about 105 to 130 ms per 8192-row chunk, about 10% of
+chunk 0's 1005 ms. The serving A/B (criterion 8) measures it.

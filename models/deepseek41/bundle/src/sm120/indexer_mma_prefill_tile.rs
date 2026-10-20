@@ -7,7 +7,7 @@ use kernels_sm120::pooled_indexer::{
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "position_mma_prefill_tile";
-pub const CUBIN: &str = tile::CUBIN;
+pub const CUBIN: &str = "position_mma_prefill_tile_deepseek41_sm120";
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
     if !geometries.contains(&FLASH) {
@@ -39,7 +39,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         scores.push(score.clone());
         scores.push(tile::diagnostic(score));
     }
-    let spec = tile::cubin_spec(scores);
-    assert_eq!(spec.name, CUBIN);
+    let mut spec = tile::cubin_spec(scores);
+    assert_eq!(spec.name, tile::CUBIN);
+    // Keep the qualified exports and bytes; the module belongs to Flash alone.
+    spec.name = CUBIN.into();
     Ok(vec![(FAMILY, spec)])
 }

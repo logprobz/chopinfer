@@ -56,6 +56,93 @@ pub(super) fn copy(
 }
 
 #[test]
+fn bulk_hits_return_unfilled_positions_and_match_single_row_copies() {
+    let registry = registry(2);
+    let codes = mapping("batch-codes", &source(256, 256), 21);
+    let scales = mapping("batch-scales", &source(256, 8), 21);
+    attach(
+        &registry,
+        vec![(Arc::clone(&codes), 256), (Arc::clone(&scales), 8)],
+    )
+    .unwrap();
+    for row in [3, 7, 19] {
+        copy(&codes, 256, row, 0, 256);
+    }
+    copy(&scales, 8, 7, 0, 8);
+    let ids = [19, 5, 7, 3, 5, 200, 19];
+    for (mapping, width, expected_misses) in [
+        (&codes, 256, vec![1, 4, 5]),
+        (&scales, 8, vec![0, 1, 3, 4, 5, 6]),
+    ] {
+        let plane = mapping.resident_plane(width).unwrap();
+        let cache = &plane.cache;
+        let before = [
+            cache.hits.load(Ordering::Relaxed),
+            cache.misses.load(Ordering::Relaxed),
+            cache.insertions.load(Ordering::Relaxed),
+            cache.evictions.load(Ordering::Relaxed),
+        ];
+        let mut actual = vec![0xa5; ids.len() * width];
+        let misses = plane.copy_resident_rows(&ids, &mut actual);
+        assert_eq!(misses, expected_misses);
+        assert_eq!(
+            cache.hits.load(Ordering::Relaxed) - before[0],
+            (ids.len() - misses.len()) as u64
+        );
+        assert_eq!(
+            [
+                cache.misses.load(Ordering::Relaxed),
+                cache.insertions.load(Ordering::Relaxed),
+                cache.evictions.load(Ordering::Relaxed),
+            ],
+            before[1..]
+        );
+        for &position in &misses {
+            assert!(
+                actual[position * width..][..width]
+                    .iter()
+                    .all(|&b| b == 0xa5)
+            );
+            // The existing single-row path still owns miss fetch and insertion.
+            plane.copy(
+                mapping.bytes(),
+                ids[position],
+                0,
+                &mut actual[position * width..][..width],
+            );
+        }
+        let expected = ids
+            .iter()
+            .flat_map(|&row| copy(mapping, width, row, 0, width))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        assert!(plane.copy_resident_rows(&ids, &mut actual).is_empty());
+        assert_eq!(actual, expected);
+        let shard = cache.bucket(ids[0]).0;
+        let held = cache.shards[shard].lock().unwrap();
+        let mut poisoned = vec![0xa5; ids.len() * width];
+        let contended = plane.copy_resident_rows(&ids, &mut poisoned);
+        assert_eq!(
+            contended,
+            ids.iter()
+                .enumerate()
+                .filter_map(|(position, &row)| (cache.bucket(row).0 == shard).then_some(position))
+                .collect::<Vec<_>>()
+        );
+        drop(held);
+        for position in contended {
+            plane.copy(
+                mapping.bytes(),
+                ids[position],
+                0,
+                &mut poisoned[position * width..][..width],
+            );
+        }
+        assert_eq!(poisoned, expected);
+    }
+}
+
+#[test]
 fn code_and_scale_planes_keep_exact_bits_and_share_one_charge() {
     let registry = registry(2);
     let codes = mapping("codes", &source(1000, 256), 1);

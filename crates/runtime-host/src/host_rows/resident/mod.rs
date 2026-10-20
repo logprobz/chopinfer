@@ -1,4 +1,5 @@
 //! Bounded resident copies of authenticated mapped rows, shared across ranks.
+mod batch;
 pub(crate) mod replay;
 mod storage;
 

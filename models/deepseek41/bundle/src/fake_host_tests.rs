@@ -41,6 +41,7 @@ mod prefill_selected;
 mod prefill_skip;
 mod prefill_tma;
 mod producer_epilogues;
+mod projection_reuse;
 mod selected_cache;
 mod shared_overlap;
 mod verify_hc;
@@ -942,6 +943,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// Measured router epilogues add one module. These two-item captures retain
 /// their original router launches; the one-item media capture audits fusion.
 /// Measured direct folds use per-operation state sized across all selected row buckets.
+/// TP4 row reuse adds two modules, seventeen resolves and nineteen
+/// releases per rank. This lifecycle keeps every launch and allocation;
+/// only resource identities move. Larger-row projection graphs are audited
+/// separately with the same loaded catalog in reference and serving modes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

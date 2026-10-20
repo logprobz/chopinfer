@@ -332,6 +332,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// the cached producer unchanged and disjoint routed scratch offsets.
 /// Qualified direct folds retain the image path and bind the same quantized
 /// operands during text decode.
+/// TP4 row reuse adds two modules, seventeen resolves and nineteen
+/// releases per rank. This lifecycle keeps every launch and allocation;
+/// only resource identities move. Larger-row projection graphs are audited
+/// separately with the same loaded catalog in reference and serving modes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22783, 0x16c27042beff1943)),
     (Ranks::TP4, (50103, 0x0428427a09488530)),

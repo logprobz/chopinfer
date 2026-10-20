@@ -221,7 +221,7 @@ impl HcOps {
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
         matches!(
             phase,
-            Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
+            Phase::Decode(1 | 8 | 32) | Phase::Verify { rows: 6 | 32, .. }
         ) && self.finish_norm.is_some()
     }
 
@@ -518,7 +518,8 @@ mod tests {
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
                     assert!(chain[0].symbol.ends_with(if rows == 1 {
                         "hc_round_chain_w8_v1"
-                    } else {
+                    } else if rows == 32 {
+                        "hc_round_rows_r2_v1"                    } else {
                         "hc_round_chain_w4_v1"
                     }));
                 } else {
@@ -551,7 +552,7 @@ mod tests {
                         Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
                     );
                     assert_eq!(selected, qualified, "{phase:?}");
-                    assert_eq!(ops.has_finish_norm(phase), qualified);
+                    assert_eq!(ops.has_finish_norm(phase), qualified || matches!(phase, Phase::Decode(32)));
                 }
             }
             assert_eq!(ops.scratch().partials, Some(32 * 15360));

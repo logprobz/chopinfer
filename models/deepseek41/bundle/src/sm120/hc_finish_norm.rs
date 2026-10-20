@@ -39,6 +39,7 @@ pub fn register(
                 super::hc_round_chain::entry(g),
                 vec![(1, 8), (6, 4), (8, 4), (32, 4)],
             )
+            .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), vec![(32, 2)])
     } else {
         backend
     }

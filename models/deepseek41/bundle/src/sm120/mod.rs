@@ -20,6 +20,7 @@ pub mod hc_mixer_probe;
 mod hc_prefill;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
+pub mod hc_round_rows;
 pub mod latent;
 #[allow(
     dead_code,

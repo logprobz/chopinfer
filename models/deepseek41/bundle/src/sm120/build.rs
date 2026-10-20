@@ -49,6 +49,8 @@ mod hc_prefill;
 mod hc_round_chain;
 #[allow(dead_code)]
 mod hc_round_expand_mix;
+#[allow(dead_code, reason = "the bundle registers measured row tiles")]
+mod hc_round_rows;
 mod host_acceptance_cubin;
 mod host_acceptance_entries;
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -281,6 +283,7 @@ pub fn selection(
             owners.push((norm_quantize_cached::cubin_name(geometry), geometry.id));
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
+            owners.push((hc_round_rows::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
@@ -417,6 +420,10 @@ pub fn selection(
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))
                 .expect("qualified rounded chain cubin"),
+        );
+        specs.extend(
+            hc_round_rows::cubins(std::slice::from_ref(geometry))
+                .expect("qualified rounded row cubin"),
         );
         specs.extend(
             norm_quantize_tiles::cubins(std::slice::from_ref(geometry))

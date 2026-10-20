@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn decode_fuses_77_hc_boundaries() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-        for rows in [1u32, 8] {
+        for rows in [1u32, 8, 32] {
             for kv in KV_LAYOUTS {
                 let shape = Shape::new(&FLASH, ranks).unwrap();
                 let host = FakeHost::new(shape, kv);
@@ -34,15 +34,40 @@ fn decode_fuses_77_hc_boundaries() {
                     count("hc_round_chain_w4_v1"),
                     if rows == 8 { 77 * nr } else { 0 }
                 );
-                assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
-                assert_eq!(count("hc_finish_norm_w32_v1"), 77 * nr);
+                assert_eq!(
+                    count("hc_round_rows_r2_v1"),
+                    usize::from(rows == 32) * 77 * nr
+                );
+                assert_eq!(count("hc_round_rows_r4_v1"), 0);
+                assert_eq!(count("hc_round_rows_r8_v1"), 0);
+                assert_eq!(
+                    count("hc_round_expand_mix_finish_v1"),
+                    0
+                );
+                assert_eq!(
+                    count("hc_finish_norm_w32_v1"),
+                    77 * nr
+                );
                 assert_eq!(count("hc_finish_norm_w16_v1"), 0);
-                assert_eq!(count("lagged_mix_collapse_split_v1"), 0);
-                assert_eq!(count("hc_mixer_probe_warp_v1"), 3 * nr);
+                assert_eq!(
+                    count("lagged_mix_collapse_split_v1"),
+                    usize::from(rows == 32) * 3 * nr
+                );
+                assert_eq!(
+                    count("hc_mixer_probe_warp_v1"),
+                    usize::from(rows != 32) * 3 * nr
+                );
                 assert_eq!(count("hc_chain_mix"), 0);
                 assert_eq!(count("input_tiles_v1"), 0);
-                assert_eq!(count("input_cached32_v1"), 3 * nr);
-                assert_eq!(count("input_v1"), 0);
+                assert_eq!(
+                    count("input_cached32_v1"),
+                    match rows {
+                        1 => 3 * nr,
+                        8 => 3 * nr,
+                        _ => 0,
+                    }
+                );
+                assert_eq!(count("input_v1"), usize::from(rows == 32) * 3 * nr);
                 assert_eq!(count("input_cached8_v1"), 0);
                 assert_eq!(count("input_cached16_v1"), 0);
 
@@ -53,6 +78,10 @@ fn decode_fuses_77_hc_boundaries() {
                         "block_x: {}, block_y: 1, block_z: 1",
                         if rows == 1 { 256 } else { 128 }
                     )));
+                }
+                for line in launches.iter().filter(|l| l.contains("hc_round_rows_")) {
+                    assert!(line.contains("grid_x: 160, grid_y: 16, grid_z: 1"));
+                    assert!(line.contains("block_x: 256, block_y: 1, block_z: 1"));
                 }
                 for line in launches.iter().filter(|l| {
                     l.contains("input_cached32_v1") || l.contains("hc_finish_norm_w32_v1")
@@ -106,7 +135,14 @@ fn decode_fuses_77_hc_boundaries() {
                         lines.join("\n"),
                     )
                     .unwrap();
+                    decode_attention::export_handles(
+                        &host.device,
+                        &dir,
+                        &format!("decode.tp{nr}.c{rows}.{:?}.journal", kv.storage),
+                    );
                 }
+                let (regions, collisions) = shared_overlap::audit_scratch(&lines);
+                assert_eq!((regions, collisions), (40 * nr, 0));
                 instance.destroy().unwrap();
                 assert_eq!(host.acquired.get(), host.released.get());
             }
@@ -117,6 +153,10 @@ fn decode_fuses_77_hc_boundaries() {
 #[test]
 fn measured_producer_modules_retain_their_qualified_bytes() {
     for (symbol, expected) in [
+        (
+            "chop_deepseek41_hc_round_rows_r2_v1",
+            "e8be72f62793188f4c5552d2cdd66dff1def03efa1e7513992c4ca9bde9843a1",
+        ),
         (
             "chop_deepseek41_hc_finish_norm_w32_v1",
             "ee3c894ebf533a2acad15e277d4539840ce4cb862836689a940c4a1d8b20829f",

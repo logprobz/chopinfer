@@ -32,6 +32,7 @@ pub(crate) mod latent_cache;
 pub mod latent_decode;
 pub mod latent_scheduled;
 pub(crate) mod moe_floor;
+pub mod markov_tiled;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_direct;
 pub mod mxfp8_fold_direct_entries;
@@ -442,6 +443,7 @@ impl crate::Kernels {
         }
         cubin == host_acceptance_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
+            || cubin == markov_tiled::CUBIN
             || cubin == dspark_quantize::cubin_name(g)
             || cubin == engram_hash_entries::CUBIN
             || cubin == ring_gather_entries::CUBIN

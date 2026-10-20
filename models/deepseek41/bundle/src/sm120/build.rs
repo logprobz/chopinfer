@@ -63,6 +63,7 @@ mod latent_cache;
 mod latent_decode;
 #[allow(dead_code)]
 mod latent_scheduled;
+mod markov_tiled;
 #[allow(dead_code)]
 mod norm_prefill;
 #[allow(dead_code)]
@@ -195,6 +196,7 @@ pub fn selection(
         confidence_parallel::FAMILY,
         confidence_parallel::cubin_spec(manifest),
     ));
+    specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),

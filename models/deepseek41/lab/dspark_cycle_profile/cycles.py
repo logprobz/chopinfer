@@ -10,6 +10,8 @@ import families
 
 EMBED = "chop_row_embedding_deepseek41_tp4_v1"
 MARKOV = "chop_deepseek41_dspark_markov_v1"
+# Builds with the tiled Markov step mark drafter graphs with its symbol.
+MARKOVS = (MARKOV, "chop_deepseek41_dspark_markov_tiled_v1")
 PHASES = ("target", "drafter", "catch_up", "sampling", "other_device")
 
 
@@ -38,7 +40,7 @@ def overlap(a, b):
 
 def classify(rows, capacity, verify_items):
     """Graph markers label complete graphs; eager intervals remain explicit."""
-    draft_graphs = {r["graphId"] for r in rows if r["name"] == MARKOV
+    draft_graphs = {r["graphId"] for r in rows if r["name"] in MARKOVS
                     and r["graphId"] is not None}
     catch_graphs = {r["graphId"] for r in rows if "dspark_quantize_w15360_" in r["name"]
                     and r["graphId"] is not None and r["graphId"] not in draft_graphs}
@@ -65,7 +67,7 @@ def classify(rows, capacity, verify_items):
                      if target_begin["start"] <= r["start"] < target_end
                      and r["graphId"] is not None}
     assert not target_graphs & (draft_graphs | catch_graphs), "ambiguous graph phase"
-    marks = [r for r in rows if r["name"] == MARKOV]
+    marks = [r for r in rows if r["name"] in MARKOVS]
     assert bool(marks) == bool(verify_items), "drafter markers differ from verify items"
     draft_begin = embeddings[0]["start"] if marks else target_begin["start"]
     draft_end = max((h["end"] for h in rows if "head_f32_" in h["name"]

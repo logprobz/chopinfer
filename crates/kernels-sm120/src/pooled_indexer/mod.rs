@@ -951,5 +951,7 @@ pub mod position_live;
 pub mod position_mma;
 pub mod position_mma_guard;
 pub mod position_mma_guard_fast;
+pub mod position_mma_prefill;
+pub mod position_select_cached;
 
 pub mod position_valid;

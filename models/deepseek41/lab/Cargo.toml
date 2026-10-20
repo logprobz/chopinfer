@@ -104,6 +104,10 @@ path = "tests/sm120/hc_prefill_fused/main.rs"
 name = "ceil_cached"
 path = "tests/sm120/ceil_cached/main.rs"
 
+[[test]]
+name = "norm_query_cached"
+path = "tests/sm120/norm_query_cached/main.rs"
+
 [[example]]
 name = "build_hc_prefill_fused"
 path = "examples/sm120/build_hc_prefill_fused.rs"
@@ -115,6 +119,10 @@ path = "examples/sm120/build_hc_prefill_expand_mix.rs"
 [[example]]
 name = "build_ceil_cached"
 path = "examples/sm120/build_ceil_cached.rs"
+
+[[example]]
+name = "build_norm_query_cached"
+path = "examples/sm120/build_norm_query_cached.rs"
 
 [[example]]
 name = "build_hc_prefill_warp"

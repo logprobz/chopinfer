@@ -43,7 +43,7 @@ fn embedding(g: &Geometry, ranks: u32) -> kernels_sm120::row::RowInstantiation {
     entry
 }
 
-fn quantizers(g: &Geometry) -> Result<Vec<block_quantize::Entry>, String> {
+pub(super) fn quantizers(g: &Geometry) -> Result<Vec<block_quantize::Entry>, String> {
     [
         (
             g.shape.hidden * g.shape.dspark.targets.len() as u32,
@@ -155,7 +155,8 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
         .chain(super::latent_glue::quantizers())
         .map(|entry| entry.query)
         .collect::<Vec<_>>();
-    for entry in quantizers(g)? {
+    // The parallel entries replace the serial ones with the same bits.
+    for entry in super::dspark_quantize::quantizers(g)? {
         if !existing.contains(&entry.query) {
             backend = backend.with_block_quantize(entry);
         }

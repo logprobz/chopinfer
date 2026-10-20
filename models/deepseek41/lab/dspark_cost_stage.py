@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "verify_width_matrix"))
+HERE = Path(__file__).resolve().parent
+MATRIX = HERE / "verify_width_matrix"
+sys.path.insert(0, str(MATRIX if MATRIX.exists() else HERE.parent))
 import stage
 from run import digest, write
 
@@ -17,6 +20,10 @@ def seal(root):
     for name in ("cpu-validation", "native-preflight", "timeout-audit"):
         assert json.loads((root / f"{name}.json").read_text())["passed"], name
     stage.configure(root)
+    destination = root / "harness/cost"
+    destination.mkdir(exist_ok=True)
+    for name in ("dspark_cost_stage.py", "dspark_cost_job.py"):
+        shutil.copyfile(HERE / name, destination / name)
     for directory in (root / "install", root / "harness"):
         for path in [directory, *directory.rglob("*")]:
             path.chmod(path.stat().st_mode & ~0o022)
@@ -26,7 +33,7 @@ def seal(root):
     manifest = root / "SHA256SUMS"
     manifest.write_text("".join(f"{digest(p)}  {p.relative_to(root)}\n" for p in selected))
     pin = digest(manifest)
-    script = root / "install/src/models/deepseek41/lab/dspark_cost_stage.py"
+    script = destination / "dspark_cost_stage.py"
     job = root / "x7-prewarm-drafter.job"
     job.write_text(f"""# timeout 1200
 # Whole-machine sampled C8/C16 adaptive and K3, 250 W on every GPU.
@@ -37,9 +44,12 @@ export PYTHONDONTWRITEBYTECODE=1
 unset CHOPINFER_KERNEL_GPU CHOPINFER_KERNEL_GPUS CHOPINFER_KERNEL_REQUIRE
 exec timeout --signal=TERM --kill-after=15s 1170s python3 -B {shlex.quote(str(script))} {shlex.quote(str(root))} --execute --manifest {pin}
 """)
+    job.chmod(0o644)
     subprocess.run(["bash", "-n", str(job)], check=True)
     stage.verify(root, pin)
     receipt = dict(job=str(job), sha256=digest(job), manifest_sha256=pin,
+                   graph_handles_per_rank=512, graph_allocation_limit_bytes_per_rank=2 << 30,
+                   native_revision=(root / "NATIVE_REVISION").read_text().strip(),
                    queued=False, server_count=4, case_count=8, timeout_seconds=1200)
     write(root / "staged-job.json", receipt)
     print(json.dumps(receipt, indent=2))
@@ -71,7 +81,7 @@ def main():
     output = root / "runs" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{os.getpid()}")
     output.parent.mkdir(exist_ok=True)
     os.execv(sys.executable, [sys.executable, "-B",
-        str(source / "models/deepseek41/lab/dspark_cost_job.py"), str(root), str(output)])
+        str(HERE / "dspark_cost_job.py"), str(root), str(output)])
 
 
 if __name__ == "__main__":

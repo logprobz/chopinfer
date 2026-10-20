@@ -1,4 +1,5 @@
 import json
+import contextlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,6 +8,50 @@ import dspark_cost_stage as sealing
 
 
 class CostJobTests(unittest.TestCase):
+    def test_drafter_comparison_covers_preparation_and_stops_before_timing(self):
+        class Fixture(job.Runner):
+            def gpu_guard(self, *args, **kwargs):
+                pass
+
+            @contextlib.contextmanager
+            def serving(self, config, epoch):
+                self.directory = self.output / f"{epoch}-{config}"
+                self.directory.mkdir()
+                self.log = self.directory / "server.log"
+                self.log.write_text("")
+                yield
+
+            def prepare(self):
+                markers = list(self.output.glob("draft-check-*"))
+                assert len(markers) == int(self.env["CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS"] == "6")
+                assert self.env["CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK"] == "512"
+                return []
+
+            def cohort(self, config, concurrency):
+                assert not list(self.output.glob("draft-check-*"))
+                path = self.directory / f"C{concurrency}"
+                path.mkdir()
+                (path / "timed.log").write_text("")
+                return dict(concurrency=concurrency, host_load=dict(idle=True))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text(json.dumps(dict(
+                source=str(Path(__file__).resolve().parents[3]))))
+            result = Fixture(root, root / "output", dry=True).run()
+            self.assertEqual(result["case_count"], 8)
+
+    def test_handle_and_observed_allocation_limits_remain_bounded(self):
+        graph = dict(schema="chopinfer.graph-cache.v1", capacity=2048,
+                     peak=1540, released=0)
+        self.assertEqual(job.capture_memory(json.dumps(graph))["peak_handles"], 1540)
+        graph["capacity"] = 2049
+        with self.assertRaises(AssertionError):
+            job.capture_memory(json.dumps(graph))
+        held = job.GRAPH_ALLOCATION_LIMIT + 1
+        with self.assertRaisesRegex(AssertionError, "2 GiB"):
+            job.capture_memory(f"graph capture memory rank 0: {held} bytes free before, 0 after, {held} held")
+
     def test_seal_removes_write_permissions_from_root_receipts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

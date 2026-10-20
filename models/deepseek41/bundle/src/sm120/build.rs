@@ -39,6 +39,11 @@ mod hc_expand_mix;
 mod hc_finish_norm;
 #[allow(dead_code)]
 mod hc_mixer_probe;
+#[allow(
+    dead_code,
+    reason = "the bundle registers the measured prefill entries"
+)]
+mod hc_prefill;
 #[path = "hc_round_chain.rs"]
 #[allow(dead_code, reason = "the bundle registers the measured entries")]
 mod hc_round_chain;
@@ -265,6 +270,9 @@ pub fn selection(
         if geometry == &model_deepseek41_contract::geometry::FLASH {
             owners.push((norm_prefill::CUBIN.into(), geometry.id));
         }
+        if hc_prefill::qualified(geometry) {
+            owners.push((hc_prefill::CUBIN.into(), geometry.id));
+        }
         owners.push((hc_expand_mix::cubin_name(geometry), geometry.id));
         owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
@@ -429,6 +437,7 @@ pub fn selection(
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));
     specs.extend(hc::cubins(geometries));
+    specs.extend(hc_prefill::cubins(geometries).expect("measured HC prefill cubin"));
     specs.extend(latent::cubins(geometries).expect("deepseek41 latent cubins"));
     specs.extend(indexer::runtime_candidates_cubins(geometries).expect("runtime candidate cubins"));
     specs.extend(indexer::cubins(geometries).expect("deepseek41 indexer cubins"));

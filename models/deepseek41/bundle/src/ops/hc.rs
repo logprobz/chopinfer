@@ -26,6 +26,7 @@ const TICKETS: &str = "scratch.tickets";
 
 pub(crate) struct HcOps {
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
+    prefill_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     decode_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
@@ -105,6 +106,9 @@ impl HcOps {
             },
             mix: asks.ask("hc.mix_collapse", need, |need| {
                 backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
+            })?,
+            prefill_mix: asks.ask("hc.prefill_mix", need, |need| {
+                backend.sinkhorn_lagged_prefill(&hc::mix_collapse(g, need.capacity), need)
             })?,
             decode_mix: {
                 let need = exact::need(32, exact::every_phase(32));
@@ -270,7 +274,9 @@ impl HcOps {
     }
 
     fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
-        if matches!(
+        if phase.prefill() {
+            &self.prefill_mix
+        } else if matches!(
             phase,
             Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
         ) {
@@ -352,6 +358,80 @@ mod tests {
     use super::*;
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
+    #[test]
+    fn prefill_mixer_selects_only_measured_buckets_and_keeps_operands() {
+        let view = |handle| View {
+            handle,
+            bytes: u64::MAX / 2,
+        };
+        let buffers = LaggedMixCollapseBuffers {
+            x: view(1),
+            mixer: MixerWeights {
+                fn_: view(2),
+                base: view(3),
+                scale: view(4),
+            },
+            pre_in: view(5),
+            collapsed: view(6),
+            pre: view(7),
+            post: view(8),
+            comb: view(9),
+            scratch: MixScratch {
+                partials: Some(view(11)),
+                tickets: Some(view(12)),
+            },
+            live_rows: View {
+                bytes: 4,
+                ..view(10)
+            },
+        };
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            for rows in [
+                33, 63, 64, 65, 191, 192, 193, 320, 2239, 2240, 2241, 2495, 2496, 2497, 2623, 2624,
+                2625, 8150, 8191, 8192,
+            ] {
+                let old = ops
+                    .mix
+                    .launches(&buffers, View::EMPTY, Counts::rows(rows))
+                    .unwrap();
+                for phase in [Phase::Prefill { rows }, Phase::Verify { rows, items: 1 }] {
+                    let new = ops
+                        .mix_for_phase(phase)
+                        .launches(&buffers, View::EMPTY, Counts::rows(rows))
+                        .unwrap();
+                    let chains = if phase.prefill() {
+                        match rows {
+                            64 | 192 => Some(8),
+                            2240 | 2496 | 2624 | 8192 => Some(4),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(chains) = chains {
+                        assert_eq!(new.len(), 1);
+                        assert_eq!(new[0].arguments, old[0].arguments);
+                        assert_eq!(new[0].rows, old[0].rows);
+                        assert_eq!(
+                            new[0].symbol,
+                            format!(
+                                "chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c{chains}_v1"
+                            )
+                        );
+                        assert_eq!(new[0].plan.grid, [rows.div_ceil(8), 1, 1]);
+                        assert_eq!(new[0].plan.block, [256, 1, 1]);
+                        assert_eq!(new[0].plan.dynamic_shared_bytes, 0);
+                    } else {
+                        assert_eq!(new, old, "{phase:?}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn verify_tail_selection_does_not_change_standalone_producer_buckets() {
         use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;

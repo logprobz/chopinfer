@@ -16,6 +16,8 @@ mod dspark_router;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;
 pub mod hc_mixer_probe;
+#[allow(dead_code, reason = "the build compiles the measured prefill module")]
+mod hc_prefill;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
 pub mod latent;
@@ -476,6 +478,7 @@ impl crate::Kernels {
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
+        let sm120 = hc_prefill::register(sm120, shape.geometry);
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_chain::register(sm120, shape.geometry);

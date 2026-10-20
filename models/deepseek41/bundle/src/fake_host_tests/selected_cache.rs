@@ -35,7 +35,7 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
         let selected = qualified
             && cached
             && if verify {
-                matches!(rows, 6 | 32)
+                matches!(rows, 4 | 6 | 32)
             } else {
                 matches!(rows, 1 | 8)
             };
@@ -88,7 +88,7 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
         }
     }
     if layout.storage == KvStorage::Native {
-        for (items_count, width) in [(1_u32, 6_u32), (2, 4), (4, 4), (8, 4)] {
+        for (items_count, width) in [(1_u32, 4_u32), (1, 6), (2, 4), (4, 4), (8, 4)] {
             let tokens = vec![7; width as usize];
             let items = (0..items_count)
                 .map(|slot| {

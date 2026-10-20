@@ -41,7 +41,7 @@ def source_pair(producer, consumer, meta):
     stem = name.removesuffix('_cached_profile0_v1')
     rows = field(consumer, 'grid_x')
     verify = '_verify' in stem
-    assert rows in ((6, 32) if verify else (1, 8)), ('unmeasured row', rows, stem)
+    assert rows in ((4, 6, 32) if verify else (1, 8)), ('unadmitted row', rows, stem)
     keys = 128 if '_window_' in stem else 640
     shape(consumer, (rows, 16 if rows <= 4 else 2, 8), 73984)
     shape(producer, (keys // 4, rows, 1), 0)
@@ -158,7 +158,14 @@ def graph_groups(lines):
         bounds = [0,total//32,total//6,total]
         expected = [b-a for a,b in zip(bounds,bounds[1:]) if b>a]
         mode = 'proportional'
-        if len(pieces) == 2 and len(expected) == 3:
+        mapped = [i for i,line in enumerate(body) if line.startswith('launch ')
+                  and line.split()[2] == 'chop_row_mxfp8_decode_v1']
+        if len(mapped) > 1 and len(pieces) == len(mapped) + 1:
+            # Target graph sections now join each mapped layer immediately
+            # before its consumer, preserving whole shared-expert regions.
+            mode = 'each-mapped-row'
+            assert ends[:-1] == mapped, 'mapped-row consumer moved across its layer join'
+        elif len(pieces) == 2 and len(expected) == 3:
             # DSpark captures its whole prefix and suffix separately, with
             # the mapped-row wait outside them. The cut is exactly before
             # the first EngramRows widening entry, independent of node count.
@@ -286,7 +293,7 @@ def main():
     head,hm=read(args.buckets/(stem+'serving.journal'))
     pair=audit(base,head,bm,hm,symbols,False)
     assert set(pair['source_substitutions']) == {s for s in symbols if s.endswith('_cached_profile0_v1')}
-    assert pair['added_producers']==4*40*4
+    assert pair['added_producers']==5*40*4
     rejected=controls(head,hm)
     for kind in ('captured', 'merge'):
         changed = head.copy()

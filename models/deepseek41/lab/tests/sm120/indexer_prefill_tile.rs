@@ -171,6 +171,14 @@ struct Part {
     width: u32,
     first_word: u64,
 }
+impl Part {
+    fn reused(&self) -> Self {
+        Self {
+            first_word: 0,
+            ..self.clone()
+        }
+    }
+}
 fn parts(c: Case, positions: &[i32]) -> Vec<Part> {
     let batches = if c.layer >= 24 {
         (0..c.rows)
@@ -469,6 +477,16 @@ fn cpu_prefill_tiles_preserve_abi_fallback_and_chunk_offsets() {
         for pair in p.windows(2) {
             assert_eq!(pair[0].rows.end, pair[1].rows.start);
         }
+        for part in &p {
+            let reused = part.reused();
+            assert_eq!(reused.rows, part.rows);
+            let stride = if c.layer >= 24 { 16384 } else { reused.width };
+            assert!(
+                u64::from(reused.rows.end - reused.rows.start) * u64::from(stride) * 4
+                    <= SCORE_BYTES
+            );
+            assert_eq!(reused.first_word, 0);
+        }
     }
     for e in crate::indexer_entries::block_entries(&FLASH) {
         let old = kernels_sm120::pooled_indexer::position_mma_guard::compact_specs(&e)
@@ -506,6 +524,7 @@ fn gpu_prefill_tiles_real_edges_partitions_and_timing() {
             let scratch=[m.alloc(scratch_bytes(c,&parts) as usize)?,m.alloc(scratch_bytes(c,&parts) as usize)?];
             let counts=m.input(&[0;32])?;
             let schedules=|m:&mut Memory<'_>,out:&Outputs,scratch,arm|parts.iter().map(|p|calls(m,c,&input,out,p,scratch,arm)).collect::<LabResult<Vec<_>>>();
+            let reused=|m:&mut Memory<'_>,out:&Outputs,scratch,arm|parts.iter().map(|p|calls(m,c,&input,out,&p.reused(),scratch,arm)).collect::<LabResult<Vec<_>>>();
             let public=schedules(&mut m,&a,scratch[0],Arm::Public)?;
             for p in &public {load(&m,&mut modules,p)?;}
             let mut raw=0;let mut pipelines=0;
@@ -561,6 +580,13 @@ fn gpu_prefill_tiles_real_edges_partitions_and_timing() {
                 m.compare(&probe,first,target,counts,1,1,1,1,0,0)?;
                 assert_eq!(m.read(counts)?[0],1,"negative control escaped");m.fill(&probe,target,bits)?;
             }
+            // Serving overwrites one score buffer after each batch's ordered
+            // consumer. Keep materialized planes only for the raw comparison.
+            a.poison(&m,&probe)?;b.poison(&m,&probe)?;
+            for (out,workspace,arm) in [(&a,scratch[0],Arm::Public),(&b,scratch[1],Arm::Tile)] {
+                for plan in reused(&mut m,out,workspace,arm)? {fire(&m,&modules,&plan)?;}
+            }
+            compare_all(&m,&probe,&a,&b,counts)?;
             let timed=c.timed() && !memcheck;
             if timed {
                 let fine=diagnose(&mut m,&mut modules,&public,scratch[0])?;
@@ -576,17 +602,18 @@ fn gpu_prefill_tiles_real_edges_partitions_and_timing() {
                 }else{None};
                 println!("PREFILL_TILE_GUARDS {}",serde_json::json!({"id":id,"public":fine,"coarse":coarse,"compact_tile":wide}));
                 for (label,reference,alternative) in [("coarse",Arm::Public,Arm::Coarse),("narrow",Arm::Coarse,Arm::Narrow),("wide",Arm::Coarse,Arm::Wide),("tile",Arm::Coarse,Arm::Tile)] {
-                    let plans=[schedules(&mut m,&a,scratch[0],reference)?,schedules(&mut m,&b,scratch[1],alternative)?];
+                    a.poison(&m,&probe)?;b.poison(&m,&probe)?;
+                    let plans=[reused(&mut m,&a,scratch[0],reference)?,reused(&mut m,&b,scratch[1],alternative)?];
                     for arm in &plans {for p in arm {fire(&m,&modules,p)?;}}
                     for (stage,score_only) in [("pack_score",true),("all",false)] {
                         let graphs=plans.iter().map(|arm|session.capture(|_| {for p in arm {fire(&m,&modules,if score_only {&p[..2]}else{p})?;}Ok(())})).collect::<LabResult<Vec<_>>>()?;
                         let timing=kernel_harness::with_timing_label(&format!("prefill-tile-{id}-{label}-{stage}"),||kernel_harness::time_ab(session,1,3,[EvictionMode::Write;2],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string())))?;
                         compare_all(&m,&probe,&a,&b,counts)?;
-                        println!("PREFILL_TILE_TIMING {}",serde_json::json!({"id":id,"stage":stage,"candidate":label,"reference":reference.name(),"batches":parts.len(),"median_ms":timing.arms.map(|a|a.median_ms),"paired_ratio":timing.paired_ratio,"exclusive":true}));
+                        println!("PREFILL_TILE_TIMING {}",serde_json::json!({"id":id,"stage":stage,"candidate":label,"reference":reference.name(),"batches":parts.len(),"median_ms":timing.arms.map(|a|a.median_ms),"paired_ratio":timing.paired_ratio,"exclusive":true,"score_buffer_reused":true}));
                     }
                 }
             }
-            println!("PREFILL_TILE_CASE {}",serde_json::json!({"id":id,"layer":c.layer,"context":c.context,"rows":c.rows,"kind":c.kind,"capture":c.capture,"live":c.live(),"kept":c.kept(),"batches":parts.len(),"raw":raw,"pipelines":pipelines,"partitions":1,"controls":2,"mismatches":0,"timed":timed,"memcheck":memcheck}));
+            println!("PREFILL_TILE_CASE {}",serde_json::json!({"id":id,"layer":c.layer,"context":c.context,"rows":c.rows,"kind":c.kind,"capture":c.capture,"live":c.live(),"kept":c.kept(),"batches":parts.len(),"raw":raw,"pipelines":pipelines,"reuse_pipelines":1,"partitions":1,"controls":2,"mismatches":0,"timed":timed,"memcheck":memcheck}));
             session.receipt("indexer-prefill-tile",BTreeMap::from([("id".into(),serde_json::json!(id)),("timed".into(),serde_json::json!(timed)),("mismatches".into(),serde_json::json!(0))]))?;
             completed+=1;
         }

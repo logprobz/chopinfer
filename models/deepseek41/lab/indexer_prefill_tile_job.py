@@ -55,6 +55,7 @@ def results(logs,memcheck=False):
             assert {k:c[k] for k in want}==want
             assert c['live']==want['rows']-int(want['kind']==12)
             assert c['kept']==(31 if want['kind']==11 else 512)
+            assert c['reuse_pipelines']==1
             assert c['raw']==4 and c['pipelines']==4 and c['partitions']==1 and c['controls']==2
             assert c['mismatches']==0 and c['memcheck'] is memcheck
             assert c['timed'] is (timed(want) and not memcheck)
@@ -64,7 +65,7 @@ def results(logs,memcheck=False):
             for stage in ('pack_score','all') for arm in ('coarse','narrow','wide','tile')}
     assert len(times)==len(wanted) and {(t['id'],t['stage'],t['candidate']) for t in times}==wanted
     for t in times:
-        assert t['exclusive'] is True
+        assert t['exclusive'] is True and t['score_buffer_reused'] is True
         assert t['reference']==('public' if t['candidate']=='coarse' else 'coarse')
         assert len(t['median_ms'])==2 and all(math.isfinite(x) and x>0 for x in [*t['median_ms'],t['paired_ratio']])
         assert t['batches']==next(c['batches'] for c in seen if c['id']==t['id'])
@@ -79,7 +80,7 @@ def results(logs,memcheck=False):
         if shapes[g['id']]['layer']>=24:assert g['compact_tile']==b
         else:assert g['compact_tile'] is None
     n=len(seen)
-    return dict(cases=n,raw=4*n,pipelines=4*n,partitions=n,controls=2*n,mismatches=0,
+    return dict(cases=n,raw=4*n,pipelines=4*n,reuse_pipelines=n,partitions=n,controls=2*n,mismatches=0,
                 timing_pairs=len(times),guards=guards,timings=times,records=seen)
 
 

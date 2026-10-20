@@ -64,4 +64,4 @@ for l4_pid in "${l4_pids[@]}"; do wait "$l4_pid" || l4_failed=1; done
 l4_pids=()
 [ "$l4_failed" -eq 0 ]
 python3 -B "$l4_root/snapshot/indexer_prefill_tile_job.py" --run "$l4_out" --output "$l4_out/comparison.json"
-echo "PREFILL_TILE_PAIR_COMPLETE cases=94 memcheck_cases=23 raw=376 pipelines=376 partitions=94 controls=188 timing_pairs=176 raw_timing_samples=1056"
+echo "PREFILL_TILE_PAIR_COMPLETE cases=94 memcheck_cases=23 raw=376 pipelines=376 reuse_pipelines=94 partitions=94 controls=188 timing_pairs=176 raw_timing_samples=1056"

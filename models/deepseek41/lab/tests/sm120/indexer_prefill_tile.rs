@@ -1,6 +1,8 @@
 //! Compare bounded prefill scoring with the public and coarse guarded paths.
 #[path = "indexer_prefill_tile_fixture.rs"]
 mod fixture;
+#[path = "indexer_prefill_publish.rs"]
+mod publish;
 use super::*;
 use fixture::{Host, Input};
 use kernel_core::position_blocks::PositionBlockSelectBuffers;
@@ -112,7 +114,9 @@ impl Arm {
     }
 }
 fn module(symbol: &str) -> LabResult<&'static str> {
-    if symbol.contains("_counts_v1") || symbol.contains("_mma_fp4_prefill_tile_v1") {
+    if symbol.starts_with("chop_candidate_block_ids_") && symbol.ends_with("_cached4_v1") {
+        Ok(publish::CUBIN)
+    } else if symbol.contains("_counts_v1") || symbol.contains("_mma_fp4_prefill_tile_v1") {
         Ok(tile::CUBIN)
     } else {
         Ok(bundle_deepseek41::sm120::fold_cubin_for_symbol(symbol)

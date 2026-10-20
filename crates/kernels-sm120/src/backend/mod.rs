@@ -140,6 +140,7 @@ mod sinkhorn;
 mod sinkhorn_expand_mix;
 mod sinkhorn_finish_norm;
 mod sinkhorn_lagged;
+mod sinkhorn_prefill;
 mod sinkhorn_round_expand_mix;
 
 pub use attention::AttentionEntries;
@@ -960,6 +961,16 @@ impl Sm120 {
         self
     }
 
+    /// Register exact prefill mixers for explicit measured row buckets.
+    pub fn with_sinkhorn_lagged_prefill(
+        mut self,
+        entry: crate::sinkhorn_hc::prefill_warp::Entry,
+        buckets: Vec<u32>,
+    ) -> Self {
+        self.sinkhorn.lagged_prefill.push((entry, buckets));
+        self
+    }
+
     /// The model's comm epilogue over the F32 all-reduce's sums
     /// (`comm::sinkhorn_split::entry`).
     pub fn with_sinkhorn_epilogue(mut self, entry: crate::comm::sinkhorn_split::Entry) -> Self {
@@ -1609,6 +1620,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
         sinkhorn_lagged::mix_collapse(&self.sinkhorn, op, need)
+    }
+
+    fn sinkhorn_lagged_prefill(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
+        sinkhorn_prefill::prepare(&self.sinkhorn, op, need)
     }
 
     fn sinkhorn_expand(

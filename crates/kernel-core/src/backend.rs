@@ -661,6 +661,16 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Prefill-only lagged mixing. Backends without a measured prefill
+    /// selection retain their ordinary mixer and its exactness contract.
+    fn sinkhorn_lagged_prefill(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
+        self.sinkhorn_lagged_mix_collapse(op, need)
+    }
+
     /// A mixer's mix-collapse and the sublayer's input norm of the
     /// collapsed row (`MixCollapseNorm`).
     ///
@@ -2401,6 +2411,7 @@ mod tests {
             Need::rows(4),
         );
         sinkhorn_lagged_mix_collapse: Empty.sinkhorn_lagged_mix_collapse(&sinkhorn(), Need::rows(4));
+        sinkhorn_lagged_prefill: Empty.sinkhorn_lagged_prefill(&sinkhorn(), Need::rows(4));
         sinkhorn_mix_collapse_norm: Empty.sinkhorn_mix_collapse_norm(&sinkhorn(), Need::rows(4));
         sinkhorn_expand: Empty.sinkhorn_expand(&sinkhorn(), Need::rows(4));
         sinkhorn_head: Empty.sinkhorn_head(&sinkhorn(), Need::rows(4));

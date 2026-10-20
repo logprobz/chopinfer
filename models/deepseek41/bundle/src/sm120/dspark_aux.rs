@@ -149,6 +149,7 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     backend = backend
         .with_sharded_embedding(embedding(g, ranks))
         .with_partial_rounding(pair(g));
+    backend = super::dspark_peer_embedding::register(backend, g, ranks);
     let existing = super::dense::quantizers(g, ranks)?
         .into_iter()
         .chain(super::moe::quantizers(g, ranks)?)

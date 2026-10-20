@@ -23,6 +23,8 @@ mod dspark_argmax;
 mod dspark_aux;
 mod dspark_cubin;
 mod dspark_entries;
+#[allow(dead_code, reason = "the bundle registers the entry")]
+mod dspark_peer_embedding;
 mod dspark_quantize;
 #[path = "dspark_router.rs"]
 #[allow(dead_code)]
@@ -220,6 +222,7 @@ pub fn selection(
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_quantize::cubins(geometries).expect("DSpark parallel quantizer cubins"));
+    specs.extend(dspark_peer_embedding::cubins(geometries).expect("DSpark peer embedding cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));
     let mut owners = Vec::new();
     if geometries
@@ -315,6 +318,7 @@ pub fn selection(
     for geometry in geometries {
         owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
         owners.push((dspark_quantize::cubin_name(geometry), geometry.id));
+        owners.push((dspark_peer_embedding::cubin_name(geometry), geometry.id));
         owners.extend(
             dspark_router::cubins(std::slice::from_ref(geometry))
                 .expect("DSpark router cubins")

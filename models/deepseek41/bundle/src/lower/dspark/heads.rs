@@ -5,6 +5,7 @@ use kernel_core::backend::{Backend, Counts, Need, Prepared, Refused, View};
 use kernel_core::collective::{AllReduceBuffers, GatherBuffers, RankViews};
 use kernel_core::contract::{ArgmaxLayout, CommQuery, DType, Refusal, RowQuery};
 use kernel_core::precision::buffers::ProjectionBuffers;
+use kernel_core::replicated_embedding::{ReplicatedEmbedding, ReplicatedEmbeddingBuffers};
 use kernel_core::rmsnorm::RmsNormBuffers;
 use kernel_core::row_copy::{GatherByIndex, GatherByIndexBuffers};
 use kernel_core::rows::{
@@ -33,6 +34,9 @@ pub struct Heads {
     norm: Prepared<RmsNormBuffers<View>>,
     vocabulary: Prepared<ProjectionBuffers<View>>,
     embedding: Vec<Prepared<EmbeddingBuffers<View>>>,
+    /// The gather, widening and reduction in one launch through immutable
+    /// peer table reads, where the backend has the entry.
+    peer: Option<Vec<Prepared<ReplicatedEmbeddingBuffers<View>>>>,
     widen: Prepared<WidenRowsBuffers<View>>,
     reduce: Vec<Prepared<AllReduceBuffers<View>>>,
     logits_row: Prepared<GatherByIndexBuffers<View>>,
@@ -63,6 +67,8 @@ pub struct HeadViews {
 }
 
 pub struct Peer {
+    /// This rank's Markov embedding shard, read by every rank's lookup.
+    pub embedding_weight: Span,
     pub embedding: Span,
     pub reduce_state: Vec<Span>,
     pub gathered: Span,
@@ -76,6 +82,8 @@ pub struct PositionViews {
     pub embedding_partial: Span,
     pub embedding_wide: Span,
     pub embedding: Span,
+    /// The peer lookup's single-stream broadcast copy of `embedding`.
+    pub embedding_copy: Span,
     pub block_logits: Span,
     pub position_rows: Span,
     pub position_logits: Span,
@@ -138,6 +146,20 @@ impl Heads {
             })
             .collect::<Result<_, _>>()?;
         let widen = own.widen_rows(&WidenRows { width: dim }, need)?;
+        let lookup = ReplicatedEmbedding {
+            vocab: width * shape.ranks(),
+            width: dim,
+            ranks: shape.ranks(),
+            streams: 1,
+        };
+        let peer = match (0..shape.ranks())
+            .map(|rank| backend.replicated_embedding(&lookup, rank, need))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(ops) => Some(ops),
+            Err(Refused::Unsupported) => None,
+            Err(error) => return Err(error),
+        };
         let reduce = (0..shape.ranks())
             .map(|rank| {
                 backend.all_reduce(
@@ -217,6 +239,7 @@ impl Heads {
             norm,
             vocabulary,
             embedding,
+            peer,
             widen,
             reduce,
             logits_row,
@@ -241,6 +264,7 @@ impl Heads {
         ]
         .into_iter()
         .chain(self.embedding.iter().map(|op| op.info()))
+        .chain(self.peer.iter().flatten().map(|op| op.info()))
         .chain(self.reduce.iter().map(|op| op.info()))
         .chain(self.partial.iter().map(|op| op.info()))
         .chain(self.gather.iter().map(|op| op.info()))
@@ -333,44 +357,61 @@ impl Heads {
         let counts = Counts::rows(items);
         let mut result = Vec::new();
         let run = |value: Result<Vec<Lowered>, Refusal>| value.map_err(|e| e.to_string());
-        let mut bind = Bind::default();
-        let buffers = EmbeddingBuffers {
-            table: bind.view(v.embedding_weight),
-            ids: bind.view(v.predecessor_ids),
-            output: bind.view(v.embedding_partial),
-            live_rows: bind.view(v.live_items),
-            table_rows: self.shape.vocab_rows(),
-        };
-        result.extend(run(bind.launch(
-            &self.embedding[rank as usize],
-            &buffers,
-            counts,
-        ))?);
-        let mut bind = Bind::default();
-        let buffers = WidenRowsBuffers {
-            input: bind.view(v.embedding_partial),
-            output: bind.view(v.embedding_wide),
-            live_rows: bind.view(v.live_items),
-        };
-        result.extend(run(bind.launch(&self.widen, &buffers, counts))?);
-        let mut bind = Bind::default();
-        let buffers = AllReduceBuffers {
-            input: bind.view(v.embedding_wide),
-            output: bind.view(v.embedding),
-            live_rows: Some(bind.view(v.live_items)),
-            ranks: peers
-                .iter()
-                .map(|p| RankViews {
-                    output: bind.view(p.embedding),
-                    state: p.reduce_state.iter().map(|&s| bind.view(s)).collect(),
-                })
-                .collect(),
-        };
-        result.extend(run(bind.launch(
-            &self.reduce[rank as usize],
-            &buffers,
-            counts,
-        ))?);
+        if let Some(peer) = &self.peer {
+            let mut bind = Bind::default();
+            let buffers = ReplicatedEmbeddingBuffers {
+                tables: peers
+                    .iter()
+                    .map(|p| bind.view(p.embedding_weight))
+                    .collect(),
+                ids: bind.view(v.predecessor_ids),
+                shard: bind.view(v.embedding_partial),
+                wide: bind.view(v.embedding_wide),
+                output: bind.view(v.embedding),
+                expanded: bind.view(v.embedding_copy),
+                live_rows: bind.view(v.live_items),
+            };
+            result.extend(run(bind.launch(&peer[rank as usize], &buffers, counts))?);
+        } else {
+            let mut bind = Bind::default();
+            let buffers = EmbeddingBuffers {
+                table: bind.view(v.embedding_weight),
+                ids: bind.view(v.predecessor_ids),
+                output: bind.view(v.embedding_partial),
+                live_rows: bind.view(v.live_items),
+                table_rows: self.shape.vocab_rows(),
+            };
+            result.extend(run(bind.launch(
+                &self.embedding[rank as usize],
+                &buffers,
+                counts,
+            ))?);
+            let mut bind = Bind::default();
+            let buffers = WidenRowsBuffers {
+                input: bind.view(v.embedding_partial),
+                output: bind.view(v.embedding_wide),
+                live_rows: bind.view(v.live_items),
+            };
+            result.extend(run(bind.launch(&self.widen, &buffers, counts))?);
+            let mut bind = Bind::default();
+            let buffers = AllReduceBuffers {
+                input: bind.view(v.embedding_wide),
+                output: bind.view(v.embedding),
+                live_rows: Some(bind.view(v.live_items)),
+                ranks: peers
+                    .iter()
+                    .map(|p| RankViews {
+                        output: bind.view(p.embedding),
+                        state: p.reduce_state.iter().map(|&s| bind.view(s)).collect(),
+                    })
+                    .collect(),
+            };
+            result.extend(run(bind.launch(
+                &self.reduce[rank as usize],
+                &buffers,
+                counts,
+            ))?);
+        }
         let mut bind = Bind::default();
         let buffers = GatherByIndexBuffers {
             source: bind.view(v.block_logits),

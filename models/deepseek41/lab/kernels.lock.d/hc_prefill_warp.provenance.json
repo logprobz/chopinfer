@@ -1,0 +1,14 @@
+[
+  {
+    "name": "hc_prefill_warp_control_sm120",
+    "source_closure_sha256": "dc1a5227759d17f325fa328a21f9eaa7bacc004a5665e73e951cf0acc4bea555"
+  },
+  {
+    "name": "hc_prefill_warp_deepseek41_sm120",
+    "source_closure_sha256": "208339d3800864ee190d38fe47f4e367c45801a696b01f69223e783dc2a4531d"
+  },
+  {
+    "name": "hc_prefill_warp_reference_probes_sm120",
+    "source_closure_sha256": "02ae37abd956919215d511fc5e8b1991fc3255cf8494b84fa6cc397018f3495a"
+  }
+]

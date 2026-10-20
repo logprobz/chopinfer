@@ -80,6 +80,14 @@ path = "examples/sm120/build_attention_pair.rs"
 name = "attention_pair"
 path = "tests/sm120/attention_pair.rs"
 
+[[test]]
+name = "hc_prefill_warp"
+path = "tests/sm120/hc_prefill_warp.rs"
+
+[[example]]
+name = "build_hc_prefill_warp"
+path = "examples/sm120/build_hc_prefill_warp.rs"
+
 [[example]]
 name = "build_acceptance"
 path = "examples/sm120/build_acceptance.rs"

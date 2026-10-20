@@ -29,6 +29,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-bundle/src/atomic_publish.rs",
     "crates/runtime-bundle-abi/src/loader.rs",
     "crates/runtime-bundle-abi/src/prefill.rs",
+    "crates/runtime-bundle-abi/src/device_results/sink.rs",
     "crates/runtime-bundle-abi/src/trampoline.rs",
     "crates/runtime-bundle-abi/tests/native_loader.rs",
     "crates/runtime-bundle-abi/tests/abi_contract.rs",
@@ -156,12 +157,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefill_getter_has_a_reviewed_contract() {
-        audit_unsafe_source(
-            Path::new("crates/runtime-bundle-abi/src/prefill.rs"),
-            include_str!("../../runtime-bundle-abi/src/prefill.rs"),
-        )
-        .unwrap();
+    fn optional_abi_callbacks_have_reviewed_contracts() {
+        for (path, source) in [
+            (
+                "crates/runtime-bundle-abi/src/prefill.rs",
+                include_str!("../../runtime-bundle-abi/src/prefill.rs"),
+            ),
+            (
+                "crates/runtime-bundle-abi/src/device_results/sink.rs",
+                include_str!("../../runtime-bundle-abi/src/device_results/sink.rs"),
+            ),
+        ] {
+            audit_unsafe_source(Path::new(path), source).unwrap();
+        }
     }
 
     #[test]

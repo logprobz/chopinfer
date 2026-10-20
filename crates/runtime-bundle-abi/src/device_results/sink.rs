@@ -8,16 +8,23 @@ use std::ffi::c_void;
 
 pub const DEVICE_RESULTS_API_SYMBOL_V1: &[u8] = b"chop_bundle_get_device_results_api_v1\0";
 
+// SAFETY-REVIEWED: the execute owns user_data and lends a writable output record;
+// returned metadata stays readable through that execute.
 pub type BundleDescribeDeviceCycleFnV1 =
     unsafe extern "C" fn(*mut c_void, *mut BundleDeviceCycleViewV1) -> BundleStatusV1;
+// SAFETY-REVIEWED: the enclosing execute owns the callback and user_data.
 pub type BundleDeclareInputDependencyFnV1 =
     unsafe extern "C" fn(*mut c_void, u32) -> BundleStatusV1;
+// SAFETY-REVIEWED: the execute owns user_data and lends the validated draft record.
 pub type BundleEmitDeviceDraftsFnV1 =
     unsafe extern "C" fn(*mut c_void, *const BundleDeviceDraftsV1) -> BundleStatusV1;
+// SAFETY-REVIEWED: the execute owns user_data and lends the validated sampling record.
 pub type BundleSampleDeviceLogitsFnV1 =
     unsafe extern "C" fn(*mut c_void, *const BundleDeviceSamplingRequestV1) -> BundleStatusV1;
+// SAFETY-REVIEWED: the execute owns user_data and lends the validated logits view.
 pub type BundleEmitReadyLogitsFnV1 =
     unsafe extern "C" fn(*mut c_void, *const BundleReadyLogitsViewV1) -> BundleStatusV1;
+// SAFETY-REVIEWED: the execute owns user_data and lends the validated completion record.
 pub type BundleEmitDeviceCompletionFnV1 =
     unsafe extern "C" fn(*mut c_void, *const BundleDeviceCompletionV1) -> BundleStatusV1;
 
@@ -59,11 +66,15 @@ impl BundleDeviceResultSinkV1 {
     }
 }
 
+// SAFETY-REVIEWED: the native caller lends the request, sink table and user_data
+// for this call; the trampoline validates the table before invoking callbacks.
 pub type BundleExecuteDeviceResultsFnV1 = unsafe extern "C" fn(
     BundleHandleV1,
     BundleByteViewV1,
     *const BundleDeviceResultSinkV1,
 ) -> BundleStatusV1;
+// SAFETY-REVIEWED: the loader retains the module owning the immutable table and
+// validates its size and ABI before reading the execute callback.
 pub type BundleGetDeviceResultsApiFnV1 = unsafe extern "C" fn() -> *const BundleDeviceResultsApiV1;
 
 /// Separate optional export, so legacy entry-table bytes also stay unchanged.

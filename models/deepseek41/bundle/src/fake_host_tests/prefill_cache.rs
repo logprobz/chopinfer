@@ -384,13 +384,13 @@ pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> V
         }
         if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {
             std::fs::create_dir_all(&root).unwrap();
-            std::fs::write(
-                std::path::Path::new(&root).join(format!(
-                    "mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
-                )),
-                lines.join("\n"),
-            )
-            .unwrap();
+            let root = std::path::Path::new(&root);
+            let name = format!(
+                "mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
+            );
+            std::fs::write(root.join(&name), lines.join("\n")).unwrap();
+            super::decode_attention::export_handles(&host.device, root, &name);
+            std::fs::write(root.join(format!("{name}.full")), journal.join("\n")).unwrap();
         }
         submitted.extend_from_slice(lines);
     }

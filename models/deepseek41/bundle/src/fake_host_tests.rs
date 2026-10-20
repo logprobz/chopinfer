@@ -64,20 +64,28 @@ fn latent_sources_configure_shared_memory_before_serving_launches() {
     journal_steps(&host);
     let lines = host.device.journal.borrow();
     assert_launches_fit_configured_shared(&lines, &shape.topology());
-    let mut sources = std::collections::BTreeSet::new();
+    let mut sources = std::collections::BTreeMap::new();
     for line in lines.iter().filter(|line| line.starts_with("launch ")) {
         let symbol = line.split_whitespace().nth(2).unwrap();
         if symbol.starts_with("chop_latent_sources_") && !symbol.contains("_merge_") {
-            assert!(line.contains("shared_memory_bytes: 83200,"), "{line}");
-            sources.insert(symbol);
+            let shared = if symbol.ends_with("_reuse2_v1") {
+                85504
+            } else {
+                83200
+            };
+            assert!(
+                line.contains(&format!("shared_memory_bytes: {shared},")),
+                "{line}"
+            );
+            sources.insert(symbol, shared);
         }
     }
     assert!(!sources.is_empty());
     let mut configured = 0;
     for line in lines.iter().filter(|line| line.starts_with("resolve ")) {
         let words = line.split_whitespace().collect::<Vec<_>>();
-        if sources.contains(words[2]) {
-            let expected = format!("configure {} 83200", words[1]);
+        if let Some(shared) = sources.get(words[2]) {
+            let expected = format!("configure {} {shared}", words[1]);
             assert!(
                 lines.contains(&expected),
                 "missing {expected} for {}",

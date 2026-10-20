@@ -164,6 +164,62 @@ fn refusal_then_cancel<A: Adapter>(records: Option<&[BundleKeptRowsV1]>) -> Vec<
     trace
 }
 
+fn allocation_indices(
+    allocations: usize,
+    shard: usize,
+    shards: usize,
+) -> impl Iterator<Item = usize> {
+    assert!(
+        shards > 0 && shards <= allocations,
+        "each shard must exercise a failure"
+    );
+    assert!(shard < shards, "shard index is out of range");
+    (shard..allocations).step_by(shards)
+}
+
+/// Exercise a disjoint part of the allocation sweep. Every failure still
+/// creates a fresh adapter and instance and checks the original cutoff and
+/// release invariants. One shard keeps the complete original sweep.
+#[doc(hidden)]
+pub fn allocation_release_shard<S: Startup, A: Adapter<Startup = S>>(
+    shard: usize,
+    shards: usize,
+) -> usize {
+    let adapter = A::new();
+    let mut instance = adapter.create().expect("create");
+    let allocations = adapter.device().buffer_order.borrow().len();
+    assert!(allocations > 0);
+    instance.destroy().expect("destroy");
+    adapter.assert_released();
+    let mut cases = 1;
+    for index in allocation_indices(allocations, shard, shards) {
+        let failed = A::new();
+        failed
+            .device()
+            .fail_allocate
+            .set(Some(index.try_into().unwrap()));
+        assert_eq!(
+            failed.create().err(),
+            Some(BundleAbiError::Status(BundleStatusV1::Panic)),
+            "allocation {index}"
+        );
+        assert_eq!(
+            failed.device().buffer_order.borrow().len(),
+            index,
+            "first failure cutoff"
+        );
+        assert_eq!(failed.device().fail_allocate.get(), None, "fault consumed");
+        assert_eq!(failed.device().allocation_failures.get(), 1);
+        failed.assert_released();
+        cases += 1;
+    }
+    println!(
+        "AllocationRelease: shard={shard}/{shards} failures={} allocations={allocations}",
+        cases - 1
+    );
+    cases
+}
+
 /// Return the number of independently exercised cases. Model tests report it
 /// for each scenario, including every allocation failure index. Only
 /// `suite!` calls it, beside the suite's `serving_startup` tests of the
@@ -171,35 +227,7 @@ fn refusal_then_cancel<A: Adapter>(records: Option<&[BundleKeptRowsV1]>) -> Vec<
 #[doc(hidden)]
 pub fn run<S: Startup, A: Adapter<Startup = S>>(scenario: Scenario) -> usize {
     let cases = match scenario {
-        Scenario::AllocationRelease => {
-            let adapter = A::new();
-            let mut instance = adapter.create().expect("create");
-            let allocations = adapter.device().buffer_order.borrow().len();
-            assert!(allocations > 0);
-            instance.destroy().expect("destroy");
-            adapter.assert_released();
-            for index in 0..allocations {
-                let failed = A::new();
-                failed
-                    .device()
-                    .fail_allocate
-                    .set(Some(index.try_into().unwrap()));
-                assert_eq!(
-                    failed.create().err(),
-                    Some(BundleAbiError::Status(BundleStatusV1::Panic)),
-                    "allocation {index}"
-                );
-                assert_eq!(
-                    failed.device().buffer_order.borrow().len(),
-                    index,
-                    "first failure cutoff"
-                );
-                assert_eq!(failed.device().fail_allocate.get(), None, "fault consumed");
-                assert_eq!(failed.device().allocation_failures.get(), 1);
-                failed.assert_released();
-            }
-            allocations + 1
-        }
+        Scenario::AllocationRelease => allocation_release_shard::<S, A>(0, 1),
         Scenario::MalformedCommit => {
             let (adapter, mut instance) = prepared::<A>();
             execute(&adapter, &mut instance, 7, 3, &[4, 5, 6], true).expect("verify");
@@ -319,7 +347,9 @@ pub fn run<S: Startup, A: Adapter<Startup = S>>(scenario: Scenario) -> usize {
 /// with `_` for every other character), and a `profiles` test that checks
 /// the list and the adapter's configurations against profiles.json; then
 /// one test per scenario line, `name: Adapter => Scenario;`, optionally
-/// grouped in `mod name { .. }`. Each adapter's `Startup` must be the
+/// grouped in `mod name { .. }`. `AllocationReleaseShards` partitions the
+/// complete allocation sweep into 16 tests with fresh instances at every
+/// failure index. Each adapter's `Startup` must be the
 /// suite's, so each profile starts once per suite in any test runner,
 /// including one process per test, and the profiles start in parallel.
 ///
@@ -372,6 +402,19 @@ macro_rules! __conformance_scenarios {
         }
         $crate::__conformance_scenarios! { $startup; $($rest)* }
     };
+    ($startup:ty; $test:ident: $adapter:ty => AllocationReleaseShards; $($rest:tt)*) => {
+        mod $test {
+            use super::*;
+            $crate::__conformance_allocation_shards! {
+                $startup, $adapter;
+                shard_00 = 0, shard_01 = 1, shard_02 = 2, shard_03 = 3,
+                shard_04 = 4, shard_05 = 5, shard_06 = 6, shard_07 = 7,
+                shard_08 = 8, shard_09 = 9, shard_10 = 10, shard_11 = 11,
+                shard_12 = 12, shard_13 = 13, shard_14 = 14, shard_15 = 15
+            }
+        }
+        $crate::__conformance_scenarios! { $startup; $($rest)* }
+    };
     ($startup:ty; $test:ident: $adapter:ty => $scenario:ident; $($rest:tt)*) => {
         #[test]
         fn $test() {
@@ -381,4 +424,57 @@ macro_rules! __conformance_scenarios {
         }
         $crate::__conformance_scenarios! { $startup; $($rest)* }
     };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __conformance_allocation_shards {
+    ($startup:ty, $adapter:ty; $($name:ident = $index:expr),+ $(,)?) => {
+        const SHARDS: &[usize] = &[$($index),+];
+        $(
+            #[test]
+            fn $name() {
+                assert!(SHARDS.iter().copied().eq(0..SHARDS.len()), "shards must cover every residue");
+                let cases = $crate::fake_host::conformance::allocation_release_shard::<$startup, $adapter>(
+                    $index, SHARDS.len(),
+                );
+                println!("AllocationRelease {}::{} shard={}/{} cases={cases}",
+                         module_path!(), stringify!($name), $index, SHARDS.len());
+            }
+        )+
+    };
+}
+
+#[cfg(test)]
+mod allocation_partition_tests {
+    use super::allocation_indices;
+
+    #[test]
+    fn every_failure_index_runs_once_including_uneven_partitions() {
+        for allocations in [1, 2, 7, 16, 17, 31, 32, 33, 808, 1616, 3232] {
+            for shards in [1, 2, 4, 16]
+                .into_iter()
+                .filter(|&count| count <= allocations)
+            {
+                let mut covered = Vec::new();
+                for shard in 0..shards {
+                    let cases: Vec<_> = allocation_indices(allocations, shard, shards).collect();
+                    assert!(!cases.is_empty());
+                    covered.extend(cases);
+                }
+                covered.sort_unstable();
+                assert_eq!(covered, (0..allocations).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
+    fn empty_or_invalid_shards_are_refused() {
+        for (allocations, shard, shards) in [(0, 0, 1), (4, 0, 0), (3, 0, 4), (4, 4, 4)] {
+            assert!(
+                std::panic::catch_unwind(|| allocation_indices(allocations, shard, shards).count())
+                    .is_err()
+            );
+        }
+    }
 }

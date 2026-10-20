@@ -335,7 +335,7 @@ impl Instance {
         self.check_dspark_status()
     }
 
-    pub(super) fn dspark_draft(
+    pub(super) fn dspark_draft_chunk(
         &mut self,
         inputs: &[crate::dspark::execution::DraftInput],
     ) -> Result<(), String> {

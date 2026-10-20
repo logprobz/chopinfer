@@ -105,8 +105,8 @@ fn warm_cycle_host_boundary_inventory() {
                     .collect();
                 assert_eq!(
                     before_hash.len(),
-                    8,
-                    "one catch-up and one draft graph per rank"
+                    4 * (1 + items.div_ceil(6)) as usize,
+                    "one catch-up graph and bounded draft chunks per rank"
                 );
                 let draft = before_hash[4];
                 let enqueue = execute
@@ -170,8 +170,9 @@ fn warm_cycle_host_boundary_inventory() {
                 assert_eq!(totals["physical_readbacks"], 7);
                 assert_eq!(totals["mapped_waits"], 8);
                 assert_eq!(
-                    totals["graph_replays"], 20,
-                    "one catch-up, one draft and three target pieces per rank"
+                    totals["graph_replays"],
+                    4 * (4 + items.div_ceil(6)),
+                    "one catch-up, bounded draft chunks and three target pieces per rank"
                 );
                 assert_eq!(
                     totals["graph_captures"], 0,

@@ -5,6 +5,9 @@ mod latent;
 #[path = "../../../bundle/src/sm120/prefill_attention.rs"]
 #[allow(dead_code)]
 mod prefill_attention;
+#[path = "../../../bundle/src/sm120/prefill_heads.rs"]
+#[allow(dead_code)]
+mod prefill_heads;
 #[path = "../../../bundle/src/sm120/prefill_cache.rs"]
 #[allow(dead_code)]
 mod registration;

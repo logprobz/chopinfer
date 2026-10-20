@@ -144,9 +144,11 @@ upper-skip executor only (see [sparse DMA admission](#sparse-dma-admission)):
 the create record's prefill profile must negotiate upper-skip chunks and the
 BF16 gather must be prepared. Package defaults are 8192-row chunks with
 upper-layer skip, so they take it. Legacy create records without prefill
-options, the explicit full-prefill profile, chunked profiles without skip and
-DSpark instances allocate no DMA inbox, owner stream or events. Full-schedule
-and two-part executions keep the SM transport unless `1` is set. `0`, or any
+options, the explicit full-prefill profile and chunked profiles without skip
+allocate no DMA inbox, owner stream or events. DSpark instances take the
+upper-skip default for their target prefill chunks. Full-schedule and
+two-part executions keep the SM transport unless `1` is set, and DSpark
+instances keep it there even then. `0`, or any
 value other than `1`, turns DMA off everywhere. Negotiated skip uses its own
 executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the original
 F32 transport when DMA is off, and also turns off the upper-skip default.
@@ -298,10 +300,16 @@ The GPU-time route decision does not establish a quiet-host TTFT gain.
 ### Sparse DMA admission
 
 The exact upper-skip schedule takes DMA for native Flash TP4, single-request
-AR text prefill with overlap disabled, both by default and with
-`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1`; `0` retains the SM transport. Under
-package defaults the unset and explicit settings produce the same create,
-execute and release journal. The adapter recognizes only
+text prefill with overlap disabled, both by default and with
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1`; `0` retains the SM transport. This
+includes a DSpark instance's target prefill chunks: their Engram rows,
+feature captures and feature packing run as ordinary launches on each
+rank's main stream, and every DMA call joins all main streams on its final
+gather before the next launch. The CPU journal of a DSpark target chunk keeps
+every compute and feature launch with its operands and replaces only the 73
+phased reductions. The inbox costs 160 MiB per rank of KV pages on DSpark
+profiles too. Under package defaults the unset and explicit settings produce
+the same create, execute and release journal, for AR and DSpark instances. The adapter recognizes only
 the F32-partial, BF16-result phased contract and the BF16-partial two-shot
 and turns entries, and carries their payload. It validates every rank's
 original input and output row interval before substituting a DMA call.

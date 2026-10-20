@@ -163,7 +163,14 @@ An ordinary local kernel calls the existing phased transport's sum helper:
 positive F32 zero, sources in ascending rank order, then one BF16 rounding.
 Three ordered permutations gather those BF16 owner intervals. Changing the
 owner interval does not change any element's arithmetic. Cross-device
-events order each permutation and join all final peer reads before reuse.
+events join three points: every partial before any scatter, every owner sum
+before any gather, and all final peer reads before reuse. Each rank issues
+its scatter copies, its sum and its gather copies on its own stream, so the
+permutations keep their order there without a barrier between them. On
+2026-10-20 at 250 W, a four-GPU probe of this schedule against one with a
+barrier after every permutation matched every output element and guard at
+8192, 8191, 4096, 2496 and 640 rows, and took 3.921 against 3.963 ms per
+8192-row reduction, about 3.3 ms less per upper-skip chunk.
 
 Where the step's collective reduces BF16 partials (the two-shot and turns
 entries of the BF16-partial contract), the transport carries BF16 partials

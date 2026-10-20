@@ -326,23 +326,27 @@ impl Call {
                 round.submit(services, streams[rank])?;
             }
         }
+        // Every partial is complete before any rank reads a peer's.
         record(0)?;
+        wait(0)?;
+        // A rank's three scatter copies all land in its own inbox from its
+        // own stream, so its sum follows them without a cross-rank barrier
+        // between permutations; the permutation order is unchanged.
         for phase in 0..3 {
-            wait(phase)?;
             copies(&self.scatter[phase])?;
-            record(phase + 1)?;
         }
         for (rank, sum) in sums.iter().enumerate() {
             sum.submit(services, streams[rank])?;
         }
+        // Every owner interval is summed before any rank gathers it.
         record(4)?;
+        wait(4)?;
         for phase in 0..3 {
-            wait(phase + 4)?;
             copies(&self.gather[phase])?;
-            record(phase + 5)?;
         }
         // All peer reads have completed before any rank can reuse partials,
         // rounded rows, outputs, inboxes, or this call's event records.
+        record(7)?;
         wait(7)?;
         Ok(())
     }

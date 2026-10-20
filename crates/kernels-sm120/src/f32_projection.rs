@@ -24,6 +24,7 @@ mod prefill;
 pub mod reuse;
 mod split;
 pub mod wide;
+pub mod zero_prefill;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {

@@ -3,7 +3,7 @@ use super::mxfp8_fold_stream;
 use kernels_sm120::gemm::mxfp8_fold_direct::{Entry, Schedule};
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "mxfp8_fold_direct";
-pub const CUBIN: &str = "mxfp8_fold_direct_sm120";
+pub const CUBIN: &str = "mxfp8_fold_direct_deepseek41_sm120";
 pub const ROWS: [u32; 8] = [1, 2, 4, 6, 8, 16, 32, 64];
 
 pub fn catalog() -> Result<Vec<Entry>, String> {

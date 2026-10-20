@@ -6,7 +6,7 @@ use kernels_sm120::gemm::mxfp8_prefill_compact::Entry;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "mxfp8_prefill_compact";
-pub const CUBIN: &str = "compact_dense_prefill_sm120";
+pub const CUBIN: &str = "compact_dense_prefill_deepseek41_sm120";
 pub const ROWS: [u32; 5] = [128, 512, 2048, 4096, 8192];
 // d2-0381: event and exclusive median ratios must both be below 0.97 on
 // both devices. Select the winning stage count with the best worst-device

@@ -5,7 +5,7 @@ use kernels_sm120::pooled_indexer::position_select_cached as cached;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "position_select_cached";
-pub const CUBIN: &str = "position_select_cached_sm120";
+pub const CUBIN: &str = "position_select_cached_deepseek41_sm120";
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
     if !geometries.contains(&FLASH) {

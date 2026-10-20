@@ -19,14 +19,20 @@ selected and top logprobs as binary64 bits. Token-string collisions and the
 sampled token's extra top-logprob key follow the existing completion parser.
 Startup verification warmup is disabled to avoid warming every possible
 shape in seven processes. Workload warmups, at least twelve full-concurrency
-steps, exact row reporting, device acceptance packets and both resident
-cache sets are required. The first four full steps are excluded from the
+steps, exact row reporting and device acceptance packets are required.
+Both resident cache sets are required once verification has run. Before the
+first verify, the cache is enabled but unused; this includes the K0 arm. The first four full steps are excluded from the
 step-time summary. All request/step data and process fault counts are saved.
 
 Warmup and timed windows report the actual zero-verify fraction and the
 policy's reason counts: missing AR baseline, estimated loss, realized loss,
 cooldown and probes. Rates use all full-concurrency steps as the denominator;
 per-plan rates and steps without a planner invocation are also explicit.
+Raw Prometheus scrapes, responses and log boundaries are saved before
+analysis so a failed gate remains replayable. Engines publish no speculation
+counter family before the first verify. The analyzer accepts that omission
+only when the complete step trace and row histogram prove zero verification;
+receipts retain `available: false` and identify the zero-count inference.
 Each traced decision includes the cost table, AR estimate, candidate estimate,
 realized rates and probe state before training on that step. A zero-verify
 adaptive window is valid evidence. Missing diagnostics are an error.
@@ -54,13 +60,14 @@ CPU checks:
 python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py
 python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py --native "$STAGE"
 python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py --replay "$RECORDED_X6_ARM"
-python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py --dry-run "$CPU_OUTPUT" token logprob inactive zero-steps
+python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py --replay-k0 "$FAILED_MATRIX" "$REPLAY_OUTPUT"
+python3 -B models/deepseek41/lab/verify_width_matrix/test_job.py --dry-run "$CPU_OUTPUT" token logprob inactive zero-steps missing-counters
 ```
 
 Run these through the shared CPU queue. The replay uses the recorded normal
 capacity X6 C8 arm. The HTTP fixture executes both job modes without GPU
 access and deliberately rejects wrong tokens, one-bit logprob changes,
-missing device packets and zero step coverage. Unit tests also cover signal
+missing device packets, missing counters during verification and zero step coverage. Unit tests also cover signal
 interruption and deadline cleanup. It is selected only by the
 explicit CPU dry-run flag and is never named in either GPU job launcher.
 
@@ -72,3 +79,8 @@ checks the time budget against a prior recorded startup and C8 cohort;
 `--seal` requires passing CPU and timeout receipts, hashes the installation
 and harness, and writes the matrix and confirmation job files. It does not
 submit them. The confirmation refuses a missing, modified or failed matrix.
+
+The failed-K0 replay reads the saved native startup identity and post-readiness
+steps. That original run wrote no metric scrapes or response bodies before
+its assertion. The replay labels its metric input as reconstructed and does
+not claim independent histogram or output-bit verification for that run.

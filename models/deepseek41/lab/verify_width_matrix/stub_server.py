@@ -25,10 +25,6 @@ def log(row):
     print(json.dumps(row), flush=True)
 
 
-for cache_id in [1, 2]:
-    log(dict(schema="chopinfer.mapped-row-cache.v1", phase="ready", cache_id=cache_id,
-             charged_bytes=1 << 30, budget_bytes=2 << 30, locked_bytes=(1 << 30)-4096,
-             process_charged_bytes=cache_id*(1 << 30)))
 
 
 def plan(c):
@@ -57,6 +53,11 @@ def run_batch(rows):
     verify=sum(k>0 for k in shape)
     decode=count-verify
     widths=sum(k+1 for k in shape if k)
+    if verify and COUNTERS["verify_items"] == 0:
+        for cache_id in [1, 2]:
+            log(dict(schema="chopinfer.mapped-row-cache.v1", phase="ready", cache_id=cache_id,
+                     charged_bytes=1 << 30, budget_bytes=2 << 30, locked_bytes=(1 << 30)-4096,
+                     process_charged_bytes=cache_id*(1 << 30)))
     for handler, _ in rows:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream")
@@ -108,11 +109,12 @@ def run_batch(rows):
 def metrics():
     labels=f'model_name="{MODEL}",engine="0"'
     lines=[]
-    for key in ("verify_items","draft_tokens","accepted_tokens","emitted_tokens","rows"):
-        lines.append(f'chop_spec_{key}_total{{{labels}}} {COUNTERS[key]}')
-    for position in range(1,17):
-        for name,values in [("drafted",DRAFTED),("accepted",ACCEPTED)]:
-            lines.append(f'chop_spec_{name}_position_total{{{labels},position="{position}"}} {values[position]}')
+    if COUNTERS["verify_items"] and not (FAULT == "missing-counters" and CONFIG == "balanced"):
+        for key in ("verify_items","draft_tokens","accepted_tokens","emitted_tokens","rows"):
+            lines.append(f'chop_spec_{key}_total{{{labels}}} {COUNTERS[key]}')
+        for position in range(1,17):
+            for name,values in [("drafted",DRAFTED),("accepted",ACCEPTED)]:
+                lines.append(f'chop_spec_{name}_position_total{{{labels},position="{position}"}} {values[position]}')
     for (decode,verify,capacity),n in HISTOGRAM.items():
         lines.append(f'chop_step_rows_total{{{labels},decode_rows="{decode}",verify_rows="{verify}",row_capacity="{capacity}"}} {n}')
     lines.append(f'chop_step_rows_dropped_total{{{labels}}} 0')

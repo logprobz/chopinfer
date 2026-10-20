@@ -339,6 +339,8 @@ pub(crate) mod tests {
             let result = decode(&bytes, |line| logs.borrow_mut().push(line.to_owned()));
             let mut expected = shape.runtime;
             expected.indexer_mma = enabled;
+            // Prefill tiles score natively, so SIMT scoring disables them.
+            expected.indexer_prefill_tile &= enabled;
             assert_eq!(result.unwrap().shape.runtime, expected);
             assert!(logs.borrow().is_empty());
         }

@@ -308,6 +308,8 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                         {"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
                              "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}},
                         {"name": "text_config.indexer_mma", "default_is_qualified": true,
+                             "definition": {"type": "boolean", "default": true}},
+                        {"name": "text_config.indexer_prefill_tile", "default_is_qualified": true,
                              "definition": {"type": "boolean", "default": true}}]
             })
         );

@@ -33,6 +33,15 @@ stores them, so its outputs equal the parallel entry's. It serves widths
 up to 8192 (eight groups per warp); wider rows keep the parallel entry.
 `block_quantize::Entry::cached` selects it for a separately named entry.
 
+`rmsnorm_quantize_cached_f32.cuh` is the same idea for the F32 query norm
+(`rmsnorm_quantize::run` with F32 rows, unchanged). The served entry
+stores the normalized row, then reloads each group from global memory
+twice. The cached entry keeps each lane's eight inputs in registers, runs
+`rmsnorm_f32`'s expressions over the same 256-lane tree and status commit,
+publishes the stored row to shared memory as well, and quantizes each
+group once from there. It serves F32 rows of at most 2048 columns with 8,
+16 or 32 warps (`rmsnorm_quantize_cached::Entry` with an F32 reference).
+
 ## Exact ordered sum
 
 `ordered_sum.cuh` computes the HF form's ordered F32 sum (from +0, one

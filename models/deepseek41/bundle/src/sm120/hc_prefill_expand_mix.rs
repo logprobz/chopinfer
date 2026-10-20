@@ -23,11 +23,6 @@ pub fn qualified(g: &Geometry) -> bool {
     g == &FLASH
 }
 
-/// Whether a prefill of `rows` launches the expansion and mixer together.
-pub fn selected(g: &Geometry, rows: u32) -> bool {
-    qualified(g) && BUCKETS.iter().any(|(_, buckets)| buckets.contains(&rows))
-}
-
 pub fn cubin_name(g: &Geometry) -> String {
     format!("sinkhorn_hc_{}_prefill_expand_mix_sm120", g.kernel_tag)
 }

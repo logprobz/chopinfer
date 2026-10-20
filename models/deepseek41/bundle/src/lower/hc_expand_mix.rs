@@ -38,7 +38,7 @@ impl Lowering<'_> {
                 .ops
                 .hc
                 .as_ref()
-                .is_some_and(|ops| ops.has_prefill_expand_mix(self.shape.geometry, phase))
+                .is_some_and(|ops| ops.has_prefill_expand_mix(phase))
     }
     pub(super) fn mix_was_fused(&self, phase: Phase, layer: u32, sublayer: Sublayer) -> bool {
         if !self.has_expand_mix(phase) && !self.has_prefill_expand_mix(phase) {

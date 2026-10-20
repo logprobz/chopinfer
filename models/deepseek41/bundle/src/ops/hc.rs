@@ -12,7 +12,6 @@ use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
     WeightedStreamHeadBuffers,
 };
-use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::hc;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
@@ -192,11 +191,34 @@ impl HcOps {
         bind.launch_within(op, &b, workspace, Counts::rows(rows))
     }
 
-    /// Only the measured prefill rows (`sm120::hc_prefill_expand_mix`).
-    pub(crate) fn has_prefill_expand_mix(&self, geometry: &Geometry, phase: Phase) -> bool {
-        phase.prefill()
-            && self.prefill_fused.is_some()
-            && crate::sm120::hc_prefill_expand_mix::selected(geometry, phase.rows())
+    /// The prefill rows the backend's expansion mixer launches: it refuses
+    /// every row count it has not measured, so ask it with distinct views.
+    pub(crate) fn has_prefill_expand_mix(&self, phase: Phase) -> bool {
+        let Some(op) = self.prefill_fused.as_ref().filter(|_| phase.prefill()) else {
+            return false;
+        };
+        let view = |handle| View {
+            handle,
+            bytes: u64::MAX / 2,
+        };
+        let probe = SinkhornExpandMixBuffers {
+            x: view(1),
+            y: view(2),
+            post_in: view(3),
+            comb_in: view(4),
+            expanded: view(5),
+            fn_: view(6),
+            base: view(7),
+            scale: view(8),
+            pre_in: view(9),
+            collapsed: view(10),
+            pre: view(11),
+            post: view(12),
+            comb: view(13),
+            live_rows: view(14),
+        };
+        op.launches(&probe, View::EMPTY, Counts::rows(phase.rows()))
+            .is_ok()
     }
     pub(crate) fn prefill_expand_mix(
         &self,
@@ -532,7 +554,7 @@ mod tests {
                     Phase::Decode(rows),
                 ] {
                     assert_eq!(
-                        ops.has_prefill_expand_mix(&FLASH, phase),
+                        ops.has_prefill_expand_mix(phase),
                         phase.prefill() && tile.is_some()
                     );
                 }

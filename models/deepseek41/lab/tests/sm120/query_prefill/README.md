@@ -13,12 +13,13 @@ no global scratch or tickets. The cached variant reads the F32 input once;
 the reread variant retains the norm's second global read. Both stage the
 normalized row and provisional codes before whole-row admission.
 
-Serving preparation selects the cached variant only for Flash prefill with
+Serving preparation selects the measured reread variant only for Flash prefill with
 8192 rows. Decode, verify and smaller prefill buckets keep their previous
 selection. The later indexer quantizer remains because intervening kernels
 can change row status. A full-row 40-layer schedule removes 40 launches per
 rank. The profiled default cone schedule has 20 eligible full-row boundaries
-per chunk. This is a candidate until the pair job passes bitwise and timing gates.
+per chunk. Both variants passed the full matrix and memcheck on two GPUs. Reread ties
+cached when cold and wins more hot cases, so serving selects reread.
 
 The lab uses authenticated 8192-row query operands and BF16 norm weights
 captured at layers 0 and 39. Each GPU executes 28 matrix cases, twelve

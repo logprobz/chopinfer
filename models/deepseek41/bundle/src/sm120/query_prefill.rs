@@ -60,5 +60,10 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
     if g != &FLASH {
         return Ok(backend);
     }
-    Ok(backend.with_rmsnorm_quantize(entries()?.pop().expect("cached query norm").reference))
+    Ok(backend.with_rmsnorm_quantize(selected()?.reference))
+}
+
+/// Both strategies passed bitwise; reread ties cold and wins more hot cases.
+pub fn selected() -> Result<Entry, String> {
+    Ok(entries()?.remove(0))
 }

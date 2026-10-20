@@ -1,4 +1,4 @@
-//! Execute the cached arm through the same prepared backend op as serving.
+//! Execute the selected arm through the same prepared backend op as serving.
 use super::{OFFSET, registration};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, View},
@@ -12,7 +12,7 @@ use model_deepseek41_contract::geometry::FLASH;
 pub fn plan(rows: u32, views: &[View]) -> LabResult<Launch> {
     let backend = bundle_deepseek41::sm120::norm_quantize::register(Sm120::new(), &FLASH)?;
     let backend = registration::register(backend, &FLASH)?;
-    let entry = registration::entries()?.pop().unwrap();
+    let entry = registration::selected()?;
     let op = backend
         .rmsnorm_quantize(
             &entry.reference.query,
@@ -54,7 +54,7 @@ fn served_plan_and_every_argument_match_the_qualified_recipe() {
             bytes: 1 << 30,
         })
         .collect::<Vec<_>>();
-    let entry = registration::entries().unwrap().pop().unwrap();
+    let entry = registration::selected().unwrap();
     for rows in [1, 64, 8128, 8192] {
         let actual = plan(rows, &views).unwrap();
         assert_eq!(actual.symbol, entry.reference.symbol);

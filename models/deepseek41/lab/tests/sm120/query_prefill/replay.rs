@@ -126,7 +126,7 @@ impl<'a> Device<'a> {
         let i = &self.input;
         let eps = self.entry.reference.query.norm.epsilon_bits;
         if arm == 1 {
-            if self.entry.reference.symbol == "chop_prefill_query_norm_ceil_cached_v1" {
+            if self.entry.reference.symbol == registration::selected()?.reference.symbol {
                 use kernel_core::{backend::View, contract::Argument};
                 let buffers = [&i.x, &i.weight, y, codes, scales, &i.live, status];
                 let views = buffers

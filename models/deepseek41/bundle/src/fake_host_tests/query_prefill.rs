@@ -33,7 +33,7 @@ fn default_cone_fuses_twenty_full_row_query_boundaries() {
         assert_eq!(
             launches
                 .iter()
-                .filter(|l| l.contains("chop_prefill_query_norm_ceil_cached_v1"))
+                .filter(|l| l.contains("chop_prefill_query_norm_ceil_reread_v1"))
                 .count(),
             20 * 4
         );
@@ -120,10 +120,10 @@ fn full_chunk_query_fusion_preserves_indexer_status_revalidation() {
                 * shape.ranks() as usize;
             let fused = rows == 8192;
             assert_eq!(
-                count("chop_prefill_query_norm_ceil_cached_v1"),
+                count("chop_prefill_query_norm_ceil_reread_v1"),
                 if fused { queries } else { 0 }
             );
-            assert_eq!(count("chop_prefill_query_norm_ceil_reread_v1"), 0);
+            assert_eq!(count("chop_prefill_query_norm_ceil_cached_v1"), 0);
             assert_eq!(
                 count("chop_deepseek41_q_norm_f32_v1"),
                 if fused { 0 } else { queries }
@@ -134,7 +134,7 @@ fn full_chunk_query_fusion_preserves_indexer_status_revalidation() {
             );
             for line in launches
                 .iter()
-                .filter(|l| l.contains("chop_prefill_query_norm_ceil_cached_v1"))
+                .filter(|l| l.contains("chop_prefill_query_norm_ceil_reread_v1"))
             {
                 assert!(line.contains("grid_x: 8192,"), "{line}");
                 assert!(line.contains("block_x: 256,"), "{line}");

@@ -9,8 +9,8 @@ from verify_hc_journal import align_buffers, align_streams, config, launches, re
 
 NORM = "chop_deepseek41_q_norm_f32_v1"
 CEIL = "chop_deepseek41_dense_ceil_f32_w1280_prefill_w8_v1"
-FUSED = "chop_prefill_query_norm_ceil_cached_v1"
-REREAD = "chop_prefill_query_norm_ceil_reread_v1"
+FUSED = "chop_prefill_query_norm_ceil_reread_v1"
+UNSELECTED = "chop_prefill_query_norm_ceil_cached_v1"
 
 
 def project(entries, rows):
@@ -42,7 +42,7 @@ def audit(before, after, ranks, rows):
     left, right = before.splitlines(), after.splitlines()
     resolves = lambda lines: Counter(l.split()[2] for l in lines if l.startswith("resolve "))
     a, b = resolves(left), resolves(right)
-    require(not a-b and b-a == Counter({FUSED: ranks, REREAD: ranks}), "module entry delta differs")
+    require(not a-b and b-a == Counter({FUSED: ranks, UNSELECTED: ranks}), "module entry delta differs")
     require(right.count("release") - left.count("release") == 3*ranks, "resource release delta differs")
     # Resource and opaque handle normalization is independent of launch rewriting.
     a, _ = normalized(left)

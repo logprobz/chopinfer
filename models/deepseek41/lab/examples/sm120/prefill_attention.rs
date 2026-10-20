@@ -145,6 +145,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         return Ok(());
     }
+    if mode == "empty-build" {
+        return probe::cache::heads::empty::build(out);
+    }
+    if mode == "empty-snapshot" {
+        probe::cache::heads::empty::snapshot(out)?;
+        println!("PASS empty_snapshot hashes=true probe_sm120=true");
+        return Ok(());
+    }
+    if ["empty-check", "empty-time", "empty-memcheck"].contains(&mode.as_str()) {
+        if args.len() != 4 {
+            return Err("usage: empty-mode OUT LISTS OFFSET".into());
+        }
+        let cubins = probe::cache::heads::empty::snapshot(out)?;
+        let offset = args[3].parse::<u32>()?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::cache::heads::empty::run(sessions, Path::new(&args[2]), offset, mode)
+        })?
+        .is_none()
+        {
+            return Err("empty-unit GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
     if mode == "build" {
         return build(out);
     }

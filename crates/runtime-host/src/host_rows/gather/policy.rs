@@ -9,6 +9,8 @@ use std::time::Duration;
 const CONTROL: &str = "CHOPINFER_MAPPED_ROW_CONTROL";
 const ASYNC: &str = "CHOPINFER_MAPPED_ASYNC_READ_AHEAD";
 const SYNC: &str = super::MAPPED_READ_AHEAD_ENV_V1;
+// Resident row caching stays enabled independently of page read-ahead.
+const DEFAULT_READ_AHEAD: bool = false;
 
 #[derive(Default)]
 struct Counts {
@@ -79,7 +81,7 @@ fn mode(value: &str) -> Result<u8, String> {
 }
 
 fn configured(get: impl Fn(&str) -> Option<OsString>) -> u8 {
-    let sync = get(SYNC).is_some_and(|value| value == "1");
+    let sync = get(SYNC).map_or(DEFAULT_READ_AHEAD, |value| value == "1");
     let asynchronous = get(ASYNC).map_or(sync, |value| value == "1");
     u8::from(sync) | (u8::from(asynchronous) << 1)
 }

@@ -115,11 +115,19 @@ fn full_budget(starts: &[u64], counts: &[u32], decode_last: bool) {
             .filter(|line| line.starts_with("launch ") && line.contains(family))
             .count()
     };
-    // Every layer and rank reaches both attention launches, including the
-    // compressed sources. Mixed batches execute both phase programs.
+    // Every layer and rank reaches its source and merge. Mixed batches
+    // also execute one-row decode, with its selected-key cache producer.
     assert_eq!(
         launches("chop_latent_sources_"),
-        FLASH.layers() as usize * 4 * 2 * if decode_last { 2 } else { 1 },
+        FLASH.layers() as usize * 4 * if decode_last { 5 } else { 2 },
+    );
+    assert_eq!(
+        launches("_cache_decode_control0_"),
+        if decode_last {
+            FLASH.layers() as usize * 4
+        } else {
+            0
+        },
     );
     for family in [
         "chop_position_indexer_",

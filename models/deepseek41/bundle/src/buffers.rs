@@ -200,6 +200,8 @@ kernel_core::scratch_record! {
         pub index_selected: value,
         /// The rank's heads' attention output (BF16 `[rows, heads,
         /// head_dim]`) and its quantized codes and scales, `wo_a`'s input.
+        /// Selected decode/verify KV operands, reused only by ordered attention layers.
+        pub selected_cache: option,
         pub attention: value,
         pub attention_codes: value,
         pub attention_scales: value,
@@ -367,6 +369,12 @@ impl Scratch<Allocation> {
             candidate_tags: row(U64),
             candidate_visible: row(I32),
             candidate_status: row(I32),
+            selected_cache: crate::Kernels::selected_cache_bytes(
+                shape.geometry,
+                shape.ranks(),
+                storage,
+            )
+            .map(Allocation::bytes),
             attention: row(heads * BF16),
             attention_codes: row(heads),
             attention_scales: row(heads / 32),

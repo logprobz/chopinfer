@@ -26,6 +26,9 @@ use kernel_core::latent_attention::{
 use kernel_core::latent_glue::{
     LatentQueryRopeBuffers, LatentWindowKeyBuffers, LatentWindowWriteBuffers, WindowAddressing,
 };
+use kernel_core::latent_sources_cache::{
+    Buffers as SelectedCacheBuffers, Layout as SelectedCacheLayout,
+};
 use kernel_core::latent_staged_window_keys::LatentStagedWindowKeyBuffers;
 use kernel_core::latent_window_stage::LatentWindowStageBuffers;
 use kernel_core::rmsnorm::RmsNormBuffers;
@@ -502,6 +505,7 @@ pub(crate) struct AttentionViews {
     pub decoded_cache: Option<DeviceBufferSpanV1>,
     /// One full cold chunk has the measured native head-sharing schedule.
     pub native_shared_heads: bool,
+    pub selected_cache: Option<DeviceBufferSpanV1>,
     pub live_rows: DeviceBufferSpanV1,
 }
 
@@ -512,6 +516,7 @@ pub(crate) struct AttentionOps {
     ops: Vec<(Kind, Prepared<LatentSourcesBuffers<View>>)>,
     cached: Option<Prepared<model_deepseek41_contract::own_ops::prefill_cache::Buffers>>,
     shared_heads: Option<Prepared<LatentSourcesBuffers<View>>>,
+    selected: Vec<(Kind, Prepared<SelectedCacheBuffers<View>>)>,
 }
 
 /// The attention query of the layers of compress ratio `ratio` in `phase`:
@@ -583,11 +588,31 @@ impl AttentionOps {
         } else {
             None
         };
+        let mut selected = Vec::new();
+        if crate::Kernels::selected_cache_bytes(shape.geometry, shape.ranks(), storage).is_some() {
+            for (kind, phase) in [
+                (Kind::Decode, AttentionPhase::Decode),
+                (Kind::Verify, AttentionPhase::Verify),
+            ] {
+                let query = attention_query(shape, ratio, phase).map_err(Refused::Rule)?;
+                let LatentAttentionQuery::Attention { capacity, .. } = query else {
+                    unreachable!()
+                };
+                let need = exact::need(capacity, exact::of_phase(kind, capacity));
+                let op = asks.ask(
+                    format!("attention.selected r{ratio} {kind:?}"),
+                    need,
+                    |need| kernels.prepare_selected_cache(shape.geometry, &query, need),
+                )?;
+                selected.push((kind, op));
+            }
+        }
         Ok(AttentionOps {
             ratio,
             ops,
             cached,
             shared_heads,
+            selected,
         })
     }
 
@@ -648,6 +673,60 @@ impl AttentionOps {
             workspace: bind.view(views.workspace),
             live_rows: bind.view(views.live_rows),
         };
+        let phase = match kind {
+            Kind::Prefill => AttentionPhase::Prefill,
+            Kind::Decode => AttentionPhase::Decode,
+            Kind::Verify => AttentionPhase::Verify,
+        };
+        if let Some((_, op)) = self
+            .selected
+            .iter()
+            .find(|(of, _)| *of == kind)
+            .filter(|_| crate::Kernels::selected_cache_rows(phase, rows))
+        {
+            let arena = views
+                .selected_cache
+                .ok_or(Refusal("selected cache allocation is absent"))?;
+            let layout = SelectedCacheLayout::new(
+                op.info().bytes_of("decoded").unwrap(),
+                op.info().bytes_of("valid").unwrap(),
+            )?;
+            let mut live = vec![
+                views.q,
+                views.row_batch,
+                views.ring.codes,
+                views.item_slots,
+                views.window_keys,
+                views.sinks,
+                views.cos_sin,
+                views.output,
+                views.workspace,
+                views.live_rows,
+            ];
+            live.extend(views.ring.scales);
+            if let Some(c) = &views.compressed {
+                live.extend([c.pool, c.tables, c.selected]);
+            }
+            live.extend(views.decoded_cache);
+            if layout.bytes > arena.length || live.iter().any(|v| overlaps(arena, *v)) {
+                return Err(Refusal(
+                    "selected cache exceeds its allocation or overlaps live operands",
+                ));
+            }
+            let mut region = |r: std::ops::Range<u64>| {
+                bind.view(DeviceBufferSpanV1::new(
+                    arena.buffer,
+                    arena.offset + r.start,
+                    r.end - r.start,
+                ))
+            };
+            let cached = SelectedCacheBuffers {
+                native: buffers,
+                decoded: region(layout.decoded),
+                valid: region(layout.valid),
+            };
+            return bind.launch(op, &cached, Counts::rows(rows));
+        }
         if let (Some(op), Some(arena)) = (&self.cached, views.decoded_cache) {
             let page = 64 / self.ratio.max(1);
             let pages = views.compressed.as_ref().map_or(1, |c| c.pages);

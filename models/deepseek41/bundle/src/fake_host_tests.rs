@@ -41,6 +41,7 @@ mod prefill_selected;
 mod prefill_skip;
 mod prefill_tma;
 mod producer_epilogues;
+mod selected_cache;
 mod shared_overlap;
 mod verify_hc;
 use crate::shape::Shape;
@@ -67,9 +68,14 @@ fn latent_sources_configure_shared_memory_before_serving_launches() {
     let mut sources = std::collections::BTreeMap::new();
     for line in lines.iter().filter(|line| line.starts_with("launch ")) {
         let symbol = line.split_whitespace().nth(2).unwrap();
-        if symbol.starts_with("chop_latent_sources_") && !symbol.contains("_merge_") {
+        if symbol.starts_with("chop_latent_sources_")
+            && !symbol.contains("_merge_")
+            && !symbol.contains("_cache_decode_control0_")
+        {
             let shared = if symbol.ends_with("_reuse2_v1") {
                 85504
+            } else if symbol.contains("_cached_profile0_") {
+                73984
             } else {
                 83200
             };
@@ -925,6 +931,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// Full mixed prefill head staging adds two immutable modules per TP4 rank,
 /// eighteen resolves, four shared-memory configurations and twenty releases.
 /// Every launch retains its argument list and numerical contract.
+/// Native TP4 adds the selected-key cache: 24 resolves, six shared-memory
+/// opt-ins, one separate cache allocation and 26 releases per rank.
+/// This two-row lifecycle retains its source launches. The image lifecycle
+/// selects the C1 producer and cached source; its ordered merge is unchanged.
+/// Retained launches keep their argument lists and numerical contracts.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1190,16 +1201,26 @@ fn every_kv_layout_lowers_every_stage() {
         };
         assert_eq!(packed, expected_packs);
         assert_eq!(native_scores, expected_packs);
+        let cache_producers = launches("_cache_decode_control0_");
+        assert_eq!(
+            cache_producers,
+            if kv.storage == KvStorage::Native {
+                FLASH.layers() as usize * 4
+            } else {
+                0
+            }
+        );
         counts.push((
             kv.storage,
-            journal.iter().filter(|l| l.starts_with("launch")).count() - packed,
+            journal.iter().filter(|l| l.starts_with("launch")).count() - packed - cache_producers,
             bf16,
         ));
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
-    // After the validated native query packs, both layouts lower the same stages.
+    // After the validated native query packs and cache producers, both layouts
+    // lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

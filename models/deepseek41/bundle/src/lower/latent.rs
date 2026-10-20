@@ -462,6 +462,7 @@ impl Lowering<'_> {
                 && phase.rows() == 8192
                 && self.prefill_row_origin.is_none()
                 && offset.is_some_and(|range| range.offset == 0),
+            selected_cache: scratch.selected_cache,
             live_rows: self.inputs.live_tokens,
         };
         ops.attend(Kind::from(phase), phase.rows(), &views)

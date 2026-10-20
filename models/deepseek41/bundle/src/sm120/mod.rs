@@ -19,6 +19,11 @@ pub mod hc_mixer_probe;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
 pub mod latent;
+#[allow(
+    dead_code,
+    reason = "the build script compiles the qualified cache catalog"
+)]
+pub(crate) mod latent_cache;
 pub mod latent_decode;
 pub mod latent_scheduled;
 pub(crate) mod moe_floor;
@@ -122,7 +127,9 @@ pub fn latent_cubins()
     crate::CUBINS
         .iter()
         .filter(|cubin| {
-            cubin.name.starts_with("latent_sources_") || cubin.name == latent_decode::CUBIN
+            cubin.name.starts_with("latent_sources_")
+                || cubin.name == latent_decode::CUBIN
+                || cubin.name == latent_cache::CUBIN
         })
         .map(|cubin| (cubin.name, cubin.bytes, cubin.symbols))
 }
@@ -287,6 +294,35 @@ impl crate::Kernels {
                 cubin,
                 prefill_cache::CUBIN | prefill_heads::NATIVE_CUBIN | prefill_heads::CACHED_CUBIN
             ) || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
+            && (cubin != latent_cache::CUBIN
+                || latent_cache::eligible(shape.geometry, shape.ranks(), storage))
+    }
+
+    pub(crate) fn selected_cache_bytes(
+        g: &model_deepseek41_contract::geometry::Geometry,
+        ranks: u32,
+        storage: model_deepseek41_contract::state::KvStorage,
+    ) -> Option<u64> {
+        latent_cache::eligible(g, ranks, storage).then_some(latent_cache::BYTES)
+    }
+
+    pub(crate) fn selected_cache_rows(
+        phase: kernel_core::contract::AttentionPhase,
+        rows: u32,
+    ) -> bool {
+        latent_cache::selected(phase, rows)
+    }
+
+    pub(crate) fn prepare_selected_cache(
+        &self,
+        geometry: &model_deepseek41_contract::geometry::Geometry,
+        query: &kernel_core::latent_attention::LatentAttentionQuery,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<kernels_sm120::latent::sources_cached::Buffers>,
+        kernel_core::backend::Refused,
+    > {
+        latent_cache::prepare(self.backend.as_ref(), geometry, query, need)
     }
 
     pub(crate) fn prepare_prefill_cache(

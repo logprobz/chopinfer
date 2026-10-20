@@ -45,6 +45,10 @@ fn check_sources(lines: &[String], rows: u32, verify: bool, selected: bool, rank
 
 #[test]
 fn measured_decode_attention_serves_exact_graph_buckets() {
+    crate::sm120::latent_cache::with_reference(measured_staging_reference);
+}
+
+fn measured_staging_reference() {
     crate::sm120::latent_decode::with_reference(|| run_case(Ranks::TP4, KV_LAYOUTS[0], true));
     for (ranks, layout) in [
         (Ranks::TP4, KV_LAYOUTS[0]),

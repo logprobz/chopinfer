@@ -68,24 +68,38 @@ class Runner(width.Runner):
     def run(self):
         self.gpu_guard("before", idle=True)
         servers = []
+        captured = []
         try:
             for epoch, config in enumerate(("uniform3", "adaptive")):
                 with self.profiled(config, epoch):
                     cohorts = [self.cohort(config, c) for c in (8, 16)]
                     ready = width.cache_ready(self.log.read_text())
-                # Export only after capture has stopped and its server exited.
-                sqlite = self.session.export()
-                attribution = cycles.analyze(sqlite, self.directory)
-                assert attribution["synthetic"] == self.dry
-                width.write(self.directory / "attribution.json", attribution)
                 assert self.session.starts == self.session.stops == 1
                 servers.append(dict(config=config, cohorts=cohorts, resident_cache=ready,
-                                    attribution=attribution,
                                     session=self.session.receipt()))
+                captured.append((self.session, self.directory, servers[-1]))
+                width.write(self.directory / "capture.json", servers[-1])
                 self.gpu_guard(f"after-{epoch}", idle=True)
             assert len(servers) == 2 and sum(len(s["cohorts"]) for s in servers) == 4
         finally:
             self.gpu_guard("final")
+        # Preserve both raw captures before any export or analysis can fail.
+        width.write(self.output / "captures.json",
+                    dict(status="captured", server_count=2, case_count=4, servers=servers))
+        errors = []
+        for session, directory, server in captured:
+            try:
+                sqlite = session.export()
+                attribution = cycles.analyze(sqlite, directory)
+                assert attribution["synthetic"] == self.dry
+                width.write(directory / "attribution.json", attribution)
+                server["attribution"] = attribution
+            except Exception as error:
+                failure = dict(config=server["config"], error=str(error),
+                               type=type(error).__name__, directory=str(directory))
+                width.write(directory / "analysis-error.json", failure)
+                errors.append(failure)
+        assert not errors, errors
         result = dict(schema="chopinfer.dspark-cycle-profile.v1", status="passed",
                       dry_run=self.dry, native_revision=self.settings["native_revision"],
                       server_count=2, case_count=4, bitwise=True, servers=servers,

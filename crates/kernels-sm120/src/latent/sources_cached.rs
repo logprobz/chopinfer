@@ -7,7 +7,7 @@ pub use grouped::GroupedEntry;
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, LaunchPlan, Refusal};
-pub use prepared::{Buffers, Layout, prepare};
+pub use prepared::{Buffers, Layout, prepare, prepare_grouped};
 
 #[derive(Clone, Debug)]
 pub struct Entry {

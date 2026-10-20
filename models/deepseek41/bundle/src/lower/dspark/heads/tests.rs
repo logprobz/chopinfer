@@ -244,6 +244,31 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                         |op| !op.collective || op.launch.symbol == "chop_comm_allgather_f32_v1"
                     )
                 );
+                assert!(
+                    program
+                        .iter()
+                        .any(|op| op.launch.symbol == "chop_row_gather_by_index_v1")
+                );
+                // A lone item's step reads its block row in place.
+                let lone = heads.position(rank, position, 1, &v, &peers).unwrap();
+                assert!(
+                    lone.iter()
+                        .all(|op| op.launch.symbol != "chop_row_gather_by_index_v1")
+                );
+                let step = lone
+                    .iter()
+                    .find(|op| op.launch.symbol == "chop_deepseek41_dspark_markov_v1")
+                    .unwrap();
+                assert_eq!(argument_span(step, 3), v.position_logits);
+                let row = vocab * 4;
+                assert_eq!(
+                    argument_span(step, 2),
+                    Span::new(
+                        v.block_logits.buffer,
+                        v.block_logits.offset + u64::from(position) * row,
+                        row
+                    )
+                );
                 let hidden = argument_span(confidence, 0);
                 assert_eq!(hidden.buffer, v.hidden_f32.buffer);
                 assert_eq!(

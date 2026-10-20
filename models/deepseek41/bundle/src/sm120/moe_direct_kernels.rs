@@ -42,6 +42,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     {
         let entries = entries(g)?;
         specs.push((
+            "routed_moe_resident",
+            kernels_sm120::moe::chained::streamed_resident::cubin_spec(
+                &format!("bandwidth_moe_{}_resident_sm120", g.kernel_tag),
+                &entries.iter().map(|e| e.gate.clone()).collect::<Vec<_>>(),
+            ),
+        ));
+        specs.push((
             "routed_moe_router_finish",
             kernels_sm120::moe::chained::router_finish::cubin_spec(
                 &format!("router_finish_moe_{}_sm120", g.kernel_tag),

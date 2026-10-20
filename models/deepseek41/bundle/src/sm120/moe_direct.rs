@@ -133,7 +133,7 @@ fn prepare(
             },
         ));
     }
-    for (stage, spec, mut plan) in stages {
+    for (stage, mut spec, mut plan) in stages {
         // TP4, 250 W, 2026-10-20: full captured graphs passed bitwise on
         // both GPUs and all four logical ranks. Matching the 80-register
         // small gate's six-CTA residency saves 0.60 ms at AR8, 1.14 ms at
@@ -148,6 +148,18 @@ fn prepare(
             )
         {
             plan.grid[0] = plan.grid[0].min(kernels_sm120::moe::SM_COUNT * 6);
+        }
+        // TP4, 250 W, 2026-10-20: the same small-gate body under an
+        // eight-CTA launch bound (64 registers, eight resident CTAs) passed
+        // 708 captured full graphs bitwise. At 32 rows it saves 0.20..0.25 ms
+        // over grid6 across 40 backbone layers, faster in 71..79 of 80 graphs
+        // per arm. Decode-8 graphs are within noise (42 of 80) and keep grid6.
+        if stage == Some(Stage::GateSmall) && entry.experts() == 384 && rows == 32 {
+            // The positional ABI is identical. Retain the floor binding's
+            // view names for scales, sorted rows and padded rows.
+            spec.symbol = kernels_sm120::moe::chained::streamed_resident::symbol(&entry.gate);
+            plan = kernels_sm120::moe::chained::streamed_resident::plan(&entry.gate, rows)?;
+            plan.workspace_bytes = entry.workspace_bytes(rows)?;
         }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
@@ -345,16 +357,18 @@ mod tests {
                     {
                         if call.launch.symbol.contains("_small_") {
                             let resident = if set.count == 384
-                                && matches!(
-                                    (phase, rows),
-                                    (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
-                                )
+                                && phase == ExecutionPhase::Decode
+                                && rows == 8
                                 && point == Point::Gate
                             {
                                 6
                             } else {
                                 8
                             };
+                            assert_eq!(
+                                call.launch.symbol.ends_with("_small_resident8_v1"),
+                                set.count == 384 && rows == 32 && point == Point::Gate
+                            );
                             let items = set.count.min(rows * set.top_k)
                                 * if point == Point::Gate { 9 * 40 } else { 80 * 5 };
                             assert_eq!(

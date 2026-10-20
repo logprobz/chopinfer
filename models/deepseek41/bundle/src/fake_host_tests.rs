@@ -984,6 +984,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// the audited lifecycle replaces 800 column gate/up and 800 column down
 /// launches with native pack and tile launches, adds 16 resolves and 20
 /// releases, and removes four shared-memory configures: 1632 lines.
+/// The resident small gate adds one module, two resolves and three releases
+/// per TP4 rank; no lifecycle launch or allocation changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

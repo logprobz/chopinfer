@@ -13,6 +13,8 @@ use model_deepseek41_contract::geometry::GEOMETRIES;
 
 mod acceptance_cubin;
 mod acceptance_entries;
+#[allow(dead_code, reason = "the bundle selects the measured widths")]
+mod ceil_cached;
 #[allow(dead_code)]
 mod ceil_parallel;
 #[allow(dead_code)]
@@ -377,6 +379,12 @@ pub fn selection(
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
+        owners.extend(
+            ceil_cached::cubins(std::slice::from_ref(geometry))
+                .expect("cached ceil cubins")
+                .into_iter()
+                .map(|(_, spec)| (spec.name, geometry.id)),
+        );
         owners.push((ceil_prefill::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
@@ -542,6 +550,7 @@ pub fn selection(
         window_fused::cubin().expect("fused window cubin"),
     ));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
+    specs.extend(ceil_cached::cubins(geometries).expect("cached ceil cubins"));
     specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));

@@ -1033,7 +1033,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17240, 0x38cae358060b8a9d),
+        (17253, 0x3b9552a22a0d1960),
     ),
     (
         "deepseek41-flash-tp2",
@@ -1043,7 +1043,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34667, 0x77231ca9a7bdd240),
+        (34693, 0x550d9f8639a60ffb),
     ),
     (
         "deepseek41-flash-tp4",
@@ -2065,9 +2065,21 @@ fn a_non_finite_index_score_refuses_its_step_alone() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// Every captured small ceil launch uses the decode entry, including ops originally
-/// prepared once at prefill capacity. Larger rows keep the serial entry.
+/// Every captured small ceil launch uses a decode entry (parallel, or cached
+/// at the measured widths), including ops originally prepared once at
+/// prefill capacity. Larger rows keep the serial entry.
 fn assert_small_row_ceil_bindings(lines: &[String]) {
+    let cached: Vec<String> = model_deepseek41_contract::geometry::GEOMETRIES
+        .iter()
+        .flat_map(|g| {
+            model_deepseek41_contract::admission::SUPPORTED_RANKS
+                .iter()
+                .filter_map(move |&ranks| crate::sm120::ceil_parallel::quantizers(g, ranks).ok())
+        })
+        .flatten()
+        .filter_map(|e| crate::sm120::ceil_cached::cached(&e))
+        .map(|e| e.symbol)
+        .collect();
     let mut checked = 0;
     let mut capturing = false;
     for line in lines {
@@ -2095,7 +2107,7 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
             .unwrap();
         if capturing || rows > model_deepseek41_contract::serving::DECODE_BATCH {
             assert_eq!(
-                symbol.ends_with("_parallel_v1"),
+                symbol.ends_with("_parallel_v1") || cached.iter().any(|c| c == symbol),
                 rows <= model_deepseek41_contract::serving::DECODE_BATCH,
                 "{line}"
             );

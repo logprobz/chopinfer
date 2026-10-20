@@ -949,7 +949,12 @@ mod tests {
                 assert_eq!(calls.len(), 1);
                 let call = &calls[0].launch;
                 if rows <= DECODE_BATCH {
-                    assert!(call.symbol.ends_with("_parallel_v1"), "{}", call.symbol);
+                    let decode = if crate::sm120::ceil_cached::WIDTHS.contains(&width) {
+                        "_cached_v1"
+                    } else {
+                        "_parallel_v1"
+                    };
+                    assert!(call.symbol.ends_with(decode), "{}", call.symbol);
                 } else {
                     let warps = if width >= 8192 { 16 } else { 8 };
                     assert!(

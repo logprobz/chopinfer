@@ -60,6 +60,9 @@ pub(crate) struct Device {
     pub verified: Vec<u64>,
     /// `CHOPINFER_STEP_TRACE=1` at create: each execute logs its phase times.
     pub step_trace: bool,
+    pub draft_chunk_items: usize,
+    #[cfg(feature = "diagnostic-taps")]
+    pub draft_check: Option<std::path::PathBuf>,
 }
 
 pub(crate) struct Rank {
@@ -80,6 +83,7 @@ pub(crate) struct Rank {
     pub predecessor_ids: Span,
     pub draft_ids: Span,
     pub confidence: Span,
+    pub chunk_output: Span,
     pub position_rows: Vec<Span>,
     pub block_logits: Span,
     pub position_logits: Span,
@@ -116,6 +120,15 @@ impl Device {
         context_tokens: u64,
     ) -> Result<Self, String> {
         let g = shape.geometry;
+        let draft_chunk_items = match std::env::var("CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS") {
+            Err(std::env::VarError::NotPresent) => 6,
+            Ok(value) => value
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| (1..=DECODE_BATCH as usize).contains(&n))
+                .ok_or("DSpark draft chunk items must be between 1 and 32")?,
+            Err(_) => return Err("DSpark draft chunk items must be UTF-8".into()),
+        };
         let config = Config {
             slots: items.capacity(),
             stages: g.dspark_stages(),
@@ -195,6 +208,10 @@ impl Device {
             },
             verified: Vec::new(),
             step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
+            draft_chunk_items,
+            #[cfg(feature = "diagnostic-taps")]
+            draft_check: std::env::var_os("CHOPINFER_DSPARK_DRAFT_CHECK")
+                .map(std::path::PathBuf::from),
         })
     }
 
@@ -391,6 +408,7 @@ impl Device {
             predecessor_ids: alloc(items * 4)?,
             draft_ids: alloc(rows * 4)?,
             confidence: alloc(rows * 4)?,
+            chunk_output: alloc(rows * 8)?,
             position_rows,
             block_logits: alloc(rows * width * 4)?,
             position_logits: alloc(items * width * 4)?,

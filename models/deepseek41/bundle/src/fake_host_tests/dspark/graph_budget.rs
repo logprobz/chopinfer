@@ -2,6 +2,132 @@
 use super::*;
 
 #[test]
+fn selected_adaptive_warmup_geometries_fit_the_graph_budget_and_replay() {
+    let shapes = runtime_bundle_sdk::warmup::verify_shapes(
+        32,
+        &runtime_bundle_sdk::warmup::VerifyWarmup {
+            item_rows: (2..=6).collect(),
+            maximum_draft_tokens: 5,
+            step_rows: 32,
+            drafting_items: None,
+            exact_graphs: true,
+        },
+    );
+    assert_eq!(shapes.len(), 97);
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 32);
+    for slot in 0..32 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    for count in [1, 2, 4, 8, 16, 32] {
+        let items: Vec<_> = (0..count)
+            .map(|slot| (slot + 1, slot, state(&instance, slot + 1).end, 7))
+            .collect();
+        execute(&mut instance, &host, &super::super::decode(&items));
+        instance.commit().unwrap();
+    }
+    for repeat in 0..2 {
+        for shape in &shapes {
+            let mut items = Vec::new();
+            let mut appends = Vec::new();
+            let mut kept_rows = Vec::new();
+            for (slot, &drafts) in shape.drafts.iter().enumerate() {
+                let request = slot as u64 + 1;
+                let start = state(&instance, request).end;
+                let rows = drafts as u32 + 1;
+                items.push(if drafts == 0 {
+                    BatchItemV1::new(request, true, 1, true, vec![7])
+                } else {
+                    kept_rows.push(kept(request, 1));
+                    BatchItemV1::verify(request, rows, true, vec![7])
+                });
+                appends.push(BatchAppendV1::new(
+                    start,
+                    u64::from(rows),
+                    start + u64::from(rows),
+                    (0..(start + u64::from(rows)).div_ceil(64))
+                        .map(|page| slot as u64 * 8 + page)
+                        .collect(),
+                    None,
+                ));
+            }
+            let batch = BatchRequestV1::new(BatchWireVersionV1::V3, items, appends)
+                .with_state_slots((0..shape.item_bucket as u64).collect())
+                .encode()
+                .unwrap();
+            let from = host.logs.borrow().len();
+            execute(&mut instance, &host, &batch);
+            instance.commit_accepted(&kept_rows).unwrap();
+            if repeat != 0 {
+                assert!(!host.logs.borrow()[from..].iter().any(|line| {
+                    line.contains("\"family\":\"target\"") && line.contains("\"event\":\"capture\"")
+                }));
+            }
+        }
+        let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+        assert_eq!(stats.epoch, 0, "warmup evicted its earlier shapes");
+        assert_eq!(stats.denied, 0);
+        assert!(stats.peak <= 384 * 4);
+        eprintln!("selected warmup pass {repeat}: {stats:?}");
+    }
+    for request in 1..=32 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
+fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 192);
+    for slot in 0..16 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    for count in [8, 16, 8, 16] {
+        let items: Vec<_> = (0..count)
+            .map(|slot| (slot + 1, slot, state(&instance, slot + 1).end))
+            .collect();
+        let from = host.logs.borrow().len();
+        let sink = execute(&mut instance, &host, &verify_all(&items, 1));
+        assert_eq!(
+            sink.draft_tokens(),
+            (1..=count).map(|id| (id, vec![0])).collect::<Vec<_>>()
+        );
+        instance
+            .commit_accepted(&(1..=count).map(|id| kept(id, 1)).collect::<Vec<_>>())
+            .unwrap();
+        let logs = host.logs.borrow();
+        let draft_widths: Vec<_> = logs[from..]
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|r| r["schema"] == "chopinfer.graph-cache.v1" && r["family"] == "draft")
+            .filter_map(|r| r["width"].as_u64())
+            .collect();
+        assert!(draft_widths.iter().all(|&n| n <= 6), "{draft_widths:?}");
+        drop(logs);
+        for record in records(&host).iter().rev().take(count as usize) {
+            assert_eq!(record["computed_positions"], 5);
+            assert_eq!(record["draft_ids"].as_array().unwrap().len(), 5);
+            assert_eq!(record["confidence_f32_bits"].as_array().unwrap().len(), 5);
+        }
+    }
+    for request in 1..=16 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn exact_width_graph_pressure_retires_before_recapture_on_every_topology() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let (host, mut instance) = create(Shape::new(&FLASH, ranks).unwrap());

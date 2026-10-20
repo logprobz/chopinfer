@@ -1,5 +1,8 @@
 //! Connect the model-owned lifecycle to one synchronous bundle instance.
 
+mod batch;
+#[cfg(feature = "diagnostic-taps")]
+mod batch_check;
 mod cycle;
 mod features;
 mod graph_budget;

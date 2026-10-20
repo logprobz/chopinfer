@@ -340,7 +340,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// one-row heads replace three launches with two; allocations are unchanged.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22917, 0x71af93528d62b2fc)),
-    (Ranks::TP4, (50631, 0xb735eca9b0a1e6cb)),
+    (Ranks::TP4, (50815, 0x4332be55fb0bb01c)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

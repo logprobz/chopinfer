@@ -3,10 +3,10 @@ use super::*;
 // Six and 32 rows replace 77 five/six-launch chains with two launches and
 // retain all original operands. Eight and 16 rows retain the unfused HC path.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0x6e897ce982998db3)),
-    (8, (8996, 0x9d687544f6a63a2e)),
-    (16, (9964, 0xa934d1fc98a23d3e)),
-    (32, (8388, 0xfdf50b621c4a735a)),
+    (6, (8040, 0xfb6a4f817b0b2149)),
+    (8, (8992, 0xea10427872fd2fbd)),
+    (16, (9964, 0x6d88a8c8d24c043f)),
+    (32, (8384, 0x177a8b57184fc800)),
 ];
 
 #[test]

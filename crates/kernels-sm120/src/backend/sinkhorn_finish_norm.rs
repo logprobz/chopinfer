@@ -70,6 +70,37 @@ pub(super) fn prepare(
         return Err(Refusal("HC finish norm constituents differ from qualification").into());
     }
     let mut symbols = hc.info().symbols.clone();
+    let mut row_tiles = None;
+    for (candidate, tiles) in backend
+        .finish_norm_rows
+        .iter()
+        .filter(|(e, _)| e.reference.reference.query == query.mixer)
+    {
+        candidate.validate()?;
+        if tiles.is_empty()
+            || tiles.windows(2).any(|p| p[0].0 >= p[1].0)
+            || candidate.reference.reference.symbol != entry.mixer.symbol
+            || candidate.reference.reference.capacity != entry.mixer.capacity
+            || candidate.reference.reference.probe
+        {
+            return Err(Refusal("invalid HC finish norm row tiles").into());
+        }
+        if row_tiles.is_some() {
+            return Err(Refusal("ambiguous HC finish norm row tiles").into());
+        }
+        for &(rows, tile) in tiles {
+            if !buckets.contains(&rows) {
+                return Err(Refusal("HC row tile lacks a qualified tail bucket").into());
+            }
+            candidate.plan(rows, rows, tile)?;
+            let index = [2, 4, 8].iter().position(|&t| t == tile).unwrap();
+            let symbol = (candidate.symbols()[index].clone(), 0);
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+        row_tiles = Some((candidate.clone(), tiles.clone()));
+    }
     symbols.extend(norm.info().symbols.clone());
     symbols.push((entry.symbols()[1].clone(), 0));
     let mut info = OpInfo::new(
@@ -96,6 +127,7 @@ pub(super) fn prepare(
         norm,
         entry: entry.clone(),
         buckets: buckets.clone(),
+        row_tiles,
         info,
     }))
 }
@@ -104,6 +136,7 @@ struct Op {
     norm: Prepared<RmsNormQuantizeBuffers<View>>,
     entry: Entry,
     buckets: Vec<u32>,
+    row_tiles: Option<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
@@ -156,6 +189,19 @@ impl PreparedOp<Buffers<View>> for Op {
         let norm = norm.pop().unwrap();
         if finish.arguments.0.len() != 10 || norm.arguments.0.len() != 10 {
             return Err(Refusal("HC finish norm constituent ABI differs"));
+        }
+        if let Some((entry, tile)) = self.row_tiles.as_ref().and_then(|(e, tiles)| {
+            tiles
+                .iter()
+                .find(|(rows, _)| *rows == counts.rows)
+                .map(|&(_, tile)| (e, tile))
+        }) {
+            if hc[0].arguments.0.len() != 9 {
+                return Err(Refusal("HC row tile producer ABI differs"));
+            }
+            let index = [2, 4, 8].iter().position(|&t| t == tile).unwrap();
+            hc[0].symbol = entry.symbols()[index].clone();
+            hc[0].plan = entry.plan(counts.rows, counts.rows, tile)?;
         }
         let mut args = finish.arguments.0;
         args.extend_from_slice(&norm.arguments.0[1..6]);

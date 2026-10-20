@@ -242,6 +242,7 @@ pub struct Sm120 {
     round_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     finish_norm: Vec<(crate::sinkhorn_hc::finish_norm::Entry, Vec<u32>)>,
     finish_norm_chains: Vec<sinkhorn_round_expand_mix::Chains>,
+    finish_norm_rows: Vec<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -368,6 +369,16 @@ impl Sm120 {
         buckets: Vec<(u32, u32)>,
     ) -> Self {
         self.finish_norm_chains.push((entry, buckets));
+        self
+    }
+
+    /// Reuse projection weights across rows only inside qualified fused tails.
+    pub fn with_sinkhorn_finish_norm_rows(
+        mut self,
+        entry: crate::sinkhorn_hc::round_rows::Entry,
+        buckets: Vec<(u32, u32)>,
+    ) -> Self {
+        self.finish_norm_rows.push((entry, buckets));
         self
     }
 

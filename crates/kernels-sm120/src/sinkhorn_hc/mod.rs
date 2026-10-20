@@ -37,6 +37,7 @@ pub mod mixer_probe;
 pub mod prefill_warp;
 pub mod round_chain_partials;
 pub mod round_expand_mix;
+pub mod round_rows;
 pub mod split;
 pub mod tiled;
 

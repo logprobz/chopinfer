@@ -140,6 +140,78 @@ fn finish_entry() -> kernels_sm120::sinkhorn_hc::finish_norm::Entry {
         prefix: "finish_norm".into(),
     }
 }
+#[test]
+fn row_tiles_preserve_arguments_and_refuse_unqualified_or_ambiguous_buckets() {
+    use kernel_core::{
+        backend::{Backend, Counts, Need, View},
+        sinkhorn_expand_mix::SinkhornRoundNormQuery,
+    };
+    let e = finish_entry();
+    let query = SinkhornRoundNormQuery {
+        mixer: e.mixer.query,
+        norm: e.norm.reference.query,
+    };
+    let rows = kernels_sm120::sinkhorn_hc::round_rows::Entry {
+        reference: hc(),
+        prefix: "rounded_rows".into(),
+    };
+    let base = || finish_backend().with_sinkhorn_finish_norm(e.clone(), vec![8, 32]);
+    let old = base()
+        .sinkhorn_round_expand_mix_norm(&query, Need::rows(32))
+        .unwrap();
+    let new = base()
+        .with_sinkhorn_finish_norm_rows(rows.clone(), vec![(32, 2)])
+        .sinkhorn_round_expand_mix_norm(&query, Need::rows(32))
+        .unwrap();
+    let workspace = View {
+        handle: 20,
+        bytes: old.info().workspace,
+    };
+    assert_eq!(new.info().workspace, old.info().workspace);
+    for count in [1, 6, 8, 16, 32] {
+        let mut expected = old
+            .launches(&finish_buffers(), workspace, Counts::rows(count))
+            .unwrap();
+        if count == 32 {
+            expected[0].symbol = rows.symbols()[0].clone();
+            expected[0].plan = rows.plan(count, count, 2).unwrap();
+        }
+        assert_eq!(
+            new.launches(&finish_buffers(), workspace, Counts::rows(count))
+                .unwrap(),
+            expected
+        );
+    }
+    for buckets in [
+        vec![],
+        vec![(6, 2)],
+        vec![(32, 3)],
+        vec![(32, 2), (8, 2)],
+        vec![(32, 2), (32, 4)],
+    ] {
+        assert!(
+            base()
+                .with_sinkhorn_finish_norm_rows(rows.clone(), buckets)
+                .sinkhorn_round_expand_mix_norm(&query, Need::rows(32))
+                .is_err()
+        );
+    }
+    assert!(
+        base()
+            .with_sinkhorn_finish_norm_rows(rows.clone(), vec![(32, 2)])
+            .with_sinkhorn_finish_norm_rows(rows.clone(), vec![(32, 2)])
+            .sinkhorn_round_expand_mix_norm(&query, Need::rows(32))
+            .is_err()
+    );
+    let mut wrong = rows;
+    wrong.reference.reference.symbol.push_str("_different");
+    assert!(
+        base()
+            .with_sinkhorn_finish_norm_rows(wrong, vec![(32, 2)])
+            .sinkhorn_round_expand_mix_norm(&query, Need::rows(32))
+            .is_err()
+    );
+}
 fn finish_buffers()
 -> kernel_core::sinkhorn_expand_mix::SinkhornRoundNormBuffers<kernel_core::backend::View> {
     use kernel_core::{

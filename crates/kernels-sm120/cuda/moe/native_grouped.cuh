@@ -298,15 +298,21 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
   if (nan) __trap();
 }
 
+// No quantizer in the gate/up epilogue; `native_ceil.cuh` supplies one.
+struct NoCeil {
+  static constexpr bool enabled = false;
+};
+
 // The persistent tile loop. Lab-only variants: `Omit` drops the first
 // 128-K chain, a negative control the oracle checks must reject, and
 // `Raw` also writes gate/up's F32 gate and up sums to `raw` (route rows of
-// n gate then n up columns) for the oracle.
-template<class C, class T, bool Omit = false, bool Raw = false>
+// n gate then n up columns) for the oracle. `Ceil` (gate/up) also
+// quantizes each tile's BF16 outputs, staged in shared memory.
+template<class C, class T, bool Omit = false, bool Raw = false, class Ceil = NoCeil>
 __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales, const int* sorted_rows,
     const int* padded_rows, const int* live_tokens, int* table, const float* route_weights,
-    void* output, float* raw = nullptr) {
+    void* output, float* raw = nullptr, const Ceil& ceil = Ceil{}) {
   static_assert(!Raw || C::gate_up, "down's output is already its F32 sum");
   using Q = Queue<C, T>;
   constexpr int S = T::stages, TC = tile_cols<C, T>, Strips = strips<C, T>;
@@ -364,19 +370,29 @@ __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight
       }
     }
     wait<0>();
+    // The staged outputs reuse the operand stages, once every warp has
+    // finished reading them.
+    [[maybe_unused]] uint16_t* staged = reinterpret_cast<uint16_t*>(&s.stage[0]);
+    if constexpr (Ceil::enabled) {
+      static_assert(sizeof(s.stage) >= sizeof(uint16_t) * T::rows * TC);
+      __syncthreads();
+    }
 #pragma unroll
     for (int f = 0; f < T::fragments; ++f) {
       if (row_base + f * 8 >= count) continue;
 #pragma unroll
       for (int i = 0; i < 4; ++i) {
-        const int route = s.routes[row_base + f * 8 + lay::d_route(t, i)];
+        const int r = row_base + f * 8 + lay::d_route(t, i);
+        const int route = s.routes[r];
         if (route < 0) continue;
         if constexpr (C::gate_up) {
           const int col = column + col_warp * 16 + lay::d_weight_row(g, i);
           if (col >= C::n) continue;
-          static_cast<uint16_t*>(output)[uint64_t(route) * C::n + col] = convert::bf16_from_f32(
+          const uint16_t bits = convert::bf16_from_f32(
               chained::before_down<typename C::clamp>(sum[0][f].v[i], sum[1][f].v[i],
                                                        route_weights[route]));
+          static_cast<uint16_t*>(output)[uint64_t(route) * C::n + col] = bits;
+          if constexpr (Ceil::enabled) staged[r * TC + (col - column)] = bits;
           if constexpr (Raw) {
             raw[uint64_t(route) * 2 * C::n + col] = sum[0][f].v[i];
             raw[uint64_t(route) * 2 * C::n + C::n + col] = sum[1][f].v[i];
@@ -390,6 +406,10 @@ __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight
           }
         }
       }
+    }
+    if constexpr (Ceil::enabled) {
+      __syncthreads();
+      ceil.template tile<C, T>(staged, s.routes, column);
     }
   }
 }

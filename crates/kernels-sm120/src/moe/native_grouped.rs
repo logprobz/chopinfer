@@ -248,15 +248,19 @@ pub const DOWN_TILES: [Tile; 2] = [
 
 /// `sizeof(Shared<C, T>)`, which each compute entry asserts.
 pub fn shared_bytes(shape: &Shape, tile: &Tile) -> u32 {
+    (tile.stages * stage_bytes(shape, tile) + tile.rows() * 8 + 4).next_multiple_of(16)
+}
+
+/// `sizeof(Shared<C, T>::Stage)`.
+fn stage_bytes(shape: &Shape, tile: &Tile) -> u32 {
     let words = if (shape.k / 32).is_multiple_of(4) {
         1
     } else {
         2
     };
     let weight_rows = shape.halves() * tile.cols(shape);
-    let stage = (tile.rows() * 128 + weight_rows * 64 + (tile.rows() + weight_rows) * 4 * words)
-        .next_multiple_of(16);
-    (tile.stages * stage + tile.rows() * 8 + 4).next_multiple_of(16)
+    (tile.rows() * 128 + weight_rows * 64 + (tile.rows() + weight_rows) * 4 * words)
+        .next_multiple_of(16)
 }
 
 pub fn queue_slots(shape: &Shape, tile: &Tile) -> u64 {
@@ -540,6 +544,162 @@ pub fn launches(
     ])
 }
 
+/// Gate/up tiles with the E4M3/32 ceil quantizer in their epilogue
+/// (`cuda/moe/native_ceil.cuh`): the serving intermediate quantizer's
+/// codes, scales and status, bit for bit, without its separate pass. The
+/// tiles write each group as if its token row were clean; the fixup launch
+/// after them rewrites tokens whose status is set. `floor_bits` is the
+/// quantizer's amax floor (`BlockQuantization::E4M3Ceil32`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ceil {
+    pub floor_bits: u32,
+}
+
+/// Threads of a fixup CTA, one CTA per token.
+pub const FIXUP_THREADS: u32 = 128;
+
+impl Ceil {
+    fn check(&self, shape: &Shape, tile: &Tile) -> Result<(), Refusal> {
+        tile.check(shape)?;
+        if !shape.gate_up
+            || !tile.cols(shape).is_multiple_of(32)
+            || !shape.n.is_multiple_of(32)
+            || u64::from(tile.rows()) * u64::from(tile.cols(shape)) * 2
+                > u64::from(tile.stages) * u64::from(stage_bytes(shape, tile))
+        {
+            return Err(Refusal(
+                "the fused ceil needs gate/up tiles of whole groups",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn tiles_symbol(&self, shape: &Shape, tile: &Tile) -> String {
+        format!(
+            "{}_ceil{:08x}_v1",
+            symbol(shape, tile, Stage::Compute, Variant::Serving).trim_end_matches("_v1"),
+            self.floor_bits
+        )
+    }
+
+    pub fn fixup_symbol(&self, shape: &Shape) -> String {
+        format!(
+            "chop_moe_native_ceil_fixup_w{}_t{}_v1",
+            shape.top_k * shape.n,
+            shape.capacity
+        )
+    }
+
+    /// The fused tiles and the fixup.
+    pub fn entries(&self, shape: &Shape, tile: &Tile) -> Result<Vec<EntrySpec>, Refusal> {
+        self.check(shape, tile)?;
+        let mut serving = entries(shape, tile, false)?;
+        let tiles = &mut serving[1];
+        tiles.symbol = self.tiles_symbol(shape, tile);
+        tiles.params.extend([
+            ptr("codes", "uint8_t"),
+            ptr("scales", "uint8_t"),
+            ptr("status", "uint32_t"),
+        ]);
+        let call = "route_weights,output);";
+        assert!(tiles.body.ends_with(call), "the compute call ends the body");
+        tiles.body = format!(
+            "{}route_weights,output,nullptr,chop::moe::native_ceil::Ceil<{:#x}u>{{codes,scales,status}});",
+            tiles.body.strip_suffix(call).expect("checked above"),
+            self.floor_bits
+        );
+        let fixup = EntrySpec::new(
+            self.fixup_symbol(shape),
+            vec![
+                ptr("live", "const int"),
+                ptr("status", "const uint32_t"),
+                ptr("codes", "uint8_t"),
+                ptr("scales", "uint8_t"),
+            ],
+            format!(
+                "chop::moe::native_ceil::fixup<{}>(live,status,codes,scales);",
+                shape.top_k * shape.n
+            ),
+            FIXUP_THREADS,
+            1,
+        );
+        Ok(vec![serving.swap_remove(1), fixup])
+    }
+
+    /// The pack, the fused tiles and the fixup of a step of `rows` tokens:
+    /// [`launches`]' pack and tile handles, then the quantizer's codes,
+    /// scales and status.
+    pub fn launches(
+        &self,
+        shape: &Shape,
+        tile: &Tile,
+        rows: u32,
+        b: &Buffers,
+        (codes, scales, status): (u64, u64, u64),
+    ) -> Result<Vec<Launch>, Refusal> {
+        self.check(shape, tile)?;
+        if [codes, scales, status].contains(&0) {
+            return Err(Refusal("the fused ceil needs its quantizer's buffers"));
+        }
+        let mut ops = launches(shape, tile, rows, b, Variant::Serving)?;
+        ops[1].symbol = self.tiles_symbol(shape, tile);
+        ops[1]
+            .arguments
+            .0
+            .extend([codes, scales, status].map(Argument::DeviceBuffer));
+        ops[1].arguments.validate()?;
+        let plan = LaunchPlan {
+            grid: [rows, 1, 1],
+            block: [FIXUP_THREADS, 1, 1],
+            dynamic_shared_bytes: 0,
+            workspace_bytes: 0,
+            cluster: [1, 1, 1],
+            pdl: true,
+        };
+        plan.validate()?;
+        let arguments = ArgumentList(
+            [b.live_tokens, status, codes, scales]
+                .map(Argument::DeviceBuffer)
+                .to_vec(),
+        );
+        arguments.validate()?;
+        ops.push(Launch {
+            symbol: self.fixup_symbol(shape),
+            rows,
+            plan,
+            arguments,
+            collective: false,
+            persistent: false,
+        });
+        Ok(ops)
+    }
+}
+
+/// One cubin of the fused ceil entries of `instances` (the pack entries
+/// stay in the native cubin, which these launches also use).
+pub fn ceil_cubin_spec(
+    name: &str,
+    ceil: &Ceil,
+    instances: &[(Shape, Tile)],
+) -> Result<CubinSpec, Refusal> {
+    let mut entries: Vec<EntrySpec> = Vec::new();
+    for (shape, tile) in instances {
+        for entry in ceil.entries(shape, tile)? {
+            if entries.iter().all(|e| e.symbol != entry.symbol) {
+                entries.push(entry);
+            }
+        }
+    }
+    Ok(CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: Vec::new(),
+        headers: vec!["#include \"moe/native_ceil.cuh\"".into()],
+        defines: Vec::new(),
+        entries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,6 +748,66 @@ mod tests {
             shared_bytes(&flash(true), &GATE_UP_TILES[0]),
             3 * (128 * 128 + 128 * 64 + 256 * 4) + 1024 + 16
         );
+    }
+
+    #[test]
+    fn fused_ceil_extends_the_serving_tiles_and_adds_a_fixup() {
+        let ceil = Ceil {
+            floor_bits: 1e-4_f32.to_bits(),
+        };
+        let shape = flash(true);
+        let tile = GATE_UP_TILES[0];
+        let entries = ceil.entries(&shape, &tile).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].symbol,
+            "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp40e0000040e00000_r2w4s3_tiles_ceil38d1b717_v1"
+        );
+        assert_eq!(entries[0].params.len(), 13);
+        assert!(entries[0].body.ends_with(
+            "route_weights,output,nullptr,chop::moe::native_ceil::Ceil<0x38d1b717u>{codes,scales,status});"
+        ));
+        assert_eq!(
+            entries[1].symbol,
+            "chop_moe_native_ceil_fixup_w3456_t8192_v1"
+        );
+        // Down tiles and partial groups are refused.
+        assert!(ceil.entries(&flash(false), &DOWN_TILES[0]).is_err());
+        let small = Shape::new(128, 3, 2048, 80, true, 512, None).unwrap();
+        assert!(ceil.entries(&small, &tile).is_err());
+        let b = Buffers {
+            input: 1,
+            weights: 2,
+            weight_scales: 3,
+            activation_scales: 4,
+            offsets: 5,
+            sorted_rows: 6,
+            padded_rows: 7,
+            live_tokens: 8,
+            route_weights: 9,
+            output: 10,
+            counts: 11,
+            active: 12,
+            scratch: 13,
+            raw: 0,
+        };
+        let served = launches(&shape, &tile, 8192, &b, Variant::Serving).unwrap();
+        let ops = ceil.launches(&shape, &tile, 777, &b, (14, 15, 16)).unwrap();
+        assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].symbol, served[0].symbol);
+        assert_eq!(ops[1].symbol, entries[0].symbol);
+        assert_eq!(ops[1].arguments.0[..10], served[1].arguments.0[..]);
+        assert_eq!(
+            ops[1].arguments.0[10..],
+            [14, 15, 16].map(Argument::DeviceBuffer)
+        );
+        assert_eq!(ops[2].symbol, entries[1].symbol);
+        assert_eq!(ops[2].plan.grid, [777, 1, 1]);
+        assert_eq!(
+            ops[2].arguments.0,
+            [8, 16, 14, 15].map(Argument::DeviceBuffer).to_vec()
+        );
+        assert!(ceil.launches(&shape, &tile, 777, &b, (14, 0, 16)).is_err());
     }
 
     #[test]

@@ -150,3 +150,51 @@ fn native_tiles_compile_without_spills_tf32_or_float_atomics() {
     }
     std::fs::remove_dir_all(out).unwrap();
 }
+
+#[test]
+fn fused_ceil_tiles_compile_without_spills() {
+    let toolchain = Toolchain::detect().unwrap();
+    assert!(
+        !toolchain.skipped,
+        "CUDA is required for the fused ceil compile gate"
+    );
+    let out = output_dir("native-ceil");
+    let ceil = native_grouped::Ceil {
+        floor_bits: 1e-4_f32.to_bits(),
+    };
+    let flash = Shape::new(
+        384,
+        6,
+        5120,
+        576,
+        true,
+        8192,
+        Some((0x40e0_0000, 0x40e0_0000)),
+    )
+    .unwrap();
+    let instances: Vec<_> = GATE_UP_TILES.iter().map(|t| (flash, *t)).collect();
+    let spec =
+        native_grouped::ceil_cubin_spec("chop_moe_native_ceil_compile", &ceil, &instances).unwrap();
+    // One fused tile entry per tile and one shared fixup.
+    assert_eq!(spec.entries.len(), GATE_UP_TILES.len() + 1);
+    let built = kernel_build::build(
+        &toolchain,
+        &[spec],
+        &out,
+        &out.join("kernels.lock"),
+        BuildOptions {
+            lock_update: true,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+    )
+    .expect("compile the fused ceil tiles");
+    for entry in &built[0].entries {
+        assert_eq!(entry.local_bytes, 0, "{} spills", entry.symbol);
+        println!(
+            "fused ceil {} registers {} static shared {}",
+            entry.symbol, entry.registers, entry.shared_static_bytes
+        );
+    }
+    std::fs::remove_dir_all(out).unwrap();
+}

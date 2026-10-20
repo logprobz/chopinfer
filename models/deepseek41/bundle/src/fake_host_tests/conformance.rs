@@ -228,7 +228,9 @@ impl<const CASE: usize> Adapter for Model<CASE> {
 }
 
 // One startup test per profile, then one test per scenario of a
-// configuration.
+// configuration. Allocation sweeps partition every failure index across
+// bounded tests: repeated operation preparation exceeds the time limit of
+// one test, while every shard keeps fresh instances and all release checks.
 conformance::suite! {
     startup: Served {
         tp4_ar: "tp4-ar",
@@ -239,17 +241,17 @@ conformance::suite! {
         tp4_dspark_upper_skip_2048: "tp4-dspark-upper-skip-2048",
     }
     mod ar_tp1 {
-        allocation_release: Model<AR_TP1> => AllocationRelease;
+        allocation_release: Model<AR_TP1> => AllocationReleaseShards;
         cancellation_policy: Model<AR_TP1> => Cancellation;
         retire_and_slot_reuse: Model<AR_TP1> => SlotReuse;
     }
     mod ar_tp2 {
-        allocation_release: Model<AR_TP2> => AllocationRelease;
+        allocation_release: Model<AR_TP2> => AllocationReleaseShards;
         cancellation_policy: Model<AR_TP2> => Cancellation;
         retire_and_slot_reuse: Model<AR_TP2> => SlotReuse;
     }
     mod ar_tp4 {
-        allocation_release: Model<AR_TP4> => AllocationRelease;
+        allocation_release: Model<AR_TP4> => AllocationReleaseShards;
         cancellation_policy: Model<AR_TP4> => Cancellation;
         retire_and_slot_reuse: Model<AR_TP4> => SlotReuse;
     }

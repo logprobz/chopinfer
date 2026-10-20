@@ -181,7 +181,10 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
             assert!(!layers.is_empty());
             let mut pair = vec![live.graphs.cached(&[key]).unwrap()[0][0]];
             for layer in layers {
-                layer.graphs.capture::<BundleAbiError>(&live.services, stream, key, 1, |_| Ok(())).unwrap();
+                layer
+                    .graphs
+                    .capture::<BundleAbiError>(&live.services, stream, key, 1, |_| Ok(()))
+                    .unwrap();
                 let graph = layer.graphs.cached(&[key]).unwrap()[0][0];
                 assert!(!pair.contains(&graph));
                 pair.push(graph);
@@ -193,7 +196,10 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
             }
             assert!(live.indexer_graph_contains(route, key));
         }
-        assert_eq!(live.graphs.ledger_len(), 3 * (1 + live.dspark.as_ref().unwrap().cycle.layers.len()));
+        assert_eq!(
+            live.graphs.ledger_len(),
+            3 * (1 + live.dspark.as_ref().unwrap().cycle.layers.len())
+        );
         live.graphs.release_all(&live.services).unwrap();
         for route in [
             IndexerRoute::Accepted,

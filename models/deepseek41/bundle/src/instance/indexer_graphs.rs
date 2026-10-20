@@ -15,14 +15,21 @@ impl Instance {
             self.graphs.contains(key)
                 && self.dspark.as_ref().is_none_or(|device| {
                     !device.cycle.layers.is_empty()
-                        && device.cycle.layers.iter().all(|layer| layer.graphs.contains(key))
+                        && device
+                            .cycle
+                            .layers
+                            .iter()
+                            .all(|layer| layer.graphs.contains(key))
                 })
         } else if let Some(pair) = self.indexer_banks.get(&route) {
             pair.target.contains(key)
                 && self.dspark.as_ref().is_none_or(|device| {
                     !pair.layers.is_empty()
                         && pair.layers.len() == device.cycle.layers.len()
-                        && pair.layers.iter().zip(&device.cycle.layers)
+                        && pair
+                            .layers
+                            .iter()
+                            .zip(&device.cycle.layers)
                             .all(|((id, graphs), layer)| *id == layer.layer && graphs.contains(key))
                 })
         } else {
@@ -36,8 +43,12 @@ impl Instance {
         }
         let mut next = self.indexer_banks.remove(&route).unwrap_or_else(|| Pair {
             target: GraphCache::sharing(&self.graphs),
-            layers: self.dspark.iter().flat_map(|device| &device.cycle.layers)
-                .map(|layer| (layer.layer, GraphCache::sharing(&layer.graphs))).collect(),
+            layers: self
+                .dspark
+                .iter()
+                .flat_map(|device| &device.cycle.layers)
+                .map(|layer| (layer.layer, GraphCache::sharing(&layer.graphs)))
+                .collect(),
         });
         std::mem::swap(&mut self.graphs, &mut next.target);
         if let Some(device) = self.dspark.as_mut() {

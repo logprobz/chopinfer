@@ -6,6 +6,7 @@ use super::{
     registration,
 };
 use kernel_harness::{LabResult, Session};
+use kernels_sm120::sinkhorn_hc::completion::Mutation;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 type Values = BTreeMap<String, Vec<u8>>;
@@ -68,6 +69,15 @@ fn bucketed(part: &[usize], rows: usize) -> (Vec<usize>, usize) {
     padded.extend((0..rows).filter(|r| !part.contains(r)));
     padded.truncate(bucket);
     (padded, bucket)
+}
+/// The prior row status under which a mutation can show. A sticky prior
+/// zeroes the codes and saturates the scales, which hides a changed ceil
+/// floor or fold; clearing the status shows only over a sticky prior.
+fn control_prior(mutation: Mutation) -> u32 {
+    match mutation {
+        Mutation::ClearStatus => 0x80,
+        _ => 0,
+    }
 }
 /// The first `live` of `rows` rows of every output role.
 fn live_rows(values: &Values, live: usize, rows: usize) -> Values {
@@ -379,7 +389,7 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
                 let new = Output::new(s, rows)?;
                 let tickets = Tickets::new(s, rows)?;
                 let widen = case.widening();
-                let prior = 0x80;
+                let prior = control_prior(entry.mutation);
                 let (expected, _) =
                     run.eager(&input, &old, &tickets, "served", widen, true, prior)?;
                 device::reset(&s.stream, &input, &new, prior, true)?;
@@ -444,6 +454,18 @@ fn comparison_rejects_changed_values_and_row_positions() {
     assert!(captured_matches("partials", &full, &captured, 2));
     full[4096 * 4] ^= 1;
     assert!(!captured_matches("partials", &full, &captured, 2));
+}
+
+#[test]
+fn every_control_runs_under_a_prior_that_shows_it() {
+    let priors = registration::controls()
+        .iter()
+        .map(|e| (e.mutation, control_prior(e.mutation)))
+        .collect::<Vec<_>>();
+    assert_eq!(priors.len(), 5);
+    for (mutation, prior) in priors {
+        assert_eq!(prior == 0, mutation != Mutation::ClearStatus);
+    }
 }
 
 #[test]

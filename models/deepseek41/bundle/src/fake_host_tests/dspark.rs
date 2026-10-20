@@ -27,7 +27,7 @@ fn target_graphs_capture_each_exact_verify_width() {
         assert_eq!(sink.draft_tokens(), [(7, vec![0; (rows - 1) as usize])]);
         let journal = host.journal.borrow();
         let step = &journal[begin..];
-        // The async gather captures both target pieces before its wait.
+        // Each Engram gather joins immediately before its target consumer.
         // Hashing separates the drafter graphs from the full target schedule.
         let hashed = step
             .iter()
@@ -51,8 +51,8 @@ fn target_graphs_capture_each_exact_verify_width() {
         } else {
             assert_eq!(
                 captured.len(),
-                8,
-                "width {rows} must capture a prefix and suffix on every rank"
+                12,
+                "width {rows} must capture three target pieces on every rank"
             );
             assert_eq!(replayed, captured);
             graphs.insert(rows, captured);

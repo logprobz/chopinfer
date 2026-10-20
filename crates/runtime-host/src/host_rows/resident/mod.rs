@@ -371,6 +371,12 @@ fn attach_with(
         return Err("resident row set has an unsupported plane count".into());
     }
     let key = members.keys().copied().collect::<Key>();
+    if key
+        .windows(2)
+        .any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1)
+    {
+        return Err("one mapped plane cannot have two resident row widths".into());
+    }
     if key.iter().any(|(_, width)| *width == 0) {
         return Err("resident rows require a nonzero plane width".into());
     }
@@ -440,7 +446,17 @@ pub(crate) fn register(planes: &[MappedGatherPlaneV1]) -> Result<(), String> {
     let Some(registry) = registry()? else {
         return Ok(());
     };
-    let available = std::fs::read_to_string("/proc/meminfo")
+    match available_memory() {
+        Some(available) => register_checked(registry, planes, available),
+        None => {
+            registry.fallback("host memory availability is unknown");
+            Ok(())
+        }
+    }
+}
+
+fn available_memory() -> Option<u64> {
+    std::fs::read_to_string("/proc/meminfo")
         .ok()
         .and_then(|text| {
             text.lines().find_map(|line| {
@@ -451,9 +467,17 @@ pub(crate) fn register(planes: &[MappedGatherPlaneV1]) -> Result<(), String> {
                     .ok()?
                     .checked_mul(1024)
             })
-        });
-    match available {
-        Some(available) => register_checked(registry, planes, available),
+        })
+}
+
+/// Register a CPU-only row set before either synchronous or asynchronous copies.
+pub(crate) fn register_group(mappings: Vec<(Arc<MappedRowsV1>, usize)>) -> Result<(), String> {
+    let Some(registry) = registry()? else {
+        return Ok(());
+    };
+    match available_memory() {
+        Some(available) if memory_permits(registry, available) => attach(registry, mappings),
+        Some(_) => Ok(()),
         None => {
             registry.fallback("host memory availability is unknown");
             Ok(())
@@ -466,10 +490,7 @@ fn register_checked(
     planes: &[MappedGatherPlaneV1],
     available: u64,
 ) -> Result<(), String> {
-    let unreserved =
-        (registry.budget.limit as u64).saturating_sub(registry.budget.used.load(Ordering::Relaxed));
-    if available < unreserved.saturating_add(HOST_RESERVE_BYTES) {
-        registry.fallback("resident mapped rows would consume the host memory reserve");
+    if !memory_permits(registry, available) {
         return Ok(());
     }
     let mut groups = BTreeMap::<(usize, u64), Vec<_>>::new();
@@ -489,6 +510,16 @@ fn register_checked(
         attach(registry, group)?;
     }
     Ok(())
+}
+
+fn memory_permits(registry: &Registry, available: u64) -> bool {
+    let unreserved =
+        (registry.budget.limit as u64).saturating_sub(registry.budget.used.load(Ordering::Relaxed));
+    if available < unreserved.saturating_add(HOST_RESERVE_BYTES) {
+        registry.fallback("resident mapped rows would consume the host memory reserve");
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]

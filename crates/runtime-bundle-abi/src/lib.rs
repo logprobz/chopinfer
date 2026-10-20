@@ -19,7 +19,7 @@ pub use host_services::{
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
     HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchClusterV1, LaunchConfigV1,
     LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedGatherPlaneV1,
-    MappedGatherStatsV1, MappedRowGatherV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
+    MappedGatherStatsV1, MappedRowGatherV1, MappedRowPlaneV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
     OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1,
     ResultSinkLimitsV1, StateRequestV1, TensorMapElementV1, TensorMapSwizzleV1, TensorMapV1,
     UnsupportedHostServicesBackendV1,
@@ -1251,6 +1251,20 @@ pub type BundleCompleteMappedGatherFnV1 = unsafe extern "C" fn(
 pub type BundleReleaseMappedGatherFnV1 =
     unsafe extern "C" fn(*mut c_void, BundleMappedGatherHandleV1) -> BundleStatusV1;
 
+/// Exact-size array element describing one immutable plane of a host row set.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BundleMappedRowPlaneV1 {
+    pub struct_size: u32,
+    pub rank: u32,
+    pub image: BundleCompiledImageHandleV1,
+    pub view_id: BundleByteViewV1,
+    pub row_bytes: u64,
+}
+
+pub type BundleRegisterMappedRowSetFnV1 =
+    unsafe extern "C" fn(*mut c_void, *const BundleMappedRowPlaneV1, u64) -> BundleStatusV1;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BundleHostServicesV1 {
@@ -1330,6 +1344,8 @@ pub struct BundleHostServicesV1 {
     pub wait_mapped_gather_v1: Option<BundleWaitMappedGatherFnV1>,
     pub complete_mapped_gather_v1: Option<BundleCompleteMappedGatherFnV1>,
     pub release_mapped_gather_v1: Option<BundleReleaseMappedGatherFnV1>,
+    /// Optional CPU-only registration of a shared immutable mapped-row set.
+    pub register_mapped_row_set_v1: Option<BundleRegisterMappedRowSetFnV1>,
 }
 
 impl BundleHostServicesV1 {
@@ -1410,6 +1426,7 @@ impl BundleHostServicesV1 {
             wait_mapped_gather_v1: None,
             complete_mapped_gather_v1: None,
             release_mapped_gather_v1: None,
+            register_mapped_row_set_v1: None,
         }
     }
 }

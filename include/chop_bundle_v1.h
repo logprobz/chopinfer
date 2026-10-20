@@ -1132,6 +1132,18 @@ typedef chop_bundle_status_v1 (*chop_bundle_complete_mapped_gather_fn_v1)(
 typedef chop_bundle_status_v1 (*chop_bundle_release_mapped_gather_fn_v1)(
     void *, chop_bundle_mapped_gather_handle_v1);
 
+/* Optional CPU-only row-set registration. Array elements have exact size.
+ * Registration never allocates device or pinned staging; caching is optional. */
+typedef struct chop_bundle_mapped_row_plane_v1 {
+  uint32_t struct_size;
+  uint32_t rank;
+  chop_bundle_compiled_image_handle_v1 image;
+  chop_bundle_byte_view_v1 view_id;
+  uint64_t row_bytes;
+} chop_bundle_mapped_row_plane_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_register_mapped_row_set_fn_v1)(
+    void *, const chop_bundle_mapped_row_plane_v1 *, uint64_t);
+
 typedef struct chop_bundle_host_services_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -1213,6 +1225,7 @@ typedef struct chop_bundle_host_services_v1 {
   chop_bundle_wait_mapped_gather_fn_v1 wait_mapped_gather_v1;
   chop_bundle_complete_mapped_gather_fn_v1 complete_mapped_gather_v1;
   chop_bundle_release_mapped_gather_fn_v1 release_mapped_gather_v1;
+  chop_bundle_register_mapped_row_set_fn_v1 register_mapped_row_set_v1;
 } chop_bundle_host_services_v1;
 
 typedef struct chop_bundle_create_result_v1 {

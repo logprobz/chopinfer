@@ -249,6 +249,9 @@ impl Instance {
                 None => Vec::new(),
             };
             let mapped: Vec<&str> = mapped.iter().map(String::as_str).collect();
+            if let Some(engram) = &self.engram {
+                engram.register_resident(services, image, index.rank)?;
+            }
             let placed = acquire::place_views_mapped(services, image, arena, index, &[], &mapped)
                 .map_err(|error| match error {
                 acquire::PlaceError::Host(error) => error,

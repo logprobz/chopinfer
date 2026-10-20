@@ -73,6 +73,15 @@ pub struct MappedRowGatherV1<'a> {
     pub rows: &'a [u32],
 }
 
+/// Immutable planes indexed by the same row ID, eligible for a shared host cache.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MappedRowPlaneV1 {
+    pub image: BundleCompiledImageHandleV1,
+    pub rank: u32,
+    pub view_id: Vec<u8>,
+    pub row_bytes: u64,
+}
+
 /// One plane of a prepared gather. Device U32 indices begin at `index_offset`
 /// bytes of the shared input span. Every enqueue gathers the same row count
 /// from each plane into the beginning of its bounded destination.
@@ -889,6 +898,12 @@ pub trait HostServicesBackendV1 {
         _destination: DeviceBufferSpanV1,
         _gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Register one authenticated row set without device or pinned staging.
+    /// Caching is optional: an unavailable cache preserves uncached serving.
+    fn register_mapped_row_set(&self, _planes: &[MappedRowPlaneV1]) -> HostServiceResultV1<()> {
         Err(BundleStatusV1::Unsupported)
     }
 

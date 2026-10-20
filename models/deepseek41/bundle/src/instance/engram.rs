@@ -59,6 +59,32 @@ fn text_flags(tokens: &[u32], image: Option<u32>) -> Option<Vec<bool>> {
 }
 
 impl Engram {
+    pub(super) fn register_resident(
+        &self,
+        services: &runtime_bundle_abi::HostServicesV1,
+        image: runtime_bundle_abi::BundleCompiledImageHandleV1,
+        rank: u32,
+    ) -> Result<(), runtime_bundle_abi::BundleAbiError> {
+        for table in self.tables.iter().flatten() {
+            let planes =
+                [&table.codes, &table.scales].map(|plane| runtime_bundle_abi::MappedRowPlaneV1 {
+                    image,
+                    rank,
+                    view_id: plane.view.clone(),
+                    row_bytes: plane.row_bytes,
+                });
+            match services.register_mapped_row_set(&planes) {
+                Ok(())
+                | Err(runtime_bundle_abi::BundleAbiError::MissingHostService(_))
+                | Err(runtime_bundle_abi::BundleAbiError::Status(
+                    runtime_bundle_abi::BundleStatusV1::Unsupported,
+                )) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn tables(&self) -> Option<&[Table]> {
         self.tables.as_deref()
     }

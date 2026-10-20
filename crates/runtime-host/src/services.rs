@@ -3868,6 +3868,42 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         release_tracked_resource_v1!(state, images, key_of_v1!(image))
     }
 
+    fn register_mapped_row_set(
+        &self,
+        planes: &[runtime_bundle_abi::MappedRowPlaneV1],
+    ) -> HostServiceResultV1<()> {
+        if planes.is_empty() || planes.len() > 64 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let state = self.state.borrow();
+        let mappings = planes
+            .iter()
+            .map(|plane| {
+                if plane.rank >= state.config.topology.rank_count() || plane.row_bytes == 0 {
+                    return Err(BundleStatusV1::InvalidArgument);
+                }
+                let ComponentStorageV1::Planned(planned) =
+                    &state.images.get(key_of_v1!(plane.image))?.storage
+                else {
+                    return Err(BundleStatusV1::NotFound);
+                };
+                let mapping = Arc::clone(
+                    planned
+                        .mapped_view(plane.rank, &plane.view_id)
+                        .ok_or(BundleStatusV1::NotFound)?,
+                );
+                let width = usize::try_from(plane.row_bytes)
+                    .map_err(|_| BundleStatusV1::InvalidArgument)?;
+                if mapping.bytes().is_empty() || !mapping.bytes().len().is_multiple_of(width) {
+                    return Err(BundleStatusV1::InvalidArgument);
+                }
+                Ok((mapping, width))
+            })
+            .collect::<HostServiceResultV1<Vec<_>>>()?;
+        crate::host_rows::resident::register_group(mappings)
+            .map_err(|_| BundleStatusV1::InvalidArgument)
+    }
+
     fn create_mapped_gather(
         &self,
         producer: BundleStreamHandleV1,

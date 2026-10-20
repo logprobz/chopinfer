@@ -26,8 +26,9 @@ use crate::host_services::{
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
     HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentLaunchV1,
     LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedGatherPlaneV1, MappedGatherStatsV1,
-    MappedRowGatherV1, OwnedDraftTokensV1, OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1,
-    PhysicalKvRequestV1, RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
+    MappedRowGatherV1, MappedRowPlaneV1, OwnedDraftTokensV1, OwnedLogitsRowV1, OwnedLogitsViewV1,
+    PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1,
+    TensorMapV1,
 };
 use crate::{
     BUNDLE_ABI_VERSION_V1, BUNDLE_CUSTOM_OPERATION_V1_CONTAINED_FAULT,
@@ -285,6 +286,7 @@ impl HostServicesTableV1 {
             wait_mapped_gather_v1: Some(wait_mapped_gather_trampoline_v1::<B>),
             complete_mapped_gather_v1: Some(complete_mapped_gather_trampoline_v1::<B>),
             release_mapped_gather_v1: Some(release_mapped_gather_trampoline_v1::<B>),
+            register_mapped_row_set_v1: Some(register_mapped_row_set_trampoline_v1::<B>),
         });
         // SAFETY-REVIEWED: this table builds every callback itself and owns the backend they read.
         let checked = unsafe { HostServicesV1::new(*raw) };
@@ -969,6 +971,56 @@ unsafe extern "C" fn create_mapped_gather_trampoline_v1<B: HostServicesBackendV1
             output,
             backend.create_mapped_gather(producer, indices, &planes),
         )
+    })
+}
+
+// SAFETY-REVIEWED: the caller keeps the checked exact-size array and names live
+// for this call. The backend receives owned names and no borrowed raw pointer.
+unsafe extern "C" fn register_mapped_row_set_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    planes: *const crate::BundleMappedRowPlaneV1,
+    count: u64,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        if count == 0 || count > 64 {
+            return Err(BundleAbiError::InvalidRange("mapped row set planes"));
+        }
+        validate_input_pointer_v1(planes, "mapped row set planes")?;
+        let expected = struct_size_v1::<crate::BundleMappedRowPlaneV1>();
+        // SAFETY-REVIEWED: the caller supplies at least this aligned first
+        // size field; refuse a different stride before walking the array.
+        if unsafe { (*planes).struct_size } != expected {
+            return Err(BundleAbiError::InvalidRange("mapped row set plane size"));
+        }
+        let count = checked_slice_count_v1::<crate::BundleMappedRowPlaneV1>(
+            "mapped row set planes",
+            count,
+        )?;
+        // SAFETY-REVIEWED: the checked array uses the exact element stride.
+        let planes = unsafe { slice::from_raw_parts(planes, count) };
+        let planes = planes
+            .iter()
+            .map(|plane| {
+                if plane.struct_size != expected
+                    || plane.row_bytes == 0
+                    || plane.view_id.length == 0
+                    || plane.view_id.length > 4096
+                {
+                    return Err(BundleAbiError::InvalidRange("mapped row set plane"));
+                }
+                plane.image.validate()?;
+                Ok(MappedRowPlaneV1 {
+                    image: plane.image,
+                    rank: plane.rank,
+                    view_id: copy_byte_view_v1(plane.view_id)?,
+                    row_bytes: plane.row_bytes,
+                })
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        Ok(host_unit_status_v1(
+            backend.register_mapped_row_set(&planes),
+        ))
     })
 }
 
@@ -2432,6 +2484,45 @@ impl HostServicesV1 {
         status_result(unsafe {
             self.raw.release_mapped_gather_v1.unwrap()(self.raw.user_data, gather)
         })
+    }
+
+    /// Offer an immutable row set to the host without allocating transfer staging.
+    pub fn register_mapped_row_set(
+        &self,
+        planes: &[MappedRowPlaneV1],
+    ) -> Result<(), BundleAbiError> {
+        let end = std::mem::offset_of!(BundleHostServicesV1, register_mapped_row_set_v1)
+            + std::mem::size_of_val(&self.raw.register_mapped_row_set_v1);
+        if (self.raw.struct_size as usize) < end {
+            return Err(BundleAbiError::MissingHostService(
+                "register_mapped_row_set_v1",
+            ));
+        }
+        let callback = required_service_v1(
+            self.raw.register_mapped_row_set_v1,
+            "register_mapped_row_set_v1",
+        )?;
+        if planes.is_empty() || planes.len() > 64 {
+            return Err(BundleAbiError::InvalidRange("mapped row set planes"));
+        }
+        let planes = planes
+            .iter()
+            .map(|plane| {
+                plane.image.validate()?;
+                if plane.row_bytes == 0 || plane.view_id.is_empty() || plane.view_id.len() > 4096 {
+                    return Err(BundleAbiError::InvalidRange("mapped row set plane"));
+                }
+                Ok(crate::BundleMappedRowPlaneV1 {
+                    struct_size: struct_size_v1::<crate::BundleMappedRowPlaneV1>(),
+                    rank: plane.rank,
+                    image: plane.image,
+                    view_id: BundleByteViewV1::from_bytes(&plane.view_id),
+                    row_bytes: plane.row_bytes,
+                })
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        // SAFETY-REVIEWED: the array and borrowed names outlive this callback.
+        status_result(unsafe { callback(self.raw.user_data, planes.as_ptr(), planes.len() as u64) })
     }
 
     pub fn prepare_kv(

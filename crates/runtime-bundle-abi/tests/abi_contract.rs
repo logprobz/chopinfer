@@ -732,6 +732,27 @@ fn c_header_and_rust_layouts_match() {
             offset_of!(abi::BundleHostServicesV1, release_mapped_gather_v1),
         ],
     );
+    assert_layout(
+        &c_layouts,
+        "mapped-row-set-plane",
+        size_of::<abi::BundleMappedRowPlaneV1>(),
+        &[
+            offset_of!(abi::BundleMappedRowPlaneV1, struct_size),
+            offset_of!(abi::BundleMappedRowPlaneV1, rank),
+            offset_of!(abi::BundleMappedRowPlaneV1, image),
+            offset_of!(abi::BundleMappedRowPlaneV1, view_id),
+            offset_of!(abi::BundleMappedRowPlaneV1, row_bytes),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "mapped-row-set-tail",
+        size_of::<abi::BundleHostServicesV1>(),
+        &[offset_of!(
+            abi::BundleHostServicesV1,
+            register_mapped_row_set_v1
+        )],
+    );
     // A launch flag is part of the ABI, not of one side's opinion of it, so the
     // header's value and this crate's constant have to be the same number.
     assert_layout(
@@ -2878,6 +2899,7 @@ struct FixtureHostBackend {
     /// destination, image, rank, view, row length and rows.
     gathers: RefCell<FixtureGathersV1>,
     prepared_gathers: RefCell<Vec<abi::MappedGatherPlaneV1>>,
+    registered_row_planes: RefCell<Vec<abi::MappedRowPlaneV1>>,
     gather_calls: RefCell<Vec<u64>>,
 }
 
@@ -2899,6 +2921,13 @@ macro_rules! unused_fixture_service {
 }
 
 impl HostServicesBackendV1 for FixtureHostBackend {
+    fn register_mapped_row_set(&self, planes: &[abi::MappedRowPlaneV1]) -> HostServiceResultV1<()> {
+        self.registered_row_planes
+            .borrow_mut()
+            .extend_from_slice(planes);
+        Ok(())
+    }
+
     fn create_mapped_gather(
         &self,
         _producer: abi::BundleStreamHandleV1,
@@ -3892,6 +3921,8 @@ int main(void) {
   printf("async-mapped-plane %zu %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_gather_plane_v1), P(chop_bundle_mapped_gather_plane_v1, struct_size), P(chop_bundle_mapped_gather_plane_v1, rank), P(chop_bundle_mapped_gather_plane_v1, image), P(chop_bundle_mapped_gather_plane_v1, view_id), P(chop_bundle_mapped_gather_plane_v1, row_bytes), P(chop_bundle_mapped_gather_plane_v1, index_offset), P(chop_bundle_mapped_gather_plane_v1, stream), P(chop_bundle_mapped_gather_plane_v1, destination));
   printf("async-mapped-completion %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_gather_completion_v1), P(chop_bundle_mapped_gather_completion_v1, struct_size), P(chop_bundle_mapped_gather_completion_v1, ready), P(chop_bundle_mapped_gather_completion_v1, host_nanoseconds), P(chop_bundle_mapped_gather_completion_v1, exposed_nanoseconds));
   printf("async-mapped-services %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, create_mapped_gather_v1), P(chop_bundle_host_services_v1, enqueue_mapped_gather_v1), P(chop_bundle_host_services_v1, wait_mapped_gather_v1), P(chop_bundle_host_services_v1, complete_mapped_gather_v1), P(chop_bundle_host_services_v1, release_mapped_gather_v1));
+  printf("mapped-row-set-plane %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_row_plane_v1), P(chop_bundle_mapped_row_plane_v1, struct_size), P(chop_bundle_mapped_row_plane_v1, rank), P(chop_bundle_mapped_row_plane_v1, image), P(chop_bundle_mapped_row_plane_v1, view_id), P(chop_bundle_mapped_row_plane_v1, row_bytes));
+  printf("mapped-row-set-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, register_mapped_row_set_v1));
   printf("host-mapped-gather-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, gather_mapped_rows_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));
@@ -4771,4 +4802,92 @@ fn refusal_diagnostics_are_bounded_and_never_reused_from_an_earlier_call() {
         Err(BundleAbiError::Poisoned)
     );
     assert_eq!(instance.last_execute_refusal(), None);
+}
+
+#[test]
+// SAFETY-REVIEWED: malformed records are refused before their names or array suffix are read.
+#[allow(unsafe_code)]
+fn mapped_row_set_registration_owns_names_and_preserves_older_tails() {
+    let backend = Rc::new(FixtureHostBackend::default());
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let mut planes = vec![
+        abi::MappedRowPlaneV1 {
+            image: abi::BundleCompiledImageHandleV1::from_parts(1, 1),
+            rank: 0,
+            view_id: b"codes".to_vec(),
+            row_bytes: 8,
+        },
+        abi::MappedRowPlaneV1 {
+            image: abi::BundleCompiledImageHandleV1::from_parts(1, 1),
+            rank: 0,
+            view_id: b"scales".to_vec(),
+            row_bytes: 1,
+        },
+    ];
+    table.caller().register_mapped_row_set(&planes).unwrap();
+    planes[0].view_id.fill(b'x');
+    assert_eq!(backend.registered_row_planes.borrow()[0].view_id, b"codes");
+    let mut old = *table.services();
+    old.struct_size = offset_of!(abi::BundleHostServicesV1, register_mapped_row_set_v1) as u32;
+    // SAFETY-REVIEWED: the copied prefix and its backend outlive this caller.
+    let caller = unsafe { abi::HostServicesV1::new(old) }.unwrap();
+    assert!(caller.has_async_mapped_gather());
+    assert_eq!(
+        caller.register_mapped_row_set(&planes),
+        Err(abi::BundleAbiError::MissingHostService(
+            "register_mapped_row_set_v1"
+        ))
+    );
+    let call = table.services().register_mapped_row_set_v1.unwrap();
+    let good = abi::BundleMappedRowPlaneV1 {
+        struct_size: size_of::<abi::BundleMappedRowPlaneV1>() as u32,
+        rank: 0,
+        image: planes[0].image,
+        view_id: abi::BundleByteViewV1::from_bytes(b"codes"),
+        row_bytes: 8,
+    };
+    for (pointer, count) in [
+        (std::ptr::null(), 1),
+        (&good as *const _, 0),
+        (&good as *const _, 65),
+    ] {
+        assert_eq!(
+            unsafe { call(table.services().user_data, pointer, count) },
+            abi::BundleStatusV1::InvalidArgument
+        );
+    }
+    for bad in [
+        abi::BundleMappedRowPlaneV1 {
+            struct_size: good.struct_size + 8,
+            ..good
+        },
+        abi::BundleMappedRowPlaneV1 {
+            row_bytes: 0,
+            ..good
+        },
+        abi::BundleMappedRowPlaneV1 {
+            view_id: abi::BundleByteViewV1 {
+                length: 4097,
+                ..good.view_id
+            },
+            ..good
+        },
+    ] {
+        assert_eq!(
+            unsafe { call(table.services().user_data, &bad, 1) },
+            abi::BundleStatusV1::InvalidArgument
+        );
+    }
+    let bad_second = [
+        good,
+        abi::BundleMappedRowPlaneV1 {
+            struct_size: 0,
+            ..good
+        },
+    ];
+    assert_eq!(
+        unsafe { call(table.services().user_data, bad_second.as_ptr(), 2) },
+        abi::BundleStatusV1::InvalidArgument
+    );
+    assert_eq!(backend.registered_row_planes.borrow().len(), 2);
 }

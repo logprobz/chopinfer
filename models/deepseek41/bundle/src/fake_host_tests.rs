@@ -963,37 +963,40 @@ fn journal_steps(host: &Rc<Host>) {
 /// releases per native rank. These small-row launches remain unchanged.
 /// At four ranks the grouped 8192-row down binding adds one module, two
 /// resolves, one configure and three releases per rank; no short-row launch
-/// uses it.
+/// uses it. The certified router rows add one module, two resolves and three
+/// releases per rank. At four ranks the router projection's workspace view
+/// grows from 251691008 to 251756544 bytes on its own launches; no launch
+/// count, grid or allocation changes, and no short-row count selects them.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17356, 0x719660e33daf99ae),
+        (17361, 0x98b3ceb0c552d139),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17214, 0x1a7b59adfbdaf1ce),
+        (17219, 0xf008fc2d9b8b05ca),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34899, 0xf08dbf9e82fc0808),
+        (34909, 0x634c896900b45d63),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34615, 0x7a48b66d8e2b1826),
+        (34625, 0xf4943a0baf57d616),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (75047, 0x6912300b3fef2ffb),
+        (75067, 0xcb0b0da8284a39ee),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (72931, 0x78cf1b4593944116),
+        (72951, 0xbfe081704a05bca6),
     ),
 ];
 

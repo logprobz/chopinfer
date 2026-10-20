@@ -343,10 +343,12 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Qualified prefill scoring adds one module, eight resolves and nine
 /// releases per rank; the small image/text launches remain unchanged.
 /// At four ranks the grouped 8192-row down binding adds one module, two
-/// resolves, one configure and three releases per rank.
+/// resolves, one configure and three releases per rank. The certified router
+/// rows add one module, two resolves and three releases per rank, and at four
+/// ranks widen only the router projection's workspace view.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22961, 0x2d55491af0fc9a08)),
-    (Ranks::TP4, (50927, 0xf989d1df8036e43c)),
+    (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
+    (Ranks::TP4, (50947, 0xf0c9e76ea79ee9b8)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

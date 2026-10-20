@@ -4,13 +4,15 @@ use super::*;
 // retain all original operands. Eight and 16 rows retain the unfused HC path.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
-// Resources the prefill query fusion and grouped down binding load before
-// verify only renumber handles in these fragments.
+// Resources the prefill query fusion, grouped down and router bindings load
+// before verify renumber handles in these fragments. The certified router
+// rows also widen the router projection's workspace view (251691008 to
+// 251756544 bytes) on its verify launches; grids and other operands match.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0x177a9abcf9d5688c)),
-    (8, (8992, 0x30e406ec51041638)),
-    (16, (9964, 0xb7adc824bc14c637)),
-    (32, (8384, 0x4434548ac1a344bc)),
+    (6, (8040, 0xcaaf9f73ad78a93a)),
+    (8, (8992, 0x06f1e9b3092dd4ca)),
+    (16, (9964, 0x381d1ab8ce464722)),
+    (32, (8384, 0xcb1620a7c991de4c)),
 ];
 
 #[test]

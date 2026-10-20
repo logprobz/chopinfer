@@ -6,6 +6,8 @@ pub const HEADER: &str = "latent/sources_prefill_heads.cuh";
 pub const SHARED_BYTES: u32 = 64 * 512 * 2 + 2 * 4 * 64 * 8 * 4 + 64 * 20;
 #[path = "sources_prefill_heads_async.rs"]
 pub mod asynchronous;
+#[path = "sources_prefill_heads_empty.rs"]
+pub mod empty;
 #[path = "sources_prefill_heads_next.rs"]
 pub mod next;
 

@@ -18,7 +18,7 @@ def recording(memcheck):
         for hot in (False, True):
             lines.append("HC_PREFILL_FUSED_TIMING " + json.dumps({
                 "case": case, "rows": int(case.split(":rows=")[1].split(":")[0]),
-                "hot": hot, "old_launches": 3, "new_launches": 1,
+                "hot": hot, "old_launches": 3, "new_launches": 2,
                 "old_us": 100.0, "new_us": 80.0, "ratio": 0.8}))
     lines.append("HC_PREFILL_FUSED_COMPLETE " + (
         "memcheck=true cases=6 invariances=0 negatives=0 timings=0 passed=true" if memcheck else
@@ -49,7 +49,8 @@ class Parser(unittest.TestCase):
             text.replace("1 passed", "0 passed"),
             text.replace("0 failed", "1 failed"),
             text.replace('"passed": true', '"passed": false', 1),
-            text.replace("site0:rows=1:finite:r1:widen=false", "wrong", 1),
+            text.replace("site0:rows=1:finite:r4c4:widen=false", "wrong", 1),
+            text.replace('"new_launches": 2', '"new_launches": 1', 1),
             text + "\nHC_PREFILL_FUSED_MISMATCH bad",
             text.replace("negatives=3", "negatives=0"),
             text.replace('"old_us": 100.0', '"old_us": 0.0', 1),

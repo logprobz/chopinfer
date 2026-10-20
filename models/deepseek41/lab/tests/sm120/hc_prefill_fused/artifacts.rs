@@ -39,13 +39,13 @@ pub fn stage() -> LabResult<()> {
         item.1.push(symbol);
     }
     images.insert(
-        catalog::MODULE.into(),
+        catalog::CANDIDATE_MODULE.into(),
         (
-            read(&format!("{}.cubin", catalog::MODULE))?,
-            catalog::entries()
+            read(&format!("{}.cubin", catalog::CANDIDATE_MODULE))?,
+            catalog::candidates()
                 .into_iter()
-                .chain(catalog::controls())
-                .map(|e| e.symbol)
+                .chain(catalog::candidate_controls())
+                .map(|e| e.symbol().to_owned())
                 .collect(),
         ),
     );
@@ -80,10 +80,10 @@ pub fn verify() -> LabResult<()> {
     let expected: std::collections::BTreeSet<_> = symbols()
         .into_iter()
         .chain(
-            catalog::entries()
+            catalog::candidates()
                 .into_iter()
-                .chain(catalog::controls())
-                .map(|e| e.symbol),
+                .chain(catalog::candidate_controls())
+                .map(|e| e.symbol().to_owned()),
         )
         .chain(
             [

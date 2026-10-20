@@ -1,5 +1,23 @@
 # Exact prefill HC composition
 
+The matrix now qualifies the prefill expansion-then-mix entries
+(`kernels_sm120::sinkhorn_hc::prefill_expand_mix`, lab family
+`hc_prefill_expand_mix`, tiles r4c4, r8c4 and r8c8) followed by the served
+input norm/ceil, against the served expand, mixer and norm chain. Each CTA
+expands its own rows once with the F32 expand's expressions into the
+expanded output, then runs the unchanged prefill pipeline over those rows
+while they are still in L2. The projection consumes the flat row in
+ascending K order, which is stream-major, so an exact schedule cannot
+interleave output streams per column block; the earlier composition below
+regenerated each panel from all four input streams and lost at full chunks
+(d2-0451a). Its controls reverse the stream sum, contract `post * y` into
+the add, and round the stream sum to BF16 first. The candidate arm has two
+launches against the chain's three. Case labels name the tile as
+`r{rows}c{chains}`; the case, invariance, control and timing counts are
+unchanged.
+
+## Earlier composition (lab only, not in the matrix)
+
 This lab candidate replaces the BF16 stream expansion, lagged mixer and
 BF16 input norm/ceil with one kernel. It is not registered for serving.
 The query norm fusion is a separate, measured serving change.

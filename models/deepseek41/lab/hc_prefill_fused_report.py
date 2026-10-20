@@ -1,4 +1,7 @@
-"""Require the complete HC prefill matrix, memcheck and peer parity."""
+"""Require the complete HC prefill matrix, memcheck and peer parity.
+
+The arms are the prefill expansion-then-mix entries (one launch, then the
+served norm) against the served expand, mixer and norm chain."""
 import argparse
 import json
 import math
@@ -7,16 +10,18 @@ import re
 
 ROWS = (1, 7, 64, 192, 320, 2496, 8191, 8192)
 PATTERNS = ("zero", "tiny", "maximum", "nan", "inf", "weight_nan", "cancellation", "sticky")
+VARIANTS = ("r4c4", "r8c4", "r8c8")
+OLD_LAUNCHES, NEW_LAUNCHES = 3, 2
 
 
 def identities(memcheck):
-    cases = {f"site{s}:rows={rows}:finite:r{tile}:widen={wide}"
+    cases = {f"site{s}:rows={rows}:finite:{variant}:widen={wide}"
              for s in ((0,) if memcheck else range(3))
              for rows in ((8192,) if memcheck else ROWS)
-             for tile in (1, 4, 8) for wide in ("false", "true")}
+             for variant in VARIANTS for wide in ("false", "true")}
     if not memcheck:
-        cases |= {f"edge:rows=7:{pattern}:r{tile}:widen={wide}"
-                  for pattern in PATTERNS for tile in (1, 4, 8)
+        cases |= {f"edge:rows=7:{pattern}:{variant}:widen={wide}"
+                  for pattern in PATTERNS for variant in VARIANTS
                   for wide in ("false", "true")}
     return cases
 
@@ -89,7 +94,8 @@ def parse(text, memcheck, require_progress=True):
         require({(r["case"], r["hot"]) for r in timings}
                 == {(c, h) for c in timing_cases() for h in (False, True)}, "timing identities differ")
     for row in timings:
-        require(row["old_launches"] == 3 and row["new_launches"] == 1, "chain launch count differs")
+        require(row["old_launches"] == OLD_LAUNCHES and row["new_launches"] == NEW_LAUNCHES,
+                "chain launch count differs")
         require(row["rows"] == int(row["case"].split(":rows=")[1].split(":")[0]), "timing rows differ")
         require(all(isinstance(row[k], (int, float)) and math.isfinite(row[k]) and row[k] > 0
                     for k in ("old_us", "new_us", "ratio")), "invalid event interval")

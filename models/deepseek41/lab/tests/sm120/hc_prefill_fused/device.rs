@@ -1,7 +1,7 @@
+use super::catalog::Candidate;
 use super::{FLAT, OFFSET, ROLES, WIDTH, artifacts, artifacts::Site, catalog};
 use kernel_core::codec::f32_to_bf16;
 use kernel_harness::{LabResult, Session, launch};
-use kernels_sm120::sinkhorn_hc::prefill_fused::Entry;
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument as A, Module, Stream};
 pub const STRIDES: [usize; 9] = [
     FLAT * 2,
@@ -132,7 +132,7 @@ impl Output {
 }
 pub struct Device<'a> {
     pub s: &'a Session,
-    pub entry: Entry,
+    pub entry: Candidate,
     pub rows: u32,
     pub widen: bool,
     pub alias: bool,
@@ -146,7 +146,7 @@ pub struct Device<'a> {
 impl<'a> Device<'a> {
     pub fn new(
         s: &'a Session,
-        entry: &Entry,
+        entry: &Candidate,
         f: &Fixture,
         widen: bool,
         alias: bool,
@@ -181,7 +181,7 @@ impl<'a> Device<'a> {
             catalog::expand(f.rows).0.symbol,
             catalog::mix(f.rows).0.symbol,
             catalog::norm().reference.symbol,
-            entry.symbol.clone(),
+            entry.symbol().to_owned(),
         ];
         let modules = symbols
             .iter()
@@ -194,7 +194,7 @@ impl<'a> Device<'a> {
             .collect::<LabResult<Vec<_>>>()?;
         let outputs = [Output::new(s, f.rows)?, Output::new(s, f.rows)?];
         // Every concurrent invocation owns distinct inputs and outputs. The
-        // candidate has no global workspace or synchronization tickets.
+        // candidates have no global workspace or synchronization tickets.
         let mut ranges = inputs
             .iter()
             .chain(outputs.iter().flat_map(|o| &o.buffers))
@@ -258,13 +258,59 @@ impl<'a> Device<'a> {
         let pre = if self.alias { &o[2] } else { &i[7] };
         let post = if self.alias { &o[3] } else { &i[2] };
         let comb = if self.alias { &o[4] } else { &i[3] };
-        let wide = if self.widen {
-            A::Buffer(&o[6])
-        } else {
-            A::NullBuffer
+        let wide = || {
+            if self.widen {
+                A::Buffer(&o[6])
+            } else {
+                A::NullBuffer
+            }
         };
-        let eps = self.entry.query.norm.norm.epsilon_bits;
-        if arm == 1 {
+        let eps = catalog::norm_eps_bits();
+        let norm = || {
+            self.functions[2]
+                .launch(
+                    stream,
+                    launch::config(catalog::norm().plan(self.rows).unwrap())?,
+                    &[
+                        A::Buffer(&o[1]),
+                        A::Buffer(&i[8]),
+                        A::Buffer(&o[5]),
+                        wide(),
+                        A::Buffer(&o[7]),
+                        A::Buffer(&o[8]),
+                        A::Buffer(&self.live),
+                        A::Buffer(&o[9]),
+                        A::U64(OFFSET as u64),
+                        A::U32(eps),
+                    ],
+                )
+                .map_err(|e| e.to_string())
+        };
+        if let (1, Candidate::ExpandMix(_)) = (arm, &self.entry) {
+            self.functions[3]
+                .launch(
+                    stream,
+                    launch::config(self.entry.plan(self.rows, 0).unwrap())?,
+                    &[
+                        A::Buffer(&i[0]),
+                        A::Buffer(&i[1]),
+                        A::Buffer(post),
+                        A::Buffer(comb),
+                        A::Buffer(&o[0]),
+                        A::Buffer(&i[4]),
+                        A::Buffer(&i[5]),
+                        A::Buffer(&i[6]),
+                        A::Buffer(pre),
+                        A::Buffer(&o[1]),
+                        A::Buffer(&o[2]),
+                        A::Buffer(&o[3]),
+                        A::Buffer(&o[4]),
+                        A::Buffer(&self.live),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            norm()
+        } else if arm == 1 {
             self.functions[3]
                 .launch(
                     stream,
@@ -285,7 +331,7 @@ impl<'a> Device<'a> {
                         A::Buffer(&o[4]),
                         A::Buffer(&i[8]),
                         A::Buffer(&o[5]),
-                        wide,
+                        wide(),
                         A::Buffer(&o[7]),
                         A::Buffer(&o[8]),
                         A::Buffer(&self.live),
@@ -328,24 +374,7 @@ impl<'a> Device<'a> {
                     ],
                 )
                 .map_err(|e| e.to_string())?;
-            self.functions[2]
-                .launch(
-                    stream,
-                    launch::config(catalog::norm().plan(self.rows).unwrap())?,
-                    &[
-                        A::Buffer(&o[1]),
-                        A::Buffer(&i[8]),
-                        A::Buffer(&o[5]),
-                        wide,
-                        A::Buffer(&o[7]),
-                        A::Buffer(&o[8]),
-                        A::Buffer(&self.live),
-                        A::Buffer(&o[9]),
-                        A::U64(OFFSET as u64),
-                        A::U32(eps),
-                    ],
-                )
-                .map_err(|e| e.to_string())
+            norm()
         }
     }
     pub fn once(&self, arm: usize, sticky: bool) -> LabResult<Vec<Vec<u8>>> {

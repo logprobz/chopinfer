@@ -4,7 +4,7 @@ mod storage;
 use super::{MappedRowsV1, RowsKeyV1};
 use crate::device::mapped_gather::MappedGatherPlaneV1;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use storage::LockedBytes;
 
@@ -29,7 +29,7 @@ impl Config {
     }
 
     fn parse(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Result<Option<Self>, String> {
-        if get("CHOPINFER_MAPPED_HOT_ROWS").is_none_or(|v| v != "1") {
+        if get("CHOPINFER_MAPPED_HOT_ROWS").is_some_and(|v| v != "1") {
             return Ok(None);
         }
         let bytes = |name: &str, default| -> Result<usize, String> {
@@ -98,23 +98,50 @@ struct Registry {
     config: Config,
     budget: Arc<Budget>,
     caches: Mutex<BTreeMap<Key, Weak<Cache>>>,
+    fallback_logged: AtomicBool,
+    allocation_unavailable: AtomicBool,
+}
+
+impl Registry {
+    fn fallback(&self, reason: &str) {
+        if !self.fallback_logged.swap(true, Ordering::Relaxed) {
+            report_fallback(reason);
+        }
+    }
+}
+
+fn report_fallback(reason: &str) {
+    runtime_engine::logging::line(
+        serde_json::json!({
+            "schema":"chopinfer.mapped-row-cache.v1", "phase":"uncached",
+            "reason":reason,
+        })
+        .to_string(),
+    );
 }
 
 static REGISTRY: OnceLock<Result<Option<Registry>, String>> = OnceLock::new();
 
 fn registry() -> Result<Option<&'static Registry>, String> {
     match REGISTRY.get_or_init(|| {
-        Config::environment().map(|config| {
-            config.map(|config| Registry {
-                config,
-                budget: Arc::new(Budget {
-                    limit: config.total_bytes,
-                    used: AtomicU64::new(0),
-                    skipped: AtomicU64::new(0),
-                }),
-                caches: Mutex::new(BTreeMap::new()),
+        Config::environment()
+            .or_else(|error| {
+                report_fallback(&error);
+                Ok(None)
             })
-        })
+            .map(|config| {
+                config.map(|config| Registry {
+                    config,
+                    budget: Arc::new(Budget {
+                        limit: config.total_bytes,
+                        used: AtomicU64::new(0),
+                        skipped: AtomicU64::new(0),
+                    }),
+                    caches: Mutex::new(BTreeMap::new()),
+                    fallback_logged: AtomicBool::new(false),
+                    allocation_unavailable: AtomicBool::new(false),
+                })
+            })
     }) {
         Ok(value) => Ok(value.as_ref()),
         Err(error) => Err(error.clone()),
@@ -324,10 +351,19 @@ impl Plane {
 }
 
 fn attach(registry: &Registry, mappings: Vec<(Arc<MappedRowsV1>, usize)>) -> Result<(), String> {
+    attach_with(registry, mappings, Cache::new)
+}
+
+fn attach_with(
+    registry: &Registry,
+    mappings: Vec<(Arc<MappedRowsV1>, usize)>,
+    allocate: impl FnOnce(Key, Charge) -> Result<Cache, String>,
+) -> Result<(), String> {
     let mut members = BTreeMap::new();
     for (mapping, width) in mappings {
         if mapping.key.identity.is_none() {
-            return Err("resident rows require an authenticated mapping".into());
+            registry.fallback("resident rows require an authenticated mapping");
+            return Ok(());
         }
         members.entry((mapping.key, width)).or_insert(mapping);
     }
@@ -358,11 +394,23 @@ fn attach(registry: &Registry, mappings: Vec<(Arc<MappedRowsV1>, usize)>) -> Res
     let cache = if let Some(cache) = caches.get(&key).and_then(Weak::upgrade) {
         cache
     } else {
+        if registry.allocation_unavailable.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let Some(charge) = registry.budget.reserve(registry.config.set_bytes) else {
-            runtime_engine::logging::line(serde_json::json!({"schema":"chopinfer.mapped-row-cache.v1","phase":"budget-skip","budget_bytes":registry.budget.limit,"charged_bytes":registry.budget.used.load(Ordering::Relaxed)}).to_string());
+            registry.fallback("resident row budget exhausted");
             return Ok(());
         };
-        let cache = Arc::new(Cache::new(key.clone(), charge)?);
+        let cache = match allocate(key.clone(), charge) {
+            Ok(cache) => Arc::new(cache),
+            Err(error) => {
+                registry
+                    .allocation_unavailable
+                    .store(true, Ordering::Relaxed);
+                registry.fallback(&error);
+                return Ok(());
+            }
+        };
         cache.report("ready");
         caches.insert(key.clone(), Arc::downgrade(&cache));
         cache
@@ -403,9 +451,14 @@ pub(crate) fn register(planes: &[MappedGatherPlaneV1]) -> Result<(), String> {
                     .ok()?
                     .checked_mul(1024)
             })
-        })
-        .ok_or("resident mapped rows require a host memory availability reading")?;
-    register_checked(registry, planes, available)
+        });
+    match available {
+        Some(available) => register_checked(registry, planes, available),
+        None => {
+            registry.fallback("host memory availability is unknown");
+            Ok(())
+        }
+    }
 }
 
 fn register_checked(
@@ -416,7 +469,8 @@ fn register_checked(
     let unreserved =
         (registry.budget.limit as u64).saturating_sub(registry.budget.used.load(Ordering::Relaxed));
     if available < unreserved.saturating_add(HOST_RESERVE_BYTES) {
-        return Err("resident mapped rows would consume the host memory reserve".into());
+        registry.fallback("resident mapped rows would consume the host memory reserve");
+        return Ok(());
     }
     let mut groups = BTreeMap::<(usize, u64), Vec<_>>::new();
     for plane in planes {

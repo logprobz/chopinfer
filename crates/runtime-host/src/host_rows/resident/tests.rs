@@ -14,6 +14,8 @@ fn registry(sets: usize) -> Registry {
             skipped: AtomicU64::new(0),
         }),
         caches: Mutex::new(BTreeMap::new()),
+        fallback_logged: AtomicBool::new(false),
+        allocation_unavailable: AtomicBool::new(false),
     }
 }
 fn mapping(label: &str, bytes: &[u8], identity: u8) -> Arc<MappedRowsV1> {
@@ -205,12 +207,17 @@ fn mapped_identity_separates_checkpoint_authentication() {
 }
 
 #[test]
-fn cache_is_off_by_default_and_disabled_budgets_are_not_parsed() {
-    assert!(Config::parse(|_| None).unwrap().is_none());
+fn cache_is_on_by_default_and_disabled_budgets_are_not_parsed() {
+    let default = Config::parse(|_| None).unwrap().unwrap();
+    assert_eq!((default.set_bytes, default.total_bytes), (1 << 30, 2 << 30));
     assert!(
-        Config::parse(|name| (name == "CHOPINFER_MAPPED_HOT_ROWS_BYTES").then(|| "invalid".into()))
-            .unwrap()
-            .is_none()
+        Config::parse(|name| match name {
+            "CHOPINFER_MAPPED_HOT_ROWS" => Some("0".into()),
+            "CHOPINFER_MAPPED_HOT_ROWS_BYTES" => Some("invalid".into()),
+            _ => None,
+        })
+        .unwrap()
+        .is_none()
     );
     let config = Config::parse(|name| (name == "CHOPINFER_MAPPED_HOT_ROWS").then(|| "1".into()))
         .unwrap()
@@ -250,6 +257,38 @@ fn allocation_failure_returns_the_entire_reservation() {
 }
 
 #[test]
+fn failed_lock_serves_exact_uncached_rows_without_retrying_allocation() {
+    let registry = registry(1);
+    let mapping = mapping("lock-fallback", &source(10, 8), 21);
+    attach_with(&registry, vec![(Arc::clone(&mapping), 8)], |key, charge| {
+        Cache::allocate(key, charge, |_| {
+            Err(std::io::Error::from_raw_os_error(libc::ENOMEM))
+        })
+    })
+    .unwrap();
+    assert!(registry.fallback_logged.load(Ordering::Relaxed));
+    assert!(registry.allocation_unavailable.load(Ordering::Relaxed));
+    assert_eq!(registry.budget.used.load(Ordering::Relaxed), 0);
+    assert!(mapping.resident.get().is_none());
+    attach_with(&registry, vec![(Arc::clone(&mapping), 8)], |_, _| {
+        panic!("unavailable allocation must not be retried")
+    })
+    .unwrap();
+    let plane = gather_plane(Arc::clone(&mapping), 8, 0);
+    let mut output = vec![0xa5; 24];
+    let ids = [2_u32, 8, 2]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+    crate::device::mapped_gather::gather_plane_v1(&plane, &ids, &mut output).unwrap();
+    let expected = [2, 8, 2]
+        .into_iter()
+        .flat_map(|row| mapping.bytes()[row * 8..][..8].to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn unauthenticated_mapping_cannot_enter_cache() {
     let registry = registry(1);
     let path = std::env::temp_dir().join(format!("resident-unauth-{}", std::process::id()));
@@ -257,11 +296,8 @@ fn unauthenticated_mapping_cannot_enter_cache() {
     let file = File::open(&path).unwrap();
     let mapping = super::super::map_rows_v1(&file, 0, 100).unwrap();
     std::fs::remove_file(path).unwrap();
-    assert!(
-        attach(&registry, vec![(mapping, 10)])
-            .unwrap_err()
-            .contains("authenticated")
-    );
+    attach(&registry, vec![(Arc::clone(&mapping), 10)]).unwrap();
+    assert!(mapping.resident.get().is_none());
     assert_eq!(registry.budget.used.load(Ordering::Relaxed), 0);
 }
 
@@ -361,11 +397,12 @@ fn synchronous_chunked_prefill_fills_the_same_cache_as_verify() {
 }
 
 #[test]
-fn host_reserve_refuses_registration_before_allocating() {
+fn host_reserve_falls_back_before_allocating() {
     let registry = registry(1);
     let mapping = mapping("reserve", &source(10, 8), 13);
     let planes = [gather_plane(Arc::clone(&mapping), 8, 0)];
-    assert!(register_checked(&registry, &planes, HOST_RESERVE_BYTES).is_err());
+    register_checked(&registry, &planes, HOST_RESERVE_BYTES).unwrap();
+    assert!(registry.fallback_logged.load(Ordering::Relaxed));
     assert!(mapping.resident.get().is_none());
     assert_eq!(registry.budget.used.load(Ordering::Relaxed), 0);
 }

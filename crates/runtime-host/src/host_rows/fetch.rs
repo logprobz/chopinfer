@@ -1,4 +1,5 @@
 //! Bounded descriptor reads for ordered resident-cache misses.
+pub(crate) mod legacy;
 mod pool;
 
 use super::MappedRowsV1;
@@ -35,12 +36,14 @@ pub(super) fn set_for_measurement(enabled: bool) {
 }
 
 pub(crate) fn snapshot() -> serde_json::Value {
+    let (legacy_gathers, legacy_misses) = legacy::snapshot();
     serde_json::json!({
         "enabled":enabled(), "configured_workers":pool::WORKERS, "batches":BATCHES.load(Ordering::Relaxed),
         "miss_positions":ROWS.load(Ordering::Relaxed), "unique_reads":READS.load(Ordering::Relaxed),
         "successful_bytes":BYTES.load(Ordering::Relaxed), "nanoseconds":NANOS.load(Ordering::Relaxed),
         "serial_fallback_batches":SERIAL.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
+        "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })
 }
 

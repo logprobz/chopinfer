@@ -205,6 +205,26 @@ fn fetched_planes_publish_exact_bytes_and_the_next_batch_hits() {
 }
 
 #[test]
+fn legacy_callback_counts_only_actual_misses_in_its_scope() {
+    let registry = registry(1);
+    let rows = mapping("legacy-miss-count", &source(100, 97), 31);
+    attach(&registry, vec![(Arc::clone(&rows), 97)]).unwrap();
+    copy(&rows, 97, 1, 0, 97);
+    let (_, misses) = super::super::fetch::legacy::count(|| {
+        for row in [1, 2, 2, 3] {
+            copy(&rows, 97, row, 0, 97);
+        }
+    });
+    assert_eq!(misses, 2);
+    let (_, warm) = super::super::fetch::legacy::count(|| {
+        for row in [1, 2, 3] {
+            copy(&rows, 97, row, 0, 97);
+        }
+    });
+    assert_eq!(warm, 0);
+}
+
+#[test]
 fn partial_plane_copy_never_publishes_unwritten_bytes() {
     let registry = registry(1);
     let mapping = mapping("partial", &source(100, 97), 2);

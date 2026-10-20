@@ -109,13 +109,19 @@ pub fn gather_plane_v1(
         return crate::host_rows::fetch::copy_rows(&plane.mapping, plane.row_bytes, &ids, output);
     }
     let probe = MappedProbe::asynchronous(&plane.mapping, plane.row_bytes);
-    gather_plane_with_probe(
-        plane,
-        input,
-        output,
-        &probe,
-        crate::host_rows::gather::mapped_async_read_ahead_v1(),
-    )
+    crate::host_rows::fetch::legacy::observe(|| {
+        let result = gather_plane_with_probe(
+            plane,
+            input,
+            output,
+            &probe,
+            crate::host_rows::gather::mapped_async_read_ahead_v1(),
+        );
+        if result.is_ok() && plane.mapping.resident_plane(plane.row_bytes).is_none() {
+            crate::host_rows::fetch::legacy::record((output.len() / plane.row_bytes) as u64);
+        }
+        result
+    })
 }
 
 fn gather_plane_with_probe(

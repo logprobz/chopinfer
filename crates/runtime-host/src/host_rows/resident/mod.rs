@@ -344,6 +344,7 @@ impl Plane {
             cache.hits.fetch_add(1, Ordering::Relaxed);
         } else {
             cache.misses.fetch_add(1, Ordering::Relaxed);
+            super::fetch::legacy::record(1);
             let source = row as usize * width + within;
             out.copy_from_slice(&table[source..source + out.len()]);
             if within == 0 && out.len() == width {

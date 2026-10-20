@@ -687,6 +687,11 @@ impl crate::Kernels {
         kernels_sm120::backend::bf16_phased_admission_plans().map_err(|error| error.to_string())
     }
 
+    /// The admitted F32-partial/BF16-output contract replaced by sparse DMA.
+    pub(crate) fn prefill_dma_replaces(symbol: &str) -> bool {
+        symbol == kernels_sm120::comm::phased_f32::ROUND_SYMBOL
+    }
+
     pub(crate) fn prefill_dma_sum_info() -> kernel_core::backend::OpInfo {
         kernel_core::backend::OpInfo::new(
             "local-rank-ordered-bf16-owner-sum",

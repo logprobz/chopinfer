@@ -559,6 +559,7 @@ impl Instance {
             && run.media.is_none()
             && run.engram.is_some()
             && run.dma.is_none()
+            && run.skip.as_ref().is_none_or(|skip| !skip.uses_dma())
             && run.micro.is_none()
             && run.overlap.is_none()
             && !self.taps.text();

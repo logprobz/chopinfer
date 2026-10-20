@@ -415,7 +415,7 @@ fn composed_trace_capacity(
             );
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
-            && s.contains(if dma && !skip {
+            && s.contains(if dma && (!skip || mode == 0) {
                 "chop_comm_owned_sum_round_f32_v1"
             } else {
                 "chop_comm_allreduce_phased_round_f32_v1"

@@ -267,3 +267,36 @@ With concurrent builds, sequential DMA upload time varied from 249.9 to
 for DMA versus 2125.0/2207.8 ms for BF16. CUDA traces place the long gaps
 inside host upload work between driver calls, with short transfer calls.
 The GPU-time route decision does not establish a quiet-host TTFT gain.
+
+### Sparse DMA admission
+
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` also admits the exact upper-skip
+schedule for native Flash TP4, single-request AR text prefill with overlap
+disabled. Unset and `0` retain the SM transport. The adapter recognizes only
+the F32-partial, BF16-result phased contract. It validates every rank's
+original input and output row interval before substituting a DMA call.
+It does not select BF16 partials or change any compute dispatch, KV mutation,
+ring update, index write or head-row copy. Intervals below 512 rows retain
+the composed transport.
+
+Every call uses the shared owner-sum kernel and the runtime's qualified
+peer-copy service. The owner sum calls the same rank-ordered F32 block sum
+as the phased kernel, with one final BF16 conversion. All peer reads join
+before compute or the next call can reuse partials, outputs or inboxes.
+The journal audit checks every compute and DMA span against stream/event
+ordering. Removing the waits must expose an alias. Tests cover full and odd
+chunks, smaller cones, cached attention composition and resource release.
+
+As with full-chunk DMA, sparse DMA uses synchronous Engram uploads. Selecting
+both experimental switches must finish every mapped row upload before the
+first compute launch; the async Engram plan cannot bypass those uploads.
+The execution entry rejects simultaneous DMA and async-gather plans.
+
+The earlier isolated sparse qualification on 2026-10-19 passed all 40 raw
+state artifacts and served token/logprob bits. At offset 0, communication
+exclusive time fell from 316.15 to 200.90 ms and the GPU envelope from
+1361.82 to 1278.20 ms. These are historical measurements on a different
+integration. A fresh state comparison and TTFT ABBA are required for this
+port. The trace analyzer checks owner sums against incoming scatter copies
+and outgoing gather copies on all ranks; independent outgoing scatters can
+legally overlap an owner's sum.

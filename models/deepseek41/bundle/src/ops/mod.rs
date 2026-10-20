@@ -33,10 +33,10 @@ pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
 #[cfg(test)]
 pub(crate) use reduce::with_bf16_gather;
-#[cfg(test)]
-pub(crate) use reduce::with_bf16_partials;
 pub(crate) use reduce::{PeerViews, PrefillDma, ReduceViews, WidenViews};
 pub(crate) use reduce::{bf16_partials_requested, dma_requested};
+#[cfg(test)]
+pub(crate) use reduce::{with_bf16_partials, with_partial_setting};
 #[cfg(test)]
 pub(crate) use reduce::{with_dma, with_dma_setting};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
@@ -121,6 +121,15 @@ impl Ops {
                 top_k: shape.geometry.shape.moe.top_k,
             },
         );
+        if reduce::prefill_only_partials(shape) {
+            let asks = Asks::default();
+            if let Some(reduce) = &mut ops.reduce {
+                if let Err(error) = reduce.prepare_prefill(kernels.backend.as_ref(), shape, &asks) {
+                    ops.missing.push(format!("prefill BF16 partials: {error}"));
+                }
+            }
+            ops.asked.extend(asks.asked());
+        }
         if !reduce::bf16_partials_requested(shape)
             && reduce::requested(shape)
             && shape.ranks() == 4

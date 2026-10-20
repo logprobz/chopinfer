@@ -2,7 +2,13 @@
 
 `CHOPINFER_DEEPSEEK41_BF16_PARTIALS=1` selects the existing shared phased
 BF16 transports for Flash TP4. Unset, `0`, and invalid values retain the
-F32-partial path. This changes bits and remains unqualified and off by
+F32-partial path. `prefill` selects BF16 partials only for prefill phases,
+including short upper-cone intervals and odd final chunks. Decode, target
+verification and draft blocks keep the original F32 transport and deferred
+HC round. The prefill operations own separate protocol state, admitted
+before any execution and reset only after the same quiescent joins.
+
+This changes bits and remains off by
 default. Explicit prefill DMA must be off: its F32 adapter bypasses the
 partial-rounding operation, so selecting both is refused at create.
 
@@ -71,3 +77,11 @@ input hashes and the exact embedded symbols. The GPU fixture checks eager
 calls and graph replays on four ranks, plus 13 full, odd-length, split and
 masked row cases up to 8192 rows. GPU evidence and served accuracy results
 are pending; this experiment is not a default change.
+
+The prefill-only candidate reuses the same registered BF16 operations and
+arithmetic as the all-phase candidate. It adds no kernel or stream fork.
+Its small-row prefill selection does not use the 512-row threshold of the
+optional rounded-output gather: all prefill rows use the selected partial
+format. Fake-host tests cover one-row, short and odd prefills, F32 decode
+fusion, draft/verify reductions and protocol reset ranges. GPU composition
+and quiet performance qualification remain required before selection.

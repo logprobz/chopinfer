@@ -1,5 +1,5 @@
 use super::*;
-use crate::ops::{with_bf16_gather, with_bf16_partials, with_dma};
+use crate::ops::{with_bf16_gather, with_bf16_partials, with_dma, with_partial_setting};
 
 const PREFIX: &str = "chop_comm_allreduce_phased_";
 
@@ -205,6 +205,15 @@ fn bf16_partials_reset_before_a_c1_graph_replay() {
 
 #[test]
 fn bf16_partials_cover_draft_blocks_and_thirty_two_verify_rows() {
+    check_draft_reductions("1");
+}
+
+#[test]
+fn prefill_only_partials_keep_f32_draft_and_verify_reductions() {
+    check_draft_reductions("prefill");
+}
+
+fn check_draft_reductions(mode: &'static str) {
     use bundle_runtime::entry::Bundle;
     use bundle_runtime::fake_host::RecordingSink;
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
@@ -213,7 +222,7 @@ fn bf16_partials_cover_draft_blocks_and_thirty_two_verify_rows() {
     host.drafter.set(true);
     host.speculation.set(Some((5, 32)));
     let record = crate::config::tests::record(&host.shape, host.kv, 8, false);
-    let mut instance = with_bf16_partials(true, || {
+    let mut instance = with_partial_setting(Some(mode), || {
         api().create(
             HostServicesTableV1::new(Rc::new(super::dspark::MappedHost::new(Rc::clone(&host)))),
             &record,
@@ -256,18 +265,30 @@ fn bf16_partials_cover_draft_blocks_and_thirty_two_verify_rows() {
         assert_eq!(sink.draft_tokens().len(), 8);
         if start == 1 {
             let journal = host.device.journal.borrow();
-            assert!(
-                journal
-                    .iter()
-                    .filter(|s| s.starts_with("launch ") && partial_entry(s))
-                    .count()
-                    >= 4 * 80
-            );
-            assert!(
-                !journal
-                    .iter()
-                    .any(|s| s.contains("chop_comm_allreduce_phased_round_f32_v1"))
-            );
+            if mode == "1" {
+                assert!(
+                    journal
+                        .iter()
+                        .filter(|s| s.starts_with("launch ") && partial_entry(s))
+                        .count()
+                        >= 4 * 80
+                );
+                assert!(
+                    !journal
+                        .iter()
+                        .any(|s| s.contains("chop_comm_allreduce_phased_round_f32_v1"))
+                );
+            } else {
+                assert!(
+                    !journal
+                        .iter()
+                        .any(|s| s.starts_with("launch ") && partial_entry(s))
+                );
+                assert!(
+                    journal.iter().any(|s| s.starts_with("launch ")
+                        && s.contains("chop_comm_reduce_scatter_f32_v1"))
+                );
+            }
         }
         if let Some(spans) = reset {
             // Only the three main protocol spans on each rank are reset.
@@ -309,4 +330,79 @@ fn bf16_partials_cover_draft_blocks_and_thirty_two_verify_rows() {
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
+fn prefill_only_partials_keep_small_rows_and_original_decode_fusion() {
+    use bundle_runtime::entry::Bundle;
+    for rows in [1, 63, 8191] {
+        let host = host(true);
+        let mut instance = with_partial_setting(Some("prefill"), || create(&host, 1));
+        host.device.journal.borrow_mut().clear();
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, rows, true),
+            &mut Views::default(),
+        );
+        {
+            let journal = host.device.journal.borrow();
+            assert!(
+                journal
+                    .iter()
+                    .any(|s| s.starts_with("launch ") && partial_entry(s))
+            );
+            assert!(
+                !journal
+                    .iter()
+                    .any(|s| s.starts_with("launch ")
+                        && s.contains("chop_comm_reduce_scatter_f32_v1"))
+            );
+        }
+        let spans = <crate::instance::Instance as Bundle>::instances().with(|table| {
+            table
+                .borrow_mut()
+                .get_mut(instance.handle())
+                .unwrap()
+                .reset_prefill_reduce_next_run()
+        });
+        assert_eq!(spans.len(), 12);
+        host.device.journal.borrow_mut().clear();
+        step(
+            &mut instance,
+            &decode(&[(7, 0, rows, 9)]),
+            &mut Views::default(),
+        );
+        {
+            let journal = host.device.journal.borrow();
+            assert!(
+                !journal
+                    .iter()
+                    .any(|s| s.starts_with("launch ") && partial_entry(s))
+            );
+            assert!(
+                journal
+                    .iter()
+                    .any(|s| s.contains("chop_comm_reduce_scatter_f32_v1"))
+            );
+            assert!(
+                journal
+                    .iter()
+                    .any(|s| s.contains("chop_deepseek41_hc_round_expand_mix_finish_v1"))
+            );
+            let first = journal.iter().position(|s| s.starts_with("zero ")).unwrap();
+            let actual = journal[first..first + spans.len()]
+                .iter()
+                .flat_map(|s| super::shared_overlap::journal_spans(s))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actual,
+                spans
+                    .iter()
+                    .map(|s| (s.buffer.raw, s.offset, s.length))
+                    .collect::<Vec<_>>()
+            );
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
 }

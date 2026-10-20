@@ -7,7 +7,7 @@ use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 const RESET_RUNS: u64 = (1 << 30) / 1024;
 
 impl super::Instance {
-    pub(super) fn admit_bf16_partials(&self) -> Result<(), String> {
+    pub(super) fn admit_bf16_partials(&mut self) -> Result<(), String> {
         if !self
             .ops
             .reduce
@@ -29,7 +29,20 @@ impl super::Instance {
                 }
             }
         }
-        self.log("BF16 partials admitted: rank-ordered F32 sum of rounded partials");
+        let reduce = self
+            .ops
+            .reduce
+            .as_mut()
+            .expect("admitted partial reduction");
+        let scope = if reduce.prefill_only_partials() {
+            "prefill"
+        } else {
+            "all"
+        };
+        reduce.admit_prefill(true);
+        self.log(&format!(
+            "BF16 partials admitted: scope={scope}, rank-ordered F32 sum of rounded partials"
+        ));
         Ok(())
     }
 
@@ -38,7 +51,7 @@ impl super::Instance {
             .ops
             .reduce
             .as_ref()
-            .is_some_and(|ops| ops.prefill_prepared())
+            .is_some_and(|ops| ops.prefill_prepared() && !ops.bf16_partials())
         {
             return;
         }

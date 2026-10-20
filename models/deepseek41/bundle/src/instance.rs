@@ -526,7 +526,7 @@ impl Instance {
                             .ops
                             .reduce
                             .as_ref()
-                            .is_some_and(|ops| ops.prefill_prepared())
+                            .is_some_and(|ops| ops.prefill_prepared() && !ops.bf16_partials())
                 })
                 .filter(|cubin| {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()

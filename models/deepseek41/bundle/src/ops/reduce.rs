@@ -22,15 +22,27 @@ use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use crate::shape::Shape;
 
-fn partials_selected(shape: &Shape, setting: Option<&str>) -> bool {
-    setting == Some("1")
-        && shape.ranks() == 4
-        && shape.geometry == &model_deepseek41_contract::geometry::FLASH
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Partials {
+    Off,
+    All,
+    Prefill,
 }
 
-pub(crate) fn bf16_partials_requested(shape: &Shape) -> bool {
+fn partials_selected(shape: &Shape, setting: Option<&str>) -> Partials {
+    if shape.ranks() != 4 || shape.geometry != &model_deepseek41_contract::geometry::FLASH {
+        return Partials::Off;
+    }
+    match setting {
+        Some("1") => Partials::All,
+        Some("prefill") => Partials::Prefill,
+        _ => Partials::Off,
+    }
+}
+
+fn partials_mode(shape: &Shape) -> Partials {
     #[cfg(test)]
-    return partials_selected(shape, PARTIALS_IN_TESTS.get().then_some("1"));
+    return partials_selected(shape, PARTIALS_IN_TESTS.get());
     #[cfg(not(test))]
     partials_selected(
         shape,
@@ -40,18 +52,31 @@ pub(crate) fn bf16_partials_requested(shape: &Shape) -> bool {
     )
 }
 
+pub(crate) fn bf16_partials_requested(shape: &Shape) -> bool {
+    partials_mode(shape) != Partials::Off
+}
+
+pub(crate) fn prefill_only_partials(shape: &Shape) -> bool {
+    partials_mode(shape) == Partials::Prefill
+}
+
 #[cfg(test)]
-thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
 
 #[cfg(test)]
 pub(crate) fn with_bf16_partials<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
+    with_partial_setting(enabled.then_some("1"), run)
+}
+
+#[cfg(test)]
+pub(crate) fn with_partial_setting<T>(setting: Option<&'static str>, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<&'static str>);
     impl Drop for Reset {
         fn drop(&mut self) {
             PARTIALS_IN_TESTS.set(self.0);
         }
     }
-    let _reset = Reset(PARTIALS_IN_TESTS.replace(enabled));
+    let _reset = Reset(PARTIALS_IN_TESTS.replace(setting));
     run()
 }
 
@@ -66,10 +91,29 @@ fn bf16_partials_are_explicit_and_declare_their_own_arithmetic() {
                 continue;
             };
             for setting in [None, Some("0"), Some(""), Some("invalid")] {
-                assert!(!partials_selected(&shape, setting));
+                assert_eq!(partials_selected(&shape, setting), Partials::Off);
             }
             let selected = geometry == &FLASH && ranks == Ranks::TP4;
-            assert_eq!(partials_selected(&shape, Some("1")), selected);
+            assert_eq!(
+                partials_selected(&shape, Some("1")),
+                if selected {
+                    Partials::All
+                } else {
+                    Partials::Off
+                }
+            );
+            assert_eq!(
+                partials_selected(&shape, Some("prefill")),
+                if selected {
+                    Partials::Prefill
+                } else {
+                    Partials::Off
+                }
+            );
+            assert!(matches!(
+                with_partial_setting(Some("prefill"), || query(&shape)),
+                CommQuery::AllReduceRounded { .. }
+            ));
             assert!(matches!(
                 with_bf16_partials(false, || query(&shape)),
                 CommQuery::AllReduceRounded { .. }
@@ -215,7 +259,7 @@ struct Prefill {
 
 /// The all-reduces of an instance, each prepared for a prefill's rows.
 pub(crate) struct ReduceOps {
-    bf16_partials: bool,
+    bf16_partials: Partials,
     /// Each rank's rounded all-reduce of hidden rows, in rank order.
     reduces: Vec<Prepared<AllReduceBuffers<View>>>,
     /// The embedding's widening into F32 partials.
@@ -231,18 +275,22 @@ pub(crate) struct ReduceOps {
 /// in rank order from zero and rounded once to BF16. The opt-in candidate
 /// declares its additional input rounding through the BF16 query.
 pub(crate) fn query(shape: &Shape) -> CommQuery {
-    if bf16_partials_requested(shape) {
-        return CommQuery::AllReduce {
-            ranks: shape.ranks(),
-            elements: u64::from(shape.dims().hidden),
-            dtype: DType::Bf16,
-            fused_residual: false,
-            fused_rmsnorm: None,
-        };
+    if partials_mode(shape) == Partials::All {
+        return partial_query(shape);
     }
     CommQuery::AllReduceRounded {
         ranks: shape.ranks(),
         elements: u64::from(shape.dims().hidden),
+    }
+}
+
+fn partial_query(shape: &Shape) -> CommQuery {
+    CommQuery::AllReduce {
+        ranks: shape.ranks(),
+        elements: u64::from(shape.dims().hidden),
+        dtype: DType::Bf16,
+        fused_residual: false,
+        fused_rmsnorm: None,
     }
 }
 
@@ -308,7 +356,7 @@ impl ReduceOps {
             )
         })?;
         Ok(ReduceOps {
-            bf16_partials: bf16_partials_requested(shape),
+            bf16_partials: partials_mode(shape),
             reduces,
             widen,
             state,
@@ -326,7 +374,11 @@ impl ReduceOps {
         asks: &Asks,
     ) -> Result<(), Refused> {
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
-        let query = query(shape);
+        let query = if self.bf16_partials == Partials::Prefill {
+            partial_query(shape)
+        } else {
+            query(shape)
+        };
         let reduces = (0..shape.ranks())
             .map(|rank| {
                 asks.ask(format!("reduce.prefill_bf16 rank {rank}"), need, |need| {
@@ -355,7 +407,11 @@ impl ReduceOps {
     }
 
     pub(crate) fn bf16_partials(&self) -> bool {
-        self.bf16_partials
+        self.bf16_partials != Partials::Off
+    }
+
+    pub(crate) fn prefill_only_partials(&self) -> bool {
+        self.bf16_partials == Partials::Prefill
     }
 
     pub(crate) fn admit_prefill(&mut self, admitted: bool) {
@@ -365,7 +421,7 @@ impl ReduceOps {
     }
 
     pub(crate) fn prefill_state(&self) -> Option<std::ops::Range<usize>> {
-        if self.bf16_partials {
+        if self.bf16_partials == Partials::All {
             return Some(0..self.state.len());
         }
         self.prefill
@@ -388,7 +444,11 @@ impl ReduceOps {
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
         let (ops, state) = match &self.prefill {
-            Some(p) if p.admitted && phase.prefill() && rows >= 512 => {
+            Some(p)
+                if p.admitted
+                    && phase.prefill()
+                    && (rows >= 512 || self.prefill_only_partials()) =>
+            {
                 (&p.reduces, p.first_state..self.state.len())
             }
             candidate => (

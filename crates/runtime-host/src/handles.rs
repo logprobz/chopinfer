@@ -85,13 +85,28 @@ impl<T> SlotTableV1<T> {
     }
 
     pub(crate) fn insert(&mut self, value: T) -> SlotResultV1<SlotKeyV1> {
+        self.try_insert_with(|| Ok(value))
+    }
+
+    /// Reserves handle metadata before constructing an externally owned resource.
+    /// A failed constructor leaves the slots unchanged; its generation is retired.
+    pub(crate) fn try_insert_with(
+        &mut self,
+        make: impl FnOnce() -> SlotResultV1<T>,
+    ) -> SlotResultV1<SlotKeyV1> {
         if self.free.is_empty() && self.slots.len() >= MAX_SLOTS_PER_TABLE_V1 {
             // Refuse before taking a generation, so a full table does not burn
             // the process-wide domain down.
             return Err(BundleStatusV1::ResourceExhausted);
         }
         let generation = issue_generation_v1()?;
-        if let Some(slot) = self.free.pop() {
+        let slot = match self.free.last() {
+            Some(slot) => *slot,
+            None => u32::try_from(self.slots.len().max(1))
+                .map_err(|_| BundleStatusV1::ResourceExhausted)?,
+        };
+        let value = make()?;
+        if self.free.pop().is_some() {
             let entry = &mut self.slots[slot as usize];
             entry.generation = generation;
             entry.value = Some(value);
@@ -104,10 +119,6 @@ impl<T> SlotTableV1<T> {
                 value: None,
             });
         }
-        let slot = u32::try_from(self.slots.len()).map_err(|_| {
-            // Unreachable below the slot cap, but the cast must not truncate.
-            BundleStatusV1::ResourceExhausted
-        })?;
         self.slots.push(SlotV1 {
             generation,
             value: Some(value),
@@ -241,6 +252,40 @@ mod tests {
         }
 
         assert_eq!(table.insert(0), Err(BundleStatusV1::ResourceExhausted));
+    }
+
+    #[test]
+    fn a_failed_constructor_preserves_empty_and_reusable_slots() {
+        let mut table = SlotTableV1::<u8>::new();
+        assert_eq!(
+            table.try_insert_with(|| Err(BundleStatusV1::HostError)),
+            Err(BundleStatusV1::HostError)
+        );
+        assert!(table.slots.is_empty());
+        let first = table.insert(7).unwrap();
+        table.remove(first).unwrap();
+        assert_eq!(
+            table.try_insert_with(|| Err(BundleStatusV1::HostError)),
+            Err(BundleStatusV1::HostError)
+        );
+        assert_eq!(table.free, vec![first.slot]);
+        assert_eq!(table.get(first), Err(BundleStatusV1::StaleHandle));
+        let second = table.try_insert_with(|| Ok(9)).unwrap();
+        assert_eq!(second.slot, first.slot);
+        assert_ne!(second.generation, first.generation);
+        assert_eq!(table.get(second), Ok(&9));
+    }
+
+    #[test]
+    fn a_full_table_refuses_before_calling_the_constructor() {
+        let mut table = SlotTableV1::new();
+        for value in 0..MAX_SLOTS_PER_TABLE_V1 - 1 {
+            table.insert(value).unwrap();
+        }
+        assert_eq!(
+            table.try_insert_with(|| panic!("a full table must not create a resource")),
+            Err(BundleStatusV1::ResourceExhausted)
+        );
     }
 
     #[test]

@@ -2153,12 +2153,13 @@ impl GraphExec {
         )
     }
 
-    /// Destroys the executable graph and reports the driver's answer. A
-    /// failed destruction leaves the graph live, so the caller keeps owning
-    /// it and may release it again.
+    /// Fences the context before destroying the executable graph. A failed
+    /// fence or destruction leaves the graph live and owned for a later retry.
+    /// Callers must release graphs before returning their buffers to a pool.
     pub fn release(&self) -> Result<(), CudaError> {
         self.require_live()?;
         set_current_inner(&self.context)?;
+        checked("cuCtxSynchronize", ffi::context_synchronize())?;
         checked("cuGraphExecDestroy", ffi::graph_exec_destroy(self.handle))?;
         self.released.set(true);
         Ok(())

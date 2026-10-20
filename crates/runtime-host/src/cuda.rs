@@ -2459,6 +2459,41 @@ mod graph_capture_tests {
         assert_eq!(runtime_cuda::fake_driver::call_count(GRAPH_EXEC_DESTROY), 2);
         device.release_stream(stream).unwrap();
     }
+
+    #[test]
+    fn graph_teardown_fences_context_before_destroy_and_retains_on_failure() {
+        const CONTEXT_SYNCHRONIZE: i32 = 19;
+        const MEMORY_FREE: i32 = 4;
+        runtime_cuda::fake_driver::reset();
+        let mut device = CudaHostDeviceV1::new().unwrap();
+        let context = device.create_context(0, 0).unwrap();
+        let pool = device.create_memory_pool(context).unwrap();
+        let stream = device.create_stream(context, 0).unwrap();
+        let buffer = device
+            .allocate_device_buffer(pool, Some(stream), 64, 1)
+            .unwrap();
+        device.begin_graph_capture(stream).unwrap();
+        let graph = device.end_graph_capture(stream).unwrap();
+        device.launch_graph(stream, graph).unwrap();
+        let fences = runtime_cuda::fake_driver::call_count(CONTEXT_SYNCHRONIZE);
+        runtime_cuda::fake_driver::fail_next(CONTEXT_SYNCHRONIZE, 719);
+        assert_eq!(device.release_graph(graph), Err(BundleStatusV1::HostError));
+        assert_eq!(runtime_cuda::fake_driver::call_count(GRAPH_EXEC_DESTROY), 0);
+        assert_eq!(runtime_cuda::fake_driver::call_count(MEMORY_FREE), 0);
+        device.launch_graph(stream, graph).unwrap();
+        device.release_graph(graph).unwrap();
+        assert_eq!(
+            runtime_cuda::fake_driver::call_count(CONTEXT_SYNCHRONIZE),
+            fences + 2
+        );
+        assert_eq!(runtime_cuda::fake_driver::call_count(GRAPH_EXEC_DESTROY), 1);
+        assert!(device.launch_graph(stream, graph).is_err());
+        device.release_device_buffer(buffer).unwrap();
+        assert_eq!(runtime_cuda::fake_driver::call_count(MEMORY_FREE), 1);
+        device.release_stream(stream).unwrap();
+        device.release_memory_pool(pool).unwrap();
+        device.release_context(context).unwrap();
+    }
 }
 
 #[cfg(test)]

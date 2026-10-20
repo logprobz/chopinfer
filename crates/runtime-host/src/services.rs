@@ -4392,13 +4392,36 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if state.captures.get(&context) != Some(&key) {
             return Err(BundleStatusV1::InvalidState);
         }
-        let graph_object = match state.device.end_graph_capture(stream_object) {
-            Ok(object) => object,
-            // Ending it again is the only way out of a capture still open.
-            Err(GraphCaptureErrorV1::Capturing(status)) => return Err(status),
-            Err(GraphCaptureErrorV1::Ended(status)) => {
-                state.end_capture_bookkeeping(context);
-                state.capture_free_bytes.remove(&context);
+        // Reserve every fallible host record before creating a driver graph.
+        // Reservation failure leaves capture open and its buffers owned for retry.
+        let order = state.order.acquire()?;
+        let mut ended = false;
+        let registered = {
+            let HostStateV1 { device, graphs, .. } = &mut *state;
+            graphs.try_insert_with(|| {
+                let object = match device.end_graph_capture(stream_object) {
+                    Ok(object) => object,
+                    Err(GraphCaptureErrorV1::Capturing(status)) => return Err(status),
+                    Err(GraphCaptureErrorV1::Ended(status)) => {
+                        ended = true;
+                        return Err(status);
+                    }
+                };
+                Ok(GraphRecordV1 {
+                    object,
+                    context,
+                    order,
+                })
+            })
+        };
+        let graph_key = match registered {
+            Ok(key) => key,
+            Err(status) => {
+                state.order.release(order)?;
+                if ended {
+                    state.end_capture_bookkeeping(context);
+                    state.capture_free_bytes.remove(&context);
+                }
                 return Err(status);
             }
         };
@@ -4419,25 +4442,10 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 i128::from(before) - i128::from(after)
             );
         }
-        let order = match state.order.acquire() {
-            Ok(order) => order,
-            Err(status) => {
-                let _ = state.device.release_graph(graph_object);
-                return Err(status);
-            }
-        };
-        match state.graphs.insert(GraphRecordV1 {
-            object: graph_object,
-            context,
-            order,
-        }) {
-            Ok(key) => Ok(BundleGraphHandleV1::from_parts(key.generation, key.slot)),
-            Err(status) => {
-                let _ = state.order.release(order);
-                let _ = state.device.release_graph(graph_object);
-                Err(status)
-            }
-        }
+        Ok(BundleGraphHandleV1::from_parts(
+            graph_key.generation,
+            graph_key.slot,
+        ))
     }
 
     fn launch_graph(
@@ -6083,6 +6091,84 @@ mod tests {
         assert_eq!(ran.get(), 1, "the launch was consumed by the first wait");
         crate::overlap::run_pending();
         assert_eq!(ran.get(), 11);
+    }
+
+    fn graph_registration_exhaustion_keeps_capture_owned(full_table: bool) {
+        use crate::fake::FakeRefusalV1;
+        use crate::handles::{MAX_SLOTS_PER_TABLE_V1, SlotTableV1};
+        use runtime_bundle_abi::BundleStatusV1;
+        let services = backend();
+        let context = services.select_context(0, 0).unwrap();
+        let pool = services.select_memory_pool(context).unwrap();
+        let stream = services.create_stream(context, 0).unwrap();
+        let buffer = services
+            .allocate_device_buffer(pool, stream, 64, 256)
+            .unwrap();
+        services.begin_graph_capture(stream).unwrap();
+        services.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseGraph));
+        let before = services.with_device(FakeHostDeviceV1::live_object_count);
+        let context_key = slot_key_v1(context.generation(), context.slot()).unwrap();
+        let previous_next = {
+            let mut state = services.state.borrow_mut();
+            let previous = state.order.next;
+            if full_table {
+                let object = state
+                    .streams
+                    .get(slot_key_v1(stream.generation(), stream.slot()).unwrap())
+                    .unwrap()
+                    .object;
+                for _ in 0..MAX_SLOTS_PER_TABLE_V1 - 1 {
+                    state
+                        .graphs
+                        .insert(super::GraphRecordV1 {
+                            object,
+                            context: context_key,
+                            order: 0,
+                        })
+                        .unwrap();
+                }
+            } else {
+                state.order.next = u64::MAX;
+            }
+            previous
+        };
+        assert_eq!(
+            services.end_graph_capture(stream),
+            Err(BundleStatusV1::ResourceExhausted)
+        );
+        assert_eq!(
+            services.with_device(FakeHostDeviceV1::live_object_count),
+            before,
+            "failed metadata reservation must not create an orphan executable"
+        );
+        assert!(services.state.borrow().captures.contains_key(&context_key));
+        assert_eq!(
+            services.release_device_buffer(buffer),
+            Err(BundleStatusV1::InvalidState)
+        );
+        {
+            let mut state = services.state.borrow_mut();
+            state.order.next = previous_next;
+            state.graphs = SlotTableV1::new();
+        }
+        services.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseGraph));
+        let graph = services.end_graph_capture(stream).unwrap();
+        services.release_graph(graph).unwrap();
+        services.release_device_buffer(buffer).unwrap();
+        services.release_stream(stream).unwrap();
+        services.release_memory_pool(pool).unwrap();
+        services.release_context(context).unwrap();
+        assert_eq!(services.with_device(FakeHostDeviceV1::live_object_count), 0);
+    }
+
+    #[test]
+    fn graph_registration_order_exhaustion_cannot_orphan_an_exec() {
+        graph_registration_exhaustion_keeps_capture_owned(false);
+    }
+
+    #[test]
+    fn graph_registration_slot_exhaustion_cannot_orphan_an_exec() {
+        graph_registration_exhaustion_keeps_capture_owned(true);
     }
 
     #[test]

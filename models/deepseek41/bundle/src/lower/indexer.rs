@@ -8,6 +8,7 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Lowering, rows};
 use crate::buffers::{block_live, index_selected, index_status, scratch_rows};
+use crate::indexer_workloads::Route;
 use crate::ops::Lowered;
 use crate::ops::indexer::{CandidateViews, FULL_BLOCK, QueryViews, REINDEX_BLOCK, SelectViews};
 use crate::program::Phase;
@@ -60,7 +61,16 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
-        self.index_select_inner(phase, layer, None)
+        self.index_select_inner(phase, layer, None, Route::Accepted)
+    }
+
+    pub(crate) fn index_select_workload(
+        &self,
+        phase: Phase,
+        layer: u32,
+        route: Route,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        self.index_select_inner(phase, layer, None, route)
     }
 
     pub(super) fn index_select_prefill(
@@ -72,7 +82,7 @@ impl Lowering<'_> {
         if !phase.prefill() || positions.len() != phase.rows() as usize {
             return Err("prefill index metadata does not match its local query rows".into());
         }
-        self.index_select_inner(phase, layer, Some(positions))
+        self.index_select_inner(phase, layer, Some(positions), Route::Accepted)
     }
 
     fn index_select_inner(
@@ -80,6 +90,7 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
         positions: Option<&[i32]>,
+        route: Route,
     ) -> Result<Option<Vec<Lowered>>, String> {
         let Some(ops) = &self.ops.select else {
             return Ok(None);
@@ -138,8 +149,14 @@ impl Lowering<'_> {
         )?;
         let mut launches = Vec::new();
         let hierarchy =
-            crate::Kernels::hierarchical_indexer_enabled(self.shape, self.kv.storage, phase);
-        let select = |calls| {
+            crate::Kernels::hierarchical_indexer_enabled(self.shape, self.kv.storage, phase)
+                || route != Route::Accepted
+                    && matches!(phase, Phase::Verify { rows: 32, items: 8 });
+        let select = |mut calls| {
+            if route == Route::Combined && !reindex {
+                calls = crate::Kernels::tiled_indexer_scores(calls).map_err(error)?;
+                calls = crate::Kernels::cached_prefill_indexer_select(calls).map_err(error)?;
+            }
             if hierarchy {
                 crate::Kernels::hierarchical_indexer_select(
                     calls,

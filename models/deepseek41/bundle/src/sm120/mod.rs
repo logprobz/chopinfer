@@ -103,6 +103,7 @@ mod indexer_mma_tile;
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query_parallel;
+mod indexer_workload_serving;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_glue;
 #[allow(dead_code)]

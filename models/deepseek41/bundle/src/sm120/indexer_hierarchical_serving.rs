@@ -1,4 +1,5 @@
-//! Decode-only ordered merging. Prefill keeps the faster single-CTA merge.
+//! Ordered merging for decode and admitted verify context routes.
+//! Prefill keeps the faster single-CTA merge.
 use crate::ops::Lowered;
 use crate::program::Phase;
 use crate::shape::Shape;

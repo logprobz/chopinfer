@@ -29,10 +29,14 @@ use runtime_bundle_sdk::BatchCodecV1;
 use super::Instance;
 use super::media::PrefillMedia;
 use crate::engram_rows::Hashed;
+use crate::indexer_workloads::Route as IndexerRoute;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
 pub(crate) mod dma;
+#[cfg(test)]
+#[path = "indexer_workload_tests.rs"]
+mod indexer_workload_tests;
 mod micro;
 pub(crate) mod overlap;
 pub(crate) mod skip;
@@ -45,6 +49,7 @@ const VERIFY: usize = 2;
 /// One phase of a step, planned before the step opens.
 struct Run {
     prefill_engram: Option<super::prefill_engram::Plan>,
+    indexer_route: IndexerRoute,
     dma: Option<dma::Plan>,
     skip: Option<skip::Plan>,
     overlap: Option<overlap::Plan>,
@@ -314,6 +319,7 @@ impl Instance {
         images: bool,
         cache_offset: Option<crate::ops::latent::CacheRange>,
         positions: &[i32],
+        indexer_route: IndexerRoute,
     ) -> Result<Programs, BundleStatusV1> {
         let stages = crate::program::stages(self.config.shape.geometry, phase);
         let mut programs = Vec::new();
@@ -354,6 +360,9 @@ impl Instance {
                 }
                 // A prefill of image rows closes their Engram gates.
                 let lowered = match (self.dspark.is_some(), images, stage) {
+                    (_, _, Stage::IndexSelect(layer)) if !phase.prefill() => {
+                        lowering.index_select_workload(phase, layer, indexer_route)
+                    }
                     (true, _, Stage::DsparkFeature(layer)) => {
                         self.dspark_feature(&lowering, phase, layer).map(Some)
                     }
@@ -439,7 +448,9 @@ impl Instance {
             ));
             return Err(BundleStatusV1::Unsupported);
         }
-        let lower = self.missing_ranks(graph);
+        let indexer_route =
+            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
+        let lower = self.missing_ranks(graph, indexer_route);
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);
         }
@@ -457,6 +468,7 @@ impl Instance {
                 media.is_some(),
                 cache,
                 &inputs.positions,
+                indexer_route,
             )?
         };
         let mut tails = Vec::new();
@@ -490,6 +502,7 @@ impl Instance {
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             prefill_engram: None,
+            indexer_route,
             dma: None,
             skip: None,
             overlap: None,
@@ -582,7 +595,7 @@ impl Instance {
     /// Which ranks need their program lowered: every rank of an eager run,
     /// and of a graph run the ranks whose graph of the bucket is not
     /// captured yet.
-    fn missing_ranks(&self, graph: Option<(u32, u32)>) -> Vec<bool> {
+    fn missing_ranks(&self, graph: Option<(u32, u32)>, route: IndexerRoute) -> Vec<bool> {
         let ranks = self.buffers.len();
         let Some((bucket, items)) = graph else {
             return vec![true; ranks];
@@ -594,15 +607,7 @@ impl Instance {
                     bucket,
                     items,
                 };
-                !self.graphs.contains(key)
-                    || self.dspark.as_ref().is_some_and(|device| {
-                        device.cycle.layers.is_empty()
-                            || device
-                                .cycle
-                                .layers
-                                .iter()
-                                .any(|layer| !layer.graphs.contains(key))
-                    })
+                !self.indexer_graph_contains(route, key)
             })
             .collect()
     }
@@ -750,6 +755,9 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        if run.graph.is_some() {
+            self.activate_indexer_graphs(run.indexer_route);
+        }
         if let Some(plan) = &run.skip {
             return plan.execute(self, run.prefill_engram.as_ref());
         }

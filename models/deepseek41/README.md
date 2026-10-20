@@ -68,6 +68,29 @@ prefill uses cached local selection only when the rounded context extent is
 the coarse scorer and original final merge. Other prefill extents retain
 their previous selector; the four-row shared-key scorer remains unselected.
 
+Full C8 and C32 decode batches and verify-32 batches of eight four-row items
+use the 128-position tiled scorer and cached dense local selector from 128K
+through 256K. Verify-32 also uses hierarchical merging from 32K. Contexts
+are the requests' ends rounded to 64-token pages; every request must fit the
+same band. These routes require index top-k 512 and 2048 candidate blocks.
+Partial batches, other verify layouts, shorter contexts and
+contexts above 256K retain the preceding schedule. The 32K decode schedule
+stays unchanged because its measured scorer gain was small and cached
+selection lost time. Prefill retains the separate policy above.
+
+Each schedule has its own graph cache, including both DSpark target pieces.
+Switching contexts retains warm graphs and the original graph-release
+ledger. Source grids, scalar arguments, score strides, candidate publication,
+guard predicates and SIMT repair remain unchanged. At 128K/256K, paired
+eight-source measurements saved 0.225/0.334 ms per C8 step,
+0.299/0.509 ms per C32 step and 0.555/0.804 ms per verify-32 step against
+the preceding schedule. Verify hierarchy alone saved 0.248 ms at 32K.
+These are per-rank indexer times, excluding query projection and attention,
+from seeded independent-request layouts. The qualification also retained
+sealed sampled prefill operands and adversarial repair cases. It establishes
+bitwise indexer output equality; integrated served speed remains a separate
+measurement.
+
 On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
 top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
 475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and

@@ -15,6 +15,7 @@ pub mod encoders;
 pub mod engram_rows;
 #[cfg(test)]
 mod fake_host_tests;
+mod indexer_workloads;
 mod instance;
 pub mod lower;
 pub mod ops;

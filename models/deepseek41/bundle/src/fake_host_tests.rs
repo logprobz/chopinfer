@@ -25,6 +25,7 @@ mod dspark;
 mod fold_stream;
 mod index_mma;
 mod index_query;
+pub(crate) mod indexer_workloads;
 mod media;
 mod moe_pipeline;
 mod norm_quantize;

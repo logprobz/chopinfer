@@ -336,6 +336,7 @@ impl conformance::Startup for Served {
                         .collect(),
                     maximum_draft_items: Some(model_glm5next_contract::contract::DRAFT_ITEMS),
                     narrow_rows: false,
+                    exact_graphs: false,
                 }),
             }
         };

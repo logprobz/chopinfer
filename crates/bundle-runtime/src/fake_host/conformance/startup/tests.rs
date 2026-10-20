@@ -234,6 +234,7 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
                 row_buckets: vec![2, 4],
                 maximum_draft_items: matches!(REFUSE, LIMITED | UNDERSTATED).then_some(2),
                 narrow_rows: false,
+                exact_graphs: false,
             }),
         };
         vec![serving("tp1-ar", 0), serving("tp1-mtp", 3)]
@@ -323,6 +324,7 @@ fn every_profile_creates_describes_and_runs_the_hosts_warmup() {
             maximum_draft_tokens: 3,
             step_rows: 32,
             drafting_items: None,
+            exact_graphs: false,
         }
     );
     assert_eq!(mtp.verify_keys, keys(&warmup));

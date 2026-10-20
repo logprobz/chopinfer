@@ -158,6 +158,7 @@ impl conformance::Startup for Served {
                     row_buckets: VERIFY_ROW_BUCKETS.to_vec(),
                     maximum_draft_items: None,
                     narrow_rows: false,
+                    exact_graphs: false,
                 }),
             }
         };

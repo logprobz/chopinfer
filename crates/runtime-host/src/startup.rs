@@ -831,6 +831,7 @@ mod wave_tests {
             maximum_draft_tokens: 7,
             step_rows: 32,
             drafting_items: None,
+            exact_graphs: false,
         }
     }
 

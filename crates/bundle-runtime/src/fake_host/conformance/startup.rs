@@ -61,6 +61,8 @@ pub struct PackageSpeculation {
     pub maximum_draft_items: Option<u32>,
     /// The package declares `chop.speculative-narrow-rows.v1`.
     pub narrow_rows: bool,
+    /// The package requires exact row and item graph warmup.
+    pub exact_graphs: bool,
 }
 
 impl Serving {
@@ -116,6 +118,7 @@ impl Serving {
             maximum_draft_tokens: tokens,
             step_rows: rows,
             drafting_items: package.maximum_draft_items.map(|items| items as usize),
+            exact_graphs: package.exact_graphs,
         })
     }
 

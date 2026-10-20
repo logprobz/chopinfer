@@ -1,8 +1,8 @@
 //! Shapes that startup warmup drives through the engine so that a bundle
-//! captures every verify graph before serving.
+//! captures selected verify graphs before serving.
 //!
-//! Graph buckets are powers of two, of rows and of items alike, as the
-//! shared bundle runtime keys its graphs. Warmup requests pin their draft
+//! Most graph keys round rows and items to powers of two. Exact graphs
+//! retain both counts. Warmup requests pin their draft
 //! tokens (`EngineRequest::with_pinned_draft_tokens`), so one decode step of
 //! a wave reaches one (row bucket, item bucket) shape.
 use std::collections::BTreeMap;
@@ -18,6 +18,8 @@ pub struct VerifyWarmup {
     pub step_rows: usize,
     /// Most items that draft in one step, when limited.
     pub drafting_items: Option<usize>,
+    /// Graph keys retain exact row and item counts instead of rounded buckets.
+    pub exact_graphs: bool,
 }
 
 /// One verify graph shape and a wave that reaches it: the wave's requests
@@ -34,8 +36,9 @@ fn bucket(count: usize) -> usize {
     count.max(1).next_power_of_two()
 }
 
-/// Every verify shape a step of at most `sequences` decoding requests can
-/// take, each with the smallest wave that reaches it. A step's rows are one
+/// Rounded keys use the smallest wave that reaches each shape. Exact keys
+/// cover every reachable width at the concurrency waves, plus one wave for
+/// each reachable drafter count. Other exact keys remain lazy. A step's rows are one
 /// per decoding request plus its drafts; at least one request verifies, the
 /// rows stay within `step_rows`, and at most `drafting_items` draft.
 pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape> {
@@ -48,7 +51,11 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
     extras.sort_unstable();
     extras.dedup();
     let mut shapes = BTreeMap::new();
+    let waves = super::waves(sequences);
     for requests in 1..=sequences {
+        if warmup.exact_graphs && !waves.contains(&requests) {
+            continue;
+        }
         let Some(room) = warmup.step_rows.checked_sub(requests) else {
             break;
         };
@@ -71,8 +78,12 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
             if count > drafting {
                 continue;
             }
-            // Keyed by item bucket first, so the waves grow.
-            let key = (bucket(requests), bucket(requests + total));
+            // Keyed by items first, so the waves grow.
+            let key = if warmup.exact_graphs {
+                (requests, requests + total)
+            } else {
+                (bucket(requests), bucket(requests + total))
+            };
             shapes.entry(key).or_insert_with(|| {
                 let mut drafts = vec![0; requests];
                 let (mut left, mut index) = (total, 0);
@@ -84,6 +95,22 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
                 }
                 drafts
             });
+        }
+    }
+    // The width witnesses above minimize drafting requests. Add one wave
+    // per reachable drafter count so its graph is warmed as well.
+    if warmup.exact_graphs
+        && let Some(&extra) = extras.first()
+    {
+        let limit = sequences.min(warmup.drafting_items.unwrap_or(sequences));
+        for requests in 1..=limit {
+            let Some(rows) = requests.checked_mul(extra + 1) else {
+                break;
+            };
+            if rows > warmup.step_rows {
+                break;
+            }
+            shapes.insert((requests, rows), vec![extra; requests]);
         }
     }
     shapes
@@ -116,6 +143,7 @@ mod tests {
             maximum_draft_tokens: 7,
             step_rows,
             drafting_items,
+            exact_graphs: false,
         }
     }
 
@@ -124,6 +152,70 @@ mod tests {
             .iter()
             .map(|shape| (shape.row_bucket, shape.item_bucket))
             .collect()
+    }
+
+    #[test]
+    fn exact_widths_cover_concurrency_waves_and_every_drafter_count() {
+        for (sequences, count) in [(1, 5), (8, 63), (16, 86), (32, 86)] {
+            let warmup = VerifyWarmup {
+                item_rows: (2..=6).collect(),
+                maximum_draft_tokens: 5,
+                step_rows: 32,
+                drafting_items: None,
+                exact_graphs: true,
+            };
+            let shapes = verify_shapes(sequences, &warmup);
+            assert_eq!(shapes.len(), count);
+            for requests in super::super::waves(sequences) {
+                for rows in requests + 1..=(requests * 6).min(32) {
+                    assert!(keys(&shapes).contains(&(rows, requests)));
+                }
+            }
+            for drafting in 1..=sequences.min(16) {
+                assert!(shapes.iter().any(|s| s.drafts == vec![1; drafting]));
+            }
+            for shape in shapes {
+                assert_eq!(shape.item_bucket, shape.drafts.len());
+                assert_eq!(
+                    shape.row_bucket,
+                    shape.drafts.len() + shape.drafts.iter().sum::<usize>()
+                );
+                assert!(shape.row_bucket <= 32);
+            }
+        }
+    }
+
+    #[test]
+    fn exact_widths_respect_sparse_depths_and_drafter_limits() {
+        let warmup = VerifyWarmup {
+            exact_graphs: true,
+            ..dflash(16, Some(2))
+        };
+        let shapes = verify_shapes(4, &warmup);
+        let mut expected = std::collections::BTreeSet::new();
+        for requests in [1, 2, 4] {
+            for first in [0, 1, 3, 7] {
+                for second in [0, 1, 3, 7] {
+                    let drafted = usize::from(first != 0) + usize::from(second != 0);
+                    let rows = requests + first + second;
+                    if drafted > 0 && drafted <= requests && rows <= 16 {
+                        expected.insert((requests, rows));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            keys(&shapes),
+            expected
+                .into_iter()
+                .map(|(items, rows)| (rows, items))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            shapes
+                .iter()
+                .all(|s| s.drafts.iter().filter(|&&d| d > 0).count() <= 2)
+        );
     }
 
     #[test]

@@ -335,6 +335,7 @@ impl conformance::Startup for Served {
                 row_buckets: (2..=model_deepseek41_contract::serving::MAX_VERIFY_ROWS).collect(),
                 maximum_draft_items: None,
                 narrow_rows: false,
+                exact_graphs: true,
             }),
         }
         };

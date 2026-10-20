@@ -160,6 +160,7 @@ impl conformance::Startup for Served {
                     row_buckets: model_qwen38_contract::contract::VERIFY_ROW_BUCKETS.to_vec(),
                     maximum_draft_items: Some(model_qwen38_contract::contract::DRAFT_ITEMS),
                     narrow_rows: true,
+                    exact_graphs: false,
                 }),
             }
         };

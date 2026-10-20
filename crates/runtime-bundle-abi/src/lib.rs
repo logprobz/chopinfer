@@ -3924,3 +3924,7 @@ pub const RECURRENT_STATE_IN_PLACE_CAPABILITY_V1: &str = "chop.recurrent-state.i
 /// the manifest maximum. Wider instances use the manifest maximum. This
 /// preserves small-instance row budgets without model-specific host policy.
 pub const SPECULATIVE_NARROW_ROWS_CAPABILITY_V1: &str = "chop.speculative-narrow-rows.v1";
+
+/// Verify graph keys retain exact row and item counts. Startup warms each
+/// reachable width at its concurrency waves and each reachable drafter count.
+pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact-graphs.v1";

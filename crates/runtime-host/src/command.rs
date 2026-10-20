@@ -2435,6 +2435,14 @@ fn serve_v1(
             maximum_draft_tokens: speculation.maximum_draft_tokens(),
             step_rows: speculation.maximum_verify_tokens(),
             drafting_items: speculation.maximum_draft_items(),
+            exact_graphs: package
+                .manifest()
+                .resource_requirements()
+                .required_capabilities()
+                .iter()
+                .any(|id| {
+                    id.as_str() == runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1
+                }),
         });
     let policy = deployment
         .policy()
@@ -5279,6 +5287,9 @@ impl ArgumentsV1 {
             .chain(std::iter::once(
                 runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1,
             ))
+            .chain(std::iter::once(
+                runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1,
+            ))
             .chain(std::iter::once(crate::executor::MEDIA_INPUTS_CAPABILITY_V1))
             .chain(std::iter::once(
                 crate::executor::POSITION_AXES_CAPABILITY_V1,
@@ -8020,6 +8031,7 @@ mod tests {
                 runtime_bundle_abi::SERVED_CONTEXT_CAPABILITY_V1,
                 runtime_bundle_abi::SERVED_ITEMS_CAPABILITY_V1,
                 runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
+                runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1,
                 runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1,
                 crate::executor::SPECULATIVE_CAPABILITY_V1,
                 runtime_bundle_abi::STATE_PER_ITEM_CAPABILITY_V1,
@@ -8069,6 +8081,8 @@ mod tests {
                 &BundleOpaqueId::new(runtime_bundle_abi::SERVED_CONTEXT_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::SERVED_ITEMS_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::SERVING_KV_CAPABILITY_V1).unwrap(),
+                &BundleOpaqueId::new(runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1)
+                    .unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1)
                     .unwrap(),
                 &BundleOpaqueId::new(crate::executor::SPECULATIVE_CAPABILITY_V1).unwrap(),

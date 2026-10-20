@@ -125,9 +125,10 @@ pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleErro
 /// snapshots restored into the state slot, the planned text image and the
 /// rows it gathers from the views it maps (the Engram tables), and the chat
 /// frontend.
-pub const CAPABILITIES: [&str; 16] = [
+pub const CAPABILITIES: [&str; 17] = [
     runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
     runtime_bundle_abi::SPECULATIVE_CAPABILITY_V1,
+    runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1,
     runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,

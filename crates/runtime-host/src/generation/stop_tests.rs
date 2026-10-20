@@ -1273,6 +1273,7 @@ fn startup_warmup_uses_real_group_admission_with_a_small_kv_pool() {
                 maximum_draft_tokens: 3,
                 step_rows: 32,
                 drafting_items: Some(4),
+                exact_graphs: false,
             }),
         ))
         .unwrap();
@@ -1345,6 +1346,7 @@ fn startup_warmup_recomputes_forced_preemptions() {
             maximum_draft_tokens: 3,
             step_rows: 32,
             drafting_items: Some(4),
+            exact_graphs: false,
         }),
     ));
     assert!(result.is_ok(), "{result:?}");

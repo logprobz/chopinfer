@@ -23,6 +23,8 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-host/src/page_cache.rs",
     "crates/runtime-host/src/signals.rs",
     "crates/runtime-host/src/host_rows.rs",
+    // SAFETY-REVIEWED: private anonymous mappings owned by mutex-protected shards.
+    "crates/runtime-host/src/host_rows/resident/storage.rs",
     "crates/runtime-host/tests/host_mapped_rows_cost.rs",
     "crates/runtime-bundle/src/atomic_publish.rs",
     "crates/runtime-bundle-abi/src/loader.rs",
@@ -111,12 +113,7 @@ fn audit_unsafe_file(path: &Path) -> TaskResult {
     let reviewed = REVIEWED_UNSAFE_FILES.iter().any(|item| *item == path_text);
     let lines: Vec<_> = source.lines().collect();
     for (index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let callback_type = path == Path::new("crates/runtime-bundle-abi/src/lib.rs")
-            && (trimmed.starts_with("pub type ")
-                || (trimmed.starts_with("unsafe extern \"C\" fn(")
-                    && index > 0
-                    && lines[index - 1].trim_end().ends_with('=')));
+        let callback_type = callback_type_declaration(path, &lines, index);
         if callback_type {
             continue;
         }
@@ -142,4 +139,47 @@ fn audit_unsafe_file(path: &Path) -> TaskResult {
         }
     }
     Ok(())
+}
+
+// Callback type declarations require unsafe callers but execute no operation.
+fn callback_type_declaration(path: &Path, lines: &[&str], index: usize) -> bool {
+    let abi_types = [
+        "crates/runtime-bundle-abi/src/lib.rs",
+        "crates/runtime-bundle-abi/src/device_results/sink.rs",
+        "crates/runtime-bundle-abi/src/prefill.rs",
+    ];
+    let trimmed = lines[index].trim_start();
+    abi_types.iter().any(|name| path == Path::new(name))
+        && (trimmed.starts_with("pub type ")
+            || (trimmed.starts_with("unsafe extern \"C\" fn(")
+                && index > 0
+                && lines[index - 1].trim_end().ends_with('=')))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_aliases_do_not_exempt_unsafe_function_bodies() {
+        let inline = ["pub type Callback = unsafe extern \"C\" fn();"];
+        let split = ["pub type Callback =", "    unsafe extern \"C\" fn();"];
+        let body = ["unsafe extern \"C\" fn callback() {}"];
+        for name in [
+            "crates/runtime-bundle-abi/src/lib.rs",
+            "crates/runtime-bundle-abi/src/device_results/sink.rs",
+            "crates/runtime-bundle-abi/src/prefill.rs",
+        ] {
+            let path = Path::new(name);
+            assert!(callback_type_declaration(path, &inline, 0));
+            assert!(callback_type_declaration(path, &split, 1));
+            assert!(!callback_type_declaration(path, &body, 0));
+        }
+        assert!(!callback_type_declaration(
+            Path::new("other.rs"),
+            &inline,
+            0
+        ));
+        assert!(!callback_type_declaration(Path::new("other.rs"), &split, 1));
+    }
 }

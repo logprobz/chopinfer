@@ -4851,6 +4851,7 @@ fn mapped_row_set_registration_owns_names_and_preserves_older_tails() {
         (&good as *const _, 0),
         (&good as *const _, 65),
     ] {
+        // SAFETY-REVIEWED: invalid pointer/count pairs are rejected before reading planes.
         assert_eq!(
             unsafe { call(table.services().user_data, pointer, count) },
             abi::BundleStatusV1::InvalidArgument
@@ -4873,6 +4874,7 @@ fn mapped_row_set_registration_owns_names_and_preserves_older_tails() {
             ..good
         },
     ] {
+        // SAFETY-REVIEWED: bad is live; invalid fields are rejected before reading its name.
         assert_eq!(
             unsafe { call(table.services().user_data, &bad, 1) },
             abi::BundleStatusV1::InvalidArgument
@@ -4885,6 +4887,7 @@ fn mapped_row_set_registration_owns_names_and_preserves_older_tails() {
             ..good
         },
     ];
+    // SAFETY-REVIEWED: both records are live; the second record's invalid size is rejected.
     assert_eq!(
         unsafe { call(table.services().user_data, bad_second.as_ptr(), 2) },
         abi::BundleStatusV1::InvalidArgument

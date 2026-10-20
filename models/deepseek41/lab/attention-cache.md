@@ -61,6 +61,39 @@ checks required function shared-memory opt-ins, launch shapes, scratch
 bounds, alias refusals, the snapshot's complete module/symbol inventory,
 and strict receipt coverage with negative parser controls.
 
-The new artifact family is `latent_decode_cache` in the model lab. Existing
-locks and serving journals stay unchanged. GPU bitwise qualification and
-performance results are pending; the candidate has no serving route.
+The new artifact family is `latent_decode_cache`. Its serving module keeps
+the qualified lab cubin byte-for-byte. Existing kernel locks stay unchanged.
+On 2026-10-20, the pair passed 48 matrix and 168 boundary cases,
+432 poison replays, 216 instrumented comparisons, 144 captured-graph
+comparisons and eight negative controls. All 144 source or attention timing
+cases improved. Across the twelve context/format cases in each bucket,
+median cold full-attention ratios were 0.454 at C1, 0.500 at decode-8,
+0.426 at verify-6 and 0.511 at verify-32. Repeated-graph ratios were 0.466,
+0.557, 0.486 and 0.562 respectively. Each full-attention timing includes
+cache construction and the original merge. The bitwise selection is limited
+to these four measured phase/row buckets; other rows retain their current
+source path. No prefill split count or operation order changes.
+
+Serving allocates a separate 21,053,440-byte cache per rank at native Flash
+TP4. Only decode rows 1 and 8 and verify rows 6 and 32 select it. The cache
+is reused on the attention stream after its previous consumer, with no new
+fork or cross-stream reuse. Each selected layer adds one producer launch;
+the ordered merge and all other launches retain their bindings. CPU tests
+check the measured buckets, unmeasured fallbacks, shared-memory opt-ins,
+allocation lifetimes and exact native validation. Serving throughput still
+needs an end-to-end measurement.
+
+The journal audit checks all eight text/media topology-layout lifecycles
+against their pinned baseline and a paired receipt covering the measured
+and fallback row buckets. It preserves all retained launch arguments,
+spans, events, waits and replay order under a resource-handle bijection.
+The existing proportional AR graph splitter can move a cut when producers
+add execution units; the audit checks its exact rule, node counts and whole
+fork/join regions. DSpark keeps its cut immediately before the first mapped
+row consumer. Fourteen journal mutations must fail before pins are updated.
+
+A layer-weighted projection from repeated-graph full-attention medians saves
+0.535 ms at C1, 0.460 ms at decode-8, 0.547 ms at verify-6 and 0.988 ms at
+verify-32 per rank and step. This sums two window, twenty 64-key-page mixed
+and eighteen 32-key-page mixed layers. It includes cache construction and
+the ordered merge; it is a microbenchmark projection, not served throughput.

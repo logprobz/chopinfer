@@ -27,7 +27,9 @@ pub fn empty(base: &mxfp8_fold::Entry, rows: u32) -> Input {
     }
 }
 fn pattern(n: u64, salt: u32, scale: bool) -> Vec<u8> {
-    let seed = (0..4096_u32)
+    // A prime period longer than every tested row and column count avoids
+    // repeating whole rows at the kernel tile boundaries.
+    let seed = (0..65521_u32)
         .map(|i| {
             let v = i.wrapping_mul(747796405).wrapping_add(salt).rotate_left(7);
             if scale {
@@ -172,4 +174,17 @@ fn captured_inputs_match_shapes() {
         count += inputs.len();
     }
     assert_eq!(count, 24);
+}
+
+#[test]
+fn synthetic_rows_are_distinct_across_tile_boundaries() {
+    for base in family::bases() {
+        let stride = base.query.activation_row_stride as usize;
+        let bytes = pattern((64 * stride) as u64, 173, false);
+        let rows = bytes
+            .chunks_exact(stride)
+            .map(|r| &r[..32])
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(rows.len(), 64, "synthetic rows repeat for {:?}", base.query);
+    }
 }

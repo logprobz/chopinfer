@@ -751,7 +751,10 @@ fn graph_lifecycle(capacity: Option<usize>) {
     }
     if let Some(capacity) = capacity {
         let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
-        assert!(stats.denied > 0 && stats.released > 0);
+        // A full ledger lowers new shapes eagerly and keeps warmed graphs.
+        assert!(stats.denied > 0);
+        assert_eq!((stats.released, stats.epoch), (0, 0));
+        assert!(!stats.pressure);
         assert!(stats.peak <= capacity);
         assert_eq!(stats.reserved, 0);
     }

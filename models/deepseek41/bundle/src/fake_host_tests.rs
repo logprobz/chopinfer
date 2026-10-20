@@ -960,11 +960,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// These short-row lifecycles retain every launch, operand and dependency.
 /// Qualified prefill scoring adds one module, eight resolves and nine
 /// releases per native rank. These small-row launches remain unchanged.
+/// At four ranks the grouped 8192-row down binding adds one module, two
+/// resolves, one configure and three releases per rank; no short-row launch
+/// uses it.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17351, 0xd8c949546bed2ab7),
+        (17356, 0x719660e33daf99ae),
     ),
     (
         "deepseek41-flash-tp1",
@@ -974,7 +977,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34889, 0xab1bccdcf810db1b),
+        (34899, 0xf08dbf9e82fc0808),
     ),
     (
         "deepseek41-flash-tp2",
@@ -984,12 +987,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (75003, 0x81e2b36f5e5fe4fd),
+        (75047, 0x6912300b3fef2ffb),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (72907, 0xedff0dfd99638809),
+        (72931, 0x78cf1b4593944116),
     ),
 ];
 

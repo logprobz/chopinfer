@@ -342,9 +342,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// rank; this shorter image fixture retains every launch and operand.
 /// Qualified prefill scoring adds one module, eight resolves and nine
 /// releases per rank; the small image/text launches remain unchanged.
+/// At four ranks the grouped 8192-row down binding adds one module, two
+/// resolves, one configure and three releases per rank.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22951, 0x2137cc0f0a836698)),
-    (Ranks::TP4, (50883, 0x2caf0054a1973388)),
+    (Ranks::TP2, (22961, 0x2d55491af0fc9a08)),
+    (Ranks::TP4, (50927, 0xf989d1df8036e43c)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

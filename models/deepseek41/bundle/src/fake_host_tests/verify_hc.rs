@@ -4,11 +4,13 @@ use super::*;
 // retain all original operands. Eight and 16 rows retain the unfused HC path.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
+// Resources the prefill query fusion and grouped down binding load before
+// verify only renumber handles in these fragments.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0xfb6a4f817b0b2149)),
-    (8, (8992, 0xea10427872fd2fbd)),
-    (16, (9964, 0x6d88a8c8d24c043f)),
-    (32, (8384, 0x4f86626b609e2718)),
+    (6, (8040, 0x177a9abcf9d5688c)),
+    (8, (8992, 0x30e406ec51041638)),
+    (16, (9964, 0xb7adc824bc14c637)),
+    (32, (8384, 0x4434548ac1a344bc)),
 ];
 
 #[test]

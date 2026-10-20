@@ -97,6 +97,8 @@ mod indexer_cached_serving;
 mod indexer_hierarchical_serving;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_mma;
+#[allow(dead_code, reason = "the build script compiles the measured entries")]
+mod indexer_mma_tile;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -434,7 +436,8 @@ impl crate::Kernels {
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))
             && (!cubin.starts_with("position_mma_")
-                || (cubin.starts_with("position_mma_guard_") && shape.runtime.indexer_mma))
+                || ((cubin.starts_with("position_mma_guard_") || cubin == indexer_mma_tile::CUBIN)
+                    && shape.runtime.indexer_mma))
             && (!cubin.starts_with("position_hierarchical_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("position_select_cached_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("streamed_moe_")
@@ -540,6 +543,7 @@ impl crate::Kernels {
         storage: model_deepseek41_contract::state::KvStorage,
     ) -> bool {
         !(cubin.starts_with("position_mma_guard_fast_")
+            || cubin == indexer_mma_tile::CUBIN
             || cubin.starts_with("position_hierarchical_")
             || cubin.starts_with("position_select_cached_"))
             || storage == model_deepseek41_contract::state::KvStorage::Native

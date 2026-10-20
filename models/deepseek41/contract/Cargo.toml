@@ -171,3 +171,7 @@ path = "examples/sm120/build_position_select_cached.rs"
 [[example]]
 name = "build_prefill_mxfp8_compact"
 path = "examples/sm120/build_prefill_mxfp8_compact.rs"
+
+[[example]]
+name = "build_position_mma_tile"
+path = "examples/sm120/build_position_mma_tile.rs"

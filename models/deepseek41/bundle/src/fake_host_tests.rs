@@ -947,6 +947,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// releases per rank. This lifecycle keeps every launch and allocation;
 /// only resource identities move. Larger-row projection graphs are audited
 /// separately with the same loaded catalog in reference and serving modes.
+/// The tiled indexer adds twelve resolves and thirteen releases per native
+/// rank; these short-context fixtures retain their prior indexer launches.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

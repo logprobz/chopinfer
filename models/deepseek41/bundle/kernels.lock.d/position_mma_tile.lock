@@ -1,0 +1,1241 @@
+[
+  {
+    "name": "position_mma_tile_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode1_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode2_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "trace",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "trace",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode1_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode2_trace0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "trace",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "q",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "qcodes_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qscales_offset"
+          },
+          {
+            "kind": "U64",
+            "name": "qstatus_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "trace",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "ce9b259fb0e7f766841a426805f795fe2256cc2a57685ebddfcdb89466eca6eb",
+    "resources": [
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace0_v1",
+        "registers": 79,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace0_v1",
+        "registers": 95,
+        "shared_static_bytes": 18560,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode1_trace0_v1",
+        "registers": 69,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode2_trace0_v1",
+        "registers": 63,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace1_v1",
+        "registers": 100,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace1_v1",
+        "registers": 118,
+        "shared_static_bytes": 18560,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace0_v1",
+        "registers": 76,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace0_v1",
+        "registers": 95,
+        "shared_static_bytes": 18560,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode1_trace0_v1",
+        "registers": 67,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode2_trace0_v1",
+        "registers": 60,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile1_mode0_trace1_v1",
+        "registers": 98,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_scores_v3_live_v1_mma_fp4_tile4_mode0_trace1_v1",
+        "registers": 118,
+        "shared_static_bytes": 18560,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -47,8 +47,109 @@ fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
     api()
         .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
         .unwrap()
+        .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+        .unwrap()
         .create(services, &record)
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+}
+
+#[test]
+fn device_result_defaults_preserve_the_negotiated_upper_skip_schedule() {
+    use model_deepseek41_contract::prefill_profile::{CHUNK, SKIP, declarations};
+    let declaration = runtime_bundle::model_options::ModelOptionsV1 {
+        schema: runtime_bundle::model_options::CAPABILITY.into(),
+        options: declarations().into(),
+    };
+    let capture = |device_results: bool, dspark: bool, skip: bool| {
+        // These are the resolved options that the host also puts in health.
+        let options = declaration
+            .resolve(&BTreeMap::from([
+                (CHUNK.into(), "2048".into()),
+                (SKIP.into(), skip.to_string()),
+            ]))
+            .unwrap();
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(dspark);
+        if dspark {
+            host.speculation.set(Some((5, 32)));
+        }
+        let mut instance = crate::device_results::with_override(
+            Some(if device_results { "1" } else { "0" }),
+            || {
+                create_profile(
+                    &host,
+                    options[CHUNK].as_u64().unwrap() as u32,
+                    options[SKIP].as_bool().unwrap(),
+                )
+            },
+        );
+        assert!(instance.supports_device_results());
+        let mut captures = Vec::new();
+        for (start, rows, terminal) in [(0, 2048, false), (2048, 1024, true)] {
+            let original = prompt(1, 0, start, rows, terminal);
+            let request = encode(
+                &original,
+                &[Boundary {
+                    request_id: 1,
+                    prompt_tokens: 3072,
+                    chunk_end: start + rows,
+                    chunk_tokens: options[CHUNK].as_u64().unwrap() as u32,
+                }],
+            )
+            .unwrap();
+            let before = host.device.journal.borrow().len();
+            let mut sink = Sink::default();
+            instance.execute_prefill(&request, &mut sink).unwrap();
+            let journal = host.device.journal.borrow();
+            let launches = journal[before..]
+                .iter()
+                .filter_map(|line| {
+                    // Exclude resource identities, retain symbol and launch shape.
+                    let launch = line.strip_prefix("launch ")?.split_once(' ')?.1;
+                    Some(launch.split_once(" [")?.0.to_owned())
+                })
+                .collect::<Vec<_>>();
+            assert!(!launches.is_empty());
+            let views = sink
+                .views
+                .iter()
+                .map(|view| {
+                    let view = view.raw();
+                    (
+                        view.first_item_index,
+                        view.row_count,
+                        view.live_width,
+                        view.row_stride_elements,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(views.len(), usize::from(terminal));
+            captures.push((launches, views));
+            drop(journal);
+            instance.commit().unwrap();
+            assert_eq!(
+                crate::instance::ledger_state(instance.handle(), 0),
+                (Some((1, start + rows)), false)
+            );
+        }
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        captures
+    };
+    for dspark in [false, true] {
+        let legacy = capture(false, dspark, true);
+        let collected = capture(true, dspark, true);
+        assert_eq!(collected, legacy);
+        let full = capture(true, dspark, false);
+        for chunk in 0..2 {
+            assert_ne!(
+                collected[chunk].0, full[chunk].0,
+                "the reported upper-skip option must change the applied schedule"
+            );
+            assert_eq!(collected[chunk].1, full[chunk].1);
+        }
+    }
 }
 
 #[test]

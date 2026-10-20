@@ -1210,7 +1210,7 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
 }
 
 /// An optional export is negotiated independently of the legacy wire version.
-/// Device-result execution keeps its existing entry point and full schedule.
+/// Its prefill envelope keeps the existing result sink and execution schedule.
 fn negotiated_prefill_request(
     instance: &impl BundleExecutionV1,
     request: Vec<u8>,
@@ -1733,15 +1733,13 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
             reason = "declare before emitted buffers so their destruction is timed"
         )]
         let _convert_phase;
-        let metadata = self
-            .device_results_v1()
-            .then(|| cycle_metadata(items, self.state_slots.as_ref()))
-            .flatten();
-        let request = if metadata.is_none() {
-            negotiated_prefill_request(&self.instance, request, items)?
-        } else {
-            request
-        };
+        let request = negotiated_prefill_request(&self.instance, request, items)?;
+        // The negotiated-prefill ABI has no device-result sink. Preserve its
+        // schedule and collection boundary; decode/verify retain device results.
+        let metadata = (!request.starts_with(runtime_bundle_sdk::prefill::MAGIC)
+            && self.device_results_v1())
+        .then(|| cycle_metadata(items, self.state_slots.as_ref()))
+        .flatten();
         let emitted = self
             .instance
             .execute_with_device_sampling(
@@ -2374,6 +2372,8 @@ fn decode_rows_v1(
 
 #[cfg(test)]
 mod tests {
+    mod negotiated_prefill;
+
     use std::collections::{BTreeMap, BTreeSet};
     use std::rc::Rc;
 
@@ -3311,6 +3311,8 @@ mod tests {
     struct FakeExecutionV1 {
         prefill_chunk: u32,
         envelopes: Vec<Vec<u8>>,
+        device_results: bool,
+        device_metadata: Vec<bool>,
         captured: Vec<(u64, u64)>,
         emitted: Vec<OwnedLogitsRowV1>,
         execute_error: Option<BundleAbiError>,
@@ -3333,6 +3335,8 @@ mod tests {
             Self {
                 prefill_chunk: 0,
                 envelopes: Vec::new(),
+                device_results: false,
+                device_metadata: Vec::new(),
                 captured: Vec::new(),
                 emitted,
                 execute_error: None,
@@ -3366,6 +3370,26 @@ mod tests {
     impl BundleExecutionV1 for FakeExecutionV1 {
         fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
             Ok(self.prefill_chunk)
+        }
+
+        fn supports_device_results(&self) -> bool {
+            self.device_results
+        }
+
+        fn execute_with_device_sampling(
+            &mut self,
+            request: &[u8],
+            limits: ResultSinkLimitsV1,
+            items: &[ModelBatchItem],
+            sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
+            metadata: Option<super::DeviceCycleMetadataV1>,
+        ) -> Result<BatchEmissionsV1, BundleAbiError> {
+            self.device_metadata.push(metadata.is_some());
+            // The existing prefill ABI does not carry a device-result sink.
+            if metadata.is_some() && request.starts_with(runtime_bundle_sdk::prefill::MAGIC) {
+                return Err(BundleAbiError::Status(BundleStatusV1::Unsupported));
+            }
+            self.execute_with_sampling(request, limits, items, sampler)
         }
 
         fn last_execute_refusal(&self) -> Option<&str> {

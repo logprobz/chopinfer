@@ -17,6 +17,9 @@ use runtime_bundle_abi::{
     BundleAbiError, BundleGraphHandleV1, BundleStreamHandleV1, HostServicesV1,
 };
 
+mod budget;
+pub use budget::{GraphReservation, GraphStats};
+
 use crate::geometry::{BundleGeometry, Items, Ranks};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -93,6 +96,7 @@ pub fn pieces(launches: usize) -> Vec<Range<usize>> {
 #[derive(Debug, Default)]
 struct Ledger {
     graphs: Vec<BundleGraphHandleV1>,
+    budget: budget::Budget,
     /// Counts releases of the whole ledger. A cache whose lookups predate the
     /// last one holds released graphs and treats itself as empty.
     epoch: u64,
@@ -103,8 +107,12 @@ impl Ledger {
     fn release_to(&mut self, services: &HostServicesV1, keep: usize) -> Result<(), BundleAbiError> {
         while self.graphs.len() > keep {
             let graph = self.graphs[self.graphs.len() - 1];
-            services.release_graph(graph)?;
+            if let Err(error) = services.release_graph(graph) {
+                self.budget.release_failures += 1;
+                return Err(error);
+            }
             self.graphs.pop();
+            self.budget.released += 1;
         }
         Ok(())
     }
@@ -118,6 +126,7 @@ enum GraphKind {
 
 pub struct GraphCache<G> {
     kind: GraphKind,
+    label: budget::Label,
     graphs: BTreeMap<GraphKey, Vec<BundleGraphHandleV1>>,
     ledger: Rc<RefCell<Ledger>>,
     /// The ledger epoch `graphs` belongs to.
@@ -147,6 +156,7 @@ impl<G: BundleGeometry> GraphCache<G> {
             epoch: 0,
             ranks,
             kind: GraphKind::Verify,
+            label: budget::Label::default(),
             items,
             geometry: PhantomData,
         }
@@ -198,6 +208,7 @@ impl<G> GraphCache<G> {
             epoch,
             ranks: owner.ranks,
             kind: owner.kind,
+            label: owner.label,
             items: owner.items,
             geometry: PhantomData,
         }
@@ -235,6 +246,34 @@ impl<G: BundleGeometry> GraphCache<G> {
         stream: BundleStreamHandleV1,
         key: GraphKey,
         launches: usize,
+        record: impl FnMut(Range<usize>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.capture_inner(services, stream, key, launches, None, record)
+    }
+
+    /// Consume a caller's reservation for an entire rank group. Cached
+    /// keys consume nothing; failed-cleanup handles remain charged.
+    #[allow(clippy::too_many_arguments)]
+    pub fn capture_reserved<E: From<BundleAbiError>>(
+        &mut self,
+        services: &HostServicesV1,
+        stream: BundleStreamHandleV1,
+        key: GraphKey,
+        launches: usize,
+        reservation: &mut GraphReservation,
+        record: impl FnMut(Range<usize>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.capture_inner(services, stream, key, launches, Some(reservation), record)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn capture_inner<E: From<BundleAbiError>>(
+        &mut self,
+        services: &HostServicesV1,
+        stream: BundleStreamHandleV1,
+        key: GraphKey,
+        launches: usize,
+        reservation: Option<&mut GraphReservation>,
         mut record: impl FnMut(Range<usize>) -> Result<(), E>,
     ) -> Result<(), E> {
         // Decode graphs stop at the largest item bucket. Catch-up may fill
@@ -282,6 +321,18 @@ impl<G: BundleGeometry> GraphCache<G> {
         if self.graphs.contains_key(&key) {
             return Ok(());
         }
+        let needed = pieces(launches).len();
+        let mut local;
+        let reservation = match reservation {
+            Some(reservation) => reservation,
+            None => {
+                local = self
+                    .reserve(needed)
+                    .ok_or(BundleAbiError::InvalidRange("graph capacity"))?;
+                &mut local
+            }
+        };
+        reservation.validate(self, needed)?;
         let capture_started = std::time::Instant::now();
         // This capture's pieces are the ledger's newest graphs. A failure
         // releases them newest first; any whose release fails stays in the
@@ -295,24 +346,47 @@ impl<G: BundleGeometry> GraphCache<G> {
                     let recorded = record(range);
                     let ended = services.end_graph_capture(stream);
                     if let Ok(graph) = ended {
-                        self.ledger.borrow_mut().graphs.push(graph);
+                        let mut ledger = self.ledger.borrow_mut();
+                        ledger.graphs.push(graph);
+                        ledger.budget.reserved -= 1;
+                        reservation.remaining -= 1;
+                        ledger.budget.captured += 1;
+                        ledger.budget.peak = ledger.budget.peak.max(ledger.graphs.len());
                     }
                     recorded.and(ended.map(|_| ()).map_err(E::from))
                 });
             if let Err(error) = captured {
+                self.ledger.borrow_mut().budget.capture_failures += 1;
                 let _ = self.ledger.borrow_mut().release_to(services, first);
+                self.trace(
+                    services,
+                    "capture-failed",
+                    Some(key),
+                    needed,
+                    capture_started.elapsed().as_micros(),
+                );
                 return Err(error);
             }
         }
         let graphs = self.ledger.borrow().graphs[first..].to_vec();
-        eprintln!(
-            "graph capture rank {} bucket {} items {}: {} pieces, {:.3}s",
-            key.rank,
-            key.bucket,
-            key.items,
-            graphs.len(),
-            capture_started.elapsed().as_secs_f64()
-        );
+        if self.stats().capacity.is_some() {
+            self.trace(
+                services,
+                "capture",
+                Some(key),
+                graphs.len(),
+                capture_started.elapsed().as_micros(),
+            );
+        } else {
+            eprintln!(
+                "graph capture rank {} bucket {} items {}: {} pieces, {:.3}s",
+                key.rank,
+                key.bucket,
+                key.items,
+                graphs.len(),
+                capture_started.elapsed().as_secs_f64()
+            );
+        }
         self.graphs.insert(key, graphs);
         Ok(())
     }
@@ -379,10 +453,32 @@ impl<G> GraphCache<G> {
     /// so a later call retries it.
     pub fn release_all(&mut self, services: &HostServicesV1) -> Result<(), BundleAbiError> {
         let mut ledger = self.ledger.borrow_mut();
+        if ledger.budget.reserved != 0 {
+            return Err(BundleAbiError::Status(
+                runtime_bundle_abi::BundleStatusV1::InvalidState,
+            ));
+        }
         ledger.epoch += 1;
         self.graphs.clear();
         self.epoch = ledger.epoch;
-        ledger.release_to(services, 0)
+        let started = std::time::Instant::now();
+        let result = ledger.release_to(services, 0);
+        if result.is_ok() {
+            ledger.budget.pressure = false;
+        }
+        drop(ledger);
+        self.trace(
+            services,
+            if result.is_ok() {
+                "release-all"
+            } else {
+                "release-failed"
+            },
+            None,
+            0,
+            started.elapsed().as_micros(),
+        );
+        result
     }
 
     /// The graphs live in this cache's ledger, whichever cache captured
@@ -404,6 +500,11 @@ impl<G> GraphCache<G> {
         };
         let held = graphs.values().flatten().copied().collect::<Vec<_>>();
         let mut ledger = self.ledger.borrow_mut();
+        if ledger.budget.reserved != 0 {
+            return Err(BundleAbiError::Status(
+                runtime_bundle_abi::BundleStatusV1::InvalidState,
+            ));
+        }
         let Some(keep) = ledger.graphs.len().checked_sub(held.len()) else {
             return Ok(false);
         };

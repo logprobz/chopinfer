@@ -164,6 +164,7 @@ pub fn is_routine_bundle_trace(message: &[u8]) -> bool {
         .is_some_and(|schema| {
             schema.starts_with("chopinfer.")
                 && (schema.ends_with(".step-shape.v1")
+                    || schema == "chopinfer.graph-cache.v1"
                     || schema.ends_with(".drafter-catch-up.v1")
                     || schema.ends_with(".drafter-confidence.v1"))
         })
@@ -340,6 +341,9 @@ mod tests {
 
     #[test]
     fn only_recognized_routine_bundle_traces_allow_lossy_delivery() {
+        assert!(is_routine_bundle_trace(
+            br#"{"schema":"chopinfer.graph-cache.v1"}"#
+        ));
         for kind in ["step-shape", "drafter-catch-up", "drafter-confidence"] {
             assert!(is_routine_bundle_trace(
                 format!(r#"{{"schema":"chopinfer.example.{kind}.v1"}}"#).as_bytes()
@@ -352,6 +356,8 @@ mod tests {
             r#"{"schema":"chopinfer.example.error.v1","error":"digest"}"#,
             r#"{"schema":"chopinfer.example.unknown.v1"}"#,
             r#"{"schema":"other.step-shape.v1"}"#,
+            r#"{"schema":"other.graph-cache.v1"}"#,
+            r#"{"schema":"chopinfer.graph-cache.v2"}"#,
             r#"{"schema":"other.drafter-confidence.v1"}"#,
             r#"{"schema":"chopinfer.example.drafter-confidence.v2"}"#,
             r#"{"schema":"chopinfer.example.step-shape.v1""#,

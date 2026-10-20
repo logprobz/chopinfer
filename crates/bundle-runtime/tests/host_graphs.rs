@@ -231,6 +231,7 @@ fn a_failed_capture_releases_its_pieces_newest_first() {
     for refused in [None, Some(0), Some(1), Some(2)] {
         let (table, backend, streams, baseline) = host(Ranks::TP4);
         let mut cache = GraphCache::<Steps>::new(Ranks::TP4);
+        cache.set_capacity(4).unwrap();
         capture(&mut cache, &table, &streams, key(0, 1, 0), 1);
         let decode = backend.live_resource_count();
         if let Some(allowed) = refused {
@@ -255,6 +256,10 @@ fn a_failed_capture_releases_its_pieces_newest_first() {
         assert!(!cache.contains(key(0, 2, 0)) && cache.contains(key(0, 1, 0)));
         let kept = refused.map_or(0, |allowed| 3 - allowed);
         assert_eq!(backend.live_resource_count() - decode, kept, "{refused:?}");
+        assert_eq!(cache.stats().live, 1 + kept);
+        assert_eq!(cache.stats().reserved, 0);
+        assert_eq!(cache.stats().peak, 4);
+        assert_eq!(cache.stats().capture_failures, 1);
         cache.release_all(table.caller()).unwrap();
         assert_eq!(backend.live_resource_count(), baseline);
     }
@@ -707,4 +712,99 @@ fn the_item_bound_is_the_manifest_package_maximum() {
         MAX_ITEMS,
         runtime_bundle::BundleBatchLimitsV1::MAXIMUM_SEQUENCES
     );
+}
+
+#[test]
+fn shared_capture_reservations_bound_whole_rank_groups() {
+    for ranks in rank_counts() {
+        let (table, backend, streams, baseline) = host(ranks);
+        let mut target = GraphCache::<Steps>::new(ranks);
+        let mut auxiliary = GraphCache::sharing(&target);
+        let capacity = 4 * ranks.count();
+        target.set_capacity(capacity).unwrap();
+        let mut group = target.reserve(capacity).unwrap();
+        assert!(auxiliary.reserve(1).is_none());
+        assert_eq!(backend.live_resource_count(), baseline);
+        assert!(target.release_all(table.caller()).is_err());
+        for rank in 0..ranks.get() {
+            target
+                .capture_reserved::<BundleAbiError>(
+                    table.caller(),
+                    streams[rank as usize],
+                    key(rank, 1, 0),
+                    192,
+                    &mut group,
+                    |_| Ok(()),
+                )
+                .unwrap();
+            auxiliary
+                .capture_reserved::<BundleAbiError>(
+                    table.caller(),
+                    streams[rank as usize],
+                    key(rank, 1, 0),
+                    1,
+                    &mut group,
+                    |_| Ok(()),
+                )
+                .unwrap();
+        }
+        drop(group);
+        assert_eq!(target.stats().live, capacity);
+        assert_eq!(auxiliary.stats().peak, capacity);
+        assert_eq!(target.stats().reserved, 0);
+        assert!(target.reserve(1).is_none());
+        // A hit consumes no capacity even when the ledger is full.
+        capture(&mut target, &table, &streams, key(0, 1, 0), 192);
+        auxiliary.release_all(table.caller()).unwrap();
+        assert_eq!(backend.live_resource_count(), baseline);
+        assert!(target.is_empty() && auxiliary.is_empty());
+        assert!(!target.stats().pressure);
+        let unused = target.reserve(capacity).unwrap();
+        drop(unused);
+        assert_eq!(target.stats().reserved, 0);
+    }
+}
+
+#[test]
+fn a_reservation_cannot_charge_another_ledger() {
+    let (table, backend, streams, baseline) = host(Ranks::TP1);
+    let owner = GraphCache::<Steps>::new(Ranks::TP1);
+    let mut other = GraphCache::<Steps>::new(Ranks::TP1);
+    let mut reservation = owner.reserve(1).unwrap();
+    assert_eq!(
+        other.capture_reserved::<BundleAbiError>(
+            table.caller(),
+            streams[0],
+            key(0, 1, 0),
+            1,
+            &mut reservation,
+            |_| Ok(())
+        ),
+        Err(BundleAbiError::InvalidRange("graph capture reservation"))
+    );
+    assert_eq!(backend.live_resource_count(), baseline);
+    assert_eq!(owner.stats().reserved, 1);
+    drop(reservation);
+    assert_eq!(owner.stats().reserved, 0);
+}
+
+#[test]
+fn blocked_retirement_keeps_handles_charged_until_the_owner_can_release_them() {
+    let (table, backend, streams, baseline) = host(Ranks::TP1);
+    let services = table.caller();
+    let mut cache = GraphCache::<Steps>::new(Ranks::TP1);
+    cache.set_capacity(1).unwrap();
+    capture(&mut cache, &table, &streams, key(0, 1, 0), 1);
+    let context = services.select_context(0, 0).unwrap();
+    let late = services.create_event(context).unwrap();
+    assert!(cache.release_all(services).is_err());
+    assert_eq!(cache.stats().live, 1);
+    assert_eq!(cache.stats().release_failures, 1);
+    assert!(!cache.contains(key(0, 1, 0)));
+    assert!(cache.reserve(1).is_none());
+    services.release_event(late).unwrap();
+    cache.release_all(services).unwrap();
+    assert_eq!(cache.stats().live, 0);
+    assert_eq!(cache.stats().released, 1);
+    assert_eq!(backend.live_resource_count(), baseline);
 }

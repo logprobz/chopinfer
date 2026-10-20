@@ -447,6 +447,28 @@ impl<'a> ReadAhead<'a> {
             started: std::sync::atomic::AtomicBool::new(false),
         }
     }
+
+    /// A read-ahead that is never asked for: the gather copies the same
+    /// bytes and reads the clock once per span.
+    fn disabled(probe: &'a dyn GatherProbe) -> Self {
+        Self {
+            probe,
+            started: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+}
+
+/// Set to `1` to let a mapped-row gather whose first rows fault ask for the
+/// rest of its rows to be read ahead. Off by default: its served effect has
+/// not been measured on its own.
+pub const MAPPED_READ_AHEAD_ENV_V1: &str = "CHOPINFER_MAPPED_READ_AHEAD";
+
+/// Whether `MAPPED_READ_AHEAD_ENV_V1` is `1`, read once per process.
+fn mapped_read_ahead_v1() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os(MAPPED_READ_AHEAD_ENV_V1).is_some_and(|value| value == "1")
+    })
 }
 
 /// Writes bytes `at..at + chunk.len()` of the rows `rows` of `table`, each
@@ -612,6 +634,24 @@ mod gather_tests {
                 [rows[16..].to_vec()],
                 "{chunk}"
             );
+        }
+    }
+
+    #[test]
+    fn a_disabled_read_ahead_asks_nothing_and_copies_the_same_bytes() {
+        let row_bytes = 96;
+        let source = table(500, row_bytes);
+        let rows: Vec<u32> = (0..100).map(|i| (i * 37 % 500) as u32).collect();
+        // Every group is slow, as in the enabled case above.
+        for chunk in [50, row_bytes, 1000, 5000] {
+            let probe = Scripted::new(50);
+            let ahead = ReadAhead::disabled(&probe);
+            let mut out = vec![0; rows.len() * row_bytes];
+            for (index, part) in out.chunks_mut(chunk).enumerate() {
+                gather_rows_v1(&source, row_bytes, &rows, index * chunk, part, &ahead);
+            }
+            assert_eq!(out, expected(&source, row_bytes, &rows));
+            assert!(probe.asked.lock().unwrap().is_empty(), "{chunk}");
         }
     }
 
@@ -4138,7 +4178,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             row_bytes,
             origin: std::time::Instant::now(),
         };
-        let ahead = ReadAhead::new(&probe);
+        let ahead = if mapped_read_ahead_v1() {
+            ReadAhead::new(&probe)
+        } else {
+            ReadAhead::disabled(&probe)
+        };
         state
             .device
             .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| {

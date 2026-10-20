@@ -73,7 +73,9 @@ before the call returns. The page-locked memory is a 64 MiB ring per stream
 (the CUDA backend's), each region reused only after an event recorded
 behind its copy completes; a gather larger than the ring, or one that wraps
 onto copies still queued, waits for them. Gathers of a megabyte or more read
-on up to eight threads, so the page faults of a cold mapping overlap. Every
+on up to eight threads, so the page faults of a cold mapping overlap. With
+`CHOPINFER_MAPPED_READ_AHEAD=1` (off by default, since its effect on served
+decode has not been measured on its own), every
 gather reads the clock after each 16th row; the first rows found slower than
 2.5 us each on average (40 us per 16) ask the kernel to read every later row
 of the gather ahead (`MADV_WILLNEED` on the pages each row touches), once per

@@ -898,8 +898,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// staged MXFP8 tiles for full rows and measured exact F32 row buckets.
 /// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC
 /// row tiles add a separate entry while small-row mixer paths stay unchanged.
-/// Blocked F32 prefill adds five compute handles and one module per rank;
-/// its measured rows retain the existing preparation and operand spans.
+/// Measured F32 prefill adds eight compute handles and two modules per rank,
+/// with one retained tiled entry configured for its existing shared-memory limit.
 /// Shared expert scratch stays independent across every fork/join region.
 /// TP4 decode and verify use the measured direct-load MoE buckets, and the
 /// paired shared gate/up keeps no single packed folds.

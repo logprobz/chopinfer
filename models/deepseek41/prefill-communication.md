@@ -132,21 +132,22 @@ Both overlap modes remain explicit experiments.
 
 ## Ordered DMA transport
 
-The automatic transport uses sequential DMA for exactly 8192 rows in a
-single text-request native Flash TP4 autoregressive prefill. It keeps the
-full-chunk attention route. Other row counts retain BF16 communication.
-Negotiated upper-layer skip profiles retain their own executor and do not
-allocate unused DMA resources. `CHOPINFER_DEEPSEEK41_PREFILL_DMA=0` disables
-DMA; `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` also disables automatic DMA
-so the original F32 transport remains selectable. Overlap remains off by
-default, and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` retains sequential work.
+DMA is opt-in. An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA`, `0`, or any value
+other than `1` keeps the existing reduction path and allocates no DMA inbox,
+owner stream or events. This also applies to legacy create records without
+prefill options and to the explicit full-prefill profile. Package defaults
+remain 8192-row chunks with upper-layer skip enabled. Negotiated skip uses
+its own executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the
+original F32 transport when DMA is off. Overlap remains off by default,
+and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` retains sequential work.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
 text-request Flash TP4 autoregressive prefills. It applies to sequential
 execution and the two-part schedule, with at least 512 rows per reduction.
 Shorter parts retain their previous transport. Attention-only overlap,
 media, packed requests, decode, verify and DSpark keep their existing path.
-This explicit setting retains the wider experimental row coverage. The
+This explicit setting also works with BF16 gather disabled and retains
+the existing experimental row coverage. The
 original and integrated transports passed served and raw-state comparisons.
 
 Each rank owns a contiguous interval of complete rows. Three ordered rank

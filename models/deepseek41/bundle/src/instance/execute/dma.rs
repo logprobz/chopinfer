@@ -314,7 +314,7 @@ pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
     }
     run.phase.prefill()
         && instance.dma.len() == 4
-        && instance.ops.prefill_dma.serves(run.phase.rows())
+        && instance.ops.prefill_dma.enabled()
         && instance.dspark.is_none()
         && run.media.is_none()
         && run.inputs.request_ids.len() == 1

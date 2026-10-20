@@ -260,7 +260,7 @@ impl Instance {
             views.push(acquire::spans(placed));
         }
         acquire::grant_peers(services, &ranks, held)?;
-        if self.ops.prefill_dma.owns_buffers(self.config.prefill.chunk) && self.dspark.is_none() {
+        if self.ops.prefill_dma.enabled() && self.dspark.is_none() {
             self.dma =
                 execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
         }

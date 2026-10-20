@@ -131,10 +131,9 @@ impl Ops {
             ops.asked.extend(asks.asked());
         }
         let dma = reduce::dma_requested();
-        if dma.requested(reduce::requested(shape))
+        if dma.enabled()
             && shape.ranks() == 4
             && shape.geometry == &model_deepseek41_contract::geometry::FLASH
-            && (dma != PrefillDma::FullChunk || storage == KvStorage::Native)
         {
             let asks = Asks::default();
             asks.record(

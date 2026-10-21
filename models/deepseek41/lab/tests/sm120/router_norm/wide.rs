@@ -271,14 +271,9 @@ fn router_wide_cpu_plan() {
         for features in family::WIDE_FEATURES {
             let wide = launch(&p, logits, live, Some(features)).unwrap();
             assert!(lab.contains(&wide.symbol), "{}", wide.symbol);
-            // The bundle serves the 64-expert tile, which the runner loads
-            // from the bundle.
-            assert_eq!(
-                Runner::serving(&wide.symbol),
-                features == family::SERVED_FEATURES,
-                "{}",
-                wide.symbol
-            );
+            // The bundle serves the 64-expert tile reading only BF16 rows
+            // (`family::normed_router_symbol`), not these.
+            assert!(!Runner::serving(&wide.symbol), "{}", wide.symbol);
             assert_eq!(wide.arguments, served.arguments);
             assert_eq!(wide.plan.block, served.plan.block);
             assert_eq!(wide.plan.grid[1], served.plan.grid[1]);

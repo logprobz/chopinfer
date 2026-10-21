@@ -1,7 +1,8 @@
-//! The narrow pair (../../../router_narrow.md): the bound router-in-norm
-//! step (the certifying norm writing its widened rows, the 64-expert router
-//! reading them on its SIMT path) against the same norm without the widened
-//! write and the 64-expert router whose SIMT path widens the norm's BF16
+//! The narrow pair (../../../router_narrow.md): the router-in-norm step as
+//! the 64-expert binding first served it (the certifying norm writing its
+//! widened rows, the router reading them on its SIMT path, now from the lab
+//! cubin) against the bundle's current step: the same norm without the
+//! widened write and the router whose SIMT path widens the norm's BF16
 //! rows itself. Every compared output must be byte for byte the bound
 //! step's, and the candidate's widened rows must stay poisoned. Worker 0
 //! takes the clean pattern, worker 1 the outliers, whose uncertified rows
@@ -61,7 +62,7 @@ pub fn step(i: &Inputs, o: &Outputs, rows: u32, narrow: bool) -> LabResult<Vec<L
     let (symbol, activation) = if narrow {
         (family::normed_router_symbol(), Argument::NullDevicePointer)
     } else {
-        (family::served_router_symbol(), ptr(o.widened))
+        (family::wide_symbol(family::SERVED_FEATURES), ptr(o.widened))
     };
     Ok(vec![
         norm(i, o, rows, !narrow)?,
@@ -197,9 +198,13 @@ fn router_narrow_cpu_plan() {
     for rows in [CAPACITY, 2048, 65] {
         let b = step(&i, &o, rows, false).unwrap();
         let n = step(&i, &o, rows, true).unwrap();
-        assert!(Runner::serving(&b[0].symbol) && Runner::serving(&b[1].symbol));
+        // The bundle serves the norm and the narrow router; the widened
+        // router runs from the lab cubin.
+        assert!(Runner::serving(&b[0].symbol) && !Runner::serving(&b[1].symbol));
+        assert!(lab.contains(&b[1].symbol));
         assert_eq!(n[0].symbol, b[0].symbol);
-        assert!(lab.contains(&n[1].symbol) && !Runner::serving(&n[1].symbol));
+        assert_eq!(n[1].symbol, family::served_router_symbol());
+        assert!(lab.contains(&n[1].symbol) && Runner::serving(&n[1].symbol));
         assert_eq!((n[0].plan, n[1].plan), (b[0].plan, b[1].plan));
         // Norm: input, weight, normed, widened, ...; router: activation, ...
         assert_eq!(b[0].arguments.0[3], ptr(o.widened));

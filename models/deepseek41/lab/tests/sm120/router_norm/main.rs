@@ -468,7 +468,8 @@ pub fn served(i: &Inputs, o: &Outputs, rows: u32) -> LabResult<Vec<Launch>> {
 }
 
 /// The candidate arm: the certifying norm (or its `certify_all` mutation)
-/// and the bundle's certified projection (64-expert tiles).
+/// and the bundle's certified projection (64-expert tiles, whose SIMT path
+/// widens the norm's BF16 rows itself).
 pub fn candidate(i: &Inputs, o: &Outputs, rows: u32, mutation: Mutation) -> LabResult<Vec<Launch>> {
     let e = family::router();
     Ok(vec![

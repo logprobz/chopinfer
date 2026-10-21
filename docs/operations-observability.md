@@ -256,6 +256,14 @@ warmup work. Larger source-read windows were also not retained: 4, 8 and
 probe with four readers. This is a sampled storage rate, not an end-to-end
 startup guarantee.
 
+A later same-candidate ABBA sweep compared 16 with eight loading workers per
+rank. Readiness averaged 109.1 versus 111.9 seconds; eight workers were 2.6%
+slower despite using about 0.9 GiB less peak server memory. All arena hashes,
+startup graph coverage and served bits matched. The 16-worker default for
+this CPU/rank configuration is retained. These runs used a separate quiet
+window, so their absolute times should not replace the paired baseline
+comparison above.
+
 ## Readiness and shutdown
 
 The listener opens after engine construction and warmup. Warmup has one

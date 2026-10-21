@@ -18,11 +18,13 @@ use super::*;
 // The prefill matrix modules change resource IDs only in these verify
 // The fused candidate publisher's create-time module and resolve (one
 // each per rank) renumber later handles; every line is otherwise equal.
+// The prefill arena and grouped catalog only renumber resources here.
+// Full lifetime audits retain every operation at these verify widths.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0xdc91ad4ed589171e)),
-    (8, (8992, 0x87e217aaf14ffd6d)),
-    (16, (9964, 0x5320812fc0eb315d)),
-    (32, (8384, 0x3067459b622060d9)),
+    (6, (8040, 0x714dce83a886b344)),
+    (8, (8992, 0xf012aa2d5d361f44)),
+    (16, (9964, 0x791d21ae043a107b)),
+    (32, (8384, 0xe644cb12b6152af0)),
 ];
 
 #[test]

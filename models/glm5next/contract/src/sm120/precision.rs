@@ -267,6 +267,13 @@ fn strip_schedule(rows: u64, k: u64, capacity: u32) -> Option<(u8, u8)> {
         (128, 4096) => Some((1, 47)),
         // KDA beta, the indexer's head weights.
         (64, 4096) => Some((1, 64)),
+        // The indexer's query and the KDA gate and forget low-rank up
+        // projections, whose decode buckets ran the one-split tiled entry
+        // on 64 and 32 CTAs (lab run 20261021T182952Z-3535624).
+        (4096, 1536) if capacity <= 2 => Some((2, 1)),
+        (4096, 1536) if matches!(capacity, 8 | 16) => Some((1, 1)),
+        (4096, 1536) => Some((4, 1)),
+        (2048, 128) => Some((2, 1)),
         // The router's F32 logits.
         (320, 4096) => Some((1, 18)),
         // The vocabulary head's F32 logits shard (the target's and the
@@ -728,6 +735,10 @@ mod tests {
                         (128, 4096, ..=8) => Some((1, 23)),
                         (128, 4096, _) => Some((1, 47)),
                         (64, 4096, _) => Some((1, 64)),
+                        (4096, 1536, ..=2) => Some((2, 1)),
+                        (4096, 1536, 8 | 16) => Some((1, 1)),
+                        (4096, 1536, _) => Some((4, 1)),
+                        (2048, 128, _) => Some((2, 1)),
                         (320, 4096, _) => Some((1, 18)),
                         (38720, 4096, _) => Some((4, 1)),
                         _ => None,
@@ -769,11 +780,12 @@ mod tests {
             }
         }
         // Each at six decode and six verify buckets: BF16 q, k and v, the
-        // KDA output, four n128 and three n64 projections, two routers and
-        // the head; FP8 the latent q-a, kv-a, q-b and output of the target
+        // KDA output, four n128 and three n64 projections, the indexer
+        // query of the target and the drafter, the KDA gate and forget
+        // low-rank up projections, two routers and the head; FP8 the latent q-a, kv-a, q-b and output of the target
         // and the drafter, the dense down projection and both shared
         // experts' down.
-        assert_eq!(bf16, (3 + 1 + 4 + 3 + 2 + 1) * 12);
+        assert_eq!(bf16, (3 + 1 + 4 + 3 + 2 + 2 + 2 + 1) * 12);
         assert_eq!(fp8, (8 + 1 + 2) * 12);
     }
 

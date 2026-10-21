@@ -789,7 +789,7 @@
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_0a6cb8165a50bd84_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_05b9eb76d6a7b8da_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -860,8 +860,8 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
@@ -941,7 +941,7 @@
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_439ebd57c819c5be_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_16f91df350ff3be0_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -1012,12 +1012,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_9fdcb01a25295486_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_3288402942f90f96_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -1088,12 +1088,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_c975f5b065f518ef_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_8a6d90064fd11cae_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -1164,12 +1164,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_d83bf420c977c9c0_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_ec233d0f74d8d2f9_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -1240,12 +1240,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_e2d29518405385f0_v1",
+        "symbol": "chop_proj_bf16_dense_n2048_k128_f664dd4917bbb481_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -1316,8 +1316,8 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
@@ -3069,7 +3069,7 @@
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_2eece05ff1423ed8_v1",
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_17d00df880e0f985_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -3140,12 +3140,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 64,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_46ae882c6f8d0fc6_v1",
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_3efba6584653023f_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -3216,12 +3216,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 160,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_76cfc64c22f23f2b_v1",
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_85f848fe781dd204_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -3292,12 +3292,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 64,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_9820e99486b515cf_v1",
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_867e3931c192e2e9_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -3368,12 +3368,12 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_c64d056948fdab8b_v1",
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_8f8a19394983951c_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -3444,88 +3444,88 @@
             "cxx_type": "const float"
           }
         ],
-        "max_threads": 384,
-        "min_blocks": 1,
+        "max_threads": 96,
+        "min_blocks": 2,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_cad7c582d8c0fd1f_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
         "allowed_local_bytes": 1024
       },
       {
         "symbol": "chop_proj_bf16_dense_n4096_k1536_d4a03c0b5abd49ba_v1",
-        "params": [
-          {
-            "kind": "TensorMap",
-            "name": "map_a"
-          },
-          {
-            "kind": "TensorMap",
-            "name": "map_b"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "output",
-            "cxx_type": "void"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "partial",
-            "cxx_type": "float"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "semaphores",
-            "cxx_type": "uint32_t"
-          },
-          {
-            "kind": "U32",
-            "name": "live_m"
-          },
-          {
-            "kind": "U32",
-            "name": "n"
-          },
-          {
-            "kind": "U32",
-            "name": "k"
-          },
-          {
-            "kind": "U32",
-            "name": "splits"
-          },
-          {
-            "kind": "U32",
-            "name": "output_f32"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "weight_scales",
-            "cxx_type": "const float"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "activation_scales",
-            "cxx_type": "const float"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "residual",
-            "cxx_type": "const void"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "weight_global_scale",
-            "cxx_type": "const float"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "activation_global_scale",
-            "cxx_type": "const float"
-          }
-        ],
-        "max_threads": 384,
-        "min_blocks": 1,
-        "allowed_local_bytes": 1024
-      },
-      {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_f81ce94ef6699faa_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -8389,7 +8389,7 @@
         "allowed_local_bytes": 1024
       }
     ],
-    "cubin_sha256": "a88599b8b3aea36432f36286d5a06be507e138c9c2ea877fb5cc468e857b79fc",
+    "cubin_sha256": "ced350db522bb40cbce9bf52eabfc4dbf207baf810534c79050bbc60483d4aab",
     "resources": [
       {
         "symbol": "chop_proj_bf16_dense_n128_k4096_1b13469ef1ffa252_v1",
@@ -8455,13 +8455,13 @@
         "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_0a6cb8165a50bd84_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_05b9eb76d6a7b8da_v1",
+        "registers": 95,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 104,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
         "symbol": "chop_proj_bf16_dense_n2048_k128_16b16d3b30e71c66_v1",
@@ -8473,49 +8473,49 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_439ebd57c819c5be_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_16f91df350ff3be0_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_9fdcb01a25295486_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_3288402942f90f96_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_c975f5b065f518ef_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_8a6d90064fd11cae_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_d83bf420c977c9c0_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_ec233d0f74d8d2f9_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n2048_k128_e2d29518405385f0_v1",
-        "registers": 168,
+        "symbol": "chop_proj_bf16_dense_n2048_k128_f664dd4917bbb481_v1",
+        "registers": 96,
         "shared_static_bytes": 1152,
         "local_bytes": 0,
-        "stack_bytes": 72,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
         "symbol": "chop_proj_bf16_dense_n2048_k4096_35299472bb5e5a8b_v1",
@@ -8725,49 +8725,58 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_2eece05ff1423ed8_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_17d00df880e0f985_v1",
+        "registers": 95,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 72,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_46ae882c6f8d0fc6_v1",
-        "registers": 168,
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_3efba6584653023f_v1",
+        "registers": 96,
         "shared_static_bytes": 1152,
         "local_bytes": 0,
-        "stack_bytes": 104,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_76cfc64c22f23f2b_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_85f848fe781dd204_v1",
+        "registers": 96,
+        "shared_static_bytes": 1408,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_9820e99486b515cf_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_867e3931c192e2e9_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
       },
       {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_c64d056948fdab8b_v1",
-        "registers": 168,
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_8f8a19394983951c_v1",
+        "registers": 96,
+        "shared_static_bytes": 1280,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_proj_bf16_dense_n4096_k1536_cad7c582d8c0fd1f_v1",
+        "registers": 96,
         "shared_static_bytes": 1152,
         "local_bytes": 0,
-        "stack_bytes": 48,
-        "max_threads": 384,
-        "min_blocks": 1
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
       },
       {
         "symbol": "chop_proj_bf16_dense_n4096_k1536_d4a03c0b5abd49ba_v1",
@@ -8775,15 +8784,6 @@
         "shared_static_bytes": 1152,
         "local_bytes": 0,
         "stack_bytes": 0,
-        "max_threads": 384,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_proj_bf16_dense_n4096_k1536_f81ce94ef6699faa_v1",
-        "registers": 168,
-        "shared_static_bytes": 1152,
-        "local_bytes": 0,
-        "stack_bytes": 48,
         "max_threads": 384,
         "min_blocks": 1
       },

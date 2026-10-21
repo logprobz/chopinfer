@@ -3,9 +3,12 @@ use super::*;
 #[test]
 fn prefill_dense_launches_use_staged_tiles() {
     // The compact and TMA staged routes, without the measured matrix tiles
-    // that serve these rows by default (their own tests cover them).
+    // and staged scales that serve these rows by default (their own tests
+    // cover them).
     crate::sm120::prefill_matrix::with_reference(|| {
-        crate::sm120::prefill_tma_matrix::with_reference(staged_tiles)
+        crate::sm120::prefill_tma_matrix::with_reference(|| {
+            crate::sm120::prefill_tma_scales::with_reference(staged_tiles)
+        })
     });
 }
 

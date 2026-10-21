@@ -1002,11 +1002,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// here verifies four rows. The combined journals were audited against
 /// main's: after removing exactly these resources and swaps, every other
 /// operation is identical after handle mapping.
+/// The early-stop selectors add one module, six resolves and seven releases
+/// per native rank, and rename each prefill local selector and merge; their
+/// streams, grids and arguments are unchanged.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17352, 0xe5b953e51a6a8bc4),
+        (17365, 0x9627b7d3a32d70b2),
     ),
     (
         "deepseek41-flash-tp1",
@@ -1016,7 +1019,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34891, 0x1d5c0e0ab9d44bcc),
+        (34917, 0x41e74275d46fb218),
     ),
     (
         "deepseek41-flash-tp2",

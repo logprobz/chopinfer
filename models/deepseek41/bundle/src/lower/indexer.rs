@@ -152,8 +152,8 @@ impl Lowering<'_> {
             crate::Kernels::hierarchical_indexer_enabled(self.shape, self.kv.storage, phase)
                 || route != Route::Accepted
                     && matches!(phase, Phase::Verify { rows: 32, items: 8 });
-        // The fused publisher was qualified beside the bounded scoring tiles,
-        // under the same admission.
+        // The fused publisher and the early-stop selectors were qualified
+        // beside the bounded scoring tiles, under the same admission.
         let fused_candidates = phase.prefill()
             && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions);
         let select = |mut calls| {
@@ -161,6 +161,7 @@ impl Lowering<'_> {
                 && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions)
             {
                 calls = crate::Kernels::prefill_tile_scores(calls, reindex).map_err(error)?;
+                calls = crate::Kernels::early_prefill_select(calls).map_err(error)?;
             }
             if route == Route::Combined && !reindex {
                 calls = crate::Kernels::tiled_indexer_scores(calls).map_err(error)?;

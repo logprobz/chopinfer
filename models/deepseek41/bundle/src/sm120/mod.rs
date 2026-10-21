@@ -126,6 +126,9 @@ mod indexer_prefill_tile_serving;
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query_parallel;
+#[allow(dead_code, reason = "the build script compiles the selector entries")]
+mod indexer_select_early;
+mod indexer_select_early_serving;
 mod indexer_workload_serving;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_glue;
@@ -516,6 +519,8 @@ impl crate::Kernels {
                     && shape.runtime.indexer_mma))
             && (cubin != indexer_candidates_cached::CUBIN
                 || shape.runtime.indexer_prefill_tile && shape.runtime.indexer_mma)
+            && (cubin != indexer_select_early::CUBIN
+                || shape.runtime.indexer_prefill_tile && shape.runtime.indexer_mma)
             && (!cubin.starts_with("position_hierarchical_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("position_select_cached_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("streamed_moe_")
@@ -645,6 +650,7 @@ impl crate::Kernels {
             || cubin == indexer_mma_tile::CUBIN
             || cubin == indexer_mma_prefill_tile::CUBIN
             || cubin == indexer_candidates_cached::CUBIN
+            || cubin == indexer_select_early::CUBIN
             || cubin.starts_with("position_hierarchical_")
             || cubin.starts_with("position_select_cached_"))
             || storage == model_deepseek41_contract::state::KvStorage::Native

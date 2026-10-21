@@ -52,6 +52,7 @@ mod projection_reuse;
 mod router_prefill;
 mod selected_cache;
 mod shared_overlap;
+mod short_prefill;
 mod verify_hc;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
@@ -928,7 +929,7 @@ fn journal_steps(host: &Rc<Host>) {
 /// combines split mixing, measured projection and expert buckets, live
 /// position selection, parallel queries, native FP4 scores with exact query
 /// repacking, measured weight prefetch and parallel ceil operations.
-/// Prefill uses valid candidate work, existing folds below 128 rows,
+/// Prefill uses valid candidate work, exact-row TP4 folds through 64 rows,
 /// staged MXFP8 tiles for full rows and measured exact F32 row buckets.
 /// Qualified retained mixed64 rows use paired native-key attention.
 /// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC

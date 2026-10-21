@@ -27,6 +27,9 @@ use super::{Asks, Bind, Lowered, exact, fold_stream};
 use crate::program::Phase;
 use crate::shape::Shape;
 
+#[path = "dense_short.rs"]
+pub(crate) mod short_prefill;
+
 /// The instruction path the dense projections declare: native block-scaled
 /// MMA, folded every 128 K.
 const EXECUTION: BlockScaledExecution = BlockScaledExecution::NativeBlockScaledMma;
@@ -203,6 +206,7 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
+    short_prefill: bool,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
     tensors: Vec<(&'static str, &'static str)>,
@@ -279,15 +283,21 @@ impl DenseOps {
             .iter()
             .map(|d| (d.id, d.tensor))
             .collect();
+        let short_prefill = short_prefill::enabled(shape);
         let mut decode = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
             for capacity in 1..=crate::Kernels::dense_decode_capacity() {
                 let query = crate::Kernels::dense_decode_query(dense.query, capacity);
                 let need = exact::need(capacity, exact::verify(capacity));
+                let fold_need = if short_prefill {
+                    exact::need(capacity, exact::every_phase(capacity))
+                } else {
+                    need
+                };
                 let op = asks.ask(
                     format!("dense.{} decode {capacity}", dense.id),
-                    need,
+                    fold_need,
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
@@ -325,6 +335,7 @@ impl DenseOps {
             }
         }
         Ok(DenseOps {
+            short_prefill,
             stream,
             stream_pair,
             tensors,
@@ -446,7 +457,12 @@ impl DenseOps {
                     "DeepSeek V4.1 has no dense prefill projection of this ID",
                 ))?
                 .1
-        } else if !phase.prefill() && rows <= crate::Kernels::dense_decode_capacity() {
+        } else if (!phase.prefill() && rows <= crate::Kernels::dense_decode_capacity())
+            || (phase.prefill()
+                && self.short_prefill
+                && workspace.is_some()
+                && (1..=short_prefill::MAX_ROWS).contains(&rows))
+        {
             &self
                 .decode
                 .iter()
@@ -646,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn small_prefills_use_fold_and_full_tiles_use_staging() {
+    fn small_prefills_use_exact_rows_and_full_tiles_use_staging() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
@@ -711,9 +727,10 @@ mod tests {
                     status: span(7, rows * 4),
                 };
                 let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
-                if !phase.prefill() && phase.rows() <= 64 {
+                if phase.rows() <= 64 {
                     let split = expect_split(shape.ranks(), dense.id, phase.rows());
-                    let packed = !pair_only(dense.id)
+                    let packed = !phase.prefill()
+                        && !pair_only(dense.id)
                         && crate::Kernels::stream_fold_qualified(&FLASH, q, phase.rows(), false);
                     assert_eq!(
                         calls.len(),

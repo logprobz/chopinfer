@@ -4678,7 +4678,10 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let source_object = state.context_object(source_context)?;
         let destination_key = key_of_v1!(destination_context);
         let source_key = key_of_v1!(source_context);
-        if state.streams.get(key_of_v1!(stream))?.context != destination_key
+        // A stream of the destination pulls, one of the source pushes; a
+        // stream of any other context is refused.
+        let issuer = state.streams.get(key_of_v1!(stream))?.context;
+        if (issuer != destination_key && issuer != source_key)
             || state
                 .buffers
                 .get(key_of_v1!(destination.buffer))?
@@ -4694,7 +4697,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        state.consumer_may_reach(destination_key, key_of_v1!(source.buffer))?;
+        // The issuing context reaches the other end's allocation.
+        if issuer == destination_key {
+            state.consumer_may_reach(destination_key, key_of_v1!(source.buffer))?;
+        } else {
+            state.consumer_may_reach(source_key, key_of_v1!(destination.buffer))?;
+        }
         let destination = state.resolve_range(destination)?;
         let source = state.resolve_range(source)?;
         if destination.length != source.length {

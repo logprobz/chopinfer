@@ -1046,6 +1046,13 @@ pub trait HostServicesBackendV1 {
         destination: DeviceBufferSpanV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()>;
+    /// Copies `source`, owned by `source_context`, into `destination`, owned
+    /// by `destination_context`, on `stream`. The stream belongs to either
+    /// context: the destination's pulls, the source's pushes, and the
+    /// stream's context must reach the other end's allocation through a
+    /// directed peer lease and that allocation's pool grant. A host from
+    /// before pushes refuses a source stream with `InvalidArgument` before
+    /// submitting anything.
     fn copy_peer_to_peer(
         &self,
         stream: BundleStreamHandleV1,

@@ -909,7 +909,7 @@ impl Drop for PinnedTransfer<'_> {
     }
 }
 
-/// Keeps both allocations and the destination stream live until peer DMA
+/// Keeps both allocations and the copy's stream live until peer DMA
 /// completes. Dropping the guard waits for completion.
 pub struct PeerTransfer {
     done: Event,
@@ -1431,9 +1431,11 @@ impl DeviceBuffer {
     }
 
     /// Issues a byte-bounded peer copy between the allocations' actual CUDA
-    /// contexts. The caller establishes peer access and orders prior writes
-    /// before this call. Both allocation streams join the copy before later
-    /// reuse or stream-ordered frees; submission does not block the host.
+    /// contexts, on a stream of either context: the destination's pulls, the
+    /// source's pushes. A stream of any other context is refused. The caller
+    /// establishes peer access and orders prior writes before this call.
+    /// Both allocation streams join the copy before later reuse or
+    /// stream-ordered frees; submission does not block the host.
     pub fn copy_peer_range_from_async(
         &self,
         destination_offset: usize,
@@ -1446,7 +1448,8 @@ impl DeviceBuffer {
         source.require_live()?;
         let destination_pointer = self.pointer_at(destination_offset, byte_len)?;
         let source_pointer = source.pointer_at(source_offset, byte_len)?;
-        require_same_context(&self.stream.context, &stream.inner.context)?;
+        require_same_context(&self.stream.context, &stream.inner.context)
+            .or_else(|_| require_same_context(&source.stream.context, &stream.inner.context))?;
         stream.require_live()?;
         let transfer = PeerTransfer {
             done: stream.context().event()?,
@@ -1455,7 +1458,7 @@ impl DeviceBuffer {
             stream: stream.clone(),
             completed: false,
         };
-        set_current_inner(&self.stream.context)?;
+        set_current_inner(&stream.inner.context)?;
         checked(
             "cuMemcpyPeerAsync",
             ffi::copy_peer_async(
@@ -2567,6 +2570,62 @@ mod tests {
                 .is_err()
         );
         assert_eq!(ffi::fake_driver_call_count(18), 1);
+    }
+
+    #[cfg(feature = "fake-driver-tests")]
+    #[test]
+    fn peer_copy_runs_on_the_source_stream_and_refuses_a_third_context() {
+        use super::PinnedHostBuffer;
+        ffi::fake_driver_reset();
+        let driver = Driver::initialize().unwrap();
+        let destination_context = driver.retain_primary_context(0).unwrap();
+        let source_context = driver.retain_primary_context(1).unwrap();
+        let third_context = driver.retain_primary_context(2).unwrap();
+        let destination_stream = destination_context.stream().unwrap();
+        let source_stream = source_context.stream().unwrap();
+        let push_stream = source_context.stream().unwrap();
+        let third_stream = third_context.stream().unwrap();
+        let destination = destination_context
+            .default_memory_pool()
+            .unwrap()
+            .allocate(&destination_stream, 16)
+            .unwrap();
+        let source = source_context
+            .default_memory_pool()
+            .unwrap()
+            .allocate(&source_stream, 16)
+            .unwrap();
+        let mut input = PinnedHostBuffer::new(&source_context, 16).unwrap();
+        input.as_mut_slice()[2..6].copy_from_slice(&[5, 6, 7, 8]);
+        source
+            .copy_from_pinned_at_async(3, &input, 2, 4, &source_stream)
+            .unwrap()
+            .finish();
+        assert!(matches!(
+            destination.copy_peer_range_from_async(5, &source, 3, 4, &third_stream),
+            Err(CudaError::ContextMismatch)
+        ));
+        assert_eq!(ffi::fake_driver_call_count(18), 0);
+        // The push writes the destination from another stream.
+        destination_stream.synchronize().unwrap();
+        let joins = ffi::fake_driver_call_count(35);
+        destination
+            .copy_peer_range_from_async(5, &source, 3, 4, &push_stream)
+            .unwrap()
+            .finish();
+        assert_eq!(ffi::fake_driver_call_count(18), 1);
+        assert_eq!(
+            ffi::fake_driver_call_count(35),
+            joins + 2,
+            "a push joins both owner streams as a pull does"
+        );
+        let mut output = PinnedHostBuffer::new(&destination_context, 16).unwrap();
+        destination
+            .copy_to_pinned_at_async(5, &mut output, 0, 4, &destination_stream)
+            .unwrap()
+            .finish();
+        assert_eq!(&output.as_slice()[..4], &[5, 6, 7, 8]);
+        assert_eq!(ffi::fake_driver_ordering_violations(), 0);
     }
 
     #[cfg(feature = "fake-driver-tests")]

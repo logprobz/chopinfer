@@ -1577,10 +1577,12 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         let (destination_buffer, destination_offset, destination_length) =
             self.range(destination)?;
         let (source_buffer, source_offset, source_length) = self.range(source)?;
+        // The destination's stream pulls, the source's pushes.
+        let issuer = self.stream(stream)?.context();
         if destination_length != source_length
             || self.context(destination_context)? != &destination_buffer.context()
             || self.context(source_context)? != &source_buffer.context()
-            || self.stream(stream)?.context() != destination_buffer.context()
+            || (issuer != destination_buffer.context() && issuer != source_buffer.context())
         {
             return Err(BundleStatusV1::InvalidArgument);
         }

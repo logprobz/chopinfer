@@ -252,8 +252,8 @@ int cuMemcpyPeerAsync(
     void* source_context,
     size_t bytes,
     void* stream) {
-  (void)source_context;
-  if (current_context != destination_context) return 201;
+  /* A pull runs in the destination's context, a push in the source's. */
+  if (current_context != destination_context && current_context != source_context) return 201;
   int result = result_for(18);
   if (result) return result;
   check_ordered_write(destination, stream);

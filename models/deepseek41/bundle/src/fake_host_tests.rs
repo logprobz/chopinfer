@@ -22,6 +22,7 @@ mod bf16_decode;
 mod bf16_partials;
 mod conformance;
 mod decode_attention;
+mod decode_join;
 mod device_results;
 mod dspark;
 mod fold_stream;

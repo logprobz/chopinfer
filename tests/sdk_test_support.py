@@ -83,6 +83,8 @@ ALLOWED |= {
           'models/mimo26/compiler/src/bin/mimo26-package.rs')),
     'models/deepseek41/compiler/tests/package_helper.rs':
         ('tests', "the package helper's integration test, which includes native.rs", ()),
+    'models/deepseek41/compiler/tests/direct_reuse.rs':
+        ('tests', "the direct package reuse integration test, which includes native.rs", ()),
     'models/deepseek41/bundle/src/fake_host_tests/dspark/native_package.rs':
         ('cfg-test', "the DSpark fake-host package tests, which include native.rs",
          ('models/deepseek41/bundle/src/fake_host_tests/dspark.rs',)),

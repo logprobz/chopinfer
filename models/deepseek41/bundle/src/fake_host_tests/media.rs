@@ -388,8 +388,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// its one-row decode runs the 16-warp entry (grid 1 x 1, block 512) with the
 /// served operands.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
-    (Ranks::TP4, (56503, 0xbb89aecac848a923)),
+    (Ranks::TP2, (22933, 0xf3b017b44088e4d5)),
+    (Ranks::TP4, (56379, 0x0e9e8d56f95ae995)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

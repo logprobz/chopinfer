@@ -309,6 +309,15 @@ pub fn selection(
             moe_native_entries::WIDE_CUBIN.into(),
             model_deepseek41_contract::geometry::FLASH.id,
         ));
+        specs.extend(
+            moe_native_entries::lean_cubins()
+                .into_iter()
+                .map(|s| (moe_native_entries::LEAN_FAMILY, s)),
+        );
+        owners.push((
+            moe_native_entries::LEAN_CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
         let spec = prefill_cache::cubin().expect("decoded prefill cubin");
         owners.push((
             spec.name.clone(),

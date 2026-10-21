@@ -544,6 +544,7 @@ impl crate::Kernels {
                 moe_native::CUBIN,
                 moe_native::CEIL_CUBIN,
                 moe_native::WIDE_CUBIN,
+                moe_native::LEAN_CUBIN,
             ]
             .contains(&cubin)
                 || (moe_native::requested() && moe_native::eligible(shape.geometry, shape.ranks())))

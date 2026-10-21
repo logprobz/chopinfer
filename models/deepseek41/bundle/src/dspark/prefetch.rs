@@ -172,8 +172,7 @@ fn enabled() -> bool {
     if let Some(value) = TEST_ENABLED.with(std::cell::Cell::get) {
         return value;
     }
-    // Qualified bitwise on the GPU at C1 and C8; =0 keeps the serial path.
-    std::env::var_os("CHOPINFER_DSPARK_PREFETCH").is_none_or(|v| v == "1")
+    std::env::var_os("CHOPINFER_DSPARK_PREFETCH").is_some_and(|v| v == "1")
 }
 
 #[cfg(test)]

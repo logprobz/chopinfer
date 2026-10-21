@@ -430,7 +430,7 @@ fn tile_timing(
             };
             let mut ops = native_ops(&shape, tile, p.rows, &buffers, Variant::Serving)?;
             let reference = if gate {
-                ops.extend(quantizer(&p.native.gate)?);
+                ops.extend(p.quantizer.iter().cloned());
                 &p.exact.gate
             } else {
                 &p.exact.down

@@ -44,6 +44,8 @@ use crate::program::{DraftPass, Phase, Stage};
 use crate::step::PIECE_ROWS;
 use crate::submit::launch_all;
 
+mod dma;
+
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
@@ -98,6 +100,7 @@ struct Run {
     lowered: Vec<bool>,
     /// A drafter run's pass; `None` for the target's phases.
     draft: Option<DraftPass>,
+    inject: bool,
     /// A drafter run's own inputs: its rows' source codes, its draft rows
     /// and their count, and a draft step's shared-selection rows.
     draft_side: Vec<(Buffer, Vec<i32>)>,
@@ -524,6 +527,7 @@ impl Instance {
             collectives,
             lowered,
             draft: None,
+            inject,
             draft_side: Vec::new(),
         })
     }
@@ -691,6 +695,7 @@ impl Instance {
             collectives,
             lowered,
             draft: Some(pass),
+            inject: false,
             draft_side: draft_side(run, first).map_err(|error| {
                 self.log(error);
                 BundleStatusV1::InternalError
@@ -947,6 +952,17 @@ impl Instance {
         let stages = std::mem::take(&mut run.stages);
         let mut collectives = std::mem::take(&mut run.collectives);
         self.quiesce_phased(&streams)?;
+        if dma::eligible(self, run) {
+            let planned =
+                dma::Plan::prepare(self, run.phase.rows(), &programs, &stages, &collectives)
+                    .map_err(|error| {
+                        self.log(&error);
+                        BundleAbiError::InvalidRange("glm5next prefill DMA plan")
+                    })?;
+            return planned
+                .execute(self, &streams)
+                .map_err(|error| self.dispatch_failed(error));
+        }
         if let Some(key) = &run.prefill {
             return self
                 .launch_prefill(&streams, key, &programs, &stages, &collectives)
@@ -1184,6 +1200,11 @@ impl Instance {
         inject: bool,
     ) -> Option<PrefillKey> {
         if arena != PREFILL || inject || self.sync_stages || self.taps.text() {
+            return None;
+        }
+        if draft.is_none() && dma::eligible_inputs(self, inputs) {
+            // The first DMA policy is eager. Cached graphs must not bypass
+            // its transport on repeated prefill shapes.
             return None;
         }
         // The pieces' first rows, rows and first items, as `rank_pieces`

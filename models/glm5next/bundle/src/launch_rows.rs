@@ -77,6 +77,14 @@ fn record(stream: BundleStreamHandleV1, lane: &str, launches: &[PreparedLaunch])
     }
 }
 
+pub(crate) fn record_dma_sum(stream: BundleStreamHandleV1, sum: &PreparedLaunch) {
+    record(
+        stream,
+        &format!("stream {}", stream.slot()),
+        std::slice::from_ref(sum),
+    );
+}
+
 /// Records the launches this thread's recorded programs (the encoder's)
 /// submit from now on.
 pub fn observe_programs() {

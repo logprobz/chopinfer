@@ -66,6 +66,49 @@ fn loads_format(layout: &Layout, cubin: &str) -> bool {
 }
 
 impl Target for Sm120Own {
+    fn prefill_dma_sum(&self, owner: bundle_runtime::dma::Owner) -> Result<PreparedLaunch, String> {
+        use bundle_runtime::dispatch::BufferBindings;
+        use kernel_core::contract::{Argument, ArgumentList};
+        use kernels_sm120::comm::owned_sum_f32;
+        let elements = owner.output.length / 2;
+        if owner.input.length != elements * 4
+            || owner.output.length != elements * 2
+            || owner.inbox.length
+                != owner
+                    .slot_elements
+                    .checked_mul(16)
+                    .ok_or("DMA inbox overflow")?
+            || [owner.input, owner.inbox, owner.output]
+                .iter()
+                .any(|s| s.offset % 16 != 0)
+        {
+            return Err("DMA owner sum views differ from the F32 contract".into());
+        }
+        let plan = owned_sum_f32::plan(elements, owner.slot_elements, owner.rank, 4)
+            .map_err(|e| e.to_string())?;
+        let mut bindings = BufferBindings::default();
+        let arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(bindings.bind(owner.input)),
+            Argument::DeviceBuffer(bindings.bind(owner.inbox)),
+            Argument::DeviceBuffer(bindings.bind(owner.output)),
+            Argument::U64(elements),
+            Argument::U64(owner.slot_elements),
+            Argument::U32(owner.rank),
+            Argument::U32(4),
+        ]);
+        Ok(PreparedLaunch {
+            symbol: owned_sum_f32::SYMBOL.into(),
+            rows: owner.rows,
+            plan,
+            arguments,
+            bindings,
+        })
+    }
+
+    fn prefill_dma_replaces(&self, symbol: &str) -> bool {
+        symbol == kernels_sm120::comm::phased_f32::ROUND_SYMBOL
+    }
+
     fn backend(&self, layout: &'static Layout) -> Result<(Box<dyn Backend>, Served), String> {
         let shape = self.shape();
         Ok(super::backend(Engines::shared(shape, layout)?, shape))
@@ -91,6 +134,7 @@ impl Target for Sm120Own {
                 || (uses.drafter && cubin == group_gather))
             && (uses.drafter || cubin != ARGMAX_CUBIN)
             && (uses.comm_epilogue || cubin != COMM_EPILOGUE_CUBIN)
+            && (uses.prefill_dma || cubin != model_glm5next_contract::sm120::dma::CUBIN)
     }
 
     fn low_latency(&self) -> Result<Vec<SpinningEntry>, String> {

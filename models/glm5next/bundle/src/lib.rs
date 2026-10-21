@@ -15,6 +15,7 @@ pub mod launch;
 pub mod lower;
 pub mod ops;
 mod payload;
+pub mod prefill_dma;
 pub mod program;
 pub mod projections;
 mod rank_layout;

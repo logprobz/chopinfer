@@ -45,7 +45,7 @@ use runtime_bundle_abi::{
     ExecuteResultSinkV1, HostServicesV1,
 };
 
-use crate::buffers::{CommState, RankBuffers, StatePools, allocate_scratch};
+use crate::buffers::{CommState, RankBuffers, StatePools, allocate_scratch_named};
 use crate::config::{Configuration, decode};
 
 const NAME: &str = "GLM 5.3 Flash";
@@ -117,6 +117,9 @@ pub struct Instance {
     shared_overlap: crate::shared_overlap::Settings,
     /// Each rank's side stream and events; none without the overlap.
     side_lanes: Vec<crate::shared_overlap::Lanes>,
+    /// Private allocation owners and inboxes for prefill's F32 MoE DMA.
+    dma: Vec<bundle_runtime::dma::Rank>,
+    prefill_dma: bool,
     /// Runs in the phased all-reduce's scope issued since every rank's
     /// phased flags and epoch were last zeroed, and the count at which the
     /// next such run zeroes them first (`Target::phased_reset_runs`; tests
@@ -261,6 +264,15 @@ impl Instance {
             stored.push(Vec::clone(&expected));
         }
         acquire::grant_peers(services, &ranks, held)?;
+        if self.prefill_dma {
+            self.dma = bundle_runtime::dma::acquire(
+                services,
+                &ranks,
+                u64::from(model_glm5next_contract::contract::PREFILL_TOKENS)
+                    * u64::from(shape.profile.hidden),
+                held,
+            )?;
+        }
         let layouts = [
             InputLayout::prefill_capacity_within::<Glm>(items),
             InputLayout::decode_within(items).end,
@@ -278,7 +290,7 @@ impl Instance {
         let cp_size = self.config.context_parallel.size();
         let mut cp_states = Vec::new();
         let mut drafters = Vec::new();
-        for &(_, pool, stream) in &ranks {
+        for (rank, &(_, pool, stream)) in ranks.iter().enumerate() {
             for (phase, bytes) in layouts.into_iter().enumerate() {
                 let arena = allocate_span(services, pool, stream, bytes, held)?;
                 let block_tables = allocate_span(services, pool, stream, tables, held)?;
@@ -300,13 +312,22 @@ impl Instance {
             let pieces = u64::from(execute::MAX_PIECES) * execute::piece_stride(items);
             self.piece_arenas
                 .push(allocate_span(services, pool, stream, pieces, held)?);
-            let buffers = allocate_scratch(shape, self.drafter.is_some(), |bytes| {
-                allocate_span(services, pool, stream, bytes, held)
-            })?
-            .map_err(|error| {
-                let _ = services.log(error.as_bytes());
-                BundleAbiError::InvalidRange("glm5next scratch")
-            })?;
+            let buffers =
+                allocate_scratch_named(shape, self.drafter.is_some(), |buffer, bytes| {
+                    let owner = if matches!(
+                        buffer,
+                        crate::buffers::Buffer::Partial | crate::buffers::Buffer::Reduced
+                    ) {
+                        self.dma.get(rank).map_or(stream, |dma| dma.owner)
+                    } else {
+                        stream
+                    };
+                    allocate_span(services, pool, owner, bytes, held)
+                })?
+                .map_err(|error| {
+                    let _ = services.log(error.as_bytes());
+                    BundleAbiError::InvalidRange("glm5next scratch")
+                })?;
             // The split mixer's tickets start at zero; each launch leaves
             // them zero.
             services.zero_device_buffer(stream, buffers[&crate::buffers::Buffer::MixTickets])?;
@@ -391,6 +412,7 @@ impl Instance {
             context_parallel: cp_size > 1,
             comm_epilogue: self.config.comm_epilogue,
             drafter: self.drafter.is_some(),
+            prefill_dma: self.prefill_dma,
         };
         for &(context, _, _) in &ranks {
             let mut resolved = BTreeMap::new();
@@ -609,6 +631,9 @@ impl Instance {
             }
         }
         acquire::synchronize(log, &ranks)?;
+        for dma in &self.dma {
+            services.synchronize_stream(dma.owner)?;
+        }
         self.ranks = ranks;
         Ok(())
     }
@@ -725,6 +750,11 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let _ = services.log(format!("{NAME} create failed: {reason}").as_bytes());
     };
     let config = decode(bytes, log)?;
+    let prefill_dma = crate::prefill_dma::requested();
+    if prefill_dma && (config.context_parallel.size() != 1 || config.comm_epilogue) {
+        log("prefill DMA currently requires CP1 without the comm epilogue");
+        return Err(BundleStatusV1::Unsupported.into());
+    }
     let taps = crate::taps::StepTaps::from_env(&config).map_err(|error| {
         log(&error);
         BundleStatusV1::InvalidArgument
@@ -820,6 +850,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         taps,
         shared_overlap: crate::shared_overlap::Settings::from_env(),
         side_lanes: Vec::new(),
+        dma: Vec::new(),
+        prefill_dma,
         phased_runs: 0,
         phased_reset_runs,
         state_copies: Vec::new(),
@@ -931,6 +963,18 @@ impl Bundle for Instance {
     /// a graph whose release fails stays owned for the next call, which
     /// the prefill store owes until one succeeds.
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
+        if !self.dma.is_empty() {
+            // Peer-copy owner joins do not cover subsequent compute reads.
+            // A failed drain must leave all private buffers and graphs owned.
+            for stream in self
+                .ranks
+                .iter()
+                .map(|r| r.2)
+                .chain(self.side_lanes.iter().map(|lanes| lanes.side))
+            {
+                self.services.synchronize_stream(stream)?;
+            }
+        }
         // The drafter's caches and the prefill programs see the shared
         // ledger's new epoch as released.
         self.prefill_graphs.forget();

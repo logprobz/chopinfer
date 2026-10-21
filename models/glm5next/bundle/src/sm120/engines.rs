@@ -288,6 +288,7 @@ impl Engines {
             bytes.insert(entry.symbol, 0);
         }
         bytes.insert(selected::ROW_GATHER_SYMBOL.into(), 0);
+        bytes.insert(kernels_sm120::comm::owned_sum_f32::SYMBOL.into(), 0);
         for symbol in selected::COMM_SYMBOLS {
             bytes.insert(symbol.into(), 0);
         }

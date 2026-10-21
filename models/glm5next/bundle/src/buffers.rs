@@ -764,6 +764,15 @@ pub fn allocate_scratch<E>(
     drafter: bool,
     mut allocate: impl FnMut(u64) -> Result<DeviceBufferSpanV1, E>,
 ) -> Result<Result<BTreeMap<Buffer, DeviceBufferSpanV1>, String>, E> {
+    allocate_scratch_named(shape, drafter, |_, bytes| allocate(bytes))
+}
+
+/// Named traversal lets a transport give peer-visible planes private owners.
+pub(crate) fn allocate_scratch_named<E>(
+    shape: Shape,
+    drafter: bool,
+    mut allocate: impl FnMut(Buffer, u64) -> Result<DeviceBufferSpanV1, E>,
+) -> Result<Result<BTreeMap<Buffer, DeviceBufferSpanV1>, String>, E> {
     let mut scratch = BTreeMap::new();
     for buffer in Buffer::ALL {
         if buffer.drafter() && !drafter {
@@ -773,7 +782,7 @@ pub fn allocate_scratch<E>(
             Ok(bytes) => bytes,
             Err(error) => return Ok(Err(error)),
         };
-        scratch.insert(buffer, allocate(bytes)?);
+        scratch.insert(buffer, allocate(buffer, bytes)?);
     }
     Ok(Ok(scratch))
 }

@@ -619,6 +619,7 @@ struct SharedSourceStateV1 {
 /// shared output's section. Tests count the bytes held until they are freed.
 struct RetainedBytesV1 {
     bytes: Vec<u8>,
+    range: Range<usize>,
     charge: u64,
     pool: Option<Arc<PackedBuffers>>,
     #[cfg(test)]
@@ -649,6 +650,7 @@ impl RetainedBytesV1 {
                 .fetch_max(now + charge, Ordering::AcqRel);
         }
         Self {
+            range: 0..bytes.len(),
             bytes,
             charge,
             pool: pooled.then(|| Arc::clone(&inner.packed_buffers)),
@@ -1498,7 +1500,24 @@ fn read_source_v1(
     offset: u64,
     buffer: &mut [u8],
 ) -> Result<(), WeightTransformError> {
-    if offset + buffer.len() as u64 > source.length {
+    read_source_storage_v1(inner, source, offset, buffer, 0..buffer.len())
+}
+
+/// Owned inputs can include alignment padding around their logical range.
+/// Cold runs then land in that storage directly, without a bounce copy.
+fn read_source_storage_v1(
+    inner: &InnerV1,
+    source: SourceAtV1,
+    offset: u64,
+    storage: &mut [u8],
+    range: Range<usize>,
+) -> Result<(), WeightTransformError> {
+    let length = range.len() as u64;
+    if range.end > storage.len()
+        || offset
+            .checked_add(length)
+            .is_none_or(|end| end > source.length)
+    {
         return Err(WeightTransformError(
             "source read outside its tensor".into(),
         ));
@@ -1511,7 +1530,7 @@ fn read_source_v1(
         .checkpoint
         .read_refusal
         .get()
-        .is_some_and(|range| at < range.end && range.start < at + buffer.len() as u64)
+        .is_some_and(|range| at < range.end && range.start < at + length)
     {
         return Err(WeightTransformError(format!(
             "read {}: {}",
@@ -1527,27 +1546,28 @@ fn read_source_v1(
         .then(|| shard.direct_file())
         .flatten();
     let runs = match direct {
-        Some(_) => residency_runs_v1(&shard.file, at, buffer.len() as u64),
-        None => vec![(buffer.len() as u64, false)],
+        Some(_) => residency_runs_v1(&shard.file, at, length),
+        None => vec![(length, false)],
     };
     if let (Some(timing), Some(start)) = (&inner.io_timing, residency_started) {
         elapsed_nanos(&timing.residency_nanos, start);
-        timing.request(source.shard, at, buffer.len() as u64);
+        timing.request(source.shard, at, length);
     }
-    let mut rest = &mut *buffer;
+    let mut begin = range.start;
     let mut run_at = at;
     for (length, cold) in runs {
-        let (part, tail) = rest.split_at_mut(length as usize);
+        let part = begin..begin + length as usize;
         // A refusal earlier in this read turns direct reads off for the rest
         // of it too.
         let read_direct = direct
             .filter(|direct| cold && !direct.off.load(Ordering::Relaxed))
             .map(|direct| {
-                read_direct_v1(
+                read_direct_storage_v1(
                     &inner.direct_buffers,
                     direct,
                     run_at,
-                    part,
+                    storage,
+                    part.clone(),
                     inner.io_timing.as_ref(),
                 )
             });
@@ -1569,8 +1589,13 @@ fn read_source_v1(
                         shard.name
                     );
                 }
-                read_buffered_v1(&shard.file, part, run_at, inner.io_timing.as_ref())
-                    .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
+                read_buffered_v1(
+                    &shard.file,
+                    &mut storage[part.clone()],
+                    run_at,
+                    inner.io_timing.as_ref(),
+                )
+                .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
                 inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
             }
             Some(Err(error)) => {
@@ -1580,24 +1605,27 @@ fn read_source_v1(
                 )));
             }
             None => {
-                read_buffered_v1(&shard.file, part, run_at, inner.io_timing.as_ref())
-                    .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
+                read_buffered_v1(
+                    &shard.file,
+                    &mut storage[part.clone()],
+                    run_at,
+                    inner.io_timing.as_ref(),
+                )
+                .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
                 inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
             }
         }
-        rest = tail;
+        begin = part.end;
         run_at += length;
     }
     elapsed_nanos(&inner.read_nanos, started);
-    inner
-        .source_bytes
-        .fetch_add(buffer.len() as u64, Ordering::Relaxed);
+    inner.source_bytes.fetch_add(length, Ordering::Relaxed);
     inner.source_reads.fetch_add(1, Ordering::Relaxed);
     if let Some(ranges) = &inner.source_ranges {
         let unique = ranges
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(source.shard, at..at + buffer.len() as u64);
+            .insert(source.shard, at..at + length);
         inner
             .unique_source_bytes
             .fetch_add(unique, Ordering::Relaxed);
@@ -1762,8 +1790,69 @@ fn read_direct_v1(
     result
 }
 
+/// Use caller-owned alignment padding when it can hold the complete direct
+/// window. Ordinary destinations retain the bounded bounce-buffer path.
+fn read_direct_storage_v1(
+    buffers: &Mutex<Vec<Vec<u8>>>,
+    direct: &DirectFileV1,
+    at: u64,
+    storage: &mut [u8],
+    range: Range<usize>,
+    timing: Option<&io_stats::IoCounters>,
+) -> std::io::Result<u64> {
+    if range.is_empty() {
+        return Ok(0);
+    }
+    let align = direct.alignment;
+    let prefix = (at % align) as usize;
+    let end = at + range.len() as u64;
+    let suffix = (end.next_multiple_of(align) - end) as usize;
+    let window = range
+        .start
+        .checked_sub(prefix)
+        .zip(range.end.checked_add(suffix))
+        .filter(|&(start, end)| {
+            end <= storage.len() && storage[start..].as_ptr().align_offset(align as usize) == 0
+        });
+    let Some((start, end)) = window else {
+        return read_direct_v1(buffers, direct, at, &mut storage[range], timing);
+    };
+    let window = &mut storage[start..end];
+    let file_start = at - prefix as u64;
+    let required = prefix + range.len();
+    let mut filled = 0;
+    while filled < window.len() {
+        let stop = window.len().min(filled + DIRECT_READ_BYTES as usize);
+        let mut read = || {
+            direct
+                .file
+                .read_at(&mut window[filled..stop], file_start + filled as u64)
+        };
+        let result = match timing {
+            Some(timing) => timing.read(true, read),
+            None => read(),
+        };
+        let count = match result {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            other => other?,
+        };
+        filled += count;
+        if count == 0 || count as u64 % align != 0 {
+            break;
+        }
+    }
+    if filled < required {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(filled as u64)
+}
+
 /// The whole output of a shared record, as sections.
-fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>>, String> {
+fn produce_sections_v1(
+    inner: &InnerV1,
+    record: &RecordV1,
+    wanted: [bool; 3],
+) -> Result<Vec<Vec<u8>>, String> {
     let error = transform_error(record.offset);
     let mut read = |index: usize, offset: u64, buffer: &mut [u8]| {
         read_source_v1(inner, record.sources[index], offset, buffer)
@@ -1789,6 +1878,7 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
     }
     if let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform {
         let described = record.prepared.record();
+        let mut scale_input = None;
         if record.has_code_section
             && let Some(index) = operand.independent_scale_source(described)
         {
@@ -1806,17 +1896,33 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
             {
                 return Ok(vec![Vec::new(), scales, Vec::new()]);
             }
+            scale_input = Some((index, input));
         }
         let inputs = (0..record.sources.len())
-            .map(|index| inner.packed_sources.read(inner, record, index))
+            .map(|index| {
+                if scale_input
+                    .as_ref()
+                    .is_some_and(|(source, _)| *source == index)
+                {
+                    Ok(scale_input.take().expect("matched scale source").1)
+                } else {
+                    inner.packed_sources.read(inner, record, index)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()
             .map_err(&error)?;
         let views = inputs.iter().map(|input| input.bytes()).collect::<Vec<_>>();
         let sizes = operand.plan.section_bytes().map_err(|e| e.to_string())?;
-        let buffers = [sizes.codes, sizes.local_scales, sizes.global_scales]
-            .map(|size| inner.packed_buffers.take(size as usize));
+        let sizes = [sizes.codes, sizes.local_scales, sizes.global_scales];
+        let buffers = std::array::from_fn(|section| {
+            if wanted[section] {
+                inner.packed_buffers.take(sizes[section] as usize)
+            } else {
+                Vec::new()
+            }
+        });
         return packing_timed_v1(inner, || {
-            operand.execute_sections_reusing(described, &views, buffers)
+            operand.execute_needed_sections_reusing(described, &views, buffers, wanted)
         })
         .map(|sections| sections.into())
         .map_err(error);
@@ -2094,7 +2200,11 @@ fn copy_shared_v1(
             }
             None => {
                 let producing = inner.detailed_timing.then(Instant::now);
-                let produced = produce_sections_v1(inner, record);
+                let needed = std::array::from_fn(|section| {
+                    section == wanted
+                        || state.remaining[section] > 0 && state.sections[section].is_none()
+                });
+                let produced = produce_sections_v1(inner, record, needed);
                 if let Some(producing) = producing {
                     elapsed_nanos(&inner.materialize_nanos, producing);
                 }
@@ -2734,7 +2844,12 @@ mod tests {
     /// kernel reports page-cache residency and its files open with `O_DIRECT`.
     fn direct_reads_supported(checkpoint: &DirectCheckpointV1) -> bool {
         let shard = &checkpoint.shards[0];
-        cached_pages_v1(&shard.file, 0, 1).is_ok() && shard.direct_file().is_some()
+        let supported = cached_pages_v1(&shard.file, 0, 1).is_ok() && shard.direct_file().is_some();
+        assert!(
+            supported || std::env::var_os("CHOPINFER_REQUIRE_DIRECT_IO_TESTS").is_none(),
+            "this qualification requires residency reports and direct I/O"
+        );
+        supported
     }
 
     /// An image over `checkpoint` with no records and direct reads on, for
@@ -2920,6 +3035,77 @@ mod tests {
         }
         let mut past = vec![0; 2];
         assert!(read_direct_v1(&buffers, direct, file_length - 1, &mut past, None).is_err());
+    }
+
+    #[test]
+    fn owned_direct_windows_cover_unaligned_eof_and_mixed_residency_without_copies() {
+        let length = 2 * DIRECT_READ_BYTES as usize + 777;
+        let data: Vec<_> = (0..length).map(|i| (i * 131 + i / 4099) as u8).collect();
+        let root = checkpoint(&[("t", "U8", vec![length as u64], data.clone())]);
+        let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+        if !direct_reads_supported(&checkpoint) {
+            eprintln!("skipped: no residency report or O_DIRECT on this file system");
+            return;
+        }
+        let shard = &checkpoint.shards[0];
+        let direct = shard.direct_file().unwrap();
+        let align = direct.alignment as usize;
+        let source = SourceAtV1 {
+            shard: 0,
+            begin: shard.tensors["t"].1,
+            length: length as u64,
+        };
+        let mut image = direct_reading_image(checkpoint.clone());
+        Arc::get_mut(&mut image.inner).unwrap().io_timing = Some(io_stats::IoCounters::default());
+        for mixed in [false, true] {
+            let before = image.stats();
+            evict(&checkpoint);
+            if mixed {
+                let mut middle = vec![0; 256 << 10];
+                shard
+                    .file
+                    .read_exact_at(&mut middle, source.begin + (1 << 20))
+                    .unwrap();
+                let runs = residency_runs_v1(&shard.file, source.begin, source.length);
+                assert!(runs.iter().any(|(_, cold)| *cold) && runs.iter().any(|(_, cold)| !cold));
+            }
+            let prefix = source.begin as usize % align;
+            let mut storage = vec![0xa5; (length + prefix).next_multiple_of(align) + align];
+            let start = storage.as_ptr().align_offset(align) + prefix;
+            read_source_storage_v1(&image.inner, source, 0, &mut storage, start..start + length)
+                .unwrap();
+            assert_eq!(&storage[start..start + length], data);
+            let delta = image.stats().since(before);
+            assert!(delta.direct_bytes > 0);
+            let io = delta.io_timing.unwrap();
+            assert!(io.direct_calls > 1);
+            assert_eq!(io.buffered_calls > 0, mixed);
+            assert_eq!(io.bounce_bytes, 0);
+        }
+        evict(&checkpoint);
+        let beyond = SourceAtV1 {
+            length: source.length + align as u64,
+            ..source
+        };
+        let mut storage = vec![0xa5; length + 4 * align];
+        let start = storage.as_ptr().align_offset(align) + source.begin as usize % align;
+        let before = image.stats();
+        let error = read_source_storage_v1(
+            &image.inner,
+            beyond,
+            0,
+            &mut storage,
+            start..start + beyond.length as usize,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .0
+                .contains(&std::io::Error::from(std::io::ErrorKind::UnexpectedEof).to_string()),
+            "{error}"
+        );
+        assert!(image.stats().since(before).io_timing.unwrap().direct_calls > 0);
+        assert!(shard.direct_file().is_some());
     }
 
     /// A range the cache holds in the middle splits into a cold run, a

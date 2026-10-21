@@ -221,17 +221,31 @@ impl PackedOperand {
         sources: &[&[u8]],
         buffers: [Vec<u8>; 3],
     ) -> Result<[Vec<u8>; 3], WeightTransformError> {
+        self.execute_needed_sections_reusing(record, sources, buffers, [true; 3])
+    }
+
+    /// Produces the requested section and omits unnecessary companions where
+    /// the layout supports it. Other layouts retain whole materialization.
+    /// Input admission is independent of which outputs are wanted.
+    pub fn execute_needed_sections_reusing(
+        &self,
+        record: &WeightRecord,
+        sources: &[&[u8]],
+        buffers: [Vec<u8>; 3],
+        mut wanted: [bool; 3],
+    ) -> Result<[Vec<u8>; 3], WeightTransformError> {
         use crate::contract::SwigluColumns;
         use crate::precision::packed::{MatrixSlice, MatrixView, ScaleBytes};
         use crate::transform::fragment::FragmentWeightLayout;
         use crate::transform::{ScaleTileLayout, Transform};
 
         let expected = self.output_bytes(record)?;
+        wanted[self.section.index()] = true;
         if sources.len() != record.sources.len() {
             return refuse("packed operand source count differs from its record");
         }
         if self.reuses_row_major_sections() {
-            return self.execute_row_major_reusing(record, sources, buffers, expected);
+            return self.execute_row_major_reusing(record, sources, buffers, expected, wanted);
         }
         let plan = &self.plan;
         let (scale_rows, scale_columns) = plan.scale_shape();

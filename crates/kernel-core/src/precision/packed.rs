@@ -588,6 +588,7 @@ impl<'a> MatrixView<'a> {
         slice: &MatrixSlice,
         mut codes: Vec<u8>,
         mut scales: Vec<u8>,
+        wanted: [bool; 2],
     ) -> Result<PackedMatrix, PrecisionError> {
         if slice.rows.is_empty()
             || slice.rows.iter().any(|&r| r >= self.rows)
@@ -638,7 +639,7 @@ impl<'a> MatrixView<'a> {
             .checked_mul(scale_width)
             .filter(|&n| n as u64 <= super::MAX_TENSOR_BYTES)
             .ok_or_else(|| self.error("repacking", "scale byte size overflow"))?;
-        codes.resize(bytes, 0);
+        codes.resize(if wanted[0] { bytes } else { 0 }, 0);
         let neutral = if matches!(
             self.format,
             WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
@@ -647,47 +648,53 @@ impl<'a> MatrixView<'a> {
         } else {
             0
         };
+        let scale_bytes = if wanted[1] { scale_bytes } else { 0 };
         let reused = scales.len().min(scale_bytes);
         scales.resize(scale_bytes, neutral);
         scales[..reused].fill(neutral);
         let row_bytes = slice.padded_k * self.code_bits() / 8;
         let live_bytes = (slice.k * self.code_bits()).div_ceil(8);
-        codes[slice.rows.len() * row_bytes..].fill(0);
+        if wanted[0] {
+            codes[slice.rows.len() * row_bytes..].fill(0);
+        }
         let mut scale_sources = vec![None; if self.local.is_some() { scale_rows } else { 0 }];
         for (out_row, &row) in slice.rows.iter().enumerate() {
-            codes[out_row * row_bytes + live_bytes..(out_row + 1) * row_bytes].fill(0);
-            if self.code_bits() >= 8 || slice.k_start.is_multiple_of(2) && slice.k.is_multiple_of(2)
-            {
-                let src = (row * self.k + slice.k_start) * self.code_bits() / 8;
-                let dst = out_row * slice.padded_k * self.code_bits() / 8;
-                let length = slice.k * self.code_bits() / 8;
-                codes[dst..dst + length].copy_from_slice(&self.codes[src..src + length]);
-                if self.code_bits() == 4 && self.nibble_order != slice.nibble_order {
-                    for byte in &mut codes[dst..dst + length] {
-                        *byte = byte.rotate_left(4);
+            if wanted[0] {
+                codes[out_row * row_bytes + live_bytes..(out_row + 1) * row_bytes].fill(0);
+                if self.code_bits() >= 8
+                    || slice.k_start.is_multiple_of(2) && slice.k.is_multiple_of(2)
+                {
+                    let src = (row * self.k + slice.k_start) * self.code_bits() / 8;
+                    let dst = out_row * slice.padded_k * self.code_bits() / 8;
+                    let length = slice.k * self.code_bits() / 8;
+                    codes[dst..dst + length].copy_from_slice(&self.codes[src..src + length]);
+                    if self.code_bits() == 4 && self.nibble_order != slice.nibble_order {
+                        for byte in &mut codes[dst..dst + length] {
+                            *byte = byte.rotate_left(4);
+                        }
                     }
-                }
-            } else {
-                codes[out_row * row_bytes..out_row * row_bytes + live_bytes].fill(0);
-                for col in 0..slice.k {
-                    let src = row * self.k + slice.k_start + col;
-                    let dst = out_row * slice.padded_k + col;
-                    if self.code_bits() == 4 {
-                        let low =
-                            src.is_multiple_of(2) == (self.nibble_order == NibbleOrder::EvenLow);
-                        let code = if low {
-                            self.codes[src / 2] & 15
-                        } else {
-                            self.codes[src / 2] >> 4
-                        };
-                        let shift = if dst.is_multiple_of(2)
-                            == (slice.nibble_order == NibbleOrder::EvenLow)
-                        {
-                            0
-                        } else {
-                            4
-                        };
-                        codes[dst / 2] |= code << shift;
+                } else {
+                    codes[out_row * row_bytes..out_row * row_bytes + live_bytes].fill(0);
+                    for col in 0..slice.k {
+                        let src = row * self.k + slice.k_start + col;
+                        let dst = out_row * slice.padded_k + col;
+                        if self.code_bits() == 4 {
+                            let low = src.is_multiple_of(2)
+                                == (self.nibble_order == NibbleOrder::EvenLow);
+                            let code = if low {
+                                self.codes[src / 2] & 15
+                            } else {
+                                self.codes[src / 2] >> 4
+                            };
+                            let shift = if dst.is_multiple_of(2)
+                                == (slice.nibble_order == NibbleOrder::EvenLow)
+                            {
+                                0
+                            } else {
+                                4
+                            };
+                            codes[dst / 2] |= code << shift;
+                        }
                     }
                 }
             }
@@ -701,9 +708,11 @@ impl<'a> MatrixView<'a> {
                 scale_sources[target_row] = Some(start);
                 let length = span_groups(k_origin, slice.k, self.groups().1).unwrap();
                 let dst = target_row * columns * scale_width;
-                scales[dst..dst + length * scale_width].copy_from_slice(
-                    &local.bytes[start * scale_width..(start + length) * scale_width],
-                );
+                if wanted[1] {
+                    scales[dst..dst + length * scale_width].copy_from_slice(
+                        &local.bytes[start * scale_width..(start + length) * scale_width],
+                    );
+                }
             }
         }
         Ok(PackedMatrix {
@@ -743,7 +752,20 @@ impl ValidatedMatrixView<'_> {
         codes: Vec<u8>,
         scales: Vec<u8>,
     ) -> Result<PackedMatrix, PrecisionError> {
-        self.0.repack_validated(slice, codes, scales)
+        self.0.repack_validated(slice, codes, scales, [true; 2])
+    }
+
+    /// Omits unneeded output storage while retaining every payload, slice
+    /// and scale-group check. The result is section storage, not a complete
+    /// matrix to pass to a numerical consumer.
+    pub(crate) fn repack_sections_reusing(
+        self,
+        slice: &MatrixSlice,
+        codes: Vec<u8>,
+        scales: Vec<u8>,
+        wanted: [bool; 2],
+    ) -> Result<PackedMatrix, PrecisionError> {
+        self.0.repack_validated(slice, codes, scales, wanted)
     }
 }
 

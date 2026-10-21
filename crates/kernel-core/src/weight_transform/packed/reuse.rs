@@ -27,6 +27,7 @@ impl PackedOperand {
         sources: &[&[u8]],
         buffers: [Vec<u8>; 3],
         expected: u64,
+        wanted: [bool; 3],
     ) -> Result<[Vec<u8>; 3], WeightTransformError> {
         let matrix = &self.matrices[0];
         let part = |index: u32| -> Result<&[u8], WeightTransformError> {
@@ -72,7 +73,7 @@ impl PackedOperand {
         };
         let [codes, scales, mut globals] = buffers;
         let packed = view
-            .repack_reusing(&slice, codes, scales)
+            .repack_sections_reusing(&slice, codes, scales, [wanted[0], wanted[1]])
             .map_err(precision)?;
         if !packed.k_origin.is_multiple_of(32) {
             return refuse("implementation requires an aligned source scale-group origin");

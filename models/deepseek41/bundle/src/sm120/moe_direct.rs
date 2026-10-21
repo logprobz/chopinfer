@@ -60,6 +60,7 @@ pub(super) fn prepare_set(
                     phase,
                     scaling,
                     super::moe_router_finish::qualified(set, phase, rows),
+                    super::moe_router_finish::r2(set, phase, rows),
                 )?,
             ))
         })
@@ -72,6 +73,7 @@ fn prepare(
     phase: ExecutionPhase,
     scaling: u32,
     fused_router: bool,
+    r2: bool,
 ) -> Result<Prepared, Refused> {
     let scratch = entry.workspace_bytes(rows)?;
     let routed_offset = if fused_router {
@@ -87,7 +89,7 @@ fn prepare(
     );
     info.workspace = ticket_offset + 256;
     let mut calls = if fused_router {
-        super::moe_router_finish::calls(entry, rows, scaling)?
+        super::moe_router_finish::calls(entry, rows, scaling, r2)?
     } else {
         Vec::new()
     };

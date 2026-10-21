@@ -365,9 +365,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// after handle mapping.
 /// The early-stop selectors add one module, six resolves and seven
 /// releases per rank, and rename each prefill local selector and merge.
+/// after handle mapping. The r2 router finish module adds one module, 14
+/// resolves and 15 releases per TP4 rank.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22969, 0x55b7d35a6d64a12a)),
-    (Ranks::TP4, (53035, 0x9d865ae5659aaa4d)),
+    (Ranks::TP4, (53151, 0x223fe83e70b7e7ef)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -4,6 +4,16 @@ use kernel_core::gated_mlp::GatedMlpProjection;
 use kernels_sm120::moe::chained::{bandwidth, floor, row_bias};
 use model_deepseek41_contract::{geometry::Geometry, moe};
 
+/// The served lower-latency router finish variant (`router_finish_r2.cuh`;
+/// all chain loads first, counts scanned per expert warp, experts scored in
+/// parallel), bitwise equal to the served finish.
+pub const R2_VARIANT: u32 = 7;
+/// The served r2 module compiles the qualified lab module's variants
+/// unchanged (`routed_moe_router_finish_r2_lab`): the translation unit
+/// decides register allocation and scheduling, and only these bytes were
+/// qualified. Only `R2_VARIANT` unstamped is launched.
+pub const R2_MODULE_VARIANTS: [u32; 3] = [1, 3, R2_VARIANT];
+
 pub fn entries(g: &Geometry) -> Result<Vec<kernels_sm120::moe::chained::floor::Entry>, String> {
     let projections = super::moe::streamed_projections(g)?;
     moe::expert_sets(g)
@@ -46,6 +56,14 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             kernels_sm120::moe::chained::streamed_resident::cubin_spec(
                 &format!("bandwidth_moe_{}_resident_sm120", g.kernel_tag),
                 &entries.iter().map(|e| e.gate.clone()).collect::<Vec<_>>(),
+            ),
+        ));
+        specs.push((
+            "routed_moe_router_finish_r2",
+            kernels_sm120::moe::chained::router_finish::r2_cubin_spec(
+                &format!("router_finish_moe_{}_r2_sm120", g.kernel_tag),
+                &entries,
+                &R2_MODULE_VARIANTS,
             ),
         ));
         specs.push((

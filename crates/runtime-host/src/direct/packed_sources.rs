@@ -198,26 +198,30 @@ impl PackedSources {
             .flat_map(|rank| &mut rank.records)
             .enumerate()
         {
-            if !matches!(
-                record.prepared.record().transform,
-                WeightTransform::PackedOperand(_)
-            ) {
+            let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform
+            else {
+                continue;
+            };
+            // Streamed records read ranges directly and never visit this
+            // cache. Counting them would keep inputs for absent consumers.
+            if record.shared.is_none() {
                 continue;
             }
             record.consumer = consumer;
-            for source in &record.sources {
+            for (source_index, source) in record.sources.iter().enumerate() {
                 if source.length > SHARED_SOURCE_BYTES_MAX {
                     record.packed_sources.push(None);
                     continue;
                 }
-                // Sections are separate cohorts: scale-first views must not
-                // retain codes until every later code view has been consumed.
-                let key = (
-                    source.shard,
-                    source.begin,
-                    source.length,
-                    record.prepared.section(),
-                );
+                // Scales serve both scale-first and later code production.
+                // Codes keep separate section cohorts so an independent
+                // scale pass cannot retain a bank of unused code inputs.
+                let cohort = operand
+                    .matrices
+                    .iter()
+                    .any(|matrix| matrix.codes as usize == source_index)
+                    .then_some(record.prepared.section());
+                let key = (source.shard, source.begin, source.length, cohort);
                 let slot = *keys.entry(key).or_insert_with(|| {
                     users.push(BTreeSet::new());
                     users.len() - 1

@@ -366,6 +366,44 @@ fn packed_sources_are_shared_across_ranks_without_retaining_code_banks() {
 }
 
 #[test]
+fn scale_inputs_are_read_once_across_whole_section_cohorts_when_they_fit() {
+    let (root, mut plans, expected, unique) = fixture(32);
+    for plan in &mut plans {
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!()
+            };
+            operand.plan.layout.id = "row-major-groups".into();
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+        }
+    }
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for budget in [4096, 2 << 20] {
+        let image = sharing_image(&checkpoint, &plans, 2, budget);
+        assert_eq!(waves(&image, 8192), expected);
+        if budget == 2 << 20 {
+            assert_eq!(image.stats().source_bytes, unique);
+        }
+        assert!(image.stats().retained_peak_bytes <= budget);
+        image.release_buffers();
+        assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+        assert_eq!(image.inner.retained_held.now.load(Ordering::Acquire), 0);
+        // Evicted or released cohorts must tolerate another partial replay.
+        let mut replay = vec![0xa5; 1025];
+        image
+            .read(image.inner.offsets[3] + 17, &mut replay)
+            .unwrap();
+        assert_eq!(replay, expected[3][17..17 + 1025]);
+        image.release_buffers();
+        assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+    }
+}
+
+#[test]
 fn ordinary_reads_do_not_allocate_or_lock_a_range_union() {
     let (root, plans, expected, _) = fixture(2);
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());

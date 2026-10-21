@@ -53,17 +53,17 @@ path = "junit.xml"
 # gates on a shared 48-core host stopped at the 600 s limit at load 87 to 250
 # (2026-10-10 to 10-12). Their passing gate runs from 2026-10-08 to 10-15, the
 # shortest (the nearest to an idle runtime this host gives) and the longest:
-# precision_lifecycles 49 s and 514 s, wide_gated_kv_write 126 s and 585 s,
-# latent_split_merge 36 s and 407 s. Run alone at load 45 to 63, those two
-# kernel-lab tests and its GLM layer lowering took 209 s, 92 s and 293 s. The
-# limit, 20 minutes, is at least twice each longest pass and 4 times each of
-# those alone runs. GLM's mixed-layout overlap proof (436 s at most) runs as
-# one test per export and scenario, and kernel-lab's GLM layer lowering (332 s
-# at most) as one per scenario and KV format, each within the budget.
+# wide_gated_kv_write 126 s and 585 s, latent_split_merge 36 s and 407 s. Run
+# alone at load 45 to 63, those two kernel-lab tests and its GLM layer
+# lowering took 209 s, 92 s and 293 s. The limit, 20 minutes, is at least
+# twice each longest pass and 4 times each of those alone runs. GLM's
+# mixed-layout overlap proof (436 s at most) runs as one test per export and
+# scenario, kernel-lab's GLM layer lowering (332 s at most) as one per
+# scenario and KV format, and Qwen's precision lifecycles (514 s at most) as
+# one per group of cases, each within the budget.
 [[profile.ci.overrides]]
 filter = """
-(binary_id(=bundle-qwen38) & test(=fake_host_tests::snapshot_dump::precision_lifecycles_keep_their_recorded_bytes))
-| (binary_id(=kernel-lab::gated_kv_write_conformance) & test(=wide_gated_kv_write_cases_validate))
+(binary_id(=kernel-lab::gated_kv_write_conformance) & test(=wide_gated_kv_write_cases_validate))
 | (binary_id(=kernel-lab::latent_split_merge_conformance) & test(=latent_split_merge_cases_validate))
 """
 slow-timeout = { period = "60s", terminate-after = 20 }

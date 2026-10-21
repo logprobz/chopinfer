@@ -1,6 +1,6 @@
 //! Audit only the collective replacement; all arithmetic and state work stays.
 use super::*;
-use crate::prefill_dma::with_enabled;
+use crate::prefill_dma::with_selection;
 
 mod owner_host;
 use owner_host::OwnerHost;
@@ -16,8 +16,12 @@ fn host() -> Rc<Host> {
 }
 
 fn create_dma(host: &Rc<Host>, enabled: bool) -> (Rc<OwnerHost>, BundleInstanceV1) {
+    create_selected(host, Some(enabled))
+}
+
+fn create_selected(host: &Rc<Host>, selection: Option<bool>) -> (Rc<OwnerHost>, BundleInstanceV1) {
     let observer = Rc::new(OwnerHost::new(Rc::clone(host)));
-    let instance = with_enabled(enabled, || {
+    let instance = with_selection(selection, || {
         api().create(
             HostServicesTableV1::new(Rc::clone(&observer)),
             &crate::config::tests::record_naming(
@@ -340,10 +344,35 @@ fn dma_uses_private_owners_and_failed_drain_retains_buffers() {
 fn dma_journal_is_pinned() {
     let lines = capture(513, true);
     assert_eq!(audit(&lines).unwrap(), 42 * (24 * 2 + 4 * 3));
+    // Omitting the unrelated active-down module and symbol shifts 20 later
+    // buffer handles by eight. Full-body comparison preserves every other
+    // field and the bijection between old and new buffer identities.
     check_journal(
         &lines,
-        (12817, 0x773e1f61bb6db6cf),
+        (12817, 0x1c1710af3e1e27ef),
         "glm5next-prefill-dma-513.txt",
     )
     .unwrap();
+}
+
+#[test]
+fn automatic_default_matches_the_qualified_opt_in_program() {
+    let capture = |selection| {
+        let host = FakeHost::with_format((3, 32), Shape::TP4.kv_formats()[1]);
+        host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
+        let (_observer, mut instance) = create_selected(&host, selection);
+        host.device.journal.borrow_mut().clear();
+        instance
+            .execute(&prompt_chunk(7, 0, 513, true), &mut DraftSink::default())
+            .unwrap();
+        instance.commit().unwrap();
+        let lines = host.device.journal.borrow().clone();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        lines
+    };
+    let automatic = capture(None);
+    assert_eq!(automatic, capture(Some(true)));
+    assert_eq!(audit(&automatic).unwrap(), 42 * (24 * 2 + 4 * 3));
+    assert_ne!(automatic, capture(Some(false)));
 }

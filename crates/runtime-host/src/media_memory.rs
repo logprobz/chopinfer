@@ -8,9 +8,25 @@
 //! preparation reserved beyond its payloads is released when the request's
 //! [`RequestMediaMemoryV1`] drops, on success, error or unwind.
 //!
+//! An image whose recipe normalizes an 8-bit canvas keeps that canvas, 3
+//! bytes a pixel, as its payload's owner; the payload's bytes are written
+//! only when an encode serializes them, so its lease is the canvas, not the
+//! payload's length.
+//!
+//! A request of inline images is planned from their headers before any of
+//! them decodes and waits for exactly what that plan needs; a request with
+//! any other media part waits for a request's whole allowance. Either way a
+//! waiting request holds no decoded media, so partial preparations cannot
+//! deadlock.
+//!
 //! Payloads a cache keeps for requests to come hold leases too. When a
 //! reservation does not fit, the pool asks each registered [`ReclaimV1`] to
 //! drop an idle payload, one at a time, before it waits.
+//!
+//! The pool bounds these accounted buffers, not the process's resident
+//! memory. Request bodies, the source the plan pass decodes one at a time,
+//! the engine's per-step wire buffer (which holds the expanded payloads of
+//! the step's encodes) and device features are outside it.
 
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::Duration;
@@ -18,9 +34,9 @@ use std::time::Duration;
 use runtime_server::{AdmissionError, CancellationSignal, MediaPayloadSourceV1, MediaPayloadV1};
 
 /// Bytes every preparation and every live payload of the process may hold
-/// together: about three of the largest images a 16 MiP recipe prepares
-/// from a decode at the host's pixel bound, or about forty of their
-/// payloads.
+/// together: about four of the largest preparations a 16 MiP recipe makes
+/// from a decode at the host's pixel bound, or about 170 of its 8-bit
+/// canvases.
 pub(crate) const PROCESS_MEDIA_PREPARATION_BYTES_V1: u64 = 8 << 30;
 /// Bytes one request's preparation may hold at once: the item being prepared
 /// and the payloads of the items before it.
@@ -39,6 +55,9 @@ pub(crate) struct MediaMemoryV1 {
     available: Condvar,
     reclaimers: Mutex<Vec<Weak<dyn ReclaimV1>>>,
 }
+
+/// The start of a refusal for a request whose media exceed its own budget.
+pub(crate) const REQUEST_MEDIA_MEMORY_REFUSAL_V1: &str = "the request's media need ";
 
 impl MediaMemoryV1 {
     pub(crate) fn new(limit: u64) -> Self {
@@ -221,7 +240,8 @@ impl RequestMediaMemoryV1 {
         }
     }
 
-    /// Acquire the full preparation allowance before reading media. Waiting
+    /// Acquires a request's preparation allowance before any of its media
+    /// decodes: what its plan needs, or a request's whole allowance. Waiting
     /// requests own no decoded payloads, so partial preparations cannot deadlock.
     pub(crate) fn wait(
         pool: Arc<MediaMemoryV1>,
@@ -249,7 +269,7 @@ impl RequestMediaMemoryV1 {
             .saturating_add(bytes);
         if needed > self.limit {
             return Err(AdmissionError::Rejected(format!(
-                "the request's media need {needed} bytes of host memory to prepare; \
+                "{REQUEST_MEDIA_MEMORY_REFUSAL_V1}{needed} bytes of host memory to prepare; \
                  the limit is {}",
                 self.limit
             )));

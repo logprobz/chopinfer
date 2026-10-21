@@ -6,6 +6,9 @@
 //! a hash of its source bytes. The key covers the source's MIME type, which
 //! picks the decoder, and the recipe that prepared it.
 //!
+//! An image whose recipe normalizes an 8-bit canvas is kept as that canvas,
+//! a quarter of its BF16 payload and an eighth of its F32 one.
+//!
 //! Its payloads keep their leases in the process media pool. An entry whose
 //! payload no request holds is idle, and the pool reclaims idle entries, least
 //! recently used first, when a reservation does not fit

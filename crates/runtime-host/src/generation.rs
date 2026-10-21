@@ -30,7 +30,8 @@ use runtime_tokenizer::Tokenizer;
 use tokio::sync::oneshot;
 
 use crate::media_memory::{
-    MediaMemoryV1, REQUEST_MEDIA_PREPARATION_BYTES_V1, RequestMediaMemoryV1,
+    MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1, REQUEST_MEDIA_PREPARATION_BYTES_V1,
+    RequestMediaMemoryV1,
 };
 pub use crate::watchdog::WorkerWatchdogV1;
 use crate::watchdog::{WorkerPhase, WorkerProgress};
@@ -351,6 +352,9 @@ pub struct EngineGenerationBackend {
     remote_media: runtime_media::remote::RemoteMediaPolicy,
     media_memory: Arc<MediaMemoryV1>,
     media_request_bytes: u64,
+    /// Sources the plan pass holds decoded, for tests.
+    #[cfg(test)]
+    planning_sources: Arc<std::sync::atomic::AtomicUsize>,
     /// Images this backend prepared, by source, for the turns that send them
     /// again.
     image_cache: Arc<crate::media_cache::PreparedImageCacheV1>,
@@ -543,6 +547,8 @@ impl EngineGenerationBackend {
             remote_media: Default::default(),
             media_memory,
             media_request_bytes: REQUEST_MEDIA_PREPARATION_BYTES_V1,
+            #[cfg(test)]
+            planning_sources: Arc::default(),
             image_cache,
             video: None,
             video_unavailable: None,
@@ -796,29 +802,162 @@ impl EngineGenerationBackend {
         Ok(prepared)
     }
 
-    /// The prepared image an inline (data URL) part names, when this backend
-    /// prepared its source before. A request whose parts all hit needs no
-    /// preparation memory.
-    fn cached_inline_image_v1(
+    /// What an inline (data URL) image part needs, from its header: its
+    /// rows and grid, what its preparation reserves and keeps, and the item
+    /// itself when this backend prepared its source before. Its decoded
+    /// source is dropped before this returns.
+    fn plan_inline_image_v1(
         &self,
         part: &FrontendMediaPartV1,
-        declared: &FrontendMultimodalV1,
-    ) -> Option<PreparedMediaInputV1> {
-        if part.kind != FrontendMediaPartKindV1::Image || !part.source.starts_with("data:") {
-            return None;
-        }
-        let modality = declared.modalities.iter().find(|modality| {
-            modality.kind == runtime_frontend::FrontendMediaKindV1::Image
-                && modality.part_types.contains(&part.part_type)
-        })?;
-        let source =
-            runtime_media::read_source(&part.source, None, part_limits_v1(modality)).ok()?;
-        self.image_cache
+        modality: &runtime_frontend::FrontendMediaModalityV1,
+        encoder: &runtime_frontend::FrontendMediaEncoderV1,
+    ) -> Result<(PlannedImageV1, Option<PreparedMediaInputV1>), AdmissionError> {
+        let rejected =
+            |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
+        let limits = part_limits_v1(modality);
+        let source = runtime_media::read_source(&part.source, None, limits).map_err(rejected)?;
+        #[cfg(test)]
+        let _planning = CountedV1::new(&self.planning_sources);
+        let hit = self
+            .image_cache
             .get(&crate::media_cache::PreparedImageCacheV1::key(
                 &source.mime,
                 modality,
                 &source.bytes,
-            ))
+            ));
+        let recipe = declared_image_recipe_v1(&modality.recipe)?;
+        if modality.layout.is_some() {
+            check_image_span_v1(&source, modality, recipe, limits)?;
+        }
+        let probe =
+            runtime_media::probe_oriented(&source.bytes, limits, image_orientation_v1(recipe))
+                .map_err(rejected)?;
+        let (width, height) = match probe {
+            runtime_media::Probe::Png { width, height }
+            | runtime_media::Probe::Jpeg { width, height } => (width, height),
+            runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
+        };
+        let reserved = image_reservation_v1(&source.bytes, probe, (width, height), recipe, limits)
+            .map_err(rejected)?;
+        let grid = planned_image_grid_v1(width, height, recipe, limits).map_err(rejected)?;
+        let merge = recipe_merge_v1(recipe);
+        let rows = match modality.layout {
+            Some(_) => image_span_rows_v1(modality, merge, grid),
+            None => Some(
+                u64::from(grid[0])
+                    * u64::from(grid[1].div_ceil(merge))
+                    * u64::from(grid[2].div_ceil(merge)),
+            ),
+        }
+        .and_then(|rows| u32::try_from(rows).ok())
+        .ok_or(AdmissionError::InvalidPrompt)?;
+        let patch = recipe_patch_v1(recipe);
+        let retained = if image_has_canvas_v1(recipe) {
+            runtime_media::recipe::canvas_retained_bytes(grid[1] * patch, grid[2] * patch)
+        } else {
+            let element = canvas_element_v1(encoder.payload_element).bytes() as u64;
+            u64::from(grid[1]) * u64::from(grid[2]) * u64::from(encoder.payload_columns) * element
+        };
+        Ok((
+            PlannedImageV1 {
+                rows,
+                grid,
+                reserved,
+                retained,
+            },
+            hit,
+        ))
+    }
+
+    /// Plans a request whose media parts are all inline images: refuses it
+    /// before any image decodes when its prompt is longer than
+    /// `maximum_prompt_tokens` or its images need more preparation memory
+    /// than a request may hold, and otherwise returns the allowance to wait
+    /// for, the prepared items when every image was prepared before, and the
+    /// text's tokens. The allowance counts each image as a miss, so an image
+    /// the pool reclaims meanwhile can still be prepared.
+    fn plan_inline_media_v1<'a, E>(
+        &self,
+        declared: &FrontendMultimodalV1,
+        segments: &'a [PromptSegmentV1],
+        media: &[FrontendMediaPartV1],
+        maximum_prompt_tokens: Option<usize>,
+        mut encode: E,
+    ) -> Result<InlineMediaPlanV1<'a>, AdmissionError>
+    where
+        E: FnMut(&str) -> Result<Vec<u32>, AdmissionError>,
+    {
+        let mut images = Vec::with_capacity(media.len());
+        let mut hits = Vec::with_capacity(media.len());
+        for part in media {
+            let modality = declared
+                .modalities
+                .iter()
+                .find(|modality| {
+                    modality.kind == runtime_frontend::FrontendMediaKindV1::Image
+                        && modality.part_types.contains(&part.part_type)
+                })
+                .ok_or(AdmissionError::InvalidPrompt)?;
+            let encoder = declared
+                .encoders
+                .get(usize::from(modality.encoder))
+                .ok_or(AdmissionError::InvalidPrompt)?;
+            let (image, hit) = self.plan_inline_image_v1(part, modality, encoder)?;
+            images.push(image);
+            hits.push(hit);
+        }
+        let mut text = std::collections::VecDeque::new();
+        let mut prompt_tokens = 0_usize;
+        for segment in segments {
+            match segment {
+                PromptSegmentV1::Text(run) => {
+                    let tokens = encode(run)?;
+                    prompt_tokens = prompt_tokens.saturating_add(tokens.len());
+                    text.push_back((run.as_str(), tokens));
+                }
+                PromptSegmentV1::Media(index) => {
+                    let image = images.get(*index).ok_or(AdmissionError::InvalidPrompt)?;
+                    prompt_tokens = prompt_tokens.saturating_add(image.rows as usize);
+                }
+            }
+        }
+        if maximum_prompt_tokens.is_some_and(|ceiling| prompt_tokens > ceiling) {
+            return Err(AdmissionError::PromptTooLong { prompt_tokens });
+        }
+        if hits.iter().all(Option::is_some) {
+            return Ok(InlineMediaPlanV1 {
+                allowance: 0,
+                cached: hits.into_iter().flatten().collect(),
+                images,
+                text,
+            });
+        }
+        // A held hit is not idle, so the pool could not reclaim it for this
+        // or another waiter: the request waits holding none, and
+        // preparation finds them again.
+        drop(hits);
+        let mut allowance = 0_u64;
+        let mut retained = 0_u64;
+        for (index, image) in images.iter().enumerate() {
+            let needed = retained.saturating_add(image.reserved);
+            if needed > self.media_request_bytes {
+                return Err(AdmissionError::Rejected(format!(
+                    "image {} of {}: {REQUEST_MEDIA_MEMORY_REFUSAL_V1}{needed} bytes of host \
+                     memory to prepare; the limit is {}",
+                    index + 1,
+                    images.len(),
+                    self.media_request_bytes
+                )));
+            }
+            allowance = allowance.max(needed);
+            retained = retained.saturating_add(image.retained);
+        }
+        Ok(InlineMediaPlanV1 {
+            allowance,
+            cached: std::collections::VecDeque::new(),
+            images,
+            text,
+        })
     }
 
     fn preprocess_video_part_v1(
@@ -1064,6 +1203,15 @@ impl GenerationBackend for EngineGenerationBackend {
         prompt: PreparedPrompt,
         cancellation: &CancellationSignal,
     ) -> Result<(PreparedPrompt, usize), AdmissionError> {
+        self.prepare_prompt_within(prompt, cancellation, None)
+    }
+
+    fn prepare_prompt_within(
+        &self,
+        prompt: PreparedPrompt,
+        cancellation: &CancellationSignal,
+        maximum_prompt_tokens: Option<usize>,
+    ) -> Result<(PreparedPrompt, usize), AdmissionError> {
         if let PreparedPrompt::MediaChat { segments, media } = &prompt {
             if !self.policy.media_inputs {
                 return Err(AdmissionError::InvalidPrompt);
@@ -1074,50 +1222,78 @@ impl GenerationBackend for EngineGenerationBackend {
                 .multimodal
                 .as_ref()
                 .ok_or(AdmissionError::InvalidPrompt)?;
-            // Images prepared before need no preparation memory, so a request
-            // whose parts all hit skips the allowance wait. Any other waits
-            // holding none of its hits, and stops looking at its first miss:
-            // a held hit is not idle, so the pool could not reclaim it for
-            // this or another waiter. Preparation finds the hits again.
-            let mut cached: std::collections::VecDeque<_> = media
-                .iter()
-                .map(|part| self.cached_inline_image_v1(part, declared))
-                .collect::<Option<_>>()
-                .unwrap_or_default();
-            let allowance = if cached.len() == media.len() {
-                0
-            } else {
-                self.media_request_bytes
+            let encode = |text: &str| {
+                self.tokenizer
+                    .encode_with_input_limit(
+                        text,
+                        &self.policy.prompt_special_tokens(),
+                        self.tokenizer_input_bytes,
+                    )
+                    .map_err(prompt_tokenization_error)
             };
+            // A request of inline images is planned from their headers
+            // first: it is refused before any decodes when it cannot fit, and
+            // otherwise waits for what its images need. One with another
+            // part waits for a request's whole allowance, as its sources are
+            // not in hand before the wait.
+            let inline = media.iter().all(|part| {
+                part.kind == FrontendMediaPartKindV1::Image && part.source.starts_with("data:")
+            });
+            let plan = if inline {
+                self.plan_inline_media_v1(declared, segments, media, maximum_prompt_tokens, encode)?
+            } else {
+                InlineMediaPlanV1 {
+                    allowance: self.media_request_bytes,
+                    cached: std::collections::VecDeque::new(),
+                    images: Vec::new(),
+                    text: std::collections::VecDeque::new(),
+                }
+            };
+            let InlineMediaPlanV1 {
+                allowance,
+                mut cached,
+                images,
+                mut text,
+            } = plan;
             let mut memory = RequestMediaMemoryV1::wait(
                 Arc::clone(&self.media_memory),
                 allowance,
                 cancellation,
             )?;
             let request_deadline = Instant::now() + self.remote_media.request_timeout;
+            let mut next = 0;
             let (tokens, inputs, spans, positions) = expand_media_chat_v1(
                 declared,
                 &self.policy.declaration().vocabulary,
                 segments,
                 media,
-                |text| {
-                    self.tokenizer
-                        .encode_with_input_limit(
-                            text,
-                            &self.policy.prompt_special_tokens(),
-                            self.tokenizer_input_bytes,
-                        )
-                        .map_err(prompt_tokenization_error)
+                |run| match text.front() {
+                    Some((planned, _)) if *planned == run => Ok(text
+                        .pop_front()
+                        .map(|(_, tokens)| tokens)
+                        .unwrap_or_default()),
+                    _ => encode(run),
                 },
-                |part, modality| match cached.pop_front() {
-                    Some(prepared) => Ok(prepared),
-                    None => self.preprocess_media_part_v1(
-                        part,
-                        modality,
-                        cancellation,
-                        request_deadline,
-                        &mut memory,
-                    ),
+                |part, modality| {
+                    let prepared = match cached.pop_front() {
+                        Some(prepared) => prepared,
+                        None => self.preprocess_media_part_v1(
+                            part,
+                            modality,
+                            cancellation,
+                            request_deadline,
+                            &mut memory,
+                        )?,
+                    };
+                    // A planned image prepares to what its header planned.
+                    if let Some(image) = images.get(next) {
+                        let [t, h, w, _] = prepared.input.geometry;
+                        if prepared.input.output_rows != image.rows || [t, h, w] != image.grid {
+                            return Err(AdmissionError::InvalidPrompt);
+                        }
+                    }
+                    next += 1;
+                    Ok(prepared)
                 },
             )?;
             let count = tokens.len();
@@ -3046,6 +3222,66 @@ fn prepare_audio_v1(
         }
     })?;
     Ok((mel, reserved))
+}
+
+/// Counts itself live in a shared counter until it drops, for tests.
+#[cfg(test)]
+struct CountedV1(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl CountedV1 {
+    fn new(counter: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+#[cfg(test)]
+impl Drop for CountedV1 {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// One inline image as its header plans it.
+struct PlannedImageV1 {
+    /// The prompt rows its span takes.
+    rows: u32,
+    /// Its patch grid `[t, h, w]`.
+    grid: [u32; 3],
+    /// The bytes its preparation reserves before it decodes.
+    reserved: u64,
+    /// The bytes its prepared payload keeps.
+    retained: u64,
+}
+
+/// A request of inline images, planned before any of them decodes.
+struct InlineMediaPlanV1<'a> {
+    /// The preparation memory to wait for.
+    allowance: u64,
+    /// Every image's prepared item, when each was prepared before.
+    cached: std::collections::VecDeque<PreparedMediaInputV1>,
+    images: Vec<PlannedImageV1>,
+    /// The prompt's text runs and their tokens, in order.
+    text: std::collections::VecDeque<(&'a str, Vec<u32>)>,
+}
+
+/// Whether `recipe` cuts its rows from an 8-bit canvas.
+fn image_has_canvas_v1(recipe: ImageRecipeV1) -> bool {
+    match recipe {
+        ImageRecipeV1::PatchGrid(recipe) => {
+            recipe.interpolation == runtime_media::recipe::Interpolation::BicubicAntialias
+        }
+        ImageRecipeV1::TokenBudget(..) | ImageRecipeV1::CenteredPad(..) => true,
+    }
+}
+
+fn recipe_patch_v1(recipe: ImageRecipeV1) -> u32 {
+    match recipe {
+        ImageRecipeV1::PatchGrid(recipe) => recipe.patch,
+        ImageRecipeV1::TokenBudget(recipe, _) => recipe.patch,
+        ImageRecipeV1::CenteredPad(recipe, _) => recipe.patch,
+    }
 }
 
 /// An image prepared under its recipe: the 8-bit canvas its rows are cut

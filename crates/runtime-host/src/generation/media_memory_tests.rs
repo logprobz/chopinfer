@@ -713,3 +713,218 @@ fn canvas_payloads_keep_the_keys_rows_and_bytes_of_their_rows() {
         }
     }
 }
+
+/// The Qwen38 recipe with an F32 encoder.
+fn qwen38_declaration() -> serde_json::Value {
+    image_modality(
+        serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
+            "factor": 32, "minimum_pixels": 65536, "maximum_pixels": 16_777_216,
+            "upscale_small_side": false, "interpolation": "bicubic-antialias",
+            "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 0.00392156862745098,
+            "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]}}),
+        "f32",
+        1536,
+        16_384,
+        false,
+    )
+}
+
+/// A 301 x 199 JPEG, whole or cut halfway through its scan: the header
+/// still plans it, but it cannot decode.
+fn jpeg(truncated: bool) -> Vec<u8> {
+    let bytes =
+        include_bytes!("../../../runtime-media/tests/fixtures/centered-pad-jpeg-444-301x199.jpg");
+    if truncated {
+        bytes[..bytes.len() / 2].to_vec()
+    } else {
+        bytes.to_vec()
+    }
+}
+
+/// A request of inline JPEGs, each a distinct source: the same image with
+/// trailing bytes after its end marker.
+fn inline_jpegs(images: &[Vec<u8>]) -> PreparedPrompt {
+    let mut segments = vec![PromptSegmentV1::Text("look at these".to_owned())];
+    let media = images
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            let mut bytes = bytes.clone();
+            bytes.extend(std::iter::repeat_n(0, index));
+            segments.push(PromptSegmentV1::Media(index));
+            segments.push(PromptSegmentV1::Text(" and".to_owned()));
+            FrontendMediaPartV1 {
+                kind: FrontendMediaPartKindV1::Image,
+                part_type: "image_url".to_owned(),
+                source: format!("data:image/jpeg;base64,{}", base64(&bytes)),
+                format: None,
+            }
+        })
+        .collect();
+    PreparedPrompt::MediaChat { segments, media }
+}
+
+/// A request of inline images that cannot fit its context or its memory is
+/// refused from the images' headers, before any image decodes: a truncated
+/// JPEG reports its decode error only when the request fits.
+#[test]
+fn inline_images_are_refused_from_their_headers_before_decoding() {
+    let pool = Arc::new(MediaMemoryV1::new(1 << 32));
+    let backend = backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 32);
+    let whole = inline_jpegs(&[jpeg(false), jpeg(false)]);
+    let cancellation = CancellationSignal::new();
+    let (prepared, count) = backend
+        .prepare_prompt_within(whole.clone(), &cancellation, Some(1 << 20))
+        .unwrap();
+    // The plan's count is the prompt's: a ceiling at it admits the prompt,
+    // one below refuses it with that count.
+    drop(prepared);
+    backend.image_cache.reclaim_idle();
+    assert!(
+        backend
+            .prepare_prompt_within(whole.clone(), &cancellation, Some(count))
+            .is_ok()
+    );
+    backend.image_cache.reclaim_idle();
+    assert!(matches!(
+        backend.prepare_prompt_within(whole, &cancellation, Some(count - 1)),
+        Err(AdmissionError::PromptTooLong { prompt_tokens }) if prompt_tokens == count
+    ));
+
+    let broken = inline_jpegs(&[jpeg(false), jpeg(true)]);
+    assert!(matches!(
+        backend.prepare_prompt_within(broken.clone(), &cancellation, Some(count - 1)),
+        Err(AdmissionError::PromptTooLong { prompt_tokens }) if prompt_tokens == count
+    ));
+    assert_eq!(pool.in_use(), 0, "a refused plan prepares nothing");
+    // Within the context, the truncated image decodes and fails.
+    let error = backend
+        .prepare_prompt_within(broken.clone(), &cancellation, Some(count))
+        .unwrap_err();
+    assert!(
+        matches!(&error, AdmissionError::Rejected(message) if !message.contains("host memory")),
+        "{error:?}"
+    );
+    backend.image_cache.reclaim_idle();
+    assert_eq!(pool.in_use(), 0);
+
+    // A request limit below the two images' need refuses the second by
+    // position, before the first decodes.
+    let PreparedPrompt::MediaChat { segments, media } = &broken else {
+        unreachable!()
+    };
+    let plan = backend
+        .plan_inline_media_v1(
+            backend.policy.declaration().multimodal.as_ref().unwrap(),
+            segments,
+            media,
+            None,
+            |text| backend.tokenize(text, false),
+        )
+        .unwrap();
+    let (allowance, first) = (plan.allowance, plan.images[0].reserved);
+    drop(plan);
+    let tight = backend_for(qwen38_declaration(), None, Arc::clone(&pool), allowance - 1);
+    let error = tight
+        .prepare_prompt_within(broken, &cancellation, None)
+        .unwrap_err();
+    assert!(
+        matches!(&error, AdmissionError::Rejected(message)
+            if message.starts_with("image 2 of 2: ") && message.contains("host memory")),
+        "{error:?}"
+    );
+    assert!(allowance > first && allowance < 1 << 30);
+    assert_eq!(pool.in_use(), 0);
+}
+
+/// A request of inline images waits for exactly what its plan needs, not a
+/// request's whole allowance, honors cancellation while it waits, and holds
+/// no decoded source then.
+#[test]
+fn inline_images_wait_for_their_planned_need() {
+    let images = [jpeg(false), jpeg(false), jpeg(false)];
+    let probe = backend_for(
+        qwen38_declaration(),
+        None,
+        Arc::new(MediaMemoryV1::new(1 << 32)),
+        1 << 32,
+    );
+    let request = inline_jpegs(&images);
+    let PreparedPrompt::MediaChat { segments, media } = &request else {
+        unreachable!()
+    };
+    let need = probe
+        .plan_inline_media_v1(
+            probe.policy.declaration().multimodal.as_ref().unwrap(),
+            segments,
+            media,
+            None,
+            |text| probe.tokenize(text, false),
+        )
+        .unwrap()
+        .allowance;
+    assert!(need < REQUEST_MEDIA_PREPARATION_BYTES_V1 / 16, "{need}");
+
+    // Others hold all but the need: the request prepares without waiting.
+    let pool = Arc::new(MediaMemoryV1::new(2 * need));
+    let backend = Arc::new(backend_for(
+        qwen38_declaration(),
+        None,
+        Arc::clone(&pool),
+        REQUEST_MEDIA_PREPARATION_BYTES_V1,
+    ));
+    let mut others = crate::media_memory::RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
+    others.reserve(need).unwrap();
+    let (prepared, _) = backend.prepare_prompt(request.clone()).unwrap();
+    drop(prepared);
+    backend.image_cache.reclaim_idle();
+    assert_eq!(pool.in_use(), need);
+
+    // One byte more held elsewhere and it waits, holding no source, until
+    // its client leaves.
+    others.reserve(1).unwrap();
+    let cancellation = CancellationSignal::new();
+    let worker = {
+        let (backend, request, cancellation) =
+            (Arc::clone(&backend), request.clone(), cancellation.clone());
+        std::thread::spawn(move || backend.prepare_prompt_cancellable(request, &cancellation))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!worker.is_finished(), "the request waits for its need");
+    assert_eq!(
+        backend.planning_sources.load(Ordering::SeqCst),
+        0,
+        "a waiting request holds no decoded source"
+    );
+    cancellation.cancel();
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(AdmissionError::Rejected(message)) if message.contains("cancelled")
+    ));
+    drop(others);
+    assert_eq!(pool.in_use(), 0);
+}
+
+/// An image that fails to decode partway through a request releases the
+/// request's reservation; the images before it stay cached and idle, and
+/// the pool reclaims them.
+#[test]
+fn a_failed_image_releases_its_request_and_leaves_earlier_images_reclaimable() {
+    let pool = Arc::new(MediaMemoryV1::new(1 << 32));
+    let backend = backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 32);
+    let mut good = jpeg(false);
+    good.push(7);
+    let error = backend
+        .prepare_prompt(inline_jpegs(&[jpeg(false), good.clone(), jpeg(true)]))
+        .unwrap_err();
+    assert!(matches!(error, AdmissionError::Rejected(_)), "{error:?}");
+    assert_eq!(backend.image_cache.len(), 2);
+    assert!(pool.in_use() > 0, "the prepared images stay cached");
+    backend.image_cache.reclaim_idle();
+    assert_eq!(pool.in_use(), 0);
+    // The cached images are hits for the next request.
+    let (prepared, _) = backend
+        .prepare_prompt(inline_jpegs(&[jpeg(false), good]))
+        .unwrap();
+    assert_eq!(media_inputs(&prepared).len(), 2);
+}

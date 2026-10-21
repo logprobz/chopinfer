@@ -5,8 +5,11 @@
 //! place of the zero-component prepare and projection (`router_prefill`).
 //! Every output is the served pair's bit for bit
 //! (models/deepseek41/lab/router_norm.md); the lab measured the pair at
-//! 0.880 of the served norm, prepare and projection at 8192 rows. Other row
-//! counts keep the served path.
+//! 0.880 of the served norm, prepare and projection at 8192 rows. The
+//! projection runs 64-expert tiles (`router_norm_entries::FEATURES`), bit
+//! for bit the 32-expert ones, which the router tile pair measured at 0.77
+//! of them on captured layers 14 and 39 (models/deepseek41/lab/
+//! router_wide.md). Other row counts keep the served path.
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernels_sm120::f32_projection::certified;
@@ -14,7 +17,7 @@ use model_deepseek41_contract::geometry::Geometry;
 
 use super::f32_zero;
 pub use super::router_norm_entries::{
-    CUBIN, FAMILY, TILE_ROWS, cubins, norm, router, router_symbol,
+    CUBIN, FAMILY, FEATURES, TILE_ROWS, cubins, norm, router, router_symbol,
 };
 
 /// The one qualified and measured step size.
@@ -84,7 +87,7 @@ pub(crate) fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
     Ok(Launch {
         symbol: router_symbol(),
         rows: ROWS,
-        plan: certified::plan(&e, TILE_ROWS, ROWS)?,
+        plan: certified::wide_plan(&e, TILE_ROWS, FEATURES, ROWS)?,
         arguments: ArgumentList(vec![
             ptr(v.widened),
             ptr(v.normed),
@@ -117,10 +120,17 @@ mod tests {
 
     #[test]
     fn keeps_the_served_plans_and_arguments() {
+        // The zero path's rows and block; half its feature grid, and only
+        // the shared memory the 64-expert tiles stage.
         let e = router();
+        let wide = certified::wide_plan(&e, TILE_ROWS, FEATURES, ROWS).unwrap();
+        let zero = zero::plan(&e, TILE_ROWS, ROWS).unwrap();
+        assert_eq!((wide.block, wide.grid[1]), (zero.block, zero.grid[1]));
+        assert_eq!((wide.grid[0], zero.grid[0]), (6, 12));
+        assert_eq!(wide.dynamic_shared_bytes, 24_576);
         assert_eq!(
-            certified::plan(&e, TILE_ROWS, ROWS).unwrap(),
-            zero::plan(&e, TILE_ROWS, ROWS).unwrap()
+            router_symbol(),
+            "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_v1"
         );
         let served = norm_prefill::entries()
             .unwrap()

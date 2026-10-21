@@ -24,12 +24,12 @@ fn router_prefill_journal_preserves_decode_and_configures_shared_memory() {
                 .iter()
                 .filter(|l| {
                     l.starts_with("launch ")
-                        && (l.contains("_zero_m32_v1") || l.contains("_certified_m32_v1"))
+                        && (l.contains("_zero_m32_v1") || l.contains("_certified_m32_f64_v1"))
                 })
                 .count();
             let in_norm = lines[from..]
                 .iter()
-                .filter(|l| l.starts_with("launch ") && l.contains("_certified_m32_v1"))
+                .filter(|l| l.starts_with("launch ") && l.contains("_certified_m32_f64_v1"))
                 .count();
             assert_eq!(in_norm > 0, rows == 8192, "rows {rows}: router in the norm");
             assert_eq!(
@@ -74,8 +74,9 @@ fn spans(line: &str) -> Vec<(u64, u64, u64)> {
 }
 
 /// At 8192 rows each MoE layer's input norm certifies its rows and the
-/// router's certified projection reads that norm's BF16 rows, widened rows
-/// and certificate; no zero-component prepare or projection runs, and the
+/// router's certified projection (64-expert tiles) reads that norm's BF16
+/// rows, widened rows and certificate; no zero-component prepare or
+/// projection runs, and the
 /// attention input norms keep the served entry.
 #[test]
 fn router_runs_in_the_moe_input_norm_at_8192_rows() {
@@ -95,7 +96,7 @@ fn router_runs_in_the_moe_input_norm_at_8192_rows() {
         .filter(|l| l.starts_with("launch "))
         .collect();
     let norm = "chop_prefill_norm_ceil_deepseek41_cached_certified_v1 ";
-    let router = "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_v1 ";
+    let router = "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_v1 ";
     assert!(
         !launches
             .iter()

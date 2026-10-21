@@ -67,3 +67,100 @@ pub fn cubin_spec(
         entries: specs,
     })
 }
+
+/// Lab: the certified projection with `features`-wide tiles
+/// (`gemm/exact_f32_certified_wide.cuh`, which the cubin must include).
+pub fn wide_symbol(entry: &Entry, tile_rows: u32, features: u32) -> String {
+    format!(
+        "{}_certified_m{tile_rows}_f{features}_v1",
+        entry.baseline_symbol()
+    )
+}
+
+/// Lab: the wide tiles' grid, block and shared memory: the served plan's
+/// rows and block, `features` weight rows staged per tile, and only the
+/// shared memory the certified tiles use (the served plan also reserves
+/// the zero path's other two component planes).
+pub fn wide_plan(
+    entry: &Entry,
+    tile_rows: u32,
+    features: u32,
+    rows: u32,
+) -> Result<LaunchPlan, Refusal> {
+    if features == 0 || !features.is_multiple_of(32) {
+        return Err(Refusal("wide certified tiles take whole 32-feature groups"));
+    }
+    let mut result = plan(entry, tile_rows, rows)?;
+    let tensor = 2 * (features + tile_rows) * 64 * 2;
+    let simt = 2 * (tile_rows * 36 + 32 * 33) * 4;
+    result.grid[0] = entry.query().n.div_ceil(features);
+    result.dynamic_shared_bytes = tensor.max(simt);
+    crate::backend::check_plan(&result)?;
+    Ok(result)
+}
+
+pub fn wide_entry_spec(entry: &Entry, tile_rows: u32, features: u32) -> Result<EntrySpec, Refusal> {
+    wide_plan(entry, tile_rows, features, 1)?;
+    let q = entry.query();
+    let mut spec = entry_spec(entry, tile_rows)?;
+    spec.symbol = wide_symbol(entry, tile_rows, features);
+    spec.body = format!(
+        "chop::exact_f32::certified_wide::run<{},{},{},{}>(activation,normed,certified,weight,output,live_rows,rows,weight_domain);",
+        q.n, q.k, tile_rows, features
+    );
+    Ok(spec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_core::contract::{ActivationFormat, DType, Epilogues, GemmQuery};
+    use kernel_core::precision::{ExecutionPhase, OperationUse};
+
+    fn router() -> Entry {
+        Entry::new(
+            GemmQuery {
+                m_capacity: 8192,
+                n: 384,
+                k: 5120,
+                weight: WeightFormat::Bf16,
+                activation: ActivationFormat::F32,
+                output: DType::F32,
+                epilogues: Epilogues::default(),
+                grouped: None,
+            },
+            OperationUse {
+                phase: ExecutionPhase::Prefill,
+                capacity: 8192,
+                graph: false,
+            },
+            "chop_test_dense_f32_m8192_n384_k5120",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn wide_tiles_keep_the_served_plan_but_the_feature_grid() {
+        let e = router();
+        // The served plan reserves the zero path's three component planes;
+        // the certified tiles stage one.
+        let served = plan(&e, 32, 8192).unwrap();
+        let narrow = wide_plan(&e, 32, 32, 8192).unwrap();
+        assert_eq!((narrow.grid, narrow.block), (served.grid, served.block));
+        assert_eq!(
+            (served.dynamic_shared_bytes, narrow.dynamic_shared_bytes),
+            (32_768, 17_664)
+        );
+        for (features, grid, shared) in [(64, 6, 24_576), (128, 3, 40_960)] {
+            let p = wide_plan(&e, 32, features, 8192).unwrap();
+            assert_eq!(p.grid, [grid, 256, 1]);
+            assert_eq!(p.block, [128, 1, 1]);
+            assert_eq!(p.dynamic_shared_bytes, shared);
+            let spec = wide_entry_spec(&e, 32, features).unwrap();
+            assert_eq!(spec.symbol, wide_symbol(&e, 32, features));
+            assert_eq!(spec.params, entry_spec(&e, 32).unwrap().params);
+            assert!(spec.body.contains(&format!("run<384,5120,32,{features}>")));
+        }
+        assert!(wide_plan(&e, 32, 48, 8192).is_err());
+    }
+}

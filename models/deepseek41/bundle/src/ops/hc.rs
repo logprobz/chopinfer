@@ -292,7 +292,7 @@ impl HcOps {
             phase,
             Phase::Decode(1 | 8 | 32)
                 | Phase::Verify {
-                    rows: 4 | 6 | 16 | 32,
+                    rows: 4 | 6 | 8 | 12 | 16 | 32,
                     ..
                 }
         ) && self.finish_norm.is_some()
@@ -363,7 +363,7 @@ impl HcOps {
             phase,
             Phase::Decode(1 | 8)
                 | Phase::Verify {
-                    rows: 4 | 6 | 16 | 32,
+                    rows: 4 | 6 | 8 | 12 | 16 | 32,
                     ..
                 }
         ) {
@@ -627,7 +627,7 @@ mod tests {
             handle: 100,
             bytes: tail.info().workspace,
         };
-        for rows in [1, 2, 4, 6, 8, 16, 32] {
+        for rows in [1, 2, 4, 6, 8, 12, 16, 32] {
             let standalone = ops
                 .round_fused
                 .as_ref()
@@ -689,7 +689,7 @@ mod tests {
                     continue;
                 }
                 let chain = chain.unwrap();
-                if matches!(rows, 4 | 6 | 16 | 32) {
+                if matches!(rows, 4 | 6 | 12 | 16 | 32) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
                     assert!(chain[0].symbol.ends_with(match rows {
@@ -710,7 +710,7 @@ mod tests {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
             let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
-            for rows in [1, 2, 4, 6, 8, 16, 32] {
+            for rows in [1, 2, 4, 6, 8, 12, 16, 32] {
                 for phase in [
                     Phase::Decode(rows),
                     Phase::Prefill { rows },
@@ -726,7 +726,7 @@ mod tests {
                         phase,
                         Phase::Decode(1 | 8)
                             | Phase::Verify {
-                                rows: 4 | 6 | 16 | 32,
+                                rows: 4 | 6 | 8 | 12 | 16 | 32,
                                 ..
                             }
                     );

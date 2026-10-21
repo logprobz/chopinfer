@@ -1,9 +1,9 @@
 use super::*;
 
-// Four, six, 16 and 32 rows replace 77 five/six-launch chains with two
+// Four, six, 12, 16 and 32 rows replace 77 five/six-launch chains with two
 // launches and retain all original operands (the eight-warp chain at four
-// rows, the four-warp chain at six and 16, the two-row producer at 32). Eight
-// rows retain the unfused HC path.
+// rows, the four-warp chain at six, 12 and 16, the two-row producer at 32).
+// Eight rows take the qualified one-launch C8 boundary with a zeroed ticket.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
 // Resources the prefill query fusion, grouped down and router bindings load
@@ -37,10 +37,11 @@ use super::*;
 // Loading the one-launch boundary module shifts their resource ids only.
 // Loading the one-launch boundary and cached query norm modules shifts their
 // resource ids only.
-const JOURNALS: [(u32, (usize, u64)); 5] = [
+const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8200, 0x4efa233dfe08c9dc)),
     (6, (8040, 0x62e4fef3e98f777f)),
-    (8, (8992, 0x5580e5cf2d78fe9a)),
+    (8, (7572, 0x8b5f622074d7ac10)),
+    (12, (9496, 0xf6b7a450bcc84a19)),
     (16, (8852, 0x689fac76fff96554)),
     (32, (8384, 0x2396e12bd25fbbc3)),
 ];
@@ -49,7 +50,7 @@ const JOURNALS: [(u32, (usize, u64)); 5] = [
 fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
     let mut missing = Vec::new();
     let mut journal_mismatches = Vec::new();
-    for rows in [4u32, 6, 8, 16, 32] {
+    for rows in [4u32, 6, 8, 12, 16, 32] {
         // DSpark supports the trained native KV layout only.
         for kv in KV_LAYOUTS
             .into_iter()
@@ -107,10 +108,12 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             }
             let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
             let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
-            let qualified = matches!(rows, 4 | 6 | 16 | 32);
+            let qualified = matches!(rows, 4 | 6 | 8 | 12 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
-            if count("hc_finish_norm_w32_v1") != pairs {
-                missing.push((rows, kv.storage, count("hc_finish_norm_w32_v1"), pairs));
+            // Eight rows take the one-launch boundary of the C8 decode bucket.
+            let boundaries = count("hc_finish_norm_w32_v1") + count("hc_completion_split_w8_v1 ");
+            if boundaries != pairs {
+                missing.push((rows, kv.storage, boundaries, pairs));
             }
             eprintln!(
                 "VERIFY_HC_LAUNCHES rows={rows} kv={:?} per_rank={} tails={} producers={}",
@@ -119,10 +122,29 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 count("hc_finish_norm_w32_v1") / 4,
                 count("hc_round_chain_w4_v1") / 4
             );
-            if count("hc_finish_norm_w32_v1") == pairs {
+            if boundaries == pairs {
+                assert_eq!(
+                    count("hc_completion_split_w8_v1 "),
+                    if rows == 8 { pairs } else { 0 }
+                );
+                assert_eq!(
+                    count("hc_finish_norm_w32_v1"),
+                    if rows == 8 { 0 } else { pairs }
+                );
+                for line in launches
+                    .iter()
+                    .filter(|l| l.contains("hc_completion_split_w8_v1 "))
+                {
+                    assert!(line.contains("grid_x: 161, grid_y: 8, grid_z: 1"));
+                    assert!(line.contains("block_x: 256, block_y: 1, block_z: 1"));
+                }
                 assert_eq!(
                     count("hc_round_chain_w4_v1"),
-                    if matches!(rows, 6 | 16) { pairs } else { 0 }
+                    if matches!(rows, 6 | 12 | 16) {
+                        pairs
+                    } else {
+                        0
+                    }
                 );
                 assert_eq!(
                     count("hc_round_rows_r2_v1"),

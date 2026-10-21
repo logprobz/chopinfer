@@ -14,17 +14,82 @@ use sha2::{Digest, Sha256};
 /// The most encoders one configuration declares.
 pub const MAX_MEDIA_ENCODERS: usize = 8;
 
-/// A media item's payload bytes, shared by every copy of the item from
+/// The owner of a media item's payload: its length, and its bytes written
+/// when an encode needs them. An owner may keep the payload in a smaller
+/// form than its bytes, such as an image's 8-bit canvas.
+pub trait MediaPayloadSourceV1: Send + Sync {
+    /// The payload's length in bytes.
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Appends exactly [`Self::len`] bytes to `out`.
+    fn write_to(&self, out: &mut Vec<u8>);
+}
+
+/// Bytes held as they are.
+struct FlatPayloadV1<T>(T);
+
+impl<T: AsRef<[u8]> + Send + Sync> MediaPayloadSourceV1 for FlatPayloadV1<T> {
+    fn len(&self) -> usize {
+        self.0.as_ref().len()
+    }
+
+    fn write_to(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.0.as_ref());
+    }
+}
+
+/// A media item's payload, shared by every copy of the item from
 /// preparation to retirement. The owner (for example bytes held under the
 /// host's memory budget) drops with the last copy.
 #[derive(Clone)]
-pub struct MediaPayloadV1(Arc<dyn AsRef<[u8]> + Send + Sync>);
+pub struct MediaPayloadV1(Arc<dyn MediaPayloadSourceV1>);
 
 impl MediaPayloadV1 {
     /// The bytes `owner` holds, kept alive until the last copy drops.
     #[must_use]
     pub fn new(owner: impl AsRef<[u8]> + Send + Sync + 'static) -> Self {
-        Self(Arc::new(owner))
+        Self(Arc::new(FlatPayloadV1(owner)))
+    }
+
+    /// The payload `source` writes, kept alive until the last copy drops.
+    #[must_use]
+    pub fn from_source(source: impl MediaPayloadSourceV1 + 'static) -> Self {
+        Self(Arc::new(source))
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Appends the payload's [`Self::len`] bytes to `out`.
+    pub fn write_to(&self, out: &mut Vec<u8>) {
+        let start = out.len();
+        self.0.write_to(out);
+        debug_assert_eq!(out.len() - start, self.len(), "a payload writes its length");
+    }
+
+    /// The payload's bytes, written into a new buffer.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.len());
+        self.write_to(&mut bytes);
+        bytes
+    }
+
+    /// Whether both are copies of one payload.
+    #[must_use]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -34,23 +99,9 @@ impl From<Vec<u8>> for MediaPayloadV1 {
     }
 }
 
-impl AsRef<[u8]> for MediaPayloadV1 {
-    fn as_ref(&self) -> &[u8] {
-        (*self.0).as_ref()
-    }
-}
-
-impl std::ops::Deref for MediaPayloadV1 {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
-
 impl PartialEq for MediaPayloadV1 {
     fn eq(&self, other: &Self) -> bool {
-        self.as_ref() == other.as_ref()
+        self.ptr_eq(other) || (self.len() == other.len() && self.to_vec() == other.to_vec())
     }
 }
 

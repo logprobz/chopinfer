@@ -15,7 +15,8 @@ pub mod warmup;
 
 pub use media::{
     MAX_MEDIA_ENCODERS, MediaArenaV1, MediaConfigError, MediaConfigV1, MediaEncodeV1,
-    MediaInjectV1, MediaInputV1, MediaPayloadV1, MediaRequestError, MediaSpanV1,
+    MediaInjectV1, MediaInputV1, MediaPayloadSourceV1, MediaPayloadV1, MediaRequestError,
+    MediaSpanV1,
 };
 pub use metrics::{
     EngineMetrics, EngineMetricsSnapshot, ExecutionObservations, MonotonicClock,

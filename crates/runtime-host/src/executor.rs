@@ -2382,7 +2382,7 @@ pub(crate) fn write_batch_request_v1(
         );
         request.reserve(payload_bytes.saturating_add(trailing));
         for encode in &encodes {
-            request.extend_from_slice(&encode.payload);
+            encode.payload.write_to(request);
         }
     } else if items
         .iter()

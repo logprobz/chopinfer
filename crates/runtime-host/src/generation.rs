@@ -1896,7 +1896,7 @@ fn admit<E: ModelExecutor>(
                     encoder: item.encoder,
                     geometry: item.geometry,
                     output_rows: item.output_rows,
-                    payload: EngineMediaPayloadV1::new(item.payload),
+                    payload: engine_payload_v1(item.payload),
                 })
                 .collect::<Vec<_>>();
             let spans = spans
@@ -2292,6 +2292,24 @@ fn tokenize_prompt(
         PreparedPrompt::MediaTokens { tokens, .. } => Ok(tokens.clone()),
     }
     .map_err(prompt_tokenization_error)
+}
+
+/// The engine's copy of a prepared payload: the same owner, so the engine
+/// keeps it leased until it drops its copy, and writes it on demand.
+struct EnginePayloadV1(runtime_server::MediaPayloadV1);
+
+impl runtime_engine::MediaPayloadSourceV1 for EnginePayloadV1 {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn write_to(&self, out: &mut Vec<u8>) {
+        self.0.write_to(out);
+    }
+}
+
+fn engine_payload_v1(payload: runtime_server::MediaPayloadV1) -> EngineMediaPayloadV1 {
+    EngineMediaPayloadV1::from_source(EnginePayloadV1(payload))
 }
 
 /// Splices trusted pad IDs into text encoded with the declared prompt tokens.
@@ -5968,7 +5986,7 @@ mod tests {
                         encoder: input.encoder,
                         geometry: input.geometry,
                         output_rows: input.output_rows,
-                        payload: EngineMediaPayloadV1::new(input.payload.clone()),
+                        payload: engine_payload_v1(input.payload.clone()),
                     })
                     .collect(),
                 engine_spans,

@@ -165,10 +165,11 @@ impl ModelExecutor for CopyModel {
                     encode.output_rows.div_ceil(PAGE_ROWS) as usize
                 );
                 assert_eq!(encode.payload.len(), 4 * encode.output_rows as usize);
+                let payload = encode.payload.to_vec();
                 for row in 0..encode.output_rows {
                     let at = encode.pages[(row / PAGE_ROWS) as usize] * u64::from(PAGE_ROWS)
                         + u64::from(row % PAGE_ROWS);
-                    let bytes = &encode.payload[4 * row as usize..4 * row as usize + 4];
+                    let bytes = &payload[4 * row as usize..4 * row as usize + 4];
                     self.arena[at as usize] = Some(u32::from_le_bytes(bytes.try_into().unwrap()));
                 }
                 self.encodes += 1;

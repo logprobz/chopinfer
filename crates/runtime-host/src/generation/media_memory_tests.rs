@@ -179,7 +179,7 @@ fn queued_requests_keep_their_payloads_leased_until_they_retire() {
         let running = match queued.remove(0) {
             PreparedPrompt::MediaTokens { media, .. } => media
                 .into_iter()
-                .map(|item| EngineMediaPayloadV1::new(item.payload))
+                .map(|item| engine_payload_v1(item.payload))
                 .collect::<Vec<_>>(),
             _ => unreachable!(),
         };
@@ -384,10 +384,7 @@ fn a_repeated_image_is_the_item_its_source_prepared_before() {
     assert_eq!(pool.in_use(), leased, "a hit leases nothing more");
     assert_eq!(media_inputs(&again), media_inputs(&first));
     for (hit, prepared) in media_inputs(&again).iter().zip(media_inputs(&first)) {
-        assert!(std::ptr::eq(
-            hit.payload.as_ptr(),
-            prepared.payload.as_ptr()
-        ));
+        assert!(hit.payload.ptr_eq(&prepared.payload));
     }
     let fresh = backend_with_request_limit(modality, &root, 1 << 30);
     let (expected, _) = fresh.prepare_prompt(request(&root, 2, 0)).unwrap();

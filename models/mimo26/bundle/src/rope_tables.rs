@@ -81,6 +81,12 @@ pub fn tables_for(geometry: &'static Geometry, tokens: u64) -> Arc<[Vec<u8>; 2]>
     tables
 }
 
+/// The table rows of `count` positions from `first`, built afresh.
+#[cfg(test)]
+pub fn rows_for(geometry: &Geometry, first: u64, count: u64, theta: f64) -> Vec<u8> {
+    build_for(geometry, first, count, theta)
+}
+
 #[cfg(test)]
 pub fn tables(tokens: u64) -> Arc<[Vec<u8>; 2]> {
     tables_for(&V26_FLASH, tokens)

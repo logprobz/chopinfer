@@ -5,7 +5,7 @@ use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_prefill_tma_matrix::{self, Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_prefill_tma_matrix";
-pub const CUBIN: &str = "fold_tma_matrix_sm120";
+pub const CUBIN: &str = "fold_tma_matrix_deepseek41_sm120";
 pub fn entries() -> Vec<Entry> {
     super::mxfp8_fold::prefill_entries(&FLASH, 4)
         .unwrap()

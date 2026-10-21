@@ -8,7 +8,7 @@ use kernels_sm120::{
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "mxfp8_prefill_matrix";
-pub const CUBIN: &str = "fold_core_prefill_sm120";
+pub const CUBIN: &str = "fold_core_prefill_deepseek41_sm120";
 pub const ROWS: [u32; 7] = [192, 448, 960, 1472, 2496, 4096, 8192];
 // SM120, 250 W, 2026-10-20. All selected rows beat 0.97 on both devices
 // with cold and warm caches. Four Q/O families additionally pass captured

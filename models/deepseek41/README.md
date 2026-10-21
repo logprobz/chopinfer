@@ -7,6 +7,12 @@ DeepSeek V4.1 Flash, from the official checkpoint
 `model.toml` declares `[release] enabled = false` until it qualifies.
 
 Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order.
+Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
+with alpha, or the first frame of an animation), decoded as the reference's
+Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
+`image_url` parts or OpenAI `file` parts whose `file_data` is an image data
+URL (the deepseek-recipe's mapping in OpenAI's nested shape; its flat shape
+is refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
 
 | Crate | Directory | Holds |
 |---|---|---|

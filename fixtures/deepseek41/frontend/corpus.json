@@ -10961,6 +10961,475 @@
   ]
  },
  {
+  "id": "image-gif",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/gif;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜><｜deepseek_image｜>\n\nDescribe.<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   129264,
+   271,
+   72188,
+   16,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "image-webp",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/webp;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜><｜deepseek_image｜>\n\nDescribe.<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   129264,
+   271,
+   72188,
+   16,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "image-jpg-spellings",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/jpg;base64,AA=="
+      }
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/JPG;base64,AQ=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜><｜deepseek_image｜>\n\n<｜deepseek_image｜>\n\nDescribe.<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   129264,
+   271,
+   129264,
+   271,
+   72188,
+   16,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "tool-images-gif-webp",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/gif;base64,AA=="
+      }
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/webp;base64,AQ=="
+      }
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result><｜deepseek_image｜>\n\n<｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   129264,
+   271,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "file-image",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "file",
+      "file": {
+       "file_data": "data:image/png;base64,AA==",
+       "filename": "a.png"
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜><｜deepseek_image｜>\n\nDescribe.<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   129264,
+   271,
+   72188,
+   16,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "tool-file-image",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "file",
+      "file": {
+       "file_data": "data:image/webp;base64,AA=="
+      }
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result><｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "file-id",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "file",
+      "file": {
+       "file_id": "file-1"
+      }
+     }
+    ]
+   }
+  ],
+  "refusal": {}
+ },
+ {
+  "id": "file-pdf",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "file",
+      "file": {
+       "file_data": "data:application/pdf;base64,AA=="
+      }
+     }
+    ]
+   }
+  ],
+  "refusal": {
+   "message": "unsupported media MIME type or invalid base64",
+   "parameter": "messages"
+  }
+ },
+ {
+  "id": "file-flat",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "file",
+      "file_data": "data:image/png;base64,AA=="
+     }
+    ]
+   }
+  ],
+  "refusal": {
+   "message": "a file part carries its fields in a \"file\" object: {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
+   "parameter": "messages"
+  }
+ },
+ {
   "id": "vendor-pair-1",
   "raw": true,
   "messages": [

@@ -19,7 +19,14 @@
       {
         "kind": "image",
         "part_types": [
-          "image_url"
+          "image_url",
+          "file"
+        ],
+        "formats": [
+          "png",
+          "jpeg",
+          "gif",
+          "webp"
         ],
         "maximum_items": 16,
         "maximum_bytes": 67108864,

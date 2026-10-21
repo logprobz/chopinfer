@@ -310,6 +310,30 @@
       "reason": "the image declaration serves images alone; the encoder writes images as <｜deepseek_image｜> and has no audio form"
     },
     {
+      "id": "file-flat",
+      "kind": "refused",
+      "when": [
+        "file:flat"
+      ],
+      "outcome": {
+        "message": "a file part carries its fields in a \"file\" object: {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
+        "parameter": "messages"
+      },
+      "reason": "deepseek-recipe 8cadfede7 reads a file part's file_id, file_data and filename at the part's top level (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 110-116), which is not OpenAI's shape; this format reads the nested file object of OpenAI's file content part and refuses the flat fields by name"
+    },
+    {
+      "id": "file-non-image",
+      "kind": "refused",
+      "when": [
+        "file:non-image"
+      ],
+      "outcome": {
+        "message": "unsupported media MIME type or invalid base64",
+        "parameter": "messages"
+      },
+      "reason": "the recipe takes any file_data as an image source (convert.rs lines 263-279) and fails only when the image loads, after rendering; the transport refuses a file_data that is not a base64 data URL of a declared image format before anything renders"
+    },
+    {
       "id": "marker-in-raw-value",
       "kind": "no-round-trip",
       "when": [
@@ -443,6 +467,17 @@
         "qualified-tool-name",
         "qualified-call-in-history",
         "named-choice-of-qualified-tool"
+      ]
+    },
+    {
+      "id": "file-parts",
+      "follows": "recipe",
+      "rule": "a file part's file_data is an image data URL, rendered as an image_url part is, as the recipe maps it, read from OpenAI's nested {\"type\": \"file\", \"file\": {\"file_data\", \"filename\"}} object rather than the recipe's flat fields; a file_id is refused, as the recipe refuses it",
+      "source": "OpenAI's chat completions file content part (the nested file object); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 263-279",
+      "cases": [
+        "file-image",
+        "tool-file-image",
+        "file-id"
       ]
     }
   ]

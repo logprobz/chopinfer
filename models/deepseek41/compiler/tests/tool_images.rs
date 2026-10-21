@@ -106,3 +106,69 @@ fn tool_images_keep_text_screening_and_other_role_refusals() {
         );
     }
 }
+
+/// GIF and WebP images, other spellings of the JPEG type and OpenAI `file`
+/// parts render as the same segments PNG `image_url` parts do, in user and
+/// tool messages, and keep their sources for media preparation in sorted
+/// prompt order; other `file` shapes are refused by name.
+#[test]
+fn image_formats_and_file_parts_render_as_image_parts() {
+    let frontend =
+        PairedFrontendV1::chat_format::<DeepSeekV41Format>(multimodal_descriptor()).unwrap();
+    let prepare = |body: &Value| {
+        prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+    };
+    let segments_and_media = |body: &Value| {
+        let PreparedPrompt::MediaChat { segments, media } = prepare(body).unwrap().prompt else {
+            panic!("images must reach media preparation");
+        };
+        let media = media
+            .into_iter()
+            .map(|item| (item.part_type, item.source))
+            .collect::<Vec<_>>();
+        (segments, media)
+    };
+    let url = |mime: &str, data: &str| format!("data:{mime};base64,{data}");
+    let image_url = |mime: &str, data: &str| json!({"type": "image_url", "image_url": {"url": url(mime, data)}});
+    let file = |mime: &str, data: &str| json!({"type": "file", "file": {"file_data": url(mime, data), "filename": "a"}});
+    let (png, _) = segments_and_media(&history());
+    let mut body = history();
+    body["messages"][0]["content"][0] = image_url("image/gif", "AA==");
+    body["messages"][2]["content"][1] = file("image/webp", "AQ==");
+    body["messages"][3]["content"][0] = image_url("image/JPG", "Ag==");
+    body["messages"][4]["content"][1] = file("image/png", "Aw==");
+    body["messages"][4]["content"][2] = image_url("image/jpg", "BA==");
+    let (segments, media) = segments_and_media(&body);
+    assert_eq!(segments, png);
+    let expected = [
+        ("image_url", url("image/gif", "AA==")),
+        ("file", url("image/png", "Aw==")),
+        ("image_url", url("image/jpg", "BA==")),
+        ("image_url", url("image/JPG", "Ag==")),
+        ("file", url("image/webp", "AQ==")),
+    ]
+    .map(|(part, source)| (part.to_owned(), source));
+    assert_eq!(media, expected);
+
+    for (part, message) in [
+        (
+            json!({"type": "file", "file": {"file_id": "file-1"}}),
+            "file_id is not supported; pass the image as a base64 data URL in file_data",
+        ),
+        (
+            json!({"type": "file", "file_data": url("image/png", "AA==")}),
+            r#"a file part carries its fields in a "file" object: {"type": "file", "file": {"file_data": ...}}"#,
+        ),
+        (
+            file("application/pdf", "AA=="),
+            "unsupported media MIME type or invalid base64",
+        ),
+        (
+            image_url("image/svg+xml", "AA=="),
+            "unsupported media MIME type or invalid base64",
+        ),
+    ] {
+        let body = json!({"messages": [{"role": "user", "content": [part]}]});
+        assert_eq!(prepare(&body).unwrap_err().message, message);
+    }
+}

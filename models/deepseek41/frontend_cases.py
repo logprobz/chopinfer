@@ -75,7 +75,10 @@ def thinking(keywords):
 
 def encoder_message(message):
     """One HF message as the encoder reads it: a media item back in OpenAI's
-    `image_url` form, which `_extract_image` (lines 305-320) reads."""
+    `image_url` form, which `_extract_image` (lines 305-320) reads. A file
+    part's data URL is an image, as deepseek-recipe maps it (convert.rs
+    lines 263-279), from OpenAI's nested file object or the recipe's flat
+    fields; a file ID is refused, as the recipe refuses it."""
     message = copy.deepcopy(message)
     if isinstance(message.get("content"), list):
         parts = []
@@ -83,6 +86,11 @@ def encoder_message(message):
             if isinstance(part, dict) and part.get("type") in ("image", "video", "audio"):
                 kind = part["type"]
                 part = {"type": f"{kind}_url", f"{kind}_url": {"url": part.get(kind)}}
+            elif isinstance(part, dict) and part.get("type") == "file":
+                file = part.get("file") if isinstance(part.get("file"), dict) else part
+                if file.get("file_id") is not None or not isinstance(file.get("file_data"), str):
+                    raise ValueError("file must have file_data and no file_id")
+                part = {"type": "image_url", "image_url": {"url": file["file_data"]}}
             parts.append(part)
         message["content"] = parts
     return message
@@ -291,9 +299,45 @@ def tool_image_cases():
             f"data:image/png;base64,{data}" for data in order]
 
 
+def image_format_cases():
+    """Images as GIF and WebP data URLs and under other spellings of the JPEG
+    type, and file parts carrying an image data URL, in user and tool
+    messages, which the encoder renders as any image; and the file parts
+    this format refuses."""
+    def image(mime, data="AA=="):
+        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+
+    def file(data_url, **fields):
+        return {"type": "file", "file": {"file_data": data_url, **fields}}
+
+    text = {"type": "text", "text": "Describe."}
+    looked = [user("Look."), {"role": "assistant", "content": "", "tool_calls": [call("a", "look", {})]}]
+    chat = {"thinking": {"type": "disabled"}}
+
+    def result(parts):
+        return {"role": "tool", "tool_call_id": "a", "content": parts}
+
+    yield "image-gif", {"messages": [user([image("image/gif"), text])]}, {"image:gif"}
+    yield "image-webp", {"messages": [user([image("image/webp"), text])]}, {"image:webp"}
+    yield "image-jpg-spellings", {"messages": [user([image("image/jpg"), image("image/JPG", "AQ=="), text])]}, {
+        "image:jpg"}
+    yield "tool-images-gif-webp", {"messages": looked + [result([image("image/gif"), image("image/webp", "AQ==")])],
+                                   **chat}, {"tool-results:images", "image:gif", "image:webp"}
+    yield "file-image", {"messages": [user([file("data:image/png;base64,AA==", filename="a.png"), text])]}, {
+        "file:image"}
+    yield "tool-file-image", {"messages": looked + [result([file("data:image/webp;base64,AA==")])], **chat}, {
+        "tool-results:images", "file:image"}
+    yield "file-id", {"messages": [user([{"type": "file", "file": {"file_id": "file-1"}}])]}, {"file:id"}
+    yield "file-pdf", {"messages": [user([file("data:application/pdf;base64,AA==")])]}, {"file:non-image"}
+    yield "file-flat", {"messages": [user([{"type": "file", "file_data": "data:image/png;base64,AA=="}])]}, {
+        "file:flat"}
+
+
 def cases(declaration):
     for name, request, _ in tool_image_cases():
         yield name, request, {f"fixed:{name}", "tool-results:images"}
+    for name, request, tags in image_format_cases():
+        yield name, request, {f"fixed:{name}", *tags}
     # The encoder's test pair 1 (encoding/tests/test_input_1.json) as a
     # served request: tools on the leading system message, a call without
     # an id and its result, thinking at the default effort.

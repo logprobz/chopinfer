@@ -1081,16 +1081,15 @@ impl FrontendDescriptorV1 {
             {
                 return Err(invalid(format!("invalid {kind} modality declaration")));
             }
-            if let Some(formats) = &modality.formats {
-                if modality.kind != FrontendMediaKindV1::Image
+            if let Some(formats) = &modality.formats
+                && (modality.kind != FrontendMediaKindV1::Image
                     || formats.is_empty()
                     || formats.iter().collect::<BTreeSet<_>>().len() != formats.len()
                     || formats
                         .iter()
-                        .any(|format| !FRONTEND_IMAGE_FORMATS_V1.contains(&format.as_str()))
-                {
-                    return Err(invalid("invalid image formats declaration"));
-                }
+                        .any(|format| !FRONTEND_IMAGE_FORMATS_V1.contains(&format.as_str())))
+            {
+                return Err(invalid("invalid image formats declaration"));
             }
             if modality.recipe.tag == "image.centered-pad.v1" {
                 modality.validate_centered_pad_v1().map_err(invalid)?;

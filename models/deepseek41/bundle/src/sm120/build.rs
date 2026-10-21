@@ -217,7 +217,10 @@ pub fn selection(
         engram_hash_entries::FAMILY,
         engram_hash_cubin::cubin_spec(manifest),
     ));
-    specs.push((engram_hash_rows::FAMILY, engram_hash_rows::cubin_spec(manifest)));
+    specs.push((
+        engram_hash_rows::FAMILY,
+        engram_hash_rows::cubin_spec(manifest),
+    ));
     specs.push((
         acceptance_entries::FAMILY,
         acceptance_cubin::cubin_spec(manifest),

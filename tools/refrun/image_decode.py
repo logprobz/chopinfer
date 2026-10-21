@@ -15,8 +15,16 @@ decoder test:
 
 writes the files under crates/runtime-media/tests/fixtures/image-decode/
 (refusing to replace a file with other bytes) and the golden
-crates/runtime-media/tests/fixtures/image-decode.json. A model's capture
-calls `capture` with its own reference loader. CPU only; no model is loaded.
+crates/runtime-media/tests/fixtures/image-decode.json. CPU only; no model
+is loaded.
+
+A model's capture calls `model_capture` where the model's image processor
+is installed: it repeats the `load_image` column over the committed files,
+checks that the processor makes the same pixel_values of `load_image`'s
+image as of its RGB array (so the processor adds no decode step of its
+own), and checks that the model's qualification probes need no
+orientation, recording each probe's mode. runtime-host's
+`image_decode::check_image_decode_v1` holds a model's served decode to it.
 
 A result is the decoded size and the SHA-256 of its RGB bytes, or the
 exception class a loader raised. A case whose served decode deliberately
@@ -676,6 +684,80 @@ def runtime_outcome(case, loader, results):
             raise SystemExit(f"{case.name}: no stored pixels for its served outcome")
         return stored
     return rgb_result(case.stored)
+
+
+# The cases a model capture also feeds to its processor: one per format,
+# each oriented or transparent as far as the format allows.
+PROCESSOR_CASES = ("png-rgba-exif6", "jpeg-exif6", "gif-transparency", "webp-alpha-exif6")
+FORMATS = {"PNG": "png", "JPEG": "jpg", "GIF": "gif", "WEBP": "webp"}
+
+
+def committed_cases():
+    """The producer's cases, each checked against its committed file."""
+    corpus = cases()
+    for case in corpus:
+        path = DIRECTORY / f"{case.name}.{case.extension}"
+        if not path.is_file() or path.read_bytes() != case.data:
+            raise SystemExit(f"{path.relative_to(ROOT)} is not the producer's file; run tools.refrun.image_decode")
+    return corpus
+
+
+def check_processor_input(processor, case):
+    """Refuses a processor whose pixel_values of `load_image`'s image differ
+    from those of the same RGB as a plain array image."""
+    import numpy as np
+    from PIL import Image
+    image = load_image(case)
+    rows = [np.asarray(processor(images=[source], return_tensors="np")["pixel_values"])
+            for source in (image, Image.fromarray(np.asarray(image), "RGB"))]
+    if rows[0].dtype != rows[1].dtype or rows[0].tobytes() != rows[1].tobytes():
+        raise SystemExit(f"{case.name}: the processor changes load_image's image")
+
+
+def probe(name, data):
+    """A qualification probe's format and mode, refused unless `load_image`
+    decodes it as stored, so no orientation applies."""
+    from PIL import Image
+    with Image.open(io.BytesIO(data)) as opened:
+        extension, mode = FORMATS[opened.format], opened.mode
+        alpha = "A" in mode or "transparency" in opened.info
+        stored = opened.convert("RGB")
+    if rgb_result(load_image(Case(name, extension, data))) != rgb_result(stored):
+        raise SystemExit(f"probe {name}: load_image orients it")
+    return {"file_sha256": hashlib.sha256(data).hexdigest(), "format": extension, "mode": mode, "alpha": alpha}
+
+
+def model_capture(script, processor, probes, output):
+    """Writes a model's decode capture to `output`: `load_image` over the
+    committed corpus, the processor check over `PROCESSOR_CASES`, and
+    `probes` ({name: encoded bytes}) as `probe` records them. `script` names
+    the capture in the output."""
+    import warnings
+    warnings.simplefilter("ignore")
+    check_versions()
+    import PIL
+    import numpy
+    import torch
+    import transformers
+    corpus = committed_cases()
+    named = {case.name: case for case in corpus}
+    for name in PROCESSOR_CASES:
+        check_processor_input(processor, named[name])
+    results = capture(load_image, corpus)
+    golden = {
+        "source": (f"{script}: transformers {transformers.__version__} load_image under Pillow {PIL.__version__}, "
+                   f"numpy {numpy.__version__}, torch {torch.__version__}, on CPU; size and SHA-256 of the "
+                   "decoded RGB, or the exception class"),
+        "processor": type(processor).__qualname__,
+        "processor_cases": {"cases": list(PROCESSOR_CASES),
+                            "check": "pixel_values of load_image's image equal those of its RGB array"},
+        "load_image_source_sha256": load_image_source_sha256(),
+        "probes": {name: probe(name, data) for name, data in probes.items()},
+        "cases": [{"name": case.name, "file_sha256": hashlib.sha256(case.data).hexdigest(),
+                   "load_image": results[case.name]} for case in corpus],
+    }
+    output.write_text(json.dumps(golden, indent=1) + "\n")
+    print(f"wrote {output.relative_to(ROOT)} with {len(corpus)} cases and {len(probes)} probes")
 
 
 def main():

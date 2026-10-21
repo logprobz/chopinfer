@@ -17,10 +17,12 @@ fake-host-services = []
 linux-cuda-host = ["dep:runtime-cuda", "dep:runtime-kernels"]
 # Device-free CUDA backend tests link runtime-cuda's synthetic driver.
 cuda-fake-driver-tests = ["linux-cuda-host", "runtime-cuda/fake-driver-tests"]
-# A model's HF differential corpus through the served frontend, for the
-# model's own tests. Its round trips also decode through the shared parser
-# called directly, which only a test build of runtime-frontend links.
-test-support = ["runtime-frontend/test-support"]
+# A model's HF differential corpus through the served frontend, and its
+# image decode capture against the served decode, for the model's own
+# tests. The corpus round trips also decode through the shared parser
+# called directly, which only a test build of runtime-frontend links; the
+# decode check compares RGB digests.
+test-support = ["runtime-frontend/test-support", "dep:sha2"]
 
 # The operator's program: verify a bundle, install one, or serve one. It
 # carries no model and no bundle, so which bundle it serves is an argument.
@@ -67,6 +69,7 @@ kernel-core = { workspace = true, features = ["precision-serde"] }
 rayon-core = "=1.13.0"
 serde.workspace = true
 serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
 # The startup warmup wave sizes, which bundle conformance tests share. The
 # batch encoder stays independent; tests compare it to the bundle codec.
 runtime-bundle-sdk.workspace = true

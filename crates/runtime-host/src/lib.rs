@@ -40,6 +40,8 @@ mod generation;
 mod grammar;
 mod handles;
 pub mod host_rows;
+#[cfg(feature = "test-support")]
+pub mod image_decode;
 mod install;
 mod kernel;
 mod kv_cache_dtype;

@@ -199,6 +199,15 @@ checkpoint. Qwen uses its checkpoint defaults. The check covers resize,
 normalization and patch order of decoded RGB arrays, not decode, EXIF,
 alpha, video frame selection or token caps.
 
+Image decode is pinned separately. `python3 -m tools.refrun.image_decode`
+writes runtime-media's image decode corpus: PNG, JPEG, GIF and WebP files
+covering color types, transparency, first frames and every orientation
+source Pillow reads, with what transformers' `load_image` and plain
+`Image.open` plus `convert("RGB")` decode from each. A model whose recipe
+applies orientation captures `load_image` over the same files with its own
+image processor installed (`model_capture`), and its tests hold the served
+decode to that capture with `runtime_host::image_decode`.
+
 `python3 -m tools.refrun preprocess audio` runs in a separate CPU environment:
 `pip install --require-hashes -r tools/refrun/requirements-audio-reference.txt`
 (CPython 3.12, torch and torchaudio CPU wheels). Never install it into the GPU

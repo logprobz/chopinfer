@@ -12,6 +12,7 @@ pub mod acquire;
 pub mod config;
 pub mod context_parallel;
 pub mod dispatch;
+pub mod dma;
 pub mod drafter;
 pub mod encoder;
 pub mod entries;

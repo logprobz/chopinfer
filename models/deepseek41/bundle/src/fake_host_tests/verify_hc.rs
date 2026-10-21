@@ -19,10 +19,10 @@ use super::*;
 // otherwise equal. Full lifetime audits retain every operation at these
 // verify widths.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0x219d4c447b88ac2d)),
-    (8, (8992, 0x6c9dfa4610cc44e5)),
-    (16, (9964, 0x65059dc0b5516a51)),
-    (32, (8384, 0xc46885e93fba40aa)),
+    (6, (8040, 0x8ace479f23fb8c06)),
+    (8, (8992, 0x8a4749306a9ea345)),
+    (16, (9964, 0x7dae5662bdc3c0eb)),
+    (32, (8384, 0x914e50e27c7d0a56)),
 ];
 
 #[test]

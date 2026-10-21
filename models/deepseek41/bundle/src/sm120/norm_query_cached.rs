@@ -22,6 +22,8 @@ pub fn entry(g: &Geometry) -> Entry {
             .expect("query norm entry")
             .remove(1),
         prefix: format!("chop_norm_quantize_{}_query", g.kernel_tag),
+        // WQ_b loads its weights while the query norm runs.
+        early_release: true,
     }
 }
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
@@ -44,5 +46,31 @@ pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
         backend.with_rmsnorm_quantize_cached(entry(g), BUCKETS.to_vec())
     } else {
         backend
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Early release changes only the template flag of each cached body.
+    #[test]
+    fn query_norm_releases_dependents_without_other_changes() {
+        let early = entry(&FLASH);
+        assert!(early.early_release);
+        let late = Entry {
+            early_release: false,
+            ..early.clone()
+        };
+        let (a, b) = (
+            late.cubin_spec("q").unwrap(),
+            early.cubin_spec("q").unwrap(),
+        );
+        assert_eq!(a.headers, b.headers);
+        assert_eq!(a.entries.len(), 3);
+        for (a, b) in a.entries.iter().zip(&b.entries) {
+            assert_eq!((&a.symbol, &a.params), (&b.symbol, &b.params));
+            assert_eq!(a.body.replacen("u>(", "u,true>(", 1), b.body);
+        }
     }
 }

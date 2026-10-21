@@ -56,12 +56,12 @@ use super::*;
 // launches bind the same workspace spans 983552 bytes later (the fused
 // router's partials precede the route metadata); plus the Verify-6 renames.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x5743860b1f2a7917)),
-    (6, (8040, 0x5b292cb339e8cc36)),
-    (8, (7572, 0x018de7e58f3cb59d)),
-    (12, (9496, 0x8bb3d18a8e1bb3ce)),
-    (16, (8532, 0x8d6b3b1e2e54a274)),
-    (32, (8384, 0xac5e0eada6606c97)),
+    (4, (7880, 0xcb6961ea7e70084d)),
+    (6, (8040, 0x5a1a7f44672a098d)),
+    (8, (7572, 0xef78c365d15079c6)),
+    (12, (9496, 0x0bc9889dc6d1706e)),
+    (16, (8532, 0x6930a72ad3b42ecb)),
+    (32, (8064, 0x5d2a932b105f7e9f)),
 ];
 
 #[test]

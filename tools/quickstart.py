@@ -70,7 +70,7 @@ def install(target, release, model):
         os.replace(partial, destination)
     for path in (root, root / 'bin', root / 'lib'):
         path.chmod(0o755)
-    for path in [root, *root.rglob('*')]:
+    for path in [root, *root.rglob('*')]:  # check-inputs: walks outside the repository
         if path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise SystemExit(f'{path} is group or world writable')
     return root

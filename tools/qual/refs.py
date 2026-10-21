@@ -32,7 +32,7 @@ def files(path, scope=None):
     if scope is not None:
         return [path / member for member in scope]
     if path.is_dir():
-        return sorted(member for member in path.rglob("*") if member.is_file())
+        return sorted(member for member in path.rglob("*") if member.is_file())  # check-inputs: walks fixtures
     return [path]
 
 

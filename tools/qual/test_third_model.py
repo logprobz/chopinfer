@@ -52,5 +52,5 @@ class ThirdModelTests(unittest.TestCase):
                     self.assertFalse(plan["qualified"])
                     self.assertEqual(plan["execution"], "not_run")
                 self.assertEqual(sorted(p.relative_to(root).as_posix()
-                                        for p in root.rglob("*") if p.is_file()),
+                                        for p in root.rglob("*") if p.is_file()),  # check-inputs: walks outside the repository
                                  [f"models/{name}/qual.json"])

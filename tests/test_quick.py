@@ -260,6 +260,10 @@ class AffectedChecks(unittest.TestCase):
         self.assertEqual(gate_only, [])
         checks = self.select("crates/runtime-host/src/offload.rs")[0]
         self.assertFalse({"refrun", "release-gate", "profile-tools"} & set(checks))
+        # A model's Rust source is not read by the reference, profile or serving tools.
+        checks = self.select("models/deepseek41/bundle/src/ops/mod.rs")[0]
+        self.assertFalse({"refrun", "refrun-deepseek41", "tapdiff", "spec-bench", "profile-tools", "ab-serving"}
+                         & set(checks))
         # Profile tools read kernel sources and need a scorer for their
         # control-rate checks, so their build and copy belong in this selection.
         checks = self.select("crates/kernels-sm120/cuda/linear/delta.cuh")[0]
@@ -383,6 +387,23 @@ class CheckInputs(unittest.TestCase):
                                   'importlib.util.spec_from_file_location(name, CI / (name + ".py"))\n',
         "ci/loaded.py": "import tools.unloaded\n",
         "tools/unloaded.py": "",
+        # Walks: a literal rglob pattern, prose and membership tests with `**`, walks declared
+        # outside the tree or to named directories, ast.walk, and an rglob of a computed pattern.
+        "tools/json_walk.py": 'import ast\nDIRS = ("models", "fixtures")\nfor tree in DIRS:\n'
+                              '    for path in Path(tree).rglob("*.json"):\n        pass\n'
+                              'HELP = "a **bold** word"\nif "**" in pattern:\n    pass\n'
+                              'for node in ast.walk(tree):\n    pass\n'
+                              'for path in install.rglob("*"):  # check-inputs: walks outside the repository\n'
+                              '    pass\n'
+                              'for path in reference.rglob("*"):  # check-inputs: walks fixtures\n    pass\n',
+        "tools/any_walk.py": 'DIRS = ("models",)\nfor path in Path(DIRS[0]).rglob(suffix):\n    pass\n',
+        "tools/git_list.py": 'DIRS = ("models",)\nsubprocess.run(["git", "ls-files", "-z"])\n',
+        "tools/everything.py": 'subprocess.run(["git", "ls-files"])  # check-inputs: walks the repository\n',
+        "models/a/src/lib.rs": "",
+        "models/a/data/x.json": "",
+        "models/a/model.toml": "",
+        "fixtures/tree/nested/two.bin": "",
+        "fixtures/tree/nested/three.rs": "",
     }
 
     def scanner(self):
@@ -411,6 +432,41 @@ class CheckInputs(unittest.TestCase):
             self.assertTrue(inputs.covers(path), path)
         shell = self.scanner().inputs(["bash", "-c", "python3 tools/plugins/*.py"])
         self.assertTrue(shell.covers("tools/shared.py"))
+
+    def test_walks_cover_what_their_patterns_and_declarations_name(self):
+        inputs = self.scanner().inputs(["python3", "-B", "tools/json_walk.py"])
+        # Every data file below the walked directories, which a path built from parts may read.
+        for path in ("models/a/data/x.json", "models/a/model.toml", "fixtures/tree/nested/two.bin"):
+            self.assertTrue(inputs.covers(path), path)
+        # Compiled source only where a walk's pattern matches it or a walk declares its directory.
+        self.assertTrue(inputs.covers("fixtures/tree/nested/three.rs"))
+        self.assertFalse(inputs.covers("models/a/src/lib.rs"))
+        for walking in ("tools/any_walk.py", "tools/git_list.py"):
+            inputs = self.scanner().inputs(["python3", "-B", walking])
+            self.assertTrue(inputs.covers("models/a/src/lib.rs"), walking)
+        # A declared walk of the repository covers every data file, and Python only where named.
+        inputs = self.scanner().inputs(["python3", "-B", "tools/everything.py"])
+        for path in ("models/a/src/lib.rs", "fixtures/tree/nested/two.bin"):
+            self.assertTrue(inputs.covers(path), path)
+        self.assertFalse(inputs.covers("tools/unloaded.py"))
+
+    def test_declared_fixture_walks_cover_every_reference_directory_a_lock_keeps(self):
+        """tools/qual/refs.py declares that it walks fixtures: every reference directory a
+        qualification lock keeps in the repository must lie there."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        self.assertIn("check-inputs: walks fixtures", (root / "tools/qual/refs.py").read_text())
+        directories = 0
+        for lock in sorted(root.glob("models/*/qual-references*.lock.json")):
+            for key, entry in json.loads(lock.read_text()).get("entries", {}).items():
+                path = entry.get("path")
+                if not entry.get("directory") or isinstance(path, dict) and "default" not in path:
+                    continue
+                if isinstance(path, dict):
+                    path = f"{path['default']}/{path.get('path', '.')}"
+                directories += 1
+                with self.subTest(lock=lock.name, entry=key):
+                    self.assertTrue(path.startswith("fixtures/"), path)
+        self.assertGreater(directories, 0)
 
     def test_computed_loads_cover_the_named_directories_modules(self):
         inputs = self.scanner().inputs(["python3", "-B", "tests/test_computed.py"])

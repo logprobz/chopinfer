@@ -9,8 +9,16 @@ string literals count, as for importlib.import_module) and the Python and
 shell files it names in a string literal, glob or shell token. Every other
 file, directory or glob a scanned file names is a data input. A named
 directory covers the data files directly in it, or below it when the file
-walks trees (rglob, os.walk or a `**` pattern); its Python and shell files
-are covered where they are imported or named. A file that loads a module from
+walks trees (an rglob or walk call, a Git listing or search, or a `**`
+glob pattern). Below it, compiled source (SOURCE) is covered only by a walk
+without a literal name pattern or with one the source name matches; other
+files may be read through a path built from parts and stay covered. Its
+Python and shell files are covered where they are imported or named. A
+walk whose line says `check-inputs: walks outside the repository` reads
+only directories outside the tree, such as installs and checkpoints; one
+whose line says `check-inputs: walks DIR, ...` walks only those repository
+directories, whatever else the file names; `walks the repository` covers
+every data file. A file that loads a module from
 a computed path (spec_from_file_location, import_module, runpy and the like
 with no literal module) is taken to load any Python file in the directories
 it names; those files are covered but not scanned in turn. A discovered test directory covers everything below it.
@@ -19,6 +27,7 @@ The closure is a bounded literal scan, like change_scope's Rust scan: a path
 built at run time from names it does not contain is not found, so ci/cpu.sh
 remains the full gate."""
 import ast
+import fnmatch
 import os
 import pathlib
 import re
@@ -53,12 +62,79 @@ def unittest_names(argv, index):
     return start > 0 and argv[start - 1] == "-m" and index > start and not argv[index].endswith(".py")
 
 
+# Compiled source: a walk covers these only when its pattern matches their name. Other
+# files may be read through a path built from parts, so any walk covers them.
+SOURCE = (".rs", ".cu", ".cuh", ".h", ".c", ".cc", ".cpp", ".hpp")
+# A walk's declaration of what it walks, on the call's first line.
+DECLARED_WALK = re.compile(r"#.*\bcheck-inputs: walks (.+?)\s*$")
+OUTSIDE = "outside the repository"
+# A declared walk of every tracked file, such as the leak guard's.
+REPOSITORY = "the repository"
+# A Git listing or search reads tracked files at any depth, like a walk without a pattern.
+GIT_LISTING = re.compile(r"""['"]ls-(?:files|tree)['"]|['"]git['"],\s*['"]grep['"]""")
+
+
+def walks(tree, text):
+    """(patterns, declared) for the trees a Python file walks. `patterns` are the
+    name patterns of its walks of the directories it names: the literal pattern
+    of each rglob call, None (every name) for a walk call or an rglob without a
+    literal pattern, and the last part of each `**` glob literal (None when that
+    part is itself `**`). A string with whitespace is prose, and one tested with
+    `in` is not a pattern; ast.walk and a file's own walk() walk no files. A
+    mention of rglob or os.walk the calls do not account for counts as a walk,
+    and so does each line with a Git listing or search (GIT_LISTING). `declared`
+    holds the directories that walks declaring theirs (DECLARED_WALK) walk
+    instead."""
+    lines = text.splitlines()
+    tested = {id(node.left) for node in ast.walk(tree)
+              if isinstance(node, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)}
+    # A bare walk() is os.walk only when imported from os; otherwise it is the file's own function.
+    imported = {alias.asname or alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+                and node.module == "os" for alias in node.names if alias.name == "walk"}
+    patterns, declared, calls = set(), set(), 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            function = node.func
+            if isinstance(function, ast.Attribute):
+                name = function.attr
+                if name == "walk" and getattr(function.value, "id", None) == "ast":
+                    continue
+            else:
+                name = "walk" if getattr(function, "id", None) in imported else None
+            if name not in ("rglob", "walk"):
+                continue
+            calls += 1
+            declaration = DECLARED_WALK.search(lines[node.lineno - 1])
+            if declaration:
+                if declaration.group(1) != OUTSIDE:
+                    declared.update(part.strip() for part in declaration.group(1).split(","))
+                continue
+            argument = node.args[0] if node.args else None
+            literal = isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+            patterns.add(argument.value if name == "rglob" and literal else None)
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str) and "**" in node.value
+              and id(node) not in tested and not any(char.isspace() for char in node.value)):
+            last = node.value.rstrip("/").rsplit("/", 1)[-1]
+            patterns.add(None if "**" in last or not last else last)
+    if len(re.findall(r"\b(?:os\.walk|rglob)\(", text)) > calls:
+        patterns.add(None)
+    for line in lines:
+        if GIT_LISTING.search(line):
+            declaration = DECLARED_WALK.search(line)
+            if not declaration:
+                patterns.add(None)
+            elif declaration.group(1) != OUTSIDE:
+                declared.update(part.strip() for part in declaration.group(1).split(","))
+    return patterns, declared
+
+
 class Inputs:
     """What one check covers: files, directories (their own files, or whole trees) and globs."""
 
     def __init__(self):
         self.files, self.directories, self.trees, self.globs = set(), set(), set(), set()
-        # Directories whose data files are covered at any depth.
+        # (directory, name pattern) pairs whose data files are covered at any depth: every
+        # file that is not SOURCE, and the SOURCE files the pattern matches (None: every name).
         self.data_trees = set()
         # Python modules a scanned file imports.
         self.modules = set()
@@ -70,7 +146,10 @@ class Inputs:
         # scripts already reach the code used from it.
         data = not path.endswith(SCANNED)
         return (path in self.files or data and pathlib.PurePosixPath(path).parent.as_posix() in self.directories
-                or data and any(path.startswith(tree + "/") for tree in self.data_trees)
+                or data and any((tree == "." or path.startswith(tree + "/"))
+                                and (pattern is None or not path.endswith(SOURCE)
+                                     or fnmatch.fnmatchcase(pathlib.PurePosixPath(path).name, pattern))
+                                for tree, pattern in self.data_trees)
                 or any(path.startswith(tree + "/") for tree in self.trees)
                 or any(glob_expression(pattern).fullmatch(path) for pattern in self.globs))
 
@@ -172,8 +251,14 @@ class Scanner:
             for value in strings:
                 if MODULE_NAME.fullmatch(value):
                     found.modules.update(self.module(value, bases, whole=True))
+            patterns, declared = walks(tree, text)
+            # Any sign of a walk covers the non-source files below every directory the file
+            # names; "" matches no source name.
             if re.search(r"\b(?:os\.walk|rglob)\(", text) or any("**" in value for value in strings):
-                found.data_trees |= found.directories
+                patterns.add("")
+            found.data_trees |= {(directory, pattern) for directory in found.directories for pattern in patterns}
+            found.data_trees |= {("." if directory == REPOSITORY else directory.rstrip("/"), None)
+                                 for directory in declared}
             # A load from a computed path may reach any module in the directories the file names.
             for argument in loads:
                 named = Inputs()

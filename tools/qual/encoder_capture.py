@@ -44,7 +44,7 @@ def inventory(root):
     """Closed regular-file inventory, with no links or special entries."""
     root = wire.external(Path(root).absolute())
     result = {}
-    for directory, subdirs, names in os.walk(root, followlinks=False):
+    for directory, subdirs, names in os.walk(root, followlinks=False):  # check-inputs: walks outside the repository
         for name in subdirs:
             wire.external(Path(directory) / name)
         for name in names:

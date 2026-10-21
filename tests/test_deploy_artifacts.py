@@ -168,7 +168,7 @@ assert Path(sys.argv[1]).is_file()
             result = subprocess.run(command, env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             expected = ('bin/chopinfer', 'bin/chopinfer-model-custom', 'lib/libnative_custom.so', 'bin/assemble-third')
-            self.assertEqual({path.relative_to(root / 'install').as_posix() for path in (root / 'install').rglob('*') if path.is_file()}, set(expected))
+            self.assertEqual({path.relative_to(root / 'install').as_posix() for path in (root / 'install').rglob('*') if path.is_file()}, set(expected))  # check-inputs: walks outside the repository
             for relative in expected:
                 path = root / 'install' / relative
                 self.assertEqual(path.read_bytes(), path.name.encode())

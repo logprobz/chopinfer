@@ -696,7 +696,7 @@ def install(root, target, facts):
             shutil.copyfile(Path(target) / 'release' / name, destination)
             destination.chmod(0o755)
             files[f'{directory}/{name}'] = sha(destination)
-    for path in [root, *root.rglob('*')]:
+    for path in [root, *root.rglob('*')]:  # check-inputs: walks outside the repository
         if path.is_dir():
             path.chmod(0o755)
     return files
@@ -709,7 +709,7 @@ def checkpoint_state(root):
     the bytes `verify` hashed to be the bytes a server reads."""
     root = Path(root)
     state = {}
-    for directory, _, names in os.walk(root):
+    for directory, _, names in os.walk(root):  # check-inputs: walks outside the repository
         for name in names:
             path = Path(directory) / name
             info = path.stat()

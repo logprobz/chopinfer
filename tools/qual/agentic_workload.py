@@ -61,7 +61,7 @@ def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=
         raise ValueError(f'{out} is not empty')
     commit = git(repository, 'rev-parse', '--verify', revision + '^{commit}').decode().strip()
     candidates = []
-    for line in git(repository, 'ls-tree', '-r', '-l', '-z', commit, '--', 'crates').split(b'\0'):
+    for line in git(repository, 'ls-tree', '-r', '-l', '-z', commit, '--', 'crates').split(b'\0'):  # check-inputs: walks outside the repository
         if not line:
             continue
         meta, path = line.split(b'\t', 1)

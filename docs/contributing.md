@@ -53,6 +53,9 @@ bash ci/cpu.sh            # full CPU gate on a clean committed HEAD
 ```
 
 `--base REF` selects a comparison point; `--all` selects the whole workspace.
+`bash ci/cpu.sh --only STEP` runs the named steps and the setup they need.
+It refuses a step that reads another step's outputs, such as the kernel
+report reader, unless that step is selected too or `--with-producers` adds it.
 `ci/check_inputs.py` derives each Python or shell check's inputs from its
 code. A walk (rglob, os.walk or a Git listing) that reads only directories
 outside the tree, or only some repository directories, says so on its line

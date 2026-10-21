@@ -290,7 +290,11 @@ impl HcOps {
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
         matches!(
             phase,
-            Phase::Decode(1 | 8 | 32) | Phase::Verify { rows: 6 | 32, .. }
+            Phase::Decode(1 | 8 | 32)
+                | Phase::Verify {
+                    rows: 4 | 6 | 16 | 32,
+                    ..
+                }
         ) && self.finish_norm.is_some()
     }
 
@@ -357,7 +361,11 @@ impl HcOps {
             &self.prefill_mix
         } else if matches!(
             phase,
-            Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
+            Phase::Decode(1 | 8)
+                | Phase::Verify {
+                    rows: 4 | 6 | 16 | 32,
+                    ..
+                }
         ) {
             &self.decode_mix
         } else {
@@ -681,13 +689,13 @@ mod tests {
                     continue;
                 }
                 let chain = chain.unwrap();
-                if matches!(rows, 6 | 32) {
+                if matches!(rows, 4 | 6 | 16 | 32) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
-                    assert!(chain[0].symbol.ends_with(if rows == 32 {
-                        "hc_round_rows_r2_v1"
-                    } else {
-                        "hc_round_chain_w4_v1"
+                    assert!(chain[0].symbol.ends_with(match rows {
+                        32 => "hc_round_rows_r2_v1",
+                        4 => "hc_round_chain_w8_v1",
+                        _ => "hc_round_chain_w4_v1",
                     }));
                 } else {
                     assert_eq!(chain.len(), 3);
@@ -716,7 +724,11 @@ mod tests {
                         .any(|(s, _)| s.ends_with("hc_mixer_probe_warp_v1"));
                     let qualified = matches!(
                         phase,
-                        Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
+                        Phase::Decode(1 | 8)
+                            | Phase::Verify {
+                                rows: 4 | 6 | 16 | 32,
+                                ..
+                            }
                     );
                     assert_eq!(selected, qualified, "{phase:?}");
                     assert_eq!(

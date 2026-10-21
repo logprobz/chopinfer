@@ -56,6 +56,13 @@ pub fn bf16_bits(value: f32) -> u16 {
 /// The bytes a canvas keeps besides its samples: the three value tables.
 const TABLE_BYTES: usize = 3 * 256 * 4;
 
+/// The bytes a `height x width` canvas keeps, as
+/// [`CanvasRows::retained_bytes`] counts them, planned from its size.
+#[must_use]
+pub fn canvas_retained_bytes(height: u32, width: u32) -> u64 {
+    u64::from(height) * u64::from(width) * 3 + TABLE_BYTES as u64
+}
+
 /// An image's patch rows as an interleaved RGB canvas and the value of each
 /// sample per channel.
 #[derive(Clone, Debug, PartialEq)]
@@ -159,7 +166,8 @@ impl CanvasRows {
         self.values().unwrap_or(0) * element.bytes()
     }
 
-    /// Bytes this form keeps: the canvas and its tables.
+    /// Bytes this form keeps: the canvas and its tables
+    /// ([`canvas_retained_bytes`]).
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
         self.canvas.len() + TABLE_BYTES
@@ -336,6 +344,7 @@ mod tests {
         assert_eq!((rows.grid(), rows.columns()), ([1, 4, 2], 24));
         assert_eq!(rows.payload_len(PayloadElement::F32), 8 * 24 * 4);
         assert_eq!(rows.retained_bytes(), 8 * 4 * 3 + TABLE_BYTES);
+        assert_eq!(canvas_retained_bytes(8, 4), rows.retained_bytes() as u64);
     }
 
     #[test]

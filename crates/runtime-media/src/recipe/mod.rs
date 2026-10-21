@@ -7,7 +7,7 @@ mod centered_pad;
 mod resample;
 mod token_budget;
 
-pub use canvas::{CanvasLayout, CanvasRows, PayloadElement, bf16_bits};
+pub use canvas::{CanvasLayout, CanvasRows, PayloadElement, bf16_bits, canvas_retained_bytes};
 
 pub use centered_pad::{
     CenteredPadPlan, CenteredPadRecipe, ValueRounding, centered_pad_canvas,

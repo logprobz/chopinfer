@@ -129,3 +129,52 @@ fn check_exact_prefill_routes() {
         }
     }
 }
+
+/// Native MoE prefill runs gate/up through the fused ceil's r2w4s3 tiles in
+/// steps of at most `FUSED_CEIL_ROWS` rows and through the wide r2w6s3
+/// tiles above, never the other in either.
+#[test]
+fn native_prefill_runs_wide_gate_up_tiles_above_the_fused_rows() {
+    crate::sm120::moe_native::with_native(true, check_native_gate_up_tiles);
+}
+
+fn check_native_gate_up_tiles() {
+    for kv in KV_LAYOUTS {
+        for rows in [2048, 2049, 8192] {
+            let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+            let host = FakeHost::new(shape, kv);
+            let record = crate::config::tests::record(&shape, kv, 1, false);
+            let mut instance = api()
+                .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+                .unwrap();
+            instance
+                .execute(&prompt(7, 0, 0, rows, true), &mut Views::default())
+                .unwrap();
+            let journal = host.device.journal.borrow();
+            assert_launches_fit_configured_shared(&journal, &shape.topology());
+            let launches = |pattern: &str| {
+                journal
+                    .iter()
+                    .filter(|l| l.starts_with("launch ") && l.contains(pattern))
+                    .count()
+            };
+            let gate_up = "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp4120000041200000_";
+            let fused = rows <= u64::from(crate::sm120::moe_native::FUSED_CEIL_ROWS);
+            let (tile, other) = if fused {
+                ("r2w4s3", "r2w6s3")
+            } else {
+                ("r2w6s3", "r2w4s3")
+            };
+            assert_eq!(launches(&format!("{gate_up}{tile}_pack_v1 ")), 4 * 40);
+            let tiles = if fused { "_tiles_ceil" } else { "_tiles_v1 " };
+            assert_eq!(launches(&format!("{gate_up}{tile}{tiles}")), 4 * 40);
+            assert_eq!(launches(&format!("{gate_up}{tile}_tiles_")), 4 * 40);
+            assert_eq!(launches(&format!("{gate_up}{other}_")), 0);
+            drop(journal);
+            instance.commit().unwrap();
+            instance.retire_request(7).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
+    }
+}

@@ -1016,6 +1016,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// exactly the resources and renames above, the short-row and staged-scale
 /// delta is the same with or without them, and every other operation is
 /// identical after handle mapping.
+/// operation is identical after handle mapping. The wide gate/up module
+/// (`moe_native_entries::WIDE_CUBIN`) adds two resolves and three releases
+/// per TP4 rank; steps above 2048 rows launch it, so these journals do not.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

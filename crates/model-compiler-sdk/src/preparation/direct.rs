@@ -15,6 +15,23 @@ use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::time::Instant;
 
+mod inputs;
+use inputs::CheckpointInputs;
+pub use inputs::CheckpointSnapshot;
+
+/// A provider whose checkpoint decisions consume the same owned metadata
+/// that supplies its cache identities. No wire or bundle ABI is changed.
+pub struct SnapshotProvider {
+    snapshot: std::sync::Arc<CheckpointSnapshot>,
+    provider: Box<dyn Provider>,
+}
+
+impl SnapshotProvider {
+    pub fn new(snapshot: std::sync::Arc<CheckpointSnapshot>, provider: Box<dyn Provider>) -> Self {
+        Self { snapshot, provider }
+    }
+}
+
 pub struct DirectPrepared {
     pub package: DirectPackage,
     pub lease: CacheLease,
@@ -281,23 +298,39 @@ struct EmissionKey {
     metadata_identity: String,
     inputs: Option<Vec<u8>>,
     digest: Option<String>,
+    checkpoint_inputs: Option<CheckpointInputs>,
 }
 
 impl EmissionKey {
     /// Taken once per request: emission consumes these same inputs. The
-    /// metadata identity is measured before emission reads any of it: the
-    /// host refuses the package if the metadata differs when it selects the
-    /// checkpoint.
+    /// Owned snapshots bind emission to the bytes hashed here. Retained
+    /// file and directory identities also detect ordinary concurrent edits.
     fn of<F: Provider + ?Sized>(
         family: &F,
         root: &Path,
         request: &PrepareDirectRequest,
+        snapshot: Option<&CheckpointSnapshot>,
     ) -> Result<Self> {
-        let identity = checkpoint_identity(root)?;
-        let metadata_identity: String = runtime_weights::checkpoint::metadata_identity(root)?
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let checkpoint_inputs = snapshot
+            .is_none()
+            .then(|| CheckpointInputs::capture(root))
+            .transpose()?;
+        let (identity, metadata_identity) = match snapshot {
+            Some(snapshot) => {
+                snapshot.verify()?;
+                (
+                    snapshot.identity.clone(),
+                    snapshot.metadata_identity.clone(),
+                )
+            }
+            None => (
+                checkpoint_identity(root)?,
+                runtime_weights::checkpoint::metadata_identity(root)?
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            ),
+        };
         let mut canonical = request.clone();
         if let Some(served) = family.direct_modalities(root, request)? {
             canonical.modalities = ModalitySelection::Only(served);
@@ -320,11 +353,15 @@ impl EmissionKey {
             }
             None => None,
         };
+        if let Some(checkpoint_inputs) = &checkpoint_inputs {
+            checkpoint_inputs.verify()?;
+        }
         Ok(Self {
             identity,
             metadata_identity,
             inputs,
             digest,
+            checkpoint_inputs,
         })
     }
 }
@@ -390,15 +427,41 @@ pub fn published_profile<F: Provider + ?Sized>(
     if !request.cache_root.is_absolute() || !request.cache_root.join("cache-version").is_file() {
         return Ok(None);
     }
-    let Some(inputs) = EmissionKey::of(family, root, request)?.digest else {
+    let captured = family.direct_snapshot(root)?;
+    match captured {
+        Some(captured) => published_profile_captured(
+            captured.provider.as_ref(),
+            root,
+            request,
+            Some(&captured.snapshot),
+        ),
+        None => published_profile_captured(family, root, request, None),
+    }
+}
+
+fn published_profile_captured<F: Provider + ?Sized>(
+    family: &F,
+    root: &Path,
+    request: &PrepareDirectRequest,
+    snapshot: Option<&CheckpointSnapshot>,
+) -> Result<Option<DirectProfile>> {
+    let key = EmissionKey::of(family, root, request, snapshot)?;
+    let Some(inputs) = key.digest.as_deref() else {
         return Ok(None);
     };
     let cache = Cache::open(&request.cache_root)?;
     let _gate = cache.gate(false)?;
-    Ok(published_for(&cache, &inputs)?
+    let profile = published_for(&cache, inputs)?
         .into_iter()
         .next()
-        .map(|(_, profile)| profile))
+        .map(|(_, profile)| profile);
+    if let Some(checkpoint_inputs) = &key.checkpoint_inputs {
+        checkpoint_inputs.verify()?;
+    }
+    if let Some(snapshot) = snapshot {
+        snapshot.verify_contents(root)?;
+    }
+    Ok(profile)
 }
 
 /// A published package whose record names these emission `inputs`, when it
@@ -455,16 +518,41 @@ pub fn prepare_direct<F: Provider + ?Sized>(
         return Err("--model must name a local checkpoint directory".into());
     }
     family.probe(&root, request.tensor_parallel_size)?;
+    // A hidden cache inside the checkpoint may create its root. Do that
+    // before capturing directory identities, so our own creation is not an edit.
+    let cache = Cache::open(&request.cache_root)?;
+    let captured = family.direct_snapshot(&root)?;
+    match captured {
+        Some(captured) => prepare_captured(
+            captured.provider.as_ref(),
+            &root,
+            request,
+            &cache,
+            started,
+            Some(&captured.snapshot),
+        ),
+        None => prepare_captured(family, &root, request, &cache, started, None),
+    }
+}
+
+fn prepare_captured<F: Provider + ?Sized>(
+    family: &F,
+    root: &Path,
+    request: &PrepareDirectRequest,
+    cache: &Cache,
+    started: Instant,
+    snapshot: Option<&CheckpointSnapshot>,
+) -> Result<DirectPrepared> {
     let EmissionKey {
         identity,
         metadata_identity,
         inputs,
         digest: digest_of_inputs,
-    } = EmissionKey::of(family, &root, request)?;
-    let cache = Cache::open(&request.cache_root)?;
+        checkpoint_inputs,
+    } = EmissionKey::of(family, root, request, snapshot)?;
     let _gate = cache.gate(false)?;
     let reused = match &digest_of_inputs {
-        Some(digest) => reusable_by_inputs(&cache, digest)?,
+        Some(digest) => reusable_by_inputs(cache, digest)?,
         None => None,
     };
     let Published {
@@ -477,20 +565,28 @@ pub fn prepare_direct<F: Provider + ?Sized>(
         Some(published) => published,
         None => emit_and_publish(
             family,
-            &cache,
-            &root,
+            cache,
+            root,
             request,
             &identity,
             inputs.as_deref(),
             digest_of_inputs.as_deref(),
+            checkpoint_inputs.as_ref(),
+            snapshot,
         )?,
     };
     let bundle = cache.path(&key)?;
     let package_identity = key["p-".len()..].to_owned();
-    if checkpoint_identity(&root)? != identity {
+    if snapshot.is_none() && checkpoint_identity(root)? != identity {
         return Err(
             "the checkpoint's safetensors files changed while its package was prepared".into(),
         );
+    }
+    if let Some(checkpoint_inputs) = &checkpoint_inputs {
+        checkpoint_inputs.verify()?;
+    }
+    if let Some(snapshot) = snapshot {
+        snapshot.verify_contents(root)?;
     }
     let lease = cache.select(std::slice::from_ref(&key))?;
     let mut measurements = Measurements {
@@ -530,6 +626,7 @@ struct Published {
 /// damaged one. The record states the inputs' digest and the profile, so a
 /// later request with the same digest reuses the package without emitting
 /// it.
+#[allow(clippy::too_many_arguments)]
 fn emit_and_publish<F: Provider + ?Sized>(
     family: &F,
     cache: &Cache,
@@ -538,6 +635,8 @@ fn emit_and_publish<F: Provider + ?Sized>(
     identity: &str,
     inputs: Option<&[u8]>,
     digest_of_inputs: Option<&str>,
+    checkpoint_inputs: Option<&CheckpointInputs>,
+    snapshot: Option<&CheckpointSnapshot>,
 ) -> Result<Published> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -570,6 +669,13 @@ fn emit_and_publish<F: Provider + ?Sized>(
             .transpose();
         // The emission's own failure first.
         let emission = emission?;
+        // Check before anything is published under the earlier emission key.
+        if let Some(checkpoint_inputs) = &checkpoint_inputs {
+            checkpoint_inputs.verify()?;
+        }
+        if let Some(snapshot) = snapshot {
+            snapshot.verify_contents(root)?;
+        }
         let named = named?;
         if let Some(named) = named
             && named != emission.profile
@@ -769,7 +875,10 @@ mod tests {
 
     /// A family whose one package serves every rank count, selecting a
     /// profile named for the requested one.
-    struct EveryRankCount;
+    #[derive(Default)]
+    struct EveryRankCount {
+        emissions: std::sync::atomic::AtomicUsize,
+    }
 
     impl Provider for EveryRankCount {
         fn name(&self) -> &str {
@@ -807,6 +916,8 @@ mod tests {
             output: &Path,
             _inputs: Option<&[u8]>,
         ) -> Result<DirectEmission> {
+            self.emissions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             use runtime_bundle::*;
             let id = |value: &str| BundleOpaqueId::new(value).unwrap();
             let component = crate::ComponentDraftV1::new(
@@ -863,12 +974,123 @@ mod tests {
         }
     }
 
+    struct ChangingCheckpoint {
+        mode: &'static str,
+        change: std::sync::atomic::AtomicBool,
+        emitter: EveryRankCount,
+    }
+
+    impl Provider for ChangingCheckpoint {
+        fn name(&self) -> &str {
+            "changing-checkpoint"
+        }
+        fn profiles(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn probe(&self, _: &Path, _: u32) -> Result<()> {
+            Ok(())
+        }
+        fn direct_inputs(&self, _: &Path, _: &PrepareDirectRequest) -> Result<Option<Vec<u8>>> {
+            Ok(Some(b"unchanged module".to_vec()))
+        }
+        fn emit_direct_with_inputs(
+            &self,
+            root: &Path,
+            request: &PrepareDirectRequest,
+            identity: &str,
+            output: &Path,
+            inputs: Option<&[u8]>,
+        ) -> Result<DirectEmission> {
+            let change = self
+                .change
+                .swap(false, std::sync::atomic::Ordering::Relaxed);
+            if !change {
+                return self
+                    .emitter
+                    .emit_direct_with_inputs(root, request, identity, output, inputs);
+            }
+            let config = root.join("config.json");
+            let saved = root.parent().unwrap().join("original-config");
+            match self.mode {
+                "in-place" => fs::write(&config, br#"{"option":"B"}"#)?,
+                "restore-inode" => {
+                    fs::rename(&config, &saved)?;
+                    fs::write(&config, br#"{"option":"B"}"#)?;
+                }
+                "optional" => fs::write(root.join("optional.json"), br#"{"option":"B"}"#)?,
+                _ => unreachable!(),
+            }
+            // Simulate changed metadata selecting a different package, then
+            // restoring A before the SDK's final header/digest checks.
+            let mut changed = request.clone();
+            changed.modalities =
+                ModalitySelection::Only([runtime_bundle::preparation::Modality::Text].into());
+            let result = self
+                .emitter
+                .emit_direct_with_inputs(root, &changed, identity, output, inputs);
+            match self.mode {
+                "in-place" => fs::write(&config, br#"{"option":"A"}"#)?,
+                "restore-inode" => {
+                    fs::remove_file(&config)?;
+                    fs::rename(saved, &config)?;
+                }
+                "optional" => fs::remove_file(root.join("optional.json"))?,
+                _ => unreachable!(),
+            }
+            result
+        }
+    }
+
+    #[test]
+    fn metadata_changed_and_restored_during_emission_cannot_poison_early_reuse() {
+        for mode in ["in-place", "restore-inode", "optional"] {
+            let root = checkpoint_root(&format!("direct-metadata-race-{mode}"));
+            fs::write(root.join("checkpoint/config.json"), br#"{"option":"A"}"#).unwrap();
+            let request = PrepareDirectRequest {
+                path: root.join("checkpoint"),
+                cache_root: root.join("cache"),
+                tensor_parallel_size: 4,
+                activation_policy: None,
+                modalities: ModalitySelection::Auto,
+            };
+            let family = ChangingCheckpoint {
+                mode,
+                change: std::sync::atomic::AtomicBool::new(true),
+                emitter: EveryRankCount::default(),
+            };
+            let error = prepare_direct(&family, &request)
+                .err()
+                .expect("changed inputs must be refused")
+                .to_string();
+            assert!(error.contains("checkpoint input"), "{mode}: {error}");
+            let cache = Cache::open(&request.cache_root).unwrap();
+            assert!(
+                cache.entries().unwrap().is_empty(),
+                "a refused emission publishes no record"
+            );
+            let good = prepare_direct(&family, &request).unwrap().package;
+            assert!(good.measurements.stages.contains_key("package_assembly"));
+            let reused = prepare_direct(&family, &request).unwrap().package;
+            assert_eq!(good.package_identity, reused.package_identity);
+            assert!(reused.measurements.stages.contains_key("package_reuse"));
+            assert_eq!(
+                family
+                    .emitter
+                    .emissions
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                2
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     /// Requests at several rank counts share one package, and each reuses
     /// it without emitting again once its inputs are recorded, with the
     /// profile it selected.
     #[test]
     fn one_package_serves_the_requests_of_every_rank_count() {
         let root = checkpoint_root("direct-every-rank-count");
+        let family = EveryRankCount::default();
         let prepare = |ranks: u32| {
             let request = PrepareDirectRequest {
                 path: root.join("checkpoint"),
@@ -877,7 +1099,7 @@ mod tests {
                 activation_policy: None,
                 modalities: ModalitySelection::Auto,
             };
-            prepare_direct(&EveryRankCount, &request).unwrap().package
+            prepare_direct(&family, &request).unwrap().package
         };
         let decisions = |package: &DirectPackage| package.measurements.decisions.clone();
         let tp2 = prepare(2);
@@ -896,7 +1118,7 @@ mod tests {
                 activation_policy: None,
                 modalities: ModalitySelection::Auto,
             };
-            let recorded = published_profile(&EveryRankCount, &request.path, &request)
+            let recorded = published_profile(&family, &request.path, &request)
                 .unwrap()
                 .expect("a recorded profile");
             assert_eq!(recorded.name, name);
@@ -917,9 +1139,14 @@ mod tests {
             modalities: ModalitySelection::Auto,
         };
         assert!(
-            published_profile(&EveryRankCount, &request.path, &request)
+            published_profile(&family, &request.path, &request)
                 .unwrap()
                 .is_none()
+        );
+        assert_eq!(
+            family.emissions.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "repeat requests must not enter the emitter or topology planning"
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -928,6 +1155,7 @@ mod tests {
     fn auto_all_and_the_explicit_list_they_serve_reuse_without_assembly() {
         use runtime_bundle::preparation::Modality;
         let root = checkpoint_root("direct-modalities");
+        let family = EveryRankCount::default();
         let full = || ModalitySelection::Only([Modality::Text, Modality::Image].into());
         for (index, (first, second)) in [
             (ModalitySelection::Auto, full()),
@@ -944,14 +1172,14 @@ mod tests {
                 activation_policy: None,
                 modalities: first,
             };
-            let initial = prepare_direct(&EveryRankCount, &request).unwrap().package;
+            let initial = prepare_direct(&family, &request).unwrap().package;
             request.modalities = second;
             assert!(
-                published_profile(&EveryRankCount, &request.path, &request)
+                published_profile(&family, &request.path, &request)
                     .unwrap()
                     .is_some()
             );
-            let reused = prepare_direct(&EveryRankCount, &request).unwrap().package;
+            let reused = prepare_direct(&family, &request).unwrap().package;
             assert_eq!(initial.package_identity, reused.package_identity);
             assert_eq!(
                 reused.measurements.stages.keys().collect::<Vec<_>>(),
@@ -959,14 +1187,240 @@ mod tests {
             );
             request.modalities = ModalitySelection::Only([Modality::Text].into());
             assert!(
-                published_profile(&EveryRankCount, &request.path, &request)
+                published_profile(&family, &request.path, &request)
                     .unwrap()
                     .is_none()
             );
-            let reduced = prepare_direct(&EveryRankCount, &request).unwrap().package;
+            let reduced = prepare_direct(&family, &request).unwrap().package;
             assert_ne!(initial.package_identity, reduced.package_identity);
             assert!(reduced.measurements.stages.contains_key("package_assembly"));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn early_reuse_rebuilds_damaged_or_incomplete_packages() {
+        for damage in [
+            "truncated-record",
+            "missing-record",
+            "incomplete-record",
+            "component",
+        ] {
+            let root = checkpoint_root(&format!("direct-recovery-{damage}"));
+            let family = EveryRankCount::default();
+            let request = PrepareDirectRequest {
+                path: root.join("checkpoint"),
+                cache_root: root.join("cache"),
+                tensor_parallel_size: 4,
+                activation_policy: None,
+                modalities: ModalitySelection::Auto,
+            };
+            let first = prepare_direct(&family, &request).unwrap().package;
+            let cache = Cache::open(&request.cache_root).unwrap();
+            let key = format!("p-{}", first.package_identity);
+            let record = cache.root.join("records").join(format!("{key}.json"));
+            match damage {
+                "truncated-record" => fs::write(record, b"{").unwrap(),
+                "missing-record" => fs::remove_file(record).unwrap(),
+                "incomplete-record" => {
+                    let mut entry = cache.entry(&key).unwrap();
+                    entry.state = "building".into();
+                    cache.save(&key, &entry).unwrap();
+                }
+                "component" => {
+                    fs::write(
+                        cache.path(&key).unwrap().join("components/weights.bin"),
+                        b"bad",
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let repaired = prepare_direct(&family, &request).unwrap().package;
+            assert_eq!(repaired.package_identity, first.package_identity);
+            assert!(
+                repaired
+                    .measurements
+                    .stages
+                    .contains_key("package_assembly")
+            );
+            let reused = prepare_direct(&family, &request).unwrap().package;
+            assert!(reused.measurements.stages.contains_key("package_reuse"));
+            assert_eq!(
+                family.emissions.load(std::sync::atomic::Ordering::Relaxed),
+                2
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_new_hidden_cache_inside_the_checkpoint_does_not_invalidate_inputs() {
+        let root = checkpoint_root("direct-hidden-cache");
+        let family = EveryRankCount::default();
+        let request = PrepareDirectRequest {
+            path: root.join("checkpoint"),
+            cache_root: root.join("checkpoint/.prepared-cache"),
+            tensor_parallel_size: 4,
+            activation_policy: None,
+            modalities: ModalitySelection::Auto,
+        };
+        let first = prepare_direct(&family, &request).unwrap().package;
+        let again = prepare_direct(&family, &request).unwrap().package;
+        assert_eq!(first.package_identity, again.package_identity);
+        assert!(again.measurements.stages.contains_key("package_reuse"));
+        assert_eq!(
+            family.emissions.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_snapshot_preserves_identities_and_bounds_reads_before_allocation() {
+        let root = checkpoint_root("direct-owned-snapshot");
+        let checkpoint = root.join("checkpoint");
+        fs::write(checkpoint.join("config.json"), br#"{"option":"A"}"#).unwrap();
+        let snapshot = CheckpointSnapshot::capture(&checkpoint).unwrap();
+        assert_eq!(snapshot.identity, checkpoint_identity(&checkpoint).unwrap());
+        let metadata: String = runtime_weights::checkpoint::metadata_identity(&checkpoint)
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(snapshot.metadata_identity, metadata);
+        assert_eq!(snapshot.headers().len(), 1);
+        assert_eq!(
+            snapshot.document("config.json").unwrap(),
+            br#"{"option":"A"}"#
+        );
+        snapshot.verify_contents(&checkpoint).unwrap();
+
+        let large = checkpoint.join("oversized.json");
+        fs::File::create(&large)
+            .unwrap()
+            .set_len((64 << 20) + 1)
+            .unwrap();
+        assert!(
+            CheckpointSnapshot::capture(&checkpoint)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("limit")
+        );
+        let selected =
+            CheckpointSnapshot::capture_documents(&checkpoint, &["config.json"]).unwrap();
+        assert!(selected.document("oversized.json").is_err());
+        selected.verify_contents(&checkpoint).unwrap();
+        fs::remove_file(large).unwrap();
+        let shard = checkpoint.join("model.safetensors");
+        fs::write(&shard, ((256_u64 << 20) + 1).to_le_bytes()).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(shard)
+            .unwrap()
+            .set_len(257 << 20)
+            .unwrap();
+        assert!(
+            CheckpointSnapshot::capture(&checkpoint)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("bounds")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_snapshot_documents_refuse_even_confined_checkpoint_links() {
+        let root = checkpoint_root("direct-snapshot-links");
+        let checkpoint = root.join("cache/snapshots/revision");
+        let blobs = root.join("cache/blobs");
+        fs::create_dir_all(&checkpoint).unwrap();
+        fs::create_dir_all(&blobs).unwrap();
+        fs::copy(
+            root.join("checkpoint/model.safetensors"),
+            checkpoint.join("model.safetensors"),
+        )
+        .unwrap();
+        fs::write(blobs.join("tokenizer"), b"{}").unwrap();
+        std::os::unix::fs::symlink("../../blobs/tokenizer", checkpoint.join("tokenizer.json"))
+            .unwrap();
+        let snapshot =
+            CheckpointSnapshot::capture_documents(&checkpoint, &["tokenizer.json"]).unwrap();
+        assert_eq!(snapshot.document("tokenizer.json").unwrap(), b"{}");
+        assert!(
+            snapshot
+                .regular_document("tokenizer.json")
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("non-symlink")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn snapshot_reuse_does_not_open_a_second_set_of_shards() {
+        const CHILD: &str = "CHOPINFER_TEST_SNAPSHOT_FD_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("python3")
+                .args(["-B", "-c", "import os,resource,sys; soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE); resource.setrlimit(resource.RLIMIT_NOFILE,(128,hard)); os.execv(sys.argv[1],sys.argv[1:])"])
+                .arg(std::env::current_exe().unwrap())
+                .args(["--exact", "preparation::direct::tests::snapshot_reuse_does_not_open_a_second_set_of_shards", "--nocapture"])
+                .env(CHILD, "1")
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+            return;
+        }
+        struct CapturedFamily;
+        impl Provider for CapturedFamily {
+            fn name(&self) -> &str {
+                "snapshot-every-rank-count"
+            }
+            fn profiles(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn probe(&self, _: &Path, _: u32) -> Result<()> {
+                Ok(())
+            }
+            fn direct_snapshot(&self, root: &Path) -> Result<Option<SnapshotProvider>> {
+                let snapshot =
+                    std::sync::Arc::new(CheckpointSnapshot::capture_documents(root, &[])?);
+                Ok(Some(SnapshotProvider::new(
+                    snapshot,
+                    Box::<EveryRankCount>::default(),
+                )))
+            }
+        }
+        let root = checkpoint_root("direct-snapshot-fds");
+        let checkpoint = root.join("checkpoint");
+        for index in 1..96 {
+            fs::copy(
+                checkpoint.join("model.safetensors"),
+                checkpoint.join(format!("model-{index}.safetensors")),
+            )
+            .unwrap();
+        }
+        let request = PrepareDirectRequest {
+            path: checkpoint,
+            cache_root: root.join("cache"),
+            tensor_parallel_size: 4,
+            activation_policy: None,
+            modalities: ModalitySelection::Auto,
+        };
+        let first = prepare_direct(&CapturedFamily, &request).unwrap().package;
+        let reused = prepare_direct(&CapturedFamily, &request).unwrap().package;
+        assert_eq!(first.package_identity, reused.package_identity);
+        assert!(reused.measurements.stages.contains_key("package_reuse"));
         fs::remove_dir_all(root).unwrap();
     }
 

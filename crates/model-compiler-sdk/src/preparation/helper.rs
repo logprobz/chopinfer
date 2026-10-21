@@ -14,6 +14,13 @@ use std::path::Path;
 pub trait Provider: Sync {
     fn name(&self) -> &str;
     fn profiles(&self) -> Vec<String>;
+    /// Bind this operation's metadata decisions to one owned snapshot.
+    /// The returned provider must use its snapshot for all checkpoint
+    /// metadata reads, including modality selection and emitted documents.
+    /// Providers without a snapshot keep their existing read path.
+    fn direct_snapshot(&self, _root: &Path) -> Result<Option<super::direct::SnapshotProvider>> {
+        Ok(None)
+    }
     /// The family's deployment policy ([`crate::deployment_policy`]), the
     /// document its packages carry. `deployment-policy` prints it, so the
     /// image entrypoint knows every installed family's variables before

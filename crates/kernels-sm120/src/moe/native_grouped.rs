@@ -564,6 +564,11 @@ pub enum Tune {
     /// [`nan_scan_symbol`] launch over the same input: the served outputs
     /// and refusals bit for bit.
     NoNan,
+    /// The lean loop without any activation admission (NaN codes and the
+    /// scale-range product check), behind an [`admission_scan_symbol`]
+    /// launch over the same input and scales: the served outputs and
+    /// refusals bit for bit.
+    Scanned,
 }
 impl Tune {
     pub const ALL: [Tune; 6] = [
@@ -582,6 +587,7 @@ impl Tune {
             Tune::NoGlobal => "no_global",
             Tune::MmaOnly => "mma_only",
             Tune::NoNan => "no_nan",
+            Tune::Scanned => "scanned",
         }
     }
     fn policy(self) -> &'static str {
@@ -592,6 +598,7 @@ impl Tune {
             Tune::NoGlobal => "NoGlobal",
             Tune::MmaOnly => "MmaOnly",
             Tune::NoNan => "NoNan",
+            Tune::Scanned => "Scanned",
         }
     }
 }
@@ -636,7 +643,8 @@ pub fn tune_entries(
 }
 
 /// The `variant` launches with the compute entry of `tune`; [`Tune::NoNan`]
-/// starts with the NaN scan of the input.
+/// starts with the NaN scan of the input, [`Tune::Scanned`] with the
+/// admission scan of the input and its scales.
 pub fn tune_launches(
     shape: &Shape,
     tile: &Tile,
@@ -660,6 +668,20 @@ pub fn tune_launches(
         scan.arguments.validate()?;
         ops.insert(0, scan);
     }
+    if tune == Tune::Scanned {
+        let mut scan = ops[0].clone();
+        scan.symbol = admission_scan_symbol(shape);
+        scan.plan.grid = [SM_COUNT * NAN_SCAN_BLOCKS_PER_SM, 1, 1];
+        scan.plan.block = [NAN_SCAN_THREADS, 1, 1];
+        scan.plan.validate()?;
+        scan.arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(b.input),
+            Argument::DeviceBuffer(b.activation_scales),
+            Argument::DeviceBuffer(b.live_tokens),
+        ]);
+        scan.arguments.validate()?;
+        ops.insert(0, scan);
+    }
     Ok(ops)
 }
 
@@ -678,6 +700,30 @@ pub fn nan_scan_entry(shape: &Shape) -> EntrySpec {
         format!(
             "chop::ptx::griddep_launch_dependents(); chop::ptx::griddep_wait(); \
              chop::moe::native_grouped::nan_scan<{}>(input,live);",
+            shape.config()
+        ),
+        NAN_SCAN_THREADS,
+        1,
+    )
+}
+
+pub fn admission_scan_symbol(shape: &Shape) -> String {
+    format!("chop_moe_native_{}_admission_scan_v1", shape.tag())
+}
+
+/// The activation admission scan of `shape`'s input and scales
+/// (`native_grouped::admission_scan`).
+pub fn admission_scan_entry(shape: &Shape) -> EntrySpec {
+    EntrySpec::new(
+        admission_scan_symbol(shape),
+        vec![
+            ptr("input", "const uint8_t"),
+            ptr("activation_scales", "const uint8_t"),
+            ptr("live", "const int"),
+        ],
+        format!(
+            "chop::ptx::griddep_launch_dependents(); chop::ptx::griddep_wait(); \
+             chop::moe::native_grouped::admission_scan<{}>(input,activation_scales,live);",
             shape.config()
         ),
         NAN_SCAN_THREADS,

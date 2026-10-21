@@ -194,10 +194,11 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
 // are timing ablations whose outputs are not meaningful: no checks, no
 // MMA, no global loads after the prologue, or MMAs on register operands
 // with no operand loads. `nan = false` leaves the activation NaN check to
-// `nan_scan`, which must run on the same input before the tiles.
+// `nan_scan`, which must run on the same input before the tiles; `acts =
+// false` also leaves the activation scale admission to `admission_scan`.
 struct Served {
   static constexpr bool lean = false, checks = true, mma = true, global = true, loads = true,
-                        nan = true;
+                        nan = true, acts = true;
 };
 
 // One MMA whose A and B scales are byte `q` of the given words, by the
@@ -290,10 +291,10 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
     const int r = row_base + f * 8 + g, source = s.sources[r];
     sb[f] = Tune::loads ? stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source))
                         : 0x7f7f7f7fu;
-    slow |= Tune::checks && row_base + f * 8 < count && source >= 0 &&
+    slow |= Tune::checks && Tune::acts && row_base + f * 8 < count && source >= 0 &&
             outside<Groups>(sb[f], 3, 246);
   }
-  if (Tune::checks && __any_sync(0xffffffffu, slow)) {
+  if (Tune::checks && Tune::acts && __any_sync(0xffffffffu, slow)) {
 #pragma unroll 1
     for (int f = 0; f < F; ++f) {
       const int r = row_base + f * 8 + g, source = s.sources[r];
@@ -482,6 +483,8 @@ struct NoMma : Served { static constexpr bool mma = false; };
 struct NoGlobal : Served { static constexpr bool global = false, checks = false; };
 struct MmaOnly : Served { static constexpr bool global = false, checks = false, loads = false; };
 struct NoNan : Served { static constexpr bool lean = true, nan = false; };
+// The lean loop with the whole activation admission in `admission_scan`.
+struct Scanned : Served { static constexpr bool lean = true, nan = false, acts = false; };
 
 // Traps on any E4M3 NaN code in the live input rows (tokens for gate/up,
 // routes for down): every code the tiles read, so a `nan = false` tile
@@ -498,6 +501,39 @@ __device__ void nan_scan(const uint8_t* input, const int* live_tokens) {
        i += uint64_t(gridDim.x) * blockDim.x) {
     const uint4 v = codes[i];
     nan |= lay::e4m3_nan(v.x) | lay::e4m3_nan(v.y) | lay::e4m3_nan(v.z) | lay::e4m3_nan(v.w);
+  }
+  if (nan) __trap();
+}
+
+// The tiles' whole activation admission over the live input rows (tokens
+// for gate/up, routes for down), one thread per row and 32-K group: any
+// E4M3 NaN code traps, and a group whose scale leaves 3..246 runs the
+// exact engine's product check (`chained::scaled_e4m3x2`) on its 32 codes,
+// as `check_activations` does in the tile. Every live row is routed (all
+// experts are local at the native geometries), so the tiles read exactly
+// these rows and groups; a `Scanned` tile behind this pass refuses exactly
+// the inputs the served tile refuses.
+template<class C>
+__device__ void admission_scan(const uint8_t* input, const uint8_t* activation_scales,
+                               const int* live_tokens) {
+  static_assert(C::k % lay::GroupK == 0 && C::k / lay::GroupK == C::groups);
+  const int live = *live_tokens;
+  if (live < 0 || live > C::capacity) __trap();
+  const uint64_t items = uint64_t(live) * (C::gate_up ? 1 : C::top_k) * C::groups;
+  uint32_t nan = 0;
+  for (uint64_t i = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x; i < items;
+       i += uint64_t(gridDim.x) * blockDim.x) {
+    const uint4* codes = reinterpret_cast<const uint4*>(input + i * lay::GroupK);
+    const uint4 v0 = codes[0], v1 = codes[1];
+    nan |= lay::e4m3_nan(v0.x) | lay::e4m3_nan(v0.y) | lay::e4m3_nan(v0.z) | lay::e4m3_nan(v0.w) |
+           lay::e4m3_nan(v1.x) | lay::e4m3_nan(v1.y) | lay::e4m3_nan(v1.z) | lay::e4m3_nan(v1.w);
+    const uint32_t scale = activation_scales[i];
+    if (scale < 3 || scale > 246) {
+      check_activations(make_uint2(v0.x, v0.y), scale);
+      check_activations(make_uint2(v0.z, v0.w), scale);
+      check_activations(make_uint2(v1.x, v1.y), scale);
+      check_activations(make_uint2(v1.z, v1.w), scale);
+    }
   }
   if (nan) __trap();
 }

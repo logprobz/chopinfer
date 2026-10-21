@@ -42,12 +42,12 @@ use super::*;
 // At 4 and 32 rows the routed gate after each r2 join launches without
 // programmatic serialization: 160 gate launches change flags 1 to 0.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x7b5e9ae6a7c4e58c)),
-    (6, (8040, 0x5edfaba614b6233c)),
-    (8, (7572, 0xfefbf7f1e5d18f85)),
-    (12, (9496, 0x77c1353864ed09a8)),
-    (16, (8852, 0x4ef2e0f44d85ea93)),
-    (32, (8384, 0x5a765343c15b8043)),
+    (4, (7880, 0x5743860b1f2a7917)),
+    (6, (8040, 0xb4d2a3d1b3984c3e)),
+    (8, (7572, 0x018de7e58f3cb59d)),
+    (12, (9496, 0x8bb3d18a8e1bb3ce)),
+    (16, (8852, 0xb9bca4dbf54c089a)),
+    (32, (8384, 0xac5e0eada6606c97)),
 ];
 
 #[test]

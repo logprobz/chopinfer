@@ -9,6 +9,9 @@
 // single chain of the same eight instructions per 128 K, the same merges
 // and the same fold as the served tile. The SIMT path is the served one per
 // 32-feature group, with the group's first feature in place of the CTA's.
+// With `FromNormed` the SIMT path stages its F32 rows by widening the
+// norm's BF16 rows itself, the same values the widened rows hold, so the
+// norm need not write them.
 namespace chop::exact_f32::certified_wide {
 
 template<int N, int K, int M, int E>
@@ -102,15 +105,25 @@ __device__ __forceinline__ void single(const uint16_t* weight, const uint16_t* n
   __syncthreads();
 }
 
-// `blocked::stage_simt` (BF16 weights) with the 32 features from `col0`.
-template<int N, int K, int M>
+// `blocked::stage_simt` (BF16 weights) with the 32 features from `col0`;
+// with `FromNormed`, `x` is the BF16 rows, widened here.
+template<int N, int K, int M, bool FromNormed>
 __device__ __forceinline__ void stage_simt(float* dst, int base, int col0,
-    const float* x, const uint16_t* w, uint32_t live) {
+    const void* x, const uint16_t* w, uint32_t live) {
   for (int at = threadIdx.x; at < M*8; at += 128) {
     const int r = at/8, k = (at%8)*4;
     const bool valid = blockIdx.y*M+r < live;
-    const float* src = valid ? x+uint64_t(blockIdx.y*M+r)*K+base+k : x;
-    copy16(dst+r*36+k, src, valid);
+    if constexpr (FromNormed) {
+      uint2 v{};
+      if (valid) v = *reinterpret_cast<const uint2*>(
+          static_cast<const uint16_t*>(x)+uint64_t(blockIdx.y*M+r)*K+base+k);
+      *reinterpret_cast<float4*>(dst+r*36+k) = make_float4(widen(uint16_t(v.x)),
+          widen(uint16_t(v.x >> 16)), widen(uint16_t(v.y)), widen(uint16_t(v.y >> 16)));
+    } else {
+      const float* f = static_cast<const float*>(x);
+      const float* src = valid ? f+uint64_t(blockIdx.y*M+r)*K+base+k : f;
+      copy16(dst+r*36+k, src, valid);
+    }
   }
   constexpr int Width = 8;
   for (int at = threadIdx.x; at < 32*32/Width; at += 128) {
@@ -127,14 +140,14 @@ __device__ __forceinline__ void stage_simt(float* dst, int base, int col0,
 }
 
 // `blocked::simt<N,K,M,false,false>` over the 32 features from `col0`.
-template<int N, int K, int M>
-__device__ __forceinline__ void simt(int col0, const float* activation,
+template<int N, int K, int M, bool FromNormed>
+__device__ __forceinline__ void simt(int col0, const void* activation,
     const uint16_t* weight, float* output, uint32_t live, const uint32_t* weight_domain,
     const uint32_t* row_domain, float* storage) {
   constexpr int R = M/16, Plane = M*36+32*33;
   const int r0 = threadIdx.x/8, f0 = threadIdx.x%8;
   float total[R][4]{};
-  stage_simt<N,K,M>(storage, 0, col0, activation, weight, live);
+  stage_simt<N,K,M,FromNormed>(storage, 0, col0, activation, weight, live);
 #pragma unroll 1
   for (int base = 0; base < K; base += 128) {
     float partial[R][4]{};
@@ -144,7 +157,8 @@ __device__ __forceinline__ void simt(int col0, const float* activation,
       asm volatile("cp.async.wait_group 0;" ::: "memory");
       __syncthreads();
       if (start+32 < K)
-        stage_simt<N,K,M>(storage+(slot^1)*Plane, start+32, col0, activation, weight, live);
+        stage_simt<N,K,M,FromNormed>(storage+(slot^1)*Plane, start+32, col0, activation, weight,
+            live);
       const float* tile = storage+slot*Plane;
 #pragma unroll
       for (int k = 0; k < 32; ++k) {
@@ -177,7 +191,7 @@ __device__ __forceinline__ void simt(int col0, const float* activation,
   __syncthreads();
 }
 
-template<int N, int K, int M, int E>
+template<int N, int K, int M, int E, bool FromNormed = false>
 __device__ void run(const float* activation, const uint16_t* normed,
     const uint32_t* certified, const uint16_t* weight, float* output,
     const uint32_t* live_rows, uint32_t rows, const uint32_t* weight_domain) {
@@ -211,8 +225,9 @@ __device__ void run(const float* activation, const uint16_t* normed,
 #pragma unroll 1
   for (int g = 0; g < E/32; ++g)
     if ((simt_rows || (simt_weight >> g & 1)) && blockIdx.x*E+g*32 < N)
-      simt<N,K,M>(blockIdx.x*E+g*32,activation,weight,output,live,weight_domain,certified,
-          reinterpret_cast<float*>(storage));
+      simt<N,K,M,FromNormed>(blockIdx.x*E+g*32,
+          FromNormed ? static_cast<const void*>(normed) : activation,weight,output,live,
+          weight_domain,certified,reinterpret_cast<float*>(storage));
   ptx::griddep_launch_dependents();
 }
 }

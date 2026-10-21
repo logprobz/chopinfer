@@ -100,13 +100,44 @@ pub fn wide_plan(
 }
 
 pub fn wide_entry_spec(entry: &Entry, tile_rows: u32, features: u32) -> Result<EntrySpec, Refusal> {
+    wide_spec(entry, tile_rows, features, false)
+}
+
+/// Lab: the wide tiles whose SIMT path widens the norm's BF16 rows itself
+/// and never reads `activation`, which may then be null; the norm need not
+/// write its widened rows.
+pub fn normed_symbol(entry: &Entry, tile_rows: u32, features: u32) -> String {
+    format!(
+        "{}_certified_m{tile_rows}_f{features}_normed_v1",
+        entry.baseline_symbol()
+    )
+}
+
+pub fn normed_entry_spec(
+    entry: &Entry,
+    tile_rows: u32,
+    features: u32,
+) -> Result<EntrySpec, Refusal> {
+    wide_spec(entry, tile_rows, features, true)
+}
+
+fn wide_spec(
+    entry: &Entry,
+    tile_rows: u32,
+    features: u32,
+    from_normed: bool,
+) -> Result<EntrySpec, Refusal> {
     wide_plan(entry, tile_rows, features, 1)?;
     let q = entry.query();
     let mut spec = entry_spec(entry, tile_rows)?;
-    spec.symbol = wide_symbol(entry, tile_rows, features);
+    spec.symbol = if from_normed {
+        normed_symbol(entry, tile_rows, features)
+    } else {
+        wide_symbol(entry, tile_rows, features)
+    };
     spec.body = format!(
-        "chop::exact_f32::certified_wide::run<{},{},{},{}>(activation,normed,certified,weight,output,live_rows,rows,weight_domain);",
-        q.n, q.k, tile_rows, features
+        "chop::exact_f32::certified_wide::run<{},{},{},{},{}>(activation,normed,certified,weight,output,live_rows,rows,weight_domain);",
+        q.n, q.k, tile_rows, features, from_normed
     );
     Ok(spec)
 }
@@ -159,7 +190,21 @@ mod tests {
             let spec = wide_entry_spec(&e, 32, features).unwrap();
             assert_eq!(spec.symbol, wide_symbol(&e, 32, features));
             assert_eq!(spec.params, entry_spec(&e, 32).unwrap().params);
-            assert!(spec.body.contains(&format!("run<384,5120,32,{features}>")));
+            assert!(
+                spec.body
+                    .contains(&format!("run<384,5120,32,{features},false>"))
+            );
+            let normed = normed_entry_spec(&e, 32, features).unwrap();
+            assert_eq!(
+                normed.symbol,
+                format!("{}_normed_v1", spec.symbol.trim_end_matches("_v1"))
+            );
+            assert_eq!(normed.params, spec.params);
+            assert!(
+                normed
+                    .body
+                    .contains(&format!("run<384,5120,32,{features},true>"))
+            );
         }
         assert!(wide_plan(&e, 32, 48, 8192).is_err());
     }

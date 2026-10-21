@@ -138,12 +138,79 @@ bytes, not visits to an earlier phase's ranges. Source-cache hits
 and shared-output reproductions distinguish input reuse from repeated packing.
 Read and production seconds sum worker time and overlap each other.
 
+`CHOPINFER_DIRECT_LOAD_TIMING=1` adds `shared_timing` to the direct-load
+counters: output-lock waits, shared materialization (including its reads and
+input waits), and packed-input lock waits. The CUDA `startup weight_pipeline`
+record reports per-rank reads, time ready but waiting for submission, buffer
+reuse waits, and host waits for transfer completion. These diagnostics overlap the older counters;
+they are not independent phases to add together. Leave them off in final
+timing comparisons. `tools/dev/startup_timing.py` summarizes a completed
+startup log, preserving nested timings and refusing failed or empty uploads.
+
 Packed inputs share the configured retention budget across ranks. Idle
 packing buffers retain at most 64 MiB, capped further by that budget;
 `retained_peak_bytes` and `pooled_peak_bytes` report these separate lifetime
 high-water marks. Active worker temporaries and pinned upload buffers are
 additional memory. The loader releases retained inputs and idle buffers
 after upload.
+
+CPU producers reuse bounded worker pools. Each rank advances independently
+with two pinned chunks of at most 64 MiB each. Completion events fence buffer
+reuse, and failures stop producers and drain outstanding transfers before
+releasing their storage.
+
+### Weight-plan metadata cache
+
+On Linux, direct loading reuses validated encoded plans in the default model
+cache's `weight-plans-v1` directory. Set `CHOPINFER_WEIGHT_PLAN_CACHE` to an
+absolute private directory to select a different location, or `0` to disable
+reuse. The cache holds metadata only, with a 256 MiB entry limit and a 1 GiB,
+64-entry total limit. Publication removes oldest entries when needed. If the
+cache is unavailable, busy, corrupt or unsafe to open, loading plans normally.
+
+Keys cover the entire planning request, including checkpoint headers and small
+documents, metadata components, topology, image role, host views and host and
+bundle implementation identities. Hits still pass ordinary image and source
+validation. Tensor payloads are read and validated on every startup; this cache
+does not authenticate or reuse their contents. The `startup weight_plan`
+record reports `metadata_cache_enabled` and `metadata_cache_hits` (rank count).
+
+On 2026-10-21, the loader changes were compared with the round-8 serving
+baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
+250 W each, 48 CPUs and `--load-threads 16`. Both arms used prefix caching,
+32 maximum sequences and 8192-token prefill chunks. Each condition used an
+ABBA sequence with two starts per arm on an idle host and idle selected GPUs.
+Readiness includes the same model construction and warmup in both arms.
+
+| Profile | Checkpoint cache condition | Baseline mean (range), seconds | Loader mean (range), seconds | Mean reduction |
+|---|---|---:|---:|---:|
+| `tp4-ar` | Cold | 105.9 (104.3-107.5) | 94.4 (90.0-98.9) | 10.8% |
+| `tp4-ar` | Recent restart | 106.3 (104.8-107.8) | 96.9 (95.9-98.0) | 8.8% |
+| `tp4-dspark` | Cold | 145.1 (141.9-148.3) | 135.5 (130.0-141.1) | 6.6% |
+| `tp4-dspark` | Recent restart | 148.3 (144.8-151.7) | 131.8 (131.4-132.2) | 11.1% |
+
+Cold runs evicted only checkpoint files with `POSIX_FADV_DONTNEED` and
+recorded resulting residency. Recent restarts followed a priming startup;
+the text loader still read almost all of its approximately 339 GB through
+direct I/O. Both conditions retained validated metadata-plan cache entries.
+These are paired observations with two samples per arm, including the
+variation shown above. The earlier 95.9-second diagnostic startup used
+different cache conditions and is not the baseline for these percentages.
+
+Mean text-weight production and upload fell from 80.9 to 73.1 seconds for
+cold AR, 81.3 to 75.8 for recent AR, 83.6 to 77.5 for cold DSpark and 87.4
+to 74.2 for recent DSpark. Cached text planning and validation took 1.8-1.9
+seconds, versus 5.4 seconds without reuse. DSpark warmup remained about
+38 seconds. The largest server peak RSS observed by readiness was 9.26
+versus 8.91 GiB for AR and 15.09 versus 14.78 GiB for DSpark. Reading,
+preparing and uploading text weights remains the largest loading phase.
+
+Separate diagnostic starts matched all eight arena digests in each profile
+and all token IDs and log-probability bits for three fixed 32-token responses
+per profile. An unequal-rank upload probe checked all 208,666,687 bytes on
+four GPUs. Diagnostic readback and detailed timing counters were disabled in
+the performance runs. Every job passed its before/after power and Xid checks
+and released the GPUs. The quick and full CPU gates also passed.
 
 ## Watch running instances with chopinfer-top
 

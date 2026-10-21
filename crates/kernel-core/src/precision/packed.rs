@@ -552,6 +552,17 @@ impl MatrixView<'_> {
     /// Whole source scale groups are retained, including a partial first group.
     /// Physical padding gets zero codes; no calibration or requantization runs.
     pub fn repack(self, slice: &MatrixSlice) -> Result<PackedMatrix, PrecisionError> {
+        self.repack_reusing(slice, Vec::new(), Vec::new())
+    }
+
+    /// Reuses initialized code and scale storage, overwriting every live byte
+    /// and resetting padding even when the previous matrix had another shape.
+    pub fn repack_reusing(
+        self,
+        slice: &MatrixSlice,
+        mut codes: Vec<u8>,
+        mut scales: Vec<u8>,
+    ) -> Result<PackedMatrix, PrecisionError> {
         self.validate()?;
         if slice.rows.is_empty()
             || slice.rows.iter().any(|&r| r >= self.rows)
@@ -602,20 +613,24 @@ impl MatrixView<'_> {
             .checked_mul(scale_width)
             .filter(|&n| n as u64 <= super::MAX_TENSOR_BYTES)
             .ok_or_else(|| self.error("repacking", "scale byte size overflow"))?;
-        let mut codes = vec![0; bytes];
-        let mut scales = vec![
-            if matches!(
-                self.format,
-                WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
-            ) {
-                127
-            } else {
-                0
-            };
-            scale_bytes
-        ];
+        codes.resize(bytes, 0);
+        let neutral = if matches!(
+            self.format,
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+        ) {
+            127
+        } else {
+            0
+        };
+        let reused = scales.len().min(scale_bytes);
+        scales.resize(scale_bytes, neutral);
+        scales[..reused].fill(neutral);
+        let row_bytes = slice.padded_k * self.code_bits() / 8;
+        let live_bytes = (slice.k * self.code_bits()).div_ceil(8);
+        codes[slice.rows.len() * row_bytes..].fill(0);
         let mut scale_sources = vec![None; if self.local.is_some() { scale_rows } else { 0 }];
         for (out_row, &row) in slice.rows.iter().enumerate() {
+            codes[out_row * row_bytes + live_bytes..(out_row + 1) * row_bytes].fill(0);
             if self.code_bits() >= 8 || slice.k_start.is_multiple_of(2) && slice.k.is_multiple_of(2)
             {
                 let src = (row * self.k + slice.k_start) * self.code_bits() / 8;
@@ -628,6 +643,7 @@ impl MatrixView<'_> {
                     }
                 }
             } else {
+                codes[out_row * row_bytes..out_row * row_bytes + live_bytes].fill(0);
                 for col in 0..slice.k {
                     let src = row * self.k + slice.k_start + col;
                     let dst = out_row * slice.padded_k + col;

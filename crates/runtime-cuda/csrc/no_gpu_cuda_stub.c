@@ -53,6 +53,37 @@ static _Thread_local size_t retained_contexts;
 static _Thread_local size_t loaded_modules;
 static _Thread_local float fake_clock;
 
+/* Optional deferred HtoD reads expose premature pinned-buffer reuse in tests. */
+struct pending_host_copy { uint64_t dst; const void* src; size_t bytes; void* stream; uint64_t sequence; };
+static _Thread_local struct pending_host_copy host_copies[1024];
+static _Thread_local unsigned host_copy_polls;
+static _Thread_local uint64_t host_copy_sequence;
+static _Thread_local int hold_later_host_copies;
+static _Thread_local void* copy_streams[1024];
+static _Thread_local unsigned copy_stream_events[1024];
+
+static void complete_host_copies(void* stream, uint64_t through) {
+  for (;;) {
+    struct pending_host_copy* next = NULL;
+    for (size_t i = 0; i < 1024; ++i) {
+      struct pending_host_copy* copy = &host_copies[i];
+      if (copy->src && copy->stream == stream && copy->sequence <= through &&
+          (!next || copy->sequence < next->sequence)) next = copy;
+    }
+    if (!next) return;
+    memcpy((void*)(uintptr_t)next->dst, next->src, next->bytes);
+    next->src = NULL;
+  }
+}
+void runtime_cuda_fake_defer_host_copies(unsigned polls) { host_copy_polls = polls; }
+void runtime_cuda_fake_hold_later_host_copies(int enabled) { hold_later_host_copies = enabled; }
+size_t runtime_cuda_fake_pending_host_copies(void) {
+  size_t count = 0;
+  for (size_t i = 0; i < 1024; ++i) count += host_copies[i].src != NULL;
+  return count;
+}
+
+
 static int remember(void** slots, void* value) {
   for (size_t i = 0; i < 1024; ++i) {
     if (slots[i] == NULL) { slots[i] = value; return 0; }
@@ -144,6 +175,12 @@ void runtime_cuda_fake_reset(void) {
   loaded_modules = 0;
   ordering_violations = 0;
   api_call_copies = 0;
+  host_copy_polls = 0;
+  host_copy_sequence = 0;
+  hold_later_host_copies = 0;
+  memset(copy_streams, 0, sizeof(copy_streams));
+  memset(copy_stream_events, 0, sizeof(copy_stream_events));
+  memset(host_copies, 0, sizeof(host_copies));
   for (size_t index = 0; index < sizeof(call_counts) / sizeof(call_counts[0]);
        ++index) {
     call_counts[index] = 0;
@@ -232,7 +269,7 @@ int cuStreamDestroy_v2(void* stream) {
 
 int cuStreamSynchronize(void* stream) {
   int result = result_for(FAKE_STREAM_SYNCHRONIZE);
-  if (result == 0) complete_allocations(stream, 0);
+  if (result == 0) { complete_allocations(stream, 0); complete_host_copies(stream, UINT64_MAX); }
   return result;
 }
 
@@ -307,7 +344,7 @@ int runtime_cuda_encode_tensor_map(
   return 0;
 }
 
-struct fake_event { unsigned flags; float timestamp; int recorded; void* stream; };
+struct fake_event { unsigned flags; float timestamp; int recorded; void* stream; uint64_t sequence; unsigned polls; int held; };
 int cuStreamWaitEvent(void* stream, void* handle, unsigned int flags) {
   (void)stream; (void)flags;
   int result = result_for(35); if (result) return result;
@@ -337,11 +374,26 @@ int cuEventRecord(void* handle, void* stream) {
   struct fake_event* event = handle;
   event->recorded = 1;
   event->stream = stream;
+  event->sequence = host_copy_sequence;
+  if (host_copy_polls) {
+    for (size_t i = 0; i < 1024; ++i) {
+      if (copy_streams[i] == NULL || copy_streams[i] == stream) {
+        copy_streams[i] = stream;
+        event->held = hold_later_host_copies && ++copy_stream_events[i] > 1;
+        break;
+      }
+    }
+  }
+  event->polls = host_copy_polls * (1 + (unsigned)((uintptr_t)stream % 3));
   event->timestamp = fake_clock;
   fake_clock += 2.0f;
   return 0;
 }
-int cuEventSynchronize(void* handle) { (void)handle; return 0; }
+int cuEventSynchronize(void* handle) {
+  struct fake_event* event = handle;
+  complete_host_copies(event->stream, event->sequence);
+  return 0;
+}
 int runtime_cuda_event_elapsed(float* ms, void* start, void* end) {
   struct fake_event* a = start;
   struct fake_event* b = end;
@@ -447,6 +499,16 @@ int cuMemAllocFromPoolAsync(uint64_t* pointer, size_t bytes, void* pool, void* s
 int cuMemcpyHtoDAsync_v2(uint64_t dst, const void* src, size_t bytes, void* stream) {
   int result = result_for(8); if (result) return result;
   check_ordered_write(dst, stream);
+  if (host_copy_polls) {
+    for (size_t i = 0; i < 1024; ++i) {
+      if (!host_copies[i].src) {
+        host_copies[i] = (struct pending_host_copy){dst, src, bytes, stream, ++host_copy_sequence};
+        fake_clock += 10;
+        return 0;
+      }
+    }
+    return 2;
+  }
   memcpy((void*)(uintptr_t)dst, src, bytes); fake_clock += 10; return 0;
 }
 int cuMemcpyDtoDAsync_v2(uint64_t dst, uint64_t src, size_t bytes, void* stream) {
@@ -681,7 +743,10 @@ int cuEventQuery(void* handle) {
   int result = result_for(31); if (result) return result;
   struct fake_event* event = handle;
   if (!event->recorded) return 0;
+  if (event->held) return 600;
+  if (event->polls) { --event->polls; return 600; }
   if (event->recorded == 1) { event->recorded = 2; return 600; }
+  complete_host_copies(event->stream, event->sequence);
   return 0;
 }
 int runtime_cuda_copy_pages(uint64_t* dst, uint64_t* src, size_t* sizes,

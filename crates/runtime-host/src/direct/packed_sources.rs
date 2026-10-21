@@ -42,7 +42,7 @@ impl PackedBuffers {
         bytes
     }
 
-    pub fn give(&self, mut bytes: Vec<u8>) {
+    pub fn give(&self, bytes: Vec<u8>) {
         if bytes.capacity() == 0 || bytes.capacity() > self.limit {
             return;
         }
@@ -53,7 +53,6 @@ impl PackedBuffers {
         if state.bytes + bytes.capacity() <= self.limit {
             state.bytes += bytes.capacity();
             state.peak = state.peak.max(state.bytes);
-            bytes.clear();
             state.buffers.push(bytes);
         }
     }
@@ -188,10 +187,14 @@ impl PackedSources {
         let source = record.sources[index];
         if let Some(slot_index) = record.packed_sources.get(index).copied().flatten() {
             let slot = &self.slots[slot_index];
+            let waiting = inner.detailed_timing.then(Instant::now);
             let mut state = slot
                 .state
                 .lock()
                 .map_err(|_| WeightTransformError("shared packed source poisoned".into()))?;
+            if let Some(waiting) = waiting {
+                elapsed_nanos(&inner.input_wait_nanos, waiting);
+            }
             let bytes = if let Some(bytes) = &state.bytes {
                 inner.source_cache_hits.fetch_add(1, Ordering::Relaxed);
                 inner

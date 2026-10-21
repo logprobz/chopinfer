@@ -63,6 +63,8 @@ libc.workspace = true
 runtime-weights.workspace = true
 # The closed weight transform set a direct checkpoint load executes.
 kernel-core = { workspace = true, features = ["precision-serde"] }
+# Scoped tasks borrow upload chunks while reusing a bounded set of workers.
+rayon-core = "=1.13.0"
 serde.workspace = true
 serde_json.workspace = true
 # The startup warmup wave sizes, which bundle conformance tests share. The

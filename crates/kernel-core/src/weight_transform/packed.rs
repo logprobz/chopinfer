@@ -13,6 +13,7 @@ use crate::precision::layout::PackingPlan;
 use crate::precision::{DecodeOrder, NibbleOrder};
 use std::ops::Range;
 
+mod reuse;
 mod scales;
 
 /// Which packed section the record stores.
@@ -228,6 +229,9 @@ impl PackedOperand {
         let expected = self.output_bytes(record)?;
         if sources.len() != record.sources.len() {
             return refuse("packed operand source count differs from its record");
+        }
+        if self.reuses_row_major_sections() {
+            return self.execute_row_major_reusing(record, sources, buffers, expected);
         }
         let plan = &self.plan;
         let (scale_rows, scale_columns) = plan.scale_shape();
@@ -543,6 +547,27 @@ impl PackedOperand {
         rows: Range<u64>,
         read: &mut super::SourceRead<'_>,
     ) -> Result<Vec<u8>, WeightTransformError> {
+        let row_bytes = self
+            .code_rows()
+            .ok_or_else(|| WeightTransformError("packed operand is not row-streamable".into()))?;
+        self.output_bytes(record)?;
+        if rows.start > rows.end || rows.end > u64::from(self.plan.rows) {
+            return refuse("packed rows outside the section");
+        }
+        let mut out = vec![0; ((rows.end - rows.start) * row_bytes) as usize];
+        self.execute_code_rows_into(record, rows, &mut out, read)?;
+        Ok(out)
+    }
+
+    /// Writes complete section rows into caller-owned storage. Padding is
+    /// reset even when that storage contains a preceding chunk's bytes.
+    pub fn execute_code_rows_into(
+        &self,
+        record: &WeightRecord,
+        rows: Range<u64>,
+        out: &mut [u8],
+        read: &mut super::SourceRead<'_>,
+    ) -> Result<(), WeightTransformError> {
         use crate::precision::packed::{MatrixSlice, MatrixView, ScaleBytes};
         let row_bytes = self
             .code_rows()
@@ -551,6 +576,9 @@ impl PackedOperand {
         let plan = &self.plan;
         if rows.start > rows.end || rows.end > u64::from(plan.rows) {
             return refuse("packed rows outside the section");
+        }
+        if out.len() as u64 != (rows.end - rows.start) * row_bytes {
+            return refuse("packed row output has the wrong byte count");
         }
         let matrix = &self.matrices[0];
         if matrix.format != plan.format {
@@ -624,7 +652,7 @@ impl PackedOperand {
             (Some(index), u32::MAX) => Some(whole(index, read)?),
             _ => None,
         };
-        let mut out = vec![0_u8; ((rows.end - rows.start) * row_bytes) as usize];
+        out.fill(0);
         for run in self.row_runs(rows.clone()) {
             let mut codes = vec![0; (run.count * code_row) as usize];
             read(
@@ -700,6 +728,6 @@ impl PackedOperand {
             let at = ((run.output - rows.start) * row_bytes) as usize;
             out[at..at + packed.codes.len()].copy_from_slice(&packed.codes);
         }
-        Ok(out)
+        Ok(())
     }
 }

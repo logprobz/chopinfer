@@ -219,7 +219,7 @@ fn ordinary_reads_do_not_allocate_or_lock_a_range_union() {
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
     let image = PlannedImageV1::new_with_range_tracking(
         checkpoint,
-        plans,
+        &plans,
         None,
         implementation_v1([0; 32]),
         DirectLoadOptionsV1 {

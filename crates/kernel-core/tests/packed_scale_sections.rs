@@ -212,6 +212,73 @@ fn seeded_sections_match_independent_bytes_and_the_pre_change_digest() {
 }
 
 #[test]
+fn reused_row_major_sections_match_the_logical_oracle() {
+    for (operand, record, codes, scales) in seeded_cases() {
+        let expected = reference(&operand, &codes, &scales);
+        let mut storage = std::array::from_fn(|_| vec![255; 8192]);
+        for _ in 0..3 {
+            storage = operand
+                .execute_sections_reusing(&record, &[&codes, &scales], storage)
+                .unwrap();
+            assert_eq!(storage, expected);
+            for section in &mut storage {
+                section.fill(255);
+            }
+        }
+    }
+}
+
+#[test]
+fn streamed_rows_and_fragments_overwrite_caller_storage_exactly() {
+    for (mut operand, mut record, codes, scales) in seeded_cases() {
+        operand.section = PackedSection::Codes;
+        let expected = reference(&operand, &codes, &scales)[0].clone();
+        let mut read = |index: usize, offset: u64, out: &mut [u8]| {
+            let source = [&codes, &scales][index];
+            out.copy_from_slice(&source[offset as usize..offset as usize + out.len()]);
+            Ok(())
+        };
+        let mut whole = vec![255; expected.len()];
+        operand
+            .execute_code_rows_into(
+                &record,
+                0..u64::from(operand.plan.rows),
+                &mut whole,
+                &mut read,
+            )
+            .unwrap();
+        assert_eq!(whole, expected);
+        let mut wrong = vec![255; expected.len() + 1];
+        assert!(
+            operand
+                .execute_code_rows_into(
+                    &record,
+                    0..u64::from(operand.plan.rows),
+                    &mut wrong,
+                    &mut read
+                )
+                .is_err()
+        );
+        assert!(wrong.iter().all(|&b| b == 255));
+        record.transform = WeightTransform::PackedOperand(Box::new(operand));
+        let prepared = record.prepare(expected.len() as u64).unwrap();
+        let mut scratch = vec![255; expected.len() + 17];
+        for range in [0..expected.len(), 1..expected.len() - 1, 3..7] {
+            let mut fragment = vec![255; range.len()];
+            prepared
+                .produce(
+                    range.start as u64..range.end as u64,
+                    &mut fragment,
+                    &mut read,
+                    &mut scratch,
+                )
+                .unwrap();
+            assert_eq!(fragment, expected[range]);
+        }
+    }
+}
+
+#[test]
 fn scale_section_keeps_full_source_validation_and_code_dependent_fallback() {
     let (operand, record, codes, mut scales) = record(DecodeOrder::ExactScaledOperand);
     // This scale lies outside both the selected rows and columns.
@@ -316,4 +383,22 @@ fn independent_scale_refusals_keep_the_whole_packers_context() {
             .0,
         expected.0
     );
+}
+
+#[test]
+fn reused_row_major_groups_match_the_logical_oracle() {
+    for (mut operand, record, codes, scales) in seeded_cases() {
+        operand.plan.layout.id = "row-major-groups".into();
+        let expected = reference(&operand, &codes, &scales);
+        let mut storage = std::array::from_fn(|_| vec![255; 8192]);
+        for _ in 0..3 {
+            storage = operand
+                .execute_sections_reusing(&record, &[&codes, &scales], storage)
+                .unwrap();
+            assert_eq!(storage, expected);
+            for section in &mut storage {
+                section.fill(255);
+            }
+        }
+    }
 }

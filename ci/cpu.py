@@ -153,6 +153,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("ci-runner", PY + ["tests/test_ci_runner.py"]),
         step("kernel-report-reader", PY + ["tests/test_kernel_reports.py"]),
         step("benchmark-loop", PY + ["tests/test_benchmark_loop.py"]),
+        step("startup-timing", PY + ["tools/dev/test_startup_timing.py", "-v"]),
         step("model-inventory", PY + ["tests/test_model_inventory.py"]),
         step("kernel-lab-inventory", PY + ["ci/kernel_lab_inventory.py"]),
         step("model-check-plans", PY + ["tests/test_model_checks.py"]),

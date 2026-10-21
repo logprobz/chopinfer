@@ -11,11 +11,13 @@ pub use host_transform::{HostTransform, HostTransformStats, HostTransformTarget}
 mod page_copy;
 pub use page_copy::{PageCopyArena, PageCopyDirection, PageCopyPair};
 
+mod upload_chunk;
 mod upload_ring;
 
 mod nvdec;
 
 pub use nvdec::{AnnexBStream, DecodedFrame, NvdecError, NvdecSession};
+pub use upload_chunk::{PinnedChunk, PinnedChunkTransfer};
 pub use upload_ring::PinnedUploadRing;
 
 use std::cell::Cell;
@@ -24,6 +26,7 @@ use std::error::Error;
 use std::ffi::CString;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "linux")]
 pub use ffi::DEVICE_POINTER_ARRAY_SLOTS;
@@ -795,6 +798,7 @@ fn checked_host_range(bytes: usize, offset: usize, requested: usize) -> Result<(
 pub struct PinnedHostBuffer {
     allocation: ffi::PinnedAllocation,
     context: Rc<ContextInner>,
+    chunk_in_flight: AtomicBool,
 }
 
 impl PinnedHostBuffer {
@@ -812,11 +816,21 @@ impl PinnedHostBuffer {
         Ok(Self {
             allocation,
             context: Rc::clone(&context.inner),
+            chunk_in_flight: AtomicBool::new(false),
         })
+    }
+
+    // A forgotten chunk guard cannot run its fence. Stop before the owner
+    // reuses or frees bytes that DMA may still read, even during unwinding.
+    fn require_no_pending_chunk(&self) {
+        if self.chunk_in_flight.load(Ordering::Relaxed) {
+            std::process::abort();
+        }
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
+        self.require_no_pending_chunk();
         self.allocation.as_slice().len()
     }
 
@@ -827,16 +841,19 @@ impl PinnedHostBuffer {
 
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
+        self.require_no_pending_chunk();
         self.allocation.as_slice()
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.require_no_pending_chunk();
         self.allocation.as_mut_slice()
     }
 }
 
 impl Drop for PinnedHostBuffer {
     fn drop(&mut self) {
+        self.require_no_pending_chunk();
         let _ = set_current_inner(&self.context);
     }
 }
@@ -3149,6 +3166,18 @@ mod tests {
 /// Controls for the statically linked CPU fake driver, absent in production builds.
 #[cfg(feature = "fake-driver-tests")]
 pub mod fake_driver {
+    /// Defer HtoD source reads until completion, with unequal event poll delays.
+    pub fn defer_host_copies(polls: u32) {
+        super::ffi::fake_driver_defer_host_copies(polls);
+    }
+    /// After each stream's first event, only synchronization completes DMA.
+    pub fn hold_later_host_copies(enabled: bool) {
+        super::ffi::fake_driver_hold_later_host_copies(enabled);
+    }
+    pub fn pending_host_copies() -> usize {
+        super::ffi::fake_driver_pending_host_copies()
+    }
+
     pub fn reset() {
         super::ffi::fake_driver_reset();
     }

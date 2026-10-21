@@ -10,6 +10,7 @@
 //! before a call arrives, and this only performs the driver work.
 
 mod mapped_gather;
+mod upload;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
@@ -22,8 +23,7 @@ use runtime_bundle_abi::{
 use runtime_cuda::{
     Context, CudaError, DeviceBuffer, Driver, Event, Function, GraphExec, KernelArgument,
     LaunchConfig, MemoryPool, Module, PeerAccessOwnership, PeerTransfer, PinnedHostBuffer,
-    PinnedTransfer, PinnedUploadRing, Stream, TensorMap, TensorMapDataType, TensorMapDescriptor,
-    TensorMapSwizzle,
+    PinnedUploadRing, Stream, TensorMap, TensorMapDataType, TensorMapDescriptor, TensorMapSwizzle,
 };
 use runtime_engine::{ModelBatchItem, SampledRow};
 
@@ -778,70 +778,6 @@ fn read_pinned_upload_chunk(
     Ok(Some((target, count)))
 }
 
-fn read_pinned_upload_wave(
-    buffers: &mut [PinnedHostBuffer],
-    uploads: &mut [PinnedFileUploadV1<'_>],
-    copied: &mut [u64],
-) -> HostDeviceResultV1<Vec<Option<(usize, usize)>>> {
-    let mut ranges = Vec::with_capacity(uploads.len());
-    std::thread::scope(|scope| {
-        let mut readers = Vec::with_capacity(uploads.len());
-        for ((buffer, upload), progress) in buffers.iter_mut().zip(uploads).zip(copied.iter()) {
-            if *progress == upload.byte_length {
-                ranges.push(None);
-                continue;
-            }
-            let count = usize::try_from(upload.byte_length - *progress)
-                .unwrap_or(usize::MAX)
-                .min(buffer.len());
-            let offset = upload
-                .source_offset
-                .checked_add(*progress)
-                .ok_or(BundleStatusV1::InvalidArgument)?;
-            let target = usize::try_from(*progress).map_err(|_| BundleStatusV1::InvalidArgument)?;
-            let chunk = &mut buffer.as_mut_slice()[..count];
-            let read = &mut *upload.read_chunk;
-            readers.push(scope.spawn(move || read(offset, chunk)));
-            ranges.push(Some((target, count)));
-        }
-        let mut all_read = true;
-        for reader in readers {
-            all_read &= reader.join().unwrap_or(false);
-        }
-        if !all_read {
-            return Err(BundleStatusV1::HostError);
-        }
-        Ok(())
-    })?;
-    for (range, progress) in ranges.iter().zip(copied.iter_mut()) {
-        if let Some((_, count)) = range {
-            *progress += *count as u64;
-        }
-    }
-    Ok(ranges)
-}
-
-fn enqueue_pinned_upload_wave<'a>(
-    buffers: &'a [PinnedHostBuffer],
-    streams: &[Stream],
-    destinations: &[DeviceBuffer],
-    ranges: &[Option<(usize, usize)>],
-) -> HostDeviceResultV1<Vec<PinnedTransfer<'a>>> {
-    buffers
-        .iter()
-        .zip(streams)
-        .zip(destinations)
-        .zip(ranges)
-        .filter_map(|(((buffer, stream), destination), range)| {
-            range.map(|(offset, count)| {
-                destination
-                    .copy_from_pinned_at_async(offset, buffer, 0, count, stream)
-                    .map_err(driver_status)
-            })
-        })
-        .collect()
-}
-
 /// Maps one closed ABI element type onto the driver's descriptor code.
 fn tensor_map_data_type(element_type: TensorMapElementV1) -> HostDeviceResultV1<TensorMapDataType> {
     match element_type {
@@ -1117,37 +1053,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
                 .iter()
                 .map(|upload| self.buffer(upload.destination).cloned())
                 .collect::<HostDeviceResultV1<_>>()?;
-            let mut first = Vec::with_capacity(uploads.len());
-            let mut second = Vec::with_capacity(uploads.len());
-            for (stream, upload) in streams.iter().zip(uploads.iter()) {
-                let capacity = usize::try_from(upload.byte_length)
-                    .unwrap_or(usize::MAX)
-                    .clamp(1, PINNED_RANK_UPLOAD_CHUNK_BYTES);
-                first.push(
-                    PinnedHostBuffer::new(&stream.context(), capacity).map_err(driver_status)?,
-                );
-                second.push(
-                    PinnedHostBuffer::new(&stream.context(), capacity).map_err(driver_status)?,
-                );
-            }
-            let mut copied = vec![0; uploads.len()];
-            let mut ranges = read_pinned_upload_wave(&mut first, uploads, &mut copied)?;
-            while ranges.iter().any(Option::is_some) {
-                let pending = enqueue_pinned_upload_wave(&first, &streams, &destinations, &ranges)?;
-                let next = read_pinned_upload_wave(&mut second, uploads, &mut copied)?;
-                for transfer in pending {
-                    transfer.finish();
-                }
-                if next.iter().all(Option::is_none) {
-                    break;
-                }
-                let pending = enqueue_pinned_upload_wave(&second, &streams, &destinations, &next)?;
-                ranges = read_pinned_upload_wave(&mut first, uploads, &mut copied)?;
-                for transfer in pending {
-                    transfer.finish();
-                }
-            }
-            Ok(())
+            upload::upload(uploads, &streams, &destinations)
         })())
     }
     fn create_context(
@@ -2186,10 +2092,10 @@ mod pinned_upload_tests {
         assert_eq!(runtime_cuda::fake_driver::call_count(16), allocations);
     }
 
-    /// A failed read in any rank stops the wave before its copies are
-    /// enqueued, so no unverified bytes reach a device.
+    /// A failed read never submits that chunk. Other ranks may already have
+    /// submitted validated chunks; all their transfer guards must drain.
     #[test]
-    fn a_failed_rank_read_enqueues_nothing_from_its_wave() {
+    fn a_failed_rank_read_keeps_its_chunk_untouched_and_drains_transfers() {
         for failing_call in [1, 2] {
             runtime_cuda::fake_driver::reset();
             let mut device = CudaHostDeviceV1::new().unwrap();
@@ -2218,7 +2124,15 @@ mod pinned_upload_tests {
                 target.fill(2);
                 calls != failing_call
             };
-            let copies_before = runtime_cuda::fake_driver::call_count(8);
+            let failed_offset = (failing_call - 1) as u64 * PINNED_RANK_UPLOAD_CHUNK_BYTES as u64;
+            let failed_range = DeviceRangeV1 {
+                object: destinations[1],
+                offset: failed_offset,
+                length: 16,
+            };
+            device
+                .copy_host_to_device(streams[1], failed_range, &[0xee; 16])
+                .unwrap();
             let mut uploads = [
                 PinnedFileUploadV1 {
                     stream: streams[0],
@@ -2237,12 +2151,14 @@ mod pinned_upload_tests {
             ];
             let result = device.upload_pinned_file_ranges(&mut uploads).unwrap();
             assert_eq!(result, Err(BundleStatusV1::HostError));
-            // Only the waves before the failing one were copied.
-            assert_eq!(
-                runtime_cuda::fake_driver::call_count(8) - copies_before,
-                2 * (failing_call - 1),
-                "failing call {failing_call}"
-            );
+            let mut untouched = [0; 16];
+            device
+                .copy_device_to_host(streams[1], &mut untouched, failed_range)
+                .unwrap();
+            assert_eq!(untouched, [0xee; 16], "failing call {failing_call}");
+            for destination in destinations {
+                device.release_device_buffer(destination).unwrap();
+            }
         }
     }
 }

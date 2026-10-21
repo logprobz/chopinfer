@@ -349,6 +349,9 @@ unsafe extern "C" {
 // SAFETY-REVIEWED: these declarations exactly match the no-device C stub ABI. Reset takes and returns nothing, fail-next and peer denial use two C ints, call-count uses one C int and returns size_t, and no pointers or borrowed lifetimes cross the boundary.
 unsafe extern "C" {
     fn runtime_cuda_fake_reset();
+    fn runtime_cuda_fake_defer_host_copies(polls: c_uint);
+    fn runtime_cuda_fake_hold_later_host_copies(enabled: c_int);
+    fn runtime_cuda_fake_pending_host_copies() -> usize;
     fn runtime_cuda_fake_deny_peer_access(device: c_int, peer: c_int);
     fn runtime_cuda_fake_fail_next(operation: c_int, code: c_int);
     fn runtime_cuda_fake_call_count(operation: c_int) -> usize;
@@ -381,6 +384,24 @@ pub fn fake_driver_deny_peer_access(device: c_int, peer: c_int) {
 pub fn fake_driver_fail_next(operation: c_int, code: c_int) {
     // SAFETY-REVIEWED: the no-device test stub stores two integer fault controls.
     unsafe { runtime_cuda_fake_fail_next(operation, code) }
+}
+
+#[cfg(feature = "fake-driver-tests")]
+pub fn fake_driver_defer_host_copies(polls: c_uint) {
+    // SAFETY-REVIEWED: the test stub stores only a thread-local integer delay.
+    unsafe { runtime_cuda_fake_defer_host_copies(polls) }
+}
+
+#[cfg(feature = "fake-driver-tests")]
+pub fn fake_driver_hold_later_host_copies(enabled: bool) {
+    // SAFETY-REVIEWED: the test stub stores only a thread-local integer flag.
+    unsafe { runtime_cuda_fake_hold_later_host_copies(c_int::from(enabled)) }
+}
+
+#[cfg(feature = "fake-driver-tests")]
+pub fn fake_driver_pending_host_copies() -> usize {
+    // SAFETY-REVIEWED: the test stub counts its bounded thread-local copy queue.
+    unsafe { runtime_cuda_fake_pending_host_copies() }
 }
 
 /// The 2D tensor map the no-device stub was last asked to encode.
@@ -891,6 +912,19 @@ pub fn copy_device_to_pinned(
         destination.as_mut_slice()[destination_offset..destination_offset + bytes].as_mut_ptr();
     // SAFETY-REVIEWED: the outer transfer guard retains the pinned allocation until sync.
     result_code(unsafe { raw::cuMemcpyDtoHAsync_v2(pointer.cast(), source, bytes, stream) })
+}
+
+pub fn copy_pinned_bytes_to_device(
+    destination: DevicePointer,
+    source: &[u8],
+    stream: StreamHandle,
+) -> c_int {
+    // SAFETY-REVIEWED: the exclusive pinned chunk and transfer guard keep
+    // this allocation borrowed until DMA completes; the safe layer checks
+    // both ranges and the owning context before passing its bytes here.
+    result_code(unsafe {
+        raw::cuMemcpyHtoDAsync_v2(destination, source.as_ptr().cast(), source.len(), stream)
+    })
 }
 
 pub fn copy_device_to_host(

@@ -243,6 +243,8 @@ class AffectedChecks(unittest.TestCase):
         for path, expected in (("ci/runner.py", {"ci-runner", "quick-selection"}),
                                ("ci/check_inputs.py", {"quick-selection"}),
                                ("tools/dev/benchmark-loop.py", {"benchmark-loop"}),
+                               ("tools/dev/startup_timing.py", {"startup-timing"}),
+                               ("tools/dev/test_startup_timing.py", {"startup-timing"}),
                                ("tools/refrun/run.py", {"refrun", "refrun-qwen38", "refrun-python-compile"}),
                                ("tools/qual/tapdiff.py", {"tapdiff"}),
                                ("tests/leak_guard.py", {"leak-guard"}),

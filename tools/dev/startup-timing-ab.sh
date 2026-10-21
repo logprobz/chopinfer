@@ -99,6 +99,7 @@ start_and_time() {
         grep -E '^startup ' "$log" \
             | sed 's/^/    /' || true
     } | tee -a "$results"
+    python3 -B "$repo/tools/dev/startup_timing.py" "$log" >"$log.summary.json"
 }
 
 local_run() {
@@ -125,6 +126,15 @@ local_run() {
         printf 'scenario=%s conditions=%s checkpoint=%s cache=%s load_threads=%s\n' "$scenario" "$conditions" "$local_model" "$local_cache" "${load_threads:-default}"
         sha256sum -- "$local_host"
         nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+        python3 -B - <<'PY'
+import json
+import os
+print(json.dumps({"cpu_affinity": sorted(os.sched_getaffinity(0)),
+                  "loading_environment": {name: os.environ.get(name) for name in (
+                      "CHOPINFER_DIRECT_LOAD_THREADS", "CHOPINFER_DIRECT_LOAD_DIRECT_READS",
+                      "CHOPINFER_DIRECT_LOAD_READ_AHEAD", "CHOPINFER_DIRECT_LOAD_SHARED_BYTES",
+                      "CHOPINFER_DIRECT_LOAD_TIMING", "CUDA_VISIBLE_DEVICES")}}))
+PY
     } >"$results"
     # This mode neither builds nor clears the cache or filesystem page cache.
     # `serve --model` loads the checkpoint directly: select a fresh cache and

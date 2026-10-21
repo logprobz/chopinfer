@@ -367,13 +367,14 @@ impl PreparedRecord {
                     unreachable!("packed rows come from packed operands");
                 };
                 let first = range.start / row;
-                let bytes = operand.execute_code_rows(
-                    &self.record,
-                    first..range.end.div_ceil(*row),
-                    read,
-                )?;
+                let rows = first..range.end.div_ceil(*row);
+                if range.start.is_multiple_of(*row) && range.end.is_multiple_of(*row) {
+                    return operand.execute_code_rows_into(&self.record, rows, out, read);
+                }
+                scratch.resize(((rows.end - rows.start) * row) as usize, 0);
+                operand.execute_code_rows_into(&self.record, rows, scratch, read)?;
                 let skip = (range.start - first * row) as usize;
-                out.copy_from_slice(&bytes[skip..skip + out.len()]);
+                out.copy_from_slice(&scratch[skip..skip + out.len()]);
                 Ok(())
             }
             Kind::Rows(gather) => {

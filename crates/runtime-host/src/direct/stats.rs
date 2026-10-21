@@ -1,5 +1,24 @@
 use std::{collections::BTreeMap, ops::Range};
 
+/// Optional diagnostics split shared materialization from lock contention.
+/// Materialization includes its source reads and input-cache waits.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct SharedTiming {
+    pub output_wait_seconds: f64,
+    pub materialize_seconds: f64,
+    pub input_wait_seconds: f64,
+}
+
+impl SharedTiming {
+    fn since(self, before: Self) -> Self {
+        Self {
+            output_wait_seconds: (self.output_wait_seconds - before.output_wait_seconds).max(0.0),
+            materialize_seconds: (self.materialize_seconds - before.materialize_seconds).max(0.0),
+            input_wait_seconds: (self.input_wait_seconds - before.input_wait_seconds).max(0.0),
+        }
+    }
+}
+
 /// Counters of one planned image's production so far.
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 pub struct DirectLoadStatsV1 {
@@ -31,6 +50,9 @@ pub struct DirectLoadStatsV1 {
     pub produce_seconds: f64,
     pub shared_seconds: f64,
     pub rank_seconds: f64,
+    /// Present only with `CHOPINFER_DIRECT_LOAD_TIMING=1`. These are summed
+    /// worker seconds and overlap the existing read and shared counters.
+    pub shared_timing: Option<SharedTiming>,
     /// Lifetime high-water mark, not an additive phase counter.
     #[serde(skip)]
     pub retained_peak_bytes: u64,
@@ -76,6 +98,9 @@ impl DirectLoadStatsV1 {
             produce_seconds: (self.produce_seconds - before.produce_seconds).max(0.0),
             shared_seconds: (self.shared_seconds - before.shared_seconds).max(0.0),
             rank_seconds: (self.rank_seconds - before.rank_seconds).max(0.0),
+            shared_timing: self
+                .shared_timing
+                .map(|timing| timing.since(before.shared_timing.unwrap_or_default())),
             retained_peak_bytes: 0,
             pooled_peak_bytes: 0,
         }
@@ -111,6 +136,36 @@ impl SourceRanges {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_timing_deltas_preserve_disabled_diagnostics() {
+        let before = DirectLoadStatsV1 {
+            shared_timing: Some(SharedTiming {
+                output_wait_seconds: 4.0,
+                materialize_seconds: 12.0,
+                input_wait_seconds: 3.0,
+            }),
+            ..DirectLoadStatsV1::default()
+        };
+        let after = DirectLoadStatsV1 {
+            shared_timing: Some(SharedTiming {
+                output_wait_seconds: 6.0,
+                materialize_seconds: 19.0,
+                input_wait_seconds: 4.0,
+            }),
+            ..DirectLoadStatsV1::default()
+        };
+        let delta = after.since(before).shared_timing.unwrap();
+        assert_eq!(delta.output_wait_seconds, 2.0);
+        assert_eq!(delta.materialize_seconds, 7.0);
+        assert_eq!(delta.input_wait_seconds, 1.0);
+        assert!(
+            DirectLoadStatsV1::default()
+                .since(before)
+                .shared_timing
+                .is_none()
+        );
+    }
 
     #[test]
     fn counts_only_new_bytes_across_overlapping_and_adjacent_file_ranges() {

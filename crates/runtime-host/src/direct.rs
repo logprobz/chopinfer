@@ -27,10 +27,17 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 mod packed_sources;
+mod plan_cache;
 mod stats;
+mod workers;
 use packed_sources::{PackedBuffers, PackedSources};
 pub use stats::DirectLoadStatsV1;
 use stats::SourceRanges;
+
+/// Additional timing is opt-in so ordinary reads avoid extra clock calls.
+pub(crate) fn detailed_timing_v1() -> bool {
+    std::env::var_os("CHOPINFER_DIRECT_LOAD_TIMING").is_some_and(|value| value == "1")
+}
 
 use kernel_core::weight_transform::{
     PreparedRecord, SourceTensor, WeightRecord, WeightTransform, WeightTransformError,
@@ -732,6 +739,10 @@ struct InnerV1 {
     produce_nanos: AtomicU64,
     shared_nanos: AtomicU64,
     rank_nanos: AtomicU64,
+    detailed_timing: bool,
+    output_wait_nanos: AtomicU64,
+    materialize_nanos: AtomicU64,
+    input_wait_nanos: AtomicU64,
     /// Bytes shared outputs hold now, and the most they held.
     retained: AtomicU64,
     retained_peak: AtomicU64,
@@ -742,6 +753,7 @@ struct InnerV1 {
     /// maps, faults and unmaps large buffers, and the unmaps serialize the
     /// other workers' page faults.
     scratch: Mutex<Vec<Vec<u8>>>,
+    workers: Mutex<Option<Arc<workers::Workers>>>,
     /// Workers' aligned buffers for direct reads, kept the same way.
     direct_buffers: Mutex<Vec<Vec<u8>>>,
 }
@@ -949,7 +961,7 @@ impl PlannedImageV1 {
     ) -> Result<Self, String> {
         Self::new_with_range_tracking(
             checkpoint,
-            plans,
+            &plans,
             transform,
             implementation,
             options,
@@ -960,7 +972,7 @@ impl PlannedImageV1 {
 
     fn new_with_range_tracking(
         checkpoint: Arc<DirectCheckpointV1>,
-        plans: Vec<WeightPlanV1>,
+        plans: &[WeightPlanV1],
         transform: Option<BundleWeightTransformFnV1>,
         implementation: WeightPlanImplementationV1,
         options: DirectLoadOptionsV1,
@@ -996,7 +1008,7 @@ impl PlannedImageV1 {
         let mut mapped_sources = Vec::new();
         let mut unproduced: Vec<std::collections::BTreeSet<usize>> =
             vec![Default::default(); count];
-        for plan in &plans {
+        for plan in plans {
             for view in plan
                 .views
                 .iter()
@@ -1053,17 +1065,17 @@ impl PlannedImageV1 {
                 .collect::<Result<Vec<_>, String>>()
         })?;
         let mut identities = Vec::with_capacity(count);
-        for (plan, (identity, prepared)) in plans.into_iter().zip(prepared_ranks) {
+        for (plan, (identity, prepared)) in plans.iter().zip(prepared_ranks) {
             identities.push(identity);
             offsets.push(next);
             next += plan.arena_bytes;
-            for component in plan.components {
+            for component in &plan.components {
                 if components.iter().any(|other| other.name == component.name) {
                     return Err(format!("component {} is planned twice", component.name));
                 }
-                components.push(component);
+                components.push(component.clone());
             }
-            for view in plan.views {
+            for view in &plan.views {
                 let entry = views.entry(view.id.clone().into_bytes()).or_insert((
                     view.alignment,
                     view.placement,
@@ -1218,12 +1230,17 @@ impl PlannedImageV1 {
             produce_nanos: AtomicU64::new(0),
             shared_nanos: AtomicU64::new(0),
             rank_nanos: AtomicU64::new(0),
+            detailed_timing: detailed_timing_v1(),
+            output_wait_nanos: AtomicU64::new(0),
+            materialize_nanos: AtomicU64::new(0),
+            input_wait_nanos: AtomicU64::new(0),
             retained: AtomicU64::new(0),
             retained_peak: AtomicU64::new(0),
             first_read: OnceLock::new(),
             #[cfg(test)]
             retained_held: Arc::default(),
             scratch: Mutex::new(Vec::new()),
+            workers: Mutex::new(None),
             direct_buffers: Mutex::new(Vec::new()),
         });
         let mut read_ahead = Vec::with_capacity(count);
@@ -1329,6 +1346,13 @@ impl PlannedImageV1 {
     /// Frees retained inputs, output sections and idle worker buffers.
     /// Call after readers have joined; later reads reproduce the same bytes.
     pub fn release_buffers(&self) {
+        let workers = self
+            .inner
+            .workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(workers);
         for shared in &self.inner.shared {
             let mut state = shared
                 .state
@@ -1383,6 +1407,11 @@ impl PlannedImageV1 {
             produce_seconds: seconds(&self.inner.produce_nanos),
             shared_seconds: seconds(&self.inner.shared_nanos),
             rank_seconds: seconds(&self.inner.rank_nanos),
+            shared_timing: self.inner.detailed_timing.then(|| stats::SharedTiming {
+                output_wait_seconds: seconds(&self.inner.output_wait_nanos),
+                materialize_seconds: seconds(&self.inner.materialize_nanos),
+                input_wait_seconds: seconds(&self.inner.input_wait_nanos),
+            }),
             retained_peak_bytes: self.inner.retained_peak.load(Ordering::Relaxed),
             pooled_peak_bytes: self.inner.packed_buffers.peak(),
         }
@@ -1986,17 +2015,26 @@ fn copy_shared_v1(
     let length = range.end - range.start;
     let wanted = record.prepared.section();
     let bytes = {
+        let waiting = inner.detailed_timing.then(Instant::now);
         let mut state = inner.shared[index]
             .state
             .lock()
             .map_err(|_| "shared output poisoned")?;
+        if let Some(waiting) = waiting {
+            elapsed_nanos(&inner.output_wait_nanos, waiting);
+        }
         let bytes = match state.sections[wanted].clone() {
             Some(bytes) => {
                 inner.shared_output_hits.fetch_add(1, Ordering::Relaxed);
                 SectionV1::Retained(bytes)
             }
             None => {
-                let produced = produce_sections_v1(inner, record)?;
+                let producing = inner.detailed_timing.then(Instant::now);
+                let produced = produce_sections_v1(inner, record);
+                if let Some(producing) = producing {
+                    elapsed_nanos(&inner.materialize_nanos, producing);
+                }
+                let produced = produced?;
                 inner
                     .shared_output_productions
                     .fetch_add(1, Ordering::Relaxed);
@@ -2184,26 +2222,32 @@ fn read_rank_parts_v1(
         let queue = Mutex::new(tasks.into_iter());
         let failed = AtomicUsize::new(0);
         let error = Mutex::new(None);
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                scope.spawn(|| {
-                    let mut scratch = take_scratch_v1(inner);
-                    while failed.load(Ordering::Relaxed) == 0 {
-                        let Some(task) = queue.lock().ok().and_then(|mut queue| queue.next())
-                        else {
-                            break;
-                        };
-                        if let Err(message) = run(task, &mut scratch) {
-                            failed.store(1, Ordering::Relaxed);
-                            if let Ok(mut error) = error.lock() {
-                                error.get_or_insert(message);
+        let pool = workers_v1(inner)?;
+        let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pool.pool().in_place_scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(|_| {
+                        let mut scratch = take_scratch_v1(inner);
+                        while failed.load(Ordering::Relaxed) == 0 {
+                            let Some(task) = queue.lock().ok().and_then(|mut queue| queue.next())
+                            else {
+                                break;
+                            };
+                            if let Err(message) = run(task, &mut scratch) {
+                                failed.store(1, Ordering::Relaxed);
+                                if let Ok(mut error) = error.lock() {
+                                    error.get_or_insert(message);
+                                }
                             }
                         }
-                    }
-                    give_scratch_v1(inner, scratch);
-                });
-            }
-        });
+                        give_scratch_v1(inner, scratch);
+                    });
+                }
+            })
+        }));
+        if completed.is_err() {
+            return Err("a direct-load worker panicked".into());
+        }
         if let Some(message) = error.into_inner().ok().flatten() {
             return Err(message);
         }
@@ -2213,6 +2257,26 @@ fn read_rank_parts_v1(
     }
     inner.produced_bytes.fetch_add(produced, Ordering::Relaxed);
     Ok(())
+}
+
+/// One bounded executor serves every rank and chunk until buffers are released.
+fn workers_v1(inner: &InnerV1) -> Result<Arc<workers::Workers>, String> {
+    let mut workers = inner
+        .workers
+        .lock()
+        .map_err(|_| "weight workers poisoned")?;
+    if workers.is_none() {
+        let count = inner
+            .options
+            .threads_per_rank
+            .max(1)
+            .checked_mul(inner.ranks.len())
+            .ok_or("weight worker count overflow")?;
+        *workers = Some(Arc::new(workers::Workers::new(count)?));
+    }
+    Ok(Arc::clone(
+        workers.as_ref().expect("weight workers initialized"),
+    ))
 }
 
 fn take_scratch_v1(inner: &InnerV1) -> Vec<u8> {
@@ -2305,43 +2369,52 @@ pub fn plan_image_v1(
 ) -> Result<Option<PlannedImageV1>, String> {
     let started = Instant::now();
     let implementation = implementation_v1(bundle_module);
-    let mut plans = Vec::with_capacity(ranks as usize);
-    for rank in 0..ranks {
-        let plan = library
-            .weight_plan(&checkpoint.request(
+    let cache = plan_cache::Cache::selected();
+    let mut validation_seconds = 0.0;
+    let result = plan_cache::prepare(
+        cache.as_ref(),
+        ranks as usize,
+        |rank| {
+            checkpoint.request(
                 image_role,
                 ranks,
-                rank,
+                rank as u32,
                 implementation,
                 components.clone(),
                 host_views.clone(),
-            ))
-            .map_err(|error| format!("{image_role} rank {rank} weight plan: {error}"))?;
-        match plan {
-            Some(plan) => plans.push(plan),
-            None if rank == 0 => return Ok(None),
-            None => {
-                return Err(format!(
-                    "{image_role}: the bundle declined rank {rank} only"
-                ));
-            }
-        }
-    }
-    let planned_seconds = started.elapsed().as_secs_f64();
-    let records: usize = plans.iter().map(|plan| plan.records.len()).sum();
-    let image = PlannedImageV1::new(
-        checkpoint,
-        plans,
-        library.weight_transform(),
-        implementation,
-        DirectLoadOptionsV1::for_ranks(ranks as usize),
+            )
+        },
+        |request| {
+            library
+                .weight_plan(request)
+                .map_err(|error| format!("{image_role} rank {} weight plan: {error}", request.rank))
+        },
+        |plans| {
+            let validation = Instant::now();
+            let image = PlannedImageV1::new_with_range_tracking(
+                checkpoint.clone(),
+                plans,
+                library.weight_transform(),
+                implementation,
+                DirectLoadOptionsV1::for_ranks(ranks as usize),
+                std::env::var_os("CHOPINFER_DIRECT_LOAD_TRACK_RANGES")
+                    .is_some_and(|value| value == "1"),
+            );
+            validation_seconds += validation.elapsed().as_secs_f64();
+            image
+        },
     )?;
+    let Some((image, records, cache_hits)) = result else {
+        return Ok(None);
+    };
+    let planned_seconds = started.elapsed().as_secs_f64() - validation_seconds;
     eprintln!(
         "startup weight_plan: {}",
         serde_json::json!({
             "image_role": image_role,
             "seconds": started.elapsed().as_secs_f64(), "plan_seconds": planned_seconds,
             "ranks": ranks, "records": records, "shared_outputs": image.inner.shared.len(),
+            "metadata_cache_enabled": cache.is_some(), "metadata_cache_hits": cache_hits,
             "checkpoint_identity": image.checkpoint().identity_hex(),
             "threads_per_rank": image.inner.options.threads_per_rank,
             "cpus": process_cpus_v1(),
@@ -2997,7 +3070,7 @@ mod tests {
     ) -> PlannedImageV1 {
         PlannedImageV1::new_with_range_tracking(
             checkpoint.clone(),
-            plans.to_vec(),
+            plans,
             None,
             implementation_v1([0; 32]),
             DirectLoadOptionsV1 {

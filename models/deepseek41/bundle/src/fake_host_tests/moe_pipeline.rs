@@ -171,7 +171,7 @@ fn check_native_gate_up_tiles() {
             let tiles = if fused {
                 "_tiles_ceil"
             } else {
-                "_tiles_lean_v1 "
+                "_tiles_scanned_v1 "
             };
             assert_eq!(launches(&format!("{gate_up}{tile}{tiles}")), 4 * 40);
             assert_eq!(launches(&format!("{gate_up}{tile}_tiles_")), 4 * 40);
@@ -180,7 +180,7 @@ fn check_native_gate_up_tiles() {
             let (tile, tiles, other) = if fused {
                 ("r2w4s3", "_tiles_v1 ", "r1w4s2")
             } else {
-                ("r1w4s2", "_tiles_lean_v1 ", "r2w4s3")
+                ("r1w4s2", "_tiles_scanned_v1 ", "r2w4s3")
             };
             assert_eq!(launches(&format!("{down}{tile}_pack_v1 ")), 4 * 40);
             assert_eq!(launches(&format!("{down}{tile}{tiles}")), 4 * 40);

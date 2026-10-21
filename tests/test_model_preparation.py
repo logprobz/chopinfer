@@ -418,14 +418,16 @@ class PreparationProcess(unittest.TestCase):
         stderr = self.refusal(missing)
         self.assertIn("no installed family implementation accepts", stderr)
         self.assertIn("chopinfer-model-fixture: No such file or directory", stderr)
-        # Metadata that changes after the package was emitted is not the
-        # checkpoint the package describes.
+        # Metadata changed during emission must be refused before the
+        # package can be published or selected for serving.
         racing = self.copy_checkpoint("racing-metadata")
         config = json.loads((racing / "config.json").read_text())
         config["fixture_change_after_emission"] = "generation_config.json"
         (racing / "config.json").write_text(json.dumps(config))
-        stderr = self.refusal(racing)
-        self.assertIn("changed after its package was selected", stderr)
+        racing_cache = self.root / "racing-metadata-cache"
+        stderr = self.refusal(racing, cache=racing_cache)
+        self.assertIn("checkpoint input directory changed during preparation", stderr)
+        self.assertEqual(list(racing_cache.glob("p-*")), [])
         # A package whose profile differs from the one named before
         # packaging, under the same name, is refused.
         drifted = self.copy_checkpoint("drifted-profile")

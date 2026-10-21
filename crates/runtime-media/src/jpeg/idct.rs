@@ -63,7 +63,7 @@ fn butterfly(input: [i64; 8], shift: u32) -> [i64; 8] {
     ]
 }
 
-pub(super) fn block(coefficients: &[i32; 64], quant: &[u16; 64]) -> [u8; 64] {
+pub(super) fn block(coefficients: &[i16; 64], quant: &[u16; 64]) -> [u8; 64] {
     let mut work = [0_i64; 64];
     for col in 0..8 {
         if (1..8).all(|row| coefficients[row * 8 + col] == 0) {
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn dc_block_uses_islow_rounding_and_level_shift() {
-        let mut coefficients = [0_i32; 64];
+        let mut coefficients = [0_i16; 64];
         let quant = [1_u16; 64];
         assert_eq!(block(&coefficients, &quant), [128; 64]);
         coefficients[0] = 8;

@@ -5839,9 +5839,10 @@ mod tests {
             maximum_aspect_ratio: 200.0,
         };
         let wrapped = ImageRecipeV1::CenteredPad(recipe, runtime_media::Alpha::Discard);
-        // The previous 1,273,686-byte preparation bound plus this source
-        // fits, but the actual decoder buffers alone need 1,507,328 bytes.
-        let pool = Arc::new(MediaMemoryV1::new(1_500_000));
+        // The decoder's buffers alone need 999,424 bytes: 16-bit
+        // coefficients and sample planes for four 256 x 256 components,
+        // the RGB image and the decoder's tables.
+        let pool = Arc::new(MediaMemoryV1::new(999_000));
         let mut memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
         assert!(matches!(
             prepare_image_v1(&source, wrapped, limits, &mut memory),
@@ -5851,7 +5852,7 @@ mod tests {
         let mut memory = RequestMediaMemoryV1::new(pool, u64::MAX);
         let (image, reserved) = prepare_image_v1(&source, wrapped, limits, &mut memory).unwrap();
         assert_eq!(image.grid(), [1, 1, 1]);
-        assert!(reserved >= 1_507_328 + source.bytes.len() as u64);
+        assert!(reserved >= 999_424 + source.bytes.len() as u64);
     }
 
     #[test]

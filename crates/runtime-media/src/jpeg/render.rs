@@ -246,7 +246,7 @@ mod tests {
         let coefficients: usize = frame
             .components
             .iter()
-            .map(|c| c.coeffs.capacity() * size_of::<[i32; 64]>())
+            .map(|c| c.coeffs.capacity() * size_of::<[i16; 64]>())
             .sum();
         let planes: Vec<_> = frame
             .components
@@ -267,7 +267,7 @@ mod tests {
         let rgb = crate::core::try_with_capacity::<u8>(256 * 256 * 3).unwrap();
         assert_eq!(
             (coefficients, samples, rgb.capacity()),
-            (1_048_576, 262_144, 196_608)
+            (524_288, 262_144, 196_608)
         );
         let peak = coefficients + samples + rgb.capacity();
         let bound = crate::recipe::centered_pad_preparation_bytes(bytes, recipe, limits).unwrap();

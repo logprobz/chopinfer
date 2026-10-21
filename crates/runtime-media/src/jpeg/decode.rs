@@ -8,7 +8,6 @@ pub(super) const ZIGZAG: [usize; 64] = [
     13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59,
     52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
-const MAX_COEFFICIENT_BYTES: usize = 256 << 20;
 const MAX_SCANS: usize = 64;
 
 pub(super) struct Component {
@@ -20,7 +19,7 @@ pub(super) struct Component {
     pub block_height: usize,
     pub logical_width: usize,
     pub logical_height: usize,
-    pub coeffs: Vec<[i32; 64]>,
+    pub coeffs: Vec<[i16; 64]>,
     pub successive: [Option<u8>; 64],
 }
 
@@ -44,14 +43,11 @@ fn div_ceil(x: usize, y: usize) -> MediaResult<usize> {
 impl Frame {
     fn new(header: Header, payload: &[u8], limits: MediaLimits) -> MediaResult<Self> {
         limits.check_image(u32::from(header.width), u32::from(header.height))?;
-        if u64::from(header.width) * u64::from(header.height) > super::MAX_JPEG_PIXELS {
-            return Err(MediaError::new("JPEG decoded pixel hard limit exceeded"));
-        }
+        header.coefficient_bytes()?;
         let (max_h, max_v) = header.maximum_sampling();
         let mcu_cols = div_ceil(usize::from(header.width), 8 * max_h)?;
         let mcu_rows = div_ceil(usize::from(header.height), 8 * max_v)?;
         let mut components = Vec::with_capacity(header.components as usize);
-        let mut coefficient_bytes = 0_usize;
         for part in payload[6..].chunks_exact(3) {
             let h = usize::from(part[1] >> 4);
             let v = usize::from(part[1] & 15);
@@ -64,16 +60,6 @@ impl Frame {
             let count = block_width
                 .checked_mul(block_height)
                 .ok_or_else(|| MediaError::new("JPEG coefficient size overflow"))?;
-            coefficient_bytes = coefficient_bytes
-                .checked_add(
-                    count
-                        .checked_mul(64 * 4)
-                        .ok_or_else(|| MediaError::new("JPEG coefficient size overflow"))?,
-                )
-                .ok_or_else(|| MediaError::new("JPEG coefficient size overflow"))?;
-            if coefficient_bytes > MAX_COEFFICIENT_BYTES {
-                return Err(MediaError::new("JPEG coefficient memory limit exceeded"));
-            }
             let mut coeffs = Vec::new();
             coeffs
                 .try_reserve_exact(count)
@@ -230,15 +216,14 @@ fn huffman(table: &Option<Huffman>) -> MediaResult<&Huffman> {
         .ok_or_else(|| MediaError::new("JPEG Huffman table is missing"))
 }
 
-fn coefficient(value: i32) -> MediaResult<i32> {
-    if !(-32768..=32767).contains(&value) {
-        return Err(MediaError::new("JPEG coefficient exceeds 16-bit range"));
-    }
-    Ok(value)
+/// Every stored coefficient fits 16 bits, as libjpeg's JCOEF does; a
+/// stream that needs more is refused.
+fn coefficient(value: i32) -> MediaResult<i16> {
+    i16::try_from(value).map_err(|_| MediaError::new("JPEG coefficient exceeds 16-bit range"))
 }
 
 fn dc_first(
-    block: &mut [i32; 64],
+    block: &mut [i16; 64],
     predictor: &mut i32,
     table: &Huffman,
     bits: &mut Bits<'_>,
@@ -248,16 +233,16 @@ fn dc_first(
     if size > 11 {
         return Err(MediaError::new("invalid JPEG DC category"));
     }
-    *predictor = coefficient(
+    *predictor = i32::from(coefficient(
         predictor
             .checked_add(bits.signed(size)?)
             .ok_or_else(|| MediaError::new("JPEG DC predictor overflow"))?,
-    )?;
+    )?);
     block[0] = coefficient(*predictor << shift)?;
     Ok(())
 }
 
-fn ac_baseline(block: &mut [i32; 64], table: &Huffman, bits: &mut Bits<'_>) -> MediaResult<()> {
+fn ac_baseline(block: &mut [i16; 64], table: &Huffman, bits: &mut Bits<'_>) -> MediaResult<()> {
     let mut k = 1;
     while k < 64 {
         let symbol = table.decode(bits)?;
@@ -274,14 +259,15 @@ fn ac_baseline(block: &mut [i32; 64], table: &Huffman, bits: &mut Bits<'_>) -> M
             return Err(MediaError::new("invalid baseline JPEG AC code"));
         }
         k += run;
-        block[ZIGZAG[k]] = bits.signed(size)?;
+        // Ten magnitude bits always fit.
+        block[ZIGZAG[k]] = bits.signed(size)? as i16;
         k += 1;
     }
     Ok(())
 }
 
 fn ac_first(
-    block: &mut [i32; 64],
+    block: &mut [i16; 64],
     table: &Huffman,
     bits: &mut Bits<'_>,
     scan: &Scan,
@@ -314,16 +300,16 @@ fn ac_first(
     Ok(())
 }
 
-fn correction(block: &mut [i32; 64], k: usize, bit: i32, bits: &mut Bits<'_>) -> MediaResult<()> {
-    let value = &mut block[ZIGZAG[k]];
-    if *value != 0 && bits.bit()? != 0 && (*value & bit) == 0 {
-        *value = coefficient(*value + if *value > 0 { bit } else { -bit })?;
+fn correction(block: &mut [i16; 64], k: usize, bit: i32, bits: &mut Bits<'_>) -> MediaResult<()> {
+    let value = i32::from(block[ZIGZAG[k]]);
+    if value != 0 && bits.bit()? != 0 && (value & bit) == 0 {
+        block[ZIGZAG[k]] = coefficient(value + if value > 0 { bit } else { -bit })?;
     }
     Ok(())
 }
 
 fn ac_refine(
-    block: &mut [i32; 64],
+    block: &mut [i16; 64],
     table: &Huffman,
     bits: &mut Bits<'_>,
     scan: &Scan,
@@ -361,7 +347,8 @@ fn ac_refine(
                 k += 1;
             }
             if let Some(value) = new_value {
-                block[ZIGZAG[k]] = value;
+                // A refinement bit is at most 1 << 13.
+                block[ZIGZAG[k]] = value as i16;
             }
             k += 1;
         }
@@ -382,7 +369,7 @@ struct DecodeState {
 }
 
 fn decode_block(
-    block: &mut [i32; 64],
+    block: &mut [i16; 64],
     state: &mut DecodeState,
     choice: ScanComponent,
     scan: &Scan,

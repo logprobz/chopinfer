@@ -8,7 +8,10 @@ mod entropy;
 mod idct;
 mod render;
 
-const MAX_JPEG_PIXELS: u64 = 16 * 1024 * 1024;
+/// The coefficient storage one JPEG may need: four full-resolution
+/// components of the largest image the host admits (89,478,485 pixels) at
+/// one `i16` per coefficient, with MCU padding.
+const MAX_COEFFICIENT_BYTES: u64 = 768 << 20;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Header {
@@ -37,6 +40,36 @@ impl Header {
             usize::from(self.width).div_ceil(8 * max_h) * usize::from(h),
             usize::from(self.height).div_ceil(8 * max_v) * usize::from(v),
         )
+    }
+
+    /// The padded blocks of every component, refusing fractional sampling.
+    fn blocks(self) -> MediaResult<u64> {
+        let (max_h, max_v) = self.maximum_sampling();
+        let mut blocks = 0_u64;
+        for index in 0..usize::from(self.components) {
+            let (h, v) = self.sampling[index];
+            if max_h % usize::from(h) != 0 || max_v % usize::from(v) != 0 {
+                return Err(MediaError::new("unsupported fractional JPEG sampling"));
+            }
+            let (w, h) = self.component_blocks(index);
+            blocks += w as u64 * h as u64;
+        }
+        Ok(blocks)
+    }
+
+    /// The coefficient storage the decoder retains for both baseline and
+    /// progressive scans, refused above [`MAX_COEFFICIENT_BYTES`] before any
+    /// allocation.
+    fn coefficient_bytes(self) -> MediaResult<u64> {
+        let bytes = self.blocks()? * 64 * size_of::<i16>() as u64;
+        if bytes > MAX_COEFFICIENT_BYTES {
+            return Err(MediaError::new(format!(
+                "JPEG image {} x {} needs {bytes} bytes of coefficient storage, above the \
+                 {MAX_COEFFICIENT_BYTES}-byte limit",
+                self.width, self.height
+            )));
+        }
+        Ok(bytes)
     }
 
     fn oriented_size(self) -> (u32, u32) {
@@ -263,23 +296,14 @@ pub fn probe_oriented(
 }
 
 /// Decoder storage derived from the SOF, before any coefficient allocation.
-/// Every component holds 64 i32 coefficients and 64 u8 samples per padded
+/// Every component holds 64 i16 coefficients and 64 u8 samples per padded
 /// block alongside the RGB output. Baseline and progressive scans both
 /// retain full coefficient arrays. The fixed allowance covers component and
 /// plane descriptors, scan state, Huffman tables, quantizers and IDCT scratch.
 pub fn decode_storage_bytes(bytes: &[u8], limits: MediaLimits) -> MediaResult<u64> {
     let header = probe_header(bytes, limits)?;
-    let (max_h, max_v) = header.maximum_sampling();
-    let mut blocks = 0_u64;
-    for index in 0..usize::from(header.components) {
-        let (h, v) = header.sampling[index];
-        if max_h % usize::from(h) != 0 || max_v % usize::from(v) != 0 {
-            return Err(MediaError::new("unsupported fractional JPEG sampling"));
-        }
-        let (w, h) = header.component_blocks(index);
-        blocks += w as u64 * h as u64;
-    }
-    Ok(blocks * 64 * (size_of::<i32>() as u64 + 1)
+    Ok(header.coefficient_bytes()?
+        + header.blocks()? * 64
         + u64::from(header.width) * u64::from(header.height) * 3
         + 16 * 1024)
 }
@@ -306,9 +330,7 @@ fn probe_header(bytes: &[u8], limits: MediaLimits) -> MediaResult<Header> {
                 }
                 let parsed = frame(marker, payload, orientation)?;
                 limits.check_image(u32::from(parsed.width), u32::from(parsed.height))?;
-                if u64::from(parsed.width) * u64::from(parsed.height) > MAX_JPEG_PIXELS {
-                    return Err(MediaError::new("JPEG decoded pixel hard limit exceeded"));
-                }
+                parsed.coefficient_bytes()?;
                 header = Some(parsed);
             }
             0xc1 | 0xc3..=0xcf if marker != 0xc4 && marker != 0xc8 && marker != 0xcc => {
@@ -437,7 +459,7 @@ mod tests {
                 segment(&mut bytes, 0xda, &[]);
                 assert_eq!(
                     decode_storage_bytes(&bytes, limits()).unwrap(),
-                    blocks * 64 * 5 + 17 * 9 * 3 + 16 * 1024,
+                    blocks * 64 * 3 + 17 * 9 * 3 + 16 * 1024,
                 );
             }
         }
@@ -465,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn hard_pixel_limit_rejects_oversized_sof_before_allocation() {
+    fn coefficient_limit_rejects_oversized_sof_before_allocation() {
         let mut bytes = simple_image(false);
         let sof = bytes
             .windows(2)
@@ -474,17 +496,16 @@ mod tests {
         bytes[sof + 5..sof + 9].copy_from_slice(&[0xff, 0xff, 0xff, 0xff]);
         let mut permissive = limits();
         permissive.maximum_pixels = u64::MAX;
-        assert!(
-            probe(&bytes, permissive)
+        // 65535 x 65535 gray needs 8 GiB of coefficients.
+        let refusal = "JPEG image 65535 x 65535 needs 8589934592 bytes of coefficient storage, \
+                       above the 805306368-byte limit";
+        assert_eq!(probe(&bytes, permissive).unwrap_err().to_string(), refusal);
+        assert_eq!(decode(&bytes, permissive).unwrap_err().to_string(), refusal);
+        assert_eq!(
+            decode_storage_bytes(&bytes, permissive)
                 .unwrap_err()
-                .to_string()
-                .contains("hard limit")
-        );
-        assert!(
-            decode(&bytes, permissive)
-                .unwrap_err()
-                .to_string()
-                .contains("hard limit")
+                .to_string(),
+            refusal
         );
     }
 

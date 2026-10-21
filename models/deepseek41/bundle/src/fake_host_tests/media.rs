@@ -365,14 +365,14 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// after handle mapping.
 /// The early-stop selectors add one module, six resolves and seven
 /// releases per rank, and rename each prefill local selector and merge.
-/// after handle mapping. The r2 router finish module adds one module, 14
-/// resolves and 15 releases per TP4 rank. At backbone Decode-1 the TP4
+/// The r2 router finish module adds one module, 14 resolves and 15
+/// releases per TP4 rank. At backbone Decode-1 the TP4
 /// router finish becomes r2v7 and the shared expert's join moves from the
 /// routed sum to directly after it: 160 renamed launches and 160 moved
 /// record/wait pairs, nothing else.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22969, 0x55b7d35a6d64a12a)),
-    (Ranks::TP4, (53151, 0x67cbd7f1d95e1169)),
+    (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
+    (Ranks::TP4, (53203, 0xf686c44e0d2058ad)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

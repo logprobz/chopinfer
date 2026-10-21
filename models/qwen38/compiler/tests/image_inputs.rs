@@ -108,7 +108,16 @@ fn the_merged_descriptor_declares_the_pinned_image_recipe() {
         .multimodal
         .as_ref()
         .unwrap();
-    let parameters = &media.modalities[0].recipe.parameters;
+    // The processor sees decoded RGB, so its capture pins every parameter
+    // but the decode's alpha policy, which image-decode.json pins
+    // (media_declaration.rs).
+    let mut parameters = media.modalities[0].recipe.parameters.clone();
+    let alpha = parameters
+        .as_object_mut()
+        .unwrap()
+        .remove("alpha_background");
+    assert_eq!(alpha, Some(Value::from("none")));
+    let parameters = &parameters;
     let pinned = &fixture("image-processor.json")["recipe"];
     assert_eq!(parameters, pinned);
     assert_eq!(

@@ -195,6 +195,21 @@ def lock_identities(root, paths, consumers=()):
     return locks
 
 
+# The top-level names a module's source imports, by source text: every
+# gate check walks the same tools/qual modules.
+IMPORTED = {}
+
+
+def imported_names(source):
+    if source not in IMPORTED:
+        names = []
+        for node in ast.walk(ast.parse(source)):
+            names += ([name.name.split(".")[0] for name in node.names] if isinstance(node, ast.Import)
+                      else [node.module.split(".")[0]] if isinstance(node, ast.ImportFrom) and node.module else [])
+        IMPORTED[source] = names
+    return IMPORTED[source]
+
+
 def python_inputs(root, module, seen=None):
     """Static local imports only. Reading this graph never imports a check module."""
     seen = set() if seen is None else seen
@@ -202,12 +217,8 @@ def python_inputs(root, module, seen=None):
     if path in seen or not (root / path).is_file():
         return seen
     seen.add(path)
-    tree = ast.parse((root / path).read_text())
-    for node in ast.walk(tree):
-        names = ([name.name.split(".")[0] for name in node.names] if isinstance(node, ast.Import)
-                 else [node.module.split(".")[0]] if isinstance(node, ast.ImportFrom) and node.module else [])
-        for name in names:
-            python_inputs(root, name, seen)
+    for name in imported_names((root / path).read_text()):
+        python_inputs(root, name, seen)
     return seen
 
 

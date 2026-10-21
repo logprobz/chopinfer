@@ -212,6 +212,22 @@ thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell
 /// executor only, with the BF16 gather it was measured with. Full-schedule
 /// and two-part executions keep the SM transport unless `1` selects
 /// `Explicit`.
+/// The element format a prefill DMA reduction copies between ranks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DmaPayload {
+    F32,
+    Bf16,
+}
+
+impl DmaPayload {
+    pub(crate) fn bytes(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+            Self::Bf16 => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,

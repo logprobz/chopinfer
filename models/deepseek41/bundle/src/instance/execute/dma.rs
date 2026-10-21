@@ -175,15 +175,15 @@ impl Call {
             // A BF16 payload's rounded rows follow the inbox in the same
             // allocation; the owner's own rows are rounded inside its sum.
             let outbox = match payload {
-                crate::sm120::DmaPayload::F32 => input,
-                crate::sm120::DmaPayload::Bf16 => subspan(
+                crate::ops::DmaPayload::F32 => input,
+                crate::ops::DmaPayload::Bf16 => subspan(
                     instance.dma[rank].inbox,
                     inbox.length,
                     u64::from(rows) * width * 2,
                 )?,
             };
             let mut round = Vec::new();
-            if payload == crate::sm120::DmaPayload::Bf16 {
+            if payload == crate::ops::DmaPayload::Bf16 {
                 for (from, to) in [(0, begin), (begin + count, rows)] {
                     if from < to {
                         let length = u64::from(to - from) * width;

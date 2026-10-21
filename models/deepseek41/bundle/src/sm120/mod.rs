@@ -694,7 +694,11 @@ impl crate::Kernels {
     /// reduce-scatter (unadmitted phased entries) is replaced with F32
     /// partials: under the BF16-partial contract its preceding launches
     /// have already rounded the partials in place, so the sum is the same.
-    pub(crate) fn prefill_dma_payload(symbol: &str, composed: bool) -> Option<DmaPayload> {
+    pub(crate) fn prefill_dma_payload(
+        symbol: &str,
+        composed: bool,
+    ) -> Option<crate::ops::DmaPayload> {
+        use crate::ops::DmaPayload;
         use kernels_sm120::comm::{phased_bf16, phased_f32, phased_turns_bf16};
         if symbol == phased_f32::ROUND_SYMBOL || composed && symbol == COMPOSED_SCATTER {
             Some(DmaPayload::F32)
@@ -705,7 +709,10 @@ impl crate::Kernels {
         }
     }
 
-    pub(crate) fn prefill_dma_sum_info(payload: DmaPayload) -> kernel_core::backend::OpInfo {
+    pub(crate) fn prefill_dma_sum_info(
+        payload: crate::ops::DmaPayload,
+    ) -> kernel_core::backend::OpInfo {
+        use crate::ops::DmaPayload;
         use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
         kernel_core::backend::OpInfo::new(
             "local-rank-ordered-bf16-owner-sum",
@@ -756,7 +763,7 @@ impl crate::Kernels {
     /// `slot` elements in the payload's format.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prefill_dma_sum(
-        payload: DmaPayload,
+        payload: crate::ops::DmaPayload,
         input: runtime_bundle_abi::DeviceBufferSpanV1,
         inbox: runtime_bundle_abi::DeviceBufferSpanV1,
         output: runtime_bundle_abi::DeviceBufferSpanV1,
@@ -764,6 +771,7 @@ impl crate::Kernels {
         rank: u32,
         rows: u32,
     ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
+        use crate::ops::DmaPayload;
         use bundle_runtime::dispatch::BufferBindings;
         use kernel_core::contract::{Argument, ArgumentList};
         use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
@@ -811,22 +819,6 @@ impl crate::Kernels {
 
 /// The first collective of the all-reduces' composed form.
 const COMPOSED_SCATTER: &str = "chop_comm_reduce_scatter_f32_v1";
-
-/// The element format a prefill DMA reduction copies between ranks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DmaPayload {
-    F32,
-    Bf16,
-}
-
-impl DmaPayload {
-    pub(crate) fn bytes(self) -> u64 {
-        match self {
-            Self::F32 => 4,
-            Self::Bf16 => 2,
-        }
-    }
-}
 
 // The build script includes the registration files, and so does the
 // projection assembly test; a test that reads the bundle's own modules

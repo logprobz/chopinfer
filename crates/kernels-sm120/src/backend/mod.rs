@@ -117,6 +117,7 @@ mod mxfp8_prefill;
 mod mxfp8_prefill_compact;
 mod mxfp8_prefill_matrix;
 mod mxfp8_prefill_tma_matrix;
+mod mxfp8_prefill_tma_scales;
 mod mxfp8_rows;
 pub mod own;
 mod pooled_indexer;
@@ -253,6 +254,7 @@ pub struct Sm120 {
     mxfp8_prefill_compacts: Vec<(crate::gemm::mxfp8_prefill_compact::Entry, u32)>,
     mxfp8_prefill_matrices: Vec<(crate::gemm::mxfp8_prefill_matrix::Entry, u32)>,
     mxfp8_prefill_tma_matrices: Vec<(crate::gemm::mxfp8_prefill_tma_matrix::Entry, u32)>,
+    mxfp8_prefill_tma_scales: Vec<(crate::gemm::mxfp8_prefill_tma_scales::Entry, u32)>,
     mxfp8_prefill_splits: Vec<(
         crate::gemm::mxfp8_fold::Entry,
         crate::gemm::mxfp8_prefill_split::TailPolicy,
@@ -302,6 +304,17 @@ impl Sm120 {
         rows: u32,
     ) -> Self {
         self.mxfp8_prefill_tma_matrices.push((entry, rows));
+        self
+    }
+
+    /// Stage scales only at explicitly registered row counts, retaining the
+    /// caller's capacity, workspace and fallback for every other count.
+    pub fn with_mxfp8_prefill_tma_scales(
+        mut self,
+        entry: crate::gemm::mxfp8_prefill_tma_scales::Entry,
+        rows: u32,
+    ) -> Self {
+        self.mxfp8_prefill_tma_scales.push((entry, rows));
         self
     }
 
@@ -1407,9 +1420,15 @@ impl Backend for Sm120 {
                 mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
             let fallback =
                 mxfp8_prefill_matrix::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
-            return mxfp8_prefill_tma_matrix::prepare(
+            let fallback = mxfp8_prefill_tma_matrix::prepare(
                 fallback,
                 &self.mxfp8_prefill_tma_matrices,
+                op,
+                need,
+            )?;
+            return mxfp8_prefill_tma_scales::prepare(
+                fallback,
+                &self.mxfp8_prefill_tma_scales,
                 op,
                 need,
             );
@@ -1419,7 +1438,13 @@ impl Backend for Sm120 {
             mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
         let fallback =
             mxfp8_prefill_matrix::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
-        mxfp8_prefill_tma_matrix::prepare(fallback, &self.mxfp8_prefill_tma_matrices, op, need)
+        let fallback = mxfp8_prefill_tma_matrix::prepare(
+            fallback,
+            &self.mxfp8_prefill_tma_matrices,
+            op,
+            need,
+        )?;
+        mxfp8_prefill_tma_scales::prepare(fallback, &self.mxfp8_prefill_tma_scales, op, need)
     }
 
     fn mxfp8_fold_gemm_pair(

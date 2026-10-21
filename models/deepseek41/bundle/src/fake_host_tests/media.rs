@@ -363,6 +363,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// rank, and verify-4 grouping adds 24 resolves, three configures and 25
 /// releases per rank. Full lifecycle audits preserve every other operation
 /// after handle mapping.
+/// The early-stop selectors add one module, six resolves and seven
+/// releases per rank, and rename each prefill local selector and merge.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22969, 0x55b7d35a6d64a12a)),
     (Ranks::TP4, (53035, 0x9d865ae5659aaa4d)),

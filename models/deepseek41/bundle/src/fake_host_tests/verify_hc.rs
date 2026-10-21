@@ -22,11 +22,13 @@ use super::*;
 // Engram hash module are created before verify and renumber its buffer,
 // stream and event handles; numbered by first use, all four journals equal
 // the previous ones.
+// The early-stop selectors' module and six resolves per rank do the same;
+// verify launches keep the served selectors.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0xa3d656509c685090)),
-    (8, (8992, 0xf190ad9c2a3907c6)),
-    (16, (9964, 0xc1539866863820dc)),
-    (32, (8384, 0x980564854e497714)),
+    (6, (8040, 0x219d4c447b88ac2d)),
+    (8, (8992, 0x6c9dfa4610cc44e5)),
+    (16, (9964, 0x65059dc0b5516a51)),
+    (32, (8384, 0xc46885e93fba40aa)),
 ];
 
 #[test]

@@ -140,6 +140,7 @@ mod indexer_query;
 #[allow(dead_code)]
 mod indexer_query_parallel;
 mod indexer_select_cached;
+mod indexer_select_early;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_glue;
 #[allow(dead_code)]
@@ -399,6 +400,7 @@ pub fn selection(
             owners.push((indexer_mma_tile::CUBIN.into(), geometry.id));
             owners.push((indexer_mma_prefill_tile::CUBIN.into(), geometry.id));
             owners.push((indexer_candidates_cached::CUBIN.into(), geometry.id));
+            owners.push((indexer_select_early::CUBIN.into(), geometry.id));
         }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),
@@ -544,6 +546,7 @@ pub fn selection(
     specs.extend(
         indexer_candidates_cached::cubins(geometries).expect("fused candidate publisher cubin"),
     );
+    specs.extend(indexer_select_early::cubins(geometries).expect("early-stop selector cubin"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

@@ -31,7 +31,31 @@ fn qualified_prefill_tile_binds_all_four_chunk_offsets() {
                     && !line.contains("_pack_fp4_")
             })
             .collect();
-        assert_eq!(scores.len(), 4 * (3 * 2 + 16 + 4 * 2));
+        let batches = 4 * (3 * 2 + 16 + 4 * 2);
+        assert_eq!(scores.len(), batches);
+        // Every batch selects with the early-stop local selector and merge
+        // on the served grids.
+        let selectors: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.starts_with("launch ")
+                    && (line.contains("chop_position_indexer_")
+                        || line.contains("chop_position_blocks_"))
+                    && line.contains("_select_v3_")
+            })
+            .collect();
+        assert_eq!(selectors.len(), 2 * batches);
+        for line in selectors {
+            let merge = line.contains("_merge_early_v1 ");
+            assert!(
+                merge || line.contains("_live_early_v1 ") || line.contains("_valid_early_v1 "),
+                "{line}"
+            );
+            assert!(
+                line.contains(&format!("grid_x: {}, ", if merge { 1 } else { 32 })),
+                "{line}"
+            );
+        }
         for line in scores {
             let compact = line.contains("chop_position_blocks_");
             assert!(
@@ -305,9 +329,15 @@ pub(super) fn audit_batched(host: &Host, journal: &[String], skip: bool) -> Resu
         )?;
         let partial = journal.get(at + 1).ok_or("missing partial selector")?;
         let merge = journal.get(at + 2).ok_or("missing merge selector")?;
+        // The admitted schedule selects with the early-stop entries.
+        let suffix = if host.shape.runtime.indexer_prefill_tile {
+            "_early_v1 "
+        } else {
+            "_v1 "
+        };
         require(
-            partial.contains("_all_select_v3_live_v1 ")
-                && merge.contains("_all_select_v3_live_merge_v1 "),
+            partial.contains(&format!("_all_select_v3_live{suffix}"))
+                && merge.contains(&format!("_all_select_v3_live_merge{suffix}")),
             "selection ordering",
         )?;
         for select in [partial, merge] {

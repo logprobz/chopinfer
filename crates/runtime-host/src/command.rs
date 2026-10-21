@@ -7262,6 +7262,7 @@ mod tests {
                 },
                 positions: None,
                 layout: None,
+                formats: None,
             }],
         };
         for capability in [false, true] {

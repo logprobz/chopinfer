@@ -120,6 +120,14 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.tool_result_images()
     }
 
+    fn image_formats(&self) -> Vec<String> {
+        self.document.image_formats()
+    }
+
+    fn image_file_parts(&self) -> bool {
+        self.document.image_file_parts()
+    }
+
     fn served_media(&self) -> Vec<FrontendMediaPartKindV1> {
         self.document.served_media()
     }

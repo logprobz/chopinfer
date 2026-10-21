@@ -733,9 +733,25 @@ pub struct FrontendMediaModalityV1 {
     /// Absent: an item's span is its encoder rows, one per merged cell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<FrontendMediaLayoutV1>,
+    /// The encoded image formats an image modality accepts, of `png`,
+    /// `jpeg`, `gif` and `webp`. Absent: PNG and JPEG.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formats: Option<Vec<String>>,
 }
 
+/// Every image format a modality may declare.
+pub const FRONTEND_IMAGE_FORMATS_V1: [&str; 4] = ["png", "jpeg", "gif", "webp"];
+
 impl FrontendMediaModalityV1 {
+    /// The image formats this modality accepts: its `formats`, or PNG and
+    /// JPEG when it declares none.
+    pub fn image_formats(&self) -> Vec<&str> {
+        match &self.formats {
+            Some(formats) => formats.iter().map(String::as_str).collect(),
+            None => vec!["png", "jpeg"],
+        }
+    }
+
     /// The rows an item's span takes in the prompt, from its merged grid
     /// `[t, h, w]` (cells after the encoder's merge): `t * h * w`, or under
     /// [`FrontendMediaLayoutV1::LearnedDelimitersV1`] `t * (h * (w + 1) + 2)`.
@@ -1033,7 +1049,7 @@ impl FrontendDescriptorV1 {
                         "image.zero-padded-token-budget.v1",
                         "image.centered-pad.v1",
                     ][..],
-                    &["image_url"][..],
+                    &["image_url", "file"][..],
                 ),
                 FrontendMediaKindV1::Audio => (
                     "audio",
@@ -1054,7 +1070,8 @@ impl FrontendDescriptorV1 {
                 || modality.maximum_tokens == 0
                 || modality.maximum_tokens as usize > self.context.maximum_total_tokens
                 || modality.part_types.is_empty()
-                || modality.part_types.len() > allowed.len()
+                || modality.part_types.iter().collect::<BTreeSet<_>>().len()
+                    != modality.part_types.len()
                 || modality
                     .part_types
                     .iter()
@@ -1063,6 +1080,26 @@ impl FrontendDescriptorV1 {
                 || !modality.recipe.parameters.is_object()
             {
                 return Err(invalid(format!("invalid {kind} modality declaration")));
+            }
+            if let Some(formats) = &modality.formats {
+                if modality.kind != FrontendMediaKindV1::Image
+                    || formats.is_empty()
+                    || formats.iter().collect::<BTreeSet<_>>().len() != formats.len()
+                    || formats
+                        .iter()
+                        .any(|format| !FRONTEND_IMAGE_FORMATS_V1.contains(&format.as_str()))
+                {
+                    return Err(invalid("invalid image formats declaration"));
+                }
+                // The host reads no EXIF orientation from WebP.
+                if formats.iter().any(|format| format == "webp")
+                    && modality.recipe.tag != "image.centered-pad.v1"
+                {
+                    return Err(invalid(format!(
+                        "{} applies EXIF orientation, which webp images do not support",
+                        modality.recipe.tag
+                    )));
+                }
             }
             if modality.recipe.tag == "image.centered-pad.v1" {
                 modality.validate_centered_pad_v1().map_err(invalid)?;

@@ -77,6 +77,9 @@ struct PermissiveFrontendV1 {
     /// thinking object, strict-only constraints and forced choices without
     /// tools served as auto.
     vendor_mapping: AtomicBool,
+    /// While set, the frontend declares GIF and WebP images, `file` parts
+    /// and images in tool results.
+    declared_images: AtomicBool,
 }
 
 impl PermissiveFrontendV1 {
@@ -93,6 +96,7 @@ impl PermissiveFrontendV1 {
             local_media_root: Some(std::env::temp_dir().join("request-surface-local-media")),
             constrains_tools: AtomicBool::new(false),
             vendor_mapping: AtomicBool::new(false),
+            declared_images: AtomicBool::new(false),
         })
     }
 
@@ -123,6 +127,23 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
 
     fn has_selected_modalities(&self) -> bool {
         self.selected_modalities.load(Ordering::Relaxed)
+    }
+
+    fn tool_result_images(&self) -> bool {
+        self.declared_images.load(Ordering::Relaxed)
+    }
+
+    fn image_formats(&self) -> Vec<String> {
+        let formats: &[&str] = if self.declared_images.load(Ordering::Relaxed) {
+            &["png", "jpeg", "gif", "webp"]
+        } else {
+            &["png", "jpeg"]
+        };
+        formats.iter().map(|&format| format.to_owned()).collect()
+    }
+
+    fn image_file_parts(&self) -> bool {
+        self.declared_images.load(Ordering::Relaxed)
     }
 
     fn served_media(&self) -> Vec<runtime_server::FrontendMediaPartKindV1> {
@@ -1365,6 +1386,166 @@ async fn media_parts_fail_closed_for_unsupported_bundles_and_urls() {
         r#""messages":[{"role":"system","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},{"role":"user","content":"hello"}],"max_tokens":1"#,
     );
     server.refuses_chat(&system_media, "messages").await;
+}
+
+/// Image formats, `file` parts and images in tool results follow the
+/// model's declaration. Undeclared, GIF and WebP data URLs are refused by
+/// format and a `file` part as an unsupported type; declared, a nested
+/// `file` part carries an image data URL as an image part in user and tool
+/// messages, and its other shapes are refused by name. A data URL's media
+/// type compares without regard to case or parameters for every model.
+#[tokio::test]
+async fn image_formats_and_file_parts_follow_the_declaration() {
+    let server = InProcessServerV1::full();
+    server.frontend.media_enabled.store(true, Ordering::Relaxed);
+    let user = |part: &str| {
+        chat(&format!(
+            r#""messages":[{{"role":"user","content":[{part}]}}],"max_tokens":1"#
+        ))
+    };
+    let tool = |part: &str| {
+        chat(&format!(
+            r#""messages":[{{"role":"user","content":"a"}},{{"role":"assistant","content":null,"tool_calls":[{{"id":"c","type":"function","function":{{"name":"n","arguments":"{{}}"}}}}]}},{{"role":"tool","tool_call_id":"c","content":[{part}]}}],"max_tokens":1"#
+        ))
+    };
+    let image = |url: &str| format!(r#"{{"type":"image_url","image_url":{{"url":"{url}"}}}}"#);
+    let file =
+        r#"{"type":"file","file":{"file_data":"data:image/png;base64,AAAA","filename":"a.png"}}"#;
+    let refusal = |body: String| {
+        let server = &server;
+        async move {
+            server.refuses_chat(&body, "messages").await;
+            server.post("/v1/chat/completions", &body).await.json()["error"]["message"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let accepted = |body: String| {
+        let server = &server;
+        async move {
+            let response = server.post("/v1/chat/completions", &body).await;
+            assert_eq!(response.status, 200, "{body}: {}", response.body);
+        }
+    };
+
+    for url in [
+        "data:IMAGE/PNG;base64,AAAA",
+        "data:image/jpg;base64,AAAA",
+        "data:image/Jpeg;name=a.jpg;base64,AAAA",
+    ] {
+        accepted(user(&image(url))).await;
+    }
+    assert_eq!(
+        refusal(user(&image("data:image/gif;base64,AAAA"))).await,
+        "image/gif images are not accepted by this model, which accepts image/png, image/jpeg"
+    );
+    assert_eq!(
+        refusal(user(&image("data:image/svg+xml;base64,AAAA"))).await,
+        "unsupported media MIME type or invalid base64"
+    );
+    assert_eq!(
+        refusal(user(file)).await,
+        "unsupported content part type 'file'"
+    );
+    assert_eq!(
+        refusal(tool(&image("data:image/png;base64,AAAA"))).await,
+        "only user messages may contain media"
+    );
+
+    server
+        .frontend
+        .declared_images
+        .store(true, Ordering::Relaxed);
+    for url in ["data:image/gif;base64,AAAA", "data:image/WEBP;base64,AAAA"] {
+        accepted(user(&image(url))).await;
+    }
+    accepted(user(file)).await;
+    accepted(tool(file)).await;
+    accepted(tool(&image("data:image/webp;base64,AAAA"))).await;
+    {
+        let requests = server.frontend.requests.lock().unwrap();
+        let parts = |request: &FrontendChatRequestV1| {
+            request
+                .messages
+                .iter()
+                .flat_map(|message| message.parts.iter().flatten())
+                .filter_map(|part| match part {
+                    runtime_server::FrontendContentPartV1::Media(media) => Some(media.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let user_file = parts(&requests[requests.len() - 3]);
+        assert_eq!(user_file.len(), 1);
+        assert_eq!(
+            user_file[0].kind,
+            runtime_server::FrontendMediaPartKindV1::Image
+        );
+        assert_eq!(user_file[0].part_type, "file");
+        assert_eq!(user_file[0].source, "data:image/png;base64,AAAA");
+        assert_eq!(parts(&requests[requests.len() - 2])[0].part_type, "file");
+    }
+    for (part, message) in [
+        (
+            r#"{"type":"file","file":{"file_id":"file-1"}}"#,
+            "file_id is not supported; pass the image as a base64 data URL in file_data",
+        ),
+        (
+            r#"{"type":"file","file_data":"data:image/png;base64,AAAA"}"#,
+            r#"a file part carries its fields in a "file" object: {"type": "file", "file": {"file_data": ...}}"#,
+        ),
+        (
+            r#"{"type":"file","file":{"file_data":"data:application/pdf;base64,AAAA"}}"#,
+            "unsupported media MIME type or invalid base64",
+        ),
+        (
+            r#"{"type":"file","file":{"file_data":"https://example.com/a.png"}}"#,
+            "file_data must be a base64 image data URL",
+        ),
+        (
+            r#"{"type":"file","file":{"file_data":"data:image/png;base64,AAAA","format":"png"}}"#,
+            "unknown content part field 'format'",
+        ),
+        (r#"{"type":"file","file":{}}"#, "file_data is required"),
+    ] {
+        assert_eq!(refusal(user(part)).await, message, "{part}");
+    }
+}
+
+/// A Responses `function_call_output` with an `input_image` reaches the
+/// frontend as the chat tool message with that image does, so a model that
+/// declares images in tool results renders both alike.
+#[tokio::test]
+async fn responses_tool_output_images_reach_the_frontend_as_chat_tool_images() {
+    let server = InProcessServerV1::full();
+    server.frontend.media_enabled.store(true, Ordering::Relaxed);
+    server
+        .frontend
+        .declared_images
+        .store(true, Ordering::Relaxed);
+    let url = "data:image/webp;base64,AAAA";
+    let chat_body = chat(&format!(
+        r#""messages":[{{"role":"user","content":"a"}},{{"role":"assistant","content":null,"tool_calls":[{{"id":"c","type":"function","function":{{"name":"n","arguments":"{{}}"}}}}]}},{{"role":"tool","tool_call_id":"c","content":[{{"type":"text","text":"seen"}},{{"type":"image_url","image_url":{{"url":"{url}"}}}}]}}],"max_tokens":1"#
+    ));
+    let response = server.post("/v1/chat/completions", &chat_body).await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    let responses_body = serde_json::json!({"model": MODEL, "max_output_tokens": 1, "input": [
+        {"role": "user", "content": "a"},
+        {"type": "function_call", "call_id": "c", "name": "n", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c", "output": [
+            {"type": "input_text", "text": "seen"},
+            {"type": "input_image", "image_url": url}]}
+    ]});
+    let response = server
+        .post("/v1/responses", &responses_body.to_string())
+        .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    let requests = server.frontend.requests.lock().unwrap();
+    let [.., from_chat, from_responses] = &requests[..] else {
+        panic!("both requests render");
+    };
+    assert_eq!(from_responses.messages, from_chat.messages);
 }
 
 /// Everything else a chat request can select is refused by name.

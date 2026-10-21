@@ -6203,6 +6203,7 @@ mod tests {
                 },
                 positions: None,
                 layout: None,
+                formats: None,
             }],
         };
         let vocabulary = FrontendVocabularyV1 {
@@ -6404,6 +6405,7 @@ mod tests {
                 },
                 positions: Some(FrontendPositionRuleV1::Grid3AxisV1),
                 layout: None,
+                formats: None,
             }],
         };
         let vocabulary = FrontendVocabularyV1 {

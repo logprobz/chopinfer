@@ -269,6 +269,15 @@ impl BundleFrontendV1 {
     }
 
     #[must_use]
+    /// The declared image modality, if any.
+    fn image_modality(&self) -> Option<&runtime_frontend_contract::FrontendMediaModalityV1> {
+        self.descriptor
+            .multimodal
+            .iter()
+            .flat_map(|multimodal| &multimodal.modalities)
+            .find(|modality| modality.kind == FrontendMediaKindV1::Image)
+    }
+
     pub fn descriptor(&self) -> &FrontendDescriptorV1 {
         &self.descriptor
     }
@@ -322,6 +331,22 @@ impl ServerFrontendV1 for BundleFrontendV1 {
 
     fn tool_result_images(&self) -> bool {
         self.descriptor.tools.image_results
+    }
+
+    fn image_formats(&self) -> Vec<String> {
+        match self.image_modality() {
+            Some(image) => image
+                .image_formats()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            None => vec!["png".to_owned(), "jpeg".to_owned()],
+        }
+    }
+
+    fn image_file_parts(&self) -> bool {
+        self.image_modality()
+            .is_some_and(|image| image.part_types.iter().any(|part| part == "file"))
     }
 
     fn served_media(&self) -> Vec<FrontendMediaPartKindV1> {

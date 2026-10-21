@@ -535,6 +535,62 @@ fn centered_pad_descriptor_refuses_unusable_parameters_and_layouts() {
     }
 }
 
+/// An image modality may declare its formats and `file` parts. Formats
+/// are distinct known names on an image modality; WebP needs a recipe that
+/// keeps the stored orientation, since the host reads no WebP EXIF
+/// orientation. Absent, the formats are PNG and JPEG and serialize as
+/// absent.
+#[test]
+fn image_formats_and_file_parts_are_declared_on_image_modalities() {
+    let modality = "/multimodal/modalities/0";
+    let valid = centered_pad_declaration();
+    let descriptor = read(&valid).unwrap();
+    let image = &descriptor.multimodal.as_ref().unwrap().modalities[0];
+    assert_eq!(image.image_formats(), ["png", "jpeg"]);
+    assert!(
+        !serde_json::to_string(&descriptor)
+            .unwrap()
+            .contains("formats")
+    );
+    let mut declared = valid.clone();
+    declared.pointer_mut(modality).unwrap()["formats"] = json!(["png", "jpeg", "gif", "webp"]);
+    declared.pointer_mut(modality).unwrap()["part_types"] = json!(["image_url", "file"]);
+    let descriptor = read(&declared).unwrap();
+    assert_eq!(
+        descriptor.multimodal.unwrap().modalities[0].image_formats(),
+        ["png", "jpeg", "gif", "webp"]
+    );
+    for (key, bad) in [
+        ("formats", json!([])),
+        ("formats", json!(["png", "png"])),
+        ("formats", json!(["tiff"])),
+        ("formats", json!(["PNG"])),
+        ("part_types", json!(["image_url", "image_url"])),
+        ("part_types", json!(["image_url", "input_file"])),
+    ] {
+        let mut value = declared.clone();
+        value.pointer_mut(modality).unwrap()[key] = bad;
+        assert!(
+            matches!(read(&value), Err(FrontendComponentErrorV1::Invalid(_))),
+            "{key}: {value}"
+        );
+    }
+    let mut patch_grid = declaration();
+    patch_grid["multimodal"] = json!({
+        "arena": {"rows": 64, "page_rows": 64, "hidden": 8, "element": "bf16"},
+        "encoders": [{"name": "image", "payload_element": "bf16", "payload_columns": 4,
+            "maximum_payload_bytes": 64, "cost_per_row_milli": 1}],
+        "modalities": [{"kind": "image", "part_types": ["image_url"], "maximum_items": 1,
+            "maximum_bytes": 64, "maximum_tokens": 8, "encoder": 0,
+            "recipe": {"tag": "image.patch-grid.v1", "parameters": {}},
+            "render": {"pad": "[EOS]"}, "formats": ["png", "gif"]}]
+    });
+    read(&patch_grid).unwrap();
+    patch_grid.pointer_mut(modality).unwrap()["formats"] = json!(["png", "webp"]);
+    let error = read(&patch_grid).unwrap_err().to_string();
+    assert!(error.contains("webp images do not support"), "{error}");
+}
+
 /// `declaration()` with `section` in place of the format, serialized, then
 /// with `from` replaced by `to` in its text: JSON a `Value` cannot hold.
 fn raw(section: &str, value: Value, from: &str, to: &str) -> Vec<u8> {

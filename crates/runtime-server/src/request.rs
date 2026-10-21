@@ -1557,9 +1557,11 @@ fn convert_content_parts(
             let kind = take_string(&mut fields, "type")?;
             let part = match kind.as_str() {
                 "text" => FrontendContentPartV1::Text(take_string(&mut fields, "text")?),
-                "image_url" | "audio_url" | "video_url" | "input_audio" => {
-                    if role != "user"
-                        && !(role == "tool" && kind == "image_url" && frontend.tool_result_images())
+                "image_url" | "audio_url" | "video_url" | "input_audio" | "file"
+                    if kind != "file" || frontend.image_file_parts() =>
+                {
+                    let image = matches!(kind.as_str(), "image_url" | "file");
+                    if role != "user" && !(role == "tool" && image && frontend.tool_result_images())
                     {
                         return Err(ApiError::invalid(
                             "only user messages may contain media",
@@ -1568,7 +1570,7 @@ fn convert_content_parts(
                     }
                     // Refused before anything reads or fetches the media.
                     let modality = match kind.as_str() {
-                        "image_url" => FrontendMediaPartKindV1::Image,
+                        "image_url" | "file" => FrontendMediaPartKindV1::Image,
                         "video_url" => FrontendMediaPartKindV1::Video,
                         _ => FrontendMediaPartKindV1::Audio,
                     };
@@ -1611,6 +1613,14 @@ fn convert_content_parts(
                             part_type: kind,
                             source: data,
                             format: Some(format),
+                        }
+                    } else if kind == "file" {
+                        let source = file_image_source(&mut fields, frontend, maximum)?;
+                        FrontendMediaPartV1 {
+                            kind: modality,
+                            part_type: kind,
+                            source,
+                            format: None,
                         }
                     } else {
                         let mut input = take_object(&mut fields, &kind)?;
@@ -1669,6 +1679,65 @@ fn convert_content_parts(
             Ok(part)
         })
         .collect()
+}
+
+/// The image a `file` part carries, in OpenAI's nested form
+/// `{"type": "file", "file": {"file_data": DATA_URL, "filename"?: NAME}}`:
+/// an image data URL, validated as an `image_url` one is. File IDs name
+/// uploads this server does not keep, and the flat form some recipes read
+/// is not OpenAI's.
+fn file_image_source(
+    fields: &mut Vec<(String, FrontendJsonV1)>,
+    frontend: &dyn ServerFrontendV1,
+    maximum: usize,
+) -> Result<String, ApiError> {
+    if fields
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "file_data" | "file_id" | "filename"))
+    {
+        return Err(ApiError::invalid(
+            "a file part carries its fields in a \"file\" object: \
+             {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
+            Some("messages"),
+        ));
+    }
+    let mut file = take_object(fields, "file")?;
+    if take_field(&mut file, "file_id").is_some() {
+        return Err(ApiError::invalid(
+            "file_id is not supported; pass the image as a base64 data URL in file_data",
+            Some("messages"),
+        ));
+    }
+    let data = take_string(&mut file, "file_data")?;
+    take_optional_string(&mut file, "filename")?;
+    reject_fields(&file)?;
+    validate_string(&data, "messages", maximum)?;
+    if !data.starts_with("data:") {
+        return Err(ApiError::invalid(
+            "file_data must be a base64 image data URL",
+            Some("messages"),
+        ));
+    }
+    validate_media_url(&data, "image_url", frontend)
+}
+
+/// The image format a data URL's media type names: type and subtype
+/// compare without regard to case, parameters are ignored and `image/jpg`
+/// is JPEG.
+fn data_url_image_format(mime: &str) -> Option<&'static str> {
+    let essence = mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match essence.as_str() {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpeg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
 }
 
 /// A `tool_reference` part's name: `name`, or the Anthropic API's
@@ -1776,14 +1845,31 @@ fn validate_media_url(
         let mime = header
             .strip_suffix(";base64")
             .ok_or_else(|| ApiError::invalid("data URL must use base64", Some("messages")))?;
-        let allowed: &[&str] = if kind == "image_url" {
-            &["image/png", "image/jpeg"]
+        let supported = if kind == "image_url" {
+            match data_url_image_format(mime) {
+                Some(format) if !frontend.image_formats().iter().any(|name| name == format) => {
+                    let accepted = frontend
+                        .image_formats()
+                        .iter()
+                        .map(|name| format!("image/{name}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(ApiError::invalid_owned(
+                        format!(
+                            "image/{format} images are not accepted by this model, which \
+                             accepts {accepted}"
+                        ),
+                        Some("messages".into()),
+                    ));
+                }
+                format => format.is_some(),
+            }
         } else if kind == "video_url" {
-            &["video/mp4"]
+            mime == "video/mp4"
         } else {
-            &["audio/wav", "audio/x-wav"]
+            matches!(mime, "audio/wav" | "audio/x-wav")
         };
-        if !allowed.contains(&mime) || !valid_base64(payload) {
+        if !supported || !valid_base64(payload) {
             return Err(ApiError::invalid(
                 "unsupported media MIME type or invalid base64",
                 Some("messages"),

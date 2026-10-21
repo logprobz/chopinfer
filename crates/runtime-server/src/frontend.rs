@@ -576,6 +576,18 @@ frontend_with_alias_delegation! {
         false
     }
 
+    /// The encoded image formats the served model accepts, by name (`png`,
+    /// `jpeg`, `gif`, `webp`).
+    fn image_formats(&self) -> Vec<String> {
+        vec!["png".to_owned(), "jpeg".to_owned()]
+    }
+
+    /// Whether images may also arrive as OpenAI `file` parts whose
+    /// `file_data` is an image data URL.
+    fn image_file_parts(&self) -> bool {
+        false
+    }
+
     /// The media kinds this server accepts, of [`FrontendMediaPartKindV1::ALL`];
     /// text is always served. The default accepts every kind when the bundle
     /// declares media inputs.

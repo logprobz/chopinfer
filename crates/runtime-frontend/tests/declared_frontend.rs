@@ -202,6 +202,7 @@ fn declared_media_renders_segments_and_refuses_client_pad_text() {
             },
             positions: None,
             layout: None,
+            formats: None,
         }],
     });
     // A grid position rule needs an image modality whose recipe merges.

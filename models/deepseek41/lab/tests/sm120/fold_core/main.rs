@@ -20,6 +20,8 @@ mod arena;
 mod data;
 #[path = "../../../sm120/fold_core.rs"]
 mod family;
+#[path = "../../../sm120/fold_local_rows.rs"]
+mod local_family;
 mod timing;
 use arena::Arena;
 
@@ -44,18 +46,21 @@ fn backend() -> &'static Sm120 {
 enum Candidate {
     Decode(decode::Entry),
     Prefill(prefill::Entry),
+    LocalRows(kernels_sm120::gemm::mxfp8_fold_local_rows::Entry),
 }
 impl Candidate {
     fn base(&self) -> mxfp8_fold::Entry {
         match self {
             Self::Decode(e) => e.packed.ticket.legacy().unwrap(),
             Self::Prefill(e) => e.base.clone(),
+            Self::LocalRows(e) => e.base.clone(),
         }
     }
     fn label(&self) -> String {
         match self {
             Self::Decode(e) => e.schedule.name().into(),
             Self::Prefill(e) => format!("m{}s{}", e.tile_rows, e.stages),
+            Self::LocalRows(e) => format!("local32n{}", e.tile_n),
         }
     }
 }
@@ -64,6 +69,11 @@ fn candidates() -> Vec<Candidate> {
         family::decode_entries()
             .into_iter()
             .map(Candidate::Decode)
+            .chain(
+                local_family::entries()
+                    .into_iter()
+                    .map(Candidate::LocalRows),
+            )
             .collect()
     } else {
         family::prefill_entries()
@@ -79,7 +89,13 @@ fn candidates() -> Vec<Candidate> {
     assert!(!result.is_empty(), "unknown core variant");
     result
 }
+fn local_rows() -> bool {
+    std::env::var("CHOPINFER_FOLD_CORE_VARIANT").is_ok_and(|v| v.starts_with("local32n"))
+}
 fn row_counts(mem: bool) -> Vec<u32> {
+    if local_rows() {
+        return vec![8, 32];
+    }
     if is_decode() {
         if mem {
             vec![8, 32]
@@ -219,6 +235,14 @@ fn candidate(a: &mut Arena<'_>, c: &Candidate, b: &Buffers<View>, rows: u32) -> 
                 state: Some(state),
             })
         }
+        Candidate::LocalRows(e) => {
+            let work = a.filled(e.workspace(), 0)?;
+            Ok(Calls {
+                init: vec![],
+                run: e.launches(b, work, rows).map_err(|e| e.to_string())?,
+                state: None,
+            })
+        }
         Candidate::Prefill(e) => Ok(Calls {
             init: vec![],
             run: e
@@ -243,7 +267,9 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
         if map.contains_key(&call.symbol) {
             continue;
         }
-        let external = if call.symbol.starts_with("chop_fold_core_") {
+        let external = if call.symbol.starts_with("chop_fold_local_") {
+            Some(local_family::CUBIN)
+        } else if call.symbol.starts_with("chop_fold_core_") {
             Some(family::DECODE)
         } else if call.symbol.contains("_matrix_") {
             Some(family::PREFILL)
@@ -395,11 +421,13 @@ fn check_case(
     let mut omit = calls[1].run.clone();
     let last = omit.last_mut().unwrap();
     match c {
-        Candidate::Decode(_) => last.symbol.push_str("_omit_v1"),
+        Candidate::Decode(_) | Candidate::LocalRows(_) => last.symbol.push_str("_omit_v1"),
         Candidate::Prefill(_) => last.symbol.push_str("_omit_first_v1"),
     }
     let mut delayed = calls[1].run.clone();
-    if is_decode() {
+    if matches!(c, Candidate::LocalRows(_)) {
+        delayed.first_mut().unwrap().symbol.push_str("_delayed_v1");
+    } else if is_decode() {
         delayed.last_mut().unwrap().symbol.push_str("_delayed_v1");
     }
     let all = calls
@@ -485,10 +513,13 @@ fn gpu(s: &Session) -> LabResult<()> {
             check_case(s, &c, rows, &input, !mem, mem)?;
             count += 1;
         }
-        if !mem {
+        if !mem || local_rows() {
             for input in data::captured(&base, is_decode())? {
+                if mem && (!matches!(input.rows, 8 | 32) || !input.id.contains("-0-")) {
+                    continue;
+                }
                 let rows = input.rows;
-                check_case(s, &c, rows, &input, true, false)?;
+                check_case(s, &c, rows, &input, !mem, mem)?;
                 count += 1;
             }
         }
@@ -525,7 +556,7 @@ fn cpu_catalog() {
     let mut symbols = std::collections::BTreeSet::new();
     let mut references: BTreeMap<String, Value> = BTreeMap::new();
     let mut plans = Vec::new();
-    for spec in family::cubins() {
+    for spec in family::cubins().into_iter().chain(local_family::cubins()) {
         for e in spec.entries {
             assert!(symbols.insert(e.symbol));
         }
@@ -563,7 +594,7 @@ fn cpu_catalog() {
     }
     println!(
         "FOLD_CORE_CATALOG {}",
-        json!({"family":family::FAMILY,"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans})
+        json!({"family":if local_rows(){local_family::FAMILY}else{family::FAMILY},"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans,"captured_memcheck":local_rows(),"candidate_cubins":if local_rows(){vec![local_family::CUBIN]}else{vec![family::DECODE,family::PREFILL]}})
     );
 }
 

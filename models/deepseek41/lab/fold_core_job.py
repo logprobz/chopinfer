@@ -9,7 +9,7 @@ import subprocess
 import time
 import projection_zero_job as shared
 
-VALID = {'decode': ['m8n16k4', 'm8n32k2', 'm32n8k4'],
+VALID = {'decode': ['m8n16k4', 'm8n32k2', 'm32n8k4', 'local32n16', 'local32n32'],
          'prefill': ['m32s3', 'm64s2', 'm64s3', 'm128s2']}
 
 
@@ -21,13 +21,15 @@ def expected(catalog, inputs, variant, mem):
     for shape in shapes:
         dims = tuple(shape[k] for k in ('n', 'k', 'groups'))
         keys += [(*dims, rows, variant, 'synthetic') for rows in catalog['memcheck_rows' if mem else 'rows']]
-        if mem:
+        if mem and not catalog.get('captured_memcheck', False):
             continue
         for capture in inputs['captures']:
             if tuple(capture[k] for k in ('n', 'k', 'groups')) != dims:
                 continue
             if catalog['phase'] == 'decode':
                 rows = [1, 8] if capture['rows'] == 8 else [32]
+                if mem:
+                    rows = [capture['rows']] if capture['layer'] == 0 else []
             else:
                 rows = [64, 2496, 8192] if capture['phase'] == 'verify-32' and capture['layer'] == 0 else []
             keys += [(*dims, r, variant, capture['id'] + ('-repeated' if r > capture['rows'] else '-prefix')) for r in rows]
@@ -91,11 +93,12 @@ def dry_run(root, plan, phase, variant, out):
                                 env=env, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180)
         (out/f'cpu-{index}.log').write_text(result.stdout)
         shared.libtest(result.stdout, 1)
-    parser_env = dict(env, CHOPINFER_FOLD_CORE_RECORDED=str(root/'source/recorded-event.log'))
+    parser_env = dict(env, CHOPINFER_FOLD_CORE_RECORDED=str(root/'source/recorded-event.log'),
+                      CHOPINFER_FOLD_CORE_RECORDED_ROOT=str(root/'source'))
     result = subprocess.run(['python3', '-B', str(root/'source/test_fold_core_job.py')],
                             env=parser_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
     (out/'parser.log').write_text(result.stdout)
-    if 'Ran 5 tests' not in result.stdout or '\nOK' not in result.stdout:
+    if 'Ran 8 tests' not in result.stdout or '\nOK' not in result.stdout or 'skipped=' in result.stdout:
         raise ValueError('parser tests did not execute')
     [catalog] = shared.records((out/'cpu-0.log').read_text(), 'FOLD_CORE_CATALOG')
     wanted = [v for v in plan['catalogs'][phase]['variants'] if v['variant'] == variant]
@@ -103,7 +106,7 @@ def dry_run(root, plan, phase, variant, out):
         raise ValueError('CPU matrix differs')
     resources = {}
     seen = set()
-    for name in [*catalog['references'], 'fold_core_decode_sm120', 'fold_core_prefill_sm120']:
+    for name in [*catalog['references'], *catalog['candidate_cubins']]:
         path = root / ('reference' if name in catalog['references'] else 'cubins') / (name+'.cubin')
         identity = json.loads(path.with_suffix('.identity.json').read_text())
         if identity['cubin_sha256'] != shared.sha(path):
@@ -128,7 +131,7 @@ def dry_run(root, plan, phase, variant, out):
         raise ValueError('missing timing probe')
     inputs = json.loads((root/'inputs/manifest.json').read_text())
     budget = plan['budgets'][phase]
-    if sum(budget[k] for k in ('memcheck', 'timing', 'overhead')) > 1150:
+    if sum(budget[k] for k in ('memcheck', 'timing', 'overhead')) > plan.get('work_limit_seconds', 1150):
         raise ValueError('invalid timeout budget')
     (out/'dry-run.json').write_text(json.dumps(dict(phase=phase, variant=variant, cpu_tests=4,
         cases_per_device=len(expected(catalog, inputs, variant, False)),

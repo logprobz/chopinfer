@@ -4,6 +4,9 @@ import json
 import os
 from pathlib import Path
 import unittest
+import tempfile
+from unittest import mock
+from types import SimpleNamespace
 import fold_core_job as job
 
 
@@ -69,6 +72,74 @@ class Tests(unittest.TestCase):
         for bad in (text.replace('1 passed','0 passed'),text.replace('0 errors','1 errors')):
             with self.assertRaises(ValueError):
                 job.analyze(bad,catalog('prefill'),inputs(),job.VALID['prefill'][0],True)
+
+    def test_local_rows_require_real_memcheck_and_served_counts(self):
+        cat=dict(phase='decode',rows=[8,32],memcheck_rows=[8,32],captured_memcheck=True,
+                 variants=[dict(n=8192,k=1280,groups=1,variant='local32n32')])
+        matrix=dict(captures=[dict(id=f'{phase}-{layer}-q-b',phase=phase,layer=layer,
+            rows=rows,n=8192,k=1280,groups=1) for phase,rows in [('decode-8',8),('verify-32',32)]
+            for layer in [0,39]])
+        for mem,wanted in [(True,4),(False,8)]:
+            keys=job.expected(cat,matrix,'local32n32',mem)
+            self.assertEqual(len(keys),wanted)
+            cases=[dict(phase='decode',n=n,k=k,groups=g,rows=r,variant=v,source=source,
+                comparisons=8,bitwise=True,negative=True,delayed_admission=True,memcheck=mem,
+                warm=sample_time(),cold=sample_time()) for n,k,g,r,v,source in keys]
+            job.analyze(render('decode',mem,cases),cat,matrix,'local32n32',mem)
+            missing=[c for c in cases if c['source']=='synthetic']
+            with self.assertRaises(ValueError):
+                job.analyze(render('decode',mem,missing),cat,matrix,'local32n32',mem)
+            wrong=copy.deepcopy(cases);wrong[-1]['memcheck']=not mem
+            with self.assertRaises(ValueError):
+                job.analyze(render('decode',mem,wrong),cat,matrix,'local32n32',mem)
+
+    def test_execute_runs_both_workers_and_stops_after_bad_memcheck(self):
+        cat=dict(phase='decode',rows=[8,32],memcheck_rows=[8,32],captured_memcheck=True,
+                 variants=[dict(n=8192,k=1280,groups=1,variant='local32n16')])
+        matrix=dict(captures=[dict(id=f'{phase}-0-q-b',phase=phase,layer=0,
+            rows=rows,n=8192,k=1280,groups=1) for phase,rows in [('decode-8',8),('verify-32',32)]])
+        for broken in [False,True]:
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'inputs').mkdir();out=root/'out';out.mkdir()
+                (root/'inputs/manifest.json').write_text(json.dumps(matrix))
+                calls=[]
+                def spawn(cmd,env,stdout,**_):
+                    mem=env['CHOPINFER_FOLD_CORE_MEMCHECK']=='1'
+                    self.assertEqual('--tool' in cmd,mem)
+                    self.assertIn('gpu_pair',cmd)
+                    calls.append((mem,env['CHOPINFER_KERNEL_GPU']))
+                    keys=job.expected(cat,matrix,'local32n16',mem)
+                    cases=[dict(phase='decode',n=n,k=k,groups=g,rows=r,variant=v,source=source,
+                        comparisons=8,bitwise=True,negative=True,delayed_admission=True,memcheck=mem,
+                        warm=sample_time(),cold=sample_time()) for n,k,g,r,v,source in keys]
+                    if broken and mem: cases[-1]['negative']=False
+                    stdout.write(render('decode',mem,cases));stdout.flush()
+                    return SimpleNamespace(wait=lambda **_:0,poll=lambda:0,pid=1)
+                plan=dict(sanitizer='recorded-sanitizer',catalogs=dict(decode=cat),
+                          budgets=dict(decode=dict(memcheck=60,timing=210,overhead=30)))
+                with mock.patch.dict(os.environ,CUDA_VISIBLE_DEVICES='0,1'), \
+                     mock.patch.object(job,'seal'), \
+                     mock.patch.object(job.shared,'power',return_value=[250,250]), \
+                     mock.patch.object(job.subprocess,'Popen',side_effect=spawn), \
+                     mock.patch.object(job.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='')):
+                    if broken:
+                        with self.assertRaises(ValueError): job.execute(root,plan,'decode','local32n16',out)
+                    else: job.execute(root,plan,'decode','local32n16',out)
+                self.assertEqual(calls,[(True,'0'),(True,'1')]+([] if broken else [(False,'0'),(False,'1')]))
+                verdict=json.loads((out/'verdict.json').read_text())
+                self.assertEqual(verdict['exit_code'],1 if broken else 0)
+                if not broken:self.assertEqual(len(json.loads((out/'results.json').read_text())),2)
+
+    def test_recorded_fold_parser(self):
+        root=os.environ.get('CHOPINFER_FOLD_CORE_RECORDED_ROOT')
+        if root is None:
+            self.skipTest('requires a recorded fold pair')
+        root=Path(root)
+        meta=json.loads((root/'recorded-fold.json').read_text())
+        for mem in [False,True]:
+            name='recorded-memcheck.log' if mem else 'recorded-fold.log'
+            cases=job.analyze((root/name).read_text(),meta['catalog'],meta['inputs'],meta['variant'],mem)
+            self.assertEqual(len(cases),16 if mem else 104)
 
     def test_recorded_event_parser(self):
         path=os.environ.get('CHOPINFER_FOLD_CORE_RECORDED')

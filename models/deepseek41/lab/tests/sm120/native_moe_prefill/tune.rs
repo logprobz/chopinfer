@@ -8,6 +8,7 @@
 use super::captured::{BANKS, Banks, READY, WORKER, captures, case_inputs, json};
 use super::pipeline::{Inputs, Pipeline, build, native_buffers, queue};
 use super::*;
+use kernel_core::contract::Argument;
 use kernel_core::precision::buffers::QuantizedWeights;
 use kernels_sm120::moe::native_grouped::Tune;
 use std::path::{Path, PathBuf};
@@ -38,23 +39,25 @@ fn arms(
     } else {
         p.native.out.down.bytes
     };
-    let ops =
-        |a: &mut Arena<'_>, tile: &Tile, tune: Option<Tune>| -> LabResult<(Vec<Launch>, View)> {
-            let q = queue(a, &shape, tile)?;
-            let out = a.filled(bytes, 0xa5)?;
-            let n = p.native.out;
-            let buffers = if gate {
-                native_buffers(i, true, i.codes, i.scales, out, q, None)
-            } else {
-                native_buffers(i, false, n.codes, n.scales, out, q, None)
-            };
-            let launches = match tune {
-                None => native::launches(&shape, tile, p.rows, &buffers, Variant::Serving),
-                Some(t) => native::tune_launches(&shape, tile, p.rows, &buffers, t),
-            }
-            .map_err(|e| e.to_string())?;
-            Ok((launches, out))
+    let ops = |a: &mut Arena<'_>,
+               tile: &Tile,
+               tune: Option<Tune>|
+     -> LabResult<(Vec<Launch>, View)> {
+        let q = queue(a, &shape, tile)?;
+        let out = a.filled(bytes, 0xa5)?;
+        let n = p.native.out;
+        let buffers = if gate {
+            native_buffers(i, true, i.codes, i.scales, out, q, None)
+        } else {
+            native_buffers(i, false, n.codes, n.scales, out, q, None)
         };
+        let launches = match tune {
+            None => native::launches(&shape, tile, p.rows, &buffers, Variant::Serving),
+            Some(t) => native::tune_launches(&shape, tile, p.rows, &buffers, t, Variant::Serving),
+        }
+        .map_err(|e| e.to_string())?;
+        Ok((launches, out))
+    };
     let served = super::tune_family::served(kind);
     let paired = super::tune_family::paired(kind);
     let (reference, reference_out) = ops(a, &served, None)?;
@@ -65,7 +68,7 @@ fn arms(
             label: tune.name().into(),
             ops: o,
             output: v,
-            bitwise: tune == Tune::Lean,
+            bitwise: matches!(tune, Tune::Lean | Tune::NoNan),
         });
     }
     let (o, v) = ops(a, &paired, None)?;
@@ -75,13 +78,15 @@ fn arms(
         output: v,
         bitwise: true,
     });
-    let (o, v) = ops(a, &paired, Some(Tune::Lean))?;
-    out.push(Arm {
-        label: "paired_lean".into(),
-        ops: o,
-        output: v,
-        bitwise: true,
-    });
+    for tune in super::tune_family::PAIRED_TUNES {
+        let (o, v) = ops(a, &paired, Some(tune))?;
+        out.push(Arm {
+            label: format!("paired_{}", tune.name()),
+            ops: o,
+            output: v,
+            bitwise: true,
+        });
+    }
     Ok((reference, reference_out, out))
 }
 
@@ -250,20 +255,40 @@ fn tune_cpu_plan() {
         };
         let reference = native::launches(&shape, &served, 8192, &b, Variant::Serving).unwrap();
         for tune in Tune::ALL {
-            let ops = native::tune_launches(&shape, &served, 8192, &b, tune).unwrap();
+            let ops =
+                native::tune_launches(&shape, &served, 8192, &b, tune, Variant::Serving).unwrap();
+            // The NaN-free loop runs behind the scan of its input.
+            let ops = if tune == Tune::NoNan {
+                assert_eq!(ops.len(), 3);
+                assert!(symbols.contains(&ops[0].symbol), "{}", ops[0].symbol);
+                assert_eq!(
+                    ops[0].arguments.0,
+                    [b.input, b.live_tokens].map(Argument::DeviceBuffer)
+                );
+                &ops[1..]
+            } else {
+                &ops[..]
+            };
             assert!(symbols.contains(&ops[1].symbol), "{}", ops[1].symbol);
             assert_eq!(ops[0], reference[0]);
             assert_eq!(ops[1].arguments, reference[1].arguments);
             assert_eq!(ops[1].plan, reference[1].plan);
         }
+        let paired_ops = super::tune_family::PAIRED_TUNES.map(|tune| {
+            native::tune_launches(&shape, &paired, 8192, &b, tune, Variant::Serving).unwrap()
+        });
         for ops in [
             native::launches(&shape, &paired, 8192, &b, Variant::Serving).unwrap(),
-            native::tune_launches(&shape, &paired, 8192, &b, Tune::Lean).unwrap(),
+            paired_ops[0].clone(),
+            paired_ops[1].clone(),
         ] {
             for op in &ops {
                 assert!(symbols.contains(&op.symbol), "{}", op.symbol);
             }
-            let compute = entries.iter().find(|e| e.symbol == ops[1].symbol).unwrap();
+            let compute = entries
+                .iter()
+                .find(|e| e.symbol == ops[ops.len() - 1].symbol)
+                .unwrap();
             assert_eq!(compute.min_blocks, 2);
         }
     }

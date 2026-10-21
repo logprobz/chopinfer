@@ -22,8 +22,9 @@ import time
 import native_moe_job as base
 
 KINDS = ("GateUp", "Down")
-ARMS = ("lean", "no_checks", "no_mma", "no_global", "mma_only", "paired", "paired_lean")
-BITWISE = ("lean", "paired", "paired_lean")
+ARMS = ("lean", "no_checks", "no_mma", "no_global", "mma_only", "no_nan", "paired", "paired_lean",
+        "paired_no_nan")
+BITWISE = ("lean", "no_nan", "paired", "paired_lean", "paired_no_nan")
 CASES = {0: ("e384-balanced", "captured-l14-r0"), 1: ("e384-skewed", "captured-l39-r1")}
 TEST = "tune::native_moe_tune_gpu"
 CPU_TESTS = ("tune::tune_cpu_plan",)

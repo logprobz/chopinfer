@@ -1,9 +1,9 @@
 //! Bitwise comparison of every candidate with the served pair on every real
-//! C1 and C8 boundary, with invariance, ticket and mutation controls.
+//! boundary of the selected row counts, with invariance, ticket and mutation
+//! controls.
 use super::{
     artifacts, corpus,
     device::{self, Input, Kernels, Output, Tickets, VARIANTS},
-    registration,
 };
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::sinkhorn_hc::completion::Mutation;
@@ -62,7 +62,7 @@ fn same_rows(a: &Values, b: &Values, map: &[usize], rows: usize) -> bool {
 /// A part of a case runs as serving runs a partial batch: in the smallest
 /// qualified bucket (1 or the case's rows) that holds it, its rows first and
 /// live, padded with the case's other rows. Other row counts have no
-/// one-launch boundary.
+/// producer and fused-tail pair.
 fn bucketed(part: &[usize], rows: usize) -> (Vec<usize>, usize) {
     let bucket = if part.len() == 1 { 1 } else { rows };
     let mut padded = part.to_vec();
@@ -381,15 +381,15 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
     }
     let mut negatives = 0;
     if !memcheck {
-        for rows in [1, 8] {
+        for rows in artifacts::rows()? {
             let case = cases.iter().find(|c| c.rows == rows).unwrap();
             let input = Input::new(s, case, &(0..rows).collect::<Vec<_>>())?;
-            for entry in registration::controls() {
+            for control in device::controls() {
                 let old = Output::new(s, rows)?;
                 let new = Output::new(s, rows)?;
                 let tickets = Tickets::new(s, rows)?;
                 let widen = case.widening();
-                let prior = control_prior(entry.mutation);
+                let prior = control_prior(control.mutation());
                 let (expected, _) =
                     run.eager(&input, &old, &tickets, "served", widen, true, prior)?;
                 device::reset(&s.stream, &input, &new, prior, true)?;
@@ -399,12 +399,12 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
                     &input,
                     &new,
                     &tickets,
-                    Some((&entry, 8)),
+                    Some(&control),
                     widen,
                     true,
                 )?;
                 let actual = device::read(&s.stream, &new)?;
-                let label = format!("{}:{}", case.id, entry.symbol(8));
+                let label = format!("{}:{}", case.id, control.symbol());
                 run.check(
                     &label,
                     "mutation_detected",
@@ -458,11 +458,11 @@ fn comparison_rejects_changed_values_and_row_positions() {
 
 #[test]
 fn every_control_runs_under_a_prior_that_shows_it() {
-    let priors = registration::controls()
+    let priors = device::controls()
         .iter()
-        .map(|e| (e.mutation, control_prior(e.mutation)))
+        .map(|c| (c.mutation(), control_prior(c.mutation())))
         .collect::<Vec<_>>();
-    assert_eq!(priors.len(), 5);
+    assert_eq!(priors.len(), 8);
     for (mutation, prior) in priors {
         assert_eq!(prior == 0, mutation != Mutation::ClearStatus);
     }
@@ -479,7 +479,7 @@ fn chunk_parts_run_in_qualified_buckets() {
     let pair = |rows: usize| super::served::plans(rows as u32, &views, false).unwrap();
     // A three-row part has no qualified boundary; the served op unfuses it.
     assert_eq!(pair(3).len(), 3);
-    for rows in [1, 8] {
+    for rows in [1, 6, 8] {
         let map = (0..rows).collect::<Vec<_>>();
         for chunk in [1, 3] {
             for part in map.chunks(chunk) {
@@ -497,6 +497,7 @@ fn chunk_parts_run_in_qualified_buckets() {
 #[test]
 #[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn real_c1_c8_bitwise_invariances_and_controls_on_gpu() {
+    // Named for its first row counts; CHOPINFER_HC_COMPLETION_ROWS selects.
     let result = kernel_harness::gpu_test(1 << 30, |s| -> LabResult<()> {
         let value = matrix(s, false)?;
         write("CHOPINFER_HC_COMPLETION_REPORT", &value)?;

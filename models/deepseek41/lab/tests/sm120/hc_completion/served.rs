@@ -77,7 +77,7 @@ pub fn plans(rows: u32, views: &[View], widen: bool) -> LabResult<Vec<Launch>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{VARIANTS, variant};
+    use crate::device::{Candidate, VARIANTS, variant};
     use kernel_core::contract::Argument;
     use kernels_sm120::sinkhorn_hc::completion::ARGUMENTS;
 
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn served_pair_and_compositions_keep_every_argument() {
         let d = |index: u64| Argument::DeviceBuffer(index + 1);
-        for rows in [1, 8] {
+        for rows in [1, 6, 8] {
             for widen in [false, true] {
                 for alias in [false, true] {
                     let views = views(alias);
@@ -128,7 +128,19 @@ mod tests {
                     expected.extend([d(21), d(14), d(15), d(16), wide, d(18), d(19), d(20)]);
                     expected.extend([Argument::U64(0), Argument::U32(1e-20_f32.to_bits()), d(22)]);
                     for name in VARIANTS {
-                        let (entry, w) = variant(name).unwrap();
+                        let (entry, w) = match variant(name).unwrap() {
+                            Candidate::Completion(entry, w) => (entry, w),
+                            Candidate::Twin(entry, w) => {
+                                // The tail's own arguments on two CTAs per row;
+                                // only the served tail is replaced.
+                                let twin = entry.compose(&pair[1], w).unwrap();
+                                assert_eq!(twin.arguments, pair[1].arguments, "{name}");
+                                assert_eq!(twin.plan, entry.plan(rows, rows, w).unwrap());
+                                assert_eq!(twin.symbol, entry.symbol(w));
+                                assert!(entry.compose(&pair[0], w).is_err());
+                                continue;
+                            }
+                        };
                         let fused = entry.compose(&pair[0], &pair[1], views[22], w).unwrap();
                         assert_eq!(fused.arguments.0.len(), ARGUMENTS);
                         assert_eq!(fused.arguments.0, expected, "{name}");
@@ -155,7 +167,7 @@ mod tests {
                 }
             }
         }
-        for name in ["served", "tail4", "split32", "rows8"] {
+        for name in ["served", "tail4", "split32", "rows8", "twin4", "twin64"] {
             assert!(variant(name).is_err());
         }
     }

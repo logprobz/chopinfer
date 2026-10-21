@@ -1,4 +1,4 @@
-use super::{corpus, device, registration};
+use super::{corpus, device, registration, twin};
 use kernel_harness::{Cubins, LabResult};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -11,6 +11,26 @@ const PROBES: &[&str] = &[
 ];
 /// Executed sites per row count: two captured groups of 77 boundaries.
 pub const SITES: usize = 154;
+/// Captured row counts with a chain-producer pair: C1 and C8 decode, Verify-6.
+const QUALIFIABLE: [usize; 3] = [1, 6, 8];
+/// The row counts this run qualifies, `CHOPINFER_HC_COMPLETION_ROWS` as
+/// increasing comma-separated values; C1 and C8 when unset.
+pub fn rows() -> LabResult<Vec<usize>> {
+    let Ok(text) = std::env::var("CHOPINFER_HC_COMPLETION_ROWS") else {
+        return Ok(vec![1, 8]);
+    };
+    let rows = text
+        .split(',')
+        .map(|v| v.parse::<usize>().map_err(|e| e.to_string()))
+        .collect::<LabResult<Vec<_>>>()?;
+    if rows.is_empty()
+        || rows.windows(2).any(|p| p[0] >= p[1])
+        || rows.iter().any(|r| !QUALIFIABLE.contains(r))
+    {
+        return Err("invalid HC completion row selection".into());
+    }
+    Ok(rows)
+}
 pub const ROUNDS: usize = 7;
 pub const WARMUP: usize = 2;
 pub fn root() -> PathBuf {
@@ -36,8 +56,29 @@ fn exports(lock: &str, name: &str, bytes: &[u8]) -> LabResult<Vec<String>> {
         })
         .collect()
 }
+/// A frozen candidate module: its exports must be the registration's, and
+/// an embedded copy must be the frozen bytes.
+fn candidate(
+    variable: &str,
+    lock: &str,
+    name: &str,
+    expected: Vec<String>,
+) -> LabResult<(Vec<u8>, Vec<String>)> {
+    let bytes = std::fs::read(std::env::var_os(variable).ok_or("candidate path required")?)
+        .map_err(|e| e.to_string())?;
+    let symbols = exports(lock, name, &bytes)?;
+    if symbols != expected {
+        return Err("candidate exports differ from the registration".into());
+    }
+    if let Some((_, embedded)) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&expected[0])
+        && embedded != bytes
+    {
+        return Err("embedded candidate differs from frozen qualification".into());
+    }
+    Ok((bytes, symbols))
+}
 /// The served producer and tail modules embedded in the bundle, the frozen
-/// candidate module, and the kernel-lab timing probe.
+/// candidate modules, and the kernel-lab timing probe.
 pub fn images() -> LabResult<Images> {
     use bundle_deepseek41::sm120 as b;
     let g = &model_deepseek41_contract::geometry::FLASH;
@@ -55,28 +96,27 @@ pub fn images() -> LabResult<Images> {
         let (name, bytes) = b::fold_cubin_for_symbol(&symbol).ok_or("reference cubin missing")?;
         result.insert(name.into(), (bytes.to_vec(), exports(lock, name, bytes)?));
     }
-    let candidate = std::fs::read(
-        std::env::var_os("CHOPINFER_HC_COMPLETION_CUBIN").ok_or("candidate path required")?,
-    )
-    .map_err(|e| e.to_string())?;
-    let symbols = exports(
-        include_str!("../../../../bundle/kernels.lock.d/sinkhorn_hc_completion.lock"),
-        registration::CUBIN,
-        &candidate,
-    )?;
-    let expected = registration::entries()
-        .iter()
-        .map(|(e, w)| e.symbol(*w))
-        .collect::<Vec<_>>();
-    if symbols != expected {
-        return Err("candidate exports differ from the registration".into());
-    }
-    if let Some((_, embedded)) = b::fold_cubin_for_symbol(&expected[0])
-        && embedded != candidate
-    {
-        return Err("embedded completion differs from frozen qualification".into());
-    }
-    result.insert(registration::CUBIN.into(), (candidate, symbols));
+    result.insert(
+        registration::CUBIN.into(),
+        candidate(
+            "CHOPINFER_HC_COMPLETION_CUBIN",
+            include_str!("../../../../bundle/kernels.lock.d/sinkhorn_hc_completion.lock"),
+            registration::CUBIN,
+            registration::entries()
+                .iter()
+                .map(|(e, w)| e.symbol(*w))
+                .collect(),
+        )?,
+    );
+    result.insert(
+        twin::CUBIN.into(),
+        candidate(
+            "CHOPINFER_HC_FINISH_TWIN_CUBIN",
+            include_str!("../../../../bundle/kernels.lock.d/sinkhorn_hc_finish_twin.lock"),
+            twin::CUBIN,
+            twin::entries().iter().map(|(e, w)| e.symbol(*w)).collect(),
+        )?,
+    );
     let probe = std::fs::read(
         std::env::var_os("CHOPINFER_HC_COMPLETION_PROBE").ok_or("kernel-lab probe required")?,
     )
@@ -127,22 +167,24 @@ pub fn timing_cubins() -> LabResult<Cubins> {
         &[("probe_sm120", PROBES)],
     ))
 }
-/// Every eligible real C1 and C8 boundary of the authenticated corpus.
+/// Every eligible real boundary of the selected row counts in the
+/// authenticated corpus.
 pub fn cases() -> LabResult<(Vec<corpus::Case>, String)> {
     let (cases, complete, sha) = corpus::load()?;
     if !complete {
         return Err("complete captured corpus required".into());
     }
+    let rows = rows()?;
     let selected: Vec<_> = cases
         .into_iter()
-        .filter(|c| matches!(c.rows, 1 | 8))
+        .filter(|c| rows.contains(&c.rows))
         .collect();
-    if selected.len() != 2 * SITES
-        || [1, 8]
+    if selected.len() != rows.len() * SITES
+        || rows
             .iter()
-            .any(|&rows| selected.iter().filter(|c| c.rows == rows).count() != SITES)
+            .any(|&r| selected.iter().filter(|c| c.rows == r).count() != SITES)
     {
-        return Err("C1 and C8 real coverage differs".into());
+        return Err("selected real coverage differs".into());
     }
     for case in &selected {
         case.eps_bits()?;
@@ -158,11 +200,11 @@ pub fn cases() -> LabResult<(Vec<corpus::Case>, String)> {
     }
     Ok((selected, sha))
 }
-/// The four smallest-index sites of each row count, for memcheck.
+/// The two smallest-index sites of each row count, for memcheck.
 pub fn memcheck_cases() -> LabResult<Vec<corpus::Case>> {
     let (cases, _) = cases()?;
     let mut picked = Vec::new();
-    for rows in [1, 8] {
+    for rows in rows()? {
         picked.extend(
             cases
                 .iter()
@@ -178,13 +220,18 @@ pub fn memcheck_cases() -> LabResult<Vec<corpus::Case>> {
     }
     Ok(picked)
 }
-pub fn coverage(cases: &[corpus::Case], sha: &str) -> Value {
+pub fn coverage(cases: &[corpus::Case], sha: &str) -> LabResult<Value> {
     let variants = device::VARIANTS.len();
-    json!({"cases":cases.iter().map(|c|json!({"id":c.id,"rows":c.rows,"widening":c.widening()})).collect::<Vec<_>>(),
-        "corpus_sha256":sha,"variants":device::VARIANTS,"configurations":["served","other"],
-        "matrix_reports":cases.len()*variants*2,"timing_records":cases.len()*variants*2,
-        "memcheck_reports":4*(variants+1),"rounds":ROUNDS,"warmup":WARMUP,
-        "scope":"Real captured C1 and C8 decode boundaries. The served configuration uses the site's widening policy with post and comb aliased to their inputs; the other configuration flips widening with separate coefficient buffers."})
+    let rows = rows()?;
+    Ok(
+        json!({"cases":cases.iter().map(|c|json!({"id":c.id,"rows":c.rows,"widening":c.widening()})).collect::<Vec<_>>(),
+        "corpus_sha256":sha,"rows":rows,"variants":device::VARIANTS,"timing_variants":device::TIMING_VARIANTS,
+        "controls":device::controls().iter().map(device::Candidate::symbol).collect::<Vec<_>>(),
+        "configurations":["served","other"],
+        "matrix_reports":cases.len()*variants*2,"timing_records":cases.len()*device::TIMING_VARIANTS.len()*2,
+        "memcheck_reports":2*rows.len()*(variants+1),"rounds":ROUNDS,"warmup":WARMUP,
+        "scope":"Real captured HC boundaries of the selected row counts (C1 and C8 decode, Verify-6). The served configuration uses the site's widening policy with post and comb aliased to their inputs; the other configuration flips widening with separate coefficient buffers. Timing pairs the served pair with itself (A/A) and with every variant."}),
+    )
 }
 #[test]
 #[ignore = "requires staged CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
@@ -207,7 +254,7 @@ fn frozen_modules_and_cases_on_cpu() {
     }
     verify().unwrap();
     let (cases, sha) = cases().unwrap();
-    let value = coverage(&cases, &sha);
+    let value = coverage(&cases, &sha).unwrap();
     if export {
         std::fs::write(
             root().join("coverage.json"),
@@ -218,7 +265,7 @@ fn frozen_modules_and_cases_on_cpu() {
     let saved: Value =
         serde_json::from_slice(&std::fs::read(root().join("coverage.json")).unwrap()).unwrap();
     assert_eq!(saved, value);
-    assert_eq!(memcheck_cases().unwrap().len(), 4);
+    assert_eq!(memcheck_cases().unwrap().len(), 2 * rows().unwrap().len());
     println!(
         "HC_COMPLETION_ARTIFACTS modules={} symbols={} cases={} PASS",
         images.len(),

@@ -1,8 +1,9 @@
-//! Paired cold/hot CUDA-event timing of each candidate against the served
-//! pair, at the widening policy of every real C1 and C8 boundary.
+//! Paired cold/hot CUDA-event timing of the served pair against itself and
+//! of each candidate against it, at the widening policy of every real
+//! boundary of the selected row counts.
 use super::{
     artifacts,
-    device::{self, Input, Kernels, Output, Tickets, VARIANTS},
+    device::{self, Input, Kernels, Output, TIMING_VARIANTS, Tickets},
 };
 use kernel_harness::{LabResult, eviction::EvictionMode};
 use serde_json::json;
@@ -42,7 +43,11 @@ fn paired_cold_hot_served_configuration_on_gpu() {
                 )
                 .map(|_| ())
             })?;
-            for variant in VARIANTS {
+            for variant in TIMING_VARIANTS {
+                let launches = match variant {
+                    "served" => 2,
+                    name => device::variant(name)?.launches(),
+                };
                 let candidate = s.capture(|stream| {
                     device::launch(
                         stream,
@@ -78,18 +83,18 @@ fn paired_cold_hot_served_configuration_on_gpu() {
                         "rounds":artifacts::ROUNDS,"warmup":artifacts::WARMUP,
                         "reference_us":f64::from(time.arms[0].median_ms)*1000.,
                         "candidate_us":f64::from(time.arms[1].median_ms)*1000.,
-                        "paired_ratio":time.paired_ratio,"reference_launches":2,"candidate_launches":1}));
+                        "paired_ratio":time.paired_ratio,"reference_launches":2,"candidate_launches":launches}));
                 }
                 new_tickets.check(&s.stream)?;
             }
             old_tickets.check(&s.stream)?;
             println!(
                 "HC_COMPLETION_TIMING_CASE {}",
-                json!({"case":case.id,"rows":rows,"records":VARIANTS.len()*2,"elapsed_s":start.elapsed().as_secs_f64()})
+                json!({"case":case.id,"rows":rows,"records":TIMING_VARIANTS.len()*2,"elapsed_s":start.elapsed().as_secs_f64()})
             );
         }
         let value = json!({"schema":"chopinfer.hc-completion-timing.v1","corpus_sha256":sha,"cases":cases.len(),"records":records,
-            "scope":"Whole-boundary AB/BA CUDA event intervals of one graph per arm. Read eviction before each arm; hot adds an untimed replay. The served pair is the reference at each row count. Site widening policy with separate post/comb buffers."});
+            "scope":"Whole-boundary AB/BA CUDA event intervals of one graph per arm. Read eviction before each arm; hot adds an untimed replay. The served pair is the reference at each row count; the served arm is its A/A control on separate outputs. Site widening policy with separate post/comb buffers."});
         std::fs::write(
             std::env::var_os("CHOPINFER_HC_COMPLETION_TIMING_REPORT")
                 .ok_or("timing report path required")?,

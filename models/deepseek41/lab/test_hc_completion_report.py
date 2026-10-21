@@ -1,19 +1,20 @@
-"""Synthetic C1/C8 completion logs: complete runs pass, every gap is rejected."""
+"""Synthetic completion logs: complete runs pass, every gap is rejected."""
 import copy
 import json
 import unittest
 import hc_completion_report as report
 
 
-def coverage():
+def coverage(rows=(1, 8)):
     cases = []
-    for rows in (1, 8):
+    for r in rows:
         for step in range(2):
             for site in range(3):
-                cases.append({"id": f"decode-{rows}:[{step}]:{site}:\"Mlp\"", "rows": rows,
+                cases.append({"id": f"decode-{r}:[{step}]:{site}:\"Mlp\"", "rows": r,
                               "widening": site % 2 == 0})
-    return {"cases": cases, "corpus_sha256": "c" * 64, "rounds": 7, "warmup": 2,
-            "matrix_reports": len(cases) * 10, "timing_records": len(cases) * 10}
+    return {"cases": cases, "corpus_sha256": "c" * 64, "rounds": 7, "warmup": 2, "rows": list(rows),
+            "variants": report.VARIANTS, "timing_variants": report.TIMING_VARIANTS, "controls": report.CONTROLS,
+            "matrix_reports": len(cases) * 16, "timing_records": len(cases) * 18}
 
 
 def matrix_fixture(cov, memcheck=False):
@@ -31,7 +32,7 @@ def matrix_fixture(cov, memcheck=False):
             {"case": c["id"], "rows": c["rows"], "reports": len(report.VARIANTS) * len(configurations)}))
     checks = [] if memcheck else [{"case": a, "name": b, "passed": True} for a, b in sorted(report.labels(cov))]
     captured = [] if memcheck else [{"case": c["id"], "outputs": 12, "failures": [], "passed": True} for c in cases]
-    negatives = 0 if memcheck else 10
+    negatives = 0 if memcheck else len(report.CONTROLS) * len(cov["rows"])
     value = {"schema": "chopinfer.hc-completion-matrix.v1", "corpus_sha256": "" if memcheck else cov["corpus_sha256"],
              "cases": len(cases), "memcheck": memcheck, "reports": reports, "checks": checks,
              "captured": captured, "negatives": negatives, "passed": True}
@@ -47,13 +48,13 @@ def matrix_fixture(cov, memcheck=False):
 def timing_fixture(cov):
     records, lines = [], []
     for c in cov["cases"]:
-        for v in report.VARIANTS:
+        for v in report.TIMING_VARIANTS:
             for hot in (False, True):
                 records.append({"case": c["id"], "rows": c["rows"], "variant": v, "widen": c["widening"],
                                 "hot": hot, "rounds": 7, "warmup": 2, "reference_us": 20.0,
                                 "candidate_us": 12.0, "paired_ratio": 0.6,
-                                "reference_launches": 2, "candidate_launches": 1})
-        lines.append("HC_COMPLETION_TIMING_CASE " + json.dumps({"case": c["id"], "rows": c["rows"], "records": 10,
+                                "reference_launches": 2, "candidate_launches": report.launches(v)})
+        lines.append("HC_COMPLETION_TIMING_CASE " + json.dumps({"case": c["id"], "rows": c["rows"], "records": 18,
                                                                 "elapsed_s": 1.0}))
     lines.append(f"HC_COMPLETION_TIMING_RESULT cases={len(cov['cases'])} records={len(records)} PASS")
     lines.append("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out")
@@ -62,14 +63,18 @@ def timing_fixture(cov):
 
 class Report(unittest.TestCase):
     def test_complete_runs_pass(self):
+        for rows in ((1, 8), (6,)):
+            cov = coverage(rows)
+            value, text = matrix_fixture(cov)
+            self.assertTrue(report.matrix(value, text, cov)["passed"])
+            value, text = matrix_fixture(cov, True)
+            self.assertEqual(report.matrix(value, text, cov, memcheck=True)["reports"], 2 * len(rows) * 8)
+            value, text = timing_fixture(cov)
+            self.assertEqual(len(report.timing(value, text, cov)), len(rows) * 9 * 2)
         cov = coverage()
-        value, text = matrix_fixture(cov)
-        self.assertTrue(report.matrix(value, text, cov)["passed"])
-        value, text = matrix_fixture(cov, True)
-        self.assertEqual(report.matrix(value, text, cov, memcheck=True)["reports"], 20)
         value, text = timing_fixture(cov)
         rows = report.timing(value, text, cov)
-        self.assertEqual(len(rows), 2 * 5 * 2)
+        self.assertEqual(len(rows), 2 * 9 * 2)
         for row in rows:
             self.assertEqual(row["boundaries"], [3, 3])
             self.assertAlmostEqual(row["saved_us_per_step"], 24.0)
@@ -87,7 +92,7 @@ class Report(unittest.TestCase):
         v = copy.deepcopy(value); v["captured"].pop(); broken.append((v, text))
         v = copy.deepcopy(value); v["negatives"] = 0; broken.append((v, text))
         broken.append((value, text.replace("1 passed", "0 passed")))
-        broken.append((value, text.replace('"reports": 10', '"reports": 9', 1)))
+        broken.append((value, text.replace('"reports": 16', '"reports": 15', 1)))
         broken.append((value, text.replace("passed=true", "passed=false")))
         for v, t in broken:
             with self.assertRaises(ValueError):
@@ -107,13 +112,22 @@ class Report(unittest.TestCase):
         value, text = timing_fixture(cov)
         for mutate in [lambda v: v["records"].pop(), lambda v: v["records"][0].update(candidate_us=0.0),
                        lambda v: v["records"][0].update(widen=not v["records"][0]["widen"]),
-                       lambda v: v["records"][0].update(candidate_launches=2)]:
+                       lambda v: v["records"][0].update(candidate_launches=1),
+                       lambda v: v["records"][-1].update(candidate_launches=1)]:
             v = copy.deepcopy(value)
             mutate(v)
             with self.assertRaises(ValueError):
                 report.timing(v, text, cov)
         with self.assertRaises(ValueError):
             report.timing(value, text.replace("PASS", "FAIL"), cov)
+
+    def test_declared_arms_must_match(self):
+        for key, value in (("variants", report.VARIANTS[:5]), ("controls", report.CONTROLS[:5]), ("rows", [1])):
+            cov = coverage()
+            value_, text = matrix_fixture(cov)
+            cov[key] = value
+            with self.assertRaises(ValueError):
+                report.matrix(value_, text, cov)
 
     def test_peers(self):
         cov = coverage()

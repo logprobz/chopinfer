@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]/'tools/journal_proof'))
 import history
 
-CUBIN='fold_local_rows_sm120'
+CUBIN='fold_local_rows_deepseek41_sm120'
 SYMBOLS=set()
 ARG=re.compile(r'DeviceBuffer\(DeviceBufferSpanV1 \{ buffer: BundleDeviceBufferHandleV1 \{ raw: (\d+) \}, offset: (\d+), length: (\d+) \}\)|NullDevicePointer|Scalar(U32|U64)\((\d+)\)')
 

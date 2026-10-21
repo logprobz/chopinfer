@@ -3,7 +3,7 @@ use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_local_rows::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "fold_local_rows";
-pub const CUBIN: &str = "fold_local_rows_sm120";
+pub const CUBIN: &str = "fold_local_rows_deepseek41_sm120";
 pub fn entries() -> Vec<Entry> {
     let base = super::mxfp8_fold::prefill_entries(&FLASH, 4)
         .unwrap()

@@ -26,7 +26,8 @@ CASES = ("e384-balanced", "e384-skewed", "e128-skewed")
 MEMCHECK_LIVES = (1, 65, 513, 2048)
 LAYERS = (0, 13, 14, 39)
 CHUNKS = (("input-0", 0, 8192), ("input-1", 8192, 65), ("input-2", 8192, 257))
-VARIANTS = 3  # two other gate/up tiles and one other down tile
+TILE_VARIANTS = 3  # two other gate/up tiles and one other down tile, all timed
+VARIANTS = TILE_VARIANTS + 2  # and the two binding candidates (native_tune.md), bitwise only
 # Full libtest paths: the commands pass --exact, which matches whole names.
 TESTS = {
     "synthetic": "synthetic::native_moe_synthetic_gpu",
@@ -161,7 +162,7 @@ def analyze_captured(text, worker, oracle, timing):
             for part in ("gate_up", "down", "both"):
                 validate_timing(r["timing"][part])
             tiles = r["timing"]["tiles"]
-            if len(tiles) != VARIANTS + 2 or sum(t["serving_tile"] for t in tiles) != 2:
+            if len(tiles) != TILE_VARIANTS + 2 or sum(t["serving_tile"] for t in tiles) != 2:
                 raise ValueError(f"{label}: incomplete tile timing")
             for t in tiles:
                 validate_timing(t["timing"])

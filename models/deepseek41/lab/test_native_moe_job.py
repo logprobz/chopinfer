@@ -23,7 +23,7 @@ def report_only():
 
 
 def qualified(live, oracle):
-    row = {"live": live, "variants": [{"kind": "GateUp", "tile": "t", "bitwise": True}] * 3,
+    row = {"live": live, "variants": [{"kind": "GateUp", "tile": "t", "bitwise": True}] * job.VARIANTS,
            "serving_gate_matches_raw": True, "failures": [], "passed": True}
     if oracle:
         row["oracle"] = {"sampled_tokens": min(32, live), "routes": 6 * min(32, live), "gate_up": stage(), "down": stage(),

@@ -37,13 +37,16 @@ use super::*;
 // Loading the one-launch boundary module shifts their resource ids only.
 // Loading the one-launch boundary and cached query norm modules shifts their
 // resource ids only.
+// Serving the round 9 router finish again at 32 rows returns the 160 finish
+// launches to the served finish and each sublayer's join to before the
+// routed sum; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0xf9aacf33eacbfd14)),
     (6, (8040, 0x2cb68ef90c9ccc65)),
     (8, (7572, 0x98021a8896a42b94)),
     (12, (9496, 0x36ae17ee47c848ea)),
     (16, (8852, 0xce004c3207df2b4d)),
-    (32, (8384, 0x48558a9fb616eaf7)),
+    (32, (8384, 0xaee19d46d48f1853)),
 ];
 
 #[test]

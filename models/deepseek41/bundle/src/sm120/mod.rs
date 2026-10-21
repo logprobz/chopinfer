@@ -57,6 +57,7 @@ pub(crate) mod prefill_cache;
 mod prefill_heads;
 pub mod prefill_matrix;
 pub mod prefill_tma_matrix;
+pub mod prefill_tma_scales;
 pub mod projection_reuse;
 pub mod query_prefill;
 pub mod replicated_embedding;
@@ -485,6 +486,7 @@ impl crate::Kernels {
             head_last::CUBIN,
             prefill_matrix::CUBIN,
             prefill_tma_matrix::CUBIN,
+            prefill_tma_scales::CUBIN,
         ]
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
@@ -612,6 +614,7 @@ impl crate::Kernels {
         let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = prefill_matrix::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = prefill_tma_matrix::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

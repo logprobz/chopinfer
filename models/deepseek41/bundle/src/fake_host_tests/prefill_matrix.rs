@@ -127,43 +127,46 @@ fn audit(before: &[String], after: &[String]) -> Result<usize, String> {
 
 #[test]
 fn preserve_operands_and_dependencies_in_ar_and_dspark_prefill() {
-    crate::sm120::prefill_tma_matrix::with_reference(|| {
-        for (kv, drafter) in [
-            (KV_LAYOUTS[0], false),
-            (KV_LAYOUTS[1], false),
-            (KV_LAYOUTS[0], true),
-        ] {
-            for rows in [192, 2496, 8192] {
-                let before =
-                    crate::sm120::prefill_matrix::with_reference(|| run(rows, kv, drafter, true));
-                let after = run(rows, kv, drafter, false);
-                let changed = audit(&before, &after).unwrap();
-                assert!(
-                    changed >= 4 * 4,
-                    "four projections on each TP4 rank must change"
-                );
-                let mut bad = after.clone();
-                let at = bad
-                    .iter()
-                    .position(|l| {
-                        l.starts_with("launch ")
-                            && l.contains("_matrix_")
-                            && !l.contains("_admit_v1")
-                    })
-                    .unwrap();
-                bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
-                assert!(
-                    audit(&before, &bad).is_err(),
-                    "changed operand escaped the audit"
-                );
-                let mut missing = after.clone();
-                missing.remove(at - 1);
-                assert!(
-                    audit(&before, &missing).is_err(),
-                    "missing admission escaped the audit"
-                );
+    crate::sm120::prefill_tma_scales::with_reference(|| {
+        crate::sm120::prefill_tma_matrix::with_reference(|| {
+            for (kv, drafter) in [
+                (KV_LAYOUTS[0], false),
+                (KV_LAYOUTS[1], false),
+                (KV_LAYOUTS[0], true),
+            ] {
+                for rows in [192, 2496, 8192] {
+                    let before = crate::sm120::prefill_matrix::with_reference(|| {
+                        run(rows, kv, drafter, true)
+                    });
+                    let after = run(rows, kv, drafter, false);
+                    let changed = audit(&before, &after).unwrap();
+                    assert!(
+                        changed >= 4 * 4,
+                        "four projections on each TP4 rank must change"
+                    );
+                    let mut bad = after.clone();
+                    let at = bad
+                        .iter()
+                        .position(|l| {
+                            l.starts_with("launch ")
+                                && l.contains("_matrix_")
+                                && !l.contains("_admit_v1")
+                        })
+                        .unwrap();
+                    bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
+                    assert!(
+                        audit(&before, &bad).is_err(),
+                        "changed operand escaped the audit"
+                    );
+                    let mut missing = after.clone();
+                    missing.remove(at - 1);
+                    assert!(
+                        audit(&before, &missing).is_err(),
+                        "missing admission escaped the audit"
+                    );
+                }
             }
-        }
+        });
     });
 }
 

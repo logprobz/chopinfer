@@ -154,7 +154,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         sm120.with_sinkhorn_lagged_warp(kernels_sm120::sinkhorn_hc::lagged_warp::Entry {
             source: super::hc_mixer_probe::entry(g),
-            buckets: vec![1, 6, 8, 32],
+            buckets: vec![1, 4, 6, 8, 16, 32],
         })
     } else {
         sm120

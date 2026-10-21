@@ -56,10 +56,10 @@ pub fn register_pair(
 ) -> kernels_sm120::backend::Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         backend
-            .with_sinkhorn_finish_norm(entry(g), vec![1, 6, 8, 32])
+            .with_sinkhorn_finish_norm(entry(g), vec![1, 4, 6, 8, 16, 32])
             .with_sinkhorn_finish_norm_chain(
                 super::hc_round_chain::entry(g),
-                vec![(1, 8), (6, 4), (8, 4), (32, 4)],
+                vec![(1, 8), (4, 8), (6, 4), (8, 4), (16, 4), (32, 4)],
             )
             .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), vec![(32, 2)])
     } else {

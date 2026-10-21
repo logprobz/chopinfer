@@ -1,7 +1,9 @@
 use super::*;
 
-// Six and 32 rows replace 77 five/six-launch chains with two launches and
-// retain all original operands. Eight and 16 rows retain the unfused HC path.
+// Four, six, 16 and 32 rows replace 77 five/six-launch chains with two
+// launches and retain all original operands (the eight-warp chain at four
+// rows, the four-warp chain at six and 16, the two-row producer at 32). Eight
+// rows retain the unfused HC path.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
 // Resources the prefill query fusion, grouped down and router bindings load
@@ -35,18 +37,19 @@ use super::*;
 // Loading the one-launch boundary module shifts their resource ids only.
 // Loading the one-launch boundary and cached query norm modules shifts their
 // resource ids only.
-const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0x75a52baf1dd3172d)),
-    (8, (8992, 0xe1c2093c60c508eb)),
-    (16, (9964, 0xf90a4b8afb8ae5f2)),
-    (32, (8384, 0xc35088cf9234733c)),
+const JOURNALS: [(u32, (usize, u64)); 5] = [
+    (4, (8200, 0x4efa233dfe08c9dc)),
+    (6, (8040, 0x62e4fef3e98f777f)),
+    (8, (8992, 0x5580e5cf2d78fe9a)),
+    (16, (8852, 0x689fac76fff96554)),
+    (32, (8384, 0x2396e12bd25fbbc3)),
 ];
 
 #[test]
 fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
     let mut missing = Vec::new();
     let mut journal_mismatches = Vec::new();
-    for rows in [6u32, 8, 16, 32] {
+    for rows in [4u32, 6, 8, 16, 32] {
         // DSpark supports the trained native KV layout only.
         for kv in KV_LAYOUTS
             .into_iter()
@@ -104,7 +107,7 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             }
             let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
             let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
-            let qualified = matches!(rows, 6 | 32);
+            let qualified = matches!(rows, 4 | 6 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
             if count("hc_finish_norm_w32_v1") != pairs {
                 missing.push((rows, kv.storage, count("hc_finish_norm_w32_v1"), pairs));
@@ -119,13 +122,16 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             if count("hc_finish_norm_w32_v1") == pairs {
                 assert_eq!(
                     count("hc_round_chain_w4_v1"),
-                    if rows == 6 { pairs } else { 0 }
+                    if matches!(rows, 6 | 16) { pairs } else { 0 }
                 );
                 assert_eq!(
                     count("hc_round_rows_r2_v1"),
                     if rows == 32 { pairs } else { 0 }
                 );
-                assert_eq!(count("hc_round_chain_w8_v1"), 0);
+                assert_eq!(
+                    count("hc_round_chain_w8_v1"),
+                    if rows == 4 { pairs } else { 0 }
+                );
                 assert_eq!(count("hc_round_expand_mix_partials_v1"), 0);
                 assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
                 assert_eq!(
@@ -140,12 +146,15 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                     count("hc_mixer_probe_warp_v1"),
                     (if qualified { 3 } else { 0 }) * 4
                 );
-                for line in launches
-                    .iter()
-                    .filter(|l| l.contains("hc_round_chain_w4_v1"))
+                for (symbol, threads) in
+                    [("hc_round_chain_w4_v1", 128), ("hc_round_chain_w8_v1", 256)]
                 {
-                    assert!(line.contains(&format!("grid_x: 160, grid_y: {rows}, grid_z: 1")));
-                    assert!(line.contains("block_x: 128, block_y: 1, block_z: 1"));
+                    for line in launches.iter().filter(|l| l.contains(symbol)) {
+                        assert!(line.contains(&format!("grid_x: 160, grid_y: {rows}, grid_z: 1")));
+                        assert!(
+                            line.contains(&format!("block_x: {threads}, block_y: 1, block_z: 1"))
+                        );
+                    }
                 }
                 for line in launches
                     .iter()

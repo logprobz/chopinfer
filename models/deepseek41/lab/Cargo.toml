@@ -188,6 +188,10 @@ path = "examples/sm120/build_indexer_score_study.rs"
 name = "build_native_moe_prefill"
 path = "examples/sm120/build_native_moe_prefill.rs"
 
+[[example]]
+name = "build_native_tune"
+path = "examples/sm120/build_native_tune.rs"
+
 [[test]]
 name = "native_moe_prefill"
 path = "tests/sm120/native_moe_prefill/main.rs"

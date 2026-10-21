@@ -53,19 +53,9 @@ pub fn norm_launch(served: Vec<Launch>, certified: View) -> Result<Launch, Refus
 }
 
 /// The router views of the certified projection.
-pub struct RouterViews {
-    /// The norm's widened F32 rows (the SIMT path's input).
-    pub widened: View,
-    /// The norm's BF16 rows.
-    pub normed: View,
-    pub certified: View,
-    pub weight: View,
-    pub output: View,
-    pub live_rows: View,
-    pub weight_domain: View,
-}
+pub(crate) use crate::ops::exact_f32::CertifiedRouterViews as RouterViews;
 
-pub fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
+pub(crate) fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
     let e = router();
     let q = e.query();
     let rows = u64::from(ROWS);

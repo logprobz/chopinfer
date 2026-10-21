@@ -106,7 +106,7 @@ impl Lowering<'_> {
                 .ok_or_else(|| format!("moe.router of layer {layer} has no weight domain"))?;
         let mut bind = crate::ops::Bind::default();
         let mut view = |span| bind.view(span);
-        let views = crate::sm120::router_norm::RouterViews {
+        let views = crate::ops::exact_f32::CertifiedRouterViews {
             widened: view(rows(scratch.normed_wide, phase.rows())),
             normed: view(rows(scratch.normed, phase.rows())),
             certified: view(rows(scratch.router_certified, phase.rows())),
@@ -115,7 +115,7 @@ impl Lowering<'_> {
             live_rows: view(self.inputs.live_tokens),
             weight_domain: view(domain),
         };
-        let launch = crate::sm120::router_norm::router_launch(&views)
+        let launch = crate::Kernels::router_in_norm_router(&views)
             .map_err(|refusal| format!("moe.router of layer {layer}: {refusal}"))?;
         Ok(bind.lowered_launches(vec![launch]))
     }

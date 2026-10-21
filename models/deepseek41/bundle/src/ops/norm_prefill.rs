@@ -56,7 +56,7 @@ impl NormPrefillOps {
         let served = self
             .input
             .launches(&buffers, View::EMPTY, Counts::rows(rows))?;
-        let launch = crate::sm120::router_norm::norm_launch(served, certified)?;
+        let launch = crate::Kernels::router_in_norm_norm(served, certified)?;
         Ok(bind.lowered_launches(vec![launch]))
     }
 

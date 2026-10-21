@@ -62,10 +62,6 @@ impl Lowering<'_> {
                 .exact_f32
                 .as_ref()
                 .is_some_and(|ops| ops.projection("moe.router").is_some())
-            && crate::sm120::router_norm::applies(
-                self.shape.geometry,
-                self.shape.ranks(),
-                phase.rows(),
-            )
+            && crate::Kernels::router_in_norm(self.shape.geometry, self.shape.ranks(), phase.rows())
     }
 }

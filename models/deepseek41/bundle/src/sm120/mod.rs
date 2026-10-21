@@ -247,6 +247,32 @@ pub fn register_f32_projections(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    /// Whether a prefill step of `rows` rows runs the router in the
+    /// MoE-input norm (`router_norm`).
+    pub(crate) fn router_in_norm(
+        g: &model_deepseek41_contract::geometry::Geometry,
+        ranks: u32,
+        rows: u32,
+    ) -> bool {
+        router_norm::applies(g, ranks, rows)
+    }
+
+    /// The certifying MoE-input norm's launch from the served norm's
+    /// (`router_norm::norm_launch`).
+    pub(crate) fn router_in_norm_norm(
+        served: Vec<kernel_core::backend::Launch>,
+        certified: kernel_core::backend::View,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        router_norm::norm_launch(served, certified)
+    }
+
+    /// The router's certified projection launch (`router_norm::router_launch`).
+    pub(crate) fn router_in_norm_router(
+        views: &crate::ops::exact_f32::CertifiedRouterViews,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        router_norm::router_launch(views)
+    }
+
     pub(crate) fn prefill_router(
         shape: &crate::shape::Shape,
         experts: u32,

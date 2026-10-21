@@ -104,3 +104,28 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
             .collect(),
     )
 }
+
+/// Lab variant of the gate finisher with the same bits
+/// (`gate_finish_loads.cuh`): every K-block partial and the route weight
+/// load before the first add. Same parameters and launch as the served
+/// finisher ([`plan`] with [`Stage::GateFinish`]).
+pub fn finish_loads_symbol(e: &Entry) -> String {
+    symbol(e, Stage::GateFinish, Loads::Direct).replace("_gate_finish_v1", "_gate_finish_loads_v1")
+}
+pub fn finish_loads_entry(e: &Entry) -> EntrySpec {
+    let mut spec = entry(e, Stage::GateFinish, Loads::Direct);
+    spec.symbol = finish_loads_symbol(e);
+    let from = "chop::moe::bandwidth::gate_finish<";
+    assert_eq!(spec.body.matches(from).count(), 1);
+    spec.body = spec
+        .body
+        .replace(from, "chop::moe::bandwidth_loads::gate_finish<");
+    spec
+}
+pub fn finish_loads_cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
+    super::spec(
+        name.into(),
+        "gate_finish_loads.cuh",
+        entries.iter().map(finish_loads_entry).collect(),
+    )
+}

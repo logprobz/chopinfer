@@ -201,6 +201,7 @@ mod tests {
             Realized {
                 ar: Some(0.0004),
                 drafting: Some(0.0002),
+                drafting_weight: 1.0,
                 drafting_steps: super::super::REALIZED_STEPS,
             },
         );

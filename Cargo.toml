@@ -170,12 +170,3 @@ opt-level = 3
 
 [profile.test.package.sha2]
 opt-level = 3
-
-# kernel-core's tests check which NaN operand its f64 reference orders
-# propagate in an unoptimized build. Keep it unoptimized under the CI profile
-# (ci/rust-profile.env) as well; at the default dev level this changes nothing.
-[profile.dev.package.kernel-core]
-opt-level = 0
-
-[profile.test.package.kernel-core]
-opt-level = 0

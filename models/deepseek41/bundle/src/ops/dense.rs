@@ -208,6 +208,7 @@ type QuantizedInput = (u32, DType);
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
+    local_query: Option<Prepared<Mxfp8FoldGemmBuffers<View>>>,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
     tensors: Vec<(&'static str, &'static str)>,
@@ -335,9 +336,15 @@ impl DenseOps {
                 }
             }
         }
+        let local_need = exact::need(32, exact::verify(32));
+        let local_query = crate::Kernels::prepare_local_query(shape, local_need)?;
+        if let Some(op) = &local_query {
+            asks.record("dense.query local C32", local_need, op.info());
+        }
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
+            local_query,
             stream,
             stream_pair,
             tensors,
@@ -396,6 +403,33 @@ impl DenseOps {
             }
         }
         result
+    }
+
+    pub(crate) fn local_query(
+        &self,
+        phase: Phase,
+        views: &GemmViews,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Option<Vec<Lowered>>, Refusal> {
+        if phase != Phase::Decode(32) {
+            return Ok(None);
+        }
+        let Some(op) = &self.local_query else {
+            return Ok(None);
+        };
+        let mut bind = Bind::default();
+        let buffers = Mxfp8FoldGemmBuffers {
+            activations: bind.view(views.activations),
+            activation_scales: bind.view(views.activation_scales),
+            weights: bind.view(views.weights),
+            weight_scales: bind.view(views.weight_scales),
+            output: bind.view(views.output),
+            live_rows: bind.view(views.live_rows),
+            status: bind.view(views.status),
+            status_row_offset: 0,
+        };
+        bind.launch_within(op, &buffers, workspace, Counts::rows(32))
+            .map(Some)
     }
 
     /// The quantization of `rows` rows of `width` columns of `input`.

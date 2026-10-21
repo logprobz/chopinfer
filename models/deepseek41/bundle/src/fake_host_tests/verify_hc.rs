@@ -44,6 +44,8 @@ use super::*;
 // The absorbing small queues at 32 rows rename the 160 gate and down small
 // launches and drop the 320 wide launches; the absorb module renumbers
 // handles only at the other rows.
+// The local C32 query module shifts resource identities only. These verify
+// launches and their operands retain the reference path at every row count.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x5743860b1f2a7917)),
     (6, (8040, 0xb4d2a3d1b3984c3e)),

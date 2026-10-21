@@ -154,10 +154,18 @@ impl Lowering<'_> {
             };
             return dual.launch(&[views, kv]).map(Some).map_err(error);
         }
-        launches.extend(
-            ops.project(id, phase, &views, self.buffers.workspace)
+        let local = if id == "attention.q-b" && layer < self.shape.geometry.layers() {
+            ops.local_query(phase, &views, self.buffers.workspace)
+                .map_err(error)?
+        } else {
+            None
+        };
+        launches.extend(match local {
+            Some(calls) => calls,
+            None => ops
+                .project(id, phase, &views, self.buffers.workspace)
                 .map_err(error)?,
-        );
+        });
         Ok(Some(launches))
     }
 }

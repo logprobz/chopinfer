@@ -25,6 +25,7 @@ mod decode_attention;
 mod decode_join;
 mod device_results;
 mod dspark;
+mod fold_local_rows;
 mod fold_stream;
 mod head_last;
 mod index_mma;
@@ -1092,6 +1093,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// steps of these lifecycles run its tiles. The scanned loop gives the
 /// module's two tile resolves the scanned names and adds the two admission
 /// scans' resolves and releases per rank.
+/// The local C32 query module adds eight resolves and nine releases per
+/// TP4 rank. These short-row lifecycles retain every launch and allocation;
+/// the complete histories were compared under typed handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

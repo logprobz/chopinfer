@@ -19,6 +19,8 @@ pub mod dspark_peer_embedding;
 pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
+pub mod fold_local_rows;
+mod fold_local_rows_serving;
 pub mod hc_completion;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;
@@ -521,6 +523,7 @@ impl crate::Kernels {
             prefill_matrix::CUBIN,
             prefill_tma_matrix::CUBIN,
             prefill_tma_scales::CUBIN,
+            fold_local_rows::CUBIN,
         ]
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))

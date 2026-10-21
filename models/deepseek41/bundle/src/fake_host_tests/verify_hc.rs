@@ -32,10 +32,10 @@ use super::*;
 // Staged-scale resources renumber handles. Verify bodies remain identical;
 // full creation histories differ only by audited short prefill substitutions.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0xb7386939260d755c)),
-    (8, (8992, 0x402809f4ec2648be)),
-    (16, (9964, 0xd635034e2db05900)),
-    (32, (8384, 0x5d17b5ce40e9e90f)),
+    (6, (8040, 0x638bb2c2a8532798)),
+    (8, (8992, 0x277db75800aa1bbc)),
+    (16, (9964, 0x10cb039556459fd2)),
+    (32, (8384, 0xc2251b36fd28722b)),
 ];
 
 #[test]

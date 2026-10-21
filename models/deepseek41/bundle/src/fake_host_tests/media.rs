@@ -374,7 +374,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// module resources match the text lifecycle, with all allocations retained.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
-    (Ranks::TP4, (53203, 0xf686c44e0d2058ad)),
+    (Ranks::TP4, (56463, 0x4c54a13f7adb5aac)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

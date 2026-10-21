@@ -337,18 +337,20 @@ another `param`. For a model that accepts images, `/v1/models` reports
 `architecture.input_modalities` (the served modalities) and
 `max_images_per_request`.
 
-Under the count, two limits bind next: the context window, since each image
-costs its recipe's tokens (Qwen3.8 up to 16,384, GLM 5.3 Flash up to 8,000),
-and the 4 GiB of host memory one request may use to prepare images not
-prepared before, which holds only a few images at the largest sizes the
-recipes produce. The body limit grows with the image limit. The GPU media
+Under the count, the context window binds next, since each image costs its
+recipe's tokens (Qwen3.8 up to 16,384, GLM 5.3 Flash up to 8,000). The 4 GiB
+of host memory one request may use to prepare images not prepared before
+binds only after that: each prepared image keeps its 8-bit canvas (48 MiB at
+Qwen3.8's 16 MiP bound), and the image being prepared reserves its decode and
+resize working set (about 300 MB for a 4000 x 3000 JPEG under Qwen3.8's
+recipe). The body limit grows with the image limit. The GPU media
 arena is a cache, not a per-request limit: prefill encodes images as its
 chunks reach them ([media arena](numerics.md#kv-offload-and-prefix-state)).
 
 Sending the same images on every turn is cheap. With prefix caching on, the
 next turn resumes from the cached conversation and encodes only the images
 after it, and an image sent again (same bytes and MIME type) reuses its
-decoded pixels while the media budget has room. A client that drops old
+prepared canvas while the media budget has room. A client that drops old
 images should drop several at once, for example the oldest half as it nears
 the limit, rather than one per turn: removing an image changes the prompt
 from that image on, so everything after it is prefilled again.

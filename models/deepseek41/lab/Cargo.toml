@@ -219,3 +219,7 @@ path = "tests/sm120/hc_completion/main.rs"
 [[example]]
 name = "build_router_norm"
 path = "examples/sm120/build_router_norm.rs"
+
+[[test]]
+name = "router_norm"
+path = "tests/sm120/router_norm/main.rs"

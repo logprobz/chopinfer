@@ -187,6 +187,34 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
   }
 }
 
+// The served inner loop's policy. The lab's tuning variants change one
+// part of it: `lean` takes each MMA's scale byte by the instruction's byte
+// selector and checks activation NaN codes in each row group's first
+// column warp only (bitwise the served outputs and admission); the others
+// are timing ablations whose outputs are not meaningful: no checks, no
+// MMA, no global loads after the prologue, or MMAs on register operands
+// with no operand loads.
+struct Served {
+  static constexpr bool lean = false, checks = true, mma = true, global = true, loads = true;
+};
+
+// One MMA whose A and B scales are byte `q` of the given words, by the
+// instruction's byte selectors; `q` folds once the group loop unrolls.
+template<int Q>
+__device__ __forceinline__ void byte_mma(ptx::D4& d, const ptx::A4& a, const ptx::B2& b,
+                                         uint32_t scale_a, uint32_t scale_b) {
+  ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3, Q, 0, Q, 0>(d, a, b, scale_a, scale_b);
+}
+__device__ __forceinline__ void byte_mma(int q, ptx::D4& d, const ptx::A4& a, const ptx::B2& b,
+                                         uint32_t scale_a, uint32_t scale_b) {
+  switch (q) {
+    case 0: byte_mma<0>(d, a, b, scale_a, scale_b); break;
+    case 1: byte_mma<1>(d, a, b, scale_a, scale_b); break;
+    case 2: byte_mma<2>(d, a, b, scale_a, scale_b); break;
+    default: byte_mma<3>(d, a, b, scale_a, scale_b); break;
+  }
+}
+
 // The row's four group scales of the stage, from its copied words.
 template<class C, int Words>
 __device__ __forceinline__ uint32_t stage_scales(const uint32_t (&words)[Words], uint64_t row) {
@@ -210,7 +238,7 @@ __device__ __forceinline__ bool outside(uint32_t scales, uint32_t lo, uint32_t h
 // from +0 over the groups, then one ordered F32 add into the accumulator.
 // The exact engines' admission runs off the MMA path: its slow checks
 // execute only when a scale leaves the range where every code is exact.
-template<class C, class T, int Groups, bool Omit>
+template<class C, class T, int Groups, bool Omit, class Tune = Served>
 __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int expert, int column,
     int count, ptx::D4 (&sum)[2][T::fragments]) {
   constexpr int TC = tile_cols<C, T>, F = T::fragments;
@@ -224,6 +252,15 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
     const int w = C::gate_up ? cf * TC + col_warp * 16 : col_warp * 32 + cf * 16;
     const int col = column + (C::gate_up ? col_warp * 16 : col_warp * 32 + cf * 16);
     const uint64_t row = uint64_t(expert) * C::weight_rows + (C::gate_up ? cf * C::n : 0) + col;
+    if constexpr (!Tune::loads) {
+#pragma unroll
+      for (int q = 0; q < Groups; ++q) {
+#pragma unroll
+        for (int i = 0; i < 4; ++i) a[cf][q].v[i] = (lane * 0x01010101u + q + i) & 0x3c3c3c3cu;
+        scale_a[cf][q] = 127;
+      }
+      continue;
+    }
     const uint32_t s0 = stage_scales<C>(st.weight_scale[w + g], row + g);
     const uint32_t s1 = stage_scales<C>(st.weight_scale[w + g + 8], row + g + 8);
 #pragma unroll
@@ -232,9 +269,10 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
       const uint32_t hi = lds32(st.weight + lay::weight_load(w + g + 8, q, t));
       lay::expand_e2m1x8(lo, a[cf][q].v[0], a[cf][q].v[2]);
       lay::expand_e2m1x8(hi, a[cf][q].v[1], a[cf][q].v[3]);
-      scale_a[cf][q] = ((t & 1 ? s1 : s0) >> (8 * q)) & 255;
+      // Lean keeps the stage's four scale bytes and selects one per MMA.
+      scale_a[cf][q] = Tune::lean ? (t & 1 ? s1 : s0) : ((t & 1 ? s1 : s0) >> (8 * q)) & 255;
     }
-    if (outside<Groups>(s0, 0, 252) || outside<Groups>(s1, 0, 252)) {
+    if (Tune::checks && (outside<Groups>(s0, 0, 252) || outside<Groups>(s1, 0, 252))) {
 #pragma unroll 1
       for (int q = 0; q < Groups; ++q) {
         check_weights(lds32(st.weight + lay::weight_load(w + g, q, t)), (s0 >> (8 * q)) & 255);
@@ -248,10 +286,12 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
 #pragma unroll
   for (int f = 0; f < F; ++f) {
     const int r = row_base + f * 8 + g, source = s.sources[r];
-    sb[f] = stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source));
-    slow |= row_base + f * 8 < count && source >= 0 && outside<Groups>(sb[f], 3, 246);
+    sb[f] = Tune::loads ? stage_scales<C>(st.act_scale[r], uint64_t(source < 0 ? 0 : source))
+                        : 0x7f7f7f7fu;
+    slow |= Tune::checks && row_base + f * 8 < count && source >= 0 &&
+            outside<Groups>(sb[f], 3, 246);
   }
-  if (__any_sync(0xffffffffu, slow)) {
+  if (Tune::checks && __any_sync(0xffffffffu, slow)) {
 #pragma unroll 1
     for (int f = 0; f < F; ++f) {
       const int r = row_base + f * 8 + g, source = s.sources[r];
@@ -266,6 +306,9 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
   // second fragment may be padding, whose zero rows are discarded.
   static_assert(F % 2 == 0);
   uint32_t nan = 0;
+  // Lean: one column warp of each row group checks the NaN codes, which
+  // its loads cover for every live row and K of the stage.
+  const bool check_nan = Tune::checks && (!Tune::lean || col_warp == 0);
 #pragma unroll
   for (int f0 = 0; f0 < F; f0 += 2) {
     if (row_base + f0 * 8 >= count) continue;  // warp-uniform: only padding remains
@@ -275,14 +318,29 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
 #pragma unroll
       for (int p = 0; p < 2; ++p) {
         const int f = f0 + p, r = row_base + f * 8 + g;
-        const uint2 codes = lds64(st.act + lay::act_load(r, q, t));
-        nan |= lay::e4m3_nan(codes.x) | lay::e4m3_nan(codes.y);
+        const uint2 codes = Tune::loads ? lds64(st.act + lay::act_load(r, q, t))
+                                        : make_uint2(lane * 0x01010101u + q, f + q);
+        if (check_nan) nan |= lay::e4m3_nan(codes.x) | lay::e4m3_nan(codes.y);
         const ptx::B2 b{{codes.x, codes.y}};
-        const uint32_t scale_b = (sb[f] >> (8 * q)) & 255;
+        if constexpr (Tune::lean) {
 #pragma unroll
-        for (int cf = 0; cf < 2; ++cf)
-          ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
-              chain[p][cf], a[cf][q], b, scale_a[cf][q], scale_b);
+          for (int cf = 0; cf < 2; ++cf)
+            byte_mma(q, chain[p][cf], a[cf][q], b, scale_a[cf][q], sb[f]);
+        } else if constexpr (Tune::mma) {
+          const uint32_t scale_b = (sb[f] >> (8 * q)) & 255;
+#pragma unroll
+          for (int cf = 0; cf < 2; ++cf)
+            ptx::mma_mxf8f6f4<ptx::Element::e2m1, ptx::Element::e4m3>(
+                chain[p][cf], a[cf][q], b, scale_a[cf][q], scale_b);
+        } else {
+          // Keep the operands live without the tensor instruction.
+          asm volatile("" :: "r"(codes.x), "r"(codes.y), "r"(sb[f]), "r"(scale_a[0][q]),
+                       "r"(scale_a[1][q]));
+#pragma unroll
+          for (int cf = 0; cf < 2; ++cf)
+            asm volatile("" :: "r"(a[cf][q].v[0]), "r"(a[cf][q].v[1]), "r"(a[cf][q].v[2]),
+                         "r"(a[cf][q].v[3]));
+        }
       }
     }
     if constexpr (!Omit) {
@@ -308,7 +366,8 @@ struct NoCeil {
 // `Raw` also writes gate/up's F32 gate and up sums to `raw` (route rows of
 // n gate then n up columns) for the oracle. `Ceil` (gate/up) also
 // quantizes each tile's BF16 outputs, staged in shared memory.
-template<class C, class T, bool Omit = false, bool Raw = false, class Ceil = NoCeil>
+template<class C, class T, bool Omit = false, bool Raw = false, class Ceil = NoCeil,
+         class Tune = Served>
 __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales, const int* sorted_rows,
     const int* padded_rows, const int* live_tokens, int* table, const float* route_weights,
@@ -355,18 +414,18 @@ __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight
       wait<S - 2>();
       __syncthreads();
       // The slot of block b - 1, which every thread has finished reading.
-      if (b + S - 1 < C::blocks)
+      if (Tune::global && b + S - 1 < C::blocks)
         issue(s, (b + S - 1) % S, b + S - 1, expert, column, act_scale_bytes, input, weight,
               weight_scales, activation_scales);
       commit();  // empty groups keep wait_group's count exact at the tail
       const bool omit = Omit && b == 0;
       if (C::tail_groups == 0 || b + 1 < C::blocks) {
-        if (omit) block<C, T, 4, true>(s, b % S, expert, column, count, sum);
-        else block<C, T, 4, false>(s, b % S, expert, column, count, sum);
+        if (omit) block<C, T, 4, true, Tune>(s, b % S, expert, column, count, sum);
+        else block<C, T, 4, false, Tune>(s, b % S, expert, column, count, sum);
       } else {
         constexpr int G = C::tail_groups == 0 ? 4 : C::tail_groups;
-        if (omit) block<C, T, G, true>(s, b % S, expert, column, count, sum);
-        else block<C, T, G, false>(s, b % S, expert, column, count, sum);
+        if (omit) block<C, T, G, true, Tune>(s, b % S, expert, column, count, sum);
+        else block<C, T, G, false, Tune>(s, b % S, expert, column, count, sum);
       }
     }
     wait<0>();
@@ -413,6 +472,13 @@ __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight
     }
   }
 }
+
+// The lab's tuning variants of `Served`.
+struct Lean : Served { static constexpr bool lean = true; };
+struct NoChecks : Served { static constexpr bool checks = false; };
+struct NoMma : Served { static constexpr bool mma = false; };
+struct NoGlobal : Served { static constexpr bool global = false, checks = false; };
+struct MmaOnly : Served { static constexpr bool global = false, checks = false, loads = false; };
 
 // Lab probe of one instruction from +0: lane l passes A registers
 // a[4l..4l+3], B registers b[2l..2l+1] and scales scales[2l] (A) and

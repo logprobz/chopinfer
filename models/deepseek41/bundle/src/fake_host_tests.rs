@@ -1004,9 +1004,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// operation is identical after handle mapping.
 /// The early-stop selectors add one module, six resolves and seven releases
 /// per native rank, and rename each prefill local selector and merge; their
-/// streams, grids and arguments are unchanged.
-/// The r2 router finish module adds one module, 14 resolves and 15 releases
-/// per TP4 rank; no launch or allocation changes.
+/// streams, grids and arguments are unchanged. The r2 router finish module
+/// adds one module, 14 resolves and 15 releases per TP4 rank; no launch or
+/// allocation changes. The combined journals were audited against main's
+/// again: the selectors and the r2 module add exactly these resources and
+/// renames, and every other operation is identical after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1033,7 +1035,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78199, 0x9b16096f5eadd8bd),
+        (78251, 0xc1fb6e3b19fe652d),
     ),
     (
         "deepseek41-flash-tp4",
@@ -1180,6 +1182,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// Opting out retains the audited exact expert path and its resources. The
 /// resident small gate and the r2 router finish modules add only their
 /// resolves and releases here (one module each; 2 and 14 resolves per rank).
+/// The native early-stop selectors add one module and six resolves per rank
+/// and rename the prefill selectors, as in the native default.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1187,7 +1191,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(76543, 0xd76955200f3e15ce), (74239, 0x9ccb208f068e8cb3)])
+            .zip([(76595, 0xd49d48c90f81e383), (74239, 0x9ccb208f068e8cb3)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

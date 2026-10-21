@@ -343,6 +343,19 @@ fn catch_up_main(
     Ok(result)
 }
 
+/// The phase of a catch-up chunk's KV projection. Below 128 rows a prefill
+/// phase takes the prefill-shaped fold entry, which runs N/32 CTAs at any
+/// row count; up to the dense decode capacity the exact-row decode entry
+/// fills the device instead. Every native MXFP8 fold entry keeps the fold128
+/// contract (128-K chains added in K order), so the bits do not change.
+fn projection_phase(count: u32) -> Phase {
+    if count <= crate::Kernels::dense_decode_capacity() {
+        Phase::Decode(count)
+    } else {
+        Phase::Prefill { rows: count }
+    }
+}
+
 /// The stage's KV projection reads the main projection's normalized codes,
 /// which neither it nor the ring write overwrites.
 fn catch_up_store(
@@ -357,12 +370,14 @@ fn catch_up_store(
     if stage >= g.dspark_stages() {
         return Err("DSpark catch-up geometry or native KV binding differs".into());
     }
-    let phase = Phase::Prefill { rows: count };
     let s = &base.buffers.scratch;
     let row = |span| crate::buffers::rows(span, count);
     let layer = g.layers() + stage;
     let mut result = base
-        .stage(phase, Stage::Project(layer, "attention.kv"))?
+        .stage(
+            projection_phase(count),
+            Stage::Project(layer, "attention.kv"),
+        )?
         .ok_or("DSpark catch-up KV projection is unavailable")?;
     result.extend(
         prepared

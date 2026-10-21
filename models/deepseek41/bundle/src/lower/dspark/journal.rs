@@ -302,23 +302,31 @@ fn dspark_full_block_journal_at_each_topology() {
                 let k = u64::from(g.shape.hidden) * g.shape.dspark.targets.len() as u64;
                 let main =
                     dspark::rings::committed(&shape, extent, &bound[rank].state, stage).unwrap();
-                programs.push(
-                    dspark::catch_up(
-                        &draft,
-                        &base,
-                        stage,
-                        3,
-                        &CatchUpViews {
-                            raw_features: alloc(3 * k * 2),
-                            feature_codes: alloc(3 * k),
-                            feature_scales: alloc(3 * k / 32),
-                            ring: main,
-                            row_slots,
-                            last,
-                        },
-                    )
-                    .unwrap(),
+                let program = dspark::catch_up(
+                    &draft,
+                    &base,
+                    stage,
+                    3,
+                    &CatchUpViews {
+                        raw_features: alloc(3 * k * 2),
+                        feature_codes: alloc(3 * k),
+                        feature_scales: alloc(3 * k / 32),
+                        ring: main,
+                        row_slots,
+                        last,
+                    },
+                )
+                .unwrap();
+                // Three rows of KV projection take the exact-row decode
+                // entry, not the prefill-shaped fold.
+                assert!(
+                    program
+                        .iter()
+                        .all(|l| !l.launch.symbol.contains("mxfp8_fold_m8192")),
+                    "{}",
+                    shape.topology()
                 );
+                programs.push(program);
             }
             launch(services, &streams, &symbols, programs);
             let mut programs = Vec::new();

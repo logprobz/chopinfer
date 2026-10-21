@@ -2,6 +2,14 @@
 use super::*;
 #[test]
 fn prefill_dense_launches_use_staged_tiles() {
+    // The compact and TMA staged routes, without the measured matrix tiles
+    // that serve these rows by default (their own tests cover them).
+    crate::sm120::prefill_matrix::with_reference(|| {
+        crate::sm120::prefill_tma_matrix::with_reference(staged_tiles)
+    });
+}
+
+fn staged_tiles() {
     for rows in [128, 512, 1024, 2048, 4096, 8192] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);

@@ -1,4 +1,4 @@
-//! Qualified output fusion retains the small-tail and unmeasured fallbacks.
+//! Qualified output fusion covers the small tails; unmeasured counts keep their fallbacks.
 use super::*;
 
 #[test]
@@ -8,9 +8,10 @@ fn fused_prefill_writes_output_without_partial_or_merge_launches() {
         .iter()
         .filter(|line| line.starts_with("launch ") && line.contains("_head_shared_finish_v1"))
         .collect::<Vec<_>>();
-    // Cold full mixed32 layers and the eighteen measured retained mixed64
-    // counts. The later native chunk and the two small tails stay unchanged.
-    assert_eq!(fused.len(), 4 * (18 + 18));
+    // Cold full mixed32 layers and every retained mixed64 count of 64 to
+    // 2496 rows, the two small tails included. The later native chunk stays
+    // unchanged.
+    assert_eq!(fused.len(), 4 * (18 + 40));
     for line in fused {
         assert!(line.contains("shared_memory_bytes: 83200,"));
         assert!(line.contains("NullDevicePointer, ScalarU64("));
@@ -19,7 +20,7 @@ fn fused_prefill_writes_output_without_partial_or_merge_launches() {
 }
 
 #[test]
-fn retained_prefill_fuses_measured_counts_and_keeps_small_tail_merges() {
+fn retained_prefill_fuses_every_measured_count_and_small_tail() {
     let trace = super::prefill_cache::composed_trace(0, false, true, false);
     let attention = trace
         .iter()
@@ -28,20 +29,10 @@ fn retained_prefill_fuses_measured_counts_and_keeps_small_tail_merges() {
                 && line.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1")
         })
         .collect::<Vec<_>>();
-    assert_eq!(attention.len(), 4 * (2 + 20));
+    // Retained native-key attention and its merge are fused at every
+    // measured count of 64 to 2496 rows, so neither launches separately.
+    assert!(attention.is_empty(), "{attention:?}");
     for rows in (64..=2496).step_by(128) {
-        let grid = format!("grid_x: {}, grid_y: 2,", rows / 2);
-        let launches = attention
-            .iter()
-            .filter(|s| s.contains(&grid))
-            .collect::<Vec<_>>();
-        let count = if rows < 320 { 8 } else { 4 };
-        assert_eq!(launches.len(), count, "retained rows={rows}");
-        assert!(
-            launches
-                .iter()
-                .all(|s| s.contains("block_x: 256,") && s.contains("shared_memory_bytes: 85504,"))
-        );
         let merge_grid = format!("grid_x: {rows}, grid_y: 16,");
         assert_eq!(
             trace
@@ -50,7 +41,8 @@ fn retained_prefill_fuses_measured_counts_and_keeps_small_tail_merges() {
                     && s.contains("h16_d512_mixed_normalized_s1_r64_prefill_merge_v1")
                     && s.contains(&merge_grid))
                 .count(),
-            count
+            0,
+            "retained rows={rows}"
         );
     }
 }

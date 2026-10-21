@@ -39,8 +39,12 @@ its executed cases, and fails on zero executed tests or cases.
 3. **Repeatability.** A poisoned repeat and a graph replay of the candidate
    give the same bytes, and so does one more run after the negative control.
 4. **Negative control.** The `certify_all` norm mutation (every row
-   certified) must change the logits exactly when a live row is
-   uncertified.
+   certified) must leave every certified live row's logits and the rows
+   past the live count byte for byte unchanged, and must change some
+   row's logits exactly when a live split row (criterion 6) is present.
+   Uncertified 1e15 and NaN rows may keep their bits under the mutation:
+   a 1e15 row has one significant term and a NaN row is NaN on either
+   path. Every split row must be uncertified.
 5. **Memory safety.** compute-sanitizer memcheck reports zero errors on
    both devices over both patterns at 1, 65 and 2048 live rows, clear
    status.
@@ -48,7 +52,10 @@ its executed cases, and fails on zero executed tests or cases.
    `clean` (pseudo-random rows, every 61st from the 11th all zero) and
    `outliers` (also every 37th row from the 3rd with one 1e15 element, so
    the rest normalize below the tensor domain, and every 53rd from the 7th
-   with a NaN, which also flags the row's status); two prior status
+   with a NaN, which also flags the row's status, and every 41st from the
+   9th that is none of these a split row, whose odd elements are scaled by
+   2^-40 so they normalize below the tensor domain while the even ones
+   keep many significant terms); two prior status
    patterns (clear; every 97th row from the 5th flagged); 1, 65, 513, 2048,
    8191 and 8192 live rows: 24 cases per worker. Router experts 80 to 95
    are below the tensor domain, so their columns take the SIMT path in both
@@ -58,7 +65,24 @@ its executed cases, and fails on zero executed tests or cases.
    candidate (certifying norm, certified projection) at 8192, 2048 and 512
    rows, clean pattern.
 
-No case list, mutation or reference changes after a result.
+No case list, mutation or reference changes after a result, except as
+recorded below.
+
+## Revision after the first memcheck run (2026-10-21)
+
+The first job's memcheck phase (d2-0460vc, both workers) found zero
+sanitizer errors and every compared byte equal in all six cases, flags
+equal to the served prepare's and the host model's, but failed criterion
+4 as first written ("must change the logits exactly when a live row is
+uncertified") in the outlier cases at 65 and 2048 live rows: the mutation
+left the logits unchanged. Those uncertified rows were only 1e15 and NaN
+rows, which give the same bits on the tensor chain and the SIMT path, so
+the control could not see the certificate. The candidate was not at
+fault. The outlier pattern gained the split rows and criterion 4 its
+current form, which also checks that the mutation changes no certified
+row. Applied to the recorded memcheck records (no split rows, unchanged
+logits), the revised per-case checks pass; the revised coverage check
+fails them, as it should, for lack of a split row.
 
 ## Expected time
 

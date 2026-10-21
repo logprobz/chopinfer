@@ -59,8 +59,14 @@ def check_case(r, label):
         raise ValueError(f"{label}: repeat or replay differs")
     if r["certified_rows"] + r["uncertified_rows"] != r["live"]:
         raise ValueError(f"{label}: flags do not cover the live rows")
-    if r["mutant_differs"] is not (r["uncertified_rows"] > 0):
-        raise ValueError(f"{label}: negative control escaped or differs without an uncertified row")
+    # The control changes no certified row, and some row exactly when a
+    # live split row exists (split rows are uncertified by construction).
+    if r["mutant_changed_certified_rows"] != 0:
+        raise ValueError(f"{label}: negative control changed a certified row")
+    if r["mutant_differs"] is not (r["split_rows"] > 0) or r["mutant_differs"] is not (r["mutant_changed_rows"] > 0):
+        raise ValueError(f"{label}: negative control escaped or differs without a split row")
+    if r["split_rows"] > r["uncertified_rows"] or r["mutant_changed_rows"] > r["uncertified_rows"]:
+        raise ValueError(f"{label}: split or changed rows exceed the uncertified rows")
 
 
 def analyze_bitwise(text, phase, emulated=False):
@@ -74,8 +80,8 @@ def analyze_bitwise(text, phase, emulated=False):
             raise ValueError(f"{label}: {'not ' if emulated else ''}an emulated record")
         check_case(r, label)
     # The outlier pattern reaches the uncertified path and the control.
-    if not any(r["uncertified_rows"] > 0 and r["mutant_differs"] for r in rows):
-        raise ValueError("no case has an uncertified live row")
+    if not any(r["split_rows"] > 0 and r["mutant_differs"] for r in rows):
+        raise ValueError("no case has a live split row")
     done = base.records(text, "router_norm_cases")
     if done != [{"executed": len(rows), "failed": 0, "memcheck": memcheck}]:
         raise ValueError("missing case completion")

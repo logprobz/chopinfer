@@ -1,9 +1,9 @@
 //! Host emulation of the router-in-norm launches, for running every phase
 //! of the job on CPU. It models each launch's reads, writes, flags and
 //! paths, not its arithmetic: the norm is a sequential F32 RMSNorm with
-//! stand-in codes and scales, and each logit sums every 64th product,
-//! tensor-path operands outside the tensor domain counting as zero (so a
-//! row certified by mistake changes its logits, as on the device).
+//! stand-in codes and scales, and each logit sums every 64th product, in
+//! reverse order on the tensor path (so a row with several significant
+//! terms certified by mistake changes its logits, as on the device).
 use super::*;
 
 fn handles(op: &Launch) -> Vec<u64> {
@@ -33,10 +33,12 @@ const STRIDE: usize = 64;
 
 fn dot(x: impl Fn(usize) -> f32, w: &[u16], f: usize, tensor: bool) -> f32 {
     let mut total = 0f32;
-    for k in (0..K as usize).step_by(STRIDE) {
-        let a = x(k);
-        let a = if tensor && !tensor_operand(a) { 0.0 } else { a };
-        total += a * widen(w[f * K as usize + k]);
+    let mut ks: Vec<usize> = (0..K as usize).step_by(STRIDE).collect();
+    if tensor {
+        ks.reverse();
+    }
+    for k in ks {
+        total += x(k) * widen(w[f * K as usize + k]);
     }
     total
 }

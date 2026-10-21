@@ -9,10 +9,12 @@ import router_norm_job as job
 
 def record(pattern, prior, live, **over):
     uncertified = 0 if pattern == "clean" or live < 4 else max(1, live // 37)
+    split = 0 if pattern == "clean" or live < 10 else max(1, live // 41)
     r = {"pattern": pattern, "prior": prior, "live": live,
          "differing_bytes": {k: 0 for k in job.COMPARED},
          "certified_rows": live - uncertified, "uncertified_rows": uncertified,
-         "repeat_bitwise": True, "graph_bitwise": True, "mutant_differs": uncertified > 0,
+         "repeat_bitwise": True, "graph_bitwise": True, "split_rows": split,
+         "mutant_differs": split > 0, "mutant_changed_rows": split, "mutant_changed_certified_rows": 0,
          "failures": [], "passed": True, "emulated": False}
     r.update(over)
     return r
@@ -56,6 +58,9 @@ class Analyzers(unittest.TestCase):
             lambda r: r["differing_bytes"].update(logits=4),
             lambda r: r.update(repeat_bitwise=False),
             lambda r: r.update(mutant_differs=not r["mutant_differs"]),
+            lambda r: r.update(mutant_differs=False, mutant_changed_rows=0),
+            lambda r: r.update(mutant_changed_certified_rows=1),
+            lambda r: r.update(mutant_changed_rows=r["uncertified_rows"] + 1),
             lambda r: r.update(passed=False, failures=["x"]),
             lambda r: r.update(certified_rows=r["certified_rows"] + 1),
             lambda r: r.update(emulated=True),

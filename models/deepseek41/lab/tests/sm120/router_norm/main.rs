@@ -222,8 +222,8 @@ pub enum Pattern {
     /// Pseudo-random rows; every 61st row from the 11th all zero.
     Clean,
     /// Clean, plus every 37th row from the 3rd with one 1e15 element (the
-    /// rest normalize below the tensor domain) and every 53rd from the 7th
-    /// with a NaN.
+    /// rest normalize below the tensor domain), every 53rd from the 7th
+    /// with a NaN, and the [`split_row`]s.
     Outliers,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +252,16 @@ impl Rng {
     }
 }
 
+/// Outlier rows whose odd elements are scaled by 2^-40, so they normalize
+/// below the tensor domain while the even ones keep many significant
+/// terms: every 41st row from the 9th that is not a zero, 1e15 or NaN row.
+/// Only these uncertified rows are certain to sum differently on the
+/// tensor chain than on the SIMT path; a 1e15 row has one significant
+/// term and a NaN row is NaN on both.
+pub fn split_row(r: usize) -> bool {
+    r % 41 == 9 && r % 61 != 11 && r % 37 != 3 && r % 53 != 7
+}
+
 pub fn input_rows(pattern: Pattern) -> Vec<u16> {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let mut rows = vec![0u16; (CAPACITY * K) as usize];
@@ -264,6 +274,11 @@ pub fn input_rows(pattern: Pattern) -> Vec<u16> {
             *x = bf16(rng.normal());
         }
         if pattern == Pattern::Outliers {
+            if split_row(r) {
+                for x in row.iter_mut().skip(1).step_by(2) {
+                    *x = bf16(widen(*x) * (-40f32).exp2());
+                }
+            }
             if r % 37 == 3 {
                 row[r % K as usize] = bf16(1e15);
             }
@@ -587,15 +602,42 @@ pub fn qualify(
     if !repeat || !replay {
         failures.push(format!("repeat {repeat} replay {replay}"));
     }
-    // Negative control: certifying every row must change the logits
-    // exactly when a live row is uncertified.
+    // Negative control: certifying every row never changes a certified
+    // row's logits, and changes some row's logits exactly when a live
+    // split row exists. Uncertified 1e15 and NaN rows may keep their bits.
+    let split = if pattern == Pattern::Outliers {
+        (0..live as usize).filter(|&r| split_row(r)).collect()
+    } else {
+        Vec::new()
+    };
+    if split.iter().any(|&r| flags[r] != 0) {
+        failures.push("a split row was certified".into());
+    }
     reset(a, &c, prior)?;
     runner.run(a, &mutant_ops)?;
     let mutant = a.read(c.logits)?;
-    let mutant_differs = mutant != first[5];
-    if mutant_differs != (uncertified > 0) {
+    let row_bytes = (N * 4) as usize;
+    let changed: Vec<usize> = (0..live as usize)
+        .filter(|&r| {
+            mutant[r * row_bytes..(r + 1) * row_bytes]
+                != first[5][r * row_bytes..(r + 1) * row_bytes]
+        })
+        .collect();
+    let changed_certified = changed.iter().filter(|&&r| flags[r] != 0).count();
+    let mutant_differs = !changed.is_empty();
+    if mutant[live as usize * row_bytes..] != first[5][live as usize * row_bytes..] {
+        failures.push("certify_all wrote logits past the live rows".into());
+    }
+    if changed_certified > 0 {
         failures.push(format!(
-            "certify_all differs {mutant_differs} with {uncertified} uncertified rows"
+            "certify_all changed {changed_certified} certified rows"
+        ));
+    }
+    let split_live = !split.is_empty();
+    if mutant_differs != split_live {
+        failures.push(format!(
+            "certify_all differs {mutant_differs} with {} live split rows",
+            split.len()
         ));
     }
     reset(a, &c, prior)?;
@@ -612,7 +654,10 @@ pub fn qualify(
         "uncertified_rows": uncertified,
         "repeat_bitwise": repeat,
         "graph_bitwise": replay,
+        "split_rows": split.len(),
         "mutant_differs": mutant_differs,
+        "mutant_changed_rows": changed.len(),
+        "mutant_changed_certified_rows": changed_certified,
         "failures": failures,
         "passed": failures.is_empty(),
         "emulated": runner.session.is_none(),

@@ -40,7 +40,7 @@ pub(super) struct Mix {
 /// Each mix's journals; create, decode, verify and drafted re-pinned when the shared
 /// gate/up overlap became the default (the side streams and events; the
 /// shared gate/ups on them, proven the one-stream program's by
-/// `fake_host_tests::shared_overlap::mixed_layouts_overlap_alike`). Every
+/// `fake_host_tests::shared_overlap::mixed_layouts_overlap_alike_*`). Every
 /// journal re-pinned when the strip-chain and prefill warp-tile entries took
 /// the kernels that fence their ring reads before release (their symbols,
 /// and their resolve order in create).

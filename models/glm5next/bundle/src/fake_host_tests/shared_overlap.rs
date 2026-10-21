@@ -1314,27 +1314,54 @@ fn context_parallel_groups_overlap_alike() {
     }
 }
 
-/// See [`context_parallel_groups_overlap_alike`].
+/// See [`context_parallel_groups_overlap_alike`]: each mixed layout's
+/// export, for the target and for the drafter, one test each.
+fn mixed_layout_overlaps_alike(export: &super::nvfp4::Mix, scenario: Scenario) {
+    use super::nvfp4::Mix;
+    let host = match scenario {
+        Scenario::Target => Mix::host as fn(&Mix) -> Rc<Host>,
+        Scenario::Drafter => Mix::mtp_host,
+    };
+    let trace = |settings| {
+        trace_with(
+            settings,
+            host(export),
+            |host| export.create(host),
+            |host, instance| run_steps(host, instance, scenario),
+        )
+    };
+    let regions = check_overlap(&trace(Settings::OFF), &trace(ALL));
+    eprintln!("{} {scenario:?}: {regions} sublayers", export.layout.id);
+}
+
 #[test]
-fn mixed_layouts_overlap_alike() {
-    use super::nvfp4::{DENSE_ROUTED, FP8_ROUTED, Mix, ROUTED};
-    for export in [&ROUTED, &DENSE_ROUTED, &FP8_ROUTED] {
-        for (scenario, host) in [
-            (Scenario::Target, Mix::host as fn(&Mix) -> Rc<Host>),
-            (Scenario::Drafter, Mix::mtp_host),
-        ] {
-            let trace = |settings| {
-                trace_with(
-                    settings,
-                    host(export),
-                    |host| export.create(host),
-                    |host, instance| run_steps(host, instance, scenario),
-                )
-            };
-            let regions = check_overlap(&trace(Settings::OFF), &trace(ALL));
-            eprintln!("{} {scenario:?}: {regions} sublayers", export.layout.id);
-        }
-    }
+fn mixed_layouts_overlap_alike_routed_target() {
+    mixed_layout_overlaps_alike(&super::nvfp4::ROUTED, Scenario::Target);
+}
+
+#[test]
+fn mixed_layouts_overlap_alike_routed_drafter() {
+    mixed_layout_overlaps_alike(&super::nvfp4::ROUTED, Scenario::Drafter);
+}
+
+#[test]
+fn mixed_layouts_overlap_alike_dense_routed_target() {
+    mixed_layout_overlaps_alike(&super::nvfp4::DENSE_ROUTED, Scenario::Target);
+}
+
+#[test]
+fn mixed_layouts_overlap_alike_dense_routed_drafter() {
+    mixed_layout_overlaps_alike(&super::nvfp4::DENSE_ROUTED, Scenario::Drafter);
+}
+
+#[test]
+fn mixed_layouts_overlap_alike_fp8_routed_target() {
+    mixed_layout_overlaps_alike(&super::nvfp4::FP8_ROUTED, Scenario::Target);
+}
+
+#[test]
+fn mixed_layouts_overlap_alike_fp8_routed_drafter() {
+    mixed_layout_overlaps_alike(&super::nvfp4::FP8_ROUTED, Scenario::Drafter);
 }
 
 /// See [`context_parallel_groups_overlap_alike`].

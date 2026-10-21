@@ -54,3 +54,41 @@ Both projections per case; down reads the served gate/up's quantized
 intermediate. The job fails on any missing, duplicate or failed case or
 arm, any bitwise arm that differs, zero executed tests, a power cap other
 than 250 W or an Xid. Timings are report-only.
+
+## Results (2026-10-21, r1)
+
+One GPU pair at 250 W, no Xids, 16 s. Both workers executed their two
+cases, each with all 7 arms of both projections timed (5 rounds of 3
+samples per arm). Every bitwise arm wrote the served bytes on all four
+cases. Median round ratios, arm over served tile (balanced, captured
+layer 14, skewed, captured layer 39):
+
+| Arm | Gate/up | Down |
+|---|---|---|
+| lean | 0.952, 0.950, 0.946, 0.950 | 0.978, 0.977, 0.973, 0.980 |
+| paired | 1.071, 0.988, 0.969, 1.010 | 0.994, 0.976, 1.000, 0.950 |
+| paired_lean | 1.012, 0.945, 0.924, 0.968 | 0.971, 0.952, 0.977, 0.926 |
+| no_checks | 0.856, 0.838, 0.836, 0.840 | 0.876, 0.873, 0.866, 0.872 |
+| no_mma | 0.567, 0.562, 0.523, 0.578 | 0.683, 0.700, 0.679, 0.715 |
+| no_global | 0.513, 0.564, 0.646, 0.540 | 0.731, 0.730, 0.762, 0.722 |
+| mma_only | 0.320, 0.359, 0.390, 0.341 | 0.514, 0.546, 0.541, 0.543 |
+
+Every round of every arm agrees with its median within 0.03. The served
+tile's own time depends on the arm it is paired with (gate/up balanced
+2.62 ms beside lean, 3.19 ms beside no_mma), so the ablations are read as
+ratios only.
+
+Bitwise and faster: lean on gate/up (5.0%) and the two-CTA lean tile on
+down (4.3%, 6.1% on the captured cases). The two-CTA gate/up tile is not
+faster than the served one.
+
+Limiter. Gate/up's MMA-only loop runs at about the MMA floor (0.9 to 1.05
+ms against 0.94), and the loop without MMAs takes 56% of the served time,
+so the MMAs and everything else barely overlap: the served time is close
+to their sum. Of the rest, global loads and their waits are about 27% of
+the served time (no_global, which also drops the checks, against
+no_checks), checks about 16% (lean recovers 5 of it) and shared loads and
+E2M1 expansion the remainder. Down's MMA-only loop still takes 1.0 ms,
+about twice its MMA floor: the F32 route-row epilogue (0.62 ms at the
+memory rate) does not overlap the mainloop, which is what the two-CTA
+tile partly recovers.

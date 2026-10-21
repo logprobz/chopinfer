@@ -861,7 +861,7 @@ impl EngineGenerationBackend {
             check_image_span_v1(&source, modality, recipe, limits)?;
         }
         let (_, width, height) =
-            runtime_media::probe_image(&source.bytes, limits, image_orientation_v1(recipe))
+            runtime_media::probe_image(&source.bytes, limits, recipe.policy().orientation)
                 .map_err(rejected)?;
         let reserved = image_reservation_v1(&source.bytes, (width, height), recipe, limits)
             .map_err(rejected)?;
@@ -2782,7 +2782,7 @@ fn modality_emits_v1(
             let limits = part_limits_v1(modality);
             let [t, h, w, rest] = geometry;
             let (temporal_patch, merge, emits) = match recipe {
-                ImageRecipeV1::PatchGrid(recipe) => (
+                ImageRecipeV1::PatchGrid(recipe, _) => (
                     recipe.temporal_patch,
                     recipe.merge,
                     emits_patches_v1(h, w, recipe, limits),
@@ -2974,7 +2974,7 @@ fn validate_recipe_outputs_v1(
     let unreadable = |_| format!("{tag}: the image recipe parameters cannot be read");
     match modality.kind {
         FrontendMediaKindV1::Image => match declared_image_recipe_v1(&modality.recipe) {
-            Ok(ImageRecipeV1::PatchGrid(recipe)) => {
+            Ok(ImageRecipeV1::PatchGrid(recipe, _)) => {
                 check_emits_own_resizes(recipe, part_limits_v1(modality))
                     .map_err(|error| format!("{tag}: {error}"))
             }
@@ -3197,11 +3197,19 @@ fn validate_image_fixed_parameters_v1(parameters: &serde_json::Value) -> Result<
     };
     for (key, expected) in [
         ("antialias", serde_json::json!(antialias)),
-        ("alpha_background", serde_json::json!("white")),
         ("exif_orientation", serde_json::json!(true)),
         ("small_side_minimum", small_side),
     ] {
         require_media_value_v1("image.patch-grid.v1", parameters, key, &expected, false)?;
+    }
+    // Absent: composite onto white, the recipe's original behavior.
+    if let Some(alpha) = parameters.get("alpha_background")
+        && declared_alpha_v1(parameters).is_none()
+    {
+        return Err(format!(
+            "image.patch-grid.v1 requires alpha_background \"white\" (composite) or \"none\" \
+             (discard), declared {alpha}"
+        ));
     }
     Ok(())
 }
@@ -3402,7 +3410,7 @@ struct InlineMediaPlanV1<'a> {
 /// Whether `recipe` cuts its rows from an 8-bit canvas.
 fn image_has_canvas_v1(recipe: ImageRecipeV1) -> bool {
     match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => {
+        ImageRecipeV1::PatchGrid(recipe, _) => {
             recipe.interpolation == runtime_media::recipe::Interpolation::BicubicAntialias
         }
         ImageRecipeV1::TokenBudget(..) | ImageRecipeV1::CenteredPad(..) => true,
@@ -3411,7 +3419,7 @@ fn image_has_canvas_v1(recipe: ImageRecipeV1) -> bool {
 
 fn recipe_patch_v1(recipe: ImageRecipeV1) -> u32 {
     match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => recipe.patch,
+        ImageRecipeV1::PatchGrid(recipe, _) => recipe.patch,
         ImageRecipeV1::TokenBudget(recipe, _) => recipe.patch,
         ImageRecipeV1::CenteredPad(recipe, _) => recipe.patch,
     }
@@ -3502,15 +3510,15 @@ fn image_reservation_v1(
 ) -> runtime_media::MediaResult<u64> {
     use runtime_media::recipe;
     let decode =
-        || runtime_media::decode_working_bytes(source, limits, image_orientation_v1(recipe));
+        || runtime_media::decode_working_bytes(source, limits, recipe.policy().orientation);
     let bytes = match recipe {
-        ImageRecipeV1::PatchGrid(recipe)
+        ImageRecipeV1::PatchGrid(recipe, _)
             if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
         {
             recipe::image_canvas_preparation_bytes(width, height, recipe, limits)?
                 .checked_add(decode()?)
         }
-        ImageRecipeV1::PatchGrid(recipe) => Some(recipe::image_preparation_bytes(
+        ImageRecipeV1::PatchGrid(recipe, _) => Some(recipe::image_preparation_bytes(
             width,
             height,
             decode()?,
@@ -3543,25 +3551,21 @@ fn prepare_image_v1(
     use runtime_media::recipe;
     let recipe = recipe.into();
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
-    let orientation = image_orientation_v1(recipe);
+    let policy = recipe.policy();
     let (_, width, height) =
-        runtime_media::probe_image(&source.bytes, limits, orientation).map_err(rejected)?;
+        runtime_media::probe_image(&source.bytes, limits, policy.orientation).map_err(rejected)?;
     let reserved =
         image_reservation_v1(&source.bytes, (width, height), recipe, limits).map_err(rejected)?;
     memory.reserve(reserved)?;
-    let alpha = match recipe {
-        ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
-        ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => alpha,
-    };
-    let decoded = decode_image_v1(source, limits, alpha, orientation)?;
+    let decoded = decode_image_v1(source, limits, policy.alpha, policy.orientation)?;
     let image = match recipe {
-        ImageRecipeV1::PatchGrid(recipe)
+        ImageRecipeV1::PatchGrid(recipe, _)
             if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
         {
             recipe::image_canvas(&decoded, recipe, limits)
                 .map(|canvas| PreparedImageV1::Canvas(Box::new(canvas)))
         }
-        ImageRecipeV1::PatchGrid(recipe) => {
+        ImageRecipeV1::PatchGrid(recipe, _) => {
             recipe::image_grid(&decoded, recipe, limits).map(PreparedImageV1::Rows)
         }
         ImageRecipeV1::TokenBudget(recipe, _) => {
@@ -3576,17 +3580,15 @@ fn prepare_image_v1(
     Ok((image.map_err(rejected)?, reserved))
 }
 
-/// The EXIF orientation policy of a recipe's sources: the centered pad
-/// keeps the stored pixels, as its reference's `Image.open` and
-/// `convert("RGB")` do; the others transpose JPEGs into the tagged
-/// orientation.
-fn image_orientation_v1(recipe: ImageRecipeV1) -> runtime_media::Orientation {
-    match recipe {
-        ImageRecipeV1::CenteredPad(..) => runtime_media::Orientation::Stored,
-        ImageRecipeV1::PatchGrid(_) | ImageRecipeV1::TokenBudget(..) => {
-            runtime_media::Orientation::Exif
-        }
-    }
+/// How an image modality's declared recipe decodes its sources: the alpha
+/// policy it declares (a patch grid without one composites onto white) and
+/// the orientation its reference loader applies. The centered pad keeps the
+/// stored pixels, as its reference's `Image.open` and `convert("RGB")` do;
+/// the others transpose as `ImageOps.exif_transpose` does.
+pub fn image_policy_v1(
+    recipe: &runtime_frontend::FrontendMediaRecipeV1,
+) -> Result<runtime_media::ImagePolicy, AdmissionError> {
+    declared_image_recipe_v1(recipe).map(ImageRecipeV1::policy)
 }
 
 /// Decodes an image source by the format its signature names, as the
@@ -3655,11 +3657,10 @@ const TOKEN_BUDGET_PARAMETERS_V1: [&str; 10] = [
 /// (`runtime_media::recipe::centered_pad_grid`).
 pub const CENTERED_PAD_TAG_V1: &str = "image.centered-pad.v1";
 
-/// An image modality's recipe, by its tag. The patch grid composites
-/// transparency onto white; the padded recipes handle it as declared.
+/// An image modality's recipe, by its tag, with its declared alpha policy.
 #[derive(Clone, Copy, Debug)]
 enum ImageRecipeV1 {
-    PatchGrid(runtime_media::recipe::ImageRecipe),
+    PatchGrid(runtime_media::recipe::ImageRecipe, runtime_media::Alpha),
     TokenBudget(
         runtime_media::recipe::TokenBudgetRecipe,
         runtime_media::Alpha,
@@ -3670,9 +3671,23 @@ enum ImageRecipeV1 {
     ),
 }
 
+impl ImageRecipeV1 {
+    /// See [`image_policy_v1`].
+    fn policy(self) -> runtime_media::ImagePolicy {
+        let (alpha, orientation) = match self {
+            ImageRecipeV1::PatchGrid(_, alpha) | ImageRecipeV1::TokenBudget(_, alpha) => {
+                (alpha, runtime_media::Orientation::Exif)
+            }
+            ImageRecipeV1::CenteredPad(_, alpha) => (alpha, runtime_media::Orientation::Stored),
+        };
+        runtime_media::ImagePolicy { alpha, orientation }
+    }
+}
+
+/// A patch grid that declares no alpha policy composites onto white.
 impl From<runtime_media::recipe::ImageRecipe> for ImageRecipeV1 {
     fn from(recipe: runtime_media::recipe::ImageRecipe) -> Self {
-        ImageRecipeV1::PatchGrid(recipe)
+        ImageRecipeV1::PatchGrid(recipe, runtime_media::Alpha::CompositeWhite)
     }
 }
 
@@ -3699,7 +3714,7 @@ fn image_span_rows_v1(
 
 fn recipe_merge_v1(recipe: ImageRecipeV1) -> u32 {
     match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => recipe.merge,
+        ImageRecipeV1::PatchGrid(recipe, _) => recipe.merge,
         ImageRecipeV1::TokenBudget(recipe, _) => recipe.merge,
         ImageRecipeV1::CenteredPad(recipe, _) => recipe.downsample,
     }
@@ -3714,7 +3729,7 @@ fn planned_image_grid_v1(
     limits: runtime_media::MediaLimits,
 ) -> runtime_media::MediaResult<[u32; 3]> {
     let (h, w, patch) = match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => {
+        ImageRecipeV1::PatchGrid(recipe, _) => {
             let (h, w) = runtime_media::recipe::smart_resize(height, width, recipe, limits)?;
             (h, w, recipe.patch)
         }
@@ -3740,7 +3755,7 @@ fn check_image_span_v1(
     limits: runtime_media::MediaLimits,
 ) -> Result<(), AdmissionError> {
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
-    let orientation = image_orientation_v1(recipe);
+    let orientation = recipe.policy().orientation;
     let (_, width, height) =
         runtime_media::probe_image(&source.bytes, limits, orientation).map_err(rejected)?;
     let grid = planned_image_grid_v1(width, height, recipe, limits).map_err(rejected)?;
@@ -3776,7 +3791,13 @@ fn declared_image_recipe_v1(
             alpha,
         ))
     } else {
-        image_recipe_v1(&recipe.parameters).map(ImageRecipeV1::PatchGrid)
+        let alpha = match recipe.parameters.get("alpha_background") {
+            None => runtime_media::Alpha::CompositeWhite,
+            Some(_) => {
+                declared_alpha_v1(&recipe.parameters).ok_or(AdmissionError::InvalidPrompt)?
+            }
+        };
+        image_recipe_v1(&recipe.parameters).map(|grid| ImageRecipeV1::PatchGrid(grid, alpha))
     }
 }
 
@@ -4779,6 +4800,47 @@ mod tests {
             24000
         );
         assert!(media_u64_v1(&serde_json::json!({"rate": 24000.5}), "rate").is_err());
+    }
+
+    #[test]
+    fn patch_grid_alpha_is_declared_or_composites_onto_white() {
+        let recipe = |alpha: Option<&str>| {
+            let mut parameters = serde_json::json!({"factor": 32, "minimum_pixels": 1024,
+                "maximum_pixels": 1 << 20, "patch": 16, "temporal_patch": 2, "merge": 2,
+                "value_scale": 1.0, "mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]});
+            if let Some(alpha) = alpha {
+                parameters["alpha_background"] = alpha.into();
+            }
+            runtime_frontend::FrontendMediaRecipeV1 {
+                tag: "image.patch-grid.v1".into(),
+                parameters,
+            }
+        };
+        let policy = |alpha| runtime_media::ImagePolicy {
+            alpha,
+            orientation: runtime_media::Orientation::Exif,
+        };
+        assert_eq!(
+            image_policy_v1(&recipe(None)).unwrap(),
+            policy(runtime_media::Alpha::CompositeWhite)
+        );
+        assert_eq!(
+            image_policy_v1(&recipe(Some("white"))).unwrap(),
+            policy(runtime_media::Alpha::CompositeWhite)
+        );
+        assert_eq!(
+            image_policy_v1(&recipe(Some("none"))).unwrap(),
+            policy(runtime_media::Alpha::Discard)
+        );
+        assert!(image_policy_v1(&recipe(Some("black"))).is_err());
+        for alpha in [None, Some("white"), Some("none")] {
+            validate_media_recipe_v1(&recipe(alpha)).unwrap();
+        }
+        assert!(
+            validate_media_recipe_v1(&recipe(Some("black")))
+                .unwrap_err()
+                .contains("alpha_background")
+        );
     }
 
     #[test]
@@ -6092,7 +6154,7 @@ mod tests {
             .to_vec(),
         };
         assert_eq!(
-            image_orientation_v1(wrapped),
+            wrapped.policy().orientation,
             runtime_media::Orientation::Stored
         );
         let token_budget = token_budget_recipe_v1(&serde_json::json!({
@@ -6102,7 +6164,9 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            image_orientation_v1(ImageRecipeV1::TokenBudget(token_budget, alpha)),
+            ImageRecipeV1::TokenBudget(token_budget, alpha)
+                .policy()
+                .orientation,
             runtime_media::Orientation::Exif
         );
         let mut jpeg_memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);

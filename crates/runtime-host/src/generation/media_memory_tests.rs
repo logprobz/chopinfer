@@ -693,16 +693,11 @@ fn canvas_payloads_keep_the_keys_rows_and_bytes_of_their_rows() {
             // The rows the recipe makes, as the flat payload carried them.
             let limits = part_limits_v1(modality);
             let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
-            let alpha = match recipe {
-                ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
-                ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => {
-                    alpha
-                }
-            };
+            let policy = recipe.policy();
             let decoded =
-                decode_image_v1(&source, limits, alpha, image_orientation_v1(recipe)).unwrap();
+                decode_image_v1(&source, limits, policy.alpha, policy.orientation).unwrap();
             let grid = match recipe {
-                ImageRecipeV1::PatchGrid(recipe) => runtime_media::recipe::patch_grid(
+                ImageRecipeV1::PatchGrid(recipe, _) => runtime_media::recipe::patch_grid(
                     &[decoded.clone(), decoded.clone()],
                     recipe,
                     limits,

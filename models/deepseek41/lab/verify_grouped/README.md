@@ -72,3 +72,7 @@ old one-item allocation guard. The six-row fixture admits one item and is
 unchanged; the other fixtures add exactly two prefill allocations per rank
 before KV sizing. All four original phase pins must match that baseline
 before either handle mapping is accepted.
+
+When the baseline changes, `--verify-original-pins` accepts the four pinned
+row-count/line-count/hash tuples exported from that baseline. Its diagnostic
+journals must match every tuple before either mapping is accepted.

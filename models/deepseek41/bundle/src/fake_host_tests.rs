@@ -1001,6 +1001,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// gate/up tile launches with the fused tiles and the 800 intermediate
 /// quantizer launches with its fixup, and adds 8 resolves, 12 releases and
 /// four configures: 24 more lines.
+/// The dedicated arena adds two allocations and releases per native TP4 rank.
+/// Verify4 grouping adds 24 resolves, three configures and 25 releases per rank.
+/// Full lifecycle audits preserve every retained operation after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1176,9 +1179,10 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(75067, 0xcb0b0da8284a39ee), (72951, 0xbfe081704a05bca6)])
+            .zip([(75291, 0xb0ca413ac3a37f82), (72951, 0xbfe081704a05bca6)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);
@@ -1191,13 +1195,22 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
                     .values()
                     .any(|c| *c == crate::sm120::moe_native::CUBIN)
             );
-            bundle_runtime::fake_host::check_journal(
-                &host.device.journal.borrow(),
-                expected,
-                "exact-tp4-journal",
-            )
-            .unwrap();
+            let lines = host.device.journal.borrow();
+            if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                let layout = format!("{:?}", kv.storage).to_lowercase();
+                let name = format!("deepseek41-flash-tp4.{layout}.exact-experts.journal");
+                std::fs::write(dir.join(&name), lines.join("\n")).unwrap();
+                decode_attention::export_handles(&host.device, &dir, &name);
+            }
+            if let Err(observed) =
+                bundle_runtime::fake_host::check_journal(&lines, expected, "exact-tp4-journal")
+            {
+                mismatches.push(format!("{:?}: {observed}", kv.storage));
+            }
         }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     });
 }
 

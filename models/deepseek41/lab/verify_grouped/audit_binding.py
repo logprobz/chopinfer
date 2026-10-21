@@ -129,9 +129,13 @@ def arena(base,head,bm,hm):
                 retained_operations=len(base))
 
 
-def unchanged_widths(pre_arena_root,base_root,head_root,symbols):
+def unchanged_widths(pre_arena_root,base_root,head_root,symbols,original_pins=None):
     expected={6:(8040,'fb6a4f817b0b2149'),8:(8992,'ea10427872fd2fbd'),
               16:(9964,'6d88a8c8d24c043f'),32:(8384,'177a8b57184fc800')}
+    if original_pins is not None:
+        expected={int(rows):(int(pin[0]),str(pin[1])) for rows,pin in original_pins.items()}
+        assert set(expected)=={6,8,16,32}
+        assert all(n>0 and len(h)==16 and all(c in '0123456789abcdef' for c in h) for n,h in expected.values())
     result={}
     for rows,pin in expected.items():
         name=f'verify-r{rows}.journal'
@@ -174,11 +178,13 @@ def unchanged_widths(pre_arena_root,base_root,head_root,symbols):
 def main():
     parser=argparse.ArgumentParser()
     for key in ['base','base-media','head','paired','report']:parser.add_argument('--'+key,type=Path,required=True)
+    parser.add_argument('--verify-original-pins',type=Path)
     parser.add_argument('--verify-pre-arena',type=Path)
     parser.add_argument('--verify-base',type=Path)
     parser.add_argument('--verify-head',type=Path)
     args=parser.parse_args();lock,native,symbols=locks();results={};rejects=0
     assert bool(args.verify_pre_arena)==bool(args.verify_base)==bool(args.verify_head)
+    assert not args.verify_original_pins or args.verify_base
     for name in ['deepseek41-flash-tp'+str(rank)+'.'+layout+'.journal' for rank in [1,2,4] for layout in ['native','bf16']]+['deepseek41-flash-tp2.media.journal','deepseek41-flash-tp4.media.journal']:
         old_root=args.base_media if '.media.' in name else args.base
         base,bm=read(old_root/name);head,hm=read(args.head/name)
@@ -213,7 +219,8 @@ def main():
     assert rejects==12
     report=dict(passed=True,lifecycles=results,paired=pair,rejected_mutations=rejects,cubin_sha256=lock['cubin_sha256'])
     if args.verify_base:
-        report['unchanged_verify_widths']=unchanged_widths(args.verify_pre_arena,args.verify_base,args.verify_head,symbols)
+        report['unchanged_verify_widths']=unchanged_widths(args.verify_pre_arena,args.verify_base,args.verify_head,symbols,
+            json.loads(args.verify_original_pins.read_text()) if args.verify_original_pins else None)
     args.report.write_text(json.dumps(report,indent=2)+'\n')
     widths=report.get('unchanged_verify_widths',{})
     print(f'VERIFY_GROUPED_BINDING_AUDIT_OK lifecycles=8 grouped_consumers=160 verify_widths={len(widths)} rejected_mutations={rejects+sum(w["rejected_mutations"]+w["arena"].get("rejected_mutations",0) for w in widths.values())}')

@@ -363,6 +363,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// ceil replaces the 320 gate/up tile and intermediate quantizer launches
 /// with fused tiles and fixups, and adds 8 resolves, 12 releases and four
 /// configures.
+/// The dedicated arena adds two allocations and releases per native TP4 rank.
+/// Verify4 grouping adds 24 resolves, three configures and 25 releases per rank.
+/// Full lifecycle audits preserve every retained operation after handle mapping.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
     (Ranks::TP4, (51643, 0x2f536f7c0df50c2a)),

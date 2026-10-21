@@ -1,7 +1,7 @@
 use crate::{MediaError, MediaLimits, MediaResult};
 
 use super::entropy::{Bits, Huffman, Tables};
-use super::{Header, Markers, be16, frame, tiff_orientation};
+use super::{Header, Markers, Metadata, be16, frame};
 
 pub(super) const ZIGZAG: [usize; 64] = [
     0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
@@ -478,7 +478,8 @@ fn decode_scan(
 pub(super) fn coefficients(bytes: &[u8], limits: MediaLimits) -> MediaResult<Frame> {
     limits.check_bytes(bytes.len())?;
     let mut markers = Markers::new(bytes)?;
-    let mut orientation = 1;
+    // Metadata counts only before the first scan, as the probe reads it.
+    let mut metadata = Some(Metadata::default());
     let mut frame_data: Option<Frame> = None;
     let mut huffman = Tables::new();
     let mut pending_quant: [Option<[u16; 64]>; 4] = [None; 4];
@@ -492,7 +493,7 @@ pub(super) fn coefficients(bytes: &[u8], limits: MediaLimits) -> MediaResult<Fra
                 if frame_data.is_some() {
                     return Err(MediaError::new("duplicate JPEG frame"));
                 }
-                let header = frame(marker, payload, orientation)?;
+                let header = frame(marker, payload, 1)?;
                 let mut new_frame = Frame::new(header, payload, limits)?;
                 new_frame.quant = pending_quant;
                 new_frame.adobe_transform = adobe;
@@ -513,11 +514,8 @@ pub(super) fn coefficients(bytes: &[u8], limits: MediaLimits) -> MediaResult<Fra
                 restart = be16(payload);
             }
             0xe1 => {
-                if let Some(value) = tiff_orientation(payload) {
-                    orientation = value;
-                    if let Some(current) = &mut frame_data {
-                        current.header.orientation = value;
-                    }
+                if let Some(metadata) = &mut metadata {
+                    metadata.app1(payload);
                 }
             }
             0xee if payload.starts_with(b"Adobe") && payload.len() >= 12 => {
@@ -530,6 +528,9 @@ pub(super) fn coefficients(bytes: &[u8], limits: MediaLimits) -> MediaResult<Fra
                 let current = frame_data
                     .as_mut()
                     .ok_or_else(|| MediaError::new("JPEG SOF is missing"))?;
+                if let Some(metadata) = metadata.take() {
+                    current.header.orientation = metadata.orientation();
+                }
                 if scans == MAX_SCANS {
                     return Err(MediaError::new("JPEG scan count limit exceeded"));
                 }

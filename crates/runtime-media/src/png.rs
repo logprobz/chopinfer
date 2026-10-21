@@ -1,12 +1,15 @@
 //! Bounded PNG decoding. A chunk walker checks every chunk's CRC and place
 //! and keeps the palette and the raw transparency chunk; the `png` crate
 //! inflates and unfilters a stream of only the critical chunks, row by row,
-//! and each row becomes RGB here.
+//! and each row becomes RGB here. Under [`Orientation::Exif`] the walker
+//! also reads orientation metadata as Pillow 12.3 does ([`Metadata`]), and
+//! each pixel is written to its transposed position.
 
 use std::io::Cursor;
 
 use crate::core::{try_filled, try_with_capacity};
-use crate::{Alpha, MediaError, MediaLimits, MediaResult, RgbImage};
+use crate::orientation::{self, Exif, Pieces, Placement};
+use crate::{Alpha, MediaError, MediaLimits, MediaResult, Orientation, RgbImage};
 
 const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const IEND: &[u8; 12] = b"\0\0\0\0IEND\xae\x42\x60\x82";
@@ -87,19 +90,51 @@ pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<(u32, u32)> {
     Ok((h.width, h.height))
 }
 
+/// The size under `orientation`: [`Orientation::Exif`] walks the chunks
+/// (checking each CRC) for orientation metadata and transposes the size.
+pub fn probe_oriented(
+    bytes: &[u8],
+    limits: MediaLimits,
+    orientation: Orientation,
+) -> MediaResult<(u32, u32)> {
+    let (width, height) = probe(bytes, limits)?;
+    if orientation == Orientation::Stored {
+        return Ok((width, height));
+    }
+    limits.check_bytes(bytes.len())?;
+    let chunks = chunks(bytes, header(bytes)?, orientation, false)?;
+    Ok(orientation::oriented_size(
+        chunks.orientation,
+        width,
+        height,
+    ))
+}
+
 /// Decoder storage derived from the IHDR, before any allocation: the
 /// critical-chunk stream (at most the source), the RGB image, and the
 /// crate's working rows. Those are its unfiltering window of a few rows, at
-/// least 128 KiB, the inflater's 32 KiB lookback and one output row; the
-/// fixed allowance also covers the inflater's tables and the decoder state.
-pub fn decode_storage_bytes(bytes: &[u8], limits: MediaLimits) -> MediaResult<u64> {
+/// least 128 KiB, the inflater's 32 KiB lookback and one output row, all at
+/// the stored width; the fixed allowance also covers the inflater's tables
+/// and the decoder state. Under [`Orientation::Exif`] it adds the largest
+/// metadata value the walker holds at once ([`metadata_storage_bytes`]).
+pub fn decode_storage_bytes(
+    bytes: &[u8],
+    limits: MediaLimits,
+    orientation: Orientation,
+) -> MediaResult<u64> {
     limits.check_bytes(bytes.len())?;
     let (width, height) = probe(bytes, limits)?;
-    let row = header(bytes)?.row_bytes(width as usize)? as u64 + 1;
+    let h = header(bytes)?;
+    let row = h.row_bytes(width as usize)? as u64 + 1;
+    let metadata = if orientation == Orientation::Exif {
+        metadata_storage_bytes(bytes)
+    } else {
+        0
+    };
     (u64::from(width) * u64::from(height))
         .checked_mul(3)
         .and_then(|rgb| rgb.checked_add(row.checked_mul(16)?))
-        .and_then(|sum| sum.checked_add(bytes.len() as u64 + (1 << 20)))
+        .and_then(|sum| sum.checked_add(bytes.len() as u64 + (1 << 20) + metadata))
         .ok_or_else(|| MediaError::new("PNG decode size overflow"))
 }
 
@@ -193,21 +228,29 @@ fn pixel(
 }
 
 /// What the chunk walker keeps: the palette, the raw transparency chunk
-/// (the crate keeps only the low byte of a gray or RGB key) and the stream
-/// the crate decodes.
+/// (the crate keeps only the low byte of a gray or RGB key), the stream the
+/// crate decodes and the orientation the metadata gives.
 struct Chunks {
     palette: Vec<[u8; 3]>,
     transparency: Vec<u8>,
     /// The signature, IHDR, an indexed image's PLTE, every IDAT and IEND,
-    /// so no ancillary chunk can change what the crate decodes.
+    /// so no ancillary chunk can change what the crate decodes. Empty when
+    /// the walk only probes.
     stream: Vec<u8>,
+    orientation: u8,
 }
 
 /// Walks every chunk, refusing a CRC mismatch anywhere, a misplaced or
 /// unknown critical chunk, data after IEND and an inconsistent chunk set.
-fn chunks(bytes: &[u8], h: Header) -> MediaResult<Chunks> {
-    let mut stream = try_with_capacity(bytes.len())?;
-    stream.extend_from_slice(&bytes[..33]);
+/// `stream` keeps the critical chunks for the decoder; `orientation` reads
+/// orientation metadata under [`Orientation::Exif`].
+fn chunks(bytes: &[u8], h: Header, orientation: Orientation, stream: bool) -> MediaResult<Chunks> {
+    let mut critical = Vec::new();
+    if stream {
+        critical = try_with_capacity(bytes.len())?;
+        critical.extend_from_slice(&bytes[..33]);
+    }
+    let mut metadata = (orientation == Orientation::Exif).then(Metadata::default);
     let mut pos = 8_usize;
     let mut palette = Vec::new();
     let mut plte = 0..0;
@@ -229,6 +272,9 @@ fn chunks(bytes: &[u8], h: Header) -> MediaResult<Chunks> {
         if crc32fast::hash(&bytes[pos + 4..pos + 8 + len]) != be32(&bytes[pos + 8 + len..end]) {
             return Err(MediaError::new("PNG chunk CRC differs"));
         }
+        if let Some(metadata) = &mut metadata {
+            metadata.chunk(kind, data)?;
+        }
         match kind {
             b"IHDR" if !seen_ihdr && pos == 8 && len == 13 => seen_ihdr = true,
             b"PLTE"
@@ -243,11 +289,13 @@ fn chunks(bytes: &[u8], h: Header) -> MediaResult<Chunks> {
                 transparency.extend_from_slice(data);
             }
             b"IDAT" if seen_ihdr => {
-                if !seen_idat && h.color == 3 {
-                    stream.extend_from_slice(&bytes[plte.clone()]);
+                if stream {
+                    if !seen_idat && h.color == 3 {
+                        critical.extend_from_slice(&bytes[plte.clone()]);
+                    }
+                    critical.extend_from_slice(&bytes[pos..end]);
                 }
                 seen_idat = true;
-                stream.extend_from_slice(&bytes[pos..end]);
             }
             b"IEND" if seen_ihdr && len == 0 => {
                 seen_iend = true;
@@ -272,12 +320,322 @@ fn chunks(bytes: &[u8], h: Header) -> MediaResult<Chunks> {
             "PNG chunk set is incomplete or inconsistent",
         ));
     }
-    stream.extend_from_slice(IEND);
+    if stream {
+        critical.extend_from_slice(IEND);
+    }
     Ok(Chunks {
         palette,
         transparency,
-        stream,
+        stream: critical,
+        orientation: metadata.map_or(1, |metadata| metadata.orientation()),
     })
+}
+
+/// Pillow's limit on one decompressed text chunk (`MAX_TEXT_CHUNK`): past
+/// it Pillow refuses the image, and so does the walker for the chunks it
+/// reads.
+const TEXT_LIMIT: usize = 1 << 20;
+
+/// The bytes the walker may inflate and hex-decode for orientation in one
+/// image, repeated keys included, before it refuses the image. Pillow's
+/// own limit on all text is 64 MiB; this bounds the work a probe does
+/// before the host reserves anything.
+const METADATA_BUDGET: u64 = 4 << 20;
+
+/// The text keys Pillow reads orientation from.
+const EXIF_KEY: &[u8] = b"exif";
+const RAW_PROFILE_KEY: &[u8] = b"Raw profile type exif";
+const XMP_KEY: &[u8] = b"XML:com.adobe.xmp";
+
+/// The orientation metadata of a PNG as Pillow 12.3 collects it: chunks
+/// before the first IDAT, then after it up to IEND, or for an animated PNG
+/// up to the next frame's fcTL (`PngImageFile.load_end`). Each Pillow info
+/// key keeps its last value, and each value is read when its chunk is, so
+/// one inflated chunk is held at a time:
+///
+/// - `exif`: an eXIf chunk or a tEXt keyed `exif` (bytes). A zTXt or iTXt
+///   keyed `exif` stores text, which Pillow cannot read (it raises) unless
+///   it is empty.
+/// - `Raw profile type exif` (tEXt, zTXt or iTXt): hex after three lines,
+///   read only without an `exif` value; invalid hex makes Pillow raise.
+/// - XMP: `XML:com.adobe.xmp` text (tEXt, zTXt, or an iTXt that decodes as
+///   UTF-8), else the bytes of the last iTXt with that key.
+///
+/// A zTXt with corrupt zlib data empties its key; an iTXt with corrupt or
+/// unknown compression is ignored, and a zTXt with an unknown compression
+/// method (which Pillow refuses) too. Truncated zlib data reads as far as
+/// it goes, as zlib's streaming decompressor does.
+#[derive(Default)]
+struct Metadata {
+    exif: Option<Exif>,
+    raw_profile: Option<Exif>,
+    /// The XMP digit of a non-empty `XML:com.adobe.xmp` text, or None
+    /// when that is unset or empty.
+    xmp_text: Option<Option<u8>>,
+    /// The same for the last iTXt's XMP bytes.
+    xmp_bytes: Option<Option<u8>>,
+    frames: Option<u32>,
+    fctl_before_idat: bool,
+    seen_idat: bool,
+    animated: bool,
+    done: bool,
+    spent: u64,
+}
+
+/// A text chunk's value as the walker reads it.
+enum Value<'a> {
+    Bytes(&'a [u8]),
+    Inflated(Vec<u8>),
+}
+
+impl Value<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Value::Bytes(bytes) => bytes,
+            Value::Inflated(bytes) => bytes,
+        }
+    }
+}
+
+impl Metadata {
+    fn chunk(&mut self, kind: &[u8], data: &[u8]) -> MediaResult<()> {
+        if self.done {
+            return Ok(());
+        }
+        match kind {
+            b"acTL" if !self.seen_idat && data.len() >= 8 => {
+                // A second acTL invalidates the animation, as Pillow's does.
+                self.frames = match self.frames {
+                    Some(_) => None,
+                    None => Some(be32(&data[..4])).filter(|&n| n != 0 && n <= 0x8000_0000),
+                };
+            }
+            b"fcTL" if !self.seen_idat => self.fctl_before_idat = true,
+            b"fcTL" if self.animated => self.done = true,
+            b"IDAT" if !self.seen_idat => {
+                self.seen_idat = true;
+                let default_image = self.frames.is_some() && !self.fctl_before_idat;
+                self.animated = u64::from(self.frames.unwrap_or(1)) + u64::from(default_image) > 1;
+            }
+            b"IEND" => self.done = true,
+            b"eXIf" => self.exif = Some(orientation::exif(&Pieces(&[data]))),
+            b"tEXt" => {
+                let (key, value) = split_nul(data);
+                self.text(key, Value::Bytes(value), true)?;
+            }
+            b"zTXt" => {
+                let (key, value) = split_nul(data);
+                if !is_orientation_key(key) || value.first().is_some_and(|&method| method != 0) {
+                    return Ok(());
+                }
+                let value = match self.inflate(value.get(1..).unwrap_or_default())? {
+                    Some(inflated) => Value::Inflated(inflated),
+                    None => Value::Bytes(&[]),
+                };
+                self.text(key, value, false)?;
+            }
+            b"iTXt" => {
+                let Some(nul) = data.iter().position(|&byte| byte == 0) else {
+                    return Ok(());
+                };
+                let (key, rest) = (&data[..nul], &data[nul + 1..]);
+                if !is_orientation_key(key) || rest.len() < 2 {
+                    return Ok(());
+                }
+                let (compressed, method, rest) = (rest[0], rest[1], &rest[2..]);
+                let mut fields = rest.splitn(3, |&byte| byte == 0);
+                let (Some(language), Some(translated), Some(value)) =
+                    (fields.next(), fields.next(), fields.next())
+                else {
+                    return Ok(());
+                };
+                let value = match (compressed, method) {
+                    (0, _) => Value::Bytes(value),
+                    (_, 0) => match self.inflate(value)? {
+                        Some(inflated) => Value::Inflated(inflated),
+                        None => return Ok(()),
+                    },
+                    _ => return Ok(()),
+                };
+                if key == XMP_KEY {
+                    self.xmp_bytes = nonempty_xmp(value.bytes());
+                }
+                let utf8 = |bytes: &[u8]| std::str::from_utf8(bytes).is_ok();
+                if utf8(language) && utf8(translated) && utf8(value.bytes()) {
+                    self.text(key, value, false)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Records a text value under `key`; `raw` is a tEXt's, whose `exif`
+    /// value stays bytes.
+    fn text(&mut self, key: &[u8], value: Value<'_>, raw: bool) -> MediaResult<()> {
+        let bytes = value.bytes();
+        match key {
+            EXIF_KEY if raw => self.exif = Some(orientation::exif(&Pieces(&[bytes]))),
+            EXIF_KEY if bytes.is_empty() => self.exif = Some(Exif::Absent),
+            EXIF_KEY => self.exif = Some(Exif::Unreadable),
+            RAW_PROFILE_KEY => self.raw_profile = Some(self.read_raw_profile(bytes)?),
+            XMP_KEY => self.xmp_text = nonempty_xmp(bytes),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Reads a raw profile: hex after its first three lines, byte pairs
+    /// separated by ASCII whitespace at most, as `bytes.fromhex` takes them.
+    fn read_raw_profile(&mut self, value: &[u8]) -> MediaResult<Exif> {
+        let mut lines = 0;
+        let start = value
+            .iter()
+            .position(|&byte| {
+                lines += usize::from(byte == b'\n');
+                lines == 3
+            })
+            .map_or(value.len(), |end| end + 1);
+        let digits = || value[start..].iter().copied().filter(|&byte| byte != b'\n');
+        let mut count = 0_u64;
+        let mut pending = false;
+        for byte in digits() {
+            if byte.is_ascii_hexdigit() {
+                count += u64::from(pending);
+                pending = !pending;
+            } else if pending || !matches!(byte, b' ' | b'\t' | b'\r' | 0x0b | 0x0c) {
+                return Ok(Exif::Unreadable);
+            }
+        }
+        if pending {
+            return Ok(Exif::Unreadable);
+        }
+        self.spend(count)?;
+        let mut decoded = try_with_capacity(count as usize)?;
+        let mut high = None;
+        for byte in digits().filter(u8::is_ascii_hexdigit) {
+            let nibble = (byte as char).to_digit(16).expect("hex digit") as u8;
+            match high.take() {
+                Some(high) => decoded.push((high << 4) | nibble),
+                None => high = Some(nibble),
+            }
+        }
+        Ok(orientation::exif(&Pieces(&[&decoded])))
+    }
+
+    /// Inflates zlib data as zlib's streaming decompressor does, up to
+    /// [`TEXT_LIMIT`]: truncated data gives what it holds, corrupt data
+    /// None, and more than the limit refuses the image.
+    fn inflate(&mut self, data: &[u8]) -> MediaResult<Option<Vec<u8>>> {
+        use miniz_oxide::inflate::TINFLStatus;
+        use miniz_oxide::inflate::core::{DecompressorOxide, decompress, inflate_flags};
+        let flags = inflate_flags::TINFL_FLAG_PARSE_ZLIB_HEADER
+            | inflate_flags::TINFL_FLAG_COMPUTE_ADLER32
+            | inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+        let mut state = DecompressorOxide::new();
+        let mut out = try_filled(data.len().saturating_mul(2).clamp(64, TEXT_LIMIT + 1), 0_u8)?;
+        let (mut input, mut written) = (data, 0);
+        let result = loop {
+            let (status, read, wrote) = decompress(&mut state, input, &mut out, written, flags);
+            input = &input[read..];
+            written += wrote;
+            match status {
+                TINFLStatus::Done | TINFLStatus::FailedCannotMakeProgress => break Some(()),
+                TINFLStatus::HasMoreOutput if out.len() <= TEXT_LIMIT => {
+                    let (len, grown) = (out.len(), (out.len() * 2).min(TEXT_LIMIT + 1));
+                    crate::core::try_reserve(&mut out, grown - len)?;
+                    out.resize(grown, 0);
+                }
+                TINFLStatus::HasMoreOutput => {
+                    return Err(MediaError::new(format!(
+                        "PNG compressed text inflates past {TEXT_LIMIT} bytes"
+                    )));
+                }
+                _ => break None,
+            }
+        };
+        if written > TEXT_LIMIT {
+            return Err(MediaError::new(format!(
+                "PNG compressed text inflates past {TEXT_LIMIT} bytes"
+            )));
+        }
+        self.spend(written as u64)?;
+        Ok(result.map(|()| {
+            out.truncate(written);
+            out
+        }))
+    }
+
+    fn spend(&mut self, bytes: u64) -> MediaResult<()> {
+        self.spent += bytes;
+        if self.spent > METADATA_BUDGET {
+            return Err(MediaError::new(format!(
+                "PNG orientation metadata inflates past {METADATA_BUDGET} bytes"
+            )));
+        }
+        Ok(())
+    }
+
+    fn orientation(&self) -> u8 {
+        // A non-empty text wins even without a digit; an empty one falls
+        // back to the iTXt bytes.
+        let xmp = self.xmp_text.or(self.xmp_bytes).flatten();
+        orientation::resolve(self.exif.or(self.raw_profile), xmp)
+    }
+}
+
+fn split_nul(data: &[u8]) -> (&[u8], &[u8]) {
+    match data.iter().position(|&byte| byte == 0) {
+        Some(nul) => (&data[..nul], &data[nul + 1..]),
+        None => (data, &[]),
+    }
+}
+
+fn is_orientation_key(key: &[u8]) -> bool {
+    matches!(key, EXIF_KEY | RAW_PROFILE_KEY | XMP_KEY)
+}
+
+/// The XMP digit of a value, as Some(None) for a non-empty value without
+/// one, or None for an empty value (which Pillow treats as unset).
+fn nonempty_xmp(value: &[u8]) -> Option<Option<u8>> {
+    (!value.is_empty()).then(|| orientation::xmp(value))
+}
+
+/// The most metadata storage the walker holds at once, from chunk headers
+/// alone: one inflated chunk of at most [`TEXT_LIMIT`] and one decoded raw
+/// profile of at most half its text, within [`METADATA_BUDGET`].
+fn metadata_storage_bytes(bytes: &[u8]) -> u64 {
+    let mut pos = 8_usize;
+    let mut largest = 0_u64;
+    while pos + 12 <= bytes.len() {
+        let len = be32(&bytes[pos..pos + 4]) as usize;
+        let Some(end) = pos.checked_add(12).and_then(|n| n.checked_add(len)) else {
+            break;
+        };
+        if end > bytes.len() {
+            break;
+        }
+        let kind = &bytes[pos + 4..pos + 8];
+        let data = &bytes[pos + 8..pos + 8 + len];
+        let key = split_nul(data).0;
+        if matches!(kind, b"tEXt" | b"zTXt" | b"iTXt") && is_orientation_key(key) {
+            let compressed = kind != b"tEXt";
+            let text = if compressed {
+                TEXT_LIMIT as u64
+            } else {
+                len as u64
+            };
+            let profile = if key == RAW_PROFILE_KEY {
+                (text / 2).min(METADATA_BUDGET)
+            } else {
+                0
+            };
+            let inflated = if compressed { TEXT_LIMIT as u64 + 1 } else { 0 };
+            largest = largest.max(inflated + profile);
+        }
+        pos = end;
+    }
+    largest
 }
 
 fn invalid(error: ::png::DecodingError) -> MediaError {
@@ -290,12 +648,24 @@ pub fn decode(bytes: &[u8], limits: MediaLimits) -> MediaResult<RgbImage> {
 }
 
 /// Decodes with transparency (an alpha channel or a tRNS chunk) handled
-/// as `alpha` says.
+/// as `alpha` says, in the stored orientation.
 pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> MediaResult<RgbImage> {
+    decode_oriented(bytes, limits, alpha, Orientation::Stored)
+}
+
+/// [`decode_with_alpha`] under `orientation`: [`Orientation::Exif`]
+/// transposes the image as its orientation metadata says ([`Metadata`]).
+pub fn decode_oriented(
+    bytes: &[u8],
+    limits: MediaLimits,
+    alpha: Alpha,
+    orientation: Orientation,
+) -> MediaResult<RgbImage> {
     limits.check_bytes(bytes.len())?;
     let h = header(bytes)?;
     limits.check_named_image("PNG", h.width, h.height)?;
-    let chunks = chunks(bytes, h)?;
+    let chunks = chunks(bytes, h, orientation, true)?;
+    let placement = Placement::new(chunks.orientation, h.width, h.height);
     let mut options = ::png::DecodeOptions::default();
     options.set_ignore_adler32(false);
     let mut decoder =
@@ -305,7 +675,6 @@ pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> Med
     decoder.set_limits(::png::Limits { bytes: usize::MAX });
     decoder.set_transformations(::png::Transformations::IDENTITY);
     let mut reader = decoder.read_info().map_err(invalid)?;
-    let width = h.width as usize;
     let output_len = usize::try_from(
         (u64::from(h.width) * u64::from(h.height))
             .checked_mul(3)
@@ -329,9 +698,9 @@ pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> Med
             if line.len() != stride {
                 return Err(MediaError::new("PNG row size differs from its IHDR"));
             }
-            let row_start = (sy as usize + y * dy as usize) * width;
+            let row = sy as usize + y * dy as usize;
             for x in 0..pass_width {
-                let target = (row_start + sx as usize + x * dx as usize) * 3;
+                let target = placement.index(sx as usize + x * dx as usize, row) * 3;
                 rgb[target..target + 3].copy_from_slice(&pixel(
                     line,
                     x,
@@ -347,7 +716,8 @@ pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> Med
         return Err(MediaError::new("PNG has more rows than its IHDR"));
     }
     reader.finish().map_err(invalid)?;
-    RgbImage::new(h.width, h.height, rgb, limits)
+    let (width, height) = placement.size();
+    RgbImage::new(width, height, rgb, limits)
 }
 
 #[cfg(test)]
@@ -516,7 +886,9 @@ mod tests {
             ..limits()
         };
         assert_eq!(
-            decode_storage_bytes(&png, limits).unwrap_err().to_string(),
+            decode_storage_bytes(&png, limits, Orientation::Stored)
+                .unwrap_err()
+                .to_string(),
             "PNG decode size overflow"
         );
     }

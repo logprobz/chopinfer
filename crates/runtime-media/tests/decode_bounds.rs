@@ -221,6 +221,86 @@ fn lossless_webp(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
+/// A PNG chunk: length, type, data and CRC.
+fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut out = (data.len() as u32).to_be_bytes().to_vec();
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    out.extend_from_slice(&crc32(&out[4..]).to_be_bytes());
+    out
+}
+
+/// `png` with `chunks` inserted after its IHDR.
+fn with_chunks(png: &[u8], chunks: &[Vec<u8>]) -> Vec<u8> {
+    [&png[..33], &chunks.concat(), &png[33..]].concat()
+}
+
+/// A little-endian TIFF stream whose IFD0 holds orientation 6, padded with
+/// `padding` zero bytes.
+fn exif6(padding: usize) -> Vec<u8> {
+    let mut out = b"II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0".to_vec();
+    out.resize(out.len() + padding, 0);
+    out
+}
+
+/// A zTXt chunk holding `text` under `key`.
+fn ztxt(key: &[u8], text: &[u8]) -> Vec<u8> {
+    let data = [
+        key,
+        b"\0\0",
+        &miniz_oxide::deflate::compress_to_vec_zlib(text, 6),
+    ]
+    .concat();
+    png_chunk(b"zTXt", &data)
+}
+
+/// An XMP packet with orientation 6, padded with spaces to `length` bytes.
+fn xmp6(length: usize) -> Vec<u8> {
+    let mut out = br#"<x:xmpmeta><rdf:Description tiff:Orientation="6"/></x:xmpmeta>"#.to_vec();
+    out.resize(length, b' ');
+    out
+}
+
+/// An animated WebP whose one frame is `vp8l` (a VP8L chunk's data) on a
+/// `width` x `height` canvas, with an EXIF orientation of 6.
+fn animated_oriented_webp(width: u32, height: u32, vp8l: &[u8]) -> Vec<u8> {
+    let le24 = |value: u32| value.to_le_bytes()[..3].to_vec();
+    let sub = |fourcc: &[u8; 4], data: &[u8]| {
+        let mut out = fourcc.to_vec();
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            out.push(0);
+        }
+        out
+    };
+    let vp8x = [vec![0x0a, 0, 0, 0], le24(width - 1), le24(height - 1)].concat();
+    let anmf = [
+        le24(0),
+        le24(0),
+        le24(width - 1),
+        le24(height - 1),
+        le24(100),
+        vec![0],
+        sub(b"VP8L", vp8l),
+    ]
+    .concat();
+    let body = [
+        b"WEBP".to_vec(),
+        sub(b"VP8X", &vp8x),
+        sub(b"ANIM", &[0; 6]),
+        sub(b"ANMF", &anmf),
+        sub(b"EXIF", &exif6(0)),
+    ]
+    .concat();
+    [
+        b"RIFF".as_slice(),
+        &(body.len() as u32).to_le_bytes(),
+        &body,
+    ]
+    .concat()
+}
+
 /// Bits written least significant first, as VP8L reads them.
 #[derive(Default)]
 struct Bits {
@@ -388,8 +468,17 @@ fn decode_peaks_stay_within_their_header_bounds() {
         let bytes = std::fs::read(path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy();
         check(&name, &bytes, stored);
-        if !name.ends_with(".webp") {
-            check(&name, &bytes, exif);
+        check(&name, &bytes, exif);
+    }
+    // The decode corpus, under both orientations where it decodes.
+    for entry in std::fs::read_dir(fixtures.join("image-decode")).unwrap() {
+        let path = entry.unwrap().path();
+        let bytes = std::fs::read(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy();
+        for policy in [stored, exif] {
+            if decode_image(&bytes, limits(), policy).is_ok() {
+                check(&name, &bytes, policy);
+            }
         }
     }
 
@@ -426,6 +515,45 @@ fn decode_peaks_stay_within_their_header_bounds() {
             },
         );
     }
+
+    // Orientation metadata: a wide image rotated onto its side (the
+    // decoder's rows stay at the stored width), a 1 MiB compressed raw
+    // profile, compressed XMP up to the 4 MiB budget, and an animated WebP
+    // whose canvas is transposed.
+    let wide = png(65_536, 3, ColorType::Rgb, BitDepth::Eight);
+    let rotated = with_chunks(&wide, &[png_chunk(b"eXIf", &exif6(0))]);
+    let hex = exif6(500 << 10)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let profile = format!("\nexif\n{:8}\n{hex}\n", hex.len() / 2);
+    assert!(profile.len() <= 1 << 20);
+    let small = png(640, 480, ColorType::Rgb, BitDepth::Eight);
+    let raw_profile = with_chunks(
+        &small,
+        &[ztxt(b"Raw profile type exif", profile.as_bytes())],
+    );
+    let budget = with_chunks(&small, &vec![ztxt(b"XML:com.adobe.xmp", &xmp6(1 << 20)); 4]);
+    let over = with_chunks(&small, &vec![ztxt(b"XML:com.adobe.xmp", &xmp6(1 << 20)); 5]);
+    let file = lossless_webp(800, 600);
+    let webp = animated_oriented_webp(800, 600, &file[20..]);
+    for (name, bytes, size) in [
+        ("png wide rotated", &rotated, (3, 65_536)),
+        ("png raw profile", &raw_profile, (480, 640)),
+        ("png metadata at budget", &budget, (480, 640)),
+        ("webp animated rotated", &webp, (600, 800)),
+    ] {
+        check(name, bytes, exif);
+        let image = decode_image(bytes, limits(), exif).unwrap();
+        assert_eq!((image.width, image.height), size, "{name}");
+    }
+    assert!(
+        decode_image(&over, limits(), exif)
+            .unwrap_err()
+            .to_string()
+            .contains("inflates past")
+    );
+    check("png metadata over budget, stored", &over, stored);
 
     // Huffman groups cost far more than the bytes that declare them, but
     // the bound's allowance per lossless byte covers the densest forms:

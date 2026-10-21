@@ -6,6 +6,7 @@ pub mod gif;
 pub mod image;
 pub mod jpeg;
 pub mod mp4;
+mod orientation;
 pub mod png;
 pub mod recipe;
 pub mod remote;

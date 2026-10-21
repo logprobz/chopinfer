@@ -1,7 +1,7 @@
 //! Bounded 8-bit JPEG decoding. The scan decoder and reconstruction live beside
 //! this marker parser so probing and full decoding agree on frame geometry.
 
-use crate::{MediaError, MediaLimits, MediaResult, Orientation, RgbImage};
+use crate::{MediaError, MediaLimits, MediaResult, Orientation, RgbImage, orientation};
 
 mod decode;
 mod entropy;
@@ -73,11 +73,11 @@ impl Header {
     }
 
     fn oriented_size(self) -> (u32, u32) {
-        if matches!(self.orientation, 5..=8) {
-            (u32::from(self.height), u32::from(self.width))
-        } else {
-            (u32::from(self.width), u32::from(self.height))
-        }
+        orientation::oriented_size(
+            self.orientation,
+            u32::from(self.width),
+            u32::from(self.height),
+        )
     }
 }
 
@@ -182,46 +182,40 @@ pub(crate) fn frame(marker: u8, payload: &[u8], orientation: u8) -> MediaResult<
     })
 }
 
-fn tiff_orientation(bytes: &[u8]) -> Option<u8> {
-    let tiff = bytes.strip_prefix(b"Exif\0\0")?;
-    let little = match tiff.get(..2)? {
-        b"II" => true,
-        b"MM" => false,
-        _ => return None,
-    };
-    let read16 = |offset: usize| -> Option<u16> {
-        let bytes: [u8; 2] = tiff.get(offset..offset.checked_add(2)?)?.try_into().ok()?;
-        Some(if little {
-            u16::from_le_bytes(bytes)
-        } else {
-            u16::from_be_bytes(bytes)
-        })
-    };
-    let read32 = |offset: usize| -> Option<u32> {
-        let bytes: [u8; 4] = tiff.get(offset..offset.checked_add(4)?)?.try_into().ok()?;
-        Some(if little {
-            u32::from_le_bytes(bytes)
-        } else {
-            u32::from_be_bytes(bytes)
-        })
-    };
-    if read16(2)? != 42 {
-        return None;
-    }
-    let ifd = usize::try_from(read32(4)?).ok()?;
-    let count = usize::from(read16(ifd)?);
-    let entries = ifd.checked_add(2)?;
-    if count > (tiff.len().checked_sub(entries)?) / 12 {
-        return None;
-    }
-    for index in 0..count {
-        let offset = entries + index * 12;
-        if read16(offset)? == 0x0112 && read16(offset + 2)? == 3 && read32(offset + 4)? == 1 {
-            let orientation = u8::try_from(read16(offset + 8)?).ok()?;
-            return (1..=8).contains(&orientation).then_some(orientation);
+/// Exif APP1 segments kept before the first scan; later ones are dropped.
+const EXIF_SEGMENTS: usize = 256;
+
+/// The metadata a JPEG's APP1 segments carry before its first scan, kept
+/// as Pillow's marker parser keeps it: the first `Exif` APP1 with every
+/// later one's payload after its marker appended (up to
+/// [`EXIF_SEGMENTS`]), and the last XMP APP1.
+#[derive(Default)]
+pub(crate) struct Metadata<'a> {
+    exif: Vec<&'a [u8]>,
+    xmp: Option<&'a [u8]>,
+}
+
+impl<'a> Metadata<'a> {
+    pub(crate) fn app1(&mut self, payload: &'a [u8]) {
+        if payload.starts_with(b"Exif\0\0") {
+            if self.exif.len() < EXIF_SEGMENTS {
+                self.exif.push(if self.exif.is_empty() {
+                    payload
+                } else {
+                    &payload[6..]
+                });
+            }
+        } else if let Some(xmp) = payload.strip_prefix(b"http://ns.adobe.com/xap/1.0/\0") {
+            self.xmp = Some(xmp);
         }
     }
-    None
+
+    /// The orientation the metadata gives, 1 when nothing transposes.
+    pub(crate) fn orientation(&self) -> u8 {
+        let exif =
+            (!self.exif.is_empty()).then(|| orientation::exif(&orientation::Pieces(&self.exif)));
+        orientation::resolve(exif, self.xmp.and_then(orientation::xmp))
+    }
 }
 
 pub fn decode(bytes: &[u8], limits: MediaLimits) -> MediaResult<RgbImage> {
@@ -311,24 +305,17 @@ pub fn decode_storage_bytes(bytes: &[u8], limits: MediaLimits) -> MediaResult<u6
 fn probe_header(bytes: &[u8], limits: MediaLimits) -> MediaResult<Header> {
     limits.check_bytes(bytes.len())?;
     let mut markers = Markers::new(bytes)?;
-    let mut orientation = 1;
+    let mut metadata = Metadata::default();
     let mut header: Option<Header> = None;
     loop {
         let (marker, payload) = markers.next()?;
         match marker {
-            0xe1 => {
-                if let Some(value) = tiff_orientation(payload) {
-                    orientation = value;
-                    if let Some(current) = &mut header {
-                        current.orientation = value;
-                    }
-                }
-            }
+            0xe1 => metadata.app1(payload),
             0xc0 | 0xc2 => {
                 if header.is_some() {
                     return Err(MediaError::new("duplicate JPEG frame"));
                 }
-                let parsed = frame(marker, payload, orientation)?;
+                let parsed = frame(marker, payload, 1)?;
                 limits.check_named_image(
                     "JPEG",
                     u32::from(parsed.width),
@@ -341,7 +328,9 @@ fn probe_header(bytes: &[u8], limits: MediaLimits) -> MediaResult<Header> {
                 return Err(MediaError::new("unsupported JPEG frame coding"));
             }
             0xda => {
-                return header.ok_or_else(|| MediaError::new("JPEG SOF is missing"));
+                let mut header = header.ok_or_else(|| MediaError::new("JPEG SOF is missing"))?;
+                header.orientation = metadata.orientation();
+                return Ok(header);
             }
             0xd9 => return Err(MediaError::new("JPEG scan is missing")),
             _ => {}

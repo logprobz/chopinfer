@@ -87,7 +87,7 @@ pub fn probe_image(
     limits.check_bytes(bytes.len())?;
     let format = sniffed(bytes)?;
     let (width, height) = match format {
-        ImageFormat::Png => crate::png::probe(bytes, limits)?,
+        ImageFormat::Png => crate::png::probe_oriented(bytes, limits, orientation)?,
         ImageFormat::Jpeg => crate::jpeg::probe_oriented(bytes, limits, orientation)?,
         ImageFormat::Gif => crate::gif::probe(bytes, limits)?,
         ImageFormat::Webp => crate::webp::probe(bytes, limits, orientation)?,
@@ -105,7 +105,7 @@ pub fn decode_working_bytes(
 ) -> MediaResult<u64> {
     limits.check_bytes(bytes.len())?;
     match sniffed(bytes)? {
-        ImageFormat::Png => crate::png::decode_storage_bytes(bytes, limits),
+        ImageFormat::Png => crate::png::decode_storage_bytes(bytes, limits, orientation),
         ImageFormat::Jpeg => crate::jpeg::decode_storage_bytes(bytes, limits),
         ImageFormat::Gif => crate::gif::decode_storage_bytes(bytes, limits),
         ImageFormat::Webp => crate::webp::decode_storage_bytes(bytes, limits, orientation),
@@ -119,7 +119,9 @@ pub fn decode_image(
     policy: ImagePolicy,
 ) -> MediaResult<RgbImage> {
     match sniffed(bytes)? {
-        ImageFormat::Png => crate::png::decode_with_alpha(bytes, limits, policy.alpha),
+        ImageFormat::Png => {
+            crate::png::decode_oriented(bytes, limits, policy.alpha, policy.orientation)
+        }
         ImageFormat::Jpeg => crate::jpeg::decode_oriented(bytes, limits, policy.orientation),
         ImageFormat::Gif => crate::gif::decode(bytes, limits, policy.alpha),
         ImageFormat::Webp => crate::webp::decode(bytes, limits, policy.alpha, policy.orientation),

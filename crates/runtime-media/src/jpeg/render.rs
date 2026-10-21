@@ -1,4 +1,4 @@
-use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
+use crate::{MediaError, MediaLimits, MediaResult, RgbImage, orientation};
 
 use super::decode::{Component, Frame};
 use super::idct;
@@ -155,25 +155,6 @@ fn color(frame: &Frame, samples: &[i32; 4]) -> MediaResult<[u8; 3]> {
     }
 }
 
-fn source_position(
-    orientation: u8,
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-) -> (usize, usize) {
-    match orientation {
-        2 => (width - 1 - x, y),
-        3 => (width - 1 - x, height - 1 - y),
-        4 => (x, height - 1 - y),
-        5 => (y, x),
-        6 => (y, height - 1 - x),
-        7 => (width - 1 - y, height - 1 - x),
-        8 => (width - 1 - y, x),
-        _ => (x, y),
-    }
-}
-
 pub(super) fn render(frame: Frame, limits: MediaLimits) -> MediaResult<RgbImage> {
     let width = usize::from(frame.header.width);
     let height = usize::from(frame.header.height);
@@ -203,7 +184,8 @@ pub(super) fn render(frame: Frame, limits: MediaLimits) -> MediaResult<RgbImage>
         .map_err(|_| MediaError::new("JPEG RGB allocation failed"))?;
     for y in 0..out_height as usize {
         for x in 0..out_width as usize {
-            let (sx, sy) = source_position(frame.header.orientation, x, y, width, height);
+            let (sx, sy) =
+                orientation::source_position(frame.header.orientation, x, y, width, height);
             let mut samples = [0_i32; 4];
             for (index, plane) in planes.iter().enumerate() {
                 samples[index] = plane.sample(sx, sy);
@@ -274,23 +256,6 @@ mod tests {
         let bound = crate::recipe::centered_pad_preparation_bytes(256, 256, decode, recipe, limits)
             .unwrap();
         assert!(bound >= peak as u64, "{bound} < {peak}");
-    }
-
-    #[test]
-    fn orientation_maps_all_eight_exif_values() {
-        let expected = [
-            (0, 0),
-            (2, 0),
-            (2, 1),
-            (0, 1),
-            (0, 0),
-            (0, 1),
-            (2, 1),
-            (2, 0),
-        ];
-        for (index, position) in expected.iter().enumerate() {
-            assert_eq!(source_position(index as u8 + 1, 0, 0, 3, 2), *position);
-        }
     }
 
     #[test]

@@ -94,10 +94,13 @@ pub enum Alpha {
     Discard,
 }
 
-/// How a decoder treats an EXIF orientation tag.
+/// How a decoder treats an image's orientation metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Orientation {
-    /// Transpose the pixels into the tagged orientation.
+    /// Transpose the pixels as Pillow 12.3's `ImageOps.exif_transpose`
+    /// does: by the EXIF orientation tag, else an XMP `tiff:Orientation`,
+    /// read from a JPEG's APP1 segments, a PNG's eXIf and text chunks and a
+    /// WebP's flagged EXIF and XMP chunks. A GIF carries none.
     #[default]
     Exif,
     /// Keep the stored pixel order and size, as PIL's `Image.open` followed

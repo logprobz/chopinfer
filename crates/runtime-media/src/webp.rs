@@ -15,6 +15,7 @@
 use std::io::Cursor;
 
 use crate::core::{try_filled, try_with_capacity};
+use crate::orientation::{self, Pieces, Placement};
 use crate::png::composite;
 use crate::{Alpha, MediaError, MediaLimits, MediaResult, Orientation, RgbImage};
 
@@ -246,7 +247,8 @@ struct Plan<'a> {
     /// The VP8X alpha flag: the canvas around an animated frame is
     /// transparent rather than opaque black.
     canvas_alpha: bool,
-    exif: bool,
+    /// The orientation the VP8X-flagged EXIF and XMP chunks give.
+    orientation: u8,
 }
 
 impl Plan<'_> {
@@ -284,7 +286,7 @@ fn plan(bytes: &[u8], limits: MediaLimits) -> MediaResult<Plan<'_>> {
             bitstream: first,
             alpha: None,
             canvas_alpha: false,
-            exif: false,
+            orientation: 1,
         });
     }
     let header = first.data;
@@ -348,8 +350,25 @@ fn plan(bytes: &[u8], limits: MediaLimits) -> MediaResult<Plan<'_>> {
         bitstream,
         alpha,
         canvas_alpha: header[0] & 0x10 != 0,
-        exif: header[0] & 0x08 != 0 || chunks.iter().any(|chunk| &chunk.fourcc == b"EXIF"),
+        orientation: metadata_orientation(header[0], &chunks),
     })
+}
+
+/// The orientation of a VP8X file's metadata as Pillow reads it through
+/// libwebp's demuxer: the first top-level EXIF chunk when VP8X sets the
+/// EXIF flag (0x08) and the first `XMP ` chunk when it sets the XMP flag
+/// (0x04); unflagged chunks, empty ones and those inside a frame are
+/// never read. A simple (VP8 or VP8L) file carries none.
+fn metadata_orientation(flags: u8, chunks: &[Chunk<'_>]) -> u8 {
+    let first = |flag: u8, fourcc: &[u8; 4]| {
+        (flags & flag != 0)
+            .then(|| chunks.iter().find(|chunk| &chunk.fourcc == fourcc))
+            .flatten()
+            .map(|chunk| chunk.data)
+            .filter(|data| !data.is_empty())
+    };
+    let exif = first(0x08, b"EXIF").map(|data| orientation::exif(&Pieces(&[data])));
+    orientation::resolve(exif, first(0x04, b"XMP ").and_then(orientation::xmp))
 }
 
 fn checked_plan(
@@ -358,20 +377,22 @@ fn checked_plan(
     orientation: Orientation,
 ) -> MediaResult<Plan<'_>> {
     limits.check_bytes(bytes.len())?;
-    let plan = plan(bytes, limits)?;
-    if orientation == Orientation::Exif && plan.exif {
-        return Err(MediaError::new("WebP EXIF orientation is not supported"));
+    let mut plan = plan(bytes, limits)?;
+    if orientation == Orientation::Stored {
+        plan.orientation = 1;
     }
     Ok(plan)
 }
 
-/// The canvas size from the headers, checked against `limits`.
+/// The canvas size from the headers, checked against `limits`, transposed
+/// under [`Orientation::Exif`] as the file's metadata says.
 pub fn probe(
     bytes: &[u8],
     limits: MediaLimits,
     orientation: Orientation,
 ) -> MediaResult<(u32, u32)> {
-    Ok(checked_plan(bytes, limits, orientation)?.canvas)
+    let plan = checked_plan(bytes, limits, orientation)?;
+    Ok(Placement::new(plan.orientation, plan.canvas.0, plan.canvas.1).size())
 }
 
 /// Decoder storage derived from the headers, before any allocation: the
@@ -432,9 +453,9 @@ fn invalid(error: image_webp::DecodingError) -> MediaError {
 /// Decodes the still image or frame 0 onto its canvas. [`Alpha::Discard`]
 /// keeps the color channels, as Pillow's `convert("RGB")` does;
 /// [`Alpha::CompositeWhite`] composites the decoded alpha, and a
-/// transparent canvas around an animated frame, onto white. An EXIF
-/// orientation tag is honored only by refusal: under
-/// [`Orientation::Exif`] a file with EXIF metadata is refused.
+/// transparent canvas around an animated frame, onto white. Under
+/// [`Orientation::Exif`] the canvas is transposed as the file's EXIF or
+/// XMP orientation says.
 pub fn decode(
     bytes: &[u8],
     limits: MediaLimits,
@@ -457,6 +478,7 @@ pub fn decode(
     let mut decoded = try_filled(frame_pixels * channels, 0_u8)?;
     decoder.read_image(&mut decoded).map_err(invalid)?;
     let (width, height) = plan.canvas;
+    let placement = Placement::new(plan.orientation, width, height);
     let background = if alpha == Alpha::CompositeWhite && plan.canvas_alpha {
         255
     } else {
@@ -467,18 +489,16 @@ pub fn decode(
         .chunks_exact(frame_width as usize * channels)
         .enumerate()
     {
-        let start = ((top as usize + y) * width as usize + left as usize) * 3;
-        for (target, source) in rgb[start..start + frame_width as usize * 3]
-            .chunks_exact_mut(3)
-            .zip(row.chunks_exact(channels))
-        {
+        for (x, source) in row.chunks_exact(channels).enumerate() {
             let color = [source[0], source[1], source[2]];
-            target.copy_from_slice(&match channels {
+            let target = placement.index(left as usize + x, top as usize + y) * 3;
+            rgb[target..target + 3].copy_from_slice(&match channels {
                 4 => composite(color, source[3], alpha),
                 _ => color,
             });
         }
     }
+    let (width, height) = placement.size();
     RgbImage::new(width, height, rgb, limits)
 }
 
@@ -627,17 +647,24 @@ mod tests {
                 message
             );
         }
+        // A flagged EXIF orientation of 6 transposes the canvas; the
+        // stored orientation ignores it, and so does an unflagged chunk.
+        let rotated = b"MM\0*\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0";
         let exif = riff(&[
             (b"VP8X", &vp8x(0x08, 2, 1)),
             (b"VP8L", bitstream),
-            (b"EXIF", b"MM\0*"),
+            (b"EXIF", rotated),
         ]);
-        assert!(probe(&exif, limits(), Orientation::Stored).is_ok());
+        assert_eq!(probe(&exif, limits(), Orientation::Stored).unwrap(), (2, 1));
+        assert_eq!(probe(&exif, limits(), Orientation::Exif).unwrap(), (1, 2));
+        let unflagged = riff(&[
+            (b"VP8X", &vp8x(0, 2, 1)),
+            (b"VP8L", bitstream),
+            (b"EXIF", rotated),
+        ]);
         assert_eq!(
-            probe(&exif, limits(), Orientation::Exif)
-                .unwrap_err()
-                .to_string(),
-            "WebP EXIF orientation is not supported"
+            probe(&unflagged, limits(), Orientation::Exif).unwrap(),
+            (2, 1)
         );
     }
 

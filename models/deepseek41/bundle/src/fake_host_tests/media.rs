@@ -391,8 +391,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// release per rank, and at four ranks the router-in-norm module two
 /// resolves and three releases per rank; no launch changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22933, 0xf3b017b44088e4d5)),
-    (Ranks::TP4, (56379, 0x0e9e8d56f95ae995)),
+    (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
+    (Ranks::TP4, (56407, 0x0eb86c1d57e06cb8)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -41,12 +41,12 @@ use super::*;
 // launches to the served finish and each sublayer's join to before the
 // routed sum; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xf9aacf33eacbfd14)),
-    (6, (8040, 0x2cb68ef90c9ccc65)),
-    (8, (7572, 0x98021a8896a42b94)),
-    (12, (9496, 0x36ae17ee47c848ea)),
-    (16, (8852, 0xce004c3207df2b4d)),
-    (32, (8384, 0xaee19d46d48f1853)),
+    (4, (7880, 0x7b5e9ae6a7c4e58c)),
+    (6, (8040, 0x5edfaba614b6233c)),
+    (8, (7572, 0xfefbf7f1e5d18f85)),
+    (12, (9496, 0x77c1353864ed09a8)),
+    (16, (8852, 0x4ef2e0f44d85ea93)),
+    (32, (8384, 0x6bc487ff15b080f5)),
 ];
 
 #[test]

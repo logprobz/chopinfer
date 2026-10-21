@@ -1087,6 +1087,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// each C1 query plus KV triple becomes one launch with identical operands.
 /// Full-row Engram staged scales add one 68608-byte shared-memory configure
 /// per TP4 rank. These short-row lifecycles retain every other line exactly.
+/// The lean native module (`moe_native_entries::LEAN_CUBIN`) adds three
+/// resolves and four releases per TP4 rank, and the unfused native MoE
+/// steps of these lifecycles run its tiles. The scanned loop gives the
+/// module's two tile resolves the scanned names and adds the two admission
+/// scans' resolves and releases per rank.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

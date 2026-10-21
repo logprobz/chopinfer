@@ -398,6 +398,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The routed gate after each r2 shared-expert join launches without
 /// programmatic serialization: 160 TP4 Decode-1 gate launches change flags
 /// 1 to 0, nothing else.
+/// At four ranks the lean native module adds three resolves and four
+/// releases per rank and no launch, five and six with the scanned loop's
+/// admission scans.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
     (Ranks::TP4, (57259, 0x955a10a91b5fcb5d)),

@@ -137,17 +137,17 @@ mod tests {
     #[test]
     fn symbols_map_each_served_selector_once() {
         assert_eq!(
-            symbol("chop_position_indexer_deepseek41_r2_all_select_v3_live_v1").unwrap(),
-            "chop_position_indexer_deepseek41_r2_all_select_v3_live_early_v1"
+            symbol("chop_position_indexer_tag_r2_all_select_v3_live_v1").unwrap(),
+            "chop_position_indexer_tag_r2_all_select_v3_live_early_v1"
         );
         assert_eq!(
-            symbol("chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1").unwrap(),
-            "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_early_v1"
+            symbol("chop_position_blocks_tag_r1_select_v3_valid_merge_v1").unwrap(),
+            "chop_position_blocks_tag_r1_select_v3_valid_merge_early_v1"
         );
         for refused in [
-            "chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1",
-            "chop_position_indexer_deepseek41_r2_all_select_v3_cached4_v1",
-            "chop_position_indexer_deepseek41_r2_all_select_v3_live_early_v1",
+            "chop_position_indexer_tag_r2_all_scores_v3_live_v1",
+            "chop_position_indexer_tag_r2_all_select_v3_cached4_v1",
+            "chop_position_indexer_tag_r2_all_select_v3_live_early_v1",
         ] {
             assert!(symbol(refused).is_err(), "{refused}");
         }
@@ -155,8 +155,8 @@ mod tests {
 
     #[test]
     fn targets_require_the_served_selector_grid() {
-        let local = "chop_position_indexer_deepseek41_r1_all_select_v3_live_v1";
-        let merge = "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1";
+        let local = "chop_position_indexer_tag_r1_all_select_v3_live_v1";
+        let merge = "chop_position_indexer_tag_r1_all_select_v3_live_merge_v1";
         let plan = |x, y| LaunchPlan {
             grid: [x, y, 1],
             block: [256, 1, 1],

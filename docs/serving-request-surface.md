@@ -308,7 +308,22 @@ chat media part outside that set returns 400 before any fetch or decode.
 
 - Images: PNG (1 to 8-bit, any color type, interlaced or not; not 16-bit)
   and JPEG (8-bit baseline or progressive Huffman), up to 89,478,485 pixels;
-  the model's recipe resizes them.
+  the model's recipe resizes them. A model may also declare GIF and WebP, as
+  DeepSeek V4.1 Flash does. A GIF is its first frame on its logical screen,
+  grown to cover that frame, with the rest in the transparency index's
+  color (else index 0's). A WebP may be lossy, lossless or with alpha; an
+  animated one is its first frame on a transparent black canvas. WebP's EXIF
+  orientation is not read, so only recipes that keep the stored orientation
+  may declare it. Lossless WebP data (VP8L and alpha) reserves 1 KiB of
+  preparation memory per compressed byte, because its Huffman tables can
+  grow with the bytes that declare them rather than with the image, so a
+  lossless WebP over about 4 MB exceeds one request's 4 GiB.
+- An image decodes by its signature, as Pillow chooses, so a data URL whose
+  type names another image format decodes as what it is; a format the model
+  does not declare is refused by name, for example `image/webp images are
+  not accepted by this model, which accepts image/png, image/jpeg`. A data
+  URL's type compares without regard to case, `image/jpg` is JPEG, and
+  parameters before `;base64` are ignored.
 - Audio: WAV only, up to 600 seconds; convert other formats first.
 - Video: MP4 through NVDEC, when the package serves video
   (`--modalities all` or a list naming video).
@@ -317,8 +332,15 @@ chat media part outside that set returns 400 before any fetch or decode.
   recipes.
 
 Content arrays accept `image_url`, `audio_url`, `video_url` and
-`input_audio` (`format: "wav"`) with data URLs. Local files need
-`--allowed-local-media-path DIR`.
+`input_audio` (`format: "wav"`) with data URLs. A model that declares them
+(DeepSeek V4.1 Flash) also accepts OpenAI's `file` part carrying an image,
+`{"type": "file", "file": {"file_data": "data:image/png;base64,...",
+"filename": "a.png"}}`, with the formats and limits of `image_url`.
+`file_id`, a `file_data` that is not a base64 image data URL, and fields
+outside the `file` object are refused; other models refuse the `file` type.
+A model that declares images in tool results (DeepSeek V4.1 Flash) accepts
+`image_url` and `file` parts in tool messages, counted and limited as user
+images. Local files need `--allowed-local-media-path DIR`.
 
 ### Many images
 
@@ -410,8 +432,10 @@ oldest first. Storage admission is first in, first out.
 
 Refused with 400: background streaming, stored event replay, automatic
 truncation, encrypted reasoning, generated reasoning summaries, hosted tools,
-prompt references, multimodal input, extra service tiers, unknown request
-fields, and continuation of an active background response.
+prompt references, multimodal input (including `input_file`) other than an
+`input_image` in a `function_call_output` for a model that declares images
+in tool results, extra service tiers, unknown request fields, and
+continuation of an active background response.
 `prompt_cache_key` is accepted and ignored.
 
 ## Differences from vLLM

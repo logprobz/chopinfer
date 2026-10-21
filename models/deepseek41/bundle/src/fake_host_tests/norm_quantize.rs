@@ -128,10 +128,12 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
             count("chop_deepseek41_hc_completion_split_w16_v1 "),
             77 * ranks
         );
+        // One decode row serves the measured cached query norm (16 warps).
         assert_eq!(
-            count("chop_norm_quantize_deepseek41_query_v1"),
+            count("chop_norm_quantize_deepseek41_query_cached16_v1 "),
             layers * ranks
         );
+        assert_eq!(count("chop_norm_quantize_deepseek41_query_v1 "), 0);
         assert_eq!(count("chop_row_rmsnorm_deepseek41_w5120_v1"), 0);
         assert_eq!(count("chop_deepseek41_q_norm_f32_v1"), 0);
         // TP4 keeps the unmeasured embedding chain. Later indexer

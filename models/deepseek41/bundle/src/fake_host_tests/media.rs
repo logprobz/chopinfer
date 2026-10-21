@@ -384,6 +384,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// rank, and its C1 decode joins each of the 77 chain and finish/norm pairs
 /// into one launch with the pair's operands and a zeroed ticket; graph
 /// pieces keep their count and lose those nodes.
+/// The cached query norm adds three resolves and four releases per rank, and
+/// its one-row decode runs the 16-warp entry (grid 1 x 1, block 512) with the
+/// served operands.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
     (Ranks::TP4, (56503, 0xbb89aecac848a923)),

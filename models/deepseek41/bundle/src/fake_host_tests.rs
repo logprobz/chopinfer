@@ -1024,6 +1024,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// combined journals before it: exactly these lines differ.
 /// The one-launch HC boundary module adds ten resolves and eleven releases
 /// per rank; these fixtures launch no C1 or C8 boundary.
+/// The cached query norm module adds three resolves and four releases per
+/// rank; these two-row decodes keep the served query norm.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1033,7 +1035,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17181, 0xd90f3560072b876a),
+        (17188, 0x29d36b589357fe9f),
     ),
     (
         "deepseek41-flash-tp2",
@@ -1043,7 +1045,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34549, 0x3a4e91c03f4002ce),
+        (34563, 0xa81717bf01943457),
     ),
     (
         "deepseek41-flash-tp4",

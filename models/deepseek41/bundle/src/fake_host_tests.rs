@@ -1011,6 +1011,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// allocation changes. The combined journals were audited against main's
 /// again: the selectors and the r2 module add exactly these resources and
 /// renames, and every other operation is identical after handle mapping.
+/// Exact-row folds replace only qualified short prefill launches. Staged
+/// scales add one module, fifteen resolves, four configurations and sixteen
+/// releases per TP4 rank. The combined audit preserves allocations and every
+/// other operation after typed handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

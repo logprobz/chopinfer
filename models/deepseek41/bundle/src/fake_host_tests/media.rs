@@ -370,6 +370,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// router finish becomes r2v7 and the shared expert's join moves from the
 /// routed sum to directly after it: 160 renamed launches and 160 moved
 /// record/wait pairs, nothing else.
+/// Short dense folds preserve image operands and dependencies; staged-scale
+/// module resources match the text lifecycle, with all allocations retained.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
     (Ranks::TP4, (53203, 0xf686c44e0d2058ad)),

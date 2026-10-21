@@ -29,6 +29,8 @@ use super::*;
 // symbol to r2v7 with identical config and operands, and each sublayer's join
 // (record and wait) moves from before the routed sum to directly after that
 // finish; no other line changes.
+// Staged-scale resources renumber handles. Verify bodies remain identical;
+// full creation histories differ only by audited short prefill substitutions.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0xb7386939260d755c)),
     (8, (8992, 0x402809f4ec2648be)),

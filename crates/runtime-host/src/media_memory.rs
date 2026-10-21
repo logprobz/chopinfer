@@ -17,7 +17,7 @@
 //! them decodes and waits for exactly what that plan needs; a request with
 //! any other media part waits for a request's whole allowance. Either way a
 //! waiting request holds no decoded media, so partial preparations cannot
-//! deadlock.
+//! deadlock. At most [`PROCESS_IMAGE_DECODES_V1`] images decode at once.
 //!
 //! Payloads a cache keeps for requests to come hold leases too. When a
 //! reservation does not fit, the pool asks each registered [`ReclaimV1`] to
@@ -42,6 +42,94 @@ pub(crate) const PROCESS_MEDIA_PREPARATION_BYTES_V1: u64 = 8 << 30;
 /// and the payloads of the items before it.
 pub(crate) const REQUEST_MEDIA_PREPARATION_BYTES_V1: u64 = 4 << 30;
 
+/// Images the process decodes and prepares at once. Each preparation runs
+/// on one core with the buffers its reservation covers; four keep requests
+/// moving without taking the host's cores from the engine thread and the
+/// transport.
+pub(crate) const PROCESS_IMAGE_DECODES_V1: usize = 4;
+
+/// The process's image decode slots: a preparation takes one before it
+/// decodes an image and gives it back when the image is prepared, on
+/// success, error or unwind.
+pub(crate) struct DecodeSlotsV1 {
+    limit: usize,
+    used: Mutex<usize>,
+    available: Condvar,
+    #[cfg(test)]
+    peak: std::sync::atomic::AtomicUsize,
+}
+
+impl DecodeSlotsV1 {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            used: Mutex::new(0),
+            available: Condvar::new(),
+            #[cfg(test)]
+            peak: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// The slots every backend of this process shares.
+    pub(crate) fn process() -> Arc<Self> {
+        static PROCESS: OnceLock<Arc<DecodeSlotsV1>> = OnceLock::new();
+        Arc::clone(PROCESS.get_or_init(|| Arc::new(Self::new(PROCESS_IMAGE_DECODES_V1))))
+    }
+
+    /// The most slots held at once.
+    #[cfg(test)]
+    pub(crate) fn peak(&self) -> usize {
+        self.peak.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Waits for a slot until `cancellation` fires. Like a memory wait it
+    /// has no deadline: a slot's holder only prepares its image, so every
+    /// wait ends.
+    pub(crate) fn acquire(
+        self: &Arc<Self>,
+        cancellation: &CancellationSignal,
+    ) -> Result<DecodeSlotV1, AdmissionError> {
+        let mut used = self
+            .used
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(AdmissionError::Rejected(
+                    MEDIA_PREPARATION_CANCELLED_V1.into(),
+                ));
+            }
+            if *used < self.limit {
+                *used += 1;
+                #[cfg(test)]
+                self.peak
+                    .fetch_max(*used, std::sync::atomic::Ordering::Relaxed);
+                return Ok(DecodeSlotV1(Arc::clone(self)));
+            }
+            used = self
+                .available
+                .wait_timeout(used, Duration::from_millis(50))
+                .unwrap_or_else(|poison| poison.into_inner())
+                .0;
+        }
+    }
+}
+
+/// One held decode slot, given back when it drops.
+pub(crate) struct DecodeSlotV1(Arc<DecodeSlotsV1>);
+
+impl Drop for DecodeSlotV1 {
+    fn drop(&mut self) {
+        let mut used = self
+            .0
+            .used
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *used = used.saturating_sub(1);
+        self.0.available.notify_one();
+    }
+}
+
 /// A holder of payloads no request needs, which it gives up on demand.
 pub(crate) trait ReclaimV1: Send + Sync {
     /// Drops one idle payload, least recently used first; false when it
@@ -58,6 +146,9 @@ pub(crate) struct MediaMemoryV1 {
 
 /// The start of a refusal for a request whose media exceed its own budget.
 pub(crate) const REQUEST_MEDIA_MEMORY_REFUSAL_V1: &str = "the request's media need ";
+
+/// The refusal of a preparation whose client left.
+pub(crate) const MEDIA_PREPARATION_CANCELLED_V1: &str = "media preparation cancelled";
 
 impl MediaMemoryV1 {
     pub(crate) fn new(limit: u64) -> Self {
@@ -139,7 +230,7 @@ impl MediaMemoryV1 {
         loop {
             if cancellation.is_cancelled() {
                 return Err(AdmissionError::Rejected(
-                    "media preparation cancelled".into(),
+                    MEDIA_PREPARATION_CANCELLED_V1.into(),
                 ));
             }
             if self.try_take(bytes) {

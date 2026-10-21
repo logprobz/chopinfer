@@ -250,11 +250,12 @@ media preparation waits for host memory from an 8 GiB media budget. A request
 whose media are all inline (data URL) images is planned from the images'
 headers first and waits for what they need, at most 4 GiB; a request with any
 other media part waits for 4 GiB. A prepared image is kept as its 8-bit
-canvas, 3 bytes per pixel, while a request or the image cache holds it.
-Requests over their own size or media limit return 400. A request of inline
-images whose prompt exceeds the context, or whose images exceed the 4 GiB, is
-refused before any image decodes. Requests waiting for memory are not refused.
-The budget bounds those buffers, not the process's resident memory.
+canvas, 3 bytes per pixel, while a request or the image cache holds it, and at
+most four images decode at once. Requests over their own size or media limit
+return 400. A request of inline images whose prompt exceeds the context, or
+whose images exceed the 4 GiB, is refused before any image decodes. Requests
+waiting for memory or a decode slot are not refused. The budget bounds those
+buffers, not the process's resident memory.
 
 **KV admission.** `--admission optimistic` (the default) admits a request when
 its prompt fits, grows its KV as it decodes, and preempts the latest-arrived

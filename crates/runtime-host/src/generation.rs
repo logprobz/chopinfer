@@ -30,8 +30,8 @@ use runtime_tokenizer::Tokenizer;
 use tokio::sync::oneshot;
 
 use crate::media_memory::{
-    MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1, REQUEST_MEDIA_PREPARATION_BYTES_V1,
-    RequestMediaMemoryV1,
+    DecodeSlotsV1, MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1,
+    REQUEST_MEDIA_PREPARATION_BYTES_V1, RequestMediaMemoryV1,
 };
 pub use crate::watchdog::WorkerWatchdogV1;
 use crate::watchdog::{WorkerPhase, WorkerProgress};
@@ -352,6 +352,8 @@ pub struct EngineGenerationBackend {
     remote_media: runtime_media::remote::RemoteMediaPolicy,
     media_memory: Arc<MediaMemoryV1>,
     media_request_bytes: u64,
+    /// Image decodes this process runs at once.
+    decode_slots: Arc<DecodeSlotsV1>,
     /// Sources the plan pass holds decoded, for tests.
     #[cfg(test)]
     planning_sources: Arc<std::sync::atomic::AtomicUsize>,
@@ -547,6 +549,7 @@ impl EngineGenerationBackend {
             remote_media: Default::default(),
             media_memory,
             media_request_bytes: REQUEST_MEDIA_PREPARATION_BYTES_V1,
+            decode_slots: DecodeSlotsV1::process(),
             #[cfg(test)]
             planning_sources: Arc::default(),
             image_cache,
@@ -565,6 +568,13 @@ impl EngineGenerationBackend {
         pool.register(Arc::downgrade(&self.image_cache) as _);
         self.media_memory = pool;
         self.media_request_bytes = request_bytes;
+        self
+    }
+
+    /// Image decode slots other than the process's, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_decode_slots(mut self, slots: Arc<DecodeSlotsV1>) -> Self {
+        self.decode_slots = slots;
         self
     }
 
@@ -684,6 +694,13 @@ impl EngineGenerationBackend {
         if let Some(prepared) = cached.and_then(|key| self.image_cache.get(&key)) {
             return Ok(prepared);
         }
+        // An image decodes in one of the process's slots, held until it is
+        // prepared.
+        let _slot = if part.kind == FrontendMediaPartKindV1::Image {
+            Some(self.decode_slots.acquire(cancellation)?)
+        } else {
+            None
+        };
         let declared = self
             .policy
             .declaration()

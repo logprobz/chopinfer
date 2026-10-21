@@ -905,6 +905,63 @@ fn inline_images_wait_for_their_planned_need() {
     assert_eq!(pool.in_use(), 0);
 }
 
+/// Concurrent requests decode at most the slots' count of images at once,
+/// all complete, and a request waiting for a slot leaves when cancelled.
+#[test]
+fn image_decodes_share_bounded_slots() {
+    use crate::media_memory::DecodeSlotsV1;
+    for limit in [1, 4] {
+        let slots = Arc::new(DecodeSlotsV1::new(limit));
+        let pool = Arc::new(MediaMemoryV1::new(1 << 33));
+        let backend = Arc::new(
+            backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 30)
+                .with_decode_slots(Arc::clone(&slots)),
+        );
+        let workers = (0..8)
+            .map(|worker| {
+                let backend = Arc::clone(&backend);
+                std::thread::spawn(move || {
+                    let mut images = vec![jpeg(false); 2];
+                    for image in &mut images {
+                        image.extend(std::iter::repeat_n(1, 16 + worker));
+                    }
+                    backend.prepare_prompt(inline_jpegs(&images)).map(|_| ())
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap().unwrap();
+        }
+        assert!(
+            (1..=limit).contains(&slots.peak()),
+            "{} of {limit}",
+            slots.peak()
+        );
+
+        // With every slot held, a request waits for one until cancelled.
+        let held = (0..limit)
+            .map(|_| slots.acquire(&CancellationSignal::new()).unwrap())
+            .collect::<Vec<_>>();
+        let cancellation = CancellationSignal::new();
+        let worker = {
+            let (backend, cancellation) = (Arc::clone(&backend), cancellation.clone());
+            std::thread::spawn(move || {
+                backend.prepare_prompt_cancellable(inline_jpegs(&[jpeg(true)]), &cancellation)
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!worker.is_finished(), "the request waits for a slot");
+        cancellation.cancel();
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(AdmissionError::Rejected(message)) if message.contains("cancelled")
+        ));
+        drop(held);
+        backend.image_cache.reclaim_idle();
+        assert_eq!(pool.in_use(), 0);
+    }
+}
+
 /// An image that fails to decode partway through a request releases the
 /// request's reservation; the images before it stay cached and idle, and
 /// the pool reclaims them.

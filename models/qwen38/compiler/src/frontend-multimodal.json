@@ -21,6 +21,12 @@
         "part_types": [
           "image_url"
         ],
+        "formats": [
+          "png",
+          "jpeg",
+          "gif",
+          "webp"
+        ],
         "maximum_items": 64,
         "maximum_bytes": 67108864,
         "maximum_tokens": 16384,
@@ -46,7 +52,8 @@
               0.5,
               0.5,
               0.5
-            ]
+            ],
+            "alpha_background": "none"
           }
         },
         "render": {

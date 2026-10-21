@@ -141,7 +141,7 @@
     "media_preprocessing_frontend": {
       "directory": false,
       "members": {
-        ".": "bb4552eb18458d38b24a3862be6c978a51393192ba1bfcfe5ea5e38ded561946"
+        ".": "a985ec7259e16bdb80f2afe9f1c848212a7cdbb283caaca2e987da237cef59ba"
       },
       "path": "models/qwen38/compiler/src/frontend-multimodal.json"
     },
@@ -1888,14 +1888,6 @@
         "producer": "legacy-unknown"
       },
       "schema": "chop-frontend-openai-v2"
-    },
-    "bb4552eb18458d38b24a3862be6c978a51393192ba1bfcfe5ea5e38ded561946": {
-      "production": {
-        "adoption_commit": "e474dd0f082f79da5cd78fe6df9a40b8ee59e10c",
-        "adoption_date": "2026-10-15",
-        "producer": "legacy-unknown"
-      },
-      "schema": "legacy-json-object"
     },
     "e19a10e3a977287afe1c33d889e374ebe02a92fe2099a43258926cb6d8ff6d66": {
       "production": {
@@ -11194,6 +11186,9 @@
         "reference_sha256": "fdc594fd35f668b78f3c490823905c6d22cbbca1de2389f08c21e0e93bbaa4b1"
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
+    },
+    "a985ec7259e16bdb80f2afe9f1c848212a7cdbb283caaca2e987da237cef59ba": {
+      "schema": "legacy-json-object"
     }
   },
   "schema": "chopinfer-qual-references/v1"

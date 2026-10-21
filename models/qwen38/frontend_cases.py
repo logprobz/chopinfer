@@ -154,3 +154,9 @@ def cases(declaration):
         {"role": "user", "content": "Thanks."}],
         "chat_template_kwargs": {"preserve_thinking": False}}, {
         "fixed:tool-response-user-turn", "user:tool-response"}
+    # GIF and WebP images, which the image modality declares beside PNG and
+    # JPEG.
+    for kind in ("gif", "webp"):
+        yield f"image-{kind}", {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/{kind};base64,AA=="}},
+            {"type": "text", "text": "Describe."}]}]}, {f"fixed:image-{kind}", f"image:{kind}"}

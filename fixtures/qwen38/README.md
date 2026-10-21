@@ -57,6 +57,14 @@ the bound prompts and answers from `image-probe-references.json`, and the
 result must have the binding's workload digest. The only other input is
 the checkpoint's `preprocessor_config.json` (by digest).
 
+`image-decode.json` pins image decoding: what transformers 5.16.1's
+`load_image` under Pillow 12.3 decodes from each file of runtime-media's
+image decode corpus, with the checks that the image processor adds no
+decode step and that every probe above needs no orientation (all are
+opaque RGB). `capture/image_decode.py` writes it on CPU, and
+`models/qwen38/compiler/tests/media_declaration.rs` holds the served decode
+to it.
+
 `agentic-outcomes.json` holds the two Qwen3.8 agentic model outcomes recorded
 by a 2026-10-01 replay of agentic sessions that never sent a final answer: coding-000050 at C4
 ended its turn inside its thinking, and coding-000035 at C8 closed its

@@ -23264,5 +23264,167 @@
    248068,
    198
   ]
+ },
+ {
+  "id": "image-gif",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/gif;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>Describe.<|im_end|>\n<|im_start|>assistant\n<think>\n",
+  "token_ids": [
+   248045,
+   8678,
+   198,
+   24342,
+   286,
+   4879,
+   369,
+   716,
+   310,
+   830,
+   11553,
+   13,
+   5044,
+   1683,
+   15060,
+   1472,
+   279,
+   3274,
+   11,
+   9307,
+   1328,
+   30800,
+   11,
+   2814,
+   47675,
+   25605,
+   11,
+   321,
+   60445,
+   55404,
+   11,
+   27224,
+   11,
+   321,
+   30246,
+   303,
+   279,
+   1534,
+   4087,
+   13,
+   248046,
+   198,
+   248045,
+   846,
+   198,
+   248053,
+   248056,
+   248054,
+   72240,
+   13,
+   248046,
+   198,
+   248045,
+   74455,
+   198,
+   248068,
+   198
+  ]
+ },
+ {
+  "id": "image-webp",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/webp;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>Describe.<|im_end|>\n<|im_start|>assistant\n<think>\n",
+  "token_ids": [
+   248045,
+   8678,
+   198,
+   24342,
+   286,
+   4879,
+   369,
+   716,
+   310,
+   830,
+   11553,
+   13,
+   5044,
+   1683,
+   15060,
+   1472,
+   279,
+   3274,
+   11,
+   9307,
+   1328,
+   30800,
+   11,
+   2814,
+   47675,
+   25605,
+   11,
+   321,
+   60445,
+   55404,
+   11,
+   27224,
+   11,
+   321,
+   30246,
+   303,
+   279,
+   1534,
+   4087,
+   13,
+   248046,
+   198,
+   248045,
+   846,
+   198,
+   248053,
+   248056,
+   248054,
+   72240,
+   13,
+   248046,
+   198,
+   248045,
+   74455,
+   198,
+   248068,
+   198
+  ]
  }
 ]

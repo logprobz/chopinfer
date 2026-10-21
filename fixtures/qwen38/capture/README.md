@@ -15,6 +15,10 @@ HF token workload. Run it with `models/qwen38/reference.py` in F32 through
 the GPU queue; `frontend_api.py shapes` derives the answer-dependent shape
 expectations. See [the reference protocol](../frontend/README.md).
 
+`image_decode.py` writes `../image-decode.json`, which pins image decoding
+to transformers' `load_image` over runtime-media's image decode corpus and
+checks that the image processor and the image probes add nothing to it.
+
 `image_rows.py` and the model-owned `reference_workloads.py` retain the
 authenticated image-probe workload producer. Accuracy answers are generated
 and bound by `tools/refrun`, never by a serving-system baseline.

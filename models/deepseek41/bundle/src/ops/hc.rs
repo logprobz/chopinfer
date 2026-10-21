@@ -287,10 +287,14 @@ impl HcOps {
         bind.launch_within(op, &b, workspace, Counts::rows(rows))
     }
 
+    // TP4, 250 W, 2026-10-21, 16-row boundaries of real captured rows
+    // (hc_tail16, hc16-r1): at Decode-16 the tail is bitwise against the
+    // rounded expansion mixer and input norm it replaces, memcheck clean,
+    // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
         matches!(
             phase,
-            Phase::Decode(1 | 8 | 32)
+            Phase::Decode(1 | 8 | 16 | 32)
                 | Phase::Verify {
                     rows: 4 | 6 | 8 | 12 | 16 | 32,
                     ..
@@ -733,7 +737,7 @@ mod tests {
                     assert_eq!(selected, qualified, "{phase:?}");
                     assert_eq!(
                         ops.has_finish_norm(phase),
-                        qualified || matches!(phase, Phase::Decode(32))
+                        qualified || matches!(phase, Phase::Decode(16 | 32))
                     );
                 }
             }

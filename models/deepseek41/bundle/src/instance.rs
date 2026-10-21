@@ -112,6 +112,10 @@ pub struct Instance {
     extent: Extent,
     /// Steps planned so far: each row's index tag holds its step's.
     steps: std::cell::Cell<u64>,
+    /// Some rank's router bias choice may hold image rows: set before a
+    /// prefill uploads its image flags, cleared once every rank's flags
+    /// are zero again. While it is clear, every rank's flags are zero.
+    image_flags: std::cell::Cell<bool>,
     overlap: Vec<execute::overlap::Rank>,
     dma: Vec<execute::dma::Rank>,
     layer_overlap: bool,
@@ -865,6 +869,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
             verify_rows,
         },
         steps: std::cell::Cell::new(0),
+        image_flags: std::cell::Cell::new(false),
         overlap: Vec::new(),
         dma: Vec::new(),
         layer_overlap: execute::overlap::layers_enabled(),
@@ -1120,6 +1125,20 @@ pub(crate) fn dspark_context(
 pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
+
+/// Marks an instance's router flags as possibly holding image rows, as a
+/// prefill does between uploading and clearing them.
+#[cfg(test)]
+pub(crate) fn set_image_flags_for_test(handle: runtime_bundle_abi::BundleHandleV1, set: bool) {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("instance")
+            .image_flags
+            .set(set);
+    });
+}
 
 #[cfg(all(test, feature = "diagnostic-taps"))]
 pub(crate) fn capture_dspark_state_for_test(

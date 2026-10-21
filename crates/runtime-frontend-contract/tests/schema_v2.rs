@@ -586,9 +586,9 @@ fn image_formats_and_file_parts_are_declared_on_image_modalities() {
             "render": {"pad": "[EOS]"}, "formats": ["png", "gif"]}]
     });
     read(&patch_grid).unwrap();
+    // The host reads WebP's EXIF orientation, so any recipe may take WebP.
     patch_grid.pointer_mut(modality).unwrap()["formats"] = json!(["png", "webp"]);
-    let error = read(&patch_grid).unwrap_err().to_string();
-    assert!(error.contains("webp images do not support"), "{error}");
+    read(&patch_grid).unwrap();
 }
 
 /// `declaration()` with `section` in place of the format, serialized, then

@@ -1091,15 +1091,6 @@ impl FrontendDescriptorV1 {
                 {
                     return Err(invalid("invalid image formats declaration"));
                 }
-                // The host reads no EXIF orientation from WebP.
-                if formats.iter().any(|format| format == "webp")
-                    && modality.recipe.tag != "image.centered-pad.v1"
-                {
-                    return Err(invalid(format!(
-                        "{} applies EXIF orientation, which webp images do not support",
-                        modality.recipe.tag
-                    )));
-                }
             }
             if modality.recipe.tag == "image.centered-pad.v1" {
                 modality.validate_centered_pad_v1().map_err(invalid)?;

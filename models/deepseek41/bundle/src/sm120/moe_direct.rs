@@ -4,7 +4,7 @@ use kernel_core::backend::{Launch, OpInfo, Refused};
 use kernel_core::contract::{Argument, ArgumentList};
 use kernel_core::precision::ExecutionPhase;
 use kernels_sm120::moe::chained::{
-    bandwidth,
+    absorb, bandwidth,
     floor::{Entry, Stage},
 };
 use model_deepseek41_contract::moe::Experts;
@@ -67,6 +67,22 @@ pub(super) fn prepare_set(
         .collect()
 }
 
+/// TP4, 250 W, 2026-10-21, captured full MoE graphs (absorb-r1): small
+/// queues that also run the wide queues' experts, with no wide launches,
+/// passed all 80 AR C32 and DSpark C8 K3 (32-row) cases bitwise on both
+/// GPUs, memcheck clean. They save 0.93 ms per AR C32 step (20 of 20 layers
+/// faster) and 1.03 ms per verify-32 cycle (18 of 20) over 40 backbone
+/// layers; the A/A control moved 0.01..0.02 ms. Same parameters, grids and
+/// partial layout as the small queues; the module is the qualified lab
+/// module's bytes. Decode-16 and the drafter bank are unmeasured.
+fn absorbs(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
+    entry.experts() == 384
+        && matches!(
+            (phase, rows),
+            (ExecutionPhase::Decode, 32) | (ExecutionPhase::Verify, 32)
+        )
+}
+
 fn prepare(
     entry: &Entry,
     rows: u32,
@@ -110,7 +126,9 @@ fn prepare(
         Stage::DownWide,
         Stage::DownFinish,
     ] {
-        if rows <= 8 && matches!(s, Stage::GateWide | Stage::DownWide) {
+        if (rows <= 8 || absorbs(entry, phase, rows))
+            && matches!(s, Stage::GateWide | Stage::DownWide)
+        {
             continue;
         }
         let direct = matches!(
@@ -190,6 +208,13 @@ fn prepare(
             )
         {
             spec = bandwidth::finish_loads_entry(entry);
+        }
+        if let Some(s @ (Stage::GateSmall | Stage::DownSmall)) = stage
+            && absorbs(entry, phase, rows)
+        {
+            // The small queue's positional ABI and view names.
+            spec = absorb::entry(entry, s);
+            plan = absorb::plan(entry, s, rows)?;
         }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
@@ -397,7 +422,18 @@ mod tests {
                                 "{phase:?} rows={rows}"
                             );
                         }
+                        let absorbed = set.count == 384
+                            && matches!(
+                                (phase, rows),
+                                (ExecutionPhase::Decode, 32) | (ExecutionPhase::Verify, 32)
+                            );
+                        assert!(!(absorbed && call.launch.symbol.contains("_wide_")));
                         if call.launch.symbol.contains("_small_") {
+                            assert_eq!(
+                                call.launch.symbol.contains("_moe_absorb_"),
+                                absorbed,
+                                "{phase:?} rows={rows}"
+                            );
                             let resident = if set.count == 384
                                 && phase == ExecutionPhase::Decode
                                 && rows == 8
@@ -410,7 +446,7 @@ mod tests {
                             assert_eq!(
                                 call.launch.symbol.ends_with("_small_resident8_v1"),
                                 set.count == 384
-                                    && (rows == 32
+                                    && ((rows == 32 && !absorbed)
                                         || (phase == ExecutionPhase::Verify && rows == 4))
                                     && point == Point::Gate
                             );

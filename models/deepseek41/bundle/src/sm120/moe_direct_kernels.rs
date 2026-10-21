@@ -1,7 +1,7 @@
 //! Locked exact MoE metadata, direct-load chains and fused epilogues.
 use kernel_build::CubinSpec;
 use kernel_core::gated_mlp::GatedMlpProjection;
-use kernels_sm120::moe::chained::{bandwidth, floor, row_bias};
+use kernels_sm120::moe::chained::{absorb, bandwidth, floor, row_bias};
 use model_deepseek41_contract::{geometry::Geometry, moe};
 
 /// The served lower-latency router finish variant (`router_finish_r2.cuh`;
@@ -70,6 +70,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             "routed_moe_gate_finish_loads",
             bandwidth::finish_loads_cubin_spec(
                 &format!("bandwidth_moe_{}_finish_loads_sm120", g.kernel_tag),
+                &entries,
+            ),
+        ));
+        specs.push((
+            "routed_moe_absorb",
+            absorb::cubin_spec(
+                &format!("bandwidth_moe_{}_absorb_sm120", g.kernel_tag),
                 &entries,
             ),
         ));

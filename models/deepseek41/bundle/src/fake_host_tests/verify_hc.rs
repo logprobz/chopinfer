@@ -41,6 +41,9 @@ use super::*;
 // bodies remain identical after typed handle mapping; no verify uses it.
 // At 4 and 32 rows the routed gate after each r2 join launches without
 // programmatic serialization: 160 gate launches change flags 1 to 0.
+// The absorbing small queues at 32 rows rename the 160 gate and down small
+// launches and drop the 320 wide launches; the absorb module renumbers
+// handles only at the other rows.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x5743860b1f2a7917)),
     (6, (8040, 0xb4d2a3d1b3984c3e)),

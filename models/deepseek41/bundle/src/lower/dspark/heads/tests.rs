@@ -257,7 +257,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                 );
                 let step = lone
                     .iter()
-                    .find(|op| op.launch.symbol == "chop_deepseek41_dspark_markov_v1")
+                    .find(|op| op.launch.symbol == "chop_deepseek41_dspark_markov_row_v1")
                     .unwrap();
                 assert_eq!(argument_span(step, 3), v.position_logits);
                 let row = vocab * 4;

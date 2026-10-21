@@ -38,6 +38,7 @@ pub(crate) mod latent_cache;
 pub(crate) mod latent_cache_groups;
 pub mod latent_decode;
 pub mod latent_scheduled;
+pub mod markov_row;
 pub mod markov_tiled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
@@ -456,6 +457,7 @@ impl crate::Kernels {
             || cubin == confidence_parallel::CUBIN
             || cubin == markov_tiled::CUBIN
             || cubin == dspark_argmax::CUBIN
+            || cubin == markov_row::CUBIN
             || cubin == dspark_quantize::cubin_name(g)
             || cubin == dspark_peer_embedding::cubin_name(g)
             || cubin == engram_hash_entries::CUBIN

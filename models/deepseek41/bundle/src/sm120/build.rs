@@ -68,6 +68,8 @@ mod latent_cache_groups;
 mod latent_decode;
 #[allow(dead_code)]
 mod latent_scheduled;
+#[allow(dead_code, reason = "the bundle dispatches the row step")]
+mod markov_row;
 mod markov_tiled;
 #[allow(dead_code)]
 mod norm_prefill;
@@ -203,6 +205,7 @@ pub fn selection(
         confidence_parallel::cubin_spec(manifest),
     ));
     specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
+    specs.push((markov_row::FAMILY, markov_row::cubin_spec(manifest)));
     specs.push((dspark_argmax::FAMILY, dspark_argmax::cubin_spec()));
     specs.push((
         ring_gather_entries::FAMILY,

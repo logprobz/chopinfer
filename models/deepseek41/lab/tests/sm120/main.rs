@@ -37,6 +37,7 @@ mod dspark_cubin;
 #[path = "../../../bundle/src/sm120/dspark_entries.rs"]
 mod dspark_entries;
 use bundle_deepseek41::sm120::confidence_parallel;
+use bundle_deepseek41::sm120::markov_row;
 use bundle_deepseek41::sm120::markov_tiled;
 mod dspark_argmax;
 mod dspark_catch_up_kv;

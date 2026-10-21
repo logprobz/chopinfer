@@ -665,7 +665,7 @@ class RustTests(unittest.TestCase):
         self.assertEqual(run[-2:], ["-E", "not (binary_id(=heavy) | binary_id(=more))"])
 
     def test_the_declared_one_process_libraries_exist(self):
-        self.assertEqual(rust_tests.one_process_libraries(["--workspace"]), ["bundle-mimo26"])
+        self.assertEqual(rust_tests.one_process_libraries(["--workspace"]), ["bundle-glm5next", "bundle-mimo26"])
 
     def test_cargo_test_runs_the_same_selection_with_its_doctests(self):
         self.assertEqual(rust_tests.commands(["-p", "core"], "cargo", 4),

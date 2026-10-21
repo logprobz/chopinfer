@@ -11,6 +11,13 @@ build = "src/sm120/build.rs"
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+# ci/rust_tests.py runs this package's library tests in one process, as cargo
+# test does, beside nextest. Its fake-host tests build the fixture package's
+# plan and precision component once per process; at 8 threads one process
+# per test took 555 s and one process 241 s (2026-10-21).
+[package.metadata.chopinfer]
+lib-tests-in-one-process = true
+
 [features]
 # CHOPINFER_TAPS_DIR: the encoder taps (`src/taps.rs`), diagnostic bundles
 # only.

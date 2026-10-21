@@ -52,20 +52,24 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
         assert_eq!(
             calls
                 .iter()
-                .filter(|l| l.contains("_cached_profile0_"))
+                .filter(|l| l.contains("_cached_") && l.contains("_profile0_"))
                 .count(),
             if selected { count } else { 0 }
         );
         assert!(
             calls
                 .iter()
-                .all(|l| !l.contains("_control1_") && !l.contains("_cached_profile1_"))
+                .all(|l| !l.contains("_control1_") && !l.contains("_profile1_"))
         );
         for line in calls
             .into_iter()
-            .filter(|l| l.contains("_cached_profile0_"))
+            .filter(|l| l.contains("_cached_") && l.contains("_profile0_"))
         {
             assert!(line.contains(&format!("grid_x: {rows},")), "{line}");
+            let grouped = verify && rows == 4;
+            assert_eq!(line.contains("_cached_h8_profile0_"), grouped, "{line}");
+            let heads = if grouped || rows > 4 { 8 } else { 1 };
+            assert!(line.contains(&format!("grid_y: {},", 16 / heads)), "{line}");
             assert!(
                 line.contains("grid_z: 8,") && line.contains("shared_memory_bytes: 73984,"),
                 "{line}"
@@ -186,5 +190,54 @@ fn selected_cache_journal_reference_lifecycle() {
         let name = "deepseek41-flash-tp4.native.cache-disabled.journal";
         std::fs::write(dir.join(name), lines.join("\n")).unwrap();
         super::decode_attention::export_handles(&host.device, &dir, name);
+    }
+}
+
+#[test]
+fn grouped_cache_retains_other_verify_widths() {
+    for rows in [6_u32, 8, 16, 32] {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        host.speculation.set(Some((5, 32)));
+        let (items, width) = if rows == 6 { (1, 6) } else { (rows / 4, 4) };
+        let mut instance = create(&host, items);
+        for slot in 0..u64::from(items) {
+            step(
+                &mut instance,
+                &prompt(7 + slot, slot, 0, 3, true),
+                &mut Views::default(),
+            );
+        }
+        let tokens = vec![9; width as usize];
+        let batch = (0..u64::from(items))
+            .map(|slot| (7 + slot, slot, 3, tokens.as_slice()))
+            .collect::<Vec<_>>();
+        let from = host.device.journal.borrow().len();
+        let mut views = Views::default();
+        instance.execute(&verify(&batch), &mut views).unwrap();
+        assert_eq!(views.rows(), rows);
+        let phase = host.device.journal.borrow()[from..].to_vec();
+        assert!(phase.iter().all(|line| !line.contains("_cached_h")));
+        let (regions, collisions) = shared_overlap::audit_scratch(&phase);
+        assert_eq!((regions, collisions), (160, 0));
+        let accepted = batch
+            .iter()
+            .map(|&(request, _, _, _)| kept(request, width))
+            .collect::<Vec<_>>();
+        instance.commit_accepted(&accepted).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        if let Some(root) = std::env::var_os("CHOPINFER_GROUPED_VERIFY_JOURNALS") {
+            let root = std::path::PathBuf::from(root);
+            std::fs::create_dir_all(&root).unwrap();
+            let name = format!("verify-r{rows}.journal");
+            std::fs::write(root.join(&name), host.device.journal.borrow().join("\n")).unwrap();
+            super::decode_attention::export_handles(&host.device, &root, &name);
+            std::fs::write(
+                root.join(format!("verify-r{rows}.phase.journal")),
+                phase.join("\n"),
+            )
+            .unwrap();
+        }
     }
 }

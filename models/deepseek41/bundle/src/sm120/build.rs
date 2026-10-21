@@ -61,6 +61,8 @@ mod latent;
 #[allow(dead_code)]
 mod latent_cache;
 #[allow(dead_code)]
+mod latent_cache_groups;
+#[allow(dead_code)]
 mod latent_decode;
 #[allow(dead_code)]
 mod latent_scheduled;
@@ -301,6 +303,9 @@ pub fn selection(
         let spec = latent_cache::cubin(g).expect("qualified selected KV cache cubin");
         owners.push((spec.name.clone(), g.id));
         specs.push((latent_cache::FAMILY, spec));
+        let spec = latent_cache_groups::cubin(g).expect("qualified cached head groups");
+        owners.push((spec.name.clone(), g.id));
+        specs.push((latent_cache_groups::FAMILY, spec));
     }
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
         let spec = own_cubin::gate_cubin_spec(manifest, geometry);

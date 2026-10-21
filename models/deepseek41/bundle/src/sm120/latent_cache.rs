@@ -70,7 +70,14 @@ pub fn prepare(
         .filter(|&r| r <= need.capacity)
         .collect();
     let reference = backend.latent_attention_sources(query, need)?;
-    sources_cached::prepare(reference, entry, need, &rows)
+    // Complete captured attention graphs won at four rows with eight heads
+    // sharing each key tile. Retain the measured routes at all other widths.
+    let groups: &[(u32, u32)] = if *phase == AttentionPhase::Verify && rows.contains(&4) {
+        &[(4, 8)]
+    } else {
+        &[]
+    };
+    sources_cached::prepare_grouped(reference, entry, need, &rows, groups)
 }
 
 #[cfg(test)]

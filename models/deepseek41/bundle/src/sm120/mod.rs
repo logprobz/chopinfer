@@ -30,6 +30,11 @@ pub mod latent;
     reason = "the build script compiles the qualified cache catalog"
 )]
 pub(crate) mod latent_cache;
+#[allow(
+    dead_code,
+    reason = "the build script compiles the qualified grouped catalog"
+)]
+pub(crate) mod latent_cache_groups;
 pub mod latent_decode;
 pub mod latent_scheduled;
 pub mod markov_tiled;
@@ -163,6 +168,7 @@ pub fn latent_cubins()
             cubin.name.starts_with("latent_sources_")
                 || cubin.name == latent_decode::CUBIN
                 || cubin.name == latent_cache::CUBIN
+                || cubin.name == latent_cache_groups::CUBIN
         })
         .map(|cubin| (cubin.name, cubin.bytes, cubin.symbols))
 }
@@ -356,7 +362,7 @@ impl crate::Kernels {
                     | prefill_heads::CACHED_CUBIN
                     | prefill_heads::FINISH_CUBIN
             ) || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
-            && (cubin != latent_cache::CUBIN
+            && (!matches!(cubin, latent_cache::CUBIN | latent_cache_groups::CUBIN)
                 || latent_cache::eligible(shape.geometry, shape.ranks(), storage))
     }
 

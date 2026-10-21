@@ -102,3 +102,9 @@ def cases(declaration):
             "name": "lookup", "description": "Look a record up.",
             "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}}}}]}]}, {
         "fixed:message-tools-with-media", "message-tools:present", "media:image_url"}
+    # GIF and WebP images, which the image modality declares beside PNG and
+    # JPEG.
+    for kind in ("gif", "webp"):
+        yield f"image-{kind}", {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/{kind};base64,AA=="}},
+            {"type": "text", "text": "Describe."}]}]}, {f"fixed:image-{kind}", f"image:{kind}"}

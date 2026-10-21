@@ -33,6 +33,11 @@ Findings that bind the Chopinfer frontend:
 ## Multimodal references
 
 `capture/frontend_media.py` regenerates prompts and processor arrays on CPU.
+`capture/image_decode.py` writes `image-decode.json`, which pins image
+decoding to transformers' `load_image` over runtime-media's image decode
+corpus and checks that the processor and the image probes add nothing to
+it; `frontend_media.py` stays unchanged because its digest is part of the
+media references' processor identity.
 The [processor README](multimodal/processor/README.md) documents the fixed
 video RGB input and its unchanged digest. `capture/media_answers.py` turns
 refrun F32 greedy answers into `reference.json` and a forced workload. The

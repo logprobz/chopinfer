@@ -7,6 +7,31 @@ fn shipped_media_declaration_is_supported() {
     runtime_host::validate_media_recipes_v1(&descriptor).unwrap();
 }
 
+/// The shipped image recipe serves `load_image`'s policy, and every file of
+/// runtime-media's image decode corpus decodes as `load_image` did in this
+/// model's capture (`fixtures/mimo26/image-decode.json`).
+#[test]
+fn image_decode_matches_the_captured_reference_loader() {
+    let descriptor = model_mimo26::frontend::descriptor();
+    let image = descriptor
+        .multimodal
+        .as_ref()
+        .unwrap()
+        .modalities
+        .iter()
+        .find(|modality| modality.kind == runtime_frontend::FrontendMediaKindV1::Image)
+        .unwrap();
+    let capture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../fixtures/mimo26/image-decode.json"
+    );
+    let checked = runtime_host::image_decode::check_image_decode_v1(
+        &image.recipe,
+        std::path::Path::new(capture),
+    );
+    assert!(checked >= 100, "{checked} files");
+}
+
 #[test]
 fn every_listed_geometry_selection_passes_the_host_recipe_check() {
     use model_mimo26_contract::{encoders::Encoders, geometry};

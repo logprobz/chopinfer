@@ -296,7 +296,8 @@
     ],
     "modalities": [
       {
-        "kind": "image", "part_types": ["image_url"], "maximum_items": 64,
+        "kind": "image", "part_types": ["image_url"], "formats": ["png", "jpeg", "gif", "webp"],
+        "maximum_items": 64,
         "maximum_bytes": 67108864, "maximum_tokens": 1024, "encoder": 0,
         "recipe": { "tag": "image.patch-grid.v1", "parameters": {
           "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 1048576,
@@ -304,7 +305,7 @@
           "interpolation": "bicubic-antialias", "antialias": true,
           "value_scale": 1.0, "mean": [123.675, 116.28, 103.53],
           "std": [58.395, 57.12, 57.375], "patch": 16,
-          "temporal_patch": 2, "merge": 2, "alpha_background": "white",
+          "temporal_patch": 2, "merge": 2, "alpha_background": "none",
           "exif_orientation": true
         } },
         "render": { "pad": "<|image_pad|>" }

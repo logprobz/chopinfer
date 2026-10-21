@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::image::ImageFormat;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MediaError(pub String);
 
@@ -92,7 +94,7 @@ pub enum Alpha {
     Discard,
 }
 
-/// How a JPEG decoder treats an EXIF orientation tag.
+/// How a decoder treats an EXIF orientation tag.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Orientation {
     /// Transpose the pixels into the tagged orientation.
@@ -173,11 +175,8 @@ pub struct MediaSource {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Probe {
-    Png {
-        width: u32,
-        height: u32,
-    },
-    Jpeg {
+    Image {
+        format: ImageFormat,
         width: u32,
         height: u32,
     },
@@ -262,6 +261,10 @@ pub fn decode_base64(input: &str, maximum_bytes: usize) -> MediaResult<Vec<u8>> 
     Ok(out)
 }
 
+/// Decodes a base64 data URL. Its media type compares without regard to
+/// case, with parameters before `;base64` ignored and `image/jpg` read as
+/// JPEG. An image takes the type its signature names, as Pillow chooses a
+/// decoder by signature, so a mislabeled image decodes as what it is.
 pub fn decode_data_url(input: &str, limits: MediaLimits) -> MediaResult<MediaSource> {
     let rest = input
         .strip_prefix("data:")
@@ -272,18 +275,30 @@ pub fn decode_data_url(input: &str, limits: MediaLimits) -> MediaResult<MediaSou
     let mime = header
         .strip_suffix(";base64")
         .ok_or_else(|| MediaError::new("data URL requires base64"))?;
-    if !matches!(
-        mime,
-        "image/png" | "image/jpeg" | "audio/wav" | "audio/x-wav" | "video/mp4"
-    ) {
+    let image = ImageFormat::from_mime(mime);
+    let mime = media_type(mime);
+    if image.is_none() && !matches!(mime.as_str(), "audio/wav" | "audio/x-wav" | "video/mp4") {
         return Err(MediaError::new("unsupported media MIME type"));
     }
     let bytes = decode_base64(payload, limits.maximum_bytes)?;
     limits.check_bytes(bytes.len())?;
-    Ok(MediaSource {
-        mime: mime.into(),
-        bytes,
-    })
+    let mime = match image {
+        Some(declared) => ImageFormat::sniff(&bytes)
+            .unwrap_or(declared)
+            .mime()
+            .to_owned(),
+        None => mime,
+    };
+    Ok(MediaSource { mime, bytes })
+}
+
+/// A media type's lowercase type and subtype, without parameters.
+pub(crate) fn media_type(mime: &str) -> String {
+    mime.split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn percent_decode_path(value: &str) -> MediaResult<PathBuf> {
@@ -384,8 +399,7 @@ fn read_local_source(path: &Path, root: &Path, limits: MediaLimits) -> MediaResu
         "video/mp4"
     } else {
         match probe(&bytes, limits)? {
-            Probe::Png { .. } => "image/png",
-            Probe::Jpeg { .. } => "image/jpeg",
+            Probe::Image { format, .. } => format.mime(),
             Probe::Wav { .. } => "audio/wav",
         }
     };
@@ -399,21 +413,21 @@ pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<Probe> {
     probe_oriented(bytes, limits, Orientation::Exif)
 }
 
-/// [`probe`], with a JPEG's size taken under `orientation`.
+/// [`probe`], with an image's size taken under `orientation`.
 pub fn probe_oriented(
     bytes: &[u8],
     limits: MediaLimits,
     orientation: Orientation,
 ) -> MediaResult<Probe> {
     limits.check_bytes(bytes.len())?;
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let (width, height) = crate::png::probe(bytes, limits)?;
-        Ok(Probe::Png { width, height })
-    } else if bytes.starts_with(b"\xff\xd8") {
-        let (width, height) = crate::jpeg::probe_oriented(bytes, limits, orientation)?;
-        limits.check_image(width, height)?;
-        Ok(Probe::Jpeg { width, height })
-    } else if bytes.starts_with(b"RIFF") {
+    if ImageFormat::sniff(bytes).is_some() {
+        let (format, width, height) = crate::image::probe_image(bytes, limits, orientation)?;
+        Ok(Probe::Image {
+            format,
+            width,
+            height,
+        })
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE".as_slice()) {
         let info = crate::wav::probe(bytes)?;
         limits.check_audio(info.frames)?;
         Ok(Probe::Wav {
@@ -423,20 +437,6 @@ pub fn probe_oriented(
         })
     } else {
         Err(MediaError::new("unsupported media header"))
-    }
-}
-
-/// The decoder's host bytes for the image `probe` read from `bytes`, from
-/// its header alone: a JPEG's coefficients and planes per padded block and
-/// the RGB output ([`crate::jpeg::decode_storage_bytes`]); a PNG's RGB
-/// output, the png crate's rows and the stream it inflates
-/// ([`crate::png::decode_storage_bytes`]). The encoded source itself is
-/// not counted.
-pub fn image_decode_bytes(bytes: &[u8], probe: Probe, limits: MediaLimits) -> MediaResult<u64> {
-    match probe {
-        Probe::Jpeg { .. } => crate::jpeg::decode_storage_bytes(bytes, limits),
-        Probe::Png { .. } => crate::png::decode_storage_bytes(bytes, limits),
-        Probe::Wav { .. } => Err(MediaError::new("not an image")),
     }
 }
 

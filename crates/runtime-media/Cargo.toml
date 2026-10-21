@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 crc32fast = "=1.5.3"
+gif = { version = "=0.14.2", default-features = false, features = ["std"] }
+image-webp = "=0.2.4"
 png = "=0.18.1"
 sha2.workspace = true
 hyper = "=1.11.0"

@@ -464,7 +464,7 @@ pub fn image_canvas(
 pub const CANVAS_HASH_CHUNK_BYTES: usize = 64 << 10;
 
 /// The recipe's share of the host bytes an [`image_canvas`] preparation
-/// holds, beside the decoder's own ([`crate::image_decode_bytes`]): the
+/// holds, beside the decoder's own ([`crate::decode_working_bytes`]): the
 /// resampler's weights for both passes, its horizontal pass and output (the
 /// canvas), the value tables and the chunk its payload is hashed through.
 /// There are no F32 rows; they are written from the canvas when needed.
@@ -494,28 +494,24 @@ pub fn image_canvas_preparation_bytes(
     .ok_or_else(|| MediaError::new("image preparation size overflow"))
 }
 
-/// Decoded bytes per source pixel the bound allows: 16-bit RGBA PNG
-/// scanlines (8), or a JPEG's component coefficients and planes, plus the
-/// 3 of the RGB image.
-pub(crate) const DECODE_BYTES_PER_PIXEL: u64 = 16 + 3;
-
 /// A conservative bound on the host bytes an image of `width` x `height`
 /// holds while it decodes and becomes patch rows with [`image_grid`],
-/// counting every buffer as live at once: the decoder's scanlines and the
-/// RGB image, the resampler's horizontal pass and output, the normalized F32
-/// plane, the F32 patch rows and a payload of up to 4 bytes per value.
+/// counting every buffer as live at once: the decode's `decode_bytes`
+/// ([`crate::decode_working_bytes`], its buffers and the RGB image), the
+/// resampler's horizontal pass and output, the normalized F32 plane, the
+/// F32 patch rows and a payload of up to 4 bytes per value.
 pub fn image_preparation_bytes(
     width: u32,
     height: u32,
+    decode_bytes: u64,
     recipe: ImageRecipe,
     limits: MediaLimits,
 ) -> MediaResult<u64> {
     let (h, w) = smart_resize(height, width, recipe, limits)?;
-    let source = u64::from(width) * u64::from(height);
     let resized = u64::from(h) * u64::from(w);
     let values = resized * 3 * u64::from(recipe.temporal_patch.max(1));
     [
-        source.checked_mul(DECODE_BYTES_PER_PIXEL),
+        Some(decode_bytes),
         u64::from(height).checked_mul(u64::from(w) * 3),
         resized.checked_mul(3),
         resized.checked_mul(3 * 4),

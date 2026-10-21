@@ -4,9 +4,10 @@
 //! SHA-256 of its F32 rows (bit-identical values), of their BF16 payload
 //! (the reference's BF16 patches), its grid and token counts. Synthetic
 //! sources come from `pattern`, which the golden generator mirrors; the
-//! grayscale, alpha, palette and tRNS PNGs and the JPEGs are files decoded
-//! as the reference's `Image.open` and `convert("RGB")` read them: alpha
-//! discarded and an EXIF orientation kept as stored. With
+//! grayscale, alpha, palette and tRNS PNGs, the JPEGs, GIFs and WebPs are
+//! files decoded as the reference's `Image.open` and `convert("RGB")` read
+//! them: alpha discarded, an EXIF orientation kept as stored and an
+//! animation's first frame. With
 //! `value_rounding: "bf16"` the rows are the reference's BF16 patches
 //! widened to f32.
 use std::path::Path;
@@ -15,7 +16,7 @@ use runtime_media::recipe::{
     CenteredPadPlan, CenteredPadRecipe, ValueRounding, centered_pad_grid, centered_pad_plan,
     centered_pad_span_tokens, check_centered_pad_recipe,
 };
-use runtime_media::{Alpha, MediaLimits, Orientation, RgbImage, jpeg, png};
+use runtime_media::{Alpha, ImagePolicy, MediaLimits, Orientation, RgbImage, decode_image, jpeg};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -192,7 +193,7 @@ fn rows_match_the_reference_bit_for_bit() {
     let golden = golden();
     let recipe = recipe(&golden);
     let cases = golden["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 36);
+    assert_eq!(cases.len(), 45);
     for case in cases {
         let name = case["name"].as_str().unwrap();
         let (width, height) = (
@@ -202,11 +203,11 @@ fn rows_match_the_reference_bit_for_bit() {
         let image = match case["file"].as_str() {
             Some(file) => {
                 let bytes = std::fs::read(fixtures().join(file)).unwrap();
-                let image = if file.ends_with(".jpg") {
-                    jpeg::decode_oriented(&bytes, limits(), Orientation::Stored).unwrap()
-                } else {
-                    png::decode_with_alpha(&bytes, limits(), Alpha::Discard).unwrap()
+                let policy = ImagePolicy {
+                    alpha: Alpha::Discard,
+                    orientation: Orientation::Stored,
                 };
+                let image = decode_image(&bytes, limits(), policy).unwrap();
                 assert_eq!(
                     sha256(image.data.iter().copied()),
                     case["decoded_rgb_sha256"].as_str().unwrap(),

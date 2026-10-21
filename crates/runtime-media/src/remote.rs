@@ -284,8 +284,7 @@ pub fn fetch_with_deadline(
             "video/mp4"
         } else {
             match probe(&bytes, limits)? {
-                Probe::Png { .. } => "image/png",
-                Probe::Jpeg { .. } => "image/jpeg",
+                Probe::Image { format, .. } => format.mime(),
                 Probe::Wav { .. } => "audio/wav",
             }
         };

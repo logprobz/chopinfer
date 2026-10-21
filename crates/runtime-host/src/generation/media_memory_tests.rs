@@ -176,9 +176,8 @@ fn queued_requests_keep_their_payloads_leased_until_they_retire() {
                 .unwrap()
                 .modalities[0];
             let limits = part_limits_v1(modality);
-            let probed = runtime_media::probe(&source, limits).unwrap();
             let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
-            image_reservation_v1(&source, probed, (256, 256), recipe, limits).unwrap()
+            image_reservation_v1(&source, (256, 256), recipe, limits).unwrap()
         };
         let allowance = per_request + preparation;
         let pool = Arc::new(MediaMemoryV1::new(3 * per_request + preparation));
@@ -434,10 +433,10 @@ fn a_repeated_image_is_the_item_its_source_prepared_before() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// The MIME type picks the decoder, so it is part of the key: PNG bytes
-/// cached as PNG and sent again as JPEG still meet the JPEG decoder.
+/// An image source takes the type its signature names, so PNG bytes cached
+/// as PNG and sent again labelled JPEG hit the PNG entry.
 #[test]
-fn a_cached_source_under_another_mime_type_is_decoded_as_that_type() {
+fn a_cached_source_labelled_another_image_type_hits_its_signature_entry() {
     let modality = &MODALITIES[1];
     let root = std::env::temp_dir();
     let backend = backend(
@@ -446,13 +445,18 @@ fn a_cached_source_under_another_mime_type_is_decoded_as_that_type() {
         Arc::new(MediaMemoryV1::new(u64::MAX)),
         1 << 30,
     );
-    backend
+    let (first, _) = backend
         .prepare_prompt(inline_request(1, "image/png"))
         .unwrap();
-    assert!(matches!(
-        backend.prepare_prompt(inline_request(1, "image/jpeg")),
-        Err(AdmissionError::Rejected(_))
-    ));
+    let (again, _) = backend
+        .prepare_prompt(inline_request(1, "image/jpeg"))
+        .unwrap();
+    assert_eq!(backend.image_cache.len(), 1);
+    assert!(
+        media_inputs(&again)[0]
+            .payload
+            .ptr_eq(&media_inputs(&first)[0].payload)
+    );
 }
 
 /// A request whose inline images all hit needs no preparation memory, so it

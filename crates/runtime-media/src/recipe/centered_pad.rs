@@ -335,31 +335,15 @@ pub fn centered_pad_canvas_preparation_bytes(
     .ok_or_else(|| MediaError::new("image preparation size overflow"))
 }
 
-/// A conservative bound on the host bytes an encoded image
+/// A conservative bound on the host bytes an image of `width` x `height`
 /// holds while it decodes and becomes patch rows with
 /// [`centered_pad_grid`], in the terms of
-/// [`super::image_preparation_bytes`]: the decoder's buffers, the
+/// [`super::image_preparation_bytes`]: the decode's `decode_bytes`, the
 /// resampler's weights for both passes ([`resample::coefficient_bytes`]),
 /// its intermediate pass in either order and its output, the 8-bit canvas,
 /// the normalization table, the F32 patch rows and a payload of up to 4
 /// bytes per value.
 pub fn centered_pad_preparation_bytes(
-    bytes: &[u8],
-    recipe: CenteredPadRecipe,
-    limits: MediaLimits,
-) -> MediaResult<u64> {
-    let probe = crate::probe_oriented(bytes, limits, crate::Orientation::Stored)?;
-    let (width, height) = match probe {
-        crate::Probe::Jpeg { width, height } | crate::Probe::Png { width, height } => {
-            (width, height)
-        }
-        _ => return Err(MediaError::new("centered pad requires a PNG or JPEG image")),
-    };
-    let decode = crate::image_decode_bytes(bytes, probe, limits)?;
-    centered_pad_buffer_bytes(width, height, decode, recipe, limits)
-}
-
-fn centered_pad_buffer_bytes(
     width: u32,
     height: u32,
     decode_bytes: u64,
@@ -512,15 +496,10 @@ mod tests {
         };
         let plan = centered_pad_plan(10_000, 1, recipe, limits()).unwrap();
         assert_eq!((plan.canvas, plan.content), ((7500, 1), (7500, 1)));
-        let decode = 10_000 * super::super::DECODE_BYTES_PER_PIXEL;
-        let bytes = centered_pad_buffer_bytes(1, 10_000, decode, recipe, limits()).unwrap();
+        let decode = 190_000;
+        let bytes = centered_pad_preparation_bytes(1, 10_000, decode, recipe, limits()).unwrap();
         let weights = 7500 * (7 * 12 + 16);
-        let buffers = 10_000 * super::super::DECODE_BYTES_PER_PIXEL
-            + 10_000 * 3
-            + 7500 * 3
-            + 7500 * 3
-            + 3 * 256 * 4
-            + 7500 * 3 * 8;
+        let buffers = decode + 10_000 * 3 + 7500 * 3 + 7500 * 3 + 3 * 256 * 4 + 7500 * 3 * 8;
         assert_eq!(bytes, weights + buffers);
     }
 

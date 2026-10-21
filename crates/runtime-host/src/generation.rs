@@ -858,15 +858,10 @@ impl EngineGenerationBackend {
         if modality.layout.is_some() {
             check_image_span_v1(&source, modality, recipe, limits)?;
         }
-        let probe =
-            runtime_media::probe_oriented(&source.bytes, limits, image_orientation_v1(recipe))
+        let (_, width, height) =
+            runtime_media::probe_image(&source.bytes, limits, image_orientation_v1(recipe))
                 .map_err(rejected)?;
-        let (width, height) = match probe {
-            runtime_media::Probe::Png { width, height }
-            | runtime_media::Probe::Jpeg { width, height } => (width, height),
-            runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
-        };
-        let reserved = image_reservation_v1(&source.bytes, probe, (width, height), recipe, limits)
+        let reserved = image_reservation_v1(&source.bytes, (width, height), recipe, limits)
             .map_err(rejected)?;
         let grid = planned_image_grid_v1(width, height, recipe, limits).map_err(rejected)?;
         let merge = recipe_merge_v1(recipe);
@@ -3493,19 +3488,19 @@ fn canvas_element_v1(
 }
 
 /// The host bytes an image's preparation reserves before it decodes, from
-/// its header: the decoder's and the recipe's working sets and the encoded
+/// its header: the decoder's working set
+/// ([`runtime_media::decode_working_bytes`]), the recipe's and the encoded
 /// source. A canvas recipe keeps no F32 rows; a bilinear patch grid keeps
-/// its rows and payload, and its decoder share stays the per-pixel bound
-/// of [`runtime_media::recipe::image_preparation_bytes`].
+/// its rows and payload ([`runtime_media::recipe::image_preparation_bytes`]).
 fn image_reservation_v1(
     source: &[u8],
-    probe: runtime_media::Probe,
     (width, height): (u32, u32),
     recipe: ImageRecipeV1,
     limits: runtime_media::MediaLimits,
 ) -> runtime_media::MediaResult<u64> {
     use runtime_media::recipe;
-    let decode = || runtime_media::image_decode_bytes(source, probe, limits);
+    let decode =
+        || runtime_media::decode_working_bytes(source, limits, image_orientation_v1(recipe));
     let bytes = match recipe {
         ImageRecipeV1::PatchGrid(recipe)
             if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
@@ -3514,7 +3509,11 @@ fn image_reservation_v1(
                 .checked_add(decode()?)
         }
         ImageRecipeV1::PatchGrid(recipe) => Some(recipe::image_preparation_bytes(
-            width, height, recipe, limits,
+            width,
+            height,
+            decode()?,
+            recipe,
+            limits,
         )?),
         ImageRecipeV1::TokenBudget(recipe, _) => {
             recipe::padded_canvas_preparation_bytes(width, height, recipe, limits)?
@@ -3543,15 +3542,10 @@ fn prepare_image_v1(
     let recipe = recipe.into();
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
     let orientation = image_orientation_v1(recipe);
-    let probe =
-        runtime_media::probe_oriented(&source.bytes, limits, orientation).map_err(rejected)?;
-    let size = match probe {
-        runtime_media::Probe::Png { width, height }
-        | runtime_media::Probe::Jpeg { width, height } => (width, height),
-        runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
-    };
+    let (_, width, height) =
+        runtime_media::probe_image(&source.bytes, limits, orientation).map_err(rejected)?;
     let reserved =
-        image_reservation_v1(&source.bytes, probe, size, recipe, limits).map_err(rejected)?;
+        image_reservation_v1(&source.bytes, (width, height), recipe, limits).map_err(rejected)?;
     memory.reserve(reserved)?;
     let alpha = match recipe {
         ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
@@ -3580,9 +3574,10 @@ fn prepare_image_v1(
     Ok((image.map_err(rejected)?, reserved))
 }
 
-/// The EXIF orientation policy of a recipe's JPEG sources: the centered
-/// pad keeps the stored pixels, as its reference's `Image.open` and
-/// `convert("RGB")` do; the others transpose into the tagged orientation.
+/// The EXIF orientation policy of a recipe's sources: the centered pad
+/// keeps the stored pixels, as its reference's `Image.open` and
+/// `convert("RGB")` do; the others transpose JPEGs into the tagged
+/// orientation.
 fn image_orientation_v1(recipe: ImageRecipeV1) -> runtime_media::Orientation {
     match recipe {
         ImageRecipeV1::CenteredPad(..) => runtime_media::Orientation::Stored,
@@ -3592,20 +3587,21 @@ fn image_orientation_v1(recipe: ImageRecipeV1) -> runtime_media::Orientation {
     }
 }
 
-/// Decodes by MIME type; `alpha` applies to PNG transparency (JPEG has
-/// none), `orientation` to a JPEG's EXIF orientation.
+/// Decodes an image source by the format its signature names, as the
+/// references' Pillow does; a source of another media type never decodes.
+/// `alpha` applies to transparency, `orientation` to an EXIF orientation.
 fn decode_image_v1(
     source: &runtime_media::MediaSource,
     limits: runtime_media::MediaLimits,
     alpha: runtime_media::Alpha,
     orientation: runtime_media::Orientation,
 ) -> Result<runtime_media::RgbImage, AdmissionError> {
-    match source.mime.as_str() {
-        "image/png" => runtime_media::png::decode_with_alpha(&source.bytes, limits, alpha),
-        "image/jpeg" => runtime_media::jpeg::decode_oriented(&source.bytes, limits, orientation),
-        _ => return Err(AdmissionError::InvalidPrompt),
+    if runtime_media::ImageFormat::from_mime(&source.mime).is_none() {
+        return Err(AdmissionError::InvalidPrompt);
     }
-    .map_err(|error| AdmissionError::Rejected(error.to_string()))
+    let policy = runtime_media::ImagePolicy { alpha, orientation };
+    runtime_media::decode_image(&source.bytes, limits, policy)
+        .map_err(|error| AdmissionError::Rejected(error.to_string()))
 }
 
 /// The tag of images fit into a zero-padded canvas within a token budget
@@ -3718,13 +3714,8 @@ fn check_image_span_v1(
 ) -> Result<(), AdmissionError> {
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
     let orientation = image_orientation_v1(recipe);
-    let (width, height) = match runtime_media::probe_oriented(&source.bytes, limits, orientation)
-        .map_err(rejected)?
-    {
-        runtime_media::Probe::Png { width, height }
-        | runtime_media::Probe::Jpeg { width, height } => (width, height),
-        runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
-    };
+    let (_, width, height) =
+        runtime_media::probe_image(&source.bytes, limits, orientation).map_err(rejected)?;
     let grid = planned_image_grid_v1(width, height, recipe, limits).map_err(rejected)?;
     let merge = recipe_merge_v1(recipe);
     let span = image_span_rows_v1(modality, merge, grid).ok_or(AdmissionError::InvalidPrompt)?;
@@ -5130,14 +5121,20 @@ mod tests {
         let limits = image_limits();
         let recipe = patch_recipe(16_777_216);
         let near_limit = declared_png(9459, 9459);
-        let cost = runtime_media::recipe::image_preparation_bytes(9459, 9459, recipe, limits)
-            .unwrap()
-            + near_limit.bytes.len() as u64;
-        // A 16 MiP image decoded at the pixel bound fits one request's budget
-        // and two fit the process's, not three.
+        let decode = runtime_media::decode_working_bytes(
+            &near_limit.bytes,
+            limits,
+            runtime_media::Orientation::Exif,
+        )
+        .unwrap();
+        let cost =
+            runtime_media::recipe::image_preparation_bytes(9459, 9459, decode, recipe, limits)
+                .unwrap()
+                + near_limit.bytes.len() as u64;
+        // An image at the pixel bound with a 16 MiP recipe fits one
+        // request's budget, and several fit the process's.
         assert!(cost <= REQUEST_MEDIA_PREPARATION_BYTES_V1);
         assert!(2 * cost <= PROCESS_MEDIA_PREPARATION_BYTES_V1);
-        assert!(3 * cost > PROCESS_MEDIA_PREPARATION_BYTES_V1);
 
         let pool = Arc::new(MediaMemoryV1::new(PROCESS_MEDIA_PREPARATION_BYTES_V1));
         let request =
@@ -5356,12 +5353,18 @@ mod tests {
         );
         assert!(limits.check_image(9459, 9459).is_ok());
         assert!(limits.check_image(9460, 9459).is_err());
-        // The MIME selects the decoder, so PNG bytes labeled JPEG reach the
-        // JPEG decoder and fail there; non-image MIME types never decode.
-        assert!(matches!(
-            decode_image_v1(&source("image/jpeg", png.clone()), limits, runtime_media::Alpha::CompositeWhite, runtime_media::Orientation::Exif),
-            Err(AdmissionError::Rejected(message)) if message.contains("JPEG")
-        ));
+        // The signature selects the decoder, as Pillow's does, so PNG bytes
+        // labeled JPEG decode as PNG; non-image MIME types never decode.
+        assert_eq!(
+            decode_image_v1(
+                &source("image/jpeg", png.clone()),
+                limits,
+                runtime_media::Alpha::CompositeWhite,
+                runtime_media::Orientation::Exif
+            )
+            .unwrap(),
+            image
+        );
         assert!(matches!(
             decode_image_v1(
                 &source("audio/wav", png),

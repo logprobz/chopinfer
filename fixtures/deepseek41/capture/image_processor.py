@@ -14,11 +14,11 @@ resampled for it. CPU preprocessing only; no model runs:
         $CHOPINFER_DEEPSEEK_CHECKPOINT
 
 Sources go to the reference as encoded bytes: "RGB" cases as PNG built in
-memory; grayscale, alpha, palette and tRNS PNGs and JPEGs are also written
-beside the golden for the test to decode, as the reference's Image.open and
-convert("RGB") read them (alpha and transparency discarded, an EXIF
-orientation tag kept as stored). The synthetic patterns match `pattern()` in
-the runtime-media test.
+memory; grayscale, alpha, palette and tRNS PNGs, JPEGs, GIFs and WebPs are
+also written beside the golden for the test to decode, as the reference's
+Image.open and convert("RGB") read them (alpha and transparency discarded,
+an EXIF orientation tag kept as stored, an animation's first frame). The
+synthetic patterns match `pattern()` in the runtime-media test.
 """
 
 import argparse
@@ -27,6 +27,7 @@ import importlib.util
 import io
 import json
 import random
+import struct
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -87,6 +88,17 @@ CASES = [
     # An EXIF orientation of 6 (rotate 90) stays 8 x 16 as stored.
     ("jpeg-exif6-8x16", "blocks", 8, 16, "JPEG-EXIF6"),
     ("jpeg-exif6-64x40", "blocks", 64, 40, "JPEG-EXIF6"),
+    # Pillow interlaces a GIF unless told not to.
+    ("gif-interlaced-64x48", "blocks", 64, 48, "GIF"),
+    ("gif-plain-50x40", "noise", 50, 40, "GIF-PLAIN"),
+    ("gif-trns-45x31", "noise", 45, 31, "GIF-TRNS"),
+    # Frame 0 is the lower right quarter of a larger logical screen.
+    ("gif-offset-frame-60x40", "blocks", 60, 40, "GIF-OFFSET"),
+    ("gif-animated-48x32", "noise", 48, 32, "GIF-ANIMATED"),
+    ("webp-lossy-301x199", "blocks", 301, 199, "WEBP-LOSSY"),
+    ("webp-lossless-64x50", "noise", 64, 50, "WEBP-LOSSLESS"),
+    ("webp-alpha-64x50", "noise", 64, 50, "WEBP-ALPHA"),
+    ("webp-animated-48x32", "blocks", 48, 32, "WEBP-ANIMATED"),
 ]
 
 
@@ -110,6 +122,28 @@ def pattern(kind, width, height, channels=3):
     if kind == "blocks":
         return ((x // np.uint64(7) * np.uint64(37) + y // np.uint64(5) * np.uint64(59) + c * np.uint64(85)) % np.uint64(256)).astype(np.uint8)
     raise ValueError(kind)
+
+
+def palette_image(kind, width, height):
+    picture = Image.fromarray(pattern(kind, width, height, 1)[:, :, 0], "P")
+    picture.putpalette(pattern("noise", 256, 1, 3).reshape(-1).tolist())
+    return picture
+
+
+def relocated_gif(data, screen, offset):
+    """A one-frame GIF with its logical screen set to `screen` and its frame
+    moved to `offset`."""
+    data = bytearray(data)
+    data[6:10] = struct.pack("<HH", *screen)
+    pos = 13 + (3 << ((data[10] & 7) + 1) if data[10] & 0x80 else 0)
+    while data[pos] == 0x21:
+        pos += 2
+        while data[pos]:
+            pos += data[pos] + 1
+        pos += 1
+    assert data[pos] == 0x2C
+    data[pos + 1:pos + 5] = struct.pack("<HH", *offset)
+    return bytes(data)
 
 
 def encoded(name, kind, width, height, mode):
@@ -148,6 +182,33 @@ def encoded(name, kind, width, height, mode):
     elif mode == "JPEG-CMYK":
         Image.fromarray(pattern(kind, width, height, 4), "CMYK").save(buffer, format="JPEG", quality=92)
         return buffer.getvalue(), "jpg"
+    elif mode in ("GIF", "GIF-PLAIN", "GIF-TRNS"):
+        picture = palette_image(kind, width, height)
+        options = {"interlace": mode != "GIF-PLAIN"}
+        if mode == "GIF-TRNS":
+            options["transparency"] = picture.getpixel((0, 0))
+        picture.save(buffer, format="GIF", **options)
+        return buffer.getvalue(), "gif"
+    elif mode == "GIF-OFFSET":
+        palette_image(kind, width // 2, height // 2).save(buffer, format="GIF")
+        offset = (width - width // 2, height - height // 2)
+        return relocated_gif(buffer.getvalue(), (width, height), offset), "gif"
+    elif mode == "GIF-ANIMATED":
+        frames = [palette_image(k, width, height) for k in (kind, "blocks")]
+        frames[0].save(buffer, format="GIF", save_all=True, append_images=frames[1:], duration=100)
+        return buffer.getvalue(), "gif"
+    elif mode in ("WEBP-LOSSY", "WEBP-LOSSLESS"):
+        Image.fromarray(pattern(kind, width, height), "RGB").save(
+            buffer, format="WEBP", quality=90, lossless=mode == "WEBP-LOSSLESS"
+        )
+        return buffer.getvalue(), "webp"
+    elif mode == "WEBP-ALPHA":
+        Image.fromarray(pattern(kind, width, height, 4), "RGBA").save(buffer, format="WEBP", quality=90)
+        return buffer.getvalue(), "webp"
+    elif mode == "WEBP-ANIMATED":
+        frames = [Image.fromarray(pattern(k, width, height), "RGB") for k in (kind, "noise")]
+        frames[0].save(buffer, format="WEBP", save_all=True, append_images=frames[1:], duration=100, quality=90)
+        return buffer.getvalue(), "webp"
     else:
         raise ValueError(mode)
     return buffer.getvalue(), "png"

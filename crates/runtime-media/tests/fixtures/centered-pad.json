@@ -967,6 +967,249 @@
    "span_tokens": 200,
    "rows_sha256": "ac6b09d1e12f0348dcfc597b724c2c387685d6da950c0e1f5b56f0f3c6857149",
    "bf16_sha256": "f612031eb487d24ca36ff7d241afe7259c37be395c92c31d9eaa6797f2623591"
+  },
+  {
+   "name": "gif-interlaced-64x48",
+   "pattern": "blocks",
+   "width": 64,
+   "height": 48,
+   "file": "centered-pad-gif-interlaced-64x48.gif",
+   "decoded_rgb_sha256": "69a56d63f9fc640022285a608efae49826bafc8b995e2987d8b41bead0f5f608",
+   "plan": [
+    476,
+    630,
+    472,
+    630,
+    2,
+    0,
+    12,
+    15
+   ],
+   "grid": [
+    1,
+    34,
+    45
+   ],
+   "tokens": 180,
+   "span_tokens": 194,
+   "rows_sha256": "a6e85882cfc3b14f03e356a9333c74f36c91eeb88a0be73ace991b9225d44118",
+   "bf16_sha256": "a584bee2047e3715712e492b6dd2d6c34a75a66612f204b2b2196afbbbf52d6e"
+  },
+  {
+   "name": "gif-plain-50x40",
+   "pattern": "noise",
+   "width": 50,
+   "height": 40,
+   "file": "centered-pad-gif-plain-50x40.gif",
+   "decoded_rgb_sha256": "6208834b9b4b420d352b60172f377f7e84490e604aebe25b47484c2a6e2ad68f",
+   "plan": [
+    490,
+    616,
+    490,
+    612,
+    0,
+    2,
+    12,
+    15
+   ],
+   "grid": [
+    1,
+    35,
+    44
+   ],
+   "tokens": 180,
+   "span_tokens": 194,
+   "rows_sha256": "3098c1c75c5be70909608b4bd579bb1fed061cfe01282875072633bb65900f63",
+   "bf16_sha256": "86afcc4514ce848a0578e6a680f201177d3b3d77f0e58491aca146c44af05da9"
+  },
+  {
+   "name": "gif-trns-45x31",
+   "pattern": "noise",
+   "width": 45,
+   "height": 31,
+   "file": "centered-pad-gif-trns-45x31.gif",
+   "decoded_rgb_sha256": "c221285548116d521de52ec222674113e44e71401e2185904e5375f213d9e326",
+   "plan": [
+    462,
+    658,
+    453,
+    658,
+    4,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    33,
+    47
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "950e9d5a776460c68efb9af86f3dcbd6f6ad4268c0967970f97502ee28fbac99",
+   "bf16_sha256": "453894dd10637deb70b8a44d3d7c96d5091d77c1cc428f02b6986c07ba1ddd62"
+  },
+  {
+   "name": "gif-offset-frame-60x40",
+   "pattern": "blocks",
+   "width": 60,
+   "height": 40,
+   "file": "centered-pad-gif-offset-frame-60x40.gif",
+   "decoded_rgb_sha256": "00bec1356940ec59b36a9aadb67248822a5a0329376ed723eeae6ca4b573d5bd",
+   "plan": [
+    448,
+    672,
+    448,
+    672,
+    0,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    32,
+    48
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "c5069d721cbea79b9e0947d80e671cf6771c4a01795f54ae2a3bed0fbe3fa44a",
+   "bf16_sha256": "5d01fbd72cd63a4ce8d38230a88625e740f0264d88523f39830ed3ca2e20f565"
+  },
+  {
+   "name": "gif-animated-48x32",
+   "pattern": "noise",
+   "width": 48,
+   "height": 32,
+   "file": "centered-pad-gif-animated-48x32.gif",
+   "decoded_rgb_sha256": "d50bd282a5d204cecbf04bb701a359d4f2e43958cd929aebb0559bca09cbc916",
+   "plan": [
+    448,
+    672,
+    448,
+    672,
+    0,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    32,
+    48
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "28ad6282ace985695fc9742ff1650712c4c75a46e1e13e3e43bd5f37911b0982",
+   "bf16_sha256": "eb182831c9dd2accaa76de8e6c34fa22af9da0fccd13c6558f6c3563d32d9503"
+  },
+  {
+   "name": "webp-lossy-301x199",
+   "pattern": "blocks",
+   "width": 301,
+   "height": 199,
+   "file": "centered-pad-webp-lossy-301x199.webp",
+   "decoded_rgb_sha256": "b0e35ce15004f71c5cd0d190b15f1c12a95018c02a20c96f6e16945753330495",
+   "plan": [
+    448,
+    672,
+    444,
+    672,
+    2,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    32,
+    48
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "11e083fcd3a1b38c249d230232e86f504d9c4b9907792c2758ae19c327483f10",
+   "bf16_sha256": "5a6ab25f1ef7c73f605792942c18b36c7db3aecb0007876862efd41f59e5a367"
+  },
+  {
+   "name": "webp-lossless-64x50",
+   "pattern": "noise",
+   "width": 64,
+   "height": 50,
+   "file": "centered-pad-webp-lossless-64x50.webp",
+   "decoded_rgb_sha256": "c0171d70e8b523bca2435fd849f8c52900ac753114ebf3298eb06b745e65f7b3",
+   "plan": [
+    490,
+    616,
+    481,
+    616,
+    4,
+    0,
+    12,
+    15
+   ],
+   "grid": [
+    1,
+    35,
+    44
+   ],
+   "tokens": 180,
+   "span_tokens": 194,
+   "rows_sha256": "b4e27ec92fcdf95daa7a052468f5c2d7c39394e350f98d1d8c794b34fbfd7a37",
+   "bf16_sha256": "b9c4f127453dee02462bdbc5a961a87095ff6aa1c462d1212ea585cc82c9ced8"
+  },
+  {
+   "name": "webp-alpha-64x50",
+   "pattern": "noise",
+   "width": 64,
+   "height": 50,
+   "file": "centered-pad-webp-alpha-64x50.webp",
+   "decoded_rgb_sha256": "f1a4819a9c852f2596ed3abb0b135b2b6b6a1f912602a684f9875a48468e298c",
+   "plan": [
+    490,
+    616,
+    481,
+    616,
+    4,
+    0,
+    12,
+    15
+   ],
+   "grid": [
+    1,
+    35,
+    44
+   ],
+   "tokens": 180,
+   "span_tokens": 194,
+   "rows_sha256": "fdf2795dc99e5b3b8c2f80ac98a805868f375e558e7ba71ff4588f2b4e1af166",
+   "bf16_sha256": "dc4af2ffb7df8769103a8b0c15e9f2a2886eefaf68c1a2776dbb41d55e7c351b"
+  },
+  {
+   "name": "webp-animated-48x32",
+   "pattern": "blocks",
+   "width": 48,
+   "height": 32,
+   "file": "centered-pad-webp-animated-48x32.webp",
+   "decoded_rgb_sha256": "39fed7311576593486638ea043c280db8ee4ac621da3aa16871ba5ff70693f14",
+   "plan": [
+    448,
+    672,
+    448,
+    672,
+    0,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    32,
+    48
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "f0879a3897b0e48b632716c01613a5e98d6a9f850e8f43926f94c506dee0d49e",
+   "bf16_sha256": "ce88dc6caf764725444916b16c2e6a369fa1a6a02618c3ae04673c1caa7eeb92"
   }
  ],
  "sizes": [

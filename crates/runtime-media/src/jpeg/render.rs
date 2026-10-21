@@ -270,7 +270,9 @@ mod tests {
             (524_288, 262_144, 196_608)
         );
         let peak = coefficients + samples + rgb.capacity();
-        let bound = crate::recipe::centered_pad_preparation_bytes(bytes, recipe, limits).unwrap();
+        let decode = super::super::decode_storage_bytes(bytes, limits).unwrap();
+        let bound = crate::recipe::centered_pad_preparation_bytes(256, 256, decode, recipe, limits)
+            .unwrap();
         assert!(bound >= peak as u64, "{bound} < {peak}");
     }
 

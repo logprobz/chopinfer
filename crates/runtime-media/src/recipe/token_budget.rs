@@ -287,24 +287,24 @@ pub fn padded_canvas_preparation_bytes(
 /// A conservative bound on the host bytes an image of `width` x `height`
 /// holds while it decodes and becomes patch rows with
 /// [`padded_token_budget_grid`], in the terms of
-/// [`super::image_preparation_bytes`]: the decoder's buffers, the
+/// [`super::image_preparation_bytes`]: the decode's `decode_bytes`, the
 /// resampler's horizontal pass and output, the normalized F32 canvas, the
 /// F32 patch rows and a payload of up to 4 bytes per value.
 pub fn padded_preparation_bytes(
     width: u32,
     height: u32,
+    decode_bytes: u64,
     recipe: TokenBudgetRecipe,
     limits: MediaLimits,
 ) -> MediaResult<u64> {
     let size = padded_size(height, width, recipe, limits)?;
-    let source = u64::from(width) * u64::from(height);
     let content = u64::from(size.content.0) * u64::from(size.content.1);
     let canvas = u64::from(size.canvas.0) * u64::from(size.canvas.1);
     let values = canvas
         .checked_mul(3)
         .and_then(|values| values.checked_mul(u64::from(recipe.temporal_patch)));
     [
-        source.checked_mul(super::DECODE_BYTES_PER_PIXEL),
+        Some(decode_bytes),
         u64::from(height).checked_mul(u64::from(size.content.1) * 3),
         content.checked_mul(3),
         canvas.checked_mul(3 * 4),
@@ -695,7 +695,7 @@ mod tests {
             maximum_pixels: u64::MAX,
             ..limits()
         };
-        let error = padded_preparation_bytes(1 << 27, 1 << 26, wide, permissive).unwrap_err();
+        let error = padded_preparation_bytes(1 << 27, 1 << 26, 0, wide, permissive).unwrap_err();
         assert!(error.to_string().contains("overflow"), "{error}");
     }
 

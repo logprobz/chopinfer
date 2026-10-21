@@ -123,8 +123,10 @@ pub fn decode(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> MediaResult<Rg
     let mut options = ::gif::DecodeOptions::new();
     options.allow_unknown_blocks(true);
     options.set_color_output(::gif::ColorOutput::Indexed);
+    // The crate also keeps XMP and ICC application extensions within this
+    // limit, at most the source, as the storage bound counts them.
     options.set_memory_limit(::gif::MemoryLimit::Bytes(
-        NonZeroU64::new(frame_pixels).expect("frame 0 has pixels"),
+        NonZeroU64::new(frame_pixels + bytes.len() as u64).expect("frame 0 has pixels"),
     ));
     let mut decoder = options.read_info(Cursor::new(bytes)).map_err(invalid)?;
     let global = decoder.global_palette().map(<[u8]>::to_vec);

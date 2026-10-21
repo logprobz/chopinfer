@@ -249,6 +249,7 @@ pub struct Sm120 {
     finish_norm_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     finish_norm_rows: Vec<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     finish_norm_completions: Vec<(crate::sinkhorn_hc::completion::Entry, Vec<(u32, u32)>)>,
+    finish_norm_twins: Vec<(crate::sinkhorn_hc::finish_twin::Entry, Vec<(u32, u32)>)>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -441,6 +442,17 @@ impl Sm120 {
         buckets: Vec<(u32, u32)>,
     ) -> Self {
         self.finish_norm_completions.push((entry, buckets));
+        self
+    }
+
+    /// Run the fused tail on two CTAs per row at measured (row bucket, warp
+    /// count) pairs. The chain producer before it is unchanged.
+    pub fn with_sinkhorn_finish_norm_twin(
+        mut self,
+        entry: crate::sinkhorn_hc::finish_twin::Entry,
+        buckets: Vec<(u32, u32)>,
+    ) -> Self {
+        self.finish_norm_twins.push((entry, buckets));
         self
     }
 

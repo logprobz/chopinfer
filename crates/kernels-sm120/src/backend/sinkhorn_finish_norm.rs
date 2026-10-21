@@ -138,6 +138,41 @@ pub(super) fn prepare(
         }
         completion = Some((candidate.clone(), tiles.clone()));
     }
+    let mut twin = None;
+    for (candidate, tiles) in backend
+        .finish_norm_twins
+        .iter()
+        .filter(|(e, _)| e.reference.mixer.query == query.mixer)
+    {
+        candidate.validate()?;
+        if tiles.is_empty()
+            || tiles.windows(2).any(|p| p[0].0 >= p[1].0)
+            || candidate.reference.symbols() != entry.symbols()
+            || candidate.reference.mixer.symbol != entry.mixer.symbol
+            || candidate.reference.mixer.capacity != entry.mixer.capacity
+            || candidate.mutation != crate::sinkhorn_hc::completion::Mutation::None
+        {
+            return Err(Refusal("invalid HC two-CTA finish buckets").into());
+        }
+        if twin.is_some() {
+            return Err(Refusal("ambiguous HC two-CTA finish entries").into());
+        }
+        for &(rows, warps) in tiles {
+            if !buckets.contains(&rows)
+                || completion
+                    .as_ref()
+                    .is_some_and(|(_, t)| t.iter().any(|&(r, _)| r == rows))
+            {
+                return Err(Refusal("HC two-CTA finish bucket lacks a separate tail").into());
+            }
+            candidate.plan(rows, rows, warps)?;
+            let symbol = (candidate.symbol(warps), 0);
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+        twin = Some((candidate.clone(), tiles.clone()));
+    }
     let mut info = OpInfo::new(
         "sm120.sinkhorn.round-expand-mix.norm-tree256.ceil32.v1",
         guarantees,
@@ -168,6 +203,7 @@ pub(super) fn prepare(
         buckets: buckets.clone(),
         row_tiles,
         completion,
+        twin,
         info,
     }))
 }
@@ -178,6 +214,7 @@ struct Op {
     buckets: Vec<u32>,
     row_tiles: Option<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     completion: Option<(crate::sinkhorn_hc::completion::Entry, Vec<(u32, u32)>)>,
+    twin: Option<(crate::sinkhorn_hc::finish_twin::Entry, Vec<(u32, u32)>)>,
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
@@ -272,6 +309,16 @@ impl PreparedOp<Buffers<View>> for Op {
             let tail = hc.pop().unwrap();
             let producer = hc.pop().unwrap();
             hc.push(entry.compose(&producer, &tail, tickets, warps)?);
+        }
+        // The two-CTA finish keeps the validated tail's arguments.
+        if let Some((entry, warps)) = self.twin.as_ref().and_then(|(e, tiles)| {
+            tiles
+                .iter()
+                .find(|(rows, _)| *rows == counts.rows)
+                .map(|&(_, warps)| (e, warps))
+        }) {
+            let tail = hc.pop().unwrap();
+            hc.push(entry.compose(&tail, warps)?);
         }
         Ok(hc)
     }

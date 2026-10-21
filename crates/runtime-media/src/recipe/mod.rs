@@ -2,18 +2,23 @@
 use crate::core::{try_filled, try_with_capacity};
 use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
 
+mod canvas;
 mod centered_pad;
 mod resample;
 mod token_budget;
 
+pub use canvas::{CanvasLayout, CanvasRows, PayloadElement, bf16_bits};
+
 pub use centered_pad::{
-    CenteredPadPlan, CenteredPadRecipe, ValueRounding, centered_pad_emits_size, centered_pad_grid,
+    CenteredPadPlan, CenteredPadRecipe, ValueRounding, centered_pad_canvas,
+    centered_pad_canvas_preparation_bytes, centered_pad_emits_size, centered_pad_grid,
     centered_pad_plan, centered_pad_preparation_bytes, centered_pad_span_tokens,
     check_centered_pad_recipe,
 };
 pub use token_budget::{
-    PaddedSize, TokenBudgetRecipe, check_token_budget_recipe, padded_emits_size,
-    padded_preparation_bytes, padded_size, padded_token_budget_grid,
+    PaddedSize, TokenBudgetRecipe, check_token_budget_recipe, padded_canvas_preparation_bytes,
+    padded_emits_size, padded_preparation_bytes, padded_size, padded_token_budget_canvas,
+    padded_token_budget_grid,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,9 +63,7 @@ impl PatchGrid {
     pub fn bf16_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.rows.len() * 2);
         for &value in &self.rows {
-            let bits = value.to_bits();
-            let rounded = bits.wrapping_add(0x7fff + ((bits >> 16) & 1));
-            bytes.extend_from_slice(&((rounded >> 16) as u16).to_le_bytes());
+            bytes.extend_from_slice(&bf16_bits(value).to_le_bytes());
         }
         bytes
     }
@@ -402,6 +405,9 @@ pub fn image_grid(
     recipe: ImageRecipe,
     limits: MediaLimits,
 ) -> MediaResult<PatchGrid> {
+    if recipe.interpolation == Interpolation::BicubicAntialias {
+        return image_canvas(image, recipe, limits)?.into_grid();
+    }
     let frames = recipe.temporal_patch as usize;
     if frames == 0 || frames > limits.maximum_frames {
         return Err(MediaError::new("invalid frame or patch count"));
@@ -411,10 +417,87 @@ pub fn image_grid(
     patch_rows(&vec![plane.as_slice(); frames], h, w, recipe.into(), limits)
 }
 
+/// The 8-bit canvas [`image_grid`] cuts a bicubic-antialias recipe's rows
+/// from: the resized image, each value normalized as [`bicubic_planar`]
+/// does. A bilinear recipe resizes in F32 and has no such canvas.
+pub fn image_canvas(
+    image: &RgbImage,
+    recipe: ImageRecipe,
+    limits: MediaLimits,
+) -> MediaResult<CanvasRows> {
+    if recipe.interpolation != Interpolation::BicubicAntialias {
+        return Err(MediaError::new(
+            "only a bicubic-antialias patch grid has an 8-bit canvas",
+        ));
+    }
+    let frames = recipe.temporal_patch as usize;
+    if frames == 0 || frames > limits.maximum_frames {
+        return Err(MediaError::new("invalid frame or patch count"));
+    }
+    let (h, w) = grid_size(image, frames, recipe, limits)?;
+    if recipe.std.iter().any(|&s| !s.is_finite() || s == 0.0)
+        || !(recipe.value_scale as f32).is_finite()
+    {
+        return Err(MediaError::new("invalid image normalization"));
+    }
+    let (mean, std) = folded_statistics(recipe.value_scale, recipe.mean, recipe.std)?;
+    let block = recipe.patch * recipe.merge;
+    let tokens = u64::from(h / block) * u64::from(w / block);
+    limits.check_tokens(tokens)?;
+    let resized = resample::bicubic_antialias(image, h, w)?;
+    CanvasRows::new(
+        h,
+        w,
+        resized.into_owned(),
+        canvas::value_table(|c, v| (f32::from(v) - mean[c]) / std[c]),
+        CanvasLayout::MergedPatches {
+            patch: recipe.patch,
+            temporal_patch: recipe.temporal_patch,
+            merge: recipe.merge,
+        },
+        tokens,
+    )
+}
+
+/// Bytes held while hashing a canvas's payload: the chunk of rows a
+/// content key reads at a time ([`CanvasRows::for_each_payload_chunk`]).
+pub const CANVAS_HASH_CHUNK_BYTES: usize = 1 << 20;
+
+/// The recipe's share of the host bytes an [`image_canvas`] preparation
+/// holds, beside the decoder's own ([`crate::image_decode_bytes`]): the
+/// resampler's weights for both passes, its horizontal pass and output (the
+/// canvas), the value tables and the chunk its payload is hashed through.
+/// There are no F32 rows; they are written from the canvas when needed.
+pub fn image_canvas_preparation_bytes(
+    width: u32,
+    height: u32,
+    recipe: ImageRecipe,
+    limits: MediaLimits,
+) -> MediaResult<u64> {
+    let (h, w) = smart_resize(height, width, recipe, limits)?;
+    let resized = u64::from(h) * u64::from(w);
+    [
+        Some(resample::coefficient_bytes(width, w)),
+        Some(resample::coefficient_bytes(height, h)),
+        u64::from(height).checked_mul(u64::from(w) * 3),
+        resized.checked_mul(3),
+        Some(3 * 256 * 4 * 2),
+        Some(
+            CANVAS_HASH_CHUNK_BYTES as u64
+                + 3 * 4 * u64::from(recipe.temporal_patch) * u64::from(recipe.patch).pow(2),
+        ),
+    ]
+    .into_iter()
+    .try_fold(0_u64, |sum, part| {
+        part.and_then(|part| sum.checked_add(part))
+    })
+    .ok_or_else(|| MediaError::new("image preparation size overflow"))
+}
+
 /// Decoded bytes per source pixel the bound allows: 16-bit RGBA PNG
 /// scanlines (8), or a JPEG's component coefficients and planes, plus the
 /// 3 of the RGB image.
-const DECODE_BYTES_PER_PIXEL: u64 = 16 + 3;
+pub(crate) const DECODE_BYTES_PER_PIXEL: u64 = 16 + 3;
 
 /// A conservative bound on the host bytes an image of `width` x `height`
 /// holds while it decodes and becomes patch rows with [`image_grid`],
@@ -484,6 +567,71 @@ pub fn video_grids(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bicubic_canvas_rows_match_the_planar_rows_bit_for_bit() {
+        let limits = MediaLimits {
+            maximum_bytes: 1024,
+            maximum_pixels: 1 << 22,
+            maximum_audio_frames: 1,
+            maximum_frames: 2,
+            maximum_tokens: 1 << 20,
+            maximum_aspect_ratio: 200.0,
+        };
+        let qwen = ImageRecipe {
+            factor: 32,
+            minimum_pixels: 4096,
+            maximum_pixels: 1 << 20,
+            upscale_small_side: false,
+            interpolation: Interpolation::BicubicAntialias,
+            patch: 16,
+            temporal_patch: 2,
+            merge: 2,
+            value_scale: 0.00392156862745098,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+        };
+        let mimo = ImageRecipe {
+            minimum_pixels: 8192,
+            value_scale: 1.0,
+            mean: [123.675, 116.28, 103.53],
+            std: [58.395, 57.12, 57.375],
+            ..qwen
+        };
+        let mut seed = 0x2545_f491_u32;
+        for recipe in [qwen, mimo] {
+            for (width, height) in [(40, 30), (64, 64), (512, 384), (1000, 333), (33, 1300)] {
+                let data = (0..width * height * 3)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        seed as u8
+                    })
+                    .collect();
+                let image = RgbImage::new(width, height, data, limits).unwrap();
+                let planar = patch_grid(&[image.clone(), image.clone()], recipe, limits).unwrap();
+                let canvas = image_canvas(&image, recipe, limits).unwrap();
+                assert_eq!(
+                    canvas
+                        .rows()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
+                    planar.rows.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    "{width} x {height}"
+                );
+                assert_eq!(image_grid(&image, recipe, limits).unwrap(), planar);
+            }
+        }
+        let bilinear = ImageRecipe {
+            interpolation: Interpolation::Bilinear,
+            ..qwen
+        };
+        let image = RgbImage::new(64, 64, vec![9; 64 * 64 * 3], limits).unwrap();
+        assert!(image_canvas(&image, bilinear, limits).is_err());
+    }
     #[test]
     fn over_maximum_retains_one_factor_on_the_short_axis() {
         let recipe = ImageRecipe {

@@ -409,6 +409,46 @@ pub fn probe_oriented(
     }
 }
 
+/// The decoder's host bytes for the image `probe` read from `bytes`, from
+/// its header alone: a JPEG's coefficients and planes per padded block and
+/// the RGB output ([`crate::jpeg::decode_storage_bytes`]); a PNG's
+/// scanlines, filter rows and RGB, its IDAT storage while it grows and the
+/// inflater's fixed workspace. The encoded source itself is not counted.
+pub fn image_decode_bytes(bytes: &[u8], probe: Probe, limits: MediaLimits) -> MediaResult<u64> {
+    match probe {
+        Probe::Jpeg { .. } => crate::jpeg::decode_storage_bytes(bytes, limits),
+        Probe::Png { width, height } => (u64::from(width) * u64::from(height))
+            .checked_mul(crate::recipe::DECODE_BYTES_PER_PIXEL)
+            .and_then(|n| n.checked_add((bytes.len() as u64).checked_mul(2)?))
+            .and_then(|n| n.checked_add(32 * 1024))
+            .ok_or_else(|| MediaError::new("image preparation size overflow")),
+        Probe::Wav { .. } => Err(MediaError::new("not an image")),
+    }
+}
+
+/// [`content_key`] of a payload of `length` bytes that `payload` passes to
+/// its sink in pieces, so the payload is never held whole.
+pub fn content_key_streamed(
+    recipe_tag: &str,
+    parameters: &[u8],
+    length: u64,
+    payload: impl FnOnce(&mut dyn FnMut(&[u8])),
+) -> [u8; 32] {
+    let mut sha = Sha256::new();
+    for part in [recipe_tag.as_bytes(), parameters] {
+        sha.update((part.len() as u64).to_le_bytes());
+        sha.update(part);
+    }
+    sha.update(length.to_le_bytes());
+    let mut written = 0_u64;
+    payload(&mut |chunk| {
+        written += chunk.len() as u64;
+        sha.update(chunk);
+    });
+    debug_assert_eq!(written, length, "a streamed payload is its declared length");
+    sha.finalize().into()
+}
+
 pub fn content_key(recipe_tag: &str, parameters: &[u8], payload: &[u8]) -> [u8; 32] {
     let mut sha = Sha256::new();
     for part in [recipe_tag.as_bytes(), parameters, payload] {

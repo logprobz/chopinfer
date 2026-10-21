@@ -32,8 +32,9 @@
 //! normalized value is then rounded once to the nearest BF16, ties to even,
 //! and kept in f32: the input of a model whose processor casts its
 //! normalized pixels to BF16 before the encoder.
-use super::{PatchGrid, resample, round_even};
-use crate::core::{try_filled, try_with_capacity};
+use super::canvas::{CanvasLayout, CanvasRows};
+use super::{CANVAS_HASH_CHUNK_BYTES, PatchGrid, resample, round_even};
+use crate::core::try_filled;
 use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -261,6 +262,17 @@ pub fn centered_pad_grid(
     recipe: CenteredPadRecipe,
     limits: MediaLimits,
 ) -> MediaResult<PatchGrid> {
+    centered_pad_canvas(image, recipe, limits)?.into_grid()
+}
+
+/// The 8-bit canvas [`centered_pad_grid`] cuts its rows from: the content
+/// centered on the pad color, with each sample's normalized (and rounded)
+/// value per channel.
+pub fn centered_pad_canvas(
+    image: &RgbImage,
+    recipe: CenteredPadRecipe,
+    limits: MediaLimits,
+) -> MediaResult<CanvasRows> {
     check_centered_pad_recipe(recipe)?;
     let plan = centered_pad_plan(image.height, image.width, recipe, limits)?;
     let tokens = u64::from(plan.tokens.0) * u64::from(plan.tokens.1);
@@ -278,31 +290,49 @@ pub fn centered_pad_grid(
         canvas[at..at + content_w * 3].copy_from_slice(row);
     }
     debug_assert_eq!(resized.len(), content_h * content_w * 3);
-    let table = normalized(recipe);
-    let p = recipe.patch as usize;
-    let (grid_h, grid_w) = (h / p, w / p);
-    let columns = 3 * p * p;
-    let count = (grid_h * grid_w)
-        .checked_mul(columns)
-        .ok_or_else(|| MediaError::new("patch allocation overflow"))?;
-    let mut rows = try_with_capacity(count)?;
-    for by in 0..grid_h {
-        for bx in 0..grid_w {
-            for (c, values) in table.iter().enumerate() {
-                for y in by * p..(by + 1) * p {
-                    for x in bx * p..(bx + 1) * p {
-                        rows.push(values[usize::from(canvas[(y * w + x) * 3 + c])]);
-                    }
-                }
-            }
-        }
-    }
-    Ok(PatchGrid {
-        grid: [1, grid_h as u32, grid_w as u32],
-        columns,
-        rows,
+    drop(resized);
+    CanvasRows::new(
+        plan.canvas.0,
+        plan.canvas.1,
+        canvas,
+        normalized(recipe),
+        CanvasLayout::Patches {
+            patch: recipe.patch,
+        },
         tokens,
+    )
+}
+
+/// The recipe's share of the host bytes a [`centered_pad_canvas`]
+/// preparation holds, beside the decoder's own: the resampler's weights for
+/// both passes, its intermediate pass in either order and its output, the
+/// canvas, the value tables and the chunk its payload is hashed through.
+pub fn centered_pad_canvas_preparation_bytes(
+    width: u32,
+    height: u32,
+    recipe: CenteredPadRecipe,
+    limits: MediaLimits,
+) -> MediaResult<u64> {
+    let plan = centered_pad_plan(height, width, recipe, limits)?;
+    let (content_h, content_w) = plan.content;
+    let content = u64::from(content_h) * u64::from(content_w);
+    let canvas = u64::from(plan.canvas.0) * u64::from(plan.canvas.1);
+    let intermediate =
+        (u64::from(height) * u64::from(content_w)).max(u64::from(content_h) * u64::from(width));
+    [
+        Some(resample::coefficient_bytes(width, content_w)),
+        Some(resample::coefficient_bytes(height, content_h)),
+        intermediate.checked_mul(3),
+        content.checked_mul(3),
+        canvas.checked_mul(3),
+        Some(3 * 256 * 4 * 2),
+        Some(CANVAS_HASH_CHUNK_BYTES as u64 + 3 * 4 * u64::from(recipe.patch).pow(2)),
+    ]
+    .into_iter()
+    .try_fold(0_u64, |sum, part| {
+        part.and_then(|part| sum.checked_add(part))
     })
+    .ok_or_else(|| MediaError::new("image preparation size overflow"))
 }
 
 /// A conservative bound on the host bytes an encoded image
@@ -318,26 +348,14 @@ pub fn centered_pad_preparation_bytes(
     recipe: CenteredPadRecipe,
     limits: MediaLimits,
 ) -> MediaResult<u64> {
-    let (width, height, decode) =
-        match crate::probe_oriented(bytes, limits, crate::Orientation::Stored)? {
-            crate::Probe::Jpeg { width, height } => (
-                width,
-                height,
-                crate::jpeg::decode_storage_bytes(bytes, limits)?,
-            ),
-            crate::Probe::Png { width, height } => {
-                // Scanlines, two filter rows and RGB, plus IDAT storage during
-                // growth and the inflater's fixed workspace. The encoded source
-                // itself is counted separately by the caller.
-                let decode = (u64::from(width) * u64::from(height))
-                    .checked_mul(super::DECODE_BYTES_PER_PIXEL)
-                    .and_then(|n| n.checked_add((bytes.len() as u64).checked_mul(2)?))
-                    .and_then(|n| n.checked_add(32 * 1024))
-                    .ok_or_else(|| MediaError::new("image preparation size overflow"))?;
-                (width, height, decode)
-            }
-            _ => return Err(MediaError::new("centered pad requires a PNG or JPEG image")),
-        };
+    let probe = crate::probe_oriented(bytes, limits, crate::Orientation::Stored)?;
+    let (width, height) = match probe {
+        crate::Probe::Jpeg { width, height } | crate::Probe::Png { width, height } => {
+            (width, height)
+        }
+        _ => return Err(MediaError::new("centered pad requires a PNG or JPEG image")),
+    };
+    let decode = crate::image_decode_bytes(bytes, probe, limits)?;
     centered_pad_buffer_bytes(width, height, decode, recipe, limits)
 }
 

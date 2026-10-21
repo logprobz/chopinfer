@@ -12,5 +12,6 @@ pub mod wav;
 
 pub use core::{
     Alpha, DecodedAudio, MediaError, MediaLimits, MediaResult, MediaSource, Orientation, Probe,
-    RgbImage, content_key, decode_base64, decode_data_url, probe, probe_oriented, read_source,
+    RgbImage, content_key, content_key_streamed, decode_base64, decode_data_url,
+    image_decode_bytes, probe, probe_oriented, read_source,
 };

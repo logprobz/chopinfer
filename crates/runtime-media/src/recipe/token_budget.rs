@@ -20,7 +20,8 @@
 //! antialiased bicubic of [`super::resample`]; the 8-bit canvas, padding
 //! included, is normalized as `(value - mean * s) / (std * s)` in f32 with
 //! `s = f32(1 / value_scale)`, and every temporal patch repeats the image.
-use super::{PatchGrid, Patching, folded_statistics, patch_rows, resample};
+use super::canvas::{self, CanvasLayout, CanvasRows};
+use super::{CANVAS_HASH_CHUNK_BYTES, PatchGrid, folded_statistics, resample};
 use crate::core::try_filled;
 use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
 
@@ -206,6 +207,17 @@ pub fn padded_token_budget_grid(
     recipe: TokenBudgetRecipe,
     limits: MediaLimits,
 ) -> MediaResult<PatchGrid> {
+    padded_token_budget_canvas(image, recipe, limits)?.into_grid()
+}
+
+/// The 8-bit canvas [`padded_token_budget_grid`] cuts its rows from: the
+/// resized content at the top left and zero elsewhere, whose value
+/// `(0 - mean * s) / (std * s)` is the padding's.
+pub fn padded_token_budget_canvas(
+    image: &RgbImage,
+    recipe: TokenBudgetRecipe,
+    limits: MediaLimits,
+) -> MediaResult<CanvasRows> {
     let frames = recipe.temporal_patch as usize;
     if frames == 0 || frames > limits.maximum_frames {
         return Err(MediaError::new("invalid frame or patch count"));
@@ -215,26 +227,61 @@ pub fn padded_token_budget_grid(
         content: (content_h, content_w),
     } = padded_size(image.height, image.width, recipe, limits)?;
     let (mean, std) = folded_statistics(recipe.value_scale, recipe.mean, recipe.std)?;
+    let block = recipe.block()?;
+    let tokens = u64::from(h) / block * (u64::from(w) / block);
+    limits.check_tokens(tokens)?;
     let resized = resample::bicubic_antialias(image, content_h, content_w)?;
-    let (h_us, w_us, content_w) = (h as usize, w as usize, content_w as usize);
-    let plane = h_us * w_us;
-    let mut out = try_filled(3 * plane, 0.0)?;
-    for c in 0..3 {
-        out[c * plane..(c + 1) * plane].fill((0.0 - mean[c]) / std[c]);
-    }
+    let (w_us, content_w) = (w as usize, content_w as usize);
+    let mut samples = try_filled(h as usize * w_us * 3, 0_u8)?;
     for (y, row) in resized.chunks_exact(content_w * 3).enumerate() {
-        for (x, pixel) in row.chunks_exact(3).enumerate() {
-            for c in 0..3 {
-                out[c * plane + y * w_us + x] = (f32::from(pixel[c]) - mean[c]) / std[c];
-            }
-        }
+        samples[y * w_us * 3..(y * w_us + content_w) * 3].copy_from_slice(row);
     }
-    let patching = Patching {
-        patch: recipe.patch,
-        temporal_patch: recipe.temporal_patch,
-        merge: recipe.merge,
-    };
-    patch_rows(&vec![out.as_slice(); frames], h, w, patching, limits)
+    drop(resized);
+    CanvasRows::new(
+        h,
+        w,
+        samples,
+        canvas::value_table(|c, v| (f32::from(v) - mean[c]) / std[c]),
+        CanvasLayout::MergedPatches {
+            patch: recipe.patch,
+            temporal_patch: recipe.temporal_patch,
+            merge: recipe.merge,
+        },
+        tokens,
+    )
+}
+
+/// The recipe's share of the host bytes a [`padded_token_budget_canvas`]
+/// preparation holds, beside the decoder's own: the resampler's weights for
+/// both passes, its horizontal pass and output, the canvas, the value tables
+/// and the chunk its payload is hashed through.
+pub fn padded_canvas_preparation_bytes(
+    width: u32,
+    height: u32,
+    recipe: TokenBudgetRecipe,
+    limits: MediaLimits,
+) -> MediaResult<u64> {
+    let size = padded_size(height, width, recipe, limits)?;
+    let (content_h, content_w) = size.content;
+    let content = u64::from(content_h) * u64::from(content_w);
+    let canvas = u64::from(size.canvas.0) * u64::from(size.canvas.1);
+    [
+        Some(resample::coefficient_bytes(width, content_w)),
+        Some(resample::coefficient_bytes(height, content_h)),
+        u64::from(height).checked_mul(u64::from(content_w) * 3),
+        content.checked_mul(3),
+        canvas.checked_mul(3),
+        Some(3 * 256 * 4 * 2),
+        Some(
+            CANVAS_HASH_CHUNK_BYTES as u64
+                + 3 * 4 * u64::from(recipe.temporal_patch) * u64::from(recipe.patch).pow(2),
+        ),
+    ]
+    .into_iter()
+    .try_fold(0_u64, |sum, part| {
+        part.and_then(|part| sum.checked_add(part))
+    })
+    .ok_or_else(|| MediaError::new("image preparation size overflow"))
 }
 
 /// A conservative bound on the host bytes an image of `width` x `height`
@@ -273,6 +320,90 @@ pub fn padded_preparation_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The F32 implementation the canvas replaced, kept as its oracle.
+    fn planar_grid(
+        image: &RgbImage,
+        recipe: TokenBudgetRecipe,
+        limits: MediaLimits,
+    ) -> MediaResult<PatchGrid> {
+        let frames = recipe.temporal_patch as usize;
+        let PaddedSize {
+            canvas: (h, w),
+            content: (content_h, content_w),
+        } = padded_size(image.height, image.width, recipe, limits)?;
+        let (mean, std) = folded_statistics(recipe.value_scale, recipe.mean, recipe.std)?;
+        let resized = resample::bicubic_antialias(image, content_h, content_w)?;
+        let (h_us, w_us, content_w) = (h as usize, w as usize, content_w as usize);
+        let plane = h_us * w_us;
+        let mut out = try_filled(3 * plane, 0.0)?;
+        for c in 0..3 {
+            out[c * plane..(c + 1) * plane].fill((0.0 - mean[c]) / std[c]);
+        }
+        for (y, row) in resized.chunks_exact(content_w * 3).enumerate() {
+            for (x, pixel) in row.chunks_exact(3).enumerate() {
+                for c in 0..3 {
+                    out[c * plane + y * w_us + x] = (f32::from(pixel[c]) - mean[c]) / std[c];
+                }
+            }
+        }
+        let patching = super::super::Patching {
+            patch: recipe.patch,
+            temporal_patch: recipe.temporal_patch,
+            merge: recipe.merge,
+        };
+        super::super::patch_rows(&vec![out.as_slice(); frames], h, w, patching, limits)
+    }
+
+    #[test]
+    fn canvas_rows_match_the_planar_rows_bit_for_bit() {
+        let recipe = TokenBudgetRecipe {
+            patch: 14,
+            temporal_patch: 2,
+            merge: 2,
+            minimum_tokens: 4,
+            maximum_tokens: 256,
+            value_scale: 0.00392156862745098,
+            mean: [0.48145466, 0.4578275, 0.40821073],
+            std: [0.26862954, 0.26130258, 0.27577711],
+        };
+        let limits = MediaLimits {
+            maximum_bytes: 1024,
+            maximum_pixels: 1 << 26,
+            maximum_audio_frames: 1,
+            maximum_frames: 2,
+            maximum_tokens: 1 << 20,
+            maximum_aspect_ratio: 200.0,
+        };
+        let mut seed = 0x9e37_79b9_u32;
+        for (width, height) in [
+            (1, 1),
+            (28, 28),
+            (61, 17),
+            (300, 200),
+            (17, 400),
+            (900, 640),
+        ] {
+            let data = (0..width * height * 3)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed as u8
+                })
+                .collect();
+            let image = RgbImage::new(width, height, data, limits).unwrap();
+            let canvas = padded_token_budget_canvas(&image, recipe, limits).unwrap();
+            let planar = planar_grid(&image, recipe, limits).unwrap();
+            let rows = canvas.rows().unwrap();
+            assert_eq!(
+                rows.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                planar.rows.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{width} x {height}"
+            );
+            assert_eq!(canvas.into_grid().unwrap(), planar, "{width} x {height}");
+        }
+    }
 
     fn limits() -> MediaLimits {
         MediaLimits {

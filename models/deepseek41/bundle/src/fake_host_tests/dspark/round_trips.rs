@@ -24,13 +24,9 @@ fn warm_cycle_host_boundary_inventory() {
     if let Some(output) = &output {
         std::fs::create_dir_all(output).unwrap();
     }
-    // The successor joins status into one packet at every width; the serial
-    // path keeps per-rank status reads above C1.
-    for (successor, items, verify_rows) in [(true, 1_u32, 6_u32), (true, 8, 4), (false, 8, 4)] {
+    for (items, verify_rows) in [(1_u32, 6_u32), (8, 4)] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let (host, mut instance) =
-            crate::dspark::prefetch::with_enabled(successor, || create_with_limits(shape, 8, 32));
-        let joined = successor || items == 1;
+        let (host, mut instance) = create_with_limits(shape, 8, 32);
         let batch = |start: u64, rows: u32, draft: bool| {
             BatchRequestV1::new(
                 BatchWireVersionV1::V3,
@@ -165,14 +161,14 @@ fn warm_cycle_host_boundary_inventory() {
                 );
                 assert_eq!(
                     totals["device_to_host"],
-                    if joined { 1 } else { 5 },
-                    "status and diagnostics are joined in one packet"
+                    if items == 1 { 1 } else { 5 },
+                    "C1 joins status and diagnostics in one packet"
                 );
                 assert_eq!(
                     totals["async_device_to_host"], 2,
                     "disjoint ID slices feed the two layer gathers"
                 );
-                assert_eq!(totals["physical_readbacks"], if joined { 3 } else { 7 });
+                assert_eq!(totals["physical_readbacks"], if items == 1 { 3 } else { 7 });
                 assert_eq!(totals["mapped_waits"], 8);
                 assert_eq!(
                     totals["graph_replays"],
@@ -184,7 +180,7 @@ fn warm_cycle_host_boundary_inventory() {
                     "inventory must use warm graphs"
                 );
                 let record = serde_json::json!({
-                    "items":items,"successor":successor,"capacity":8,"draft_budget":verify_rows-1,"forced_kept_rows":verify_rows,
+                    "items":items,"capacity":8,"draft_budget":verify_rows-1,"forced_kept_rows":verify_rows,
                     "catch_up_and_draft_metadata":counts(&execute[..draft]),
                     "draft_and_device_join":counts(&execute[draft..hash]),
                     "hash_and_async_id_copy":counts(&execute[hash..enqueue+1]),
@@ -195,7 +191,7 @@ fn warm_cycle_host_boundary_inventory() {
                     "scope":"bundle execute and commit; includes the prepared gather ID copy; excludes executor sampling and scheduler acceptance"
                 });
                 println!("{record}");
-                if let Some(output) = output.as_ref().filter(|_| successor) {
+                if let Some(output) = &output {
                     std::fs::write(
                         output.join(format!("c{items}.json")),
                         serde_json::to_vec_pretty(&record).unwrap(),

@@ -355,8 +355,7 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                     .unwrap();
                 let timing: serde_json::Value = serde_json::from_str(timing).unwrap();
                 assert_eq!(timing["device_results"], true);
-                // The default successor joins every width's status in one packet.
-                let downloads = 1;
+                let downloads = if items == 1 { 1 } else { shape.ranks() + 1 };
                 assert_eq!(timing["bundle_readbacks"], downloads + 2);
                 assert_eq!(timing["explicit_bundle_syncs"], 0);
                 drop(log);

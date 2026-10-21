@@ -1712,21 +1712,29 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
-        let request = match (&self.state_slots, self.batch_wire) {
-            // Slot IDs wrap a V3 payload, so request state implies V3 records.
-            (Some(pool), _) => wrap_state_slots_v1(
-                encode_batch_request_with_capability_v1(
-                    items,
-                    kv_plan,
-                    BatchWireCapabilityV1::V3MediaSpeculative,
-                )?,
-                items,
-                pool,
-            )?,
-            (None, BatchWireCapabilityV1::V1) => encode_batch_request_v1(items, kv_plan)?,
-            (None, wire) => encode_batch_request_with_capability_v1(items, kv_plan, wire)?,
-        };
-        let request = wrap_position_axes_v1(request, items, self.position_axes)?;
+        // One buffer holds the whole record: wrappers patch their lengths in
+        // place, so a step's media payloads are written once and never copied.
+        let mut request = Vec::new();
+        write_position_axes_v1(
+            &mut request,
+            items,
+            self.position_axes,
+            |request, trailing| match (&self.state_slots, self.batch_wire) {
+                // Slot IDs wrap a V3 payload, so request state implies V3 records.
+                (Some(pool), _) => {
+                    write_state_slots_v1(request, items, pool, trailing, |request, trailing| {
+                        write_batch_request_v1(
+                            request,
+                            items,
+                            kv_plan,
+                            BatchWireCapabilityV1::V3MediaSpeculative,
+                            trailing,
+                        )
+                    })
+                }
+                (None, wire) => write_batch_request_v1(request, items, kv_plan, wire, trailing),
+            },
+        )?;
         let expected = items
             .iter()
             .flat_map(|item| {
@@ -2033,67 +2041,74 @@ fn executor_error_v1(message: String) -> ExecutorError {
     })
 }
 
-/// Encodes one prepared batch in the host's own model-neutral wire form.
-///
-/// Nothing compiler-chosen crosses the boundary: every field is fixed width and
-/// little endian, and the phase byte has its own declared codes.
-pub(crate) fn encode_batch_request_v1(
-    items: &[ModelBatchItem],
-    kv_plan: &PreparedAppendBatch,
-) -> Result<Vec<u8>, ExecutorError> {
-    encode_batch_request_with_capability_v1(items, kv_plan, BatchWireCapabilityV1::V1)
+/// Writes `magic`, the u32 length of the record `enclosed` appends, and that
+/// record, in place: the length is patched once the record is written, so
+/// the record is never copied into a wrapper.
+fn write_framed_v1(
+    out: &mut Vec<u8>,
+    magic: &[u8],
+    too_large: &str,
+    enclosed: impl FnOnce(&mut Vec<u8>) -> Result<(), ExecutorError>,
+) -> Result<(), ExecutorError> {
+    out.extend_from_slice(magic);
+    let at = out.len();
+    out.extend_from_slice(&[0; 4]);
+    enclosed(out)?;
+    let length =
+        u32::try_from(out.len() - at - 4).map_err(|_| executor_error_v1(too_large.to_owned()))?;
+    out[at..at + 4].copy_from_slice(&length.to_le_bytes());
+    Ok(())
 }
 
-/// Appends each item's admitted slot ID after the enclosed V3 payload.
-fn wrap_state_slots_v1(
-    payload: Vec<u8>,
+/// Appends a V4 record: the V3 record `enclosed` writes, then each item's
+/// admitted slot ID. `enclosed` receives the bytes this and any outer
+/// record append after it, to reserve with its media payloads.
+pub(crate) fn write_state_slots_v1(
+    out: &mut Vec<u8>,
     items: &[ModelBatchItem],
     pool: &crate::recurrent::StateSlotPoolV1,
-) -> Result<Vec<u8>, ExecutorError> {
-    let too_large = || executor_error_v1("state batch does not fit the wire".to_owned());
-    let length = u32::try_from(payload.len()).map_err(|_| too_large())?;
-    let count = u32::try_from(items.len()).map_err(|_| too_large())?;
-    let mut request = BATCH_REQUEST_MAGIC_V4.to_vec();
-    request.extend_from_slice(&length.to_le_bytes());
-    request.extend_from_slice(&payload);
-    request.extend_from_slice(&count.to_le_bytes());
-    for item in items {
-        let slot = pool
-            .slot(item.request_id())
-            .ok_or_else(|| executor_error_v1("request has no admitted state slot".to_owned()))?;
-        request.extend_from_slice(&slot.to_le_bytes());
+    trailing: usize,
+    enclosed: impl FnOnce(&mut Vec<u8>, usize) -> Result<(), ExecutorError>,
+) -> Result<(), ExecutorError> {
+    const TOO_LARGE: &str = "state batch does not fit the wire";
+    let count = u32::try_from(items.len()).map_err(|_| executor_error_v1(TOO_LARGE.to_owned()))?;
+    let slots = items
+        .iter()
+        .map(|item| {
+            pool.slot(item.request_id())
+                .ok_or_else(|| executor_error_v1("request has no admitted state slot".to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let own = 4 + 8 * slots.len();
+    write_framed_v1(out, BATCH_REQUEST_MAGIC_V4, TOO_LARGE, |out| {
+        enclosed(out, trailing + own)
+    })?;
+    out.extend_from_slice(&count.to_le_bytes());
+    for slot in slots {
+        out.extend_from_slice(&slot.to_le_bytes());
     }
-    Ok(request)
+    Ok(())
 }
 
-/// Wraps a V3 or V4 record with each item's explicit positions: a row count,
-/// zero or the item's phase rows, then that many (T, H, W) i32 triples. A
-/// step with no explicit positions keeps its record unchanged.
-fn wrap_position_axes_v1(
-    payload: Vec<u8>,
+/// Appends the V3 or V4 record `enclosed` writes, wrapped with each item's
+/// explicit positions: a row count, zero or the item's phase rows, then that
+/// many (T, H, W) i32 triples. A step with no explicit positions keeps its
+/// record unwrapped. `enclosed` receives the bytes appended after it.
+fn write_position_axes_v1(
+    out: &mut Vec<u8>,
     items: &[ModelBatchItem],
     enabled: bool,
-) -> Result<Vec<u8>, ExecutorError> {
+    enclosed: impl FnOnce(&mut Vec<u8>, usize) -> Result<(), ExecutorError>,
+) -> Result<(), ExecutorError> {
     if items.iter().all(|item| item.position_axes().is_empty()) {
-        return Ok(payload);
+        return enclosed(out, 0);
     }
     if !enabled {
         return Err(executor_error_v1(format!(
             "explicit positions require the {POSITION_AXES_CAPABILITY_V1} capability"
         )));
     }
-    if !payload.starts_with(BATCH_REQUEST_MAGIC_V3) && !payload.starts_with(BATCH_REQUEST_MAGIC_V4)
-    {
-        return Err(executor_error_v1(
-            "explicit positions require batch wire V3".to_owned(),
-        ));
-    }
-    let length = u32::try_from(payload.len())
-        .map_err(|_| executor_error_v1("position batch does not fit the wire".to_owned()))?;
-    let mut request = BATCH_REQUEST_MAGIC_V5.to_vec();
-    request.extend_from_slice(&length.to_le_bytes());
-    request.extend_from_slice(&payload);
-    write_wire_count_v1(&mut request, items.len(), "position item")?;
+    let mut own = 4;
     for item in items {
         let rows = match item.phase() {
             BatchPhase::Prefill { tokens } => tokens,
@@ -2106,20 +2121,61 @@ fn wrap_position_axes_v1(
                 "explicit positions must cover every row of their item".to_owned(),
             ));
         }
-        write_wire_count_v1(&mut request, axes.len(), "position row")?;
+        own += 4 + 12 * axes.len();
+    }
+    write_framed_v1(
+        out,
+        BATCH_REQUEST_MAGIC_V5,
+        "position batch does not fit the wire",
+        |out| {
+            let start = out.len();
+            enclosed(out, own)?;
+            let record = &out[start..];
+            if !record.starts_with(BATCH_REQUEST_MAGIC_V3)
+                && !record.starts_with(BATCH_REQUEST_MAGIC_V4)
+            {
+                return Err(executor_error_v1(
+                    "explicit positions require batch wire V3".to_owned(),
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    write_wire_count_v1(out, items.len(), "position item")?;
+    for item in items {
+        let axes = item.position_axes();
+        write_wire_count_v1(out, axes.len(), "position row")?;
         for axis in axes.iter().flatten() {
-            request.extend_from_slice(&axis.to_le_bytes());
+            out.extend_from_slice(&axis.to_le_bytes());
         }
     }
-    Ok(request)
+    Ok(())
 }
 
+/// Encodes one prepared batch in the host's own model-neutral wire form.
+///
+/// Nothing compiler-chosen crosses the boundary: every field is fixed width and
+/// little endian, and the phase byte has its own declared codes.
 pub(crate) fn encode_batch_request_with_capability_v1(
     items: &[ModelBatchItem],
     kv_plan: &PreparedAppendBatch,
     batch_wire: BatchWireCapabilityV1,
 ) -> Result<Vec<u8>, ExecutorError> {
     let mut request = Vec::new();
+    write_batch_request_v1(&mut request, items, kv_plan, batch_wire, 0)?;
+    Ok(request)
+}
+
+/// Appends one batch's record to `request`. Media payloads are written last
+/// and directly, after reserving them together with the `trailing` bytes an
+/// enclosing record appends, so no later growth copies them.
+pub(crate) fn write_batch_request_v1(
+    request: &mut Vec<u8>,
+    items: &[ModelBatchItem],
+    kv_plan: &PreparedAppendBatch,
+    batch_wire: BatchWireCapabilityV1,
+    trailing: usize,
+) -> Result<(), ExecutorError> {
     request.extend_from_slice(batch_wire.magic());
     let item_count = u32::try_from(items.len())
         .map_err(|_| executor_error_v1("batch item count does not fit the wire".to_owned()))?;
@@ -2260,7 +2316,6 @@ pub(crate) fn encode_batch_request_with_capability_v1(
             | BatchWireCapabilityV1::V3Media
             | BatchWireCapabilityV1::V3MediaSpeculative
     ) {
-        let mut payload = Vec::new();
         let encodes = items
             .iter()
             .flat_map(ModelBatchItem::media_encodes)
@@ -2283,19 +2338,20 @@ pub(crate) fn encode_batch_request_with_capability_v1(
                 "media records require the chop.media-inputs.v1 capability".to_owned(),
             ));
         }
-        write_wire_count_v1(&mut request, encodes.len(), "media encode")?;
-        for encode in encodes {
+        write_wire_count_v1(request, encodes.len(), "media encode")?;
+        let mut payload_bytes = 0_usize;
+        for encode in &encodes {
             request.extend_from_slice(&u32::from(encode.encoder).to_le_bytes());
             for dimension in encode.geometry {
                 request.extend_from_slice(&dimension.to_le_bytes());
             }
             request.extend_from_slice(&encode.output_rows.to_le_bytes());
-            write_wire_count_v1(&mut request, encode.pages.len(), "media page")?;
+            write_wire_count_v1(request, encode.pages.len(), "media page")?;
             for page in &encode.pages {
                 request.extend_from_slice(&page.to_le_bytes());
             }
             request.extend_from_slice(
-                &u64::try_from(payload.len())
+                &u64::try_from(payload_bytes)
                     .map_err(|_| executor_error_v1("media payload offset overflowed".to_owned()))?
                     .to_le_bytes(),
             );
@@ -2304,9 +2360,11 @@ pub(crate) fn encode_batch_request_with_capability_v1(
                     .map_err(|_| executor_error_v1("media payload length overflowed".to_owned()))?
                     .to_le_bytes(),
             );
-            payload.extend_from_slice(&encode.payload);
+            payload_bytes = payload_bytes
+                .checked_add(encode.payload.len())
+                .ok_or_else(|| executor_error_v1("media payload offset overflowed".to_owned()))?;
         }
-        write_wire_count_v1(&mut request, injects.len(), "media inject")?;
+        write_wire_count_v1(request, injects.len(), "media inject")?;
         for (index, inject) in injects {
             request.extend_from_slice(
                 &u32::try_from(index)
@@ -2318,11 +2376,14 @@ pub(crate) fn encode_batch_request_with_capability_v1(
             request.extend_from_slice(&inject.arena_row.to_le_bytes());
         }
         request.extend_from_slice(
-            &u64::try_from(payload.len())
+            &u64::try_from(payload_bytes)
                 .map_err(|_| executor_error_v1("media payload length overflowed".to_owned()))?
                 .to_le_bytes(),
         );
-        request.extend_from_slice(&payload);
+        request.reserve(payload_bytes.saturating_add(trailing));
+        for encode in &encodes {
+            request.extend_from_slice(&encode.payload);
+        }
     } else if items
         .iter()
         .any(|item| !item.media_encodes().is_empty() || !item.media_injects().is_empty())
@@ -2331,7 +2392,7 @@ pub(crate) fn encode_batch_request_with_capability_v1(
             "media records require batch wire V3".to_owned(),
         ));
     }
-    Ok(request)
+    Ok(())
 }
 
 fn write_wire_count_v1(out: &mut Vec<u8>, count: usize, name: &str) -> Result<(), ExecutorError> {
@@ -3336,6 +3397,8 @@ mod tests {
     struct FakeExecutionV1 {
         prefill_chunk: u32,
         envelopes: Vec<Vec<u8>>,
+        /// Every request execute received, as sent.
+        requests: Vec<Vec<u8>>,
         device_results: bool,
         device_metadata: Vec<bool>,
         captured: Vec<(u64, u64)>,
@@ -3360,6 +3423,7 @@ mod tests {
             Self {
                 prefill_chunk: 0,
                 envelopes: Vec::new(),
+                requests: Vec::new(),
                 device_results: false,
                 device_metadata: Vec::new(),
                 captured: Vec::new(),
@@ -3481,6 +3545,7 @@ mod tests {
             if self.emitted.len() as u64 > limits.maximum_rows {
                 return Err(BundleAbiError::ExecuteResultCapacity);
             }
+            self.requests.push(request.to_vec());
             if request.starts_with(runtime_bundle_sdk::prefill::MAGIC) {
                 assert_ne!(self.prefill_chunk, 0);
                 runtime_bundle_sdk::prefill::decode(request).unwrap();
@@ -3729,7 +3794,12 @@ mod tests {
                     assert_eq!(envelope.boundaries[0].prompt_tokens, 2);
                     assert_eq!(
                         envelope.original,
-                        super::encode_batch_request_v1(&items, &kv_plan()).unwrap()
+                        super::encode_batch_request_with_capability_v1(
+                            &items,
+                            &kv_plan(),
+                            super::BatchWireCapabilityV1::V1
+                        )
+                        .unwrap()
                     );
                 }
             }
@@ -4456,6 +4526,116 @@ mod tests {
                 .message()
                 .contains("anchor items require batch wire V3")
         );
+    }
+
+    /// The V4 wrapper as it was before records were written in place: it
+    /// copied the enclosed record.
+    fn copied_state_slots(payload: Vec<u8>, slots: &[u64]) -> Vec<u8> {
+        let mut request = super::BATCH_REQUEST_MAGIC_V4.to_vec();
+        request.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        request.extend_from_slice(&payload);
+        request.extend_from_slice(&(slots.len() as u32).to_le_bytes());
+        for slot in slots {
+            request.extend_from_slice(&slot.to_le_bytes());
+        }
+        request
+    }
+
+    /// The V5 wrapper as it was before, copying the enclosed record.
+    fn copied_position_axes(payload: Vec<u8>, items: &[ModelBatchItem]) -> Vec<u8> {
+        let mut request = super::BATCH_REQUEST_MAGIC_V5.to_vec();
+        request.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        request.extend_from_slice(&payload);
+        request.extend_from_slice(&(items.len() as u32).to_le_bytes());
+        for item in items {
+            let axes = item.position_axes();
+            request.extend_from_slice(&(axes.len() as u32).to_le_bytes());
+            for axis in axes.iter().flatten() {
+                request.extend_from_slice(&axis.to_le_bytes());
+            }
+        }
+        request
+    }
+
+    #[test]
+    fn records_written_in_place_match_the_copying_wrappers() {
+        let geometry = KvGeometry::new(4, 8).unwrap();
+        let mut pool = KvPool::new(geometry, 4).unwrap();
+        let first = pool.create_sequence(8).unwrap();
+        let second = pool.create_sequence(8).unwrap();
+        let plan = pool
+            .prepare_append_batch(&[(first, 2), (second, 2)])
+            .unwrap();
+        let item = |id: u64, payload: Vec<u8>, positions: bool| {
+            let item = ModelBatchItem::new(
+                RequestId::new(id),
+                BatchPhase::Prefill { tokens: 2 },
+                vec![5, 6],
+                true,
+            )
+            .with_media(
+                vec![runtime_engine::MediaEncodeV1 {
+                    encoder: 0,
+                    geometry: [1, 2, 3, 0],
+                    output_rows: 2,
+                    pages: vec![id],
+                    payload: payload.into(),
+                }],
+                vec![runtime_engine::MediaInjectV1 {
+                    item_row: 0,
+                    rows: 2,
+                    arena_row: 4 * id,
+                }],
+            );
+            if positions {
+                item.with_position_axes(vec![[0, 0, 0], [0, 0, 1]])
+            } else {
+                item
+            }
+        };
+        for (slots, positions) in [(false, false), (false, true), (true, false), (true, true)] {
+            let items = vec![
+                item(40, (0..=255).collect(), positions),
+                item(41, vec![9; 1 << 16], positions),
+            ];
+            let mut executor = BundleModelExecutorV1::new_with_batch_wire(
+                FakeExecutionV1::emitting(vec![
+                    row(40, &[1.0, 2.0, 3.0]),
+                    row(41, &[1.0, 2.0, 3.0]),
+                ]),
+                VOCABULARY,
+                4,
+                super::BatchWireCapabilityV1::V3Media,
+            )
+            .with_position_axes(true);
+            if slots {
+                executor =
+                    executor.with_state_slots(crate::recurrent::StateSlotPoolV1::with_capacity(4));
+                executor.admit_request_v1(RequestId::new(41)).unwrap();
+                executor.admit_request_v1(RequestId::new(40)).unwrap();
+            }
+            drop(executor.execute(&items, &plan).unwrap());
+            let wire = if slots {
+                super::BatchWireCapabilityV1::V3MediaSpeculative
+            } else {
+                super::BatchWireCapabilityV1::V3Media
+            };
+            let mut expected =
+                super::encode_batch_request_with_capability_v1(&items, &plan, wire).unwrap();
+            if slots {
+                let pool = executor.state_slots.as_ref().unwrap();
+                let ids = [40, 41].map(|id| pool.slot(RequestId::new(id)).unwrap());
+                expected = copied_state_slots(expected, &ids);
+            }
+            if positions {
+                expected = copied_position_axes(expected, &items);
+            }
+            assert_eq!(
+                executor.instance.requests.first(),
+                Some(&expected),
+                "slots {slots}, positions {positions}"
+            );
+        }
     }
 }
 

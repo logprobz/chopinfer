@@ -3,7 +3,7 @@ use super::record::{Capture, CapturedRow, Frame, Golden, SampleBits, create, met
 use super::trace::{MIXED_DECODE, Trace};
 use crate::executor::{
     BatchWireCapabilityV1, BundleExecutionV1, DeviceLogitsSamplerV1, SamplingDispatch,
-    batch_wire_capability_v1, encode_batch_request_with_capability_v1, wrap_state_slots_v1,
+    batch_wire_capability_v1, write_batch_request_v1, write_state_slots_v1,
 };
 use crate::services::HostServicesV1Backend;
 use runtime_bundle_abi::{
@@ -533,12 +533,14 @@ fn replay_installed_trace_gpu() -> Result<()> {
             } else {
                 batch_wire_capability_v1(loaded.manifest())
             };
-            let request = encode_batch_request_with_capability_v1(&items, &plan, wire)?;
-            let request = if let Some(slots) = &slots {
-                wrap_state_slots_v1(request, &items, slots)?
+            let mut request = Vec::new();
+            if let Some(slots) = &slots {
+                write_state_slots_v1(&mut request, &items, slots, 0, |request, trailing| {
+                    write_batch_request_v1(request, &items, &plan, wire, trailing)
+                })?;
             } else {
-                request
-            };
+                write_batch_request_v1(&mut request, &items, &plan, wire, 0)?;
+            }
             let limits = ResultSinkLimitsV1::new(
                 step.rows() as u64,
                 vocabulary as u64,

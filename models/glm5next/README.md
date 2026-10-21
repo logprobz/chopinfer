@@ -16,6 +16,15 @@ The profile file owns settings, status and qualified concurrency. Read the
 [qualification scope and exceptions](../../docs/serving-profiles.md) before
 treating a compatible checkpoint or explicit override as qualified.
 
+### Ordered prefill DMA
+
+The official block-FP8 layout with FP8 MTP KV at CP1 uses ordered DMA for
+single-request text prefill from 512 rows. It preserves the F32 rank fold
+and one BF16 output round. Set `CHOPINFER_GLM5NEXT_PREFILL_DMA=0` to use the
+previous collective. Other default configurations keep their existing path.
+The [schedule audit and served comparison](journal-changes/prefill-dma.md)
+record the scope, bitwise checks and 8K/32K TTFT results.
+
 ### Layer reference
 
 `text_layers` holds the served build's taps of one sequence

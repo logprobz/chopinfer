@@ -750,7 +750,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let _ = services.log(format!("{NAME} create failed: {reason}").as_bytes());
     };
     let config = decode(bytes, log)?;
-    let prefill_dma = crate::prefill_dma::requested();
+    let prefill_dma = crate::prefill_dma::requested(&config);
     if prefill_dma && (config.context_parallel.size() != 1 || config.comm_epilogue) {
         log("prefill DMA currently requires CP1 without the comm epilogue");
         return Err(BundleStatusV1::Unsupported.into());

@@ -760,7 +760,8 @@ impl crate::Kernels {
     /// The row layout of a launch that may consume part of a reduced
     /// interval: the HC expand that reads the reduced rows, the r8 c4
     /// prefill mix and the cached norm-ceil of the next sublayer. These are
-    /// the entries the 2026-10-21 consumer probe ran per owner interval.
+    /// the entries the 2026-10-21 consumer probe ran per owner interval; the
+    /// MoE-input norm-ceil may also certify each row's router operands.
     pub(crate) fn prefill_dma_consumer(
         symbol: &str,
         hidden: u64,
@@ -804,16 +805,28 @@ impl crate::Kernels {
                 grid: (0, 8),
             },
             // input, weight, normed, widened (F32 copy of normed, or null),
-            // codes, scales, live rows, status, its first row, eps; one CTA
-            // per row.
-            "chop_prefill_norm_ceil_deepseek41_cached_v1" => RowLocal {
+            // codes, scales, live rows, status, its first row, eps, and in
+            // the certifying form one flag per row (`certified[row]`, the
+            // router's exact-operand flag); one CTA per row.
+            "chop_prefill_norm_ceil_deepseek41_cached_v1"
+            | "chop_prefill_norm_ceil_deepseek41_cached_certified_v1" => RowLocal {
                 kind: RowLocalKind::Norm,
-                rows: vec![
-                    (0, hidden * 2),
-                    (2, hidden * 2),
-                    (4, hidden),
-                    (5, hidden / 32),
-                ],
+                rows: if symbol.ends_with("_certified_v1") {
+                    vec![
+                        (0, hidden * 2),
+                        (2, hidden * 2),
+                        (4, hidden),
+                        (5, hidden / 32),
+                        (10, 4),
+                    ]
+                } else {
+                    vec![
+                        (0, hidden * 2),
+                        (2, hidden * 2),
+                        (4, hidden),
+                        (5, hidden / 32),
+                    ]
+                },
                 reduced: None,
                 live: 6,
                 row_offset: Some(8),

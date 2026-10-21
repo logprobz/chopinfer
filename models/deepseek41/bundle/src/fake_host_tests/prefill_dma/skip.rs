@@ -341,14 +341,21 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
     }
 }
 
+/// The chain's expand, mix and norm-ceil; the MoE-input norm-ceil that also
+/// certifies each row's router operands takes the plain one's place.
 const CONSUMERS: [&str; 3] = [
     "chop_sinkhorn_hc_deepseek41_expand_f32_v1",
     "chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c4_v1",
     "chop_prefill_norm_ceil_deepseek41_cached_v1",
 ];
+const CERTIFIED_NORM: &str = "chop_prefill_norm_ceil_deepseek41_cached_certified_v1";
 
 fn consumer(line: &str) -> bool {
-    line.starts_with("launch ") && CONSUMERS.iter().any(|s| line.contains(&format!(" {s} ")))
+    line.starts_with("launch ")
+        && CONSUMERS
+            .iter()
+            .chain([&CERTIFIED_NORM])
+            .any(|s| line.contains(&format!(" {s} ")))
 }
 
 fn stream(line: &str) -> &str {
@@ -363,15 +370,16 @@ fn capture_consumed(rows: u64, consume: bool) -> Vec<String> {
 
 /// Walk each stream's consumer launches in submission order: an unsplit
 /// launch is unchanged; a split chain is four chains over the owner
-/// intervals, the rank's own first. Returns the split chains.
-fn split_chains(serial: &[String], pipelined: &[String]) -> usize {
+/// intervals, the rank's own first. Returns the split chains and how many
+/// of them end in the certifying norm-ceil.
+fn split_chains(serial: &[String], pipelined: &[String]) -> (usize, usize) {
     let spans = super::super::shared_overlap::journal_spans;
     let streams = serial
         .iter()
         .filter(|l| consumer(l))
         .map(|l| stream(l))
         .collect::<BTreeSet<_>>();
-    let mut chains = 0;
+    let (mut chains, mut certified) = (0, 0);
     for st in streams {
         let s = serial
             .iter()
@@ -393,7 +401,13 @@ fn split_chains(serial: &[String], pipelined: &[String]) -> usize {
             let mut offsets = vec![BTreeSet::new(); 3];
             for (k, part) in parts.iter().enumerate() {
                 let original = chain[k % 3];
-                assert!(part.contains(&format!(" {} ", CONSUMERS[k % 3])), "{part}");
+                let norm = if chain[2].contains(&format!(" {CERTIFIED_NORM} ")) {
+                    CERTIFIED_NORM
+                } else {
+                    CONSUMERS[2]
+                };
+                let kind = [CONSUMERS[0], CONSUMERS[1], norm][k % 3];
+                assert!(part.contains(&format!(" {kind} ")), "{part}");
                 let (whole, piece) = (spans(original), spans(part));
                 assert_eq!(whole.len(), piece.len());
                 for (position, (w, q)) in whole.iter().zip(&piece).enumerate() {
@@ -419,12 +433,13 @@ fn split_chains(serial: &[String], pipelined: &[String]) -> usize {
                 assert!(per.values().all(|q| q.len() == 4));
             }
             chains += 1;
+            certified += usize::from(chain[2].contains(&format!(" {CERTIFIED_NORM} ")));
             i += 3;
             j += 12;
         }
         assert_eq!(j, p.len());
     }
-    chains
+    (chains, certified)
 }
 
 #[test]
@@ -448,8 +463,9 @@ fn dma_consumes_each_gathered_interval_as_it_lands() {
     assert_eq!(transport(&serial), transport(&pipelined));
     // On every rank: the 38 full-row calls followed by the chain (two
     // others go to the dense quantizer) and the 2240- and 2496-row cone
-    // calls, whose mix is the r8 c4 pipeline.
-    assert_eq!(split_chains(&serial, &pipelined), 40 * 4);
+    // calls, whose mix is the r8 c4 pipeline. The 20 full-row chains before
+    // MoE end in the norm-ceil that certifies the router's operands.
+    assert_eq!(split_chains(&serial, &pipelined), (40 * 4, 20 * 4));
     audit(&pipelined).unwrap();
     // Without the waits before each interval's consumers, an expand reads
     // reduced rows its gather copy may still be writing.

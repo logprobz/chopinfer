@@ -352,7 +352,8 @@ After each hidden reduction the served graph runs only row-local kernels
 before the next projection: the HC expand of the reduced rows, the prefill
 mix and the next sublayer's cached norm-ceil. Where every rank's next three
 launches are exactly the expand, the r8 c4 prefill mix and the cached
-norm-ceil, each sized to the call's rows, and the rows divide into whole
+norm-ceil (before MoE, its form that also writes each row's router
+certification flag), each sized to the call's rows, and the rows divide into whole
 eight-row mix tiles per owner, the DMA call runs them per owner interval.
 Each rank's gather copies move to its own copy lane, which records an event
 after each phase. Its main stream runs the chain on its own interval right
@@ -367,7 +368,7 @@ count table, the norm's status rows are addressed through its row offset,
 and its row grid is sized to the interval. These entries compute every row
 from that row's inputs alone: the expand indexes rows by block, the mix
 keeps per-row accumulators in eight-row tiles with zeroed padding, and the
-norm-ceil runs one block per row. No argument of the chain other than the
+norm-ceil runs one block per row, its certification flag included. No argument of the chain other than the
 expand's reduced rows may overlap anything the call reads or writes. Any
 other chain, the embedding reduction and odd chunks keep the serial order.
 At package defaults on an 8192-row chunk this splits 40 calls per rank: the

@@ -3,7 +3,8 @@
 //!
 //! Admitted only where every rank's next launches are exactly the HC expand
 //! of the call's reduced rows, the r8 c4 prefill mix and the cached
-//! norm-ceil, each sized to the call's rows. Each interval's launch keeps
+//! norm-ceil (or its form that certifies each row's router operands), each
+//! sized to the call's rows. Each interval's launch keeps
 //! the original's symbol and arguments, with its row views narrowed to the
 //! interval, its live count read from the prefill count table and its row
 //! grid sized to the interval. These entries compute every row from that

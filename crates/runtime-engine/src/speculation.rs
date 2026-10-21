@@ -16,6 +16,8 @@ mod diagnostics;
 #[cfg(test)]
 mod low_concurrency_tests;
 #[cfg(test)]
+mod realized_tests;
+#[cfg(test)]
 mod refresh_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
@@ -317,12 +319,15 @@ impl SpeculationConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AcceptanceEstimate {
     positions: [f64; MAX_DRAFT_TOKENS],
+    /// A new request's estimate that no verification has observed yet.
+    unverified: bool,
 }
 
 impl AcceptanceEstimate {
     const fn initial() -> Self {
         Self {
             positions: [INITIAL_ACCEPTANCE; MAX_DRAFT_TOKENS],
+            unverified: false,
         }
     }
 
@@ -332,6 +337,7 @@ impl AcceptanceEstimate {
     }
 
     fn observe(&mut self, verified: usize, accepted: usize, weight: f64) {
+        self.unverified &= verified == 0;
         self.observe_weighted(verified, accepted, |_| weight);
     }
 
@@ -797,7 +803,10 @@ impl SpeculationPolicy {
 
     /// The estimate a request starts from.
     pub(crate) fn prior(&self) -> AcceptanceEstimate {
-        self.prior.clone()
+        AcceptanceEstimate {
+            unverified: true,
+            ..self.prior.clone()
+        }
     }
 
     /// Records one verified item: `verified` drafts were checked and the first
@@ -1264,6 +1273,24 @@ impl SpeculationPolicy {
         if !self.costs.measured(items) {
             self.trace_reason("await_ar_baseline");
             return vec![0; items];
+        }
+        // Realized drafting throughput follows the acceptance of the
+        // requests that drafted: a hard stretch of one prompt can pull it
+        // below AR. When every request that may draft here is new, that
+        // verdict measured other requests, so the new requests' estimates
+        // decide again until their own drafting steps are realized. Probe
+        // spacing stays: where the estimates also lose, nothing drafts.
+        let mut eligible = candidates.iter().filter(|c| c.maximum_draft_tokens > 0);
+        if eligible.clone().next().is_some()
+            && eligible.all(|c| c.acceptance.unverified)
+            && let Some(state) = self.zero_draft.get_mut(items)
+            && state.disabled
+        {
+            state.remaining = 0;
+            if let Some(realized) = self.realized.get_mut(&items) {
+                realized.drafting = None;
+                realized.drafting_steps = 0;
+            }
         }
         // Backoff learned against faster AR can outlive that comparison.
         // A material slowdown permits one early remeasurement, even when
@@ -2015,6 +2042,7 @@ mod tests {
         }];
         assert!(policy.plan(&one, budget(96, 96))[0] > 0);
         let poor = AcceptanceEstimate {
+            unverified: false,
             positions: [0.1; MAX_DRAFT_TOKENS],
         };
         let many = [PlanCandidate {
@@ -2132,6 +2160,7 @@ mod tests {
         // One measured pass; per-token estimates scale it by depth.
         set_draft_cost(&mut policy, &[1], 1000.0);
         let estimate = AcceptanceEstimate {
+            unverified: false,
             positions: [0.9; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -2359,6 +2388,7 @@ mod tests {
     fn a_joint_block_plan_pays_at_c4_where_no_single_item_does() {
         let mut policy = block_policy();
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.75; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -2464,12 +2494,14 @@ mod tests {
             policy.costs.record(rows, 4500 + 90 * (rows as u64 - 1));
         }
         let shallow = AcceptanceEstimate {
+            unverified: false,
             positions: [
                 0.9, 0.9, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05,
                 0.05, 0.05,
             ],
         };
         let never = AcceptanceEstimate {
+            unverified: false,
             positions: [0.0; MAX_DRAFT_TOKENS],
         };
         let candidates = [
@@ -2540,6 +2572,7 @@ mod tests {
         assert_eq!(policy.executable_at_most(2), 1);
         assert_eq!(policy.executable_at_most(9), 7);
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.9; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -2876,6 +2909,7 @@ mod tests {
         cost: impl Fn(bool, usize) -> u64,
     ) -> Vec<usize> {
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.99; MAX_DRAFT_TOKENS],
         };
         let mut previous = vec![0; items];
@@ -2986,6 +3020,7 @@ mod tests {
         policy.observe_step(&[7], 0, 20_000);
         policy.observe_step(&[7], 0, 20_000);
         let good = AcceptanceEstimate {
+            unverified: false,
             positions: [0.99; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -3059,6 +3094,7 @@ mod tests {
         // Among equally promising candidates the joint plan drafts those
         // that need no catch-up.
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.9; MAX_DRAFT_TOKENS],
         };
         let candidates = [true, false, true, false].map(|fresh| PlanCandidate {
@@ -3459,6 +3495,7 @@ mod tests {
         policy.block_steps.record((16, 128), 38_800.0, 16, 1.0);
         policy.zero_draft[16].idle = PROBE_INTERVAL;
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.9; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -3521,6 +3558,7 @@ mod tests {
     fn batches_that_prefill_draft_only_caught_up_requests() {
         let mut policy = block_policy_with_cap(256);
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.95; MAX_DRAFT_TOKENS],
         };
         for _ in 0..2 {
@@ -3550,6 +3588,7 @@ mod tests {
         policy.observe_step(&[0; 4], 0, 6_860);
         policy.zero_draft[4].idle = PROBE_INTERVAL;
         let poor = AcceptanceEstimate {
+            unverified: false,
             positions: [0.05; MAX_DRAFT_TOKENS],
         };
         let steady = [false; 4].map(|fresh| PlanCandidate {
@@ -3571,6 +3610,7 @@ mod tests {
     fn a_catch_up_is_spread_over_the_steps_a_request_has_left() {
         let policy = block_policy_with_cap(256);
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.5; MAX_DRAFT_TOKENS],
         };
         let candidate = |fresh, remaining_tokens| PlanCandidate {
@@ -3606,7 +3646,11 @@ mod tests {
             for rows in 1..=4 {
                 policy.costs.micros.insert(rows, 1000.0);
             }
-            let estimate = policy.prior();
+            // A running request: a new one's estimate decides alone.
+            let estimate = AcceptanceEstimate {
+                unverified: false,
+                ..policy.prior()
+            };
             let one = PlanCandidate {
                 maximum_draft_tokens: 1,
                 acceptance: &estimate,
@@ -3686,6 +3730,7 @@ mod tests {
             22_500.0 * WIDER_BUCKET_RATIO.powi(3)
         );
         let acceptance = AcceptanceEstimate {
+            unverified: false,
             positions: [0.8; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -3750,6 +3795,7 @@ mod tests {
                     // evaluates every plan in full.
                     policy.realized.clear();
                     let acceptance = AcceptanceEstimate {
+                        unverified: false,
                         positions: [0.7; MAX_DRAFT_TOKENS],
                     };
                     let candidates = (0..items)
@@ -3789,6 +3835,7 @@ mod tests {
         policy.observe_step(&[0; 4], 0, 5_000);
         policy.observe_step(&[0; 4], 0, 5_000);
         let optimistic = AcceptanceEstimate {
+            unverified: false,
             positions: [0.99; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -4083,6 +4130,7 @@ mod tests {
             policy.observe_step(&small, 0, small_micros);
         }
         let estimate = AcceptanceEstimate {
+            unverified: false,
             positions: [acceptance; MAX_DRAFT_TOKENS],
         };
         let candidates = [PlanCandidate {
@@ -4157,6 +4205,7 @@ mod tests {
                 policy.observe_step(&[1; 16], 0, 21_200);
             }
             let acceptance = AcceptanceEstimate {
+                unverified: false,
                 positions: [0.75; MAX_DRAFT_TOKENS],
             };
             let candidates = [PlanCandidate {

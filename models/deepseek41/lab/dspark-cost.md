@@ -14,8 +14,11 @@ Exact-width startup warmup covers 97 target keys at a 32-row budget:
 all reachable widths at the ordinary concurrency waves, the widest key
 at other concurrencies where every request can fit a draft, and witnesses
 for each drafter count. The complete reachable set has 426 keys and would
-need 1,278 target graph handles per rank before other graphs. The existing
-384-handle limit stays in effect. Unselected keys remain lazy. Admission retains existing graphs when the
+need 1,278 target graph handles per rank before other graphs. A TP4
+startup warms 131 target keys with their completion tails, plus catch-up
+and draft widths: 423 handles per rank. The 384-handle limit lowered the
+widest 16-item verify keys eagerly, so the limit is 512 per rank. Unselected
+keys remain lazy. Admission retains existing graphs when the
 cache fills and lowers uncached shapes eagerly. Completion tails cannot
 retire the warmed set.
 

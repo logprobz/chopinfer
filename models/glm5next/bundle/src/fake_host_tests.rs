@@ -38,6 +38,7 @@ mod ll_residency;
 mod nvfp4;
 mod phased_reset;
 mod phased_residency;
+mod prefill_dma;
 mod rows;
 mod shared_overlap;
 mod sm120;
@@ -683,6 +684,29 @@ impl FakePackage for FakeHost {
         if self.backing.get() {
             let bytes = self.read(source);
             self.write(destination, &bytes);
+        }
+        Ok(())
+    }
+    fn copy_peer_to_peer(
+        &self,
+        stream: BundleStreamHandleV1,
+        _destination_context: BundleContextHandleV1,
+        destination: DeviceBufferSpanV1,
+        _source_context: BundleContextHandleV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.check_span(source);
+        self.check_span(destination);
+        assert_eq!(source.length, destination.length);
+        if self.fail_copy.fails() {
+            return Err(BundleStatusV1::HostError);
+        }
+        self.device.journal.borrow_mut().push(format!(
+            "peer-copy {} {source:?} -> {destination:?}",
+            stream.slot()
+        ));
+        if self.backing.get() {
+            self.write(destination, &self.read(source));
         }
         Ok(())
     }

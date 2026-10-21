@@ -45,6 +45,10 @@ fn main() {
     // shared gather by index.
     specs.push((engines::ROW_COPY_FAMILY, engines::row_copy_cubin_spec()));
     specs.push((engines::ROW_GATHER_FAMILY, engines::row_gather_cubin_spec()));
+    specs.push((
+        model_glm5next_contract::sm120::dma::FAMILY,
+        model_glm5next_contract::sm120::dma::cubin_spec(),
+    ));
     // One family per engine, holding every cubin it builds.
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {

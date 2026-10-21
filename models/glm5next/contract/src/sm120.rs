@@ -9,6 +9,7 @@
 pub mod backend;
 pub mod catalog;
 pub mod context_parallel;
+pub mod dma;
 pub mod encoder;
 pub mod engines;
 pub mod payload;

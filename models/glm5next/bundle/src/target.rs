@@ -39,6 +39,8 @@ pub struct Uses {
     /// context-parallel group all-gather
     /// (`model_glm5next_contract::draft_argmax`).
     pub drafter: bool,
+    /// Candidate prefill transport, loaded only when explicitly selected.
+    pub prefill_dma: bool,
 }
 
 /// The spans the indexer's pooling gate binds: its BF16 side tensor, the
@@ -55,6 +57,11 @@ pub struct PoolGateSpans {
 
 /// One topology's target.
 pub trait Target: Send + Sync {
+    /// The existing F32 MoE fold over one DMA owner's local interval.
+    fn prefill_dma_sum(&self, owner: bundle_runtime::dma::Owner) -> Result<PreparedLaunch, String>;
+
+    /// A collective with the exact F32-input/BF16-output fold DMA replaces.
+    fn prefill_dma_replaces(&self, symbol: &str) -> bool;
     /// The backend whose ops an instance serving a checkpoint stored in
     /// `layout` prepares, the queries its entries serve and GLM's own
     /// kernels (`Served`).

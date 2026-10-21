@@ -359,9 +359,13 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The fused candidate publisher adds one module, one resolve and two
 /// releases per rank, and replaces each layer-20 producer triple with one
 /// launch.
+/// allocations match the exact path after handle normalization. The fused
+/// ceil replaces the 320 gate/up tile and intermediate quantizer launches
+/// with fused tiles and fixups, and adds 8 resolves, 12 releases and four
+/// configures.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
-    (Ranks::TP4, (51619, 0xb2a037eb131e62a2)),
+    (Ranks::TP4, (51643, 0x2f536f7c0df50c2a)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -996,6 +996,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// The fused candidate publisher adds one module, one resolve and two
 /// releases per native rank, and replaces each layer-20 producer triple
 /// (scores, local gather, merge) with one launch on the merge's spans.
+/// releases, and removes four shared-memory configures: 1632 lines. In
+/// these steps of at most 2048 rows the fused ceil then replaces the 800
+/// gate/up tile launches with the fused tiles and the 800 intermediate
+/// quantizer launches with its fixup, and adds 8 resolves, 12 releases and
+/// four configures: 24 more lines.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1027,7 +1032,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (74583, 0x3ba9fbf1cc78ee9f),
+        (74607, 0x9fa61d210d8cd514),
     ),
 ];
 
@@ -1100,12 +1105,15 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
 
 /// The Flash TP4 journals with the explicit native MoE prefill switch
 /// (`sm120::moe_native`, `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`): the
-/// native module loads, every prefill expert projection launches the
+/// native modules load, every prefill expert projection launches the
 /// native tiles within their configured shared memory, decode keeps its
 /// experts, and the lifecycle releases everything. Every prefill step's
-/// 40 layers launch the gate/up and down pack and tile entries on each rank
-/// (four resolves per rank) in place of the exact expert launches. The
-/// explicit setting and the default must produce the same pinned journals.
+/// 40 layers launch gate/up's pack, fused ceil tiles and fixup and down's
+/// pack and tiles on each rank in place of the exact expert launches and
+/// the intermediate quantizer: every prefill step here has at most
+/// `moe_native::FUSED_CEIL_ROWS` rows (the wrapper's unit test covers the
+/// larger steps, which keep the quantizer). The explicit setting and the
+/// default must produce the same pinned journals.
 #[test]
 fn native_moe_prefill_switch_runs_the_tp4_journal() {
     let shape = crate::shape::topologies()
@@ -1133,8 +1141,20 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
             .iter()
             .filter(|l| l.starts_with("launch ") && l.contains("chop_moe_native_"))
             .count();
-        // Gate/up and down, each a pack and a tile launch.
-        assert!(native > 0 && native % 4 == 0, "{native} native launches");
+        // Gate/up's pack, fused tiles and fixup; down's pack and tiles. No
+        // separate intermediate quantizer runs in a native step.
+        assert!(native > 0 && native % 5 == 0, "{native} native launches");
+        let fixups = lines
+            .iter()
+            .filter(|l| l.starts_with("launch ") && l.contains("chop_moe_native_ceil_fixup_"))
+            .count();
+        assert_eq!(fixups * 5, native);
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with("launch ") && l.contains("_moe_ceil_w3456_")),
+            "a native step kept the separate intermediate quantizer"
+        );
         let layout = format!("{:?}", kv.storage).to_lowercase();
         let (_, _, expected) = FLASH_JOURNALS
             .iter()

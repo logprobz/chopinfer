@@ -53,7 +53,7 @@ impl PackedOperand {
             }),
             global: None,
         };
-        view.validate().map_err(precision)?;
+        let view = view.validated().map_err(precision)?;
         if self.decode_order.scales_before_bf16_mma() {
             view.validate_bf16_operands(self.decode_order)
                 .map_err(precision)?;

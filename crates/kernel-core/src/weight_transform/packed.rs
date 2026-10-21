@@ -306,9 +306,10 @@ impl PackedOperand {
                 },
                 global,
             };
-            view.validate().map_err(precision)?;
+            let validated = view.validated().map_err(precision)?;
             if self.decode_order.scales_before_bf16_mma() {
-                view.validate_bf16_operands(self.decode_order)
+                validated
+                    .validate_bf16_operands(self.decode_order)
                     .map_err(precision)?;
             }
             let slice = MatrixSlice {
@@ -332,7 +333,7 @@ impl PackedOperand {
                     )
                     .and_then(|plugin| plugin.repack_mxfp8_rows_slice(view, &slice))
                 }
-                (source, resident) if source == resident => view.repack(&slice),
+                (source, resident) if source == resident => validated.repack(&slice),
                 _ => return refuse("encoding differs from the prepared physical contract"),
             }
             .map_err(precision)?;
@@ -709,12 +710,13 @@ impl PackedOperand {
                     bytes,
                 }),
             };
-            view.validate().map_err(precision)?;
+            let validated = view.validated().map_err(precision)?;
             if self.decode_order.scales_before_bf16_mma() {
-                view.validate_bf16_operands(self.decode_order)
+                validated
+                    .validate_bf16_operands(self.decode_order)
                     .map_err(precision)?;
             }
-            let packed = view
+            let packed = validated
                 .repack(&MatrixSlice {
                     rows: (0..run.count as usize).collect(),
                     k_start: matrix.k_kept.start as usize,

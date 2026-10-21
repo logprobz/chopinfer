@@ -72,6 +72,25 @@ fn decode_fuses_77_hc_boundaries() {
                 assert_eq!(count("input_cached16_v1"), 0);
 
                 assert_eq!(count("input_local_v1"), 0);
+                // Every decode bucket serves the measured cached query norm.
+                let query = crate::sm120::norm_query_cached::BUCKETS
+                    .iter()
+                    .find(|(bucket, _)| *bucket == rows)
+                    .map(|&(_, warps)| warps)
+                    .unwrap();
+                for warps in [8, 16, 32] {
+                    assert_eq!(
+                        count(&format!("_query_cached{warps}_v1 ")),
+                        usize::from(warps == query) * 40 * nr
+                    );
+                }
+                assert_eq!(count("_norm_quantize_deepseek41_query_v1 "), 0);
+                for line in launches.iter().filter(|l| l.contains("_query_cached")) {
+                    assert!(line.contains(&format!("grid_x: 1, grid_y: {rows}, grid_z: 1")));
+                    assert!(
+                        line.contains(&format!("block_x: {}, block_y: 1, block_z: 1", query * 32))
+                    );
+                }
                 if let Some(warps) = fused {
                     let entry = crate::sm120::hc_completion::served();
                     let symbol = format!("{} ", entry.symbol(warps));

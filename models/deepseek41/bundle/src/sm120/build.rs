@@ -88,6 +88,9 @@ mod norm_quantize;
 mod norm_quantize_cached;
 #[path = "norm_quantize_tiles.rs"]
 mod norm_quantize_tiles;
+#[path = "norm_query_cached.rs"]
+#[allow(dead_code, reason = "the bundle registers the measured buckets")]
+mod norm_query_cached;
 mod own_cubin;
 #[allow(dead_code, reason = "the bundle prepares the paired schedule")]
 mod prefill_attention;
@@ -377,6 +380,7 @@ pub fn selection(
             owners.push((hc_mixer_probe::cubin_name(geometry), geometry.id));
             owners.push((norm_quantize_tiles::cubin_name(geometry), geometry.id));
             owners.push((norm_quantize_cached::cubin_name(geometry), geometry.id));
+            owners.push((norm_query_cached::cubin_name(geometry), geometry.id));
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
             owners.push((hc_completion::CUBIN.into(), geometry.id));
@@ -523,6 +527,10 @@ pub fn selection(
         specs.extend(
             norm_quantize_cached::cubins(std::slice::from_ref(geometry))
                 .expect("qualified cached norm cubin"),
+        );
+        specs.extend(
+            norm_query_cached::cubins(std::slice::from_ref(geometry))
+                .expect("qualified cached query norm cubin"),
         );
         specs.extend(
             hc_finish_norm::cubins(std::slice::from_ref(geometry))

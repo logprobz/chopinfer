@@ -52,6 +52,7 @@ pub mod norm_prefill;
 pub mod norm_quantize;
 pub mod norm_quantize_cached;
 pub mod norm_quantize_tiles;
+pub mod norm_query_cached;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
@@ -579,6 +580,7 @@ impl crate::Kernels {
             sm120
         };
         let sm120 = norm_quantize_cached::register(sm120, shape.geometry);
+        let sm120 = norm_query_cached::register(sm120, shape.geometry);
         let sm120 = norm_prefill::register(sm120, shape.geometry)?;
         let sm120 = query_prefill::register(sm120, shape.geometry)?;
         let sm120 = window_fused::register(sm120);

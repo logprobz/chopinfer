@@ -727,6 +727,73 @@ impl crate::Kernels {
         )
     }
 
+    /// The row layout of a launch that may consume part of a reduced
+    /// interval: the HC expand that reads the reduced rows, the r8 c4
+    /// prefill mix and the cached norm-ceil of the next sublayer. These are
+    /// the entries the 2026-10-21 consumer probe ran per owner interval.
+    pub(crate) fn prefill_dma_consumer(
+        symbol: &str,
+        hidden: u64,
+        streams: u64,
+    ) -> Option<crate::ops::RowLocal> {
+        use crate::ops::{RowLocal, RowLocalKind};
+        let flat = streams * hidden * 2;
+        Some(match symbol {
+            // x, y, post, comb, out, live rows; grid (columns, rows).
+            "chop_sinkhorn_hc_deepseek41_expand_f32_v1" => RowLocal {
+                kind: RowLocalKind::Expand,
+                rows: vec![
+                    (0, flat),
+                    (1, hidden * 2),
+                    (2, streams * 4),
+                    (3, streams * streams * 4),
+                    (4, flat),
+                ],
+                reduced: Some(1),
+                live: 5,
+                row_offset: None,
+                optional: vec![],
+                grid: (1, 1),
+            },
+            // x, fn, base, scale, pre_in, collapsed, pre, post, comb, live
+            // rows; grid (row tiles of eight).
+            "chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c4_v1" => RowLocal {
+                kind: RowLocalKind::Mix,
+                rows: vec![
+                    (0, flat),
+                    (4, streams * 4),
+                    (5, hidden * 2),
+                    (6, streams * 4),
+                    (7, streams * 4),
+                    (8, streams * streams * 4),
+                ],
+                reduced: None,
+                live: 9,
+                row_offset: None,
+                optional: vec![],
+                grid: (0, 8),
+            },
+            // input, weight, normed, widened (F32 copy of normed, or null),
+            // codes, scales, live rows, status, its first row, eps; one CTA
+            // per row.
+            "chop_prefill_norm_ceil_deepseek41_cached_v1" => RowLocal {
+                kind: RowLocalKind::Norm,
+                rows: vec![
+                    (0, hidden * 2),
+                    (2, hidden * 2),
+                    (4, hidden),
+                    (5, hidden / 32),
+                ],
+                reduced: None,
+                live: 6,
+                row_offset: Some(8),
+                optional: vec![(3, hidden * 4)],
+                grid: (0, 1),
+            },
+            _ => return None,
+        })
+    }
+
     /// Round `input`'s F32 partial rows once to BF16 into `output`.
     pub(crate) fn prefill_dma_round(
         input: runtime_bundle_abi::DeviceBufferSpanV1,

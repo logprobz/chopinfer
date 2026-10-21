@@ -1,7 +1,7 @@
 //! Replace only the existing cone's rounded reductions with ordered DMA.
 //! Every compute launch and persistent mutation retains its original rows.
 use super::{Instance, Programs, Run, Stage};
-use crate::instance::execute::dma::Call;
+use crate::instance::execute::dma::{Call, Consumers};
 use bundle_runtime::pipeline::PoisonOnUnwind;
 use kernel_core::contract::Argument;
 use model_deepseek41_contract::state::KvStorage;
@@ -104,6 +104,9 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
 struct Block {
     compute: Vec<Range<usize>>,
     reduce: Call,
+    /// The row-local launches after the call, run per owner interval; their
+    /// program launches are then skipped.
+    consume: Option<Consumers>,
 }
 
 pub(super) struct Plan {
@@ -159,17 +162,33 @@ impl Plan {
             else {
                 continue;
             };
+            let following = (0..4)
+                .map(|rank| &body.0[rank][ranks[rank][index].end..])
+                .collect::<Vec<_>>();
+            let flags = (0..4)
+                .map(|rank| &body.1[rank][ranks[rank][index].end..])
+                .collect::<Vec<_>>();
+            let consume = Consumers::prepare(instance, &reduce, &following, &flags)?;
+            let taken = if consume.is_some() {
+                Consumers::LAUNCHES
+            } else {
+                0
+            };
             let compute = cursors
                 .iter_mut()
                 .enumerate()
                 .map(|(rank, cursor)| {
                     let r = &ranks[rank][index];
                     let span = *cursor..r.collective;
-                    *cursor = r.end;
+                    *cursor = r.end + taken;
                     span
                 })
                 .collect();
-            blocks.push(Block { compute, reduce });
+            blocks.push(Block {
+                compute,
+                reduce,
+                consume,
+            });
         }
         let tail = cursors
             .into_iter()
@@ -207,7 +226,9 @@ impl Plan {
         let result = (|| {
             for block in &self.blocks {
                 issue(&block.compute)?;
-                block.reduce.execute(instance, &streams)?;
+                block
+                    .reduce
+                    .execute(instance, &streams, block.consume.as_ref())?;
             }
             issue(&self.tail)
         })();

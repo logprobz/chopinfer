@@ -42,6 +42,15 @@ fn capture(mode: u8, rows: u64) -> Vec<String> {
     journal
 }
 
+/// Whether span `index` of `line` is only read: a peer copy's source, and
+/// the reduced rows an HC expand reads. Every other span counts as written.
+fn read_only(line: &str, index: usize) -> bool {
+    (line.starts_with("peer-copy ") && index == 0)
+        || (line.starts_with("launch ")
+            && line.contains(" chop_sinkhorn_hc_deepseek41_expand_f32_v1 ")
+            && index == 1)
+}
+
 fn intersects(a: Span, b: Span) -> bool {
     a.0 == b.0 && a.1 < b.1 + b.2 && b.1 < a.1 + a.2 && a.2 != 0 && b.2 != 0
 }
@@ -50,6 +59,7 @@ fn intersects(a: Span, b: Span) -> bool {
 /// records/waits. Host submission order alone creates no cross-stream edge.
 /// Check DMA reads and writes, including remote sources, against all compute
 /// spans while retaining only histories subsumed by later ordered accesses.
+/// Two reads never conflict.
 fn audit(journal: &[String]) -> Result<usize, String> {
     let spans = super::shared_overlap::journal_spans;
     let relevant = |s: &&String| {
@@ -76,7 +86,7 @@ fn audit(journal: &[String]) -> Result<usize, String> {
         .collect::<BTreeSet<_>>();
     let mut clocks = vec![vec![0_u64; streams.len()]; streams.len()];
     let mut events = BTreeMap::<u32, Vec<u64>>::new();
-    let mut history = BTreeMap::<u64, Vec<(Span, Vec<u64>, bool)>>::new();
+    let mut history = BTreeMap::<u64, Vec<(Span, Vec<u64>, bool, bool)>>::new();
     let ordered = |a: &[u64], b: &[u64]| a.iter().zip(b).all(|(a, b)| a <= b);
     let mut accesses = 0;
     for line in journal.iter().filter(relevant) {
@@ -94,13 +104,16 @@ fn audit(journal: &[String]) -> Result<usize, String> {
             events.insert(words[2].parse().unwrap(), clocks[stream].clone());
         }
         let transport = words[0] == "peer-copy" || transport_launch(line);
-        for span in spans(line)
+        for (index, span) in spans(line)
             .into_iter()
-            .filter(|s| interesting.contains(&s.0))
+            .enumerate()
+            .filter(|(_, s)| interesting.contains(&s.0))
         {
+            let read = read_only(line, index);
             let previous = history.entry(span.0).or_default();
-            for (other, clock, other_transport) in previous.iter() {
+            for (other, clock, other_transport, other_read) in previous.iter() {
                 if transport != *other_transport
+                    && !(read && *other_read)
                     && intersects(span, *other)
                     && !ordered(clock, &clocks[stream])
                 {
@@ -109,13 +122,15 @@ fn audit(journal: &[String]) -> Result<usize, String> {
                     ));
                 }
             }
-            previous.retain(|(other, clock, kind)| {
+            // A later read never stands in for an earlier write.
+            previous.retain(|(other, clock, kind, other_read)| {
                 !(*kind == transport
+                    && (!read || *other_read)
                     && span.1 <= other.1
                     && span.1 + span.2 >= other.1 + other.2
                     && ordered(clock, &clocks[stream]))
             });
-            previous.push((span, clocks[stream].clone(), transport));
+            previous.push((span, clocks[stream].clone(), transport, read));
             accesses += usize::from(transport);
         }
     }

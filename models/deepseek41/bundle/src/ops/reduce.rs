@@ -228,6 +228,59 @@ impl DmaPayload {
     }
 }
 
+/// A row-local launch that may run on part of a reduced interval: which
+/// arguments hold rows and how many bytes each row takes there. Every other
+/// argument is the same for every row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RowLocal {
+    pub(crate) kind: RowLocalKind,
+    pub(crate) rows: Vec<(usize, u64)>,
+    /// The argument reading the reduced rows, if this launch reads them.
+    pub(crate) reduced: Option<usize>,
+    /// The device cell holding the live row count.
+    pub(crate) live: usize,
+    /// A U64 argument that addresses rows from an explicit first row.
+    pub(crate) row_offset: Option<usize>,
+    /// Row arguments that may instead be null.
+    pub(crate) optional: Vec<(usize, u64)>,
+    /// The grid dimension counting rows, and the rows each step covers.
+    pub(crate) grid: (usize, u32),
+}
+
+/// The consumers that follow a hidden reduction, in their served order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RowLocalKind {
+    Expand,
+    Mix,
+    Norm,
+}
+
+/// Whether DMA runs the row-local consumers of each gathered owner
+/// interval as it lands. Unset selects it; `0` keeps them after the call.
+pub(crate) fn dma_consume_requested() -> bool {
+    #[cfg(test)]
+    return CONSUME_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static CONSUME_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_consume<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CONSUME_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(CONSUME_IN_TESTS.replace(enabled));
+    run()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,

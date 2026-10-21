@@ -340,3 +340,135 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
         assert!(audit(&missing).is_err());
     }
 }
+
+const CONSUMERS: [&str; 3] = [
+    "chop_sinkhorn_hc_deepseek41_expand_f32_v1",
+    "chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c4_v1",
+    "chop_prefill_norm_ceil_deepseek41_cached_v1",
+];
+
+fn consumer(line: &str) -> bool {
+    line.starts_with("launch ") && CONSUMERS.iter().any(|s| line.contains(&format!(" {s} ")))
+}
+
+fn stream(line: &str) -> &str {
+    line.split_whitespace().nth(1).unwrap()
+}
+
+fn capture_consumed(rows: u64, consume: bool) -> Vec<String> {
+    crate::ops::with_partial_setting(Some("prefill"), || {
+        crate::ops::with_dma_consume(consume, || capture(rows, None))
+    })
+}
+
+/// Walk each stream's consumer launches in submission order: an unsplit
+/// launch is unchanged; a split chain is four chains over the owner
+/// intervals, the rank's own first. Returns the split chains.
+fn split_chains(serial: &[String], pipelined: &[String]) -> usize {
+    let spans = super::super::shared_overlap::journal_spans;
+    let streams = serial
+        .iter()
+        .filter(|l| consumer(l))
+        .map(|l| stream(l))
+        .collect::<BTreeSet<_>>();
+    let mut chains = 0;
+    for st in streams {
+        let s = serial
+            .iter()
+            .filter(|l| consumer(l) && stream(l) == st)
+            .collect::<Vec<_>>();
+        let p = pipelined
+            .iter()
+            .filter(|l| consumer(l) && stream(l) == st)
+            .collect::<Vec<_>>();
+        let (mut i, mut j) = (0, 0);
+        while i < s.len() {
+            if p.get(j) == Some(&s[i]) {
+                i += 1;
+                j += 1;
+                continue;
+            }
+            let chain = &s[i..i + 3];
+            let parts = &p[j..j + 12];
+            let mut offsets = vec![BTreeSet::new(); 3];
+            for (k, part) in parts.iter().enumerate() {
+                let original = chain[k % 3];
+                assert!(part.contains(&format!(" {} ", CONSUMERS[k % 3])), "{part}");
+                let (whole, piece) = (spans(original), spans(part));
+                assert_eq!(whole.len(), piece.len());
+                for (position, (w, q)) in whole.iter().zip(&piece).enumerate() {
+                    if w == q {
+                        continue;
+                    }
+                    if w.2 == 4 && q.2 == 4 {
+                        // The live count cell.
+                        continue;
+                    }
+                    assert_eq!((q.0, q.2 * 4), (w.0, w.2), "{part}");
+                    assert!(q.1 >= w.1 && q.1 + q.2 <= w.1 + w.2);
+                    offsets[k % 3].insert((position, (q.1 - w.1) / q.2));
+                }
+            }
+            // Every row argument is cut into the four owner quarters.
+            for set in &offsets {
+                let mut per = BTreeMap::<usize, BTreeSet<u64>>::new();
+                for &(position, quarter) in set {
+                    per.entry(position).or_default().insert(quarter);
+                }
+                assert!(!per.is_empty());
+                assert!(per.values().all(|q| q.len() == 4));
+            }
+            chains += 1;
+            i += 3;
+            j += 12;
+        }
+        assert_eq!(j, p.len());
+    }
+    chains
+}
+
+#[test]
+fn dma_consumes_each_gathered_interval_as_it_lands() {
+    let serial = capture_consumed(8192, false);
+    let pipelined = capture_consumed(8192, true);
+    let others = |j: &[String]| {
+        compute(j)
+            .into_iter()
+            .filter(|l| !consumer(l))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(others(&serial), others(&pipelined));
+    // The copies and owner sums are the call's in either case.
+    let transport = |j: &[String]| {
+        j.iter()
+            .filter(|l| l.starts_with("peer-copy ") || transport_launch(l))
+            .count()
+    };
+    assert_eq!(transport(&serial), transport(&pipelined));
+    // On every rank: the 38 full-row calls followed by the chain (two
+    // others go to the dense quantizer) and the 2240- and 2496-row cone
+    // calls, whose mix is the r8 c4 pipeline.
+    assert_eq!(split_chains(&serial, &pipelined), 40 * 4);
+    audit(&pipelined).unwrap();
+    // Without the waits before each interval's consumers, an expand reads
+    // reduced rows its gather copy may still be writing.
+    let mut early = Vec::new();
+    for (at, line) in pipelined.iter().enumerate() {
+        let next = pipelined[at + 1..].iter().find(|l| !l.starts_with("wait "));
+        if line.starts_with("wait ")
+            && next.is_some_and(|n| consumer(n) && stream(n) == stream(line))
+        {
+            continue;
+        }
+        early.push(line.clone());
+    }
+    assert!(early.len() < pipelined.len());
+    assert!(audit(&early).is_err());
+}
+
+#[test]
+fn dma_keeps_consumers_after_calls_it_cannot_split() {
+    // 8191-row calls do not divide into whole eight-row mix tiles per owner.
+    assert_eq!(capture_consumed(8191, true), capture_consumed(8191, false));
+}

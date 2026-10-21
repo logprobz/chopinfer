@@ -17,8 +17,13 @@ pub(crate) struct Rank {
     /// Allocation/free and the host's automatic peer-copy joins only. Keeping
     /// this off both active lanes avoids serializing disjoint row parts.
     pub(crate) owner: BundleStreamHandleV1,
+    /// Gather copies when the rank's main stream consumes each gathered
+    /// interval as it lands; idle otherwise.
+    lane: BundleStreamHandleV1,
     inbox: DeviceBufferSpanV1,
     events: [BundleEventHandleV1; 8],
+    /// One per gather phase, recorded on the lane after its copy.
+    gathered: [BundleEventHandleV1; 3],
 }
 
 pub(crate) fn acquire(
@@ -32,6 +37,8 @@ pub(crate) fn acquire(
         .map(|&(context, pool, _)| {
             let owner = services.create_stream(context, 1)?;
             held.push(Held::Stream(owner));
+            let lane = services.create_stream(context, 1)?;
+            held.push(Held::Stream(lane));
             let inbox = allocate_span(
                 services,
                 pool,
@@ -40,15 +47,18 @@ pub(crate) fn acquire(
                 held,
             )?;
             let mut events = Vec::new();
-            for _ in 0..8 {
+            for _ in 0..11 {
                 let event = services.create_event(context)?;
                 held.push(Held::Event(event));
                 events.push(event);
             }
+            let gathered = events.split_off(8);
             Ok(Rank {
                 owner,
+                lane,
                 inbox,
                 events: events.try_into().expect("eight DMA events"),
+                gathered: gathered.try_into().expect("three gather events"),
             })
         })
         .collect()
@@ -70,6 +80,7 @@ pub(crate) fn drain_streams(instance: &Instance) -> Result<(), BundleAbiError> {
         .ranks
         .iter()
         .map(|rank| rank.2)
+        .chain(instance.dma.iter().map(|rank| rank.lane))
         .chain(instance.overlap.iter().map(|rank| rank.lane.stream))
         .chain(instance.side_lanes.iter().map(|lanes| lanes.side))
     {
@@ -106,6 +117,9 @@ struct Transfer {
 }
 
 pub(super) struct Call {
+    first: u32,
+    rows: u32,
+    embedding: bool,
     /// Each rank's rounding of the partial rows it sends (BF16 payload).
     rounds: Vec<Vec<PreparedLaunch>>,
     scatter: [Vec<Transfer>; 3],
@@ -252,6 +266,9 @@ impl Call {
             }
         }
         Ok(Some(Self {
+            first,
+            rows,
+            embedding,
             rounds,
             scatter,
             sums,
@@ -264,10 +281,14 @@ impl Call {
         crate::shared_overlap::disjoint_copy_spans(&self.footprint, compute)
     }
 
+    /// Run the call. With `consumers`, each rank's gather copies move to its
+    /// lane and its main stream runs the consumers of its own interval after
+    /// its sum and of every other interval after that interval's copy.
     pub(super) fn execute(
         &self,
         instance: &Instance,
         streams: &[BundleStreamHandleV1],
+        consumers: Option<&Consumers>,
     ) -> Result<(), DispatchError> {
         if streams.len() != 4 || instance.dma.len() != 4 {
             return Err(DispatchError::InvalidPlan);
@@ -308,7 +329,9 @@ impl Call {
             }
             Ok(())
         };
-        let copies = |transfers: &[Transfer]| -> Result<(), BundleAbiError> {
+        let copies = |transfers: &[Transfer],
+                      streams: &[BundleStreamHandleV1]|
+         -> Result<(), BundleAbiError> {
             for transfer in transfers {
                 services.copy_peer_to_peer(
                     streams[transfer.destination],
@@ -333,20 +356,60 @@ impl Call {
         // own stream, so its sum follows them without a cross-rank barrier
         // between permutations; the permutation order is unchanged.
         for phase in 0..3 {
-            copies(&self.scatter[phase])?;
+            copies(&self.scatter[phase], streams)?;
         }
         for (rank, sum) in sums.iter().enumerate() {
             sum.submit(services, streams[rank])?;
         }
         // Every owner interval is summed before any rank gathers it.
         record(4)?;
-        wait(4)?;
-        for phase in 0..3 {
-            copies(&self.gather[phase])?;
+        let Some(consumers) = consumers else {
+            wait(4)?;
+            for phase in 0..3 {
+                copies(&self.gather[phase], streams)?;
+            }
+            // All peer reads have completed before any rank can reuse
+            // partials, rounded rows, outputs, inboxes, or this call's
+            // event records.
+            record(7)?;
+            wait(7)?;
+            return Ok(());
+        };
+        let resolved = consumers.resolve(instance)?;
+        let lanes = instance
+            .dma
+            .iter()
+            .map(|rank| rank.lane)
+            .collect::<Vec<_>>();
+        for &lane in &lanes {
+            for rank in &instance.dma {
+                services.wait_event(lane, rank.events[4])?;
+            }
         }
-        // All peer reads have completed before any rank can reuse partials,
-        // rounded rows, outputs, inboxes, or this call's event records.
-        record(7)?;
+        // A rank's own rows are final once its sum is, in its stream order.
+        for (rank, &stream) in streams.iter().enumerate() {
+            for launch in &resolved[rank][rank] {
+                launch.submit(services, stream)?;
+            }
+        }
+        for phase in 0..3 {
+            copies(&self.gather[phase], &lanes)?;
+            for (rank, dma) in instance.dma.iter().enumerate() {
+                services.record_event(dma.gathered[phase], lanes[rank])?;
+            }
+        }
+        for phase in 0..3 {
+            for (rank, &stream) in streams.iter().enumerate() {
+                services.wait_event(stream, instance.dma[rank].gathered[phase])?;
+                for launch in &resolved[rank][(rank + 3 - phase) % 4] {
+                    launch.submit(services, stream)?;
+                }
+            }
+        }
+        // As above, with the copies' completion recorded on the lanes.
+        for (rank, &lane) in lanes.iter().enumerate() {
+            services.record_event(instance.dma[rank].events[7], lane)?;
+        }
         wait(7)?;
         Ok(())
     }
@@ -476,7 +539,7 @@ impl Plan {
         let result = (|| {
             for (compute, reduction) in &self.blocks {
                 issue(compute)?;
-                reduction.execute(instance, &streams)?;
+                reduction.execute(instance, &streams, None)?;
             }
             issue(&self.tail)
         })();
@@ -486,6 +549,9 @@ impl Plan {
         result
     }
 }
+
+mod consume;
+pub(super) use consume::Consumers;
 
 #[cfg(test)]
 mod ownership_tests;

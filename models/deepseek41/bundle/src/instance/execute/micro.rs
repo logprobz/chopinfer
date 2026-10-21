@@ -379,7 +379,7 @@ impl Plan {
                         if matches!(stage, Work::Reduce(_))
                             && let Some(call) = &self.dma[block][part]
                         {
-                            call.execute(instance, &comm)?;
+                            call.execute(instance, &comm, None)?;
                             continue;
                         }
                         issue(

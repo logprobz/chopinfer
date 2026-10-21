@@ -285,9 +285,7 @@ pub(crate) fn widens(g: &Geometry, layer: u32, sublayer: Sublayer) -> bool {
 /// MoE-input norm's rows and certificate (router-in-norm, launched through
 /// `crate::Kernels::router_in_norm_router`).
 pub(crate) struct CertifiedRouterViews {
-    /// The norm's widened F32 rows (the SIMT path's input).
-    pub(crate) widened: View,
-    /// The norm's BF16 rows.
+    /// The norm's BF16 rows, which the SIMT path widens itself.
     pub(crate) normed: View,
     pub(crate) certified: View,
     pub(crate) weight: View,

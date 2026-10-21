@@ -9,7 +9,11 @@
 //! projection runs 64-expert tiles (`router_norm_entries::FEATURES`), bit
 //! for bit the 32-expert ones, which the router tile pair measured at 0.77
 //! of them on captured layers 14 and 39 (models/deepseek41/lab/
-//! router_wide.md). Other row counts keep the served path.
+//! router_wide.md). The norm writes no widened rows: the projection's SIMT
+//! path widens the BF16 rows itself, bit for bit, and the narrow pair
+//! measured the norm and router at 0.89 of the step with the widened write
+//! (models/deepseek41/lab/router_narrow.md). Other row counts keep the
+//! served path.
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernels_sm120::f32_projection::certified;
@@ -32,8 +36,8 @@ pub fn applies(g: &Geometry, ranks: u32, rows: u32) -> bool {
 }
 
 /// The certifying norm's launch: the served norm launch `served` (its
-/// one launch, of the served cached entry) with the certificate written
-/// to `certified`.
+/// one launch, of the served cached entry, writing no widened rows) with
+/// the certificate written to `certified`.
 pub fn norm_launch(served: Vec<Launch>, certified: View) -> Result<Launch, Refusal> {
     let [mut launch] = <[Launch; 1]>::try_from(served)
         .map_err(|_| Refusal("router-in-norm needs the one served norm launch"))?;
@@ -46,6 +50,10 @@ pub fn norm_launch(served: Vec<Launch>, certified: View) -> Result<Launch, Refus
     }
     if certified.handle == 0 || certified.bytes < u64::from(ROWS) * 4 {
         return Err(Refusal("router-in-norm certificate rows are missing"));
+    }
+    // Arguments: input, weight, normed, widened, ...
+    if launch.arguments.0.get(3) != Some(&Argument::NullDevicePointer) {
+        return Err(Refusal("router-in-norm norm must not write widened rows"));
     }
     launch.symbol = entry.reference.symbol;
     launch
@@ -62,7 +70,6 @@ pub(crate) fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
     let e = router();
     let q = e.query();
     let rows = u64::from(ROWS);
-    v.widened.covers(rows * u64::from(q.k) * 4)?;
     v.normed.covers(rows * u64::from(q.k) * 2)?;
     v.certified.covers(rows * 4)?;
     v.weight.covers(u64::from(q.n) * u64::from(q.k) * 2)?;
@@ -71,7 +78,6 @@ pub(crate) fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
     v.weight_domain.covers(e.weight_domain_bytes())?;
     let written = [v.output.handle];
     let read = [
-        v.widened.handle,
         v.normed.handle,
         v.certified.handle,
         v.weight.handle,
@@ -89,7 +95,8 @@ pub(crate) fn router_launch(v: &RouterViews) -> Result<Launch, Refusal> {
         rows: ROWS,
         plan: certified::wide_plan(&e, TILE_ROWS, FEATURES, ROWS)?,
         arguments: ArgumentList(vec![
-            ptr(v.widened),
+            // The SIMT path widens `normed`; no widened rows exist.
+            Argument::NullDevicePointer,
             ptr(v.normed),
             ptr(v.certified),
             ptr(v.weight),
@@ -130,7 +137,7 @@ mod tests {
         assert_eq!(wide.dynamic_shared_bytes, 24_576);
         assert_eq!(
             router_symbol(),
-            "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_v1"
+            "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_normed_v1"
         );
         let served = norm_prefill::entries()
             .unwrap()
@@ -150,7 +157,12 @@ mod tests {
             symbol: served.reference.symbol.clone(),
             rows: ROWS,
             plan: served.plan(ROWS).unwrap(),
-            arguments: ArgumentList(vec![Argument::DeviceBuffer(1)]),
+            arguments: ArgumentList(vec![
+                Argument::DeviceBuffer(1),
+                Argument::DeviceBuffer(2),
+                Argument::DeviceBuffer(3),
+                Argument::NullDevicePointer,
+            ]),
             collective: false,
             persistent: false,
         };
@@ -160,10 +172,12 @@ mod tests {
         };
         let out = norm_launch(vec![launch.clone()], certified).unwrap();
         assert_eq!(out.symbol, norm().reference.symbol);
-        assert_eq!(
-            out.arguments.0,
-            [Argument::DeviceBuffer(1), Argument::DeviceBuffer(9)]
-        );
+        assert_eq!(out.arguments.0[..4], launch.arguments.0[..]);
+        assert_eq!(out.arguments.0[4..], [Argument::DeviceBuffer(9)]);
+        // A norm still writing its widened rows is refused.
+        let mut widening = launch.clone();
+        widening.arguments.0[3] = Argument::DeviceBuffer(4);
+        assert!(norm_launch(vec![widening], certified).is_err());
         assert!(norm_launch(vec![launch.clone(), launch.clone()], certified).is_err());
         assert!(
             norm_launch(

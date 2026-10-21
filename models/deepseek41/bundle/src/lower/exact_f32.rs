@@ -92,7 +92,7 @@ impl Lowering<'_> {
 
     /// The router's certified projection over the MoE-input norm's BF16
     /// rows and certificate (`sm120::router_norm`), which the norm stage
-    /// wrote in place of the zero-component prepare.
+    /// wrote in place of the zero-component prepare and its widened rows.
     fn certified_router(
         &self,
         phase: Phase,
@@ -107,7 +107,6 @@ impl Lowering<'_> {
         let mut bind = crate::ops::Bind::default();
         let mut view = |span| bind.view(span);
         let views = crate::ops::exact_f32::CertifiedRouterViews {
-            widened: view(rows(scratch.normed_wide, phase.rows())),
             normed: view(rows(scratch.normed, phase.rows())),
             certified: view(rows(scratch.router_certified, phase.rows())),
             weight: view(weight),

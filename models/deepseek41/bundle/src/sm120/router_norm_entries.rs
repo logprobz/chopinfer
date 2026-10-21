@@ -1,7 +1,8 @@
 //! The router-in-norm serving cubin (`router_norm`), shared with the build
 //! script and the qualification lab: the served cached MoE-input prefill
 //! norm with its router certificate, and the served router entry's
-//! certified projection at 32-row, 64-expert tiles.
+//! certified projection at 32-row, 64-expert tiles, whose SIMT path widens
+//! the norm's BF16 rows itself.
 use kernel_build::CubinSpec;
 use kernels_sm120::f32_projection::{Entry, certified};
 use kernels_sm120::row::rmsnorm_prefill;
@@ -38,7 +39,7 @@ pub fn router() -> Entry {
 }
 
 pub fn router_symbol() -> String {
-    certified::wide_symbol(&router(), TILE_ROWS, FEATURES)
+    certified::normed_symbol(&router(), TILE_ROWS, FEATURES)
 }
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<CubinSpec>, String> {
@@ -49,7 +50,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<CubinSpec>, String> {
     spec.headers
         .push("#include \"gemm/exact_f32_certified_wide.cuh\"".into());
     spec.entries.push(
-        certified::wide_entry_spec(&router(), TILE_ROWS, FEATURES).map_err(|e| e.to_string())?,
+        certified::normed_entry_spec(&router(), TILE_ROWS, FEATURES).map_err(|e| e.to_string())?,
     );
     let norms =
         rmsnorm_prefill::cubin_spec("unused".into(), &[norm()]).map_err(|e| e.to_string())?;

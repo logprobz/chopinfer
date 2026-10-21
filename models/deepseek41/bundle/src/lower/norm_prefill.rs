@@ -29,18 +29,22 @@ impl Lowering<'_> {
             Sublayer::Attention => "attn_norm.weight",
             Sublayer::Mlp => "ffn_norm.weight",
         };
+        // The router-in-norm norm writes no widened rows: the router's SIMT
+        // path widens its BF16 rows itself, and nothing else reads them.
+        let in_norm = sublayer == Sublayer::Mlp && self.router_in_norm(phase);
         let views = RmsNormQuantizeBuffers {
             input: row(s.collapsed),
             weight: self.buffers.view(&layer_view(layer, weight))?,
             normed: row(s.normed),
-            widened: widens(self.shape.geometry, layer, sublayer).then(|| row(s.normed_wide)),
+            widened: (widens(self.shape.geometry, layer, sublayer) && !in_norm)
+                .then(|| row(s.normed_wide)),
             codes: row(s.normed_codes),
             scales: row(s.normed_scales),
             live_rows: self.inputs.live_tokens,
             status: self.carried(phase, s.row_status)?,
             status_row_offset: 0,
         };
-        let launched = if sublayer == Sublayer::Mlp && self.router_in_norm(phase) {
+        let launched = if in_norm {
             ops.launch_certified(phase.rows(), views, row(s.router_certified))
         } else {
             ops.launch(phase.rows(), views)

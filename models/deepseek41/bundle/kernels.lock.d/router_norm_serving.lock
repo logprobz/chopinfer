@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_v1",
+        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_normed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -122,10 +122,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "0709c5b1d9a43bc12e4cb7e7c2fcc64de6f22a374c7967889b1d51a970f1a58b",
+    "cubin_sha256": "9d302df0ffdce5c4036f76bc532f61085d849065378e3a378e04c7ead7573776",
     "resources": [
       {
-        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_v1",
+        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_normed_v1",
         "registers": 118,
         "shared_static_bytes": 1024,
         "local_bytes": 0,

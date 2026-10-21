@@ -15,6 +15,9 @@ pub const FOLD_K: u32 = 128;
 /// Shared row-status bit for non-finite or invalid quantized input.
 pub const NON_FINITE_INPUT: u32 = 1;
 
+pub(crate) const OPERAND_REFUSAL: Refusal =
+    Refusal("MXFP8 fold operands must be finite and exact in BF16");
+
 /// Static weights are admitted on the host before their packed bytes can
 /// be uploaded. Native execution and exact decoding share this domain.
 pub fn admit_operand(matrix: MatrixView<'_>) -> Result<(), Refusal> {
@@ -25,7 +28,7 @@ pub fn admit_operand(matrix: MatrixView<'_>) -> Result<(), Refusal> {
     }
     matrix
         .validate_bf16_operands(DecodeOrder::ExactScaledOperand)
-        .map_err(|_| Refusal("MXFP8 fold operands must be finite and exact in BF16"))
+        .map_err(|_| OPERAND_REFUSAL)
 }
 
 /// Each output is a sum over the exact decoded operands. Accumulate at most

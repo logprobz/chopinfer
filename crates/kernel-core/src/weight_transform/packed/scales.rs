@@ -22,7 +22,8 @@ impl PackedOperand {
             || matrix.source_expert != 0
             || matrix.global.is_some()
             || matrix.local_dtype != Some(DType::Ue8M0)
-            || self.decode_order.scales_before_bf16_mma()
+            || (self.decode_order.has_bf16_weight_operand()
+                && self.decode_order != DecodeOrder::ExactScaledOperand)
             || matrix.k == 0
             || !matrix.k.is_multiple_of(32)
             || !matrix.k_origin.is_multiple_of(32)

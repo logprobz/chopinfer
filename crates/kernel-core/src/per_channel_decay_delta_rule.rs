@@ -151,7 +151,7 @@ impl From<PerChannelDecayDeltaRuleQuery> for PerChannelDecayOp {
 impl PerChannelDecayDeltaRuleQuery {
     /// Elements of one slot's state: F32 for the delta rule, BF16 for the
     /// convolution. The host reserves `rows + 1` copies per slot
-    /// (docs/serving-recurrent-state.md).
+    /// (docs/numerics.md#recurrent-state).
     ///
     /// The size helpers are exact for a validated query (a state of at
     /// most `MAX_STATE_BYTES`), at any u32 row count. On a query that fails

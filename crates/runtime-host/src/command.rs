@@ -1608,7 +1608,7 @@ pub fn run_command_line_v1(
         && command == "eval"
     {
         // Qualification against a running server: its own exit codes
-        // (docs/cli.md), so it bypasses the receipt-or-refusal path.
+        // (tools/qual/README.md#release-gates), so it bypasses the receipt-or-refusal path.
         let revision = env!("CHOPINFER_BUILD_REVISION");
         let tool = runtime_eval::Tool {
             name: format!("{program} eval"),
@@ -3350,7 +3350,7 @@ type OpenServedInstanceV1 = (
 /// Opens the served instance for `maximum_sequences` live sequences. A
 /// package that requires `chop.served-items.v1` receives the count in its
 /// create record. A bundle may still size its slots and graph buckets for its
-/// package maximum until it adopts the count (docs/bundle-runtime.md).
+/// package maximum until it adopts the count (BUNDLE_ARCHITECTURE.md#ownership-boundary).
 fn open_instance_v1(
     loaded: &'static InstalledBundleHostV1,
     topology: &ServedTopologyV1,

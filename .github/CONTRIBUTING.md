@@ -2,7 +2,7 @@
 
 See [docs/contributing.md](../docs/contributing.md) for the workflow,
 [AGENTS.md](../AGENTS.md) for contributor rules, and
-[docs/toolchain.md](../docs/toolchain.md) for build setup.
+[docs/contributing.md#setup](../docs/contributing.md#setup) for build setup.
 
 ## What is accepted
 

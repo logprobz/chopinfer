@@ -6,7 +6,7 @@ This is the contract of the six shared check kinds: `teacher_forced`,
 scoring and judging. `eval run` captures the supported kinds against a
 server (media remains Python-only), and the Python suite
 (`tools/qual/kinds.py`, `tools/qual/checks.py`) scores them by calling `eval
-rescore` ([CLI](cli.md)). The conformance vectors in `tests/qual-vectors/`
+rescore` ([qualification tools](../tools/qual/README.md#release-gates)). The conformance vectors in `tests/qual-vectors/`
 pin the verdicts. Other checks (`receipt` kind) are judged by their declared
 predicates alone and are not part of this contract.
 
@@ -797,3 +797,11 @@ Frontend context and chat-render files use scoped `frontend_capture` members;
 tokenizer goldens use their own file entry. Parsing, counts and report digests
 use the authenticated bytes. Lock refusals exit with a `refused:` message
 and no comparison verdict or traceback.
+
+## Capture coverage
+
+Model declarations pin their capture inventory in addition to the shared
+kind rules. Qwen's frozen frontend capture requires at least three needle
+rows, 15 API rows, 75 chat-render rows and 81 tokenizer rows. Those minima
+do not permit missing declared cases, and an unrelated diagnostic capture
+does not replace the authenticated frontend or serving inputs.

@@ -473,7 +473,7 @@ fn offload_declaration() -> Value {
         value["checks"][&name] = json!({"module": "kv_offload",
             "args": ["report", "--off", format!("{{{off}}}"), "--swap", format!("{{{swap}}}")],
             "files": [off, swap], "timeout_seconds": 600, "receipt": "*-kv-offload-*.json",
-            "rules": [{"path": ["passed"], "op": "eq", "value": true, "source": "docs/serving-kv-pool.md"}]});
+            "rules": [{"path": ["passed"], "op": "eq", "value": true, "source": "docs/numerics.md#kv-offload-and-prefix-state"}]});
         value["cohorts"]["full"]["checks"]
             .as_array_mut()
             .unwrap()

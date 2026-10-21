@@ -7,7 +7,7 @@ optional transform). `Taps` registers forward hooks for the selected names
 once per model; they record only inside `Taps.step`, so a pass outside a
 step runs untouched.
 
-Names follow the tap grammar (docs/reference-runner.md, "Taps and tapdiff"):
+Names follow the tap grammar (tools/refrun/README.md, "Taps and tapdiff"):
 `<scope>.<site>` with scope `embed`, `L<nn>`, `final`, `enc.<tower>.B<nn>`
 or `mtp.L<n>`, and a canonical site
 (`SITES`) or a model-specific `x.<...>` site, as in `L03.attn.out`,

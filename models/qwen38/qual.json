@@ -423,7 +423,7 @@
           ],
           "op": "eq",
           "value": "e3d931c2c6c3d5d84cc571194f097e15292288e88b9ccdea271b41547bb5cfa0",
-          "source": "docs/model-qwen38.md#long-context-qualification"
+          "source": "docs/serving-profiles.md#long-context-qualification"
         }
       ],
       "constants": {
@@ -681,7 +681,7 @@
           ],
           "op": "count_ge",
           "value": 3,
-          "source": "docs/bundle-qwen38.md"
+          "source": "docs/check-kinds.md#capture-coverage"
         },
         {
           "path": [
@@ -690,7 +690,7 @@
           ],
           "op": "count_ge",
           "value": 15,
-          "source": "docs/bundle-qwen38.md"
+          "source": "docs/check-kinds.md#capture-coverage"
         },
         {
           "path": [
@@ -699,7 +699,7 @@
           ],
           "op": "ge",
           "value": 75,
-          "source": "docs/bundle-qwen38.md"
+          "source": "docs/check-kinds.md#capture-coverage"
         },
         {
           "path": [
@@ -708,7 +708,7 @@
           ],
           "op": "ge",
           "value": 81,
-          "source": "docs/bundle-qwen38.md"
+          "source": "docs/check-kinds.md#capture-coverage"
         }
       ],
       "files": [
@@ -1485,7 +1485,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         },
         {
           "path": [
@@ -1493,14 +1493,14 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         }
       ],
       "constants": {
         "media_preprocessing": {
           "SPREAD_FACTOR": {
             "value": 2.0,
-            "source": "docs/reference-runner.md#frontend-preprocessing"
+            "source": "tools/refrun/README.md#frontend-preprocessing"
           }
         }
       }
@@ -1530,13 +1530,13 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/paired-accuracy.md"
+          "source": "docs/numerics.md#paired-release-accuracy"
         }
       ],
       "constants": {
         "paired_teacher": {
           "PROFILE_POLICIES": {
-            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "source": "docs/numerics.md#activation-and-calibration",
             "value": {
               "tp4-ar": {
                 "schema": "paired-teacher-margins/v1",
@@ -1670,7 +1670,7 @@
             ],
             "op": "eq",
             "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1682,7 +1682,7 @@
             ],
             "op": "eq",
             "value": 4,
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1694,7 +1694,7 @@
             ],
             "op": "eq",
             "value": "bf16",
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1706,7 +1706,7 @@
             ],
             "op": "eq",
             "value": 2,
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1740,7 +1740,7 @@
             ],
             "op": "eq",
             "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1752,7 +1752,7 @@
             ],
             "op": "eq",
             "value": 4,
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1764,7 +1764,7 @@
             ],
             "op": "eq",
             "value": "bf16",
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1776,7 +1776,7 @@
             ],
             "op": "eq",
             "value": 2,
-            "source": "docs/model-qwen38.md#context-parallelism"
+            "source": "docs/serving-profiles.md#qwen-evidence"
           },
           {
             "path": [
@@ -1816,7 +1816,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },
@@ -1842,7 +1842,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     }
@@ -2089,7 +2089,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2101,7 +2101,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2113,7 +2113,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2129,7 +2129,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2141,7 +2141,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2153,7 +2153,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2179,7 +2179,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2191,7 +2191,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2203,7 +2203,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "spec_candidate": [
@@ -2227,7 +2227,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2239,7 +2239,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2251,7 +2251,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2277,7 +2277,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2289,7 +2289,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2301,7 +2301,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "verify_candidate": [
@@ -2325,7 +2325,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2337,7 +2337,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2349,7 +2349,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2375,7 +2375,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2387,7 +2387,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2399,7 +2399,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2425,7 +2425,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2437,7 +2437,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2449,7 +2449,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "preemption_candidate": [
@@ -2473,7 +2473,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2485,7 +2485,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2497,7 +2497,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2523,7 +2523,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2535,7 +2535,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2547,7 +2547,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "preemption_candidate_c1": [
@@ -2571,7 +2571,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2583,7 +2583,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2595,7 +2595,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2611,7 +2611,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2623,7 +2623,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2635,7 +2635,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/model-qwen38.md#context-parallelism"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         }
@@ -2677,7 +2677,7 @@
         "tensor_parallel_size": 2,
         "profile_name": "tp2-mtp"
       },
-      "source": "docs/topology-qwen.md",
+      "source": "docs/serving-profiles.md#qwen-evidence",
       "media": false,
       "keep_references": [
         "teacher"
@@ -2695,7 +2695,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2711,7 +2711,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "stored_teacher": [
@@ -2722,7 +2722,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2735,7 +2735,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "teacher": [
@@ -2746,7 +2746,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2759,7 +2759,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2774,7 +2774,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "spec_ar": [
@@ -2785,7 +2785,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2798,7 +2798,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "spec_candidate": [
@@ -2809,7 +2809,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2822,7 +2822,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2838,7 +2838,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -2849,7 +2849,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "verify_ar": [
@@ -2860,7 +2860,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2873,7 +2873,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "verify_candidate": [
@@ -2884,7 +2884,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2897,7 +2897,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -2911,7 +2911,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "prefix_record": [
@@ -2922,7 +2922,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -2935,7 +2935,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         }
@@ -2974,7 +2974,7 @@
         "profile_name": "tp2-mtp",
         "speculation_tokens": 0
       },
-      "source": "docs/topology-qwen.md",
+      "source": "docs/serving-profiles.md#qwen-evidence",
       "media": false,
       "keep_references": [
         "teacher"
@@ -2992,7 +2992,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -3005,7 +3005,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         },
@@ -3021,7 +3021,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -3034,7 +3034,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "stored_teacher": [
@@ -3045,7 +3045,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -3058,7 +3058,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -3071,7 +3071,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ],
           "teacher": [
@@ -3082,7 +3082,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-qwen.md",
+              "source": "docs/serving-profiles.md#qwen-evidence",
               "unless_present": true
             },
             {
@@ -3095,7 +3095,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             },
             {
               "path": [
@@ -3108,7 +3108,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-qwen.md"
+              "source": "docs/serving-profiles.md#qwen-evidence"
             }
           ]
         }

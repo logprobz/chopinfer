@@ -1,26 +1,9 @@
 # kernels-sm120
 
-SM12x CUDA engines, launch planners, instantiation catalogs and tuning
-tables. The library overview is [docs/kernel-library.md](../../docs/kernel-library.md);
-each engine family documents its ABI, schedules and numerics beside its
-sources:
-
-| Family | Reference |
-|---|---|
-| Dense GEMM | [cuda/gemm/README.md](cuda/gemm/README.md) |
-| Grouped expert GEMM and routing | [cuda/moe/README.md](cuda/moe/README.md) |
-| PCIe all-reduce, all-gather and logits exchange | [cuda/comm/README.md](cuda/comm/README.md) |
-| Paged, verify and gated attention | [cuda/attention/README.md](cuda/attention/README.md) |
-| Block-sparse attention with an indexer | [cuda/attention/SPARSE.md](cuda/attention/SPARSE.md) |
-| Linear attention (gated delta rule) | [cuda/linear/README.md](cuda/linear/README.md) |
-| Row ops (RMSNorm, RoPE, quantize, logits, DFlash, hyper-connection rows) | [cuda/row/README.md](cuda/row/README.md) |
-| Sinkhorn-mixed hyper-connections (mix-collapse, expand, stream head) | [cuda/sinkhorn_hc/README.md](cuda/sinkhorn_hc/README.md) |
-| Multimodal encoder kernels | [src/encoder/README.md](src/encoder/README.md) |
-
-Tuning tables live in `tuning/` (`schedules.json` holds the shared
-grouped-MoE rows); their format is described in
-[kernel-build](../kernel-build/README.md#tuning-tables). Kernels are tested on
-hardware by [kernel-lab](../kernel-lab/README.md).
+The SM120 CUDA engines and typed launch planners. Start with
+[kernel contribution rules](../../docs/kernel-library.md). Each engine's
+local README owns its ABI and arithmetic requirements. Target limits are in
+`src/device.rs`; catalogs and tuning belong to their model.
 
 ## Common device layer
 
@@ -46,12 +29,3 @@ conversion to or from FP16x2 on SM120, so only those helpers go through
 scalar FP16 and FP32 conversions.
 
 No CuTe or CUTLASS header is included.
-
-## Model-owned construction
-
-`row::rmsnorm::RmsNorm` constructs the BF16 RMSNorm engine from explicit
-`kernel-core` requirements without a `Profile`. Its validated selection
-supplies entry code, semantic declarations, launch plans and scalar
-arguments. The row catalogs delegate their RMSNorm entries to it. Other
-families keep their catalog construction paths. See
-[docs/kernel-library.md](../../docs/kernel-library.md) (model-owned selections).

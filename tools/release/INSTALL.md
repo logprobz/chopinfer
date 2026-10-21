@@ -27,7 +27,7 @@ untested and may be refused. Models: MiMo V2.6 Flash, Qwen3.8 Flash and GLM
    model: `chopinfer eval verify-references --model models/<model>` checks
    them offline, and `chopinfer eval run --model models/<model> --report DIR
    --launch --model CHECKPOINT` serves the checkpoint and runs the quick
-   checks. See `docs/cli.md` at the same tag.
+   checks. See `docs/developer-preview.md` at the same tag.
 
 [Report issues](https://github.com/logprobz/chopinfer/issues) with the version,
 hardware and a minimal reproduction. Remove secrets and private inputs.

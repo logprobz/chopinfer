@@ -29,7 +29,7 @@ reporting that token's raw logprob and the row's top logprobs.
 The gate requires, per position:
 
 - cache: `usage.prompt_tokens_details.cached_tokens` as the anchor rules of
-  docs/serving-kv-pool.md ("Where prefix anchors are captured") give it, with
+  docs/numerics.md#kv-offload-and-prefix-state ("Where prefix anchors are captured") give it, with
   the model's prefill granule from `qualification.prefix.prefill_granule`
   and the server's reuse unit: 0 for every request but the hit, which
   resumes the longest anchor the chunked arm left before p (`resumed`).
@@ -126,7 +126,7 @@ BLOCK_TOKENS = 64
 TOP_LOGPROBS = 5
 ARMS = ("cold", "chunked", "hit")
 # The profiles' prefill chunk. A prompt longer than one chunk also leaves an
-# anchor where its final chunk starts (docs/serving-kv-pool.md).
+# anchor where its final chunk starts (docs/numerics.md#kv-offload-and-prefix-state).
 PREFILL_CHUNK_TOKENS = 2048
 PROMPT_END_ARMS = ("cold", "hit")
 ACCEPTANCE_LENGTHS = (256, 1024, 4096)
@@ -230,7 +230,7 @@ def reuse_tokens(server):
     """The tokens in which `server` (a record's server identity) finds shared
     prefixes and captures prompt ends: one KV page on every rank of its
     context-parallel group, as its /health reports them
-    (docs/serving-kv-pool.md#context-parallelism). A host that predates
+    (docs/numerics.md#context-parallelism). A host that predates
     `kv_page_tokens` served context-parallel size 1 over the declared block."""
     serving = (server.get("health") or {}).get("serving") or {}
     size = (serving.get("profile") or {}).get("context_parallel_size", 1)
@@ -550,7 +550,7 @@ def counter(text, name):
 def media_cases(client, model, run_id, reuse):
     """Each media pair's prompts, with the text after the image grown until
     both prompts span two units of `reuse` tokens past the media start: a
-    hit is found and captured only in whole units (docs/serving-kv-pool.md,
+    hit is found and captured only in whole units (docs/numerics.md#kv-offload-and-prefix-state,
     "Context parallelism"), so a shorter prompt can never show the positive
     control's hit, nor a wrongly shared anchor past the media. Refuses a
     case that does not reach that length."""

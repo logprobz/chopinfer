@@ -55,8 +55,8 @@ impl BlockQuantization {
     /// The exact code/scale rule. F32 inputs round to BF16 before amax and
     /// element quantization. NaNs, infinities and BF16 overflow are refused.
     /// E2M1/E4M3 scales saturate at 448, then payloads clamp to +/-6,
-    /// matching the pinned TileLang SATFINITE cast. See
-    /// `docs/block-quantization.md` for the lowering evidence.
+    /// matching the pinned TileLang SATFINITE cast
+    /// (`docs/numerics.md#row-status`).
     pub fn apply(self, values: &[f32], rows: usize, width: usize) -> Result<Quantized, Refusal> {
         if !width.is_multiple_of(self.group_size() as usize) {
             return Err(Refusal("block quantization requires complete row groups"));

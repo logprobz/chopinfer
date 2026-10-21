@@ -4,7 +4,7 @@
 //! The model program (layer plan, lowering, buffers, recurrent state) is
 //! here; dispatch, graphs, input packing, upload, logits views, resources
 //! and the instance table come from `bundle-runtime`. See
-//! `docs/bundle-qwen38.md`.
+//! `docs/numerics.md#kv-offload-and-prefix-state`.
 
 #![deny(unsafe_code)]
 

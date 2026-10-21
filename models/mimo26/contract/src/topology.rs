@@ -81,7 +81,7 @@ pub fn ring_state_bytes_per_rank(tp: Tp) -> u64 {
 
 pub use model_compiler_sdk::device::DEVICE_BYTES;
 /// The average context, prompt and output so far, the package maximum of
-/// sequences keeps KV for (docs/topology-mimo.md, "Device memory").
+/// sequences keeps KV for in the package's memory estimate.
 const AVERAGE_CONTEXT_TOKENS: u64 = 8192;
 /// What the host keeps before it sizes the KV pool: its reserve and the
 /// 512 MiB sampling workspace.

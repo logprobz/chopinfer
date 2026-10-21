@@ -25,5 +25,5 @@ rank. The image holds 676 tensors (schema `chopinfer.mimo26.encoder-image.v2`):
 The merger has an RMSNorm weight and two bias-free linear weights. This follows
 the checkpoint and vLLM implementation; the HF merger's LayerNorm and biases
 would request tensors that are absent (see
-[serving-mimo26.md](../../../../../docs/serving-mimo26.md)). The image is about
+[MiMo evidence](../../../../../docs/serving-profiles.md#mimo-evidence)). The image is about
 2.6 GB per rank for the pinned checkpoint, with 4 KiB view alignment.

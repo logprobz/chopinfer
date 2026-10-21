@@ -14,7 +14,7 @@ from tools.model_sdk import inventory
 # The reference checks import these in the reference runner's Python.
 REFERENCE_MODULES = ("torch", "transformers", "numpy")
 REFERENCE_REMEDY = ("set CHOPINFER_REFRUN_PYTHON in local.env to the reference runner's Python "
-                    "(docs/reference-runner.md lists its packages); the checks run on CPU")
+                    "(tools/refrun/README.md lists its packages); the checks run on CPU")
 PROBE = ("import importlib.util, sys\n"
          "print(' '.join(name for name in sys.argv[1:] if importlib.util.find_spec(name) is None))")
 

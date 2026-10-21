@@ -39,8 +39,8 @@ The merger normalization, `visual.merger.ln_q` (`MERGERS`, chosen by
 - vision_config has no normalization selector. Paired F32 GPU probes with
   this adapter (2026-10-01; 313 objective image probes plus 74 earlier)
   found LayerNorm no better overall and significantly worse on OCR and tiny
-  numbers, so RMSNorm stays the default. docs/serving-mimo26.md (vision
-  merger normalization) has the numbers. The tiny CPU parity test applies
+  numbers, so RMSNorm stays the default. docs/numerics.md (vision merger
+  normalization) has the numbers. The tiny CPU parity test applies
   the same choice on both sides, so it validates the implementation of each
   choice, not the trained one.
 

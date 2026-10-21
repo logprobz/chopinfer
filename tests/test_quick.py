@@ -248,7 +248,7 @@ class AffectedChecks(unittest.TestCase):
                                ("tools/refrun/run.py", {"refrun", "refrun-qwen38", "refrun-python-compile"}),
                                ("tools/qual/tapdiff.py", {"tapdiff"}),
                                ("tests/leak_guard.py", {"leak-guard"}),
-                               ("docs/testing.md", {"project-layout"})):
+                               ("docs/contributing.md", {"project-layout"})):
             with self.subTest(path=path):
                 checks, _, covered = self.select(path)
                 self.assertLessEqual(expected, set(checks))

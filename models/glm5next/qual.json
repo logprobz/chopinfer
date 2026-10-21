@@ -493,13 +493,13 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/paired-accuracy.md"
+          "source": "docs/numerics.md#paired-release-accuracy"
         }
       ],
       "constants": {
         "paired_teacher": {
           "PROFILE_POLICIES": {
-            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "source": "docs/numerics.md#activation-and-calibration",
             "value": {
               "tp4-mtp": {
                 "schema": "paired-teacher-margins/v1",
@@ -2145,7 +2145,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         },
         {
           "path": [
@@ -2153,14 +2153,14 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         }
       ],
       "constants": {
         "media_preprocessing": {
           "SPREAD_FACTOR": {
             "value": 2.0,
-            "source": "docs/reference-runner.md#frontend-preprocessing"
+            "source": "tools/refrun/README.md#frontend-preprocessing"
           }
         }
       }
@@ -2830,7 +2830,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },
@@ -2856,7 +2856,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     }
@@ -3040,7 +3040,7 @@
     "This declaration qualifies the default configuration alone (tp4-mtp: TP4, FP8 latent KV, DCP 1), one gate run against one server: every live check and record requires context_parallel_size 1, TP4 and FP8 KV. DCP 2 and 4, BF16 latent KV and encoder parity, which needs the diagnostic-taps build, are qualified by their own configurations (configurations.dcp2, dcp4, kv-bf16 and taps in this file), each gated against its own server, since a TP4 server takes all four GPUs.",
     "Determinism compares two records of tools/qual/determinism.py record --server-log, each bound to the pinned checkpoint and the live process that answered it: determinism_ar from an autoregressive server and determinism_spec from an MTP one (both with --image: this declaration claims image input, so each record must include the image request). The gate scores the MTP record against the AR record (reference_file), which must share its run ID, checkpoint and build (package identity, version, source commit; reference_equal), so speculative output must equal AR bit for bit, as must each record's cold repeat and prefix hits.",
     "This run records the FP8 arms later paired runs compare against, each bound to this server's identity: the full cohort's teacher writes its capture to {raw}/teacher-capture.json beside its receipt (the FP8 arm of the kv-bf16 configuration's teacher_arms), and evals_gsm8k answers the whole GSM8K test split as arm fp8 under this run's ID, bound to the pinned checkpoint and this server's startup log (the FP8 arm of a checkpoint variant's paired GSM8K, evals_compare).",
-    "paired_teacher compares this server's teacher capture (the candidate arm) with the stored accepted arm of the same configuration and arm: the correctness runner reads stored_teacher from each of its stores (last good and seed, both seeded with the accepted captures of the GATES4 install, served the same way) and reports a store without one as no baseline yet (tools/qual/README.md#correctness-runner, docs/paired-accuracy.md). Its margins are tp4-mtp's, which the operator approved on 2026-10-11 (0.005 nats pooled, 0.015 per category, 0.01 top-one, four tail positions); each configuration that declares the check (both DCP sizes) selects them by its profile, on its own teacher reference. No margins are declared for tp4-ar, which no GLM gate run serves; it is tied to tp4-mtp by the bit-for-bit determinism pair and the AR-versus-MTP spec_verify and verify_exact pairs.",
+    "paired_teacher compares this server's teacher capture (the candidate arm) with the stored accepted arm of the same configuration and arm: the correctness runner reads stored_teacher from each of its stores (last good and seed, both seeded with the accepted captures of the GATES4 install, served the same way) and reports a store without one as no baseline yet (tools/qual/README.md#correctness-runner, docs/numerics.md#paired-release-accuracy). Its margins are tp4-mtp's, which the operator approved on 2026-10-11 (0.005 nats pooled, 0.015 per category, 0.01 top-one, four tail positions); each configuration that declares the check (both DCP sizes) selects them by its profile, on its own teacher reference. No margins are declared for tp4-ar, which no GLM gate run serves; it is tied to tp4-mtp by the bit-for-bit determinism pair and the AR-versus-MTP spec_verify and verify_exact pairs.",
     "The soak's memory rule declares a warm-up and a cache allowance (operator, 2026-10-11; soak.memory_rule): a request's last prompt chunk (at most 64 rows) captures its prefill program at its first run and keeps it, at most 64 lengths (models/glm5next/README.md, Qualification checks), each about 40 MiB host and 21 MiB GPU across the four ranks. Growth after the first 180 s must stay within 512 MiB host and GPU, and growth over the whole soak within 512 MiB plus the 64 programs' bound (2,560 MiB host, 1,344 MiB GPU). In GATES4 (2026-10-11) the DCP 1 soak grew 1,077.5 MiB host over its 1,380 s and 43.6 MiB after 180 s. GPU memory for all 64 programs is left: every GATES4 server had at least 989 MiB free per rank before its first graph capture, and all 64 programs with every other graph take at most about 500 MiB per rank. The full soak runs 1,200 s so that its job fits the release preview's 1,740-second bound.",
     "chat scores the chat reference (fixtures/glm5next/chat-reference.json: the seven teacher chat texts and ten longer conversations of 251 to 603 tokens, 4,340 positions, eleven of the seventeen crossing four 64-token pages) teacher-forced like the teacher check, with the spread rule's mean headroom factor 1.25 (SPREAD_MEAN_FACTOR, adopted 2026-10-11, fixed before the references ran). Its limits come from the reference alone: BF16 spread 0.180 mean, 3.1% decisive, 6.4% total; f64 0.014. So the mean limit is 0.25 (1.25 x 0.180 rounded up to 0.05) and the top-1 limits are the floors (8%, 8%, 10%). The teacher check keeps its seven chat texts and limits. The full cohort's capture ({raw}/chat-capture.json) is the arm a paired comparison reads; the quick cohort writes none, so chopinfer eval captures both quick checks.",
     "frontend_goldens captures the served frontend itself (--url): each row of fixtures/glm5next/frontend/chat-renders.json, which transformers 5.16.1 rendered from the pinned revision's chat_template.jinja and tokenized with its tokenizer.json on CPU (models/glm5next/compiler/fixtures/checkpoints/glm-5.3-flash/goldens.py --gate; no vLLM capture), goes to /tokenize, as does each text of the tokenizer goldens beside goldens.py, and the served token IDs must equal HF's. The rows cover the role tags, reasoning, reasoning_effort low, high and max, tool definitions, tool calls with non-string arguments and tool results, and the chat teacher conversations; images are left to media_preprocessing. It passed against served tp4-mtp servers (2026-10-11: 31 chat rows and 27 tokenizer rows, every token ID equal).",

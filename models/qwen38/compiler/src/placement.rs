@@ -570,7 +570,7 @@ mod tests {
         }
     }
 
-    /// The per-rank shapes of docs/topology-qwen.md at 2 ranks.
+    /// The expected tensor placement at two ranks.
     #[test]
     fn tp2_plans_have_the_documented_shapes() {
         let (ranks, q, attn, lqkv, lvalue, heads, local, shared, vocab, bytes) = (

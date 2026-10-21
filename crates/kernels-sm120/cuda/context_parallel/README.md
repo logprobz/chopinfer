@@ -8,7 +8,7 @@ indexer selections lives with the indexer (`pooled_indexer/`).
 A context-parallel group is `cp_size` consecutive ranks; physical KV page j
 of a sequence lives on group rank `j % cp_size`, in the rank's local page
 `table[j / cp_size]` (`runtime_kv::ContextParallelPagesV1`,
-docs/serving-kv-pool.md "Context parallelism"). Attention heads stay split
+docs/numerics.md#kv-offload-and-prefix-state "Context parallelism"). Attention heads stay split
 across ranks as without context parallelism, so a rank attends the whole
 group's heads over its own keys and merges its own heads' partials.
 

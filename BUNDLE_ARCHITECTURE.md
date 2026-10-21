@@ -1,9 +1,8 @@
 # Chopinfer bundle architecture
 
-This document owns the ownership boundary and the bundle ABI rules. The
-overview of processes, the request path and the crates is
-[docs/architecture.md](docs/architecture.md). Independent publishers use the
-[external model SDK workflow](docs/external-models.md).
+This document states the ownership boundary and bundle ABI rules. The
+[model integration guide](docs/adding-a-model.md) covers in-tree and
+independent SDK workflows.
 
 Chopinfer separates the model-neutral Rust serving runtime from installable
 model bundles. The host loads one explicitly selected local bundle at process
@@ -87,7 +86,7 @@ the image keeps a per-model copy.
 
 An installed native bundle is trusted in-process code. Verification checks
 manifest structure, the closed file set, identities, and ABI version; it is
-not a sandbox ([security boundary](docs/security-boundary.md)). A process
+not a sandbox ([security boundary](SECURITY.md)). A process
 selects one bundle until exit. Hot reload, automatic network fetching, and
 runtime JIT are outside the initial contract.
 
@@ -223,21 +222,6 @@ retain their admission behavior. Passing an option range is compatibility
 validation, not accuracy or performance evidence. Non-default execution is
 left to the operator; CPU tests cover host validation and refusal paths.
 
-The synthetic helper opts in when `config.json` contains
-`scratch_multiplier` (1 through 4). Its bundle sizes its token input buffer
-at create and refuses unknown options or values outside those compiled
-limits. Defaults for this CPU fixture are not qualified. Legacy fixture
-packages and default launch journals keep their existing bytes.
-
-Qwen3.8 does not yet declare `indexer_budget`: the shipped contract pins
-`TOP_BLOCKS = 512`, and QSA selection and attention instantiate that keep
-count in their compiled geometry. Its config default of 2048 tokens means
-512 blocks of four. Changing buffer sizes alone would not change selection.
-Supporting another budget needs corresponding compiled kernel variants,
-resource and graph planning, and separate numerical qualification. The
-mechanism therefore ships with the fixture only; Qwen's current kernels,
-locks, journals and snapshots are preserved.
-
 ## Direct weight loading
 
 Packages carry no weights. A bundle exports `chop_bundle_weight_plan_v1`
@@ -257,9 +241,8 @@ bundle's `chop_bundle_weight_transform_v1` export. A plan may also map a
 view read-only from the checkpoint instead of uploading it
 (`chop.host-mapped-gather.v1`); the bundle then has the host gather rows
 of it into a device buffer through an optional services tail, and never
-sees the mapping. Identities, host-placed and host-mapped views and
-streaming are in
-[direct weight loading](docs/direct-loading.md).
+sees the mapping. The host validates and streams those plans through
+`runtime-weights`.
 
 ## Kernel ownership and reuse
 
@@ -284,7 +267,7 @@ One kernel base exists per NVIDIA ISA family. A bundle selects only shapes,
 formats, and capabilities it qualifies. A profile is immutable and names its
 architecture, topology, artifact identities, exact kernels, and serving
 limits. Compatible quantizations of one family reuse the same implementation
-through [quantized checkpoint support](docs/quantized-checkpoints.md). A new
+through [quantized checkpoint support](docs/kernel-library.md#activation-policy). A new
 model needs a new bundle and profile, not a shared model-specific switch.
 
 ## Qualification
@@ -292,7 +275,7 @@ model needs a new bundle and profile, not a shared model-specific switch.
 Every deployable profile needs authenticated inputs, exact operation
 contracts, numerical checks, bounded resources, transaction and cancellation
 checks, real-device correctness, and serving evidence. CPU fixtures do not
-qualify a model or GPU kernel ([docs/testing.md](docs/testing.md)).
+qualify a model or GPU kernel ([docs/contributing.md#checks](docs/contributing.md#checks)).
 Unsupported profiles fail closed.
 
 ## ABI stability

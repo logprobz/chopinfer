@@ -45,7 +45,7 @@ pub const CONFIG: ModelConfig = ModelConfig {
 
 /// Rows of the verify steps whose rows Qwen3.8 serves exactly: the MTP
 /// drafter's K3 steps (the bonus and three drafts) of one request
-/// (docs/adaptive-speculation.md). The entries those steps launch declare
+/// (docs/numerics.md#state-and-verification-contract). The entries those steps launch declare
 /// one-row rows up to this many.
 /// The qualified K3 verify path fixes the exact row count.
 pub const EXACT_VERIFY_ROWS: u32 = 4;
@@ -57,8 +57,8 @@ pub const ATTENTION: AttentionConfig = AttentionConfig {
     v_head: ATTN_HEAD,
 };
 
-/// Qwen3.8 Flash's per-rank sizes at 2 or 4 ranks (docs/topology-qwen.md,
-/// "Per-rank shapes"): heads, rows, experts and vocabulary split evenly, one
+/// Qwen3.8 Flash's per-rank sizes at 2 or 4 ranks: heads, rows,
+/// experts and vocabulary split evenly, one
 /// KV head per rank, and the shared expert's columns padded to 128. A view
 /// of [`RankShape::shape`] with Qwen's derived sizes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,7 +152,7 @@ impl RankShape {
 mod tests {
     use super::*;
 
-    /// docs/topology-qwen.md's per-rank table.
+    /// The independent expected per-rank sizes at TP2 and TP4.
     #[test]
     fn rank_shapes_match_the_topology_table() {
         for (ranks, q, attn_row, qkv, experts, shared, vocab, conv, delta) in [

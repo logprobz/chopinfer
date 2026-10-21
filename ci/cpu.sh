@@ -30,5 +30,5 @@ while IFS='=' read -r name value; do
     if [[ $name =~ ^[A-Z_]+$ ]]; then export "$name=${!name:-$value}"; fi
 done < "$root/ci/rust-profile.env"
 
-# ci/cpu.py runs every check as supervised steps: see docs/testing.md.
+# ci/cpu.py runs every check as supervised steps: see docs/contributing.md#checks.
 exec python3 -B ci/cpu.py "$@"

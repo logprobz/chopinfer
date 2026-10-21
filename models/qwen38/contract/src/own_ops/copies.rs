@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn serving_snapshots_are_the_bundles_pieces() {
         let shape = Shape::TP4;
-        // The design's table (docs/bundle-qwen38.md, "Prefix caching").
+        // Independent byte counts for each piece of committed snapshot state.
         let snapshot = Snapshot::of(shape, 64, 32, 12, 32, false);
         assert_eq!(snapshot.ple_entry_bytes, 184_448);
         assert_eq!(

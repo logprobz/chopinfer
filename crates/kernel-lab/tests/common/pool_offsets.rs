@@ -22,8 +22,8 @@
 //! 2026-09-28. The maximum is the largest offset under the package limits:
 //! up to 256 items, MiMo contexts of 1,048,576 tokens and Qwen contexts of
 //! 262,144, a KV pool of 0.9 of free device memory
-//! (`docs/serving-kv-pool.md`) and at most 512 linear-state entries per layer
-//! plane (`docs/serving-recurrent-state.md`). No product needed a fix.
+//! (`docs/numerics.md#kv-offload-and-prefix-state`) and at most 512 linear-state entries per layer
+//! plane (`docs/numerics.md#recurrent-state`). No product needed a fix.
 //!
 //! Attention engine (`kernels-sm120/cuda/attention`):
 //!

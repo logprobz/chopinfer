@@ -196,7 +196,7 @@ class Reports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             a, _ = self.kernel_fixture(root / 'a', f'kernel-lab@{VERSION}', path='README.md')
-            b, data = self.kernel_fixture(root / 'b', f'kernel-lab@{VERSION}', path='docs/testing.md')
+            b, data = self.kernel_fixture(root / 'b', f'kernel-lab@{VERSION}', path='docs/contributing.md')
             report = self.report(HEADER, kernel_reports=[a, b])
             lab = next(c for c in self.consumers(report) if c['identity']['package'].startswith('kernel-lab@'))
             self.assertTrue(lab['current_evidence'])
@@ -365,7 +365,7 @@ class Reports(unittest.TestCase):
 
     def test_mimo_program_and_ordinary_docs_keep_model_scope(self):
         alone = self.report('models/mimo26/bundle/src/program.rs')
-        mixed = self.report('models/mimo26/bundle/src/program.rs', 'docs/serving-mimo26.md')
+        mixed = self.report('models/mimo26/bundle/src/program.rs', 'docs/unreferenced-guide.md')
         self.assertEqual(self.models(alone), {'mimo26'})
         self.assertEqual(self.ids(alone), self.ids(mixed))
         self.assertEqual(alone['counts']['profiles'], mixed['counts']['profiles'])
@@ -373,16 +373,17 @@ class Reports(unittest.TestCase):
         self.assertNotIn('kernel_oracle', ' '.join(self.ids(alone)))
 
     def test_docs_only_and_empty_diff_keep_the_standing_cpu_check(self):
-        for paths in [(), ('docs/serving-mimo26.md',), ('README.md',)]:
+        # A synthetic path keeps this independent of documents read by code.
+        for paths in [(), ('docs/unreferenced-guide.md',), ('README.md',)]:
             report = self.report(*paths)
             self.assertEqual(self.ids(report), {'shared:cpu'})
             self.assertEqual(report['profiles'], [])
             self.assertEqual(report['obligations'][0]['evidence']['execution'], 'not_run')
         # A document no Rust source names keeps every package in scope; a root
         # file Rust sources name selects their packages and dependents
-        # (docs/testing.md, Affected checks): runtime-host's checkpoint test
+        # (docs/contributing.md#checks, Affected checks): runtime-host's checkpoint test
         # and MiMo's compiler catalog both write a README.md of their own.
-        self.assertEqual(self.report('docs/serving-mimo26.md')['counts']['packages'], len(self.metadata['packages']))
+        self.assertEqual(self.report('docs/unreferenced-guide.md')['counts']['packages'], len(self.metadata['packages']))
         readme = self.report('README.md')['artifacts']['packages']
         self.assertTrue({'runtime-host', 'model-mimo26'} <= set(readme), readme)
         self.assertNotIn('kernels-sm120', readme)
@@ -591,7 +592,7 @@ class Reports(unittest.TestCase):
             Path(data['lock_path']).rename(lock)
             data['lock_path'] = str(lock)
             write_report(path, data)
-            for paths in [(HEADER,), (HEADER, 'docs/testing.md')]:
+            for paths in [(HEADER,), (HEADER, 'docs/contributing.md')]:
                 report = self.report(*paths, kernel_reports=[path])
                 oracle = self.item(report, 'shared:kernel_oracle')
                 observed = next(row for row in oracle['locks'] if row['path'] == 'crates/runtime-kernels/kernels.lock')
@@ -889,7 +890,7 @@ class Reports(unittest.TestCase):
         self.assertTrue(self.ids(local) <= self.ids(broad))
         self.assertEqual(self.models(broad), MODELS)
         self.assertEqual(broad, self.report('models/mimo26/bundle/src/program.rs', all_checks=True))
-        self.assertEqual(self.report('README.md', 'docs/testing.md'), self.report('docs/testing.md', 'README.md'))
+        self.assertEqual(self.report('README.md', 'docs/contributing.md'), self.report('docs/contributing.md', 'README.md'))
 
     def test_contradictory_capabilities_cannot_exclude_profiles(self):
         catalog = deepcopy(self.catalog)

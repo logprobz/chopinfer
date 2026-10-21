@@ -2401,8 +2401,8 @@ fn host_table(host: &FakeHost, slot: u32) -> bundle_runtime::snapshot::Table {
     .unwrap()
 }
 
-/// Snapshot pages of one rank, from the per-rank state sizes of
-/// docs/topology-qwen.md rather than the declared state: 36 linear layers'
+/// Snapshot pages of one rank, independently computed from state geometry
+/// rather than the declared state: 36 linear layers'
 /// convolution and delta entries, the PLE entry, each ring layer's 16 keys
 /// of 128 BF16 and 16 positions of 3 words, the drafter's eight retained
 /// four-stream rows, and the 24-byte header.

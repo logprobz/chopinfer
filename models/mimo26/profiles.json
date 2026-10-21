@@ -32,8 +32,8 @@
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/serving-mimo26.md#mopd-alpha-checkpoint",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/serving-profiles.md#mimo-evidence",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     },
     "tp4-mtp": {
@@ -64,9 +64,9 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/serving-mimo26.md#speculation-at-c16-and-c32-against-vllm",
-        "docs/serving-mimo26.md#production-qualification-status-2026-09-25",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/serving-profiles.md#mimo-evidence",
+        "docs/serving-profiles.md#mimo-evidence",
+        "docs/serving-profiles.md#selecting-a-profile"
       ],
       "prefill_budget": "tbt",
       "decode_tbt_target_ms": 150
@@ -101,9 +101,9 @@
       "evidence": [
         "docs/serving-profiles.md#row-local-decode-requalification-2026-10-05",
         "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/serving-mimo26.md#mopd-alpha-checkpoint",
-        "docs/deploy-common.md#concurrency-and-prefill-policy",
-        "docs/serving-mimo26.md#speculation-at-c16-and-c32-against-vllm"
+        "docs/serving-profiles.md#mimo-evidence",
+        "docs/serving-profiles.md#selecting-a-profile",
+        "docs/serving-profiles.md#mimo-evidence"
       ],
       "prefill_budget": "tbt",
       "decode_tbt_target_ms": 150
@@ -134,8 +134,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/topology-mimo.md",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/serving-profiles.md#mimo-evidence",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     }
   }

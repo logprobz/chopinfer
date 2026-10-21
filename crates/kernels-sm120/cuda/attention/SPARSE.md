@@ -48,7 +48,7 @@ zero scores and contexts through 262,144.
 Serving admission requires block 4, kept counts 256/512 and M-RoPE
 sections [6,5,5] at rotary 32 or [11,11,10] at rotary 64. Its finite
 attention table is checked against the lab catalog. The
-[kernel library](../../../../docs/kernel-library.md#engines) lists both
+[kernel library](../../../../docs/kernel-library.md#adding-an-op) lists both
 GPU-qualified instances, including the closure expansion reconciled on
 2026-10-04 with all 3,067 required W7D coverage items qualified. That evidence
 covers the listed kernel instances, not model quality or serving performance.

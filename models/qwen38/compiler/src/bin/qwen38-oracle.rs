@@ -1,7 +1,7 @@
 //! Qwen3.8 Flash per-operation checks on bundle dumps: QSA selections
 //! recomputed from a dump's own rows, batch drift between dumps and against
 //! the GPU reference runner's taps, and prepared projections on captured
-//! operands. See docs/qwen38-oracle.md.
+//! operands. Use `qwen38-oracle --help` for commands.
 
 use model_qwen38::Result;
 use model_qwen38::oracle::LAYERS;

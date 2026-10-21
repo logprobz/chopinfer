@@ -3,7 +3,7 @@
 Every module in tools/qual runs under every gate config, except modules that
 declare QUALIFICATION_RUNS_ONCE: such a module pins its own config in
 setUpModule through qual_test_config, an audit found that nothing in it reads
-the outer CHOPINFER_QUAL_CONFIG, and it runs once (see docs/testing.md). The
+the outer CHOPINFER_QUAL_CONFIG, and it runs once (see docs/contributing.md#checks). The
 runner refuses a declaration in a module that no longer pins its config. A
 cell passes only if its module ran at least one test and unittest reported OK.
 """

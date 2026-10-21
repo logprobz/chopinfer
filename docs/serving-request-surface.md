@@ -3,8 +3,8 @@
 `chopinfer serve` exposes an OpenAI-compatible HTTP API modeled on vLLM's.
 This page is the reference for its endpoints, request parameters, defaults,
 refusals and queueing. Server flags are listed by `chopinfer serve --help` and
-described in [operator commands](cli.md) and
-[deployment](deploy-common.md#common-http-options); metrics are in
+described in [operator commands](developer-preview.md) and
+[deployment](developer-preview.md); metrics are in
 [metrics and traces](operations-observability.md).
 
 ## Endpoints
@@ -16,7 +16,7 @@ described in [operator commands](cli.md) and
 | `POST /v1/responses`, `GET /v1/responses/{id}`, `POST /v1/responses/{id}/cancel` | [Responses API](#responses-api) |
 | `GET /v1/models` | Served model names, effective `max_model_len` and served `modalities` |
 | `POST /tokenize`, `POST /detokenize` | The installed tokenizer, without generation |
-| `GET /health`, `GET`/`POST /ping` | Readiness and the [serving identity](deploy-common.md#what-health-reports) |
+| `GET /health`, `GET`/`POST /ping` | Readiness and the [serving identity](operations-observability.md#serving-identity) |
 | `GET /version` | Chopinfer version |
 | `GET /metrics` | Prometheus metrics |
 | `GET /debug/step-profile` | Sampled step timings, when enabled |
@@ -269,7 +269,7 @@ package's `batch_limits` bound them further: startup refuses
 `maximum_prefill_tokens`, and `--prefill-chunk-tokens` must be a multiple of
 `prefill_granule` (64 for Qwen3.8). Decode items run first and a prefill chunk
 fills the rest of the step. `--prefill-budget fixed|tbt|decode-aware` caps
-prefill beside decoding requests; see [mixed scheduling](mixed-scheduling.md).
+prefill beside decoding requests; see [mixed scheduling](serving-profiles.md#prefill-policy).
 
 ### Batched prompts
 
@@ -295,7 +295,7 @@ does not disable capture.
 ## Media inputs
 
 `/health` and `/v1/models` report the served `modalities`, for example
-`["text", "image"]` (see `--modalities` in [operator commands](cli.md)). A
+`["text", "image"]` (see `--modalities` in [operator commands](developer-preview.md)). A
 chat media part outside that set returns 400 before any fetch or decode.
 
 - Images: PNG (1 to 8-bit, any color type, interlaced or not; not 16-bit)
@@ -335,7 +335,7 @@ and the 4 GiB of host memory one request may use to prepare images not
 prepared before, which holds only a few images at the largest sizes the
 recipes produce. The body limit grows with the image limit. The GPU media
 arena is a cache, not a per-request limit: prefill encodes images as its
-chunks reach them ([media arena](serving-kv-pool.md#media-arena)).
+chunks reach them ([media arena](numerics.md#kv-offload-and-prefix-state)).
 
 Sending the same images on every turn is cheap. With prefix caching on, the
 next turn resumes from the cached conversation and encodes only the images
@@ -423,7 +423,7 @@ The main differences, besides the refused fields above:
 - Responses echo the requested model alias.
 - Speculative decoding is adaptive by default.
 - Prefix caching resumes at captured anchors rather than at any cached
-  64-token block ([KV pool](serving-kv-pool.md)).
+  64-token block ([KV pool](numerics.md#kv-offload-and-prefix-state)).
 - The Responses store is bounded; vLLM's is not.
 
 ## Qwen3.8 API parity
@@ -438,7 +438,7 @@ logprobs shape, `n` with a seed and the reasoning/content split match.
 | Prompt too long | 400, param `input_tokens` | 400, param null, `prompt token count ... exceeds the serving limit 262144` |
 | Stream chunks | `prompt_token_ids`/`token_ids: null`; first tool delta has no `arguments` | `usage: null` with `include_usage`; first tool delta has `arguments: ""`; concatenated deltas are identical |
 | Identifiers | `chatcmpl-<hex>`, `chatcmpl-tool-<hex>` | `chatcmpl_<request>`, `call_<request>_<choice>_<index>` |
-| Model name | the served name chosen at launch | `local-<checkpoint identity>` by default, from a `qwen38-package` package and through `serve --model` alike, the pinned revision included ([compatible checkpoints](compatible-checkpoints.md)); `--served-model-name` chooses another, as the qualification runner does with `Qwen3.8-Flash-Next-FP8` |
+| Model name | the served name chosen at launch | `local-<checkpoint identity>` by default, from a `qwen38-package` package and through `serve --model` alike, the pinned revision included ([compatible checkpoints](developer-preview.md#checkpoints)); `--served-model-name` chooses another, as the qualification runner does with `Qwen3.8-Flash-Next-FP8` |
 
 To check parity offline, `models/qwen38/compiler/tests/frontend_replay.rs`
 (part of `ci/cpu.sh`, skipped without `CHOPINFER_QWEN38_CHECKPOINT`) replays

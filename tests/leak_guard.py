@@ -115,7 +115,6 @@ PENDING = {
         'crates/runtime-engine/src/speculation.rs',
         'crates/runtime-media/tests/jpeg.rs',
         'crates/runtime-scheduler/src/mixed_budget.rs',
-        'models/glm5next/README.md',
         'models/glm5next/bundle/src/fake_host_tests/invariance.rs',
         'models/glm5next/bundle/src/instance/prefill_graphs.rs',
         'models/glm5next/bundle/src/ops/exact.rs',
@@ -144,7 +143,6 @@ PENDING = {
         'tests/test_serve_profiles.py',
     },
     'internal process wording': {
-        'models/glm5next/README.md',
         'models/glm5next/contract/src/sm120/engines.rs',
         'models/glm5next/encoder_parity_run.py',
         'models/glm5next/profiles.json',

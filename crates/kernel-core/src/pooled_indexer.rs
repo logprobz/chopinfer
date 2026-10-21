@@ -132,7 +132,7 @@ pub enum IndexerSelectionMode {
     Global,
     /// Context parallel: group rank r scores only the pools in the KV pages
     /// it owns (physical page j of a sequence on group rank `j % ranks`, in
-    /// its local page of stripe `j / ranks`; docs/serving-kv-pool.md
+    /// its local page of stripe `j / ranks`; docs/numerics.md#kv-offload-and-prefix-state
     /// "Context parallelism") and writes its own top-k as (score, pool)
     /// pairs;
     /// `context_parallel::ContextParallelQuery::TopKMerge` merges the ranks'

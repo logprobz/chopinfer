@@ -463,7 +463,7 @@ class GateTests(unittest.TestCase):
         check.pop('receipt')
         check['stdout_json'] = True
         check['rules'] = [dict(path=['self_test'], op='eq', value='passed',
-                               source='tools/qual/README.md#structured-outputs')]
+                               source='docs/serving-request-surface.md')]
         config['checks'] = [check]
         for profile in config['profiles'].values():
             profile['checks'] = ['structured']

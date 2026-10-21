@@ -4,7 +4,7 @@
 //! them to host buffers, issues them eagerly or as cached graphs, and owns the
 //! mixed-step input format and its device layout. It holds no model shape,
 //! tensor name or model stage. Its logits exchange uses the model-neutral
-//! communication contract in `kernel-core`. See `docs/bundle-runtime.md`.
+//! communication contract in `kernel-core`. See `BUNDLE_ARCHITECTURE.md#ownership-boundary`.
 
 #![deny(unsafe_code)]
 

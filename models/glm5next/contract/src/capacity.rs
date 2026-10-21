@@ -2,9 +2,9 @@
 //! pool, and the KV tokens the serving pool then gets.
 //!
 //! The host sizes the serving KV pool from the device memory left after the
-//! bundle's weights, workspaces and request state (docs/serving-kv-pool.md):
+//! bundle's weights, workspaces and request state (docs/numerics.md#kv-offload-and-prefix-state):
 //! create allocates the recurrent state before the pool
-//! (docs/serving-recurrent-state.md, `chop.recurrent-state.preallocated.v1`),
+//! (docs/numerics.md#recurrent-state, `chop.recurrent-state.preallocated.v1`),
 //! and the host subtracts a 1 GiB reserve, takes 90 % and divides by the page
 //! bytes. A slot holds one state copy without speculation and `rows + 1` with
 //! it, `rows = draft_tokens + 1` (the committed copy and a checkpoint per

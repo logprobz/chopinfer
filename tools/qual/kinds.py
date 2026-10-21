@@ -36,7 +36,7 @@ judge(metrics, check) -> (status, predicates)
     KeyError, as it did on the receipt.
 
 The shared kinds' and frontend_goldens' verify, score and judge run in
-`chopinfer eval rescore` (docs/cli.md), the one scorer implementation: `call`
+`chopinfer eval rescore` (tools/qual/README.md#release-gates), the one scorer implementation: `call`
 sends each step to the binary, found as `CHOPINFER_EVAL` or the checkout's
 target directory. This module keeps what eval cannot do from Python's side:
 reading a pinned reference from the working tree or a source revision, and

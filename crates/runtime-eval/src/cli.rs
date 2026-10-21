@@ -34,7 +34,7 @@ eval files (--model DIR | --package DIR) [--variant NAME]
 eval declaration --model DIR [--variant NAME [--variant-dir DIR]]
   | eval declaration --root ROOT < DECLARATION.json
   (validates a declaration and prints it; --root reads ROOT/tools/qual/modules.json)
-eval rescore < REQUEST.json   (offline verify, score, judge and limit calls; docs/cli.md)
+eval rescore < REQUEST.json   (offline verify, score, judge and limit calls; tools/qual/README.md#release-gates)
 --model DIR is a model directory ROOT/models/<model> holding qual.json (declared paths resolve
 under ROOT) or a checkpoint directory, resolved as serve --model resolves it. --package DIR is a
 package directory or an install root with one model. --variant NAME reads the model's

@@ -71,7 +71,7 @@ fn projections() -> Result<ProjectionInventory, String> {
     Ok(inventory)
 }
 
-/// The verify steps whose rows are exact (docs/adaptive-speculation.md):
+/// The verify steps whose rows are exact (docs/numerics.md#state-and-verification-contract):
 /// up to `serving::EXACT_VERIFY_ROWS` rows of one request served at a time,
 /// since AR itself depends on its batch above C1.
 pub const EXACT_VERIFY: kernels_sm120::invariance::ExactVerify =

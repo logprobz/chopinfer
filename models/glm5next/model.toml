@@ -23,7 +23,7 @@ bin = ["chopinfer-model-glm5next"]
 package = "model-glm5next-contract"
 
 # Released after its full requalification through the release preview
-# (docs/model-glm5next.md, "Release qualification"); the released-model
+# (docs/serving-profiles.md#release-qualification); the released-model
 # facts apply (tests/test_model_inventory.py, tests/test_serve_profiles.py,
 # tools/qual/qual_test_config.py). The release ships the helper and the
 # bundle; GLM loads checkpoints directly and has no explicit packaging bin.
@@ -85,7 +85,7 @@ catalog = true
 # tests/model-geometry-recipe.sh: one `--contract` leg per fixture under
 # fixtures/glm5next/geometries/. The bundle program and its cubins are built
 # for the flash geometry at TP4 (`Shape::TP4`), so an added geometry stops at
-# the contract stage (docs/model-glm5next.md, "Geometries").
+# the contract stage, before compiling or packaging unsupported shapes.
 [geometry_recipe]
 stage = "contract"
 fixtures = ["synthetic-small"]

@@ -23,13 +23,13 @@
       ],
       "op": "eq",
       "value": true,
-      "source": "docs/paired-accuracy.md"
+      "source": "docs/numerics.md#paired-release-accuracy"
     }
   ],
   "constants": {
     "paired_teacher": {
       "POLICY": {
-        "source": "docs/paired-accuracy.md, proposed pending operator approval",
+        "source": "docs/numerics.md#paired-release-accuracy, proposed pending operator approval",
         "value": {
           "schema": "paired-teacher-margins/v1",
           "approval": "",

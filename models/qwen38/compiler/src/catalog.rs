@@ -1,5 +1,5 @@
 //! Header-only catalog and lossless placement/repack recipes for 1, 2 or
-//! 4 ranks (docs/topology-qwen.md).
+//! 4 ranks. Serving admission is defined by the model contract.
 use crate::{Result, precision_source::SourcePrecision};
 use kernel_core::contract::WeightFormat;
 use kernel_core::topology::TensorParallel;

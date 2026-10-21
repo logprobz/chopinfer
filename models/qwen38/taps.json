@@ -4,7 +4,7 @@
  "v1_schema": "chopinfer.qwen38.capture.v1",
  "about": [
   "The engine's taps (models/qwen38/bundle/src/dump.rs), in program order except that full attention's attn.core precedes linear attention's. The first entry whose name matches, in its layers when given, applies; {nn} is a two-digit layer.",
-  "Names follow docs/reference-runner.md (\"Taps and tapdiff\") (tools/refrun/taps.py's grammar). v1 is the tap's name in chopinfer.qwen38.capture.v1 dumps, which tapdiff and the Qwen tools still read.",
+  "Names follow tools/refrun/README.md (\"Taps and tapdiff\") (tools/refrun/taps.py's grammar). v1 is the tap's name in chopinfer.qwen38.capture.v1 dumps, which tapdiff and the Qwen tools still read.",
   "cols is the full width; a col_shards rank holds cols / ranks of it, its share of every [heads, dim] block. Taps without cols or blocks have per-rank layouts tapdiff does not reduce.",
   "ranks \"every\": each rank computes the same value and each rank's copy is written. detail: written only in the layers CHOPINFER_TAPS_LAYERS names.",
   "The reference taps the canonical names on the HF Qwen3.8 modules: enc.vision.out is model.visual.merger's output, the merged rows; L<nn>.in.streams is X entering the layer (all streams); L<nn>.x.hc.attn and .x.hc.mlp the hyper-connection's mixed sublayer input before the sublayer's norm; L<nn>.attn.core the input of o_proj (full) or out_proj (linear); L<nn>.attn.out and .mlp.out the self_attn or linear_attn and mlp outputs; L<nn>.router.* mlp.gate's outputs 0 (logits), 2 (ids) and 1 (weights); L<nn>.out X after the layer; L01.x.ple.out X after the PLE residual add; final.x.hc.mixer the hyper_connection_mixer output."

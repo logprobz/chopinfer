@@ -134,7 +134,7 @@ partials. The shared-key entry `chop_attn_{name}_rows_shared_v1` (`decode_rows.c
 `Variant::plan_rows_shared`, paged full attention, at most 16 rows per item)
 streams each K/V range once for up to four rows of equal unit count, with
 partials equal to `_rows_v1`'s bit for bit; MiMo serves exact rows on it
-([cost](../../../../docs/adaptive-speculation.md)). kernel-lab
+([cost](../../../../docs/numerics.md#state-and-verification-contract)). kernel-lab
 `attention_exact_rows_equal_one_row_decode` checks every token row against
 the unfused one-row decode entry bit for bit.
 

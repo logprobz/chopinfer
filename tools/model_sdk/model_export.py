@@ -26,7 +26,7 @@ the SDK come from the same revision:
   directory of build scripts and tests); a `.join` literal on a receiver
   whose directory the text establishes (`Bases`), read from it; and
   checkout-rooted literals read from the checkout root where the text
-  establishes that root (see docs/external-models.md). A
+  establishes that root (see docs/adding-a-model.md#external-sdk-workflow). A
   climbing or rooted `.join` or `.starts_with` literal on any other
   receiver fails the export, except a build script's or test's climb that
   stays inside the model, which is kept. Any other string literal that

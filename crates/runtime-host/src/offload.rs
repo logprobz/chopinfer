@@ -71,7 +71,7 @@ impl HostArenaPlanV1 {
 pub fn preflight_host_memory(budget: u64, available: u64) -> Result<(), String> {
     if budget != 0 && budget.checked_add(16 * GIB).is_none_or(|n| n > available) {
         return Err(format!(
-            "host KV budget {budget} bytes plus reserve {} bytes exceeds MemAvailable {available} bytes; reduce --kv-offload-gib and check page-locked memory limits (docs/deploy-common.md)",
+            "host KV budget {budget} bytes plus reserve {} bytes exceeds MemAvailable {available} bytes; reduce --kv-offload-gib and check page-locked memory limits (docs/developer-preview.md)",
             16 * GIB
         ));
     }

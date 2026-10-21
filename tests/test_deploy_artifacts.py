@@ -220,13 +220,12 @@ assert Path(sys.argv[1]).is_file()
 
     def test_startup_deadlines_cover_cold_authentication(self):
         self.assertIn('--start-period=600s', (ROOT / 'deploy/docker/Dockerfile').read_text())
-        for model in inventory.released(ROOT):
-            self.assertIn('timeout 600s curl --retry 600',
-                          (ROOT / f'docs/deploy-{model}.md').read_text())
+        self.assertIn('timeout 600s curl --retry 600',
+                      (ROOT / 'docs/developer-preview.md').read_text())
 
     def test_documented_release_gate_commands_parse(self):
-        document = (ROOT / 'docs/serving-mimo26.md').read_text()
-        commands = re.findall(r'`(?:python3 )?tools/qual/release_gate.py ([^`]+)`', document)
+        document = (ROOT / 'tools/qual/README.md').read_text()
+        commands = re.findall(r'^python3 tools/qual/release_gate.py ([^\n]+)$', document, re.MULTILINE)
         self.assertTrue(commands)
         sys.path.insert(0, str(ROOT / 'tools/qual'))
         import release_gate
@@ -234,8 +233,6 @@ assert Path(sys.argv[1]).is_file()
             inputs = Path(directory) / 'release-inputs.json'
             inputs.write_text('{}')
             for arguments in commands:
-                invocation = document[document.index('tools/qual/release_gate.py ' + arguments) - 8:]
-                self.assertTrue(invocation.startswith('python3 '), invocation[:80])
                 command = ['python3', 'tools/qual/release_gate.py', *shlex.split(arguments)]
                 result = subprocess.run([*command, '--help'], cwd=ROOT, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

@@ -284,8 +284,8 @@ fn a_failed_encoder_run_leaves_no_rows_to_the_next_request() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// The text taps' sites the tests select: the localization set of
-/// docs/model-glm5next.md, and layer 3's query latent as a detail tap.
+/// The text taps' sites the tests select: the localization set and
+/// layer 3's query latent as a detail tap.
 #[cfg(feature = "diagnostic-taps")]
 const TEXT_SITES: &[(&str, &str)] = &[
     (

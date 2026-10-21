@@ -462,7 +462,7 @@ fn f32_logits_from_environment() -> bool {
 
 /// `1` runs a step's plain decode rows inside its prefill forward, as
 /// one-token prefill items, so the step reads the weights once instead of
-/// running the decode graph after the prefill (docs/mixed-scheduling.md).
+/// running the decode graph after the prefill (docs/serving-profiles.md#prefill-policy).
 /// Off by default. Instances with a drafter, steps with verify rows or
 /// media, and the BF16 logits head (`CHOPINFER_MIMO_F32_LOGITS=0`) keep the
 /// decode graph.

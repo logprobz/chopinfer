@@ -1042,7 +1042,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#current-bound-fixtures"
+          "source": "tools/refrun/README.md#current-bound-fixtures"
         },
         {
           "path": [
@@ -1051,7 +1051,7 @@
           ],
           "op": "eq",
           "value": 4,
-          "source": "docs/reference-runner.md#current-bound-fixtures"
+          "source": "tools/refrun/README.md#current-bound-fixtures"
         }
       ],
       "constants": {
@@ -1631,7 +1631,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         },
         {
           "path": [
@@ -1639,14 +1639,14 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/reference-runner.md#frontend-preprocessing"
+          "source": "tools/refrun/README.md#frontend-preprocessing"
         }
       ],
       "constants": {
         "media_preprocessing": {
           "SPREAD_FACTOR": {
             "value": 2.0,
-            "source": "docs/reference-runner.md#frontend-preprocessing"
+            "source": "tools/refrun/README.md#frontend-preprocessing"
           },
           "PROCESSOR_OVERRIDES": {
             "value": {
@@ -1663,7 +1663,7 @@
               "max_pixels": 1048576,
               "min_pixels": 8192
             },
-            "source": "docs/reference-runner.md#frontend-preprocessing"
+            "source": "tools/refrun/README.md#frontend-preprocessing"
           }
         }
       }
@@ -1693,13 +1693,13 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/paired-accuracy.md"
+          "source": "docs/numerics.md#paired-release-accuracy"
         }
       ],
       "constants": {
         "paired_teacher": {
           "PROFILE_POLICIES": {
-            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "source": "docs/numerics.md#activation-and-calibration",
             "value": {
               "tp4-ar": {
                 "schema": "paired-teacher-margins/v1",
@@ -1770,7 +1770,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },
@@ -1796,7 +1796,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     }
@@ -1993,9 +1993,9 @@
     "External evidence must come from this release; the operator must verify its deployment provenance.",
     "MOPD alpha: teacher, exact verify and multimodal gate against GPU reference runner F32 references of the MOPD checkpoint (fixtures/mimo26/README.md); vLLM captures are informational. A passing alpha screen is not full numerical qualification. Release preview still requires current-run GSM8K >=193/200 in both arms and the declared speculative-verification bounds; C1 greedy differences are informational.",
     "Audio is served but not qualified in-tree (capabilities.unqualified_media): the repository holds no audio reference input, so the multimodal, mixed-media, soak and encoder parity checks carry no audio items. The audio front end's preprocessing is still checked against torchaudio on generated signals. Test audio with your own inputs.",
-    "Declared preprocessing deviation: ImageNet mean [0.485, 0.456, 0.406] and std [0.229, 0.224, 0.225] replace checkpoint CLIP statistics. The 349-probe paired F32 study favors ImageNet (205 wins, p = 0.0013); docs/serving-mimo26.md#solid-color-images.",
-    "Declared preprocessing deviation: images are capped at 1048576 pixels (1024 image tokens) for serving resources; docs/reference-runner.md#frontend-preprocessing.",
-    "Declared preprocessing deviation: image minimum 8192 pixels, retaining bicubic. Accuracy evidence: 3136 loses 14/21 scenes (mean -1.73 nats; eight losses of 3.4-5.7), with probe sign p=0.0088 and scene t-test p approximately 0.003 despite scene sign p=0.189; small images retain 9 rather than 4 tokens. docs/serving-mimo26.md#image-resize-reference.",
+    "Declared preprocessing deviation: ImageNet mean [0.485, 0.456, 0.406] and std [0.229, 0.224, 0.225] replace checkpoint CLIP statistics. The 349-probe paired F32 study favors ImageNet (205 wins, p = 0.0013); docs/numerics.md#solid-color-images.",
+    "Declared preprocessing deviation: images are capped at 1048576 pixels (1024 image tokens) for serving resources; tools/refrun/README.md#frontend-preprocessing.",
+    "Declared preprocessing deviation: image minimum 8192 pixels, retaining bicubic. Accuracy evidence: 3136 loses 14/21 scenes (mean -1.73 nats; eight losses of 3.4-5.7), with probe sign p=0.0088 and scene t-test p approximately 0.003 despite scene sign p=0.189; small images retain 9 rather than 4 tokens. docs/numerics.md#image-resize-reference.",
     "spec_continuation (adopted 2026-10-15) gates tp4-dflash on its own continuations after speculative/AR divergence: each arm's emitted tokens are teacher-forced through the GPU reference runner in the pinned teacher reference's F32 and BF16 modes and judged by the unchanged spread-rule limits with the AR control as validity check (docs/numerics.md#speculative-continuations). It adds no paired margin; the 2026-10-06 DFlash pooled verify-row waiver is unchanged. Its candidate-minus-AR and KL figures are reported, not gated."
   ],
   "preview": {
@@ -2054,7 +2054,7 @@
         "profile_name": "tp2-ar",
         "speculation_tokens": 0
       },
-      "source": "docs/topology-mimo.md",
+      "source": "docs/serving-profiles.md#mimo-evidence",
       "media": false,
       "keep_references": [
         "teacher"
@@ -2072,7 +2072,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2085,7 +2085,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ]
         },
@@ -2101,7 +2101,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2114,7 +2114,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ],
           "stored_teacher": [
@@ -2125,7 +2125,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-mimo.md",
+              "source": "docs/serving-profiles.md#mimo-evidence",
               "unless_present": true
             },
             {
@@ -2138,7 +2138,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2151,7 +2151,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ],
           "teacher": [
@@ -2162,7 +2162,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-mimo.md",
+              "source": "docs/serving-profiles.md#mimo-evidence",
               "unless_present": true
             },
             {
@@ -2175,7 +2175,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2188,7 +2188,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ]
         },
@@ -2202,7 +2202,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2213,7 +2213,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ],
           "prefix_record": [
@@ -2224,7 +2224,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/topology-mimo.md",
+              "source": "docs/serving-profiles.md#mimo-evidence",
               "unless_present": true
             },
             {
@@ -2237,7 +2237,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             },
             {
               "path": [
@@ -2250,7 +2250,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/topology-mimo.md"
+              "source": "docs/serving-profiles.md#mimo-evidence"
             }
           ]
         }

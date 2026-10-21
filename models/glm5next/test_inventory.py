@@ -41,7 +41,7 @@ class GlmInventory(ModelRequirements):
         self.assertRegex(unit, r'CHOPINFER_EXPECTED_BUNDLE_ID=glm5next\.v1 /opt/chopinfer/bin/entrypoint\.sh')
         self.assertIn('EnvironmentFile=/etc/chopinfer/glm5next.env', unit)
         self.assertIn('ReadWritePaths=/var/lib/chopinfer', unit)
-        self.assertIn('timeout 600s curl --retry 600', (ROOT / 'docs/deploy-glm5next.md').read_text())
+        self.assertIn('timeout 600s curl --retry 600', (ROOT / 'docs/developer-preview.md').read_text())
         # The packages carry the deployment policy, which
         # test_release_targets_and_lock_directory_once_enabled pins.
 

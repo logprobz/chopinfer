@@ -220,7 +220,7 @@ const _: () = assert!(crate::tp::MTP_EH_K == crate::tp::Q_HEADS * crate::tp::V_D
 mod tests {
     use super::*;
 
-    /// docs/topology-mimo.md's per-rank table.
+    /// The independent expected per-rank sizes at TP2 and TP4.
     #[test]
     fn rank_shapes_match_the_topology_table() {
         for (tp, q, ga, swa, dense, expert, vocab, fc, dflash_kv) in [

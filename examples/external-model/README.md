@@ -5,12 +5,12 @@ synthetic state machine, `compiler` packages a checkpoint with an already
 built native module, and `contract` owns their IDs and layout. It has no core
 model registration. Execution uses fake host services and proves boundary
 mechanics, not model quality. Compatibility rules and release policy are in
-the SDK's `docs/external-models.md`.
+the SDK's `docs/adding-a-model.md#external-sdk-workflow`.
 
 The first exercise builds a small Rust bundle and compiler, then packages a
 seed as authenticated bundle metadata. The bundle holds no weights; a model
 with weights plans them from its checkpoint (see the SDK's
-`docs/direct-loading.md`). It needs Rust 1.89.0, Python 3.11 or newer, Git, a
+`BUNDLE_ARCHITECTURE.md#direct-weight-loading`). It needs Rust 1.89.0, Python 3.11 or newer, Git, a
 C linker and a preseeded Cargo registry cache, and no `nvcc`, model weights,
 host binary or GPU.
 
@@ -18,7 +18,7 @@ host binary or GPU.
 
 A new model starts from this template. `export --model models/<m>` exists
 only to move an in-tree model out of the SDK's repository; the SDK's
-`docs/external-models.md` states its limits.
+`docs/adding-a-model.md#external-sdk-workflow` states its limits.
 
 Export this template before building. The exporter places one complete pinned
 SDK under the ignored `sdk/` directory and creates `sdk-pin.json`; `lock`
@@ -262,7 +262,7 @@ python3 -B -m tools.model_sdk relock --workspace "$MODEL_SOURCE" \
 `relock` builds once with each model lock redirected to a candidate, refuses
 any lock outside the model's own tree (SDK locks are never rewritten),
 replaces only changed lock files and rebuilds against them. A failure
-restores the old locks; the SDK's `docs/external-models.md` describes its
+restores the old locks; the SDK's `docs/adding-a-model.md#external-sdk-workflow` describes its
 recovery state. Its `relock-report.json` lists each lock's added, removed and
 changed records. A changed record names its fields and is `cubin` when its cubin bytes changed,
 `recipe` when another gating field changed, or `provenance` when only the

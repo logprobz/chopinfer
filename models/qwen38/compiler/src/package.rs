@@ -79,7 +79,7 @@ impl std::str::FromStr for Drafter {
 /// Where the package places each rank's n-gram table (11.92 GiB per rank
 /// at TP4). The GPU is the default. `host` keeps it in page-locked,
 /// device-mapped host memory, which frees that device memory for KV and
-/// needs as much pinned host RAM (docs/deploy-common.md).
+/// needs as much pinned host RAM (docs/developer-preview.md).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NgramPlacement {
     #[default]

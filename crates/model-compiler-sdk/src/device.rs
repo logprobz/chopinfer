@@ -5,6 +5,6 @@
 pub const DEVICE_BYTES: u64 = 94 << 30;
 
 /// What the host keeps free on the tightest rank before it sizes the KV
-/// pool (docs/serving-kv-pool.md). A model's plan adds what else it keeps
+/// pool (docs/numerics.md#kv-offload-and-prefix-state). A model's plan adds what else it keeps
 /// outside the pool.
 pub const HOST_RESERVE_BYTES: u64 = 1 << 30;

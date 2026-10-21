@@ -39,7 +39,7 @@ LOCKED = ["--locked", "--offline"]
 # Nextest writes each profile's JUnit report under the workspace's target
 # directory, whatever CARGO_TARGET_DIR says.
 NEXTEST_REPORTS = [ROOT / "target/nextest" / profile / "junit.xml" for profile in ("ci", "exhaustive")]
-# A warm gate that takes longer than this gets a warning (docs/testing.md).
+# A warm gate that takes longer than this gets a warning (docs/contributing.md#checks).
 WARM_GATE_SECONDS = 15 * 60
 # How often a run checks that HEAD is still the commit it started on.
 HEAD_POLL_SECONDS = 10
@@ -367,7 +367,7 @@ def report_times(elapsed, slowest, full_gate, out):
     if full_gate and elapsed > WARM_GATE_SECONDS:
         print(f"cpu-ci warning: the gate took {elapsed / 60:.1f} minutes; a warm gate should finish within "
               f"{WARM_GATE_SECONDS // 60}. Unless the target was cold or the host busy, check the slowest tests "
-              "and steps (docs/testing.md).", file=out)
+              "and steps (docs/contributing.md#checks).", file=out)
 
 
 def remove_tree(path):
@@ -416,7 +416,7 @@ def main(arguments=None):
     for problem in problems:
         print("cpu-ci preflight: " + problem, file=sys.stderr)
     if problems:
-        print("cpu-ci preflight failed: nothing ran (see docs/toolchain.md)", file=sys.stderr)
+        print("cpu-ci preflight failed: nothing ran (see docs/contributing.md#setup)", file=sys.stderr)
         return 2
     if args.preflight:
         print("cpu-ci preflight: ok", file=sys.stderr)

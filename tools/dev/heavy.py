@@ -102,7 +102,7 @@ def make_directory(path):
 class Settings:
     def __init__(self, env):
         if not env.get("CHOPINFER_HEAVY_DIR"):
-            raise Refused("set CHOPINFER_HEAVY_DIR to the shared state directory (see docs/development-loop.md)")
+            raise Refused("set CHOPINFER_HEAVY_DIR to the shared state directory (see docs/contributing.md#shared-build-hosts)")
         self.dir = pathlib.Path(env["CHOPINFER_HEAVY_DIR"])
         self.slots = number(env, "CHOPINFER_HEAVY_SLOTS", 4, 1)
         self.during_gate = min(number(env, "CHOPINFER_HEAVY_SLOTS_DURING_GATE", 2, 0), self.slots)

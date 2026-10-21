@@ -412,13 +412,13 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/paired-accuracy.md"
+          "source": "docs/numerics.md#paired-release-accuracy"
         }
       ],
       "constants": {
         "paired_teacher": {
           "PROFILE_POLICIES": {
-            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "source": "docs/numerics.md#activation-and-calibration",
             "value": {
               "tp4-ar": {
                 "schema": "paired-teacher-margins/v1",
@@ -1153,7 +1153,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },
@@ -1179,7 +1179,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "docs/serving-kv-pool.md"
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },

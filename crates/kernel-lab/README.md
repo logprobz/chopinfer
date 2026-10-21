@@ -105,7 +105,7 @@ emits their cubins; `tests/lab_shapes.rs` checks their catalog contracts on
 the CPU, and the `ops` binary launches every one on a GPU against its oracle
 (the lab-shape cases of its attention and sparse attention modules, and the
 sparse invariance adapter).
-See the maintained [kernel instance table](../../docs/kernel-library.md#engines)
+See the maintained [kernel instance table](../../docs/kernel-library.md#adding-an-op)
 for supported shapes and dated GPU qualification results. CPU catalog coverage
 alone does not establish GPU correctness or qualify a model checkpoint.
 
@@ -371,7 +371,7 @@ routes and logits; `tools/moe_routing_locality.py` reads the routes. The
 real-weight tests read their weights through the host's direct-load
 executor (`tests/common/mimo_planned.rs`). Model references come from the GPU
 reference runner (`tools/refrun`), whose taps `python3 -m tools.qual.tapdiff`
-compares layer by layer ([debugging](../../docs/debugging.md)).
+compares layer by layer ([debugging](../../docs/contributing.md#diagnostics)).
 
 Generated encoder component conformance runs against each bundle's serving
 cubins in `tests/encoder_conformance.rs` and
@@ -379,177 +379,6 @@ cubins in `tests/encoder_conformance.rs` and
 runtime taps (for example `enc.<tower>.B<nn>.out`) through
 `CHOPINFER_TAPS_DIR`; the declaration-driven GPU reference is
 `python3 -m tools.refrun.encoder --declaration <declaration>`.
-
-## Cache preparation and timing comparisons
-
-Read-sweep eviction is the default. Receipts from before this default switch
-used a 256 MiB write flush in `time` and `time_after`, unless read mode was
-selected explicitly for an A/B run. `time_multi_graph` previously reused
-warm caches; it now uses the shared eviction helper, so its older timings
-are not comparable. Write eviction remains selectable. Treat a paired ratio
-more than 2% from 1 as a material difference, after inspecting clock and
-throttle flags.
-
-On 2026-10-03, 10:54-11:15 UTC, all seven validation jobs passed on four
-RTX PRO 6000 Blackwell Max-Q GPUs, with one job assigned to each GPU pair.
-The other pair was busy with another kernel-lab or reference job, so these
-were assigned-device measurements with concurrent work elsewhere in the
-machine. Receipts reported 128 MiB L2
-and a 250 W power limit. The comparison alternated write/read and read/write
-arms per round on identical work. No measured A/B arm was flagged for power
-or thermal throttling or SM clock drift.
-
-Read eviction was equal or faster almost everywhere. GDN delta decode and
-verify at batches 8-32 took 5-31% less time; the eager
-`delta_verify_c32_r4` median fell from 98.3 to 67.6 us. Full decode MoE
-measurements took about 3-6% less time, paged decode at batches 8 and 32
-about 5%, and the batch-32 QSA step about 5%. The MiMo output projection at
-M=32 took about 7% less time, and the bulk-write prefix calibration about
-15.5%. Head GEMMs and small kernels were generally within 1-2%. These
-results support the hypothesis that dirty write-flush lines charge DRAM
-writebacks to the timed work, and justify the read-sweep default; they do
-not directly establish the writeback mechanism.
-
-CUDA event timing on this GPU quantizes near 2.048 us. Differences below
-2 us on small kernels are not resolvable with this timing method and should
-not be treated as performance improvements.
-
-`CHOPINFER_KERNEL_EVICTION=write|read` selects eviction for the shared helper.
-Read mode reuses `chop_probe_read_v1`: it reads `max(2 * L2, 64 MiB)` once,
-reduces to one checksum with one atomic per CTA, and performs no bulk writes.
-The CUDA L2 attribute is queried for the selected device. The sweep buffer
-is initialized once and synchronized before timing. PDL producer, input initialization and delayed
-rank controls still use their original writes because those writes are part
-of the behavior under test, rather than cache preparation.
-
-`time_prepared` orders eviction, activation production, then the timed target.
-Its producer is outside the event interval. Use it to model cold weights and
-warm activations in serving; `time` keeps the cold roofline mode. Producers
-must enqueue on the supplied stream and avoid reading weights they intend
-to keep cold.
-
-`time_ab` independently evicts each arm and alternates A/B, B/A per measured
-round. It returns each arm's median and the median of paired B/A ratios.
-Even round counts now average the two middle samples.
-`CHOPINFER_KERNEL_EVICTION_AB=1` uses this helper inside `time` to compare
-write (A) and read (B) eviction on identical work. The ordinary return value
-belongs to the selected eviction mode. Inspect `timing_rounds` in the receipt
-or run `python3 crates/kernel-lab/tools/eviction_table.py RECEIPT_DIRECTORY`
-to print the paired table.
-
-Each measured round records SM and memory clocks, clock event reasons,
-pstate, power draw and limit in milliwatts, and temperature through NVML.
-Snapshots occur after event completion, outside the measured interval; they
-cannot detect a transient throttle event that clears before the query.
-Power or thermal reasons (including hardware slowdown) and an SM clock
-more than 5% from the session opening clock flag the round. Query failures
-are recorded explicitly. Flagged rounds remain in the statistics so the
-receipt exposes the complete sample set; they need review before a performance
-claim. Timing records are drained into the next receipt for that device on
-the timing thread.
-
-Timing operations can use `time_named`, or `with_timing_label` around
-`time_after`, to retain their own label with the measurement ID. The A/B table
-uses these labels, including launch-floor calibration and individual QSA or
-recurrent stages, rather than borrowing the receiving receipt's label.
-Older receipts without operation labels are shown as `unlabelled`.
-
-`time_after` collects target-only samples separately in each eviction arm;
-the prefix is outside the timed interval. Aggregate graph measurements keep
-all rank snapshots in `GraphTiming::gpu_rounds` and in rank 0's receipt,
-including flags from any participating rank. Benchmark jobs should generate
-an assigned-device `kernel-lab probe` receipt in their own receipt directory
-before benchmarking; recurrent rooflines require it and other rooflines use
-it in preference to nominal fallback ceilings.
-
-## Non-dense BF16 chain measurements
-
-`non_dense_accumulation` measures encoder BF16 pairs and frozen online-softmax
-PV inputs with the separate `probe_non_dense_accumulation_sm120` cubin. It does
-not modify a served template. `encoder_pairs_adversarial` compares its long
-chain bitwise with the unmodified encoder template before the epilogue, and
-checks FMA against a CPU emulator. `pv_adversarial` preserves each captured
-32-key tile's probability residuals and rescale schedule. Its short-chain modes
-include tile temporaries, at most eight MMA calls, and 128-key temporaries.
-A 128-key combined pair temporary contains sixteen calls, so it is measured
-separately from the eight-call alternatives.
-
-`encoder_pairs_real` and `pv_real` require `CHOPINFER_ACCUMULATION_MANIFEST`.
-`CHOPINFER_ACCUMULATION_CASE` selects one case; an empty selection fails.
-`CHOPINFER_ACCUMULATION_K` selects one adversarial K. A manifest uses schema
-`chopinfer.non-dense-accumulation.v1` and a `cases` array. Each case states
-`id`, `family` (`encoder_pairs` or `pv`), `origin`, `source_sha256`, `n`, `m`,
-`k`, mathematical `reduction_k`, `terms`, and file records with relative
-`path` and `sha256`. Files are little-endian row-major BF16 `weight[n,k]`
-and F32 `activation[m,k]`. PV adds F32 `correction[m,k/32]` and
-`denominator[m]`; encoder cases set these fields to null. The activation is
-the original F32 encoder input or the unnormalized PV probability at its
-own tile maximum. Values for PV are transposed into `weight[n,k]`.
-
-The GPU-only wrapper `tools/capture_non_dense.py` adds bounded operand hooks
-to existing reference APIs without editing reference-bound sources. It writes
-reference-policy captures, which do not prove equality to served intermediate
-operands. Pass the wrapper's arguments before `--`, then the reference CLI
-arguments, including explicit CUDA devices. The runner retains its checkpoint
-verification and repeat checks. No manifest is published on a failed or empty
-capture. `python3 -B tools/test_capture_non_dense.py` checks capture geometry
-and empty-publication rejection without importing a GPU framework.
-
-Receipts distinguish decoded-operand accumulation error from original-input
-representation error and report max/p99.99 F32 ulps, contract-term ratios,
-bias and BF16 misrounding. Small tail samples are marked. Contract failures
-are recorded before the test fails. Frozen PV numerator and denominator
-results do not qualify full attention, softmax, KV storage or epilogues.
-Run assigned-device jobs with `CHOPINFER_KERNEL_REQUIRE=1` so missing inputs
-or devices cannot silently pass. Measurement receipts determine a later
-numerics recommendation; this harness does not authorize a kernel switch.
-
-`grouped_accumulation` extends the study to expert reductions. It requires
-`CHOPINFER_GROUPED_MANIFEST` with schema `chopinfer.grouped-accumulation.v1`;
-`CHOPINFER_GROUPED_CASE` selects one fixture and rejects empty selections.
-Each fixture has digest-bound gate/up/down banks, actual routed input rows,
-a rank topology, and explicit K ownership intervals. Decoded BF16 operands
-may chain over an ownership interval. Raw FP8-converted BF16 operands retain
-F32 post scales at K128 boundaries; candidate grains do not round scaled
-weights to BF16. K32 and K128 baseline promotions model prefill and decode.
-
-`tools/capture_grouped_accumulation.py` accepts an explicit checkpoint/dump
-recipe on assigned CUDA devices and loads only selected expert matrices. It
-verifies checkpoint files with the existing reference lock machinery, chooses
-actual hot/rare routed rows, and records their indices and input digests.
-The lab freezes one baseline GPU SwiGLU intermediate, rounded to BF16 once,
-for every down candidate. Receipts identify that derivation and do not claim
-routed-combine or complete model equivalence. Stream ownership intervals must
-come from an actual dispatch trace; equal hypothetical portions are not
-presented as served schedules. The measurement does not change MoE numerics.
-
-`grouped_adversarial` checks probe parity and FMA emulation. CPU-only checks
-cover unrounded post-scale references and invalid ownership schedules, plus
-`python3 -B tools/test_capture_grouped_accumulation.py`. Real NVFP4 checkpoint
-operands need a distinct capture; synthetic preparation fixtures cannot stand
-in for them.
-
-`matrix_real` accepts `CHOPINFER_MATRIX_MANIFEST` with schema
-`chopinfer.matrix-accumulation.v1`. `tools/capture_pv_products.py` supplies
-compact encoder pair, windowed and QSA PV matrices on GPUs. It expands each
-k16 group in probability-term/value-half order, keeps per-row visible K
-separate from the expanded physical reduction, and excludes padded features.
-Encoder baselines preserve 64-key tile temporaries. Window and selected-key
-baselines measure stable-maximum chains. QSA captures the executed F32 eager
-softmax before its BF16 cast and preserves the captured selection set in
-ascending native key order; it never recomputes top-k. Text sinks keep their
-zero-value denominator mass, while encoder sinks remain masked key-0 biases.
-
-These matrices do not qualify online-softmax, FP8 KV storage or complete
-serving parity. Run `grouped_adversarial` first: its strict PV operand-orientation
-check must pass before using matrix measurements. The wrappers retain normal
-reference repeat checks and restore their hooks in `finally`. CPU geometry
-checks are in `tools/test_capture_pv_products.py`.
-
-The grouped controls also call the unchanged TMA `mma_chunk` consumer on its
-actual shared-memory swizzle and require bitwise equality to K128 runs. This
-checks the eight-call arithmetic shared by the standard dense and SwiGLU
-mainloops; it is not a TMA scheduler or loading benchmark.
 
 ## F32 norm side tensors
 

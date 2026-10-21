@@ -1,7 +1,7 @@
 //! `chopinfer eval`: qualifies a running server against a model's
 //! declaration (`models/<m>/qual.json`) with the shared check kinds of
 //! `tools/qual/kinds.py`, to be the one scorer implementation the Python
-//! tooling calls. docs/cli.md describes the commands, the report and the
+//! tooling calls. tools/qual/README.md#release-gates describes the commands, the report and the
 //! exit codes.
 //!
 //! It names no model: every model fact comes from the declaration, the
@@ -65,7 +65,7 @@ impl Host {
 }
 
 /// Runs `eval ARGUMENTS...` for the program `tool` hosted by `host` and
-/// returns its exit code (docs/cli.md).
+/// returns its exit code (tools/qual/README.md#release-gates).
 pub fn command_line(tool: &Tool, host: &Host, arguments: &[String]) -> ExitCode {
     cli::run_hosted(tool, host, arguments).code()
 }

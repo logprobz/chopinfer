@@ -1,6 +1,6 @@
 # cargo-nextest settings for ci/cpu.sh and ci/quick.sh. Nextest runs every
 # test in its own process and tests from different binaries at once; see
-# docs/testing.md for the groups below.
+# docs/contributing.md#checks for the groups below.
 nextest-version = { required = "0.9.146" }
 
 [test-groups]

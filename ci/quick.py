@@ -152,7 +152,7 @@ def refused(problems):
     for problem in problems:
         print("quick preflight: " + problem, file=sys.stderr)
     if problems:
-        print("quick preflight failed: nothing ran (see docs/toolchain.md)", file=sys.stderr)
+        print("quick preflight failed: nothing ran (see docs/contributing.md#setup)", file=sys.stderr)
     return 2 if problems else 0
 
 

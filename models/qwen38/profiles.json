@@ -32,8 +32,8 @@
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/bundle-qwen38.md#accuracy-gate",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/numerics.md#prefix-cache-accuracy",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     },
     "tp4-mtp": {
@@ -65,8 +65,8 @@
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/bundle-qwen38.md#accuracy-gate",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/numerics.md#prefix-cache-accuracy",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     },
     "tp4-ar-dcp2": {
@@ -98,8 +98,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/model-qwen38.md#context-parallelism",
-        "docs/context-parallel.md"
+        "docs/serving-profiles.md#qwen-evidence",
+        "docs/numerics.md#context-parallelism"
       ]
     },
     "tp4-mtp-dcp2": {
@@ -131,8 +131,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/model-qwen38.md#context-parallelism",
-        "docs/context-parallel.md"
+        "docs/serving-profiles.md#qwen-evidence",
+        "docs/numerics.md#context-parallelism"
       ]
     },
     "tp2-ar": {
@@ -161,8 +161,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/topology-qwen.md",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/serving-profiles.md#qwen-evidence",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     },
     "tp2-mtp": {
@@ -191,8 +191,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/topology-qwen.md",
-        "docs/deploy-common.md#concurrency-and-prefill-policy"
+        "docs/serving-profiles.md#qwen-evidence",
+        "docs/serving-profiles.md#selecting-a-profile"
       ]
     }
   }

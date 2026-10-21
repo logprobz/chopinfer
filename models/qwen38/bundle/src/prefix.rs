@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_is_linear_ple_ring_and_drafter_state() {
-        // The design's table (docs/bundle-qwen38.md, "Prefix caching").
+        // Independent byte counts for each piece of committed snapshot state.
         assert_eq!(LINEAR_LAYERS * Shape::TP4.conv_entry_bytes, 552_960);
         assert_eq!(LINEAR_LAYERS * Shape::TP4.delta_entry_bytes, 28_311_552);
         assert_eq!(PLE_ENTRY_BYTES, 184_448);

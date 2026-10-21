@@ -1,6 +1,6 @@
 //! Qwen geometry shared by package declarations and the native module.
 //! The selected Geometry owns model dimensions; Shape derives per-rank
-//! layouts for the topology (docs/topology-qwen.md).
+//! layouts for the topology (docs/serving-profiles.md#qwen-evidence).
 
 use crate::geometry::{FLASH, GEOMETRIES, Geometry};
 use bundle_runtime::config::Topology;
@@ -621,7 +621,7 @@ pub const MAX_DRAFT_TOKENS: u32 = MAX_VERIFY_ROWS - 1;
 pub const MAX_VERIFY_TOKENS: u32 = DECODE_BATCH;
 /// The qualified speculation graphs cover two, four, and eight rows.
 pub const VERIFY_ROW_BUCKETS: [u32; 3] = [2, 4, 8];
-/// The verify steps whose rows are exact (docs/adaptive-speculation.md):
+/// The verify steps whose rows are exact (docs/numerics.md#state-and-verification-contract):
 /// the MTP drafter's K3 steps of one request served at a time, four rows
 /// (the bonus and three drafts) whose arithmetic is AR's. Larger buckets and
 /// concurrent requests are not covered.

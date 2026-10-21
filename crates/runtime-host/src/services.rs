@@ -1774,7 +1774,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             plan,
             options.bytes_per_second,
         )
-        .map_err(|e| format!("host KV pinning of {} bytes failed: {e:?}; check page-locked memory limits and docs/deploy-common.md", plan.allocated_bytes))?;
+        .map_err(|e| format!("host KV pinning of {} bytes failed: {e:?}; check page-locked memory limits and docs/developer-preview.md", plan.allocated_bytes))?;
         state.offload = Some(queue);
         Ok(Some(plan))
     }
@@ -2922,7 +2922,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             .inspect_err(|status| {
                 eprintln!(
                     "host allocate_mapped_host_buffer: {byte_length} bytes: {status:?}; \
-                     page-locked host memory may be limited (docs/deploy-common.md)"
+                     page-locked host memory may be limited (docs/developer-preview.md)"
                 );
             })?;
         // The same rule as a device allocation: the base must carry the

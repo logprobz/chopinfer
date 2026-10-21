@@ -31,8 +31,8 @@
       "kv_memory_fraction": 0.9,
       "status": "qualified",
       "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
+        "docs/serving-profiles.md#final-gate-2026-10-11",
+        "docs/serving-profiles.md#glm-evidence",
         "models/glm5next/README.md#serving-profiles"
       ]
     },
@@ -64,8 +64,8 @@
       "kv_memory_fraction": 0.9,
       "status": "experimental",
       "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
+        "docs/serving-profiles.md#final-gate-2026-10-11",
+        "docs/serving-profiles.md#glm-evidence",
         "models/glm5next/README.md#serving-profiles"
       ]
     },
@@ -97,8 +97,8 @@
       "kv_memory_fraction": 0.9,
       "status": "qualified",
       "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
+        "docs/serving-profiles.md#final-gate-2026-10-11",
+        "docs/serving-profiles.md#glm-evidence",
         "models/glm5next/README.md#serving-profiles"
       ]
     },
@@ -131,8 +131,8 @@
       "kv_memory_fraction": 0.9,
       "status": "qualified",
       "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
+        "docs/serving-profiles.md#final-gate-2026-10-11",
+        "docs/serving-profiles.md#glm-evidence",
         "models/glm5next/README.md#serving-profiles"
       ]
     },
@@ -165,8 +165,8 @@
       "kv_memory_fraction": 0.9,
       "status": "qualified",
       "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
+        "docs/serving-profiles.md#final-gate-2026-10-11",
+        "docs/serving-profiles.md#glm-evidence",
         "models/glm5next/README.md#serving-profiles"
       ]
     }

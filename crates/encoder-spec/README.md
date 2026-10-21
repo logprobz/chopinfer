@@ -7,7 +7,7 @@ CUDA, no device code and no model names (`tests/model-neutral-host.sh` checks
 `src/`). The kernel catalogs are generated from it (kernels-sm120
 `encoder::catalog`, see its `src/encoder/README.md`) and the shared encoder
 runtime lowers and runs it (bundle-runtime `encoder`, see
-`docs/bundle-runtime.md`). The GPU reference runner evaluates the same files
+`BUNDLE_ARCHITECTURE.md#ownership-boundary`). The GPU reference runner evaluates the same files
 in torch (`tools/refrun/encoder.py`, one implementation per variant id),
 reading the JSON itself; the declarations it runs are the ones this crate
 validates.

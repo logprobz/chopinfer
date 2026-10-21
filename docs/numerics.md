@@ -2,7 +2,7 @@
 
 This page states the numerical contracts kernels and serving must meet, and
 the accuracy gates that qualify a served model. Use the
-[first-divergence workflow](debugging.md) to choose between fixed-schedule
+[first-divergence workflow](contributing.md#diagnostics) to choose between fixed-schedule
 exactness, structural journals and matched-input oracle comparisons.
 
 Each kernel op has an f64 CPU oracle over the exact decoded inputs the
@@ -21,7 +21,7 @@ the last place for BF16 output and zero for F32, `K` is the reduction length
 and `S` is the oracle's sum of absolute products. Layer outputs require
 per-token cosine similarity of at least 0.9999.
 
-FP8 E4M3 KV caches ([serving kv pool](serving-kv-pool.md)) are checked
+FP8 E4M3 KV caches ([serving kv pool](numerics.md#kv-offload-and-prefix-state)) are checked
 twice, and the two checks bound different errors. The device arithmetic
 error is checked exactly as above: attention over the stored codes must
 meet the bound against the oracle over the same codes. The storage error,
@@ -92,7 +92,7 @@ kernels; quantizing a BF16 pointer's contents to FP8 or FP4 does not meet
 it. Activation-quantized paths declare conversions and calibration
 separately. Serving a W4A4 export's weights under BF16 changes its
 semantics and needs its own quality evaluation; see
-[quantized checkpoint policies](quantized-checkpoints.md).
+[quantized checkpoint policies](kernel-library.md#activation-policy).
 
 ## Engine rules
 
@@ -192,7 +192,7 @@ The links lead to each rule's details.
 A change that keeps every bit needs only bitwise evidence: the affected
 kernel-lab tests and a serving A/B under its bitwise gate. One that changes
 bits, even within the bound, follows these steps in order
-([performance](performance.md), [contribution tiers](contributing.md#contribution-tiers)):
+([performance](contributing.md#measuring-a-change), [contribution tiers](contributing.md#contribution-tiers)):
 
 1. **f64 oracle evidence first.** The changed entries pass their kernel-lab
    oracle tests under `CHOPINFER_KERNEL_REQUIRE=1` on an idle GPU, with the
@@ -212,6 +212,51 @@ bits, even within the bound, follows these steps in order
    to hide a mismatch.
 
 Only then do the timings count.
+
+## Row status
+
+Kernels that can meet invalid data report it per row instead of trapping:
+the trained block quantizer (`BlockQuantizeQuery`), quantized clamped SwiGLU
+(`SiluMulQuantizeBuffers`), the fused paged index-key and compressed-KV
+writers, latent query rotation (`LatentQueryRopeBuffers`), the latent window
+writer (`LatentWindowWriteBuffers`) and the plain F32 RMSNorm
+(`RmsNormBuffers` with `numerics = Some(RmsNormNumerics::TREE_256)`; legacy
+BF16 entries pass `None` and keep their ABI).
+
+Each launch takes a caller-owned U32 `status` plane and a U64
+`status_row_offset` in words. The plane covers
+`(status_row_offset + planned_rows) * 4` bytes, checked on the host, and
+aliases no other role or cache plane. Kernels OR flags into live rows' words
+and never clear a bit; other words, inactive rows included, are unchanged.
+Callers clear the selected words once before an independent step, order
+launches that share rows, and check every selected word before accepting the
+step's outputs.
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 1 | `NONFINITE_INPUT` | An original or BF16-rounded input, weight or rotation table value is NaN or infinity |
+| 2 | `SCALE_OVERFLOW` | Generic caller-reported scale failure; finite E2M1/E4M3 saturation does not set it |
+| 4 | `UNREPRESENTABLE_OUTPUT` | A result is not finite and exact in BF16, or F32 arithmetic became nonfinite |
+
+A row with a prior or new flag is written as positive zero; packed outputs
+get zero codes and scale 1 (UE8M0 byte 127 or E4M3 `0x38`), never the NaN
+scale `0xff`. Every group or head of a row is validated before any of it is
+written. Query rotation keeps the F32 query row and zeroes every BF16 head.
+The latent window store skips a flagged row and leaves both planes' previous
+bytes, so do not advance retained bounds or accept a staged attention result
+for a failed step. In the paged key writers, out-of-range positions, items,
+rotary rows and pages are holes: they read and write nothing and leave the
+status word unchanged. SwiGLU skips the product of a nonfinite operand, so an
+infinite gate cannot produce NaN; its registration still refuses clamps with
+`max(gate_max, 1) * up_limit` above the BF16 maximum.
+
+E2M1 with E4M3 scales follows the pinned TileLang 0.1.12 vendor code:
+`amax / 6` converts to E4M3 with SATFINITE, so a finite amax above `6 * 448`
+is valid, takes scale byte `0x7e` and clips values above 2688, with no flag.
+The position-key writer's `IndexerKeyFormat` selects storage: `Fp4` keeps
+the E2M1 and UE8M0 planes, and `Bf16` stores each exact native product in
+channel order with no scale plane (an empty scales view, scale stride zero),
+after the same checks, so it admits no row `Fp4` refuses.
 
 ## Text RoPE arithmetic and qualification
 
@@ -253,191 +298,34 @@ BF16 rounding at a few dozen table entries). MiMo's context-sized tables cost
 
 ## Batch shape
 
-The numerical contract bounds each output against its oracle; it does not
-require batch independence, but prefill provides it. For MiMo V2.6 and
-Qwen3.8 (AR and speculative), a prompt row's arithmetic depends only on its
-absolute position and its data: never on the step's live row count, the
-row's place in its chunk, the other items in the step or the launch grid. A
-cold prefill therefore gives the same bits under any chunking, and a
-prefix-cache hit gives the bits of a cold prefill
-([prefix-cache accuracy](#prefix-cache-accuracy)). Qwen needs its chunk ends
-on multiples of 64, which its scheduler granule provides.
+Prefill arithmetic depends on a row's absolute position and data, not its
+chunk, companion requests or launch grid. MiMo and Qwen cold prefill and
+prefix hits therefore keep the same bits; Qwen chunk ends must align to 64.
 
-Decode and verify steps choose their F32 reduction order from the step's
-shape:
+Decode and verify may select different F32 reduction orders at row-bucket
+boundaries: GEMM/expert splits, attention splits and all-reduce protocols.
+Within a bucket each row follows its own history, lengths and routes.
+The verify bucket also depends on the total draft rows. Exact verify rows
+match one-row decode only within their declared range.
 
-- GEMM, expert and attention split counts and tile geometry from the row
-  bucket;
-- all-reduce protocols, and their norm orders, from row thresholds of the
-  bucket;
-- paged decode and verify attention cut each row's (verify: item's) keys
-  into pieces from its own length and the bucket, so its bits do not depend
-  on the other rows or items
-  ([attention README](../crates/kernels-sm120/cuda/attention/README.md));
-- MiMo's grouped experts run the ring decode entries (exact entries for
-  exact verify rows) in buckets of up to 16 rows and the prefill route and
-  prefill expert entries in wider buckets; either way a row's expert sums
-  follow its own routes only.
+A lone request or fixed-batch replay is bit-reproducible with greedy decoding
+or the same explicit seed and sampling parameters. Unseeded sampling draws
+a fresh seed. Concurrent requests may produce different logprobs and tokens
+as batch composition changes; the accuracy gates do not require equality
+between buckets or repeated concurrent runs.
 
-So a decoding request's logits can change bitwise with the requests that
-share its steps only through their number, at a bucket boundary, and under
-speculation through the verify bucket, which follows every item's draft
-length. A fixed-state replay at MiMo B64
-(2026-10-04, `tools/dev/fixed-state-replay.py`) measured the former
-coupling at 0.02-0.035 nats mean absolute target logprob per position over
-40 decode steps when only the other rows' lengths were reordered: step-wide
-paged decode attention and stream-K expert entries, which cut each
-expert's K range by the step's routed items, each carried part of it. With
-both removed the replay's probe rows were bitwise equal.
+Sampling chooses each row's token independently, but the dispatch selects
+its kernel family. The simple family's raw-logprob normalizer uses 256
+threads when top logprobs are requested or the dispatch has at most eight
+rows, otherwise 64. The filtered family always uses 256 threads. Thus
+reported logprob bits may change across dispatch shapes too.
 
-Qwen3.8 changes its reduction order at B8 (the warp blocks of its dense
-decode projections and the K splits of its FP8 gate/up experts) and at B16
-and B32 (sparse attention splits, which decode context parallelism does
-not use); buckets above 32 run the prefill-shaped entries. A Qwen MTP
-verify step holds at most 32 rows by default when the instance serves at
-most 32 sequences; the diagnostic `CHOPINFER_SPECULATIVE_WIDE_ROWS=1`
-allows wider verify steps ([debugging](debugging.md#reproduce-one-device-case)). A MiMo DFlash verify step holds up to eight rows per item, up
-to 256, so at 32 sequences it can cross from the decode entries to the
-prefill-shaped entries.
-
-In Qwen3.8 the first differing value between B1 and B8 is the first layer's
-linear-attention input projection (`gdn.qkv`), where the dense warp blocks
-change from one to two. Repeated runs of Qwen3.8 and MiMo V2.6 at 4 to 32
-concurrent greedy requests differed in some requests from run to run (Qwen
-TP4 AR at eight requests: 41 of 224 request pairs over eight starts), while
-single requests and replays of a fixed batch matched bit for bit. GLM 5.3
-Flash matched in every repeated eight-request smoke run (2026-10-12) and in
-its 16-request `preemption_exact` pairs; it was not measured at other
-buckets.
-
-This batch variance is documented behavior. Decode and verify outputs are held
-to accuracy gates, not to batch independence. The gates that cover batched
-decode are speculative verification and the concurrency qualification's
-B64-against-B32 decode repeats (MiMo AR -0.0012 to +0.0039 nats, Qwen AR
-+0.0028; [serving
-profiles](serving-profiles.md#tp4-concurrency-qualification-2026-10-04)).
-Speculative verification ([below](#serving-qualification-gates)) has two
-forms. A single verify draw, as the release declarations run, may sit at
-most 0.005 nats of mean error above its AR control, with a bound on excess
-top-one disagreements and a coverage check. Pooled draws at several item
-buckets, as MiMo DFlash records, each keep their own top-one bound and
-coverage, while only the draws' mean is held to the 0.005 margin, so one
-bucket can exceed it (MiMo DFlash measured +0.0074 at C32 and +0.0076 at
-B64); MiMo DFlash's pooled mean is itself waived
-([accuracy waiver](serving-profiles.md#accuracy-waiver-2026-10-06)). No gate
-bounds every bucket uniformly at 0.005 nats, and none requires equality
-between buckets or between runs. A request served alone, and a fixed batch replayed with the same
-rows, are reproducible bit for bit when decoding is greedy or uses the same
-explicit seed and sampling parameters (an unseeded sampled request draws a
-fresh seed). Under concurrent load the bucket's reduction order shifts
-logprobs and can change a greedy token. Measured against the same
-requests served one at a time, 16 concurrent requests moved likely-token
-logprobs by a median of 0.001 to 0.004 nats (99th percentile about 0.2, at
-most 0.54), and the first differing token followed a top-2 gap of up to 0.54
-nats ([serving profiles](serving-profiles.md#alpha-limits)). The spread
-between buckets is small next to the gates: on the row-local MiMo build the AR
-decode buckets' mean errors against exact ranged from 0.0538 to 0.0600 nats
-from C1 to B64 (sd 0.0026, [served
-error](#served-error-against-the-bf16-floor)). Making every bucket give a lone
-row's bits would cost decode throughput at 8 to 32 sequences and fix each
-bucket's kernel choices to the one-row arithmetic, so it is not done.
-
-MiMo decode and verify steps, at TP2 and TP4, are row-local: a row's bits
-depend only on its own history and inputs and on the bucket. Verify
-attention and the DFlash drafter's block attention (a bidirectional verify
-variant) became row-local on 2026-10-05, after the first requalification
-below. Still coupled:
-
-1. Bucket boundaries: every bucketed kernel (dense GEMM tiles and split-K,
-   the expert entries at 1, 2-16 and 32+ rows, attention splits, all-reduce
-   protocols) may change its reduction order when the live row or item
-   count crosses a bucket.
-2. The verify bucket follows the step's total draft rows, which adaptive
-   speculation varies per item, so a companion's draft length can move an
-   item across a verify bucket. This is inherent in batching verify steps.
-3. Speculative and AR rows differ by design; exact verify rows equal one-row
-   decode only up to eight rows.
-
-Prefill, the MTP drafter and the logits gathers stay row-local. Sampling
-chooses each row's token from that row alone, with two couplings to the
-dispatch. The dispatch's rows together choose the sampling entry (the
-simple or the filtered family). In the simple family, a reported logprob's
-normalizer is summed with a thread count chosen for the whole dispatch: 256
-threads when a row asks for top logprobs or the dispatch has at most eight
-rows, otherwise 64. The filtered family always uses 256 threads for its
-statistics and histogram. Logprob bits can therefore change with the
-requests that share a step.
-Served cost against the previous build (tok/s ratio, the 2026-10-05 B64
-numerics run's served A/Bs, chat and GSM8K): TP4 AR C8 0.99-1.00, C16 1.00-1.01, C32 0.94,
-C64 0.96-0.97; TP2 AR C16 1.01, C32 0.99; long-context decode at 16K 1.00.
-
-The 2026-10-05 requalification on this build passed TP4 AR C64 accuracy (paired
-and absolute teacher; B64 against C32 +0.0031 nats in all three repeats,
-bit-identical), preemption and stability (GSM8K, spec_verify, soak), and TP2
-AR accuracy. TP4 DFlash C64 failed the pooled speculative bucket gate:
-+0.0085 nats against the 0.005 margin (CI95 [-0.0009, 0.0275]; top-1 flips
-2.42% against AR's 2.44%; the paired teacher passed), where the previous
-build measured +0.0023 once, so `tp4-dflash` serves 32 sequences
-([serving profiles](serving-profiles.md#row-local-decode-requalification-2026-10-05)).
-On the row-local verify build DFlash failed the same gate at +0.0082 nats
-(CI95 [0.0001, 0.0233]) with the teacher gates passing; its pooled rows were
-bitwise equal across two servers (16,205 forced positions; which bucket
-executed each position is not recorded), so the excess is systematic, not
-composition. The gate never ran at 32, so `tp4-dflash` became experimental
-at 32 (on 2026-10-06 it was qualified through 64 with this gate waived; see
-below). Row-local verify cost DFlash 0.3-1.1% of served tok/s (chat C32
-0.997, C64 0.991; GSM8K C32 0.993, C64 0.989). No rerun was made to obtain a
-pass. The 2026-10-05 DFlash accuracy draws then recorded more draws on the same
-build and rescored them against the mean of the C32, B8, B16 and B64 AR
-draws ([serving qualification gates](#serving-qualification-gates)): pooled
-DFlash rows pass at 8 and 16 items (+0.0021 and +0.0005 nats) and still
-fail at 32 and 64 (+0.0074 and +0.0076; against C32 alone +0.0080 and
-+0.0082). AR B64 sits +0.0034 and AR C1 +0.0027 from the same mean.
-The 2026-10-06 verify attention study found no precision difference behind
-the gap:
-- **Verify attention against decode.** The kernel-lab comparison
-  `attention_verify_precision_against_decode` ran MiMo verify steps of 5 to
-  64 items: one to eight rows each, contexts up to 32,761 tokens, sinks, and
-  grid and model-like inputs. Each verify row was compared with the decode
-  row at its position on identical inputs, both against the f64 oracle.
-  Verify was never less precise than decode at B64 by more than 0.00001
-  BF16 steps of mean error or 0.034 percentage points of inexact outputs.
-  Past 32,768 keys, decode was the less precise path, since its rows take
-  one probability term there.
-- **K/V write.** The verify phase's row RoPE and K/V write give AR's bits
-  at 8 to 64 items (`attention_verify_pipeline_against_ar`).
-- **State handling.** Forced DFlash C1 with exact rows equalled AR C1 at all
-  4,053 scored positions. Four items of two rows equalled it at every
-  position an exact-row step computed; the other six positions came from
-  zero-draft steps run as decode at buckets 2 to 4.
-
-With exact rows off, the verify kernels sat above the C32 control, outside
-`chat_tool_call`, by +0.0005 nats per position at one item and +0.0010 at
-four. AR draws sit at -0.0001 to +0.0003, and pooled draws at 8 to 64 items
-at +0.0017 to +0.0024. The excess is neither a precision loss of verify
-attention on these inputs nor a K/V or state difference.
-The 2026-10-06 verify excess study held the verify row bucket fixed with
-`CHOPINFER_MIMO_VERIFY_BUCKET`. The excess follows the bucket, not the items
-in a step:
-
-- +0.0016 at 64 rows for one to eight items, and +0.0027 at 256 rows;
-- rows bitwise equal across item counts wherever their step histories
-  match, and between graph and eager verify.
-
-Running wide verify attention as per-row exact rows
-(`CHOPINFER_MIMO_VERIFY_ATTENTION=rows`) makes the 64- and 256-row buckets
-bitwise identical but leaves +0.0021. Verify attention arithmetic is
-therefore not the whole cause, and the cause is open. At 16 items the
-excess is +0.0020 outside `chat_tool_call`, so a 16-sequence cap passes the
-gate on this reference without removing it.
-A request served alone is reproducible bit for bit, with or without
-speculation, when it is greedy or repeats the same explicit seed and
-sampling parameters: its prefill does not depend on chunking, MiMo verify steps of
-up to eight rows run exact rows whose bits are the one-row decode step's,
-and Qwen's C1 MTP K3 rows use AR's reduction order
-([adaptive speculation](adaptive-speculation.md)). Batch shape alone moved
-top-1 gaps by 0.03 to 0.17 nats at measured GSM8K branch points
-(2026-10-01), which is why gates treat near ties separately ([top-one near ties](#top-one-near-ties)).
+Speculative verification allows 0.005 nats of mean error above its AR
+control, plus top-one and coverage gates. Single-draw and pooled-draw rules
+are distinct: a pooled mean does not bound each bucket at 0.005. MiMo
+DFlash's pooled mean has an explicit
+[accuracy waiver](serving-profiles.md#accuracy-waiver-2026-10-06);
+the top-one, coverage and teacher gates remain required.
 
 ### Prefill chunk invariance
 
@@ -477,8 +365,6 @@ indexer and top-k and the hyper-connection all-reduces are invariant as
 well. Each entry declares it (`kernels_sm120::invariance`), and the kernel
 lab's generated invariance tests check every declaring entry bitwise
 against splits at its granule ([kernel lab](../crates/kernel-lab/README.md)).
-Cost at TP4 (2026-09-30): fragment prefill entries +1 to +13% at 2,048 rows,
-cold AR prefill throughput 1.6% to 7.3% lower, decode unchanged.
 
 ## Sampling contract
 
@@ -616,48 +502,11 @@ top-k of these F32 scores exactly; equality to f64 scores of the same BF16
 operands is not required. Keep the score error bound, tie rule,
 deterministic replay and existing quality gates.
 
-GPU diagnostics on 2026-10-03 compared Torch IEEE F32 and f64 scores over
-the same BF16 indexer operands. The 4K prose chain differed on 2 of 24,540
-sparse rows, and the 8K chain on 5 of 73,692. The conservative combined
-score bound included 17,069 of the 4K rows (69.56%); it is an error
-guarantee, not an estimate of selection flips. The median absolute boundary
-gap was 0.003738, while the two differing rows had gaps of 1.256e-6 and
-5.321e-7. These are diagnostic matmuls, not the serving MMA's bits.
-
-Changing only score precision changed mean absolute logprobs by 0.00000845
-nats on 4K prose and 0.000271 on 8K prose, versus their baseline reference
-errors of 0.02157 and 0.05756. Neither changed a top-one choice. On the six
-8K needle-answer positions, the difference was 0.01705 nats and f64
-selection reduced reference error from 0.03984 to 0.02322, also without a
-top-one change. This localized sensitivity warrants broader needle checks;
-these measurements do not establish a need for exact f64 selection.
-Swapping every row within the conservative bound perturbs thousands of
-correctly ranked rows and cannot estimate the effect of actual F32 flips.
-
-The indexer keeps norm and rotation arithmetic in F32 until one BF16
-storage rounding, and stays that way. HF's BF16 sequence (the BF16
-teacher's) would also round the norm output, each RoPE product and their
-sum to BF16. Upstream HF f64 rounds none of these values.
-
-A matched-input check on 2026-10-05 held the BF16 projection, pooled-key
-storage, BF16 cos/sin and f64 scoring fixed on real projection rows (12
-layers at 4K and 32K, 4 at 128K). The shipped sequence leaves every query
-and key element within 0.5 BF16 ulp of the f64 value, the minimum for BF16
-storage. HF rounding averages 0.57 to 0.70 ulp, puts 17% to 19% of
-elements beyond 0.5 ulp and raises mean score error by 12% at 4K and 26%
-at 128K. It mis-selects 9%, 17% and 23% more blocks than the shipped
-sequence against the f64 selection at 4K, 32K and 128K, and changes the
-selection of 30% (4K) to 79% (128K) of rows.
-
-A GPU teacher-forced pilot on 2026-10-03 had found HF rounding closer to
-upstream HF f64 over 1,024 prose positions (0.03467 against 0.03956 nats,
-12 against 14 top-one disagreements). Paired by position, the gain is 8K
-prose alone (0.00997 nats, 94% of it from ten positions); 4K worsened by
-0.000179. The top-one change was six disagreements fixed and four new, and
-five of the six 4K needle positions worsened. With no operand-level
-mechanism behind it, this is chain variation from a large selection
-perturbation, not an accuracy gain, so no indexer rounding change is
-planned.
+The indexer keeps norm and rotation in F32 until one BF16 storage rounding.
+Extra HF-style intermediate BF16 roundings increase operand error; a closer
+full-chain result on a small prompt set does not establish a better arithmetic
+contract. Changes to selection precision or rounding require matched-input
+oracle evidence and the model's unchanged quality gates.
 
 ## Prefix-cache accuracy
 
@@ -675,7 +524,7 @@ the cold send bit for bit, and 1,024-token chunks must return the bits of
 MiMo anchors sit at any position. Qwen anchors sit on multiples of 64 (its
 prefill granule): a prompt-end capture moves to the last multiple of 64 at
 or below the prompt end, kept inside the prompt's last chunk from
-accumulators the kernels already hold ([Qwen3.8 bundle](bundle-qwen38.md)),
+accumulators the kernels already hold ([Qwen3.8 bundle](numerics.md#kv-offload-and-prefix-state)),
 so the anchor changes no bit and adds no step. Beyond two such prompts in one
 step the anchor ends a chunk instead, one extra step of the last 1 to 63
 rows.
@@ -684,7 +533,7 @@ Bitwise equality is the gate. `tools/qual/prefix_exact.py` checks it at
 every page boundary of a model's exact reference: per scored position a cold
 one-shot prefill, a cold prefill with a chunk ending at the anchor and a
 real hit must give the same raw logprob and top logprobs, and each request
-must report the cached tokens the [anchor rules](serving-kv-pool.md) give
+must report the cached tokens the [anchor rules](numerics.md#kv-offload-and-prefix-state) give
 with the model's prefill granule. It also scores the rows against the exact
 reference: hit mean absolute logprob error may exceed cold error by at most
 0.005, and hit-only top-one disagreements may exceed cold-only ones by at
@@ -734,11 +583,9 @@ drop only q lo k lo. The merged rows the language model reads stay BF16,
 like its token embeddings. The kernels are described in
 `crates/kernels-sm120/src/encoder/README.md`.
 
-The served merged rows are within 0.0017 relative L2 of HF's F32 rows, the
-rows' own BF16 rounding, against 0.026 to 0.055 for a BF16 tower (TP4
-encoder captures, 2026-10-01). Accuracy comes first, so the cost is accepted:
-a 1920 x 1080 image encodes in 239 ms instead of 138 ms, a 16 MP image in
-9.47 s instead of 3.69 s, and the encoder buffers grow by 544 MiB per rank.
+The F32 policy avoids the larger error of an all-BF16 vision tower. Its
+extra compute and buffer cost is accepted for accuracy; changing it requires
+encoder and serving qualification.
 
 ## MiMo vision row scale
 
@@ -760,7 +607,7 @@ scale error under the gate's 0.1% floor.
 ## Serving qualification gates
 
 Accuracy is judged against the reference model code: the vendor model code
-of the served checkpoint run on the [GPU reference runner](reference-runner.md),
+of the served checkpoint run on the [GPU reference runner](../tools/refrun/README.md),
 its F32 run (`exact`) for closeness and its other runs for the realistic
 spread. vLLM can itself be inaccurate, so no declaration sets a
 `legacy_reference` vLLM capture and no gate scores against one; frontend and
@@ -793,38 +640,16 @@ seven teacher chat texts (107.08 against 88.25 nats). Without a factor, a
 spread just below a multiple of 0.05 would leave the limit at the spread
 itself.
 
-Each model's spread variants are its runner BF16 and f64 runs. The BF16
-spread sets the limits that differ from the floors:
-
-| Model | Set | Positions | Limits: mean, decisive, near tie, total |
-|---|---|---:|---|
-| MiMo (MOPD) | teacher, pooled | 4,108 | 0.15, 8%, 8%, 10% |
-| MiMo | chat | 486 | 0.45, 9.3%, 8%, 13.4% |
-| MiMo | other categories, each media case | | 0.15, 8%, 8%, 10% |
-| Qwen3.8 | teacher, pooled | 4,176 | 0.10, 8%, 8%, 10% |
-| Qwen3.8 | chat | 899 | 0.20, 8%, 8%, 10% |
-| Qwen3.8 | other categories | | 0.15, 8%, 8%, 10% |
-| Qwen3.8 | long context (last 1,024 of 32,768 tokens) | 1,024 | 0.10, 8%, 8%, 10% |
-
-MiMo's chat texts (a JSON tool schema, call and result among them) are
-ill-conditioned for every BF16 implementation: the reference's own BF16 run
-sits 0.42 nats from F32 there, so chat's limits follow that spread. The
-fixtures' provenance is in their READMEs
-([MiMo](../fixtures/mimo26/README.md#reference-code-references),
-[Qwen](../fixtures/qwen38/README.md#teacher-gate-reference)).
+Each model's declaration names its independently pinned spread variants.
+The fixture READMEs retain reference provenance. Per-model results and
+effective limits belong to the declarations and their evidence, not a
+second copy of the profile table.
 
 ### Small categories
 
-A limit raised to the reference's own spread can sit at that spread: an
-engine exactly as accurate as the reference's BF16 run then fails the
-limit by chance about as often as it passes, at any size. Measured on the
-pinned references (2026-10-15), the 141-position, three-text prose-frozen
-category's total top-1 limit (0.10) sits 0.03 binomial standard errors above
-GLM's BF16 rate (14 of 141, 95% interval 5.5% to 16.1%), and its near-tie
-limit 0.09 above (11 of 141); MiMo's prose-frozen near-tie limit sits 0.09
-above, and MiMo's 486-position chat total and decisive limits equal its BF16
-rates. Such an engine passes those limits with probability 0.53 to 0.58;
-more positions cannot help while the limit equals the rate.
+A top-one limit at the reference BF16 run's own rate can fail an equally
+accurate engine by chance. More positions do not fix a limit placed exactly
+at the comparison rate.
 
 The spread rule therefore checks each top-1 limit of a category or media
 case for power (variant-spread.v2, adopted on 2026-10-15): a limit that sits less than two binomial standard errors above
@@ -834,14 +659,9 @@ positions by at most two standard deviations of the discordant count, the
 paired rule's top-1 clause
 ([check kinds](check-kinds.md#the-spread-rule-variant-spreadv2)). Limits
 with power, every mean limit and every pooled set are judged as before.
-Positions within a text are not independent, so the true false-fail rate is
-above the binomial 2.3% and the fallback's power below it: at 141 positions
-it fails a candidate with twice the BF16 run's flips, not one with half as
-many again. On the 17 stage 5 teacher receipts no verdict changes; GLM's
-held BF16 KV run of 2026-10-14 (16 of 141 against the BF16 run's 14, 9 of
-them shared) would pass by the paired clause (7 against 5), and its
-requalification on 2026-10-16 passed that way
-([BF16 KV](model-glm5next.md#bf16-kv)).
+Positions within a text are not independent, so the binomial approximation
+overstates power. This fallback does not change pooled or mean limits and
+does not excuse errors outside its stated rule.
 
 A gate result the rules do not cover can be waived only by declaration: a
 check's `waivers` name the predicate or teacher category, a ceiling no
@@ -881,48 +701,26 @@ Speculative verification compares each prepared row bucket against its
 paired AR baseline at the same concurrency, over exactly the positions the
 reference forcing can score (`verify_exact.py`). Mean error against exact
 may worsen by at most 0.005, and excess top-one disagreements are bounded by
-two standard deviations of the discordant count. On the row-local MiMo build
-each AR decode bucket is one fixed draw whose mean error against exact
-ranges from 0.0538 to 0.0600 nats over C1, B8, B16, C32 and B64 (sd 0.0026),
-so a single C32 control moves verdicts. `verify_exact.py report --control`
-therefore compares each bucket against the mean of several AR draws: C32 as
-`--ar`, with B8, B16 and B64 (B64 left out when it is the candidate) as
-controls. The top-one counts still pair with C32. Against
-a four-draw mean a candidate's gap has an sd of about 0.0029 nats, against
-0.0037 for one draw, and the margin stays 0.005. Rescored on recorded MiMo
-receipts, AR B64 is +0.0034 (+0.0031 against C32 alone) and AR C1 +0.0027;
-pooled DFlash is +0.0021 at C8 and +0.0005 at C16 (pass), and +0.0074 at
-C32 and +0.0076 at B64 (fail). A speculative candidate is therefore scored
-as the mean of several draws at different item buckets (`report
---pool-verify`): MiMo DFlash records pooled rows at C8, C16 and C32 without
-filler and at B64, and the mean of the four draws' row errors at each
-position may sit at most 0.005 above the four-draw AR mean. Each draw keeps
-its own top-one bound and coverage; its single-draw gap is reported, not
-gated. Pooling averages across buckets, so a bucket whose own gap exceeds
-the margin passes when the mean is within it. This rule was adopted on
-2026-10-06, after DFlash C64 had failed the single-draw gate three times
-(+0.0085, +0.0082 and +0.0076) and the verify excess study had shown that the
-excess follows the verify row bucket; it changes the gate after those
-failures rather than removing the excess. On the recorded receipts the
-four-draw gap is +0.0044 (CI95 [+0.0007, +0.0110]). The first requalification
-under the rule failed at +0.0057 (CI95 [+0.0003, +0.0162]): C8 and C16 drew
-+0.0051 and +0.0026 against the +0.0021 and +0.0005 projected, while C32 and
-B64 repeated +0.0074 and +0.0076 ([serving
-profiles](serving-profiles.md#row-local-decode-requalification-2026-10-05)).
-The maintainers then waived the pooled mean for MiMo DFlash on sampling-level
-evidence ([accuracy waiver](serving-profiles.md#accuracy-waiver-2026-10-06));
-the 0.005 margin itself is unchanged and still gates every other candidate.
-The waiver is stated here and in the profile text, not in
-`models/mimo26/qual.json`: the declared verify gate judges one record, not
-the pooled four-draw mean the waiver covers, and a declared waiver must name
-a declared predicate. It moves into the declaration when the pooled gate is
-declared (decided 2026-10-15).
+two standard deviations of the discordant count.
+`verify_exact.py report --control` can compare against several AR draws;
+top-one counts still pair with the main AR control. With `--pool-verify`,
+the mean of candidate draw errors at each position may exceed the control
+mean by at most 0.005. Every draw keeps its own top-one and coverage gate;
+single-draw mean gaps are reported. This permits a bucket above the margin
+when the pooled mean passes.
+
+MiMo DFlash's pooled mean failed and was waived, not passed
+([scope and evidence](serving-profiles.md#accuracy-waiver-2026-10-06)).
+The margin remains unchanged for other candidates. That waiver applies to
+the pooled mean, not the one-record predicate declared in `qual.json`; it
+belongs in the declaration when the pooled gate itself is declared.
+
 Fixed-K3 MTP state runs
 and the release and preview declarations keep one AR control and one draw.
 The preview keeps exact C1
 greedy equality for Qwen MTP; MiMo DFlash uses the `spec_verify.py`
 copy-set bounds (mean |dlogprob| <= 0.15, top-1 disagreement <= 0.08) plus
-paired GSM8K. See the [speculation contract](adaptive-speculation.md).
+paired GSM8K. See the [speculation contract](numerics.md#state-and-verification-contract).
 Stochastic checks require distributional correctness, not matching text.
 
 Qwen's layer comparison (`qwen38_layers`) judges every tap of a bundle dump
@@ -1064,21 +862,10 @@ route-near-tie.v2 (`tools/qual/tapdiff.py`):
   the rule fails with it, and a flip at a gap beyond the margin is judged by
   the plain rules.
 
-Adopted with minimal exclusion on 2026-10-15, with the
-plausibility guard added on 2026-10-16. On GLM's reference
-the margins run from 7.2e-3 at layer 3 to 3.69e-2 from layer 18 on. GLM's
-2026-10-14 layer dumps (TP-split, stage 5 taps) failed five taps on the
-aggregate alone, all from row 1, whose first flip is a near tie at layer 3
-(gap 6.6e-5); its layer 16 flip swapped F32's 7th expert for its 19th (gap
-8.4e-4, margin 1.42e-2). Under the rule, row 1 alone explains each of the
-five taps, leaving aggregates at 0.23 to 0.34 of their bounds, and row 1
-sits at 0.03 to 0.10 of its per-row bound, with a norm 0.954 to 1.004 times
-the F32 row's and a cosine of at least 0.998 with it. The per-row bound is
-loose on `mlp.out` taps, whose worst BF16 row is itself a rerouted row: at
-layer 16 its relative error is 0.364, so the bound is 1.09, and a zeroed
-row (relative error 1.0) is inside it. The plausibility guard rejects such
-a row (its norm ratio is 0); a moderately wrong row that keeps the F32
-row's norm and direction is still caught only by the per-row bound.
+The rule was adopted on 2026-10-15 with the plausibility guard added on
+2026-10-16. The per-row error bound can be loose when the BF16 floor row
+itself reroutes; the norm/direction guards reject zeroed or implausible rows
+that such a bound alone would admit.
 
 ## Scope of offline oracle evidence
 
@@ -1094,8 +881,246 @@ identity (`mopd` by default), and the layer images read from
 `CHOPINFER_MIMO_CHECKPOINT` must authenticate against it. Seal each
 exported directory with the offline `seal` command before comparison. This
 is a seeded hidden-input layer chain, not a full-model token run; missing bounds, state, ranks or operands are
-insufficient. See [debugging](debugging.md) for first-divergence reporting;
+insufficient. See [debugging](contributing.md#diagnostics) for first-divergence reporting;
 Qwen eager synchronized dumps cannot clear a graph-only failure.
 
 A precision option is adopted only with a resolved accuracy benefit against
 the reference.
+
+## State and verification contract
+
+Verification prepares K + 1 rows transactionally. Commit keeps only the
+accepted prefix and the correction or bonus token; rejected KV, recurrent
+state and drafter state are restored before the next step. Streaming, stop
+handling and logprobs describe committed target tokens only. Greedy acceptance
+compares target token IDs; stochastic acceptance preserves the target
+distribution rather than forcing AR text equality. Graph row capacities are
+compile-time bounds; unused rows never become samples or committed state.
+
+The MiMo release preview records both speculation and AR with
+`tools/qual/spec_verify.py` (16 copy and 16 natural prompts, 64 greedy output
+tokens, top-5 logprobs). Over common prefixes, the copy set must keep mean
+|dlogprob| <= 0.15 and top-1 disagreement <= 0.08. Both GSM8K arms must score
+at least 193/200, lose at most one AR-correct item and drop at most one total
+correct answer. C1 greedy differences are informational. See
+[the release gates](../tools/qual/README.md).
+
+### Exact verify rows
+
+MiMo verify steps of up to eight rows run one-row AR arithmetic for every
+stage; wider verify steps follow their bucket's reduction order. Qwen MTP
+K3 at C1 also uses AR's order. These are C1 guarantees, not concurrent batch
+independence. The release declarations decide whether a particular profile's
+AR/speculative equality is a hard gate or informational.
+
+## KV offload and prefix state
+
+Serving KV pages are opaque bundle-owned layouts. The host allocates them
+after weights, workspaces and persistent state, zeroes new pages, performs
+whole-page copy-on-write on every rank and commits or rolls back the logical
+batch. A bundle declaring `rewrites_last_page` also copies shared full tail
+pages. Bundle callbacks commit or restore recurrent state. Layout identity
+is fixed for the engine lifetime; FP8 quantizes only declared KV regions.
+
+Anchors include logical pages and exact bundle state. A request resumes from
+its longest matching token/media/cache-salt prefix ending before its last
+prompt token. Capture points are the prompt end, the start of its final
+configured prefill chunk, and previously produced shared full pages beyond
+its hit when no anchor exists there. Granules round these positions down.
+A request resumed within its final chunk needs no extra shared-page anchor.
+Prompt-end anchors serve extensions; same-prompt repeats must still prefill
+their last token. Prompt-logprob requests cannot skip rows they must report.
+Unused anchors are evictable under page pressure.
+
+Offload is disabled by default. Transfers retain page references until all
+ranks complete; swap-in restores newly reserved pages before admission.
+Resume tries GPU state, host state, then recomputation. A refused capture or
+restore may fall back only after confirmed device completion. Host copies
+cannot be deduplicated by device allocation identity: an anchor's shared
+tail can change without that identity changing. Reusable host prefix caching
+(`--kv-offload-prefix on`) remains refused.
+
+The full `kv_offload` check compares offload-off and forced-swap servers in
+plain AR and prefix-pressure scenarios. C1 compares 36 prompts' token IDs,
+strings, logprob bits, alternatives, finish and usage after exact resumes;
+at least 18 must reach a forced swap and qualify. Plain runs permit no
+fallback; pressure runs list and exclude capacity fallbacks. Concurrent runs
+must complete, transfer both ways, leave the host tier idle and avoid stalls.
+Pressure must exercise prefix eviction and, with speculation, verified items.
+Concurrent equality and off/off controls are informational. The reference
+host arena is 16 GiB; the check does not enable offload by default.
+
+### Context parallelism
+
+Groups contain N consecutive ranks, with N dividing the topology and declared
+by the bundle. Physical page j belongs to group rank j % N at local table
+index j / N. One logical stripe allocates a local page on every rank and
+covers N * page_tokens positions. Replica groups must stay within a KV-head
+replica set. The tightest rank bounds capacity; partial stripes still
+reserve every rank's page. Group buffers are allocated before the pool.
+
+Prefix discovery uses whole stripes. Prompt/chunk anchors retain the prefill
+granule and can end inside a stripe; copy-on-write and offload cover every
+rank's share. Hit outputs must equal cold prefill at each group size.
+The create tail declares the group size only above one, preserving size-one
+wire bytes. Each writer stores only owner-local positions and partial
+attention results merge in fixed rank order. A different group size changes
+reduction order and needs its own serving qualification.
+
+### Recurrent state
+
+Stable state-slot IDs are host-owned; physical state and speculative history
+are bundle-owned. Commit, accepted-prefix commit and cancel must retain or
+restore exactly the corresponding rows, including drafter state. Prefix and
+preemption snapshots include that state as well as KV. A failed callback
+poisons the instance as specified by the bundle ABI, not a retry promise.
+
+## Paired release accuracy
+
+`paired_teacher` compares this run's teacher capture with an accepted capture
+of the same configuration and arm, both scored against the same independently
+pinned reference, by declared margins. The accepted capture is the one the
+[correctness runner](../tools/qual/README.md#correctness-runner) stores: the
+check runs once against the last-good store and once against the seed store,
+and both rows gate. It supplements the absolute teacher gate, including
+reference-spread limits, and the existing C1 exactness checks. It does not
+replace either.
+
+The check uses `teacher.score`, `limits.paired` and the existing deterministic
+95% text-clustered bootstrap (2,000 resamples). It reports both arms' mean and
+maximum absolute logprob error and decisive, near-tie and total top-one counts.
+It reports paired error changes, discordant counts and affected text names,
+categories and absolute token positions. Pooled results and every category
+must pass separately. Near ties use the pinned reference's stored top-k gaps,
+including the existing 0.3-nat boundary. Classification never uses the other
+serving arm as ground truth.
+
+The [declaration fragment](../tools/qual/templates/paired-teacher.json) keeps
+all acceptance numbers in one `paired-teacher-margins/v1` object: the margins,
+the reference pin, the approval and its rationale. These are **approved
+margins**:
+
+| Rule | Proposed value | Meaning |
+|---|---|---|
+| Pooled mean error | 0.005 nats | Upper clustered CI95 of candidate-minus-accepted absolute error |
+| Category mean error | 0.01 nats | Point increase, without category CI gating |
+| Pooled top-one | 0.01 | Upper clustered CI95 of the per-position net added disagreement rate |
+| Category top-one harm | alpha 0.05 | Whole-text one-sided sign test, with Holm over all categories |
+| Minimum CI clusters | 8 texts | No bootstrap CI is computed or gated below this count |
+| Sparse pooled point rules | false | Pooled evidence below the minimum text count is insufficient unless explicitly allowed |
+| Tail growth threshold | 0.5 nats | Strictly greater absolute-error increase/decrease at a position |
+| Pooled tail allowance | 2 net positions | Increases beyond the threshold minus decreases beyond it |
+
+Category top-one harm sums ordinal severity per text (agreement < near
+tie < decisive flip), then uses a one-sided sign test over increasing and
+decreasing texts. Ties are excluded. Holm correction rejects only while
+p < alpha / remaining categories. Positions within a text are not independent
+trials. Sparse pooled evidence is insufficient, even for bit-identical arms,
+unless a predeclared `allow_sparse_pooled` policy permits point rules with a
+coverage rationale. Categories retain point means and whole-text sign tests.
+The declaration owns each profile's adopted margins; GLM uses a 0.015-nat category mean margin and four net tail positions;
+its margins must not be replaced by the template's.
+A margin change is a reviewed policy change, not a baseline update.
+
+## Activation and calibration
+
+The check selects its margins by the live rank count and effective
+speculation mode (`tp{N}-{mode}`); a profile running context parallelism
+C > 1 selects `tp{N}-{mode}-cp{C}` when the declaration states it, and its
+DCP 1 counterpart's margins otherwise. An unknown profile, or one without
+margins, is refused. A single-policy external declaration can still use
+`POLICY`.
+
+The runner runs `paired_teacher` twice per arm, as `paired_teacher/last-good`
+and `paired_teacher/seed`, each with that store's teacher receipt of the same
+configuration and arm as `--accepted` (`{stored_teacher}`) and this run's
+teacher receipt, which holds every scored text's served rows, as
+`--candidate` (`{teacher}`). A store without a capture of the arm reports "no baseline
+yet" as information. The comparison reads the live server's profile and
+checkpoint binding, recomputes absolute errors from both arms' served rows,
+reports a candidate absolute numerical failure as `fail`, and makes a
+failing accepted arm `insufficient`. The paired check's constants cannot
+loosen the shipped teacher policy. Last good moves only on a passing
+full run of every declared configuration; the seed only through
+`baseline reseed` with a recorded reason.
+
+```sh
+CHOPINFER_QUAL_CONFIG=models/MODEL/qual.json \
+  python3 -B tools/qual/paired_teacher.py \
+  --accepted "$STORED_CAPTURE" --candidate "$CANDIDATE_CAPTURE" \
+  --url "$CANDIDATE_URL"
+```
+
+Complete capture files may be up to 64 MiB and use the shared no-follow JSON
+reader; duplicate keys and nonfinite numbers are refused. Receipts carry
+token-ID digests, score starts, categories and complete served rows.
+Rescoring recomputes both arms and refuses missing, duplicate, reordered or
+differently scored texts. To score another pinned set, add `--reference-name
+NAME` and a separate `--check-id ID` to the check arguments, with the same
+independently adopted reference for both arms, never a newly captured
+accepted-server output as the reference.
+
+`tools/qual/paired_calibrate.py --first A --second B --out FILE` validates two
+accepted repeat captures, their absolute gates, independent startup nonces
+and pinned reference. It scores both repeat directions and records the
+maximum nonnegative upper CI95 for pooled mean and top-one, the largest
+category point increase and net tail count in `observed_spread`, beside the
+reviewed proposal in `margins`; deterministic zero spread does not adopt zero
+margins. Refuse repeats that fail the reviewed proposal, including category
+harm, rather than loosening it. Repeats verify observed repeatability; the
+accepted-only neutral topology comparison supports margins for legitimate
+numerics changes. Neither is a population noise bound. If a paired
+comparison fails, preserve the evidence and resolve the cause; do not widen
+the margin or move a baseline to make it pass.
+
+## Media reference comparisons
+
+### Vision merger normalization
+
+MiMo's vision merger uses RMSNorm over `visual.merger.ln_q.weight` with
+epsilon 1e-6. The vendor declares LayerNorm with biases absent from the
+checkpoint. Paired F32 reference probes found no overall LayerNorm benefit
+and worse OCR results, so RMSNorm remains the served/reference choice.
+
+### Solid-color images
+
+MiMo does not name the color of a uniform image: it answers "white" for solid
+colors, and reads a solid red frame as blue, under either merger norm. This is
+model behavior, not preprocessing. Normalization is a declared deviation: the
+served recipe keeps ImageNet mean and std, which a paired F32 study of 349
+probes favored over the checkpoint's CLIP statistics.
+
+### Image resize reference
+
+Images use the checkpoint processor's bicubic resize with a minimum of 8,192
+pixels. The served recipe keeps ImageNet mean and std on 0..255 values, where
+the checkpoint names CLIP constants, and caps an image at 1,048,576 pixels;
+the qualification declaration records the normalization, the minimum and the
+cap as explicit deviations from the checkpoint processor. A paired F32 GPU
+comparison (2026-10-02) found no significant difference between bicubic and
+bilinear, and the 3,136-pixel checkpoint minimum lost accuracy on small
+images, so the 8,192 minimum stays. Video keeps its 8,192-pixel minimum and
+262,144-pixel per-frame cap, with bicubic resize and ImageNet normalization
+as a serving choice (the checkpoint has no video processor configuration).
+The image reference is transformers' AutoImageProcessor on the GPU
+[reference runner](../tools/refrun/README.md).
+
+### Paired baseline scope
+
+MiMo MTP has no accepted paired arm. GLM AR has no standalone paired teacher
+baseline: its accuracy link is the same-run AR/MTP determinism and row
+comparisons. Each GLM DCP size uses its own accepted captures. BF16 KV and
+five-draft configurations declare no paired check. The template has an empty
+approval and null reference; it is a proposal until independently adopted.
+
+### Qwen committed snapshots
+
+Qwen snapshots preserve committed recurrent and PLE state, live raw-key rings
+and, with MTP, the drafter frontier and retained target rows. Captures follow
+commit and never include speculative checkpoints. Restore targets the slot
+assigned at admission. A frontier extending into an earlier shared page may
+restore only its own request. In-place recurrent cancellation invalidates
+touched slots and retires those requests; a sampling failure instead commits
+the step and retires only the failed request. MTP tail rewrites require
+copy-on-write even for a full page. Snapshot buffers stay owned until device
+completion on every rank.

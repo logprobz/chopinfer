@@ -268,7 +268,7 @@ its own cubin `block_merge_{tag}_sm120`.
 ## Pages
 
 Pooled keys live in the KV pages of `runtime_kv::ContextParallelPagesV1`
-(docs/serving-kv-pool.md "Context parallelism"). With a context-parallel
+(docs/numerics.md#kv-offload-and-prefix-state "Context parallelism"). With a context-parallel
 group of `cp_size` ranks (1 without context parallelism), physical page j of
 a sequence holds tokens `[j * Page, (j + 1) * Page)` and lives on group rank
 `j % cp_size`, in that rank's local page `table[j / cp_size]`: each rank's

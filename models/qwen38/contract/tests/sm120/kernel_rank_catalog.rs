@@ -1,7 +1,7 @@
 //! Qwen3.8's per-rank kernel shapes at 2 ranks, over its catalogs
 //! (`sm120::catalogs`): every entry the TP2
 //! bundle looks up exists in its own profile with TP4's parameters,
-//! buckets and capacities at the documented shape (docs/topology-qwen.md),
+//! buckets and capacities at the contract's per-rank shape,
 //! validates, plans and matches its cubin entry; the TP4 profile keeps
 //! exactly its own entries; and every symbol is unique.
 
@@ -112,7 +112,7 @@ fn profiles_name_their_rank_counts() {
         .ranks_of(model_qwen38_contract::sm120::config::MODEL),
         None
     );
-    // docs/topology-qwen.md, "Per-rank shapes": TP2 and TP4.
+    // Derive the expected per-rank shapes for TP2 and TP4.
     let table = [2, 4].map(|ranks| {
         let s = Qwen38Shape { ranks };
         [

@@ -19,7 +19,7 @@ class KvOffloadModelTests(unittest.TestCase):
         # models/qwen38/bundle/src/contract.rs.
         self.assertEqual(model.page_bytes("qwen", 4, "bf16"), 835_584)
         self.assertEqual(model.page_bytes("qwen", 4, "fp8"), 442_368)
-        # docs/deploy-common.md: 11,520 B per token and rank for MiMo at TP2.
+        # MiMo TP2's independent expected size: 11,520 B per token and rank.
         self.assertEqual(model.page_bytes("mimo", 2, "bf16"), 64 * 11_520)
 
     def test_snapshot_sizes_match_decision_0085_and_q_prefix(self):
@@ -32,7 +32,7 @@ class KvOffloadModelTests(unittest.TestCase):
         self.assertEqual(model.snapshot_pages("mimo", 4, "fp8", "dflash"), 92)
         # Q-PREFIX's describe_prefix_state_v1 reports 35 BF16 pages.
         self.assertEqual(model.snapshot_pages("qwen", 4, "bf16"), 35)
-        # The per-slot layouts of docs/topology-qwen.md plus one ring copy.
+        # The expected per-slot state layout plus one ring copy.
         self.assertEqual(
             model.snapshot_bytes("qwen", 4),
             29_048_960 + model.QWEN_RING_COPY,

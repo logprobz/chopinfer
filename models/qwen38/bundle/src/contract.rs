@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(ordinal(MTP_LAYER), FULL_LAYERS);
     }
 
-    /// docs/topology-qwen.md, "Per-rank shapes".
+    /// The independent expected per-rank state sizes.
     #[test]
     fn shapes_per_topology() {
         let row = |s: Shape| {

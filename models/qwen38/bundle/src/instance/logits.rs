@@ -4,7 +4,7 @@ use super::*;
 
 /// Row-owned decode and verify logits, on by default at TP2 and TP4
 /// after fixed-batch device runs matched the gather bit for bit
-/// (docs/bundle-runtime.md); `0` keeps the rank-0 gather. The host defers
+/// in the same configuration; `0` keeps the rank-0 gather. The host defers
 /// views by default; `CHOPINFER_SAMPLING_DEFER_VIEWS=0` serializes their
 /// sampling.
 pub const ROW_OWNED_LOGITS: &str = "CHOPINFER_QWEN38_ROW_OWNED_LOGITS";

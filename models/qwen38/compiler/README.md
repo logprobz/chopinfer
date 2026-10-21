@@ -44,7 +44,7 @@ precision at TP4 only). The text image and, with `--encoders on`, the vision
 encoder image are planned components: the weight plan
 (`../contract/src/weight_plan.rs`) places them from the checkpoint with the
 layout below, and the host loads them. Commands, flags and package
-declarations are in [docs/model-qwen38.md](../../../docs/model-qwen38.md).
+declarations are in [docs/serving-profiles.md#qwen-evidence](../../../docs/serving-profiles.md#qwen-evidence).
 
 Dense BF16 weights use `bf16_mma_fragments_16x16_v1` and routed FP8 weights
 `fp8_e4m3_mma_fragments_16x32_v1`; skinny matrices pad their last 16-row
@@ -65,7 +65,7 @@ Recurrent state is allocated by the bundle, not stored in the images.
 ## Dump checks
 
 `src/oracle.rs` and `src/oracle/` check bundle dumps operation by operation
-on the CPU; see [docs/qwen38-oracle.md](../../../docs/qwen38-oracle.md).
+on the CPU; see [models/qwen38/compiler/src/bin/qwen38-oracle.rs](src/bin/qwen38-oracle.rs).
 Whole-model references come from the GPU reference runner (`../reference.py`).
 
 Direct emission inputs now include the selected geometry. After upgrading,

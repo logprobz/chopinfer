@@ -6,7 +6,7 @@ private listener. Native engine and KV metrics come from the worker that owns
 their state; HTTP refusal and intake metrics come from the listener. Label
 domains are bounded and request IDs never become labels. Counters advance only
 after the corresponding transition commits and reset on restart. For
-behavioral or numerical diagnosis, use the [first-divergence workflow](debugging.md).
+behavioral or numerical diagnosis, use the [first-divergence workflow](contributing.md#diagnostics).
 
 ## vLLM-compatible metrics
 
@@ -82,9 +82,9 @@ count lookups; the vLLM ones count tokens.
 | `chop_prefill_budget_decode_estimate_seconds{model_name,engine,rows_le}`, `..._samples` | Decode-aware mode only: the decode step estimate per power-of-two row bucket and its sample count; two samples qualify it |
 | `chop_prefill_budget_prefill_token_seconds{model_name,engine,tokens_le}` | Decode-aware mode only: estimated prefill time per token per power-of-two step-token bucket |
 | `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | Tbt mode only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
-| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](mixed-scheduling.md)) |
+| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
-| `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](serving-kv-pool.md#where-prefix-anchors-are-captured)) |
+| `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
 | `chop_prefix_cache_{captures,capture_failures,restore_failures,evictions}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, evictions, and the anchors and pages held now |
 | `chop_errors_total`, `chop_cancellations_total` | Engine errors and cancelled sequences |
 | `vllm:batch_refusals_total{model_name,engine}` | Batches safely refused before device work, including the refusal that trips the loop guard |
@@ -120,350 +120,60 @@ startup.
 
 ## Weight-loading counters
 
-`startup direct_load` separates `preparation` (arena allocation and filled
-host views) from `upload` (device image production and transfer). Each has
-elapsed seconds and counter deltas. The legacy top-level counters and the
-`cumulative` object cover the image's lifetime; do not divide those totals
-by upload seconds when preparation also read weights. Directly mapped
-checkpoint views and optional prewarming are separate from filled host views.
+`startup direct_load` reports `preparation` (arena allocation and filled
+host views) and `upload` (device image production and transfer) separately,
+each with elapsed seconds and counter deltas. The top-level and `cumulative`
+counters cover the image's lifetime, so do not divide them by upload seconds.
+`CHOPINFER_DIRECT_LOAD_TRACK_RANGES=1` adds exact fetched-range accounting
+(`unique_source_bytes`) at the cost of a shared lock per read, and
+`CHOPINFER_DIRECT_LOAD_TIMING=1` adds lock and wait timings (`shared_timing`,
+`startup weight_pipeline`) that overlap the other counters; leave both off
+when comparing startup times. `tools/dev/startup_timing.py` summarizes a
+startup log. Validated weight plans, metadata only, are reused from the model
+cache's `weight-plans-v1` directory; `CHOPINFER_WEIGHT_PLAN_CACHE` names
+another absolute private directory, or `0` disables reuse. Tensor payloads
+are still read and validated on every start. Views mapped
+from the checkpoint stay in the page cache, not pinned memory; `mapped_bytes`
+and the `prewarm_*` fields state them, and `host-ram-short` warns when
+`MemAvailable` cannot hold the prewarmed views plus a 16 GiB margin
+(`CHOPINFER_PREWARM_MARGIN_BYTES`).
 
-`requested_source_bytes` includes retained input hits; `source_bytes` counts
-requested ranges fetched from files, and `file_read_bytes` also includes
-direct-I/O alignment. Buffered reads may come from the page cache.
-`CHOPINFER_DIRECT_LOAD_TRACK_RANGES=1` enables exact fetched-range accounting
-for diagnostics. It takes a shared lock per source read and is off by default.
-`source_ranges_tracked` reports whether it is enabled; `unique_source_bytes`
-is zero when disabled. When enabled, phase deltas count newly encountered
-bytes, not visits to an earlier phase's ranges. Source-cache hits
-and shared-output reproductions distinguish input reuse from repeated packing.
-Read and production seconds sum worker time and overlap each other.
+## Readiness and shutdown
 
-`CHOPINFER_DIRECT_LOAD_TIMING=1` adds `shared_timing` to the direct-load
-counters: output-lock waits, shared materialization (including its reads and
-input waits), and packed-input lock waits. The CUDA `startup weight_pipeline`
-record reports per-rank reads, time ready but waiting for submission, buffer
-reuse waits, and host waits for transfer completion. These diagnostics overlap the older counters;
-they are not independent phases to add together. Leave them off in final
-timing comparisons. `tools/dev/startup_timing.py` summarizes a completed
-startup log, preserving nested timings and refusing failed or empty uploads.
+The listener opens after engine construction and warmup. Warmup has one
+180-second deadline; remaining graphs are captured on first use. `/health`
+means worker readiness, not complete graph coverage. Allow 600 seconds from
+process launch for cold verification, preparation, loading and warmup.
+Docker marks an unhealthy container but does not restart it for that alone.
 
-Packed inputs share the configured retention budget across ranks. Idle
-packing buffers retain at most 64 MiB, capped further by that budget;
-`retained_peak_bytes` and `pooled_peak_bytes` report these separate lifetime
-high-water marks. Active worker temporaries and pinned upload buffers are
-additional memory. The loader releases retained inputs and idle buffers
-after upload.
+### Serving identity
 
-CPU producers reuse bounded worker pools. Each rank advances independently
-with two pinned chunks of at most 64 MiB each. Completion events fence buffer
-reuse, and failures stop producers and drain outstanding transfers before
-releasing their storage.
+`/health` and `/ping` expose status, modalities and a `serving` object with
+bundle, package, checkpoint and metadata identities, startup nonce and the
+effective profile. Checkpoint identity covers safetensors names, headers
+and lengths; byte verification is separate. `kv_page_tokens` and the declared
+context-parallel size determine prefix reuse stripes. Startup logs repeat
+the identity. Responses carry the startup nonce and, for direct checkpoints,
+checkpoint identity in headers. Health/ping do not require an API key.
 
-### Weight-plan metadata cache
+### Drain and shutdown
 
-On Linux, direct loading reuses validated encoded plans in the default model
-cache's `weight-plans-v1` directory. Set `CHOPINFER_WEIGHT_PLAN_CACHE` to an
-absolute private directory to select a different location, or `0` to disable
-reuse. The cache holds metadata only, with a 256 MiB entry limit and a 1 GiB,
-64-entry total limit. Publication removes oldest entries when needed. If the
-cache is unavailable, busy, corrupt or unsafe to open, loading plans normally.
-
-Keys cover the entire planning request, including checkpoint headers and small
-documents, metadata components, topology, image role, host views and host and
-bundle implementation identities. Hits still pass ordinary image and source
-validation. Tensor payloads are read and validated on every startup; this cache
-does not authenticate or reuse their contents. The `startup weight_plan`
-record reports `metadata_cache_enabled` and `metadata_cache_hits` (rank count).
-
-On 2026-10-21, the loader changes were compared with the round-8 serving
-baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
-250 W each, 48 CPUs and `--load-threads 16`. Both arms used prefix caching,
-32 maximum sequences and 8192-token prefill chunks. Each condition used an
-ABBA sequence with two starts per arm on an idle host and idle selected GPUs.
-Readiness includes the same model construction and warmup in both arms.
-
-| Profile | Checkpoint cache condition | Baseline mean (range), seconds | Loader mean (range), seconds | Mean reduction |
-|---|---|---:|---:|---:|
-| `tp4-ar` | Cold | 105.9 (104.3-107.5) | 94.4 (90.0-98.9) | 10.8% |
-| `tp4-ar` | Recent restart | 106.3 (104.8-107.8) | 96.9 (95.9-98.0) | 8.8% |
-| `tp4-dspark` | Cold | 145.1 (141.9-148.3) | 135.5 (130.0-141.1) | 6.6% |
-| `tp4-dspark` | Recent restart | 148.3 (144.8-151.7) | 131.8 (131.4-132.2) | 11.1% |
-
-Cold runs evicted only checkpoint files with `POSIX_FADV_DONTNEED` and
-recorded resulting residency. Recent restarts followed a priming startup;
-the text loader still read almost all of its approximately 339 GB through
-direct I/O. Both conditions retained validated metadata-plan cache entries.
-These are paired observations with two samples per arm, including the
-variation shown above. The earlier 95.9-second diagnostic startup used
-different cache conditions and is not the baseline for these percentages.
-
-Mean text-weight production and upload fell from 80.9 to 73.1 seconds for
-cold AR, 81.3 to 75.8 for recent AR, 83.6 to 77.5 for cold DSpark and 87.4
-to 74.2 for recent DSpark. Cached text planning and validation took 1.8-1.9
-seconds, versus 5.4 seconds without reuse. DSpark warmup remained about
-38 seconds. The largest server peak RSS observed by readiness was 9.26
-versus 8.91 GiB for AR and 15.09 versus 14.78 GiB for DSpark. Reading,
-preparing and uploading text weights remains the largest loading phase.
-
-Separate diagnostic starts matched all eight arena digests in each profile
-and all token IDs and log-probability bits for three fixed 32-token responses
-per profile. An unequal-rank upload probe checked all 208,666,687 bytes on
-four GPUs. Diagnostic readback and detailed timing counters were disabled in
-the performance runs. Every job passed its before/after power and Xid checks
-and released the GPUs. The quick and full CPU gates also passed.
+SIGTERM/SIGINT stops admission and makes health unready. During draining,
+health and new requests return 503 with `Retry-After: 1`; metrics remain
+available. Admitted work runs until completion or the drain deadline
+(`--drain-timeout-ms`, default 30 seconds). At the deadline, unfinished streams
+receive an error and `[DONE]` within a 100 ms flush window, then the process
+releases GPUs and exits. A second signal exits immediately. Keep the
+supervisor stop timeout above the drain budget, as in the 45-second examples.
+A fatal engine/rank error exits nonzero without native teardown; restart a
+fresh process and remove unready endpoints from load balancing.
 
 ## Watch running instances with chopinfer-top
 
-`chopinfer-top` is a terminal view of the `chopinfer serve` instances on a
-host: what each serves, whether it is ready, and how it is doing, and of the
-host's GPUs. It is a separate binary, shipped in `bin/` beside `chopinfer` and
-in the image. It is a client of `/health` and `/metrics` only, which need no
-API key, reads the GPUs through NVML, and links no serving code. The flags are
-in [operator commands](cli.md#live-view-chopinfer-top).
-
-```text
-chopinfer-top                          # find instances and watch them
-chopinfer-top --target HOST:8311       # also watch a server it cannot find
-chopinfer-top --list --json            # one reading, for scripts
-```
-
-### Where instances come from
-
-| Source | What it finds | Limits |
-|---|---|---|
-| Explicit targets | `--target HOST:PORT` (repeatable; also `http://HOST:PORT`, or `:PORT` for 127.0.0.1), `--targets-file FILE` (one per line, `#` starts a comment) and the comma-separated `CHOPINFER_TOP_TARGETS` | Stay listed while unreachable and are retried every 5 s. `--api-key KEY` (default `CHOPINFER_API_KEY`) sends a bearer token to these only, for a server behind an authenticating proxy |
-| `/proc` | `chopinfer` and `chopinfer-host` processes whose command line runs `serve`, owned by this user (every user's when run as root) and in chopinfer-top's network namespace | Processes in another namespace, such as a container's, are left to Docker. The listening sockets come from the process's descriptors; a wildcard bind is reached on loopback |
-| Docker | Running containers whose process list shows `chopinfer serve` or `chopinfer-host serve`. The daemon lists the processes on its host side, so any image works and nothing runs inside the container | Needs a daemon socket this user can open. Only `/_ping`, the container list and each container's process list are read |
-
-Discovery runs alongside explicit targets; `--no-docker` turns off containers
-and `--no-discover` turns off both scanners. Rows that report the same startup
-nonce are one server and are shown once: an explicit target first, then a
-process, then a container, with the others listed as "also seen as".
-
-Docker discovery uses `DOCKER_HOST` alone when it is a `unix://` socket. Any
-other `DOCKER_HOST` scheme turns container discovery off, with a note.
-Without `DOCKER_HOST`, it tries the rootless socket
-`$XDG_RUNTIME_DIR/docker.sock` and the system socket `/var/run/docker.sock`,
-and uses each one that answers `/_ping`. A daemon that does not answer, or
-stops answering, is tried again every 60 seconds. A container that does not
-run serve is checked on every scan for its first two minutes, then every five
-minutes.
-
-A container is reached through the `--listen` address on its serve command
-line (`127.0.0.1:8310` when absent): with host networking at that address,
-otherwise at a host port published for the listen port, and failing that at
-the container's own network addresses on the listen port (IPv4 for an IPv4
-listener, IPv6 for an IPv6 one, both for `[::]`). A server that listens on
-the container's loopback cannot be reached from the host; the row shows as
-unreachable and an event says so once. Its process list is read again every
-minute, so the row fills in once serve listens where the host can reach it.
-Listen on `0.0.0.0` and publish the port, as the image does.
-
-The systemd units run serve as the `chopinfer` user, so another user's `/proc`
-scan does not count them. Pass `--target 127.0.0.1:PORT` for each unit, or
-run chopinfer-top as root.
-
-### When it scans
-
-A full scan runs at startup, before the first frame, and then every
-`--rescan` seconds (default 15, from 2 to 300). An instance that stops
-answering or restarts asks for a scan sooner, at most one every 5 seconds. A
-process found without a listener has only its own sockets checked every 2
-seconds, so its row fills in soon after it opens one. `r` runs a full scan at
-once. Discovery only has to find new instances: a restart or a different model
-at an address already watched shows up in that instance's poller within one
-poll, through the new startup nonce. At most 64 instances are polled at once;
-an event reports when there are more, and the rest are polled as others go.
-
-### States
-
-serve opens its listener only after loading and warmup, so a discovered
-process appears as starting well before it answers. The header counts rows by
-state.
-
-| State | Meaning |
-|---|---|
-| connecting | An explicit target not polled yet |
-| starting | Discovered, not answering yet: loading weights, warming up, or listening for under 30 s without a valid answer |
-| not answering | A process has listened for over 30 s without a valid answer |
-| ready | `/health` is ready and requests are running or waiting |
-| ready idle | `/health` is ready with nothing running or waiting |
-| not ready | `/health` is not ready or unreadable; the summary, the details header and the events show its reason |
-| unreachable | An instance that answered before stopped answering, an explicit target never answered, or a container has no address the host can reach |
-| not chopinfer | Something answers without the `x-chopinfer-startup-nonce` header: another server, or a proxy that strips it |
-| failed | `chop_generation_worker_failed` is 1 |
-| poisoned | `chop_instance_poisoned` is 1 |
-
-### What the numbers are
-
-Each poll reads `/health`, then `/metrics`, and keeps the metrics only when
-both carry the same startup nonce, so a restart between the two requests
-cannot mix two processes' counters. The list shows one row per
-instance and a five-minute decode sparkline; Enter opens the details of one
-instance. The selected instance's decode and prefill plots under the list are
-scaled to a round number at or above their largest value, shown at their top
-right, so a small burst does not fill the plot. The details fit the terminal:
-a smaller one shows fewer panels, and throughput, load, latency and health
-stay the longest. Identity (bundle, profile, ranks, KV dtype, served names, version,
-checkpoint and startup nonce) comes from the `serving` member of `/health`.
-
-| Shown | Series |
-|---|---|
-| Decode tok/s | Rate of `vllm:generation_tokens_total` |
-| Prefill tok/s | Rate of `chop_step_prefill_tokens_sum` (prompt tokens computed by committed prefill-bearing steps) |
-| Running, waiting | `vllm:num_requests_running`, `vllm:num_requests_waiting`; sequences are shown against `max_sequences` from `/health` |
-| KV | `vllm:kv_cache_usage_perc` |
-| Intake | `chop_intake_used_bytes` over `chop_intake_budget_bytes` |
-| Requests/s | Rate of the sum of `vllm:request_success_total` |
-| Prefix: reused / queried tokens | `vllm:prefix_cache_hits_total` over `vllm:prefix_cache_queries_total` (the list's PREFIX column) |
-| Prefix: lookups that hit | `chop_prefix_cache_hits_total` over `chop_prefix_cache_queries_total` |
-| Prefix: reused tok/s, recompute seen tok/s, evictions/s | Rates of `vllm:prefix_cache_hits_total`, `chop_prefix_cache_recomputed_seen_tokens_total`, `chop_prefix_cache_evictions_total` |
-| Prefix: anchors / pages, capture / restore failures | `chop_prefix_cache_anchors`, `chop_prefix_cache_blocks`; `chop_prefix_cache_capture_failures_total`, `chop_prefix_cache_restore_failures_total` |
-| Accepted drafts | `vllm:spec_decode_num_accepted_tokens_total` over `vllm:spec_decode_num_draft_tokens_total` (the list's SPEC column) |
-| Acceptance by position | `vllm:spec_decode_num_accepted_tokens_per_pos_total` over `vllm:spec_decode_num_draft_tokens_per_pos_total` at each `position` |
-| K chosen | Shares of `chop_speculation_k_total` by `k` |
-| Latency p50, p90, p99 and count | `vllm:time_to_first_token_seconds` (the list's TTFT50 column), `vllm:inter_token_latency_seconds`, `vllm:e2e_request_latency_seconds`, `vllm:request_queue_time_seconds`, `vllm:request_prefill_time_seconds`, `vllm:request_time_per_output_token_seconds` |
-| Batches/s and batch mix | Rate of `chop_batches_total`; `chop_decode_only_batches_total`, `chop_mixed_batches_total`, `chop_prefill_only_batches_total` |
-| Step time p50, p99 | `chop_step_execution_seconds` by `phase` (`decode`, `mixed`, `prefill`) |
-| Requests since start | `vllm:request_success_total` by `finished_reason`, `chop_cancellations_total`, `vllm:num_preemptions_total`, `chop_errors_total`, `chop_admission_refusals_total` by `reason` |
-| Worker, poisoned, batch refusals | `chop_generation_worker_{starting,ready,failed,stopped}`, `chop_instance_poisoned`, `vllm:batch_refusals_total` |
-| Transport buffer | `chop_transport_buffer_reserved_bytes` over `chop_transport_buffer_budget_bytes` |
-| Uptime | The process age from `/proc` for a discovered process, else `chop_process_uptime_seconds` |
-
-Rates span the last three polls. Ratios, shares, the batch mix and latency
-quantiles cover the selected window: 60 s, 5 m or since start, which `w`
-cycles. They come from counter and histogram bucket deltas between the newest
-poll and the one at the window's start, timed on `chop_process_uptime_seconds`
-when every poll has it. History holds five minutes of polls. When the server
-has run for less than the window, the figures cover its whole life; when
-chopinfer-top has watched it for less than the window, they cover what it has
-seen, and the window label says how much (`window 5m (40s of data)`). A new
-startup nonce, or a counter or the server clock going backwards, is a restart:
-the history is dropped, the counters are re-baselined and the restart is
-counted.
-
-### GPUs
-
-`g` opens a view of the GPUs of the host chopinfer-top runs on, read through
-NVML (`libnvidia-ml.so.1`, loaded at run time; without it the view says why).
-Instances on other hosts show no GPUs. In a container NVML comes from the
-NVIDIA runtime's `utility` driver capability, which the image sets; NVML there
-may not list processes in a way `/proc` can resolve, so GPUs may not name
-their instance. GPU numbers are NVML's, as nvidia-smi shows them, not CUDA
-ordinals, which `CUDA_VISIBLE_DEVICES` renumbers.
-
-The view has a table of every GPU, then for the selected one its activity and
-power over the last minutes and its state, a Time panel, its processes, and
-the GPU events. Shares and rates cover the last three polls, as instance rates
-do. Smaller terminals drop columns and panels; the Time panel stays longest.
-
-| Shown | Source |
-|---|---|
-| Temperature | `nvmlDeviceGetTemperature`; yellow under 10 C of headroom, red at none or in a thermal slowdown |
-| Headroom ("under the limit") | The maximum operating temperature (else the slowdown threshold), read once, less the temperature: nvidia-smi's T.Limit |
-| Fan | `nvmlDeviceGetFanSpeed`, every fifth poll |
-| Power | `nvmlDeviceGetPowerUsage`, averaged over a second on Ampere and newer, against `nvmlDeviceGetEnforcedPowerLimit` |
-| SM and memory clocks, P-state | `nvmlDeviceGetClockInfo` against `nvmlDeviceGetMaxClockInfo`, `nvmlDeviceGetPerformanceState` |
-| Limited by | The most serious reason of `nvmlDeviceGetCurrentClocksEventReasons`: a thermal or hardware slowdown (red, and an event), the power brake, the power cap (normal for a capped card under load), reliability, idle |
-| VRAM | `nvmlDeviceGetMemoryInfo_v2` used against total, as nvidia-smi counts it; red above 95% |
-| UTIL, kernels | GPM graphics activity while the view is open, else the GPU share of `nvmlDeviceGetUtilizationRates` |
-| Tensor, DRAM, SM busy, SM occupancy, PCIe rx and tx | GPM metrics: any tensor activity, DRAM bandwidth against its peak, SM activity, active warps against the most the SMs hold, PCIe bytes a second |
-| Memory busy (without GPM) | The memory share of `nvmlDeviceGetUtilizationRates` |
-| PCIe link | Current generation and width against the maximum; a link below its maximum while the GPU is busy is marked |
-| ECC | `nvmlDeviceGetEccMode`, read once, and uncorrected volatile errors, every fifth poll |
-| Processes | `nvmlDeviceGetComputeRunningProcesses_v3` and `nvmlDeviceGetGraphicsRunningProcesses_v3` merged by pid, marked C, G or C+G; a process on both counts its memory once |
-
-The Time panel splits wall time into kernels, the share of time any kernel ran
-from any process on the GPU, and no kernel: the GPU waiting for the host or
-for work. It does not split no-kernel time further. serve books a step's time
-when the step commits, so a long prefill lands in a later poll, and GPU
-activity counts every process, so the difference between the two is not a
-reliable measure of host time. The instance's running and waiting requests on
-the next line tell the cases apart: no-kernel time while requests run is time
-on the host. With GPM the panel also shows how busy the SMs, their warps, the
-tensor pipes and DRAM bandwidth were; these overlap rather than add up.
-
-GPU processes map to instances through `/proc`: process rows by pid and start
-time, container rows by the Docker container id in the process's cgroup, and
-explicit targets on this host by serve's `--listen` port, so a systemd unit
-watched with `--target` names its GPUs. A listen port counts only for
-`chopinfer` or `chopinfer-host` running serve on this host's network: in
-chopinfer-top's network namespace or, where that cannot be read, in no
-container. The target names the listen address, `localhost`, or, for a
-wildcard bind, a loopback address the bind accepts: IPv4 for `0.0.0.0`, both
-families for `[::]`. Each pid is read once per start time, so a serve that
-restarts is found under its new pid. Enter on a GPU opens its
-instance's details, which name the instance's GPUs, and Esc returns.
-
-Each change is one event in the log: GPUs found or not read, a thermal or
-hardware slowdown starting or ending, headroom under 5 C (again only once it
-has been back to 10 C), uncorrected ECC errors rising, a GPU no longer
-answering NVML, and a process that is no instance holding memory on a GPU
-beside one, once per pid. A GPU stays lost until a query of it answers again; a poll
-where every query fails changes nothing. A poll whose process lists fail keeps
-the list from before, for up to the five minutes of history, and the
-Processes panel gives its age; no process is reported again or forgotten. A
-GPU that NVML lists but will not open for this user shows why (such as no
-permission) and is not lost. It is looked up again every 5 polls, and once it
-opens it is described again and read like the others.
-
-GPM counters (Hopper and newer) are sampled only while the GPU view is open;
-`--no-gpu-counters` stops them, and `--no-gpus` stops GPU reading. Their
-figures matched `nvidia-smi dmon --gpm-metrics` under a copy kernel on an RTX
-PRO 6000 Blackwell Max-Q with driver 615.71 (graphics activity 99 to 100%, SM
-94%, occupancy 64%, DRAM 71%), and the two read side by side. Whether a
-profiler such as Nsight Compute, or Nsight Systems' GPU metrics, starts while
-the view samples GPM was not tested: on that host the profilers needed
-administrator access to the counters.
-
-### Keys and scripted use
-
-| Key | Action |
-|---|---|
-| Up, Down, `j`, `k` | Select an instance (list) or a GPU (GPU view) |
-| Enter, double click | Open its details, or the details of the GPU's instance; a click selects |
-| Esc, Backspace, `h` | Back to the view before |
-| Right, Left, Tab, Shift-Tab, `l` | Next or previous instance (details) |
-| `g` | Open or leave the GPU view |
-| `w` | Window: 60 s, 5 m, since start |
-| `r` | Rescan for processes and containers now |
-| `p` | Pause the screen; polls keep their latest result |
-| `?` | Help; any key closes it |
-| `q`, Ctrl-C | Quit |
-
-The interactive view needs a terminal; without one chopinfer-top exits with
-status 2 and points to `--list`. `--list` runs one discovery pass and two
-polls one interval apart, reading the GPUs at each without GPM, prints a
-table (source, address, model, state, decode and prefill tok/s,
-running/waiting, KV), then the GPUs (temperature, fan, power, SM clock, VRAM,
-utilization, instance), and writes warnings to stderr. `--list --json`
-prints a `chopinfer.top.list.v1` document: an `instances` array (source, pid
-or container or target, address, state and detail, model, uptime, the
-`/health` identity, rates, gauges, ratios and counter totals), a `gpus`
-object (`status` of `read`, `off` or `unavailable` with its `detail`, the
-`driver`, and `devices` with each GPU's readings and processes, each with its
-`C` or `G` type and instance, and `processes_age_seconds`, the age of that
-list, which is from an earlier poll when the latest one's process lists
-failed; both are null when the processes were not read) and the `events` log. Its ratios use the 60 s
-window, which for a server older than a minute covers only the interval
-between the two polls.
-
-### Polling cost
-
-Each poll of an instance is one `/health` and one `/metrics` request. The
-`/metrics` snapshot briefly takes the engine's metrics locks. The default
-`--interval` is 1 s and the floor 0.5 s; an instance that does not answer is
-polled every 5 s. A few dashboards on one server cost nothing measurable.
-chopinfer-top keeps no history beyond five minutes and raises no alerts:
-scrape with Prometheus for alerting and dashboards, as below.
-
-Reading the GPUs takes about 0.2 ms of NVML queries per GPU a poll, plus the
-fan and ECC errors every fifth poll, at about a millisecond each. NVML
-creates no CUDA context and submits no GPU work. On four idle RTX PRO 6000
-Blackwell Max-Q with driver 615.71 (2026-10-17), chopinfer-top used about
-7 ms of CPU a second reading them, against under 1 ms with `--no-gpus`; the
-GPU view's GPM sampling added about 15 ms a second, nearly all of it in
-`nvmlGpmMetricsGet`. The effect on serving throughput was not measured.
+`chopinfer-top --help` describes discovery, explicit URLs and display options.
+It reads health and metrics; unavailable queries must not be interpreted as
+zero usage. Its GPU discovery is local and does not establish that a device
+is idle. Use the served identity to match an instance to its configuration.
 
 ## Example alerts
 
@@ -511,7 +221,7 @@ systemd restart events outside the worker, and alert on collector failure too.
 The worker gauges are best-effort: they can vanish before a scrape and cannot
 reliably detect a fatal exit. `up` catches an unreachable target; `absent`
 catches a missing job. The 600-second startup allowance matches the
-deployment readiness budget ([deployment](deploy-common.md)).
+deployment readiness budget ([deployment](developer-preview.md)).
 
 Prefix hit rate is `rate(vllm:prefix_cache_hits_total[5m]) /
 rate(vllm:prefix_cache_queries_total[5m])`. Speculative acceptance rate is
@@ -572,7 +282,7 @@ Step and request logs are not replay inputs; they omit token contents.
   so align steps with client timings by this field, not by when a line is
   read.
 - `prefill_cap`, `predicted_us`, `decode_estimate_us`, `trained`: the
-  [mixed scheduling](mixed-scheduling.md) cap and estimates; null under the
+  [mixed scheduling](serving-profiles.md#prefill-policy) cap and estimates; null under the
   fixed budget or before an estimate exists.
 - `host`: the engine thread's wall time per phase in microseconds
   (scheduling, execute, commit, gaps between executor calls, and

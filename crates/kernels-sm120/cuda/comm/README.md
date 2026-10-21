@@ -455,6 +455,25 @@ entry, its variants (no turns, 32- and 128-granule blocks) and the two-shot
 with ranks that start together and with injected skew (one late rank, or
 staggered starts), and measures the PCIe write rate per link pattern.
 
+## Owner sums for copy-engine transports
+
+`owned_sum_f32.cuh` (`comm::owned_sum_f32`) and `owned_sum_bf16.cuh`
+(`comm::owned_sum_bf16`) are the local arithmetic of a transport that moves
+partials with peer copies instead of spinning entries. They perform no peer
+access, polling or protocol mutation, and need no co-residency.
+
+- `chop_comm_owned_sum_round_f32_v1` sums one owner's rows from its own F32
+  input and the F32 slots `inbox[source * slot]` with the phased F32 sum
+  helper and rounds once to BF16: the phased F32 round entry's bits.
+- `chop_comm_owned_round_bf16_v1` rounds F32 rows once to BF16 with the
+  phased BF16 send helper, for the transport to copy.
+  `chop_comm_owned_sum_bf16_v1` sums one owner's rows with the phased BF16
+  sum helper, its own F32 input rounded as sent and every other source from
+  BF16 slots: the phased BF16 entries' bits, with half the copied payload.
+
+The caller completes the slot copies before the sum and gathers the output
+after. Elements and slots are whole 16-byte vectors.
+
 ## Qwen3.8 hyper-connection all-reduce
 
 `comm/hyper_connection.cuh` sums the partials of a 2560-wide sublayer output at 2, 4

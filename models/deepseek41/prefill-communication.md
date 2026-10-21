@@ -345,3 +345,9 @@ tokens, including restored continuations) were byte-identical, with no live
 resources left and no Xids. That job stopped at its first served arm on a
 pinned KV page count, so the TTFT ABBA and Nsight profiles of this port
 remain to be measured, now against the unset default.
+
+That evidence, and every earlier DMA measurement here, used F32 partials.
+Native Flash TP4 prefill now defaults to BF16 partials, which the transport
+carries as BF16. Its bitwise and TTFT qualification against the
+within-bound head is pending; the BF16 scatter moves half the F32 bytes, so
+the earlier timings do not carry over.

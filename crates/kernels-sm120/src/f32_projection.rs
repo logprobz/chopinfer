@@ -18,6 +18,7 @@ pub const HEADER: &str = "gemm/exact_f32.cuh";
 pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 
 pub mod blocked;
+pub mod certified;
 mod decode;
 pub mod last;
 mod prefill;

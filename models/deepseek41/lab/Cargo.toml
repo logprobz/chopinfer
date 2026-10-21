@@ -215,3 +215,7 @@ path = "examples/sm120/build_indexer_prefill_tile.rs"
 [[test]]
 name = "hc_completion"
 path = "tests/sm120/hc_completion/main.rs"
+
+[[example]]
+name = "build_router_norm"
+path = "examples/sm120/build_router_norm.rs"

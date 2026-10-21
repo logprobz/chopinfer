@@ -164,16 +164,30 @@ fn main() {
     direct_sources();
     println!("cargo:rerun-if-env-changed=CHOPINFER_BUILD_REVISION");
     println!("cargo:rerun-if-changed=build.rs");
-    // Resolve Git paths so branch changes also invalidate builds in worktrees.
-    for name in ["HEAD", "packed-refs"] {
-        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+    // Resolve Git paths so branch changes also invalidate builds in worktrees:
+    // the worktree's HEAD and, for a branch, the files that hold its commit.
+    // Only existing paths are watched, since Cargo reruns a build script on
+    // every build while a watched path is missing, as a branch's loose ref is
+    // once `git pack-refs` packs it. A loose ref takes precedence over
+    // packed-refs, which other branches rewrite, so packed-refs is watched
+    // only for a packed branch; the branch's reflog records every update,
+    // including a commit that writes a loose ref for a packed branch.
+    if let Some(path) = git(&["rev-parse", "--git-path", "HEAD"]) {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        let path = |name: &str| {
+            git(&["rev-parse", "--git-path", name]).filter(|path| Path::new(path).exists())
+        };
+        let loose = path(&reference);
+        let watched = [
+            loose.clone(),
+            path(&format!("logs/{reference}")),
+            loose.is_none().then(|| path("packed-refs")).flatten(),
+        ];
+        for path in watched.into_iter().flatten() {
             println!("cargo:rerun-if-changed={path}");
         }
-    }
-    if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"])
-        && let Some(path) = git(&["rev-parse", "--git-path", &reference])
-    {
-        println!("cargo:rerun-if-changed={path}");
     }
     let revision = std::env::var("CHOPINFER_BUILD_REVISION")
         .ok()

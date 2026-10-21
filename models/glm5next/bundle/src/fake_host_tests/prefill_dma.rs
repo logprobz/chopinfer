@@ -6,7 +6,7 @@ mod owner_host;
 use owner_host::OwnerHost;
 
 const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
-const OLD: &str = kernels_sm120::comm::phased_f32::ROUND_SYMBOL;
+const OLD: &str = "chop_comm_allreduce_phased_round_f32_v1";
 type Span = (u64, u64, u64);
 
 fn host() -> Rc<Host> {

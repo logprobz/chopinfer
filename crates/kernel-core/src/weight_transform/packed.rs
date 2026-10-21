@@ -559,8 +559,9 @@ impl PackedOperand {
         Ok(out)
     }
 
-    /// Writes complete section rows into caller-owned storage. Padding is
-    /// reset even when that storage contains a preceding chunk's bytes.
+    /// Writes complete section rows into caller-owned storage once every row
+    /// is admitted; a refusal leaves the storage unchanged. Padding is reset
+    /// even when that storage contains a preceding chunk's bytes.
     pub fn execute_code_rows_into(
         &self,
         record: &WeightRecord,
@@ -652,7 +653,9 @@ impl PackedOperand {
             (Some(index), u32::MAX) => Some(whole(index, read)?),
             _ => None,
         };
-        out.fill(0);
+        // A refused producer publishes no bytes: every run is read, checked
+        // and repacked before `out` is written.
+        let mut runs = Vec::new();
         for run in self.row_runs(rows.clone()) {
             let mut codes = vec![0; (run.count * code_row) as usize];
             read(
@@ -725,8 +728,14 @@ impl PackedOperand {
             if k_groups != u32::MAX && packed.k_origin % k_groups as usize != 0 {
                 return refuse("implementation requires an aligned source scale-group origin");
             }
-            let at = ((run.output - rows.start) * row_bytes) as usize;
-            out[at..at + packed.codes.len()].copy_from_slice(&packed.codes);
+            runs.push((
+                ((run.output - rows.start) * row_bytes) as usize,
+                packed.codes,
+            ));
+        }
+        out.fill(0);
+        for (at, codes) in runs {
+            out[at..at + codes.len()].copy_from_slice(&codes);
         }
         Ok(())
     }

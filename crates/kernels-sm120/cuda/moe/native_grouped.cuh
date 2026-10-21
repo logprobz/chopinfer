@@ -193,9 +193,11 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
 // column warp only (bitwise the served outputs and admission); the others
 // are timing ablations whose outputs are not meaningful: no checks, no
 // MMA, no global loads after the prologue, or MMAs on register operands
-// with no operand loads.
+// with no operand loads. `nan = false` leaves the activation NaN check to
+// `nan_scan`, which must run on the same input before the tiles.
 struct Served {
-  static constexpr bool lean = false, checks = true, mma = true, global = true, loads = true;
+  static constexpr bool lean = false, checks = true, mma = true, global = true, loads = true,
+                        nan = true;
 };
 
 // One MMA whose A and B scales are byte `q` of the given words, by the
@@ -308,7 +310,7 @@ __device__ __forceinline__ void block(const Shared<C, T>& s, int slot, int exper
   uint32_t nan = 0;
   // Lean: one column warp of each row group checks the NaN codes, which
   // its loads cover for every live row and K of the stage.
-  const bool check_nan = Tune::checks && (!Tune::lean || col_warp == 0);
+  const bool check_nan = Tune::checks && Tune::nan && (!Tune::lean || col_warp == 0);
 #pragma unroll
   for (int f0 = 0; f0 < F; f0 += 2) {
     if (row_base + f0 * 8 >= count) continue;  // warp-uniform: only padding remains
@@ -479,6 +481,26 @@ struct NoChecks : Served { static constexpr bool checks = false; };
 struct NoMma : Served { static constexpr bool mma = false; };
 struct NoGlobal : Served { static constexpr bool global = false, checks = false; };
 struct MmaOnly : Served { static constexpr bool global = false, checks = false, loads = false; };
+struct NoNan : Served { static constexpr bool lean = true, nan = false; };
+
+// Traps on any E4M3 NaN code in the live input rows (tokens for gate/up,
+// routes for down): every code the tiles read, so a `nan = false` tile
+// behind it refuses exactly the inputs the served tile refuses.
+template<class C>
+__device__ void nan_scan(const uint8_t* input, const int* live_tokens) {
+  static_assert(C::k % 16 == 0);
+  const int live = *live_tokens;
+  if (live < 0 || live > C::capacity) __trap();
+  const uint64_t words = uint64_t(live) * (C::gate_up ? 1 : C::top_k) * (C::k / 16);
+  const uint4* codes = reinterpret_cast<const uint4*>(input);
+  uint32_t nan = 0;
+  for (uint64_t i = blockIdx.x * uint64_t(blockDim.x) + threadIdx.x; i < words;
+       i += uint64_t(gridDim.x) * blockDim.x) {
+    const uint4 v = codes[i];
+    nan |= lay::e4m3_nan(v.x) | lay::e4m3_nan(v.y) | lay::e4m3_nan(v.z) | lay::e4m3_nan(v.w);
+  }
+  if (nan) __trap();
+}
 
 // Lab probe of one instruction from +0: lane l passes A registers
 // a[4l..4l+3], B registers b[2l..2l+1] and scales scales[2l] (A) and

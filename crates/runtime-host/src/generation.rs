@@ -804,7 +804,14 @@ impl EngineGenerationBackend {
                 let kept = canvas.retained_bytes() as u64;
                 (
                     key,
-                    memory.retain_source(reserved, CanvasPayloadV1 { canvas, element }, kept)?,
+                    memory.retain_source(
+                        reserved,
+                        CanvasPayloadV1 {
+                            canvas: *canvas,
+                            element,
+                        },
+                        kept,
+                    )?,
                     kept,
                 )
             }
@@ -3417,7 +3424,7 @@ fn recipe_patch_v1(recipe: ImageRecipeV1) -> u32 {
 /// from, or the rows themselves for a recipe that resizes in F32.
 #[derive(Debug)]
 enum PreparedImageV1 {
-    Canvas(runtime_media::recipe::CanvasRows),
+    Canvas(Box<runtime_media::recipe::CanvasRows>),
     Rows(runtime_media::recipe::PatchGrid),
 }
 
@@ -3446,7 +3453,7 @@ impl PreparedImageV1 {
     #[cfg(test)]
     fn into_grid(self) -> runtime_media::recipe::PatchGrid {
         match self {
-            PreparedImageV1::Canvas(canvas) => canvas.into_grid().unwrap(),
+            PreparedImageV1::Canvas(canvas) => (*canvas).into_grid().unwrap(),
             PreparedImageV1::Rows(grid) => grid,
         }
     }
@@ -3455,7 +3462,7 @@ impl PreparedImageV1 {
 /// A media item's prepared values: F32 rows, or an image's canvas.
 enum PreparedRowsV1 {
     Values(Vec<f32>),
-    Canvas(runtime_media::recipe::CanvasRows),
+    Canvas(Box<runtime_media::recipe::CanvasRows>),
 }
 
 /// An image payload kept as its canvas and written as `element` values.
@@ -3555,17 +3562,19 @@ fn prepare_image_v1(
         ImageRecipeV1::PatchGrid(recipe)
             if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
         {
-            recipe::image_canvas(&decoded, recipe, limits).map(PreparedImageV1::Canvas)
+            recipe::image_canvas(&decoded, recipe, limits)
+                .map(|canvas| PreparedImageV1::Canvas(Box::new(canvas)))
         }
         ImageRecipeV1::PatchGrid(recipe) => {
             recipe::image_grid(&decoded, recipe, limits).map(PreparedImageV1::Rows)
         }
         ImageRecipeV1::TokenBudget(recipe, _) => {
             recipe::padded_token_budget_canvas(&decoded, recipe, limits)
-                .map(PreparedImageV1::Canvas)
+                .map(|canvas| PreparedImageV1::Canvas(Box::new(canvas)))
         }
         ImageRecipeV1::CenteredPad(recipe, _) => {
-            recipe::centered_pad_canvas(&decoded, recipe, limits).map(PreparedImageV1::Canvas)
+            recipe::centered_pad_canvas(&decoded, recipe, limits)
+                .map(|canvas| PreparedImageV1::Canvas(Box::new(canvas)))
         }
     };
     Ok((image.map_err(rejected)?, reserved))

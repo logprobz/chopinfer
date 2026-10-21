@@ -322,9 +322,56 @@
         "max_threads": 128,
         "min_blocks": 1,
         "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_normed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "certified",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "526d5c2b85120b6eb2266430b1d1eb729e35416b8b0b10e5ccdcaf5f1c8772c3",
+    "cubin_sha256": "75455767de6ca9f24ef8ee59cbaeded9af58ebf17aed946c65b5cfa2a2d4f88a",
     "resources": [
       {
         "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_v1",
@@ -374,6 +421,15 @@
       {
         "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f128_v1",
         "registers": 226,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_certified_m32_f64_normed_v1",
+        "registers": 118,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

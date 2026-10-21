@@ -4,7 +4,8 @@
 //! certified projection (`f32_projection::certified`, 32-row tiles), which
 //! replace the served norm, the zero-component prepare and its projection;
 //! and the certified projection at wider feature tiles for the router tile
-//! pair (../router_wide.md).
+//! pair (../router_wide.md), and the bound tiles reading only the norm's
+//! BF16 rows for the narrow pair (../router_narrow.md).
 use bundle_deepseek41::sm120::{f32_zero, norm_prefill};
 use kernels_sm120::f32_projection::certified;
 use kernels_sm120::row::rmsnorm_prefill::{self, Mutation};
@@ -59,6 +60,12 @@ pub fn served_router_symbol() -> String {
     bundle_deepseek41::sm120::router_norm_entries::router_symbol()
 }
 
+/// The narrow pair's router (../router_narrow.md): the bound tiles whose
+/// SIMT path widens the norm's BF16 rows itself.
+pub fn normed_router_symbol() -> String {
+    certified::normed_symbol(&router(), TILE_ROWS, SERVED_FEATURES)
+}
+
 /// The router tile pair's feature widths (`certified::wide_entry_spec`):
 /// 32 is the served tile's arithmetic at the shared memory it uses, 64 and
 /// 128 stage more experts per activation row block.
@@ -89,5 +96,9 @@ pub fn cubins() -> Vec<kernel_build::CubinSpec> {
                 .expect("wide certified tile"),
         );
     }
+    spec.entries.push(
+        certified::normed_entry_spec(&router(), TILE_ROWS, SERVED_FEATURES)
+            .expect("normed certified tile"),
+    );
     vec![spec]
 }

@@ -1,7 +1,8 @@
-//! The router tile pair (../../../router_wide.md): the served certified
-//! router projection (32 experts by 32 rows per tile) against the same
-//! projection at 32-, 64- and 128-expert tiles, bit for bit on the logits
-//! and timed as paired graphs. Worker w takes captured layer 14 or 39 (the
+//! The router tile pair (../../../router_wide.md): the certified router
+//! projection at its first 32-expert by 32-row tiles (served until the
+//! 64-expert binding, now from the lab cubin) against the same projection
+//! at 32-, 64- and 128-expert tiles, bit for bit on the logits and timed as
+//! paired graphs. Worker w takes captured layer 14 or 39 (the
 //! captured MoE input codes widened to BF16, with the layer's router
 //! weights) and two synthetic cases whose uncertified rows and experts
 //! reach the SIMT path.
@@ -133,7 +134,7 @@ pub fn projection(
     })
 }
 
-/// The served certified projection (`features` None) or a wide tile, into
+/// The 32-expert certified projection (`features` None) or a wide tile, into
 /// `logits`, over a step of `rows` rows.
 pub fn launch(p: &Projection, logits: View, rows: u32, features: Option<u32>) -> LabResult<Launch> {
     let e = family::router();
@@ -265,11 +266,19 @@ fn router_wide_cpu_plan() {
     let logits = a.filled(4, 0).unwrap();
     for live in [CAPACITY, 2049, 65] {
         let served = launch(&p, logits, live, None).unwrap();
-        assert!(Runner::serving(&served.symbol), "{}", served.symbol);
+        assert!(lab.contains(&served.symbol), "{}", served.symbol);
+        assert!(!Runner::serving(&served.symbol), "{}", served.symbol);
         for features in family::WIDE_FEATURES {
             let wide = launch(&p, logits, live, Some(features)).unwrap();
             assert!(lab.contains(&wide.symbol), "{}", wide.symbol);
-            assert!(!Runner::serving(&wide.symbol), "{}", wide.symbol);
+            // The bundle serves the 64-expert tile, which the runner loads
+            // from the bundle.
+            assert_eq!(
+                Runner::serving(&wide.symbol),
+                features == family::SERVED_FEATURES,
+                "{}",
+                wide.symbol
+            );
             assert_eq!(wide.arguments, served.arguments);
             assert_eq!(wide.plan.block, served.plan.block);
             assert_eq!(wide.plan.grid[1], served.plan.grid[1]);

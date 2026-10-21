@@ -145,7 +145,7 @@ pub fn run(a: &mut Arena<'_>, ops: &[Launch]) -> LabResult<()> {
                 );
             }
             host.insert(h[3], work);
-        } else if op.symbol.contains("_zero_m32_v1") || op.symbol.contains("_certified_m32_v1") {
+        } else if op.symbol.contains("_zero_m32_v1") || op.symbol.contains("_certified_m32_") {
             let certified = op.symbol.contains("_certified_");
             // zero: activation, weight, workspace, output, live, rows, domain;
             // certified: activation, normed, certified, weight, output, live, rows, domain.

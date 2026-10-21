@@ -467,15 +467,16 @@ pub fn served(i: &Inputs, o: &Outputs, rows: u32) -> LabResult<Vec<Launch>> {
 }
 
 /// The candidate arm: the certifying norm (or its `certify_all` mutation)
-/// and the certified projection.
+/// and the bundle's certified projection (64-expert tiles).
 pub fn candidate(i: &Inputs, o: &Outputs, rows: u32, mutation: Mutation) -> LabResult<Vec<Launch>> {
     let e = family::router();
     Ok(vec![
         norm_launch(&family::certifying_norm(mutation), i, o, rows)?,
         make(
-            family::certified_symbol(),
+            family::served_router_symbol(),
             rows,
-            certified::plan(&e, family::TILE_ROWS, rows).map_err(|e| e.to_string())?,
+            certified::wide_plan(&e, family::TILE_ROWS, family::SERVED_FEATURES, rows)
+                .map_err(|e| e.to_string())?,
             vec![
                 ptr(o.widened),
                 ptr(o.normed),
@@ -765,7 +766,10 @@ fn router_norm_cpu_plan() {
             assert!(lab.contains(&op.symbol), "{}", op.symbol);
             assert_eq!(Runner::serving(&op.symbol), served, "{}", op.symbol);
         }
-        assert_eq!(ops[2].plan, cand[1].plan);
+        // The zero path's rows and block over the 64-expert feature grid.
+        assert_eq!(ops[2].plan.block, cand[1].plan.block);
+        assert_eq!(ops[2].plan.grid[1], cand[1].plan.grid[1]);
+        assert_eq!(cand[1].plan.grid[0], N.div_ceil(family::SERVED_FEATURES));
         assert_eq!(ops[0].plan, cand[0].plan);
         // The certifying norm takes the served arguments (over its own
         // outputs) and the flags.

@@ -52,6 +52,13 @@ pub fn certified_symbol() -> String {
     certified::symbol(&router(), TILE_ROWS)
 }
 
+/// The bundle's bound certified projection: its experts per tile and symbol.
+pub const SERVED_FEATURES: u32 = bundle_deepseek41::sm120::router_norm_entries::FEATURES;
+
+pub fn served_router_symbol() -> String {
+    bundle_deepseek41::sm120::router_norm_entries::router_symbol()
+}
+
 /// The router tile pair's feature widths (`certified::wide_entry_spec`):
 /// 32 is the served tile's arithmetic at the shared memory it uses, 64 and
 /// 128 stage more experts per activation row block.

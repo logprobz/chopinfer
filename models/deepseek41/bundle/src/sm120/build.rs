@@ -294,6 +294,14 @@ pub fn selection(
             mxfp8_fold::compact::CUBIN.into(),
             model_deepseek41_contract::geometry::FLASH.id,
         ));
+        owners.push((
+            prefill_matrix::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
+        owners.push((
+            prefill_tma_matrix::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
     }
 
     for g in geometries

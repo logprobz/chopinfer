@@ -26,6 +26,7 @@ pub mod breakdown;
 pub mod completion;
 pub mod expand_mix;
 pub mod finish_norm;
+pub mod finish_twin;
 pub mod lagged;
 pub mod lagged_split;
 pub mod lagged_tiled;

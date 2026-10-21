@@ -553,12 +553,41 @@ impl FakeHost {
         }))
     }
 
+    /// The rank's index bytes and image size, built once per test process
+    /// for each shape, rank, layout override set and drafter. Create reads
+    /// each index several times, and rebuilding it took a third of an
+    /// allocation sweep's CPU time (2026-10-21).
     fn rank_index(&self, rank: u32) -> (Vec<u8>, u64) {
-        if self.drafter.get() {
-            dspark::index(&self.shape, rank, &self.layouts.borrow())
-        } else {
-            index(&self.shape, rank, &self.layouts.borrow())
-        }
+        type Key = (Shape, u32, BTreeMap<String, String>, bool);
+        type Built = std::sync::Arc<std::sync::OnceLock<(Vec<u8>, u64)>>;
+        static INDEXES: std::sync::Mutex<Vec<(Key, Built)>> = std::sync::Mutex::new(Vec::new());
+        let key = (
+            self.shape,
+            rank,
+            self.layouts.borrow().clone(),
+            self.drafter.get(),
+        );
+        let built = {
+            let mut indexes = INDEXES.lock().unwrap();
+            let at = match indexes.iter().position(|(k, _)| *k == key) {
+                Some(at) => at,
+                None => {
+                    indexes.push((key.clone(), Built::default()));
+                    indexes.len() - 1
+                }
+            };
+            std::sync::Arc::clone(&indexes[at].1)
+        };
+        built
+            .get_or_init(|| {
+                let (shape, rank, layouts, drafter) = &key;
+                if *drafter {
+                    dspark::index(shape, *rank, layouts)
+                } else {
+                    index(shape, *rank, layouts)
+                }
+            })
+            .clone()
     }
 
     fn page_bytes(&self) -> u64 {

@@ -1,6 +1,8 @@
 //! Run the shared expert beside the routed experts inside decode and verify
 //! graphs. The input quantization precedes the fork, and the routed sum
-//! follows the join. Each stream retains its arithmetic and stage order.
+//! follows the join; after an r2 router finish the join precedes the gate,
+//! so only the router runs beside the shared expert. Each stream retains its
+//! arithmetic and stage order.
 //! The shared expert owns separate backend workspace and row status.
 //! Capture pieces contain whole fork/join regions. Eager runs remain serial.
 
@@ -282,11 +284,27 @@ pub(crate) fn disjoint_copy_spans(
     Ok(())
 }
 
+/// Whether a router finish ends before the shared expert, so that its
+/// sublayer's gate waits for the shared expert: the lower-latency r2
+/// finishes (`*_router_finish_*_finish_r2v*`). A gate started beside the
+/// shared expert's last kernel loses more than such a finish saves.
+pub(crate) fn joins_before_gate(symbol: &str) -> bool {
+    symbol.starts_with("chop_")
+        && symbol.contains("_moe_router_finish_")
+        && symbol.contains("_finish_r2v")
+}
+
 /// Check actual pointer arguments before capture. Only the input codes,
 /// input scales and live-row count may be shared across the two branches;
 /// their producers finish before the fork, and both entry arguments must
 /// declare const input pointers. Every other intersecting range
 /// is rejected, including scratch introduced by a newly selected backend.
+///
+/// A sublayer whose router ends with the r2 finish joins before its gate:
+/// `[Fork, Side, Compute(router), Join, Compute(gate onward)]`. That finish
+/// ends before the shared expert, and a gate started beside the shared
+/// expert loses more than the finish saves; only the router is then
+/// concurrent with the shared expert and audited against it.
 pub fn checked_units(
     stages: &[Stage],
     program: &[PreparedLaunch],
@@ -295,16 +313,34 @@ pub fn checked_units(
     if stages.len() != program.len() {
         return Err("overlap stage and launch counts differ".into());
     }
-    let units = units(stages)?;
-    for unit in &units {
+    let mut units = units(stages)?;
+    for unit in &mut units {
         let [Op::Fork, Op::Side(side), Op::Compute(main), Op::Join] = &unit[..] else {
             continue;
         };
+        let (side, mut main) = (side.clone(), main.clone());
+        let gate = main
+            .clone()
+            .find(|&i| matches!(stages[i], Stage::ExpertsGateUp(_)))
+            .ok_or("overlapped sublayer has no gate")?;
+        if program[main.start..gate]
+            .iter()
+            .any(|l| joins_before_gate(&l.symbol))
+        {
+            *unit = vec![
+                Op::Fork,
+                Op::Side(side.clone()),
+                Op::Compute(main.start..gate),
+                Op::Join,
+                Op::Compute(gate..main.end),
+            ];
+            main = main.start..gate;
+        }
         let bound = |range: Range<usize>| -> Result<Vec<_>, String> {
             range.map(|i| Ok((i, spans(&program[i])?))).collect()
         };
-        let main = bound(main.clone())?;
-        for (side_index, side_spans) in bound(side.clone())? {
+        let main = bound(main)?;
+        for (side_index, side_spans) in bound(side)? {
             for (main_index, main_spans) in &main {
                 for &(a, a_const) in &side_spans {
                     for &(b, b_const) in main_spans {
@@ -583,6 +619,90 @@ mod tests {
         assert!(checked_units(&stages, &program, &[span(9, 640, 128)]).is_err());
         bind(&mut program[shared], span(9, u64::MAX, 4));
         assert!(checked_units(&stages, &program, &[input]).is_err());
+    }
+
+    #[test]
+    fn an_r2_router_finish_joins_the_shared_expert_before_the_gate() {
+        let span = |handle, offset, length| {
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(handle, 1),
+                offset,
+                length,
+            )
+        };
+        let stages = crate::program::moe(0);
+        let at = |stage| stages.iter().position(|&s| s == stage).unwrap();
+        let (route, gate, down, shared) = (
+            at(Stage::Route(0)),
+            at(Stage::ExpertsGateUp(0)),
+            at(Stage::ExpertsDown(0)),
+            at(Stage::SharedGateUp(0)),
+        );
+        let program = |finish: &str| {
+            stages
+                .iter()
+                .enumerate()
+                .map(|(i, stage)| PreparedLaunch {
+                    symbol: if i == route {
+                        finish.to_string()
+                    } else {
+                        format!("{stage:?}")
+                    },
+                    rows: 1,
+                    plan: LaunchPlan {
+                        grid: [1; 3],
+                        block: [32, 1, 1],
+                        cluster: [1; 3],
+                        dynamic_shared_bytes: 0,
+                        workspace_bytes: 0,
+                        pdl: true,
+                    },
+                    arguments: ArgumentList(vec![Argument::U32(i as u32)]),
+                    bindings: BufferBindings::default(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let served = "chop_deepseek41_moe_router_finish_e384_k6_finish_v1";
+        let r2 = "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_v1";
+        assert!(!joins_before_gate(served));
+        let units_of = |p: &[PreparedLaunch]| checked_units(&stages, p, &[]);
+        assert_eq!(
+            units_of(&program(served)).unwrap()[0],
+            vec![
+                Op::Fork,
+                Op::Side(shared..stages.len() - 1),
+                Op::Compute(0..shared),
+                Op::Join
+            ]
+        );
+        let edge = units_of(&program(r2)).unwrap();
+        assert_eq!(
+            edge[0],
+            vec![
+                Op::Fork,
+                Op::Side(shared..stages.len() - 1),
+                Op::Compute(0..gate),
+                Op::Join,
+                Op::Compute(gate..shared),
+            ]
+        );
+        assert_eq!(edge.len(), units_of(&program(served)).unwrap().len());
+        let bind = |launch: &mut PreparedLaunch, view| {
+            let id = launch.bindings.bind(view);
+            launch.arguments = ArgumentList(vec![Argument::DevicePointerArray(vec![id])]);
+        };
+        // After the join the routed down may reuse the shared expert's
+        // scratch; the router, still concurrent, may not.
+        for (finish, ordered) in [(r2, true), (served, false)] {
+            let mut p = program(finish);
+            bind(&mut p[down], span(7, 0, 256));
+            bind(&mut p[shared], span(7, 128, 256));
+            assert_eq!(units_of(&p).is_ok(), ordered, "{finish}");
+            let mut p = program(finish);
+            bind(&mut p[0], span(7, 0, 256));
+            bind(&mut p[shared], span(7, 128, 256));
+            assert!(units_of(&p).is_err(), "{finish}");
+        }
     }
 
     #[test]

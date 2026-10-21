@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     kernel_build::build_in_families(
         &tc,
-        &[spec.clone()],
+        std::slice::from_ref(&spec),
         &out,
         &LockDir::new(dir).family(hc_completion::FAMILY, [&spec.name]),
         BuildOptions {

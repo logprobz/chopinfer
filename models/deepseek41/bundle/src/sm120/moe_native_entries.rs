@@ -4,8 +4,9 @@
 //! gate/up tile with the intermediate ceil quantizer in its epilogue
 //! (`native_grouped::Ceil`) with its fixup, in their own cubin. Unfused
 //! gate/up steps run the wider r2w6s3 tile from a third cubin, with the
-//! lean inner loop from a fourth, which also holds the two-CTA r1w4s2 down
-//! tile of unfused steps (models/deepseek41/lab/native_tune.md).
+//! scanned inner loop from a fourth, which also holds the two-CTA r1w4s2
+//! down tile of unfused steps and the admission scans before them
+//! (models/deepseek41/lab/native_tune.md, native_admission.md).
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::precision::quantizer::BlockQuantization;
 use kernels_sm120::moe::native_grouped::{self as native, Ceil, Shape, Tile, Tune, Variant};
@@ -37,10 +38,13 @@ pub const PAIRED_DOWN_TILE: Tile = Tile {
     col_warps: 4,
     stages: 2,
 };
-/// The unfused steps' inner loop: scale bytes by the MMA's byte selectors
-/// and one NaN-checking column warp per row group; bitwise the served loop
-/// and 5% faster on gate/up per 8192-row layer.
-pub const UNFUSED_LOOP: Tune = Tune::Lean;
+/// The unfused steps' inner loop: the lean loop (scale bytes by the MMA's
+/// byte selectors) with the whole activation admission, NaN codes and the
+/// scale-range product check, in an admission scan before the pack.
+/// Bitwise the served loop and refusing exactly its inputs on every
+/// qualified case and control; 13% (gate/up) and 8% (two-CTA down) faster
+/// than the lean loop per 8192-row layer.
+pub const UNFUSED_LOOP: Tune = Tune::Scanned;
 
 /// The target bank's expert set (384 experts, top 6).
 pub fn target_set() -> moe::Experts {
@@ -77,8 +81,9 @@ pub fn wide_cubins() -> Vec<kernel_build::CubinSpec> {
     vec![native::cubin_spec(WIDE_CUBIN, &instances, false).expect("wide gate/up serving cubin")]
 }
 
-/// The unfused steps' lean entries: the wide gate/up tiles (their pack is
-/// [`WIDE_CUBIN`]'s) and the two-CTA down pack and tiles.
+/// The unfused steps' entries: the wide gate/up tiles (their pack is
+/// [`WIDE_CUBIN`]'s), the two-CTA down pack and tiles, and both
+/// projections' admission scans.
 pub fn lean_cubins() -> Vec<kernel_build::CubinSpec> {
     let gate_up = shape(GatedMlpProjection::GateUp);
     let down = shape(GatedMlpProjection::Down);
@@ -98,6 +103,8 @@ pub fn lean_cubins() -> Vec<kernel_build::CubinSpec> {
     // Two CTAs per SM; the build refuses the bound if it spills.
     tiles[0].min_blocks = 2;
     entries.extend(tiles);
+    entries.push(native::admission_scan_entry(&gate_up));
+    entries.push(native::admission_scan_entry(&down));
     let mut spec = native::cubin_spec(LEAN_CUBIN, &[], false).expect("lean serving cubin");
     spec.entries = entries;
     vec![spec]

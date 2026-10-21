@@ -11,7 +11,9 @@
 //! (models/deepseek41/lab/native_ceil.md); larger steps keep the separate
 //! quantizer, run gate/up through the wider r2w6s3 tile and down through
 //! the 64-row r1w4s2 tile at two CTAs per SM, both with the lean inner
-//! loop (native_tune.md); every tile and loop gives the same bits. Decode,
+//! loop behind an activation admission scan (native_tune.md,
+//! native_admission.md); every tile and loop gives the same bits and
+//! refuses the same inputs. Decode,
 //! verify and the drafter's bank are unchanged.
 use super::moe_native_entries as entries;
 use kernel_core::backend::{Counts, Launch, OpInfo, PreparedOp, Refused, View};
@@ -198,6 +200,8 @@ pub fn wrap(
         ));
         replaced.push((ceil.fixup_symbol(&shape), 0));
     }
+    // The unfused steps' admission scan.
+    replaced.push((native::admission_scan_symbol(&shape), 0));
     info.symbols.splice(..split, replaced);
     Ok(Box::new(Prepared {
         base,
@@ -336,8 +340,14 @@ impl PreparedOp<GatedMlpBuffers<View>> for Prepared {
                 Variant::Serving,
             )?
         };
-        // The pack and the tiles carry the queue's workspace.
-        for op in &mut launches[..2] {
+        // The pack and the tiles carry the queue's workspace; the unfused
+        // steps' admission scan before them uses none.
+        let scan = native::admission_scan_symbol(&self.shape);
+        let first = usize::from(launches[0].symbol == scan);
+        if first == 1 {
+            launches[0].plan.workspace_bytes = 0;
+        }
+        for op in &mut launches[first..first + 2] {
             op.plan.workspace_bytes = self.info.workspace;
         }
         if !fused {
@@ -556,11 +566,14 @@ mod tests {
                 let gate_up = kind == GatedMlpProjection::GateUp;
                 assert_eq!(quantizer.len(), usize::from(gate_up));
                 // Down: the served pack and tiles, then the unfused steps'
-                // two-CTA pack and lean tiles. Gate/up: the wide pack and
-                // lean tiles, the fused steps' pack, tiles and fixup, then
-                // the quantizer of the unfused steps.
+                // two-CTA pack and scanned tiles. Gate/up: the wide pack and
+                // scanned tiles, the fused steps' pack, tiles and fixup.
+                // Then the unfused steps' admission scan, and gate/up's
+                // quantizer of the unfused steps.
                 let symbols = &op.info().symbols;
-                assert_eq!(symbols.len(), 4 + 2 * usize::from(gate_up));
+                assert_eq!(symbols.len(), 5 + 2 * usize::from(gate_up));
+                let scan = (native::admission_scan_symbol(&entries::shape(kind)), 0);
+                assert_eq!(symbols[if gate_up { 5 } else { 4 }], scan);
                 let shape = entries::shape(kind);
                 let tile = if gate_up {
                     entries::WIDE_GATE_UP_TILE
@@ -574,9 +587,10 @@ mod tests {
                         0,
                     )
                 };
+                assert_eq!(entries::UNFUSED_LOOP, Tune::Scanned);
                 let lean = |t: &Tile| {
                     (
-                        native::tune_symbol(&shape, t, Tune::Lean, Variant::Serving),
+                        native::tune_symbol(&shape, t, entries::UNFUSED_LOOP, Variant::Serving),
                         native::shared_bytes(&shape, t),
                     )
                 };
@@ -585,7 +599,7 @@ mod tests {
                 } else {
                     let paired = entries::PAIRED_DOWN_TILE;
                     assert_eq!(
-                        symbols[..],
+                        symbols[..4],
                         [
                             pack(&tile),
                             (
@@ -629,7 +643,7 @@ mod tests {
                             (ceil.fixup_symbol(&shape), 0),
                         ]
                     );
-                    assert_eq!(symbols[5..], quantizer[..]);
+                    assert_eq!(symbols[6..], quantizer[..]);
                 } else {
                     assert!(symbols.iter().all(|(s, _)| !s.contains(QUANTIZER)));
                 }
@@ -645,8 +659,28 @@ mod tests {
                     );
                 }
                 let (b, workspace) = views(op.as_ref());
-                let launches = op.launches(&b, workspace, Counts::rows(rows)).unwrap();
-                assert_eq!(launches.len(), 2 + usize::from(gate_up));
+                let all = op.launches(&b, workspace, Counts::rows(rows)).unwrap();
+                // Unfused steps start with the admission scan of the input
+                // and its scales, with no workspace.
+                let unfused = rows > FUSED_CEIL_ROWS;
+                assert_eq!(all.len(), 2 + usize::from(gate_up) + usize::from(unfused));
+                if unfused {
+                    use kernel_core::contract::Argument;
+                    assert_eq!(all[0].symbol, scan.0);
+                    assert_eq!(all[0].plan.workspace_bytes, 0);
+                    // The tiles' input, activation scales and live count.
+                    let tiles = &all[2].arguments.0;
+                    assert_eq!(
+                        all[0].arguments.0,
+                        [tiles[0].clone(), tiles[3].clone(), tiles[6].clone()]
+                    );
+                    assert!(
+                        tiles[..7]
+                            .iter()
+                            .all(|a| matches!(a, Argument::DeviceBuffer(_)))
+                    );
+                }
+                let launches = &all[usize::from(unfused)..];
                 assert!(
                     launches
                         .iter()

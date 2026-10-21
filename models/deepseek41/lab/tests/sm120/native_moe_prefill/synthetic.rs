@@ -464,8 +464,8 @@ fn cpu_plan() {
                         Runner::serving(&op.symbol),
                         set == family::serving::target_set()
                     );
-                    // The unfused target steps' lean entries are the
-                    // bundle's lean cubin's.
+                    // The unfused target steps' scanned entries and
+                    // admission scans are the bundle's lean cubin's.
                     let lean = set == family::serving::target_set()
                         && rows > bundle_deepseek41::sm120::moe_native::FUSED_CEIL_ROWS;
                     assert!(
@@ -477,7 +477,8 @@ fn cpu_plan() {
                     );
                 }
             }
-            // Pack, tiles and quantizer, or pack, fused tiles and fixup.
+            // Pack, tiles and quantizer, or pack, fused tiles and fixup;
+            // the unfused target steps start with the admission scan.
             assert_eq!(
                 p.native
                     .gate
@@ -485,9 +486,19 @@ fn cpu_plan() {
                     .any(|o| o.symbol.contains("_moe_ceil_")),
                 !fused
             );
+            let scanned = set == family::serving::target_set()
+                && rows > bundle_deepseek41::sm120::moe_native::FUSED_CEIL_ROWS;
+            for ops in [&p.native.gate, &p.native.down] {
+                assert_eq!(
+                    ops[0].symbol.contains("_admission_scan_"),
+                    scanned,
+                    "{}",
+                    ops[0].symbol
+                );
+            }
             assert_eq!(p.quantizer.len(), 1);
-            assert_eq!(p.native.gate.len(), 3);
-            assert_eq!(p.native.down.len(), 2);
+            assert_eq!(p.native.gate.len(), 3 + usize::from(scanned));
+            assert_eq!(p.native.down.len(), 2 + usize::from(scanned));
         }
     }
     println!(

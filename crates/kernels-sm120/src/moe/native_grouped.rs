@@ -544,6 +544,95 @@ pub fn launches(
     ])
 }
 
+/// The lab's tuning variants of the served inner loop (`native_grouped.cuh`,
+/// `Served`). [`Tune::Lean`] keeps the served outputs and admission bit for
+/// bit; the others are timing ablations whose outputs are not meaningful.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tune {
+    /// Scale bytes by the MMA's byte selectors; NaN codes checked by one
+    /// column warp per row group.
+    Lean,
+    /// No admission or NaN checks.
+    NoChecks,
+    /// No tensor instructions.
+    NoMma,
+    /// No global loads after the prologue's stages (and no checks).
+    NoGlobal,
+    /// MMAs on register operands only: no loads and no checks.
+    MmaOnly,
+}
+impl Tune {
+    pub const ALL: [Tune; 5] = [
+        Tune::Lean,
+        Tune::NoChecks,
+        Tune::NoMma,
+        Tune::NoGlobal,
+        Tune::MmaOnly,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Tune::Lean => "lean",
+            Tune::NoChecks => "no_checks",
+            Tune::NoMma => "no_mma",
+            Tune::NoGlobal => "no_global",
+            Tune::MmaOnly => "mma_only",
+        }
+    }
+    fn policy(self) -> &'static str {
+        match self {
+            Tune::Lean => "Lean",
+            Tune::NoChecks => "NoChecks",
+            Tune::NoMma => "NoMma",
+            Tune::NoGlobal => "NoGlobal",
+            Tune::MmaOnly => "MmaOnly",
+        }
+    }
+}
+
+pub fn tune_symbol(shape: &Shape, tile: &Tile, tune: Tune) -> String {
+    symbol(shape, tile, Stage::Compute, Variant::Serving)
+        .replace("_tiles_v1", &format!("_tiles_{}_v1", tune.name()))
+}
+
+/// The compute entries of `tunes` at `tile`, beside the serving entries.
+pub fn tune_entries(shape: &Shape, tile: &Tile, tunes: &[Tune]) -> Result<Vec<EntrySpec>, Refusal> {
+    let serving = entries(shape, tile, false)?
+        .pop()
+        .ok_or(Refusal("native compute entry is missing"))?;
+    let from = ",false,false>(arena,";
+    if serving.body.matches(from).count() != 1 {
+        return Err(Refusal("native compute entry body changed"));
+    }
+    Ok(tunes
+        .iter()
+        .map(|&tune| {
+            let mut e = serving.clone();
+            e.symbol = tune_symbol(shape, tile, tune);
+            e.body = serving.body.replace(
+                from,
+                &format!(
+                    ",false,false,chop::moe::native_grouped::NoCeil,chop::moe::native_grouped::{}>(arena,",
+                    tune.policy()
+                ),
+            );
+            e
+        })
+        .collect())
+}
+
+/// The serving launches with the compute entry of `tune`.
+pub fn tune_launches(
+    shape: &Shape,
+    tile: &Tile,
+    rows: u32,
+    b: &Buffers,
+    tune: Tune,
+) -> Result<Vec<Launch>, Refusal> {
+    let mut ops = launches(shape, tile, rows, b, Variant::Serving)?;
+    ops[1].symbol = tune_symbol(shape, tile, tune);
+    Ok(ops)
+}
+
 /// Gate/up tiles with the E4M3/32 ceil quantizer in their epilogue
 /// (`cuda/moe/native_ceil.cuh`): the serving intermediate quantizer's
 /// codes, scales and status, bit for bit, without its separate pass. The
@@ -920,5 +1009,32 @@ mod tests {
                 Variant::Serving
             )
         );
+    }
+
+    #[test]
+    fn tune_entries_change_only_the_loop_policy() {
+        for (shape, tile) in [
+            (flash(true), GATE_UP_TILES[2]),
+            (flash(false), DOWN_TILES[0]),
+        ] {
+            let serving = entries(&shape, &tile, false).unwrap().pop().unwrap();
+            let tuned = tune_entries(&shape, &tile, &Tune::ALL).unwrap();
+            assert_eq!(tuned.len(), Tune::ALL.len());
+            for (entry, tune) in tuned.iter().zip(Tune::ALL) {
+                assert_eq!(entry.symbol, tune_symbol(&shape, &tile, tune));
+                assert_ne!(entry.symbol, serving.symbol);
+                assert_eq!(entry.params, serving.params);
+                assert_eq!(
+                    entry.body.replace(
+                        &format!(
+                            ",chop::moe::native_grouped::NoCeil,chop::moe::native_grouped::{}>",
+                            tune.policy()
+                        ),
+                        ">"
+                    ),
+                    serving.body
+                );
+            }
+        }
     }
 }

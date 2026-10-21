@@ -9,6 +9,7 @@
 
 pub(crate) mod compressor;
 pub(crate) mod dense;
+pub(crate) mod dense_dual;
 pub(crate) mod engram;
 pub(crate) mod engram_hash;
 pub(crate) mod exact;

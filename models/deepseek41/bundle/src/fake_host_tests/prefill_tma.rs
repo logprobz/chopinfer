@@ -99,17 +99,19 @@ fn staged_tiles() {
             .iter()
             .filter(|l| {
                 l.starts_with("launch ")
-                    && l.contains("chop_deepseek41_mxfp8_")
+                    && (l.contains("chop_deepseek41_mxfp8_") || l.contains("chop_mxfp8_dual_"))
                     && !l.contains("_prepare_v1")
             })
             .collect();
         // Decode selects the qualified direct, packed, ticket and split-fold buckets.
         // Each paired shared gate/up replaces two individual projections.
+        // Each C1 query/KV grid replaces two computes and one KV admission.
         let completed = dense
             .iter()
             .filter(|line| {
                 let symbol = line.split_whitespace().nth(2).unwrap();
                 symbol.contains("mxfp8_stream_")
+                    || symbol.contains("mxfp8_dual_")
                     || symbol.contains("mxfp8_direct_")
                     || ((symbol.contains("mxfp8_ticket_") || symbol.contains("mxfp8_prefetch_"))
                         && !symbol.contains("_initialize_"))
@@ -118,8 +120,15 @@ fn staged_tiles() {
                         && !symbol.ends_with("_partials_v1"))
             })
             .count();
-        assert_eq!(completed, 4 * (330 - 40));
-        assert_eq!(dense.len(), 4 * 370);
+        assert_eq!(completed, 4 * (330 - 40 - 40));
+        assert_eq!(dense.len(), 4 * (370 - 80));
+        assert_eq!(
+            dense
+                .iter()
+                .filter(|l| l.contains("chop_mxfp8_dual_"))
+                .count(),
+            4 * 40
+        );
         assert!(dense.iter().all(|l| !l.contains("_prefill_tma_v1")));
         drop(lines);
         instance.commit().unwrap();

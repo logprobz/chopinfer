@@ -206,6 +206,7 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
+    pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
@@ -335,6 +336,7 @@ impl DenseOps {
             }
         }
         Ok(DenseOps {
+            dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
             stream,
             stream_pair,
@@ -361,6 +363,9 @@ impl DenseOps {
             return Vec::new();
         };
         let mut result = Vec::new();
+        if let Some(op) = self.dual.as_ref().and_then(|dual| dual.initializer(weight)) {
+            result.push((false, op, fold_stream::allocation_bytes(op, false)));
+        }
         for paired in [false, true] {
             let ops: Vec<_> = if paired {
                 if *id != "moe.shared-gate" {

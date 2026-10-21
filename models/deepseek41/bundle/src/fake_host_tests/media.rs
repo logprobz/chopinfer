@@ -390,6 +390,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// after handle mapping. The router certificate adds one allocation and its
 /// release per rank, and at four ranks the router-in-norm module two
 /// resolves and three releases per rank; no launch changes.
+/// The combined C1 query/KV adds the same private resources as the text
+/// lifecycle and replaces 40 projection triples per rank with one launch
+/// each. Every other operation is retained after typed handle mapping.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
     (Ranks::TP4, (56407, 0x0eb86c1d57e06cb8)),

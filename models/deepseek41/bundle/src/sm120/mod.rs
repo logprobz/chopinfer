@@ -8,6 +8,8 @@ pub mod ceil_cached;
 pub mod ceil_parallel;
 pub mod ceil_prefill;
 pub mod confidence_parallel;
+pub mod dense_dual;
+mod dense_dual_serving;
 pub mod dspark;
 pub mod dspark_argmax;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
@@ -522,6 +524,7 @@ impl crate::Kernels {
         ]
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            && (cubin != dense_dual::CUBIN || dense_dual::enabled(shape.geometry, shape.ranks()))
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))

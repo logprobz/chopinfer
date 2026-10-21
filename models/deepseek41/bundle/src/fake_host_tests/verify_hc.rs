@@ -40,6 +40,8 @@ use super::*;
 // Serving the round 9 router finish again at 32 rows returns the 160 finish
 // launches to the served finish and each sublayer's join to before the
 // routed sum; no other line changes.
+// Combined C1 query/KV adds private storage before capture. All six verify
+// bodies remain identical after typed handle mapping; no verify uses it.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x7b5e9ae6a7c4e58c)),
     (6, (8040, 0x5edfaba614b6233c)),

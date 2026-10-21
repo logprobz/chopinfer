@@ -1040,6 +1040,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// four ranks the router-in-norm module (`sm120::router_norm`) adds two
 /// resolves and three releases per rank. No launch changes: only 8192-row
 /// steps run the router in the norm.
+/// Combined C1 query/KV adds one module, two resolves and 120 private
+/// allocations per TP4 rank (108175360 bytes), with 40 weight initializers.
+/// Full lifecycle audits retain every other operation after handle mapping;
+/// each C1 query plus KV triple becomes one launch with identical operands.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

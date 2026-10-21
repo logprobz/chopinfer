@@ -21,6 +21,14 @@ impl Lowering<'_> {
         let Some(ops) = &self.ops.dense else {
             return Ok(None);
         };
+        let dual = ops
+            .dual
+            .as_ref()
+            .filter(|op| op.eligible(self.shape, phase, layer));
+        if dual.is_some() && id == "attention.kv" {
+            // The preceding query stage has already written this private KV span.
+            return Ok(Some(Vec::new()));
+        }
         let Some(dense) = projections(self.shape).into_iter().find(|d| d.id == id) else {
             return Ok(None);
         };
@@ -127,6 +135,25 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             status: self.carried(phase, scratch.row_status)?,
         };
+        if id == "attention.q-a"
+            && let Some(dual) = dual
+        {
+            let kv = GemmViews {
+                stream: crate::ops::fold_stream::storage(
+                    &self.buffers.views,
+                    &layer_view(layer, "attn.wkv.weight"),
+                    false,
+                ),
+                activations: views.activations,
+                activation_scales: views.activation_scales,
+                weights: self.buffers.view(&layer_view(layer, "attn.wkv.weight"))?,
+                weight_scales: self.buffers.view(&layer_view(layer, "attn.wkv.scale"))?,
+                output: rows_of(scratch.kv),
+                live_rows: views.live_rows,
+                status: views.status,
+            };
+            return dual.launch(&[views, kv]).map(Some).map_err(error);
+        }
         launches.extend(
             ops.project(id, phase, &views, self.buffers.workspace)
                 .map_err(error)?,

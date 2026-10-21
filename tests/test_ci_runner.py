@@ -395,6 +395,18 @@ class ScorerDependencies(unittest.TestCase):
             steps = {step.name: step for step in self.planned(pathlib.Path(directory))}
             self.assertIn("profile-copy", steps["portable"].after)
 
+    def test_qualification_runs_modules_at_once_even_on_a_small_budget(self):
+        """ci/quick.sh in an 8-CPU lane gets jobs=8; one module at a time made the qualification
+        run its longest check. The full gate keeps a sixth of its budget."""
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            for jobs, modules in ((1, 1), (2, 1), (8, 4), (16, 4), (32, 5), (48, 8)):
+                with self.subTest(jobs=jobs):
+                    steps = {step.name: step for step in cpu.order(*cpu.steps(work / "target", work, jobs, 8))}
+                    argv = steps["release-gate"].argv
+                    self.assertEqual(argv[argv.index("--jobs") + 1], str(modules))
+                    self.assertEqual(steps["release-gate-clean"].env["CHOPINFER_CI_JOBS"], str(modules))
+
     def test_no_step_counts_for_more_than_half_the_budget(self):
         """With as many test threads as the budget, the workspace tests start beside the long
         independent steps instead of waiting until no other step runs."""

@@ -102,8 +102,10 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
     # independent step (docs/contributing.md#checks).
     # Qualification runs this many modules at once, and the geometry lanes
     # share the whole budget for their Cargo and nvcc jobs, whose builds are
-    # short bursts between single-threaded checks.
-    qualification_jobs = max(jobs // 6, 1)
+    # short bursts between single-threaded checks. A small budget (ci/quick.sh
+    # in an 8-CPU lane) still runs up to 4 modules at once: one at a time, the
+    # qualification run was the longest check of a broad change.
+    qualification_jobs = max(jobs // 6, min(jobs // 2, 4), 1)
     env = os.environ.copy()
 
     def step(name, argv, after=(), weight=1, skips=None, **variables):

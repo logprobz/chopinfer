@@ -3,16 +3,28 @@ use crate::instance::execute::overlap::with_mode;
 use crate::ops::with_dma;
 use std::collections::BTreeSet;
 
+mod bf16;
 mod defaults;
 mod skip;
 
 const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
+const BF16_ROUND: &str = "chop_comm_owned_round_bf16_v1";
+const BF16_SUM: &str = "chop_comm_owned_sum_bf16_v1";
 type Span = (u64, u64, u64);
 
 fn host() -> Rc<Host> {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
+    host.device
+        .ordinary_symbols
+        .borrow_mut()
+        .extend([SUM, BF16_ROUND, BF16_SUM].map(String::from));
     host
+}
+
+/// A launch of the transport's owner sums. The BF16 rounding is checked as
+/// compute: the copies that read its rows must be ordered after it.
+fn transport_launch(line: &str) -> bool {
+    line.starts_with("launch ") && [SUM, BF16_SUM].iter().any(|s| line.contains(s))
 }
 
 fn capture(mode: u8, rows: u64) -> Vec<String> {
@@ -58,7 +70,7 @@ fn audit(journal: &[String]) -> Result<usize, String> {
         .collect::<BTreeMap<_, _>>();
     let interesting = journal
         .iter()
-        .filter(|s| s.starts_with("peer-copy ") || (s.starts_with("launch ") && s.contains(SUM)))
+        .filter(|s| s.starts_with("peer-copy ") || transport_launch(s))
         .flat_map(|s| spans(s))
         .map(|s| s.0)
         .collect::<BTreeSet<_>>();
@@ -81,7 +93,7 @@ fn audit(journal: &[String]) -> Result<usize, String> {
         if words[0] == "record" {
             events.insert(words[2].parse().unwrap(), clocks[stream].clone());
         }
-        let transport = words[0] == "peer-copy" || (words[0] == "launch" && line.contains(SUM));
+        let transport = words[0] == "peer-copy" || transport_launch(line);
         for span in spans(line)
             .into_iter()
             .filter(|s| interesting.contains(&s.0))

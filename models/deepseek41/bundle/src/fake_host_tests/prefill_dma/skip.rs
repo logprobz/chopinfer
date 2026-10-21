@@ -222,3 +222,57 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+#[test]
+fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
+    use crate::ops::with_partial_setting;
+    let phased = |journal: &[String]| {
+        journal
+            .iter()
+            .filter(|line| {
+                line.starts_with("launch ")
+                    && (line.contains(" chop_comm_allreduce_phased_bf16_v1 ")
+                        || line.contains(" chop_comm_allreduce_phased_turns_bf16_v1 "))
+            })
+            .count()
+    };
+    let count = |journal: &[String], symbol: &str| {
+        journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(&format!(" {symbol} ")))
+            .count()
+    };
+    for rows in [8192, 8191] {
+        let (reference, candidate) = with_partial_setting(Some("prefill"), || {
+            (capture(rows, Some(false)), capture(rows, None))
+        });
+        assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
+        assert_eq!(phased(&reference) - phased(&candidate), 73 * 4);
+        assert_eq!(count(&candidate, SUM), 0);
+        assert_eq!(count(&candidate, BF16_SUM), 73 * 4);
+        assert_eq!(count(&candidate, BF16_ROUND), 73 * 6);
+        let before = compute(&reference);
+        let after = compute(&candidate);
+        assert_eq!(before, after);
+        let copies = candidate
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 73 * 24);
+        let upper_rows: u64 = (0..16)
+            .map(|layer| 2496 - 128 * layer - (8192 - rows))
+            .sum();
+        let reduced_rows = 41 * rows + 2 * upper_rows;
+        let bytes: u64 = copies
+            .iter()
+            .map(|line| super::super::shared_overlap::journal_spans(line)[0].2)
+            .sum();
+        assert_eq!(bytes, reduced_rows * u64::from(FLASH.shape.hidden) * 12);
+        assert_eq!(audit(&candidate).unwrap(), 73 * (24 * 2 + 4 * 3));
+        let missing = candidate
+            .into_iter()
+            .filter(|line| !line.starts_with("wait "))
+            .collect::<Vec<_>>();
+        assert!(audit(&missing).is_err());
+    }
+}

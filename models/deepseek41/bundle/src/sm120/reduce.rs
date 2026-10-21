@@ -91,6 +91,12 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
             kernels_sm120::comm::owned_sum_f32::cubin_spec("comm_dma_sum_deepseek41_sm120".into()),
         ),
         (
+            "comm_dma_bf16",
+            kernels_sm120::comm::owned_sum_bf16::cubin_spec(
+                "comm_dma_bf16_deepseek41_sm120".into(),
+            ),
+        ),
+        (
             "comm_bf16_partials",
             kernels_sm120::comm::phased_bf16::cubin_spec(
                 "comm_bf16_partials_deepseek41_sm120".into(),

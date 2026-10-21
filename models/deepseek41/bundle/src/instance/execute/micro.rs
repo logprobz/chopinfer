@@ -268,8 +268,27 @@ impl Plan {
             let mut calls = Vec::new();
             for part in 0..2 {
                 let first = if part == 0 { 0 } else { rows[0] };
+                let collectives = blocks[block]
+                    .iter()
+                    .map(|rank| {
+                        let reduce = &rank[part].reduce;
+                        let at = reduce
+                            .flags
+                            .iter()
+                            .position(|&v| v)
+                            .ok_or("prefill part has no collective")?;
+                        Ok(reduce.launches[at].symbol.as_str())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
                 calls.push(if super::dma::eligible(instance, run) {
-                    super::dma::Call::prepare(instance, first, rows[part], block == 0)?
+                    super::dma::Call::prepare(
+                        instance,
+                        first,
+                        rows[part],
+                        block == 0,
+                        &collectives,
+                        true,
+                    )?
                 } else {
                     None
                 });

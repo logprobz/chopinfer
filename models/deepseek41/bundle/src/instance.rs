@@ -536,6 +536,16 @@ impl Instance {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
                 })
                 .filter(|cubin| {
+                    // BF16-partial prefills send rounded partials over DMA.
+                    cubin.name != "comm_dma_bf16_deepseek41_sm120"
+                        || !self.dma.is_empty()
+                            && self
+                                .ops
+                                .reduce
+                                .as_ref()
+                                .is_some_and(|ops| ops.bf16_partials())
+                })
+                .filter(|cubin| {
                     !cubin.name.starts_with("comm_bf16_partials_")
                         || self
                             .ops

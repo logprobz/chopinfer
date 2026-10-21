@@ -38,12 +38,13 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
                 .find(|&i| flags[rank][i])
                 .ok_or("sparse reduction has no collective")?;
             let launch = &programs[rank][collective];
-            if !crate::Kernels::prefill_dma_replaces(&launch.symbol) {
+            // Only the admitted phased contracts; composed parts keep theirs.
+            if crate::Kernels::prefill_dma_payload(&launch.symbol, false).is_none() {
                 at = end;
                 continue;
             }
-            // The qualified phased contract takes its F32 partial and BF16
-            // result as its first two arguments. Check the bound row views;
+            // The qualified phased contracts take their F32 partial and BF16
+            // result as their first two arguments. Check the bound row views;
             // never infer it from a layer number or a compact output index.
             let Some(Argument::DeviceBuffer(input)) = launch.arguments.0.first() else {
                 return Err("sparse reduction input is not a direct buffer".into());
@@ -144,11 +145,16 @@ impl Plan {
             }) {
                 return Err("sparse DMA ranks disagree on original rows".into());
             }
+            let collectives = (0..4)
+                .map(|rank| body.0[rank][ranks[rank][index].collective].symbol.as_str())
+                .collect::<Vec<_>>();
             let Some(reduce) = Call::prepare(
                 instance,
                 reference.first,
                 reference.rows,
                 reference.stage == Stage::EmbeddingReduce,
+                &collectives,
+                false,
             )?
             else {
                 continue;

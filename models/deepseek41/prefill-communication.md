@@ -3,8 +3,9 @@
 Native Flash TP4 now defaults to BF16 input partials for prefill only; see
 [communication-partials.md](communication-partials.md). Set
 `CHOPINFER_DEEPSEEK41_BF16_PARTIALS=0` to retain the F32-partial arithmetic
-described below or to use the explicit F32 DMA transport. Overlap remains
-off by default and must be bitwise against its selected sequential path.
+described below. The DMA transport carries the partial format of the
+collective it replaces. Overlap remains off by default and must be bitwise
+against its selected sequential path.
 
 The optional attention schedule splits the final output projection into two
 row ranges for chunks of at least 1024 rows. The first range is aligned to
@@ -164,6 +165,20 @@ Three ordered permutations gather those BF16 owner intervals. Changing the
 owner interval does not change any element's arithmetic. Cross-device
 events order each permutation and join all final peer reads before reuse.
 
+Where the step's collective reduces BF16 partials (the two-shot and turns
+entries of the BF16-partial contract), the transport carries BF16 partials
+instead. Each rank first rounds the rows it sends, every row outside its
+own interval, once to BF16 with the phased BF16 entries' rounding helper.
+The scatter copies those BF16 rows, half the F32 bytes, into BF16 slots.
+The owner sum calls the phased BF16 sum helper: its own F32 rows rounded as
+sent, every source's BF16 value widened, positive F32 zero, ascending rank
+order, one BF16 rounding. The gather is unchanged. The output is the
+replaced collective's bits. The rounded rows use the second half of the
+same inbox allocation, so the BF16 payload allocates nothing more. The
+payload is chosen from the replaced launch's symbol on every rank; a
+collective the transport does not recognize keeps the step on the
+collectives.
+
 Each rank keeps a private 160 MiB inbox and eight events. A and B reuse the
 inbox only after the previous collective's global join. The overlap audit
 includes complete DMA input/output intervals and every inbox, including
@@ -273,9 +288,10 @@ The GPU-time route decision does not establish a quiet-host TTFT gain.
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` also admits the exact upper-skip
 schedule for native Flash TP4, single-request AR text prefill with overlap
 disabled. Unset and `0` retain the SM transport. The adapter recognizes only
-the F32-partial, BF16-result phased contract. It validates every rank's
+the F32-partial, BF16-result phased contract and the BF16-partial two-shot
+and turns entries, and carries their payload. It validates every rank's
 original input and output row interval before substituting a DMA call.
-It does not select BF16 partials or change any compute dispatch, KV mutation,
+It does not select a partial format or change any compute dispatch, KV mutation,
 ring update, index write or head-row copy. Intervals below 512 rows retain
 the composed transport.
 

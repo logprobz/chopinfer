@@ -31,10 +31,10 @@ pub(crate) mod shared;
 pub(crate) use compressor::{PlaneViews, PoolingViews, WriteViews};
 pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
+pub(crate) use reduce::bf16_partials_requested;
 #[cfg(test)]
 pub(crate) use reduce::with_bf16_gather;
 pub(crate) use reduce::{PeerViews, PrefillDma, ReduceViews, WidenViews};
-pub(crate) use reduce::{bf16_partials_requested, dma_requested};
 #[cfg(test)]
 pub(crate) use reduce::{with_bf16_partials, with_partial_setting};
 #[cfg(test)]
@@ -154,8 +154,15 @@ impl Ops {
             asks.record(
                 "reduce.prefill_dma_owner",
                 Need::rows(8192),
-                &Kernels::prefill_dma_sum_info(),
+                &Kernels::prefill_dma_sum_info(crate::sm120::DmaPayload::F32),
             );
+            if reduce::bf16_partials_requested(shape, storage) {
+                asks.record(
+                    "reduce.prefill_dma_bf16_owner",
+                    Need::rows(8192),
+                    &Kernels::prefill_dma_sum_info(crate::sm120::DmaPayload::Bf16),
+                );
+            }
             ops.asked.extend(asks.asked());
             ops.prefill_dma = dma;
         }

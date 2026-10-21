@@ -586,9 +586,8 @@ impl crate::Kernels {
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = if crate::ops::bf16_partials_requested(shape, storage) {
-            if crate::ops::dma_requested().enabled() {
-                return Err("BF16 partials require CHOPINFER_DEEPSEEK41_PREFILL_DMA=0".into());
-            }
+            // Prefill DMA carries the rounded BF16 partials of the
+            // collectives it replaces (`prefill_dma_payload`).
             // Create admits every resident grid before preparing or running
             // any graph. A failed admission refuses the selected instance.
             sm120.with_phased_bf16_all_reduce()
@@ -687,20 +686,77 @@ impl crate::Kernels {
         kernels_sm120::backend::bf16_phased_admission_plans().map_err(|error| error.to_string())
     }
 
-    /// The admitted F32-partial/BF16-output contract replaced by sparse DMA.
-    pub(crate) fn prefill_dma_replaces(symbol: &str) -> bool {
-        symbol == kernels_sm120::comm::phased_f32::ROUND_SYMBOL
+    /// The payload of the copy-engine reduction that replaces a prefill
+    /// collective, or `None` for a collective it does not replace. The
+    /// F32-partial contract sends F32 partials; the BF16-partial contract's
+    /// two-shot and turns entries send each rank's partial rounded once to
+    /// BF16, as they do. With `composed`, the composed form's F32
+    /// reduce-scatter (unadmitted phased entries) is replaced with F32
+    /// partials: under the BF16-partial contract its preceding launches
+    /// have already rounded the partials in place, so the sum is the same.
+    pub(crate) fn prefill_dma_payload(symbol: &str, composed: bool) -> Option<DmaPayload> {
+        use kernels_sm120::comm::{phased_bf16, phased_f32, phased_turns_bf16};
+        if symbol == phased_f32::ROUND_SYMBOL || composed && symbol == COMPOSED_SCATTER {
+            Some(DmaPayload::F32)
+        } else if symbol == phased_bf16::SYMBOL || symbol == phased_turns_bf16::SYMBOL {
+            Some(DmaPayload::Bf16)
+        } else {
+            None
+        }
     }
 
-    pub(crate) fn prefill_dma_sum_info() -> kernel_core::backend::OpInfo {
+    pub(crate) fn prefill_dma_sum_info(payload: DmaPayload) -> kernel_core::backend::OpInfo {
+        use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
         kernel_core::backend::OpInfo::new(
             "local-rank-ordered-bf16-owner-sum",
             kernel_core::properties::Invariance::any_rows(8192),
-            vec![(kernels_sm120::comm::owned_sum_f32::SYMBOL.into(), 0)],
+            match payload {
+                DmaPayload::F32 => vec![(owned_sum_f32::SYMBOL.into(), 0)],
+                DmaPayload::Bf16 => vec![
+                    (owned_sum_bf16::ROUND_SYMBOL.into(), 0),
+                    (owned_sum_bf16::SUM_SYMBOL.into(), 0),
+                ],
+            },
         )
     }
 
+    /// Round `input`'s F32 partial rows once to BF16 into `output`.
+    pub(crate) fn prefill_dma_round(
+        input: runtime_bundle_abi::DeviceBufferSpanV1,
+        output: runtime_bundle_abi::DeviceBufferSpanV1,
+        rows: u32,
+    ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
+        use bundle_runtime::dispatch::BufferBindings;
+        use kernel_core::contract::{Argument, ArgumentList};
+        use kernels_sm120::comm::owned_sum_bf16;
+        let elements = output.length / 2;
+        if input.length != elements * 4
+            || output.length != elements * 2
+            || [input, output].iter().any(|s| s.offset % 16 != 0)
+        {
+            return Err("DMA rounding has inconsistent byte views".into());
+        }
+        let plan = owned_sum_bf16::round_plan(elements).map_err(|e| e.to_string())?;
+        let mut bindings = BufferBindings::default();
+        let arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(bindings.bind(input)),
+            Argument::DeviceBuffer(bindings.bind(output)),
+            Argument::U64(elements),
+        ]);
+        Ok(bundle_runtime::pipeline::PreparedLaunch {
+            symbol: owned_sum_bf16::ROUND_SYMBOL.into(),
+            rows,
+            plan,
+            arguments,
+            bindings,
+        })
+    }
+
+    /// The owner's rank-ordered sums. `inbox` holds four rank slots of
+    /// `slot` elements in the payload's format.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prefill_dma_sum(
+        payload: DmaPayload,
         input: runtime_bundle_abi::DeviceBufferSpanV1,
         inbox: runtime_bundle_abi::DeviceBufferSpanV1,
         output: runtime_bundle_abi::DeviceBufferSpanV1,
@@ -710,16 +766,29 @@ impl crate::Kernels {
     ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
         use bundle_runtime::dispatch::BufferBindings;
         use kernel_core::contract::{Argument, ArgumentList};
-        use kernels_sm120::comm::owned_sum_f32;
+        use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
         let elements = output.length / 2;
         if input.length != elements * 4
             || output.length != elements * 2
-            || inbox.length != slot.checked_mul(16).ok_or("DMA inbox overflow")?
+            || inbox.length
+                != slot
+                    .checked_mul(4 * payload.bytes())
+                    .ok_or("DMA inbox overflow")?
             || [input, inbox, output].iter().any(|s| s.offset % 16 != 0)
         {
             return Err("DMA owner sum has inconsistent byte views".into());
         }
-        let plan = owned_sum_f32::plan(elements, slot, rank, 4).map_err(|e| e.to_string())?;
+        let (symbol, plan) = match payload {
+            DmaPayload::F32 => (
+                owned_sum_f32::SYMBOL,
+                owned_sum_f32::plan(elements, slot, rank, 4),
+            ),
+            DmaPayload::Bf16 => (
+                owned_sum_bf16::SUM_SYMBOL,
+                owned_sum_bf16::sum_plan(elements, slot, rank, 4),
+            ),
+        };
+        let plan = plan.map_err(|e| e.to_string())?;
         let mut bindings = BufferBindings::default();
         let arguments = ArgumentList(vec![
             Argument::DeviceBuffer(bindings.bind(input)),
@@ -731,12 +800,31 @@ impl crate::Kernels {
             Argument::U32(4),
         ]);
         Ok(bundle_runtime::pipeline::PreparedLaunch {
-            symbol: owned_sum_f32::SYMBOL.into(),
+            symbol: symbol.into(),
             rows,
             plan,
             arguments,
             bindings,
         })
+    }
+}
+
+/// The first collective of the all-reduces' composed form.
+const COMPOSED_SCATTER: &str = "chop_comm_reduce_scatter_f32_v1";
+
+/// The element format a prefill DMA reduction copies between ranks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DmaPayload {
+    F32,
+    Bf16,
+}
+
+impl DmaPayload {
+    pub(crate) fn bytes(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+            Self::Bf16 => 2,
+        }
     }
 }
 

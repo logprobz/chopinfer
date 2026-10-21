@@ -1,4 +1,7 @@
-//! Ordered DMA transport with an owner-local rank sum and BF16 gather.
+//! Ordered DMA transport with an owner-local rank sum and BF16 gather. The
+//! scatter carries the payload of the collective it replaces: F32 partials,
+//! or each rank's partial rounded once to BF16 as the BF16-partial
+//! contract's entries send it.
 use super::{Run, Stage};
 use crate::instance::Instance;
 use bundle_runtime::acquire::RankHandles;
@@ -103,6 +106,8 @@ struct Transfer {
 }
 
 pub(super) struct Call {
+    /// Each rank's rounding of the partial rows it sends (BF16 payload).
+    rounds: Vec<Vec<PreparedLaunch>>,
     scatter: [Vec<Transfer>; 3],
     sums: Vec<PreparedLaunch>,
     gather: [Vec<Transfer>; 3],
@@ -110,21 +115,40 @@ pub(super) struct Call {
 }
 
 impl Call {
+    /// The reduction of rows `first..first + rows` that replaces the four
+    /// ranks' `collectives`, carrying the payload they send. `None` where
+    /// the rows or the collectives are outside the transport; `composed`
+    /// admits the composed form (`Kernels::prefill_dma_payload`).
     pub(super) fn prepare(
         instance: &Instance,
         first: u32,
         rows: u32,
         embedding: bool,
+        collectives: &[&str],
+        composed: bool,
     ) -> Result<Option<Self>, String> {
         if instance.dma.len() != 4 || !(512..=PREFILL_TOKENS).contains(&rows) {
             return Ok(None);
         }
+        let payloads = collectives
+            .iter()
+            .map(|symbol| crate::Kernels::prefill_dma_payload(symbol, composed))
+            .collect::<Vec<_>>();
+        let Some(Some(payload)) = payloads.first().copied() else {
+            return Ok(None);
+        };
+        if payloads.len() != 4 || payloads.iter().any(|p| *p != Some(payload)) {
+            return Ok(None);
+        }
+        let bytes = payload.bytes();
         let width = u64::from(instance.config.shape.dims().hidden);
         let owner_rows = rows.div_ceil(4);
         let slot = u64::from(owner_rows) * width;
         let mut inputs = Vec::new();
+        let mut sent = Vec::new();
         let mut outputs = Vec::new();
         let mut inboxes = Vec::new();
+        let mut rounds = Vec::new();
         let mut sums = Vec::new();
         let mut footprint = Vec::new();
         for (rank, buffers) in instance.buffers.iter().enumerate() {
@@ -138,27 +162,53 @@ impl Call {
                 first,
                 rows,
             )?;
-            let inbox = subspan(instance.dma[rank].inbox, 0, slot * 16)?;
+            let inbox = subspan(instance.dma[rank].inbox, 0, slot * 4 * bytes)?;
             let begin = (rank as u32 * owner_rows).min(rows);
             let count = owner_rows.min(rows - begin);
+            let own = |span: DeviceBufferSpanV1, bytes: u64| {
+                subspan(
+                    span,
+                    u64::from(begin) * width * bytes,
+                    u64::from(count) * width * bytes,
+                )
+            };
+            // A BF16 payload's rounded rows follow the inbox in the same
+            // allocation; the owner's own rows are rounded inside its sum.
+            let outbox = match payload {
+                crate::sm120::DmaPayload::F32 => input,
+                crate::sm120::DmaPayload::Bf16 => subspan(
+                    instance.dma[rank].inbox,
+                    inbox.length,
+                    u64::from(rows) * width * 2,
+                )?,
+            };
+            let mut round = Vec::new();
+            if payload == crate::sm120::DmaPayload::Bf16 {
+                for (from, to) in [(0, begin), (begin + count, rows)] {
+                    if from < to {
+                        let length = u64::from(to - from) * width;
+                        round.push(crate::Kernels::prefill_dma_round(
+                            subspan(input, u64::from(from) * width * 4, length * 4)?,
+                            subspan(outbox, u64::from(from) * width * 2, length * 2)?,
+                            to - from,
+                        )?);
+                    }
+                }
+                footprint.push(outbox);
+            }
+            rounds.push(round);
             sums.push(crate::Kernels::prefill_dma_sum(
-                subspan(
-                    input,
-                    u64::from(begin) * width * 4,
-                    u64::from(count) * width * 4,
-                )?,
+                payload,
+                own(input, 4)?,
                 inbox,
-                subspan(
-                    output,
-                    u64::from(begin) * width * 2,
-                    u64::from(count) * width * 2,
-                )?,
+                own(output, 2)?,
                 slot,
                 rank as u32,
                 count,
             )?);
             footprint.extend([input, output, inbox]);
             inputs.push(input);
+            sent.push(outbox);
             outputs.push(output);
             inboxes.push(inbox);
         }
@@ -173,14 +223,14 @@ impl Call {
                     source,
                     destination,
                     input: subspan(
-                        inputs[source],
-                        u64::from(first) * width * 4,
-                        u64::from(count) * width * 4,
+                        sent[source],
+                        u64::from(first) * width * bytes,
+                        u64::from(count) * width * bytes,
                     )?,
                     output: subspan(
                         inboxes[destination],
-                        source as u64 * slot * 4,
-                        u64::from(count) * width * 4,
+                        source as u64 * slot * bytes,
+                        u64::from(count) * width * bytes,
                     )?,
                 });
                 let first = (source as u32 * owner_rows).min(rows);
@@ -202,6 +252,7 @@ impl Call {
             }
         }
         Ok(Some(Self {
+            rounds,
             scatter,
             sums,
             gather,
@@ -222,19 +273,26 @@ impl Call {
             return Err(DispatchError::InvalidPlan);
         }
         let services = &instance.services;
+        let resolve = |rank: usize, launch: &PreparedLaunch| {
+            dispatch::resolve(
+                &instance.symbols[rank],
+                &launch.symbol,
+                launch.plan,
+                &launch.arguments,
+                &launch.bindings,
+            )
+        };
+        let rounds = self
+            .rounds
+            .iter()
+            .enumerate()
+            .map(|(rank, rounds)| rounds.iter().map(|r| resolve(rank, r)).collect())
+            .collect::<Result<Vec<Vec<_>>, _>>()?;
         let sums = self
             .sums
             .iter()
             .enumerate()
-            .map(|(rank, sum)| {
-                dispatch::resolve(
-                    &instance.symbols[rank],
-                    &sum.symbol,
-                    sum.plan,
-                    &sum.arguments,
-                    &sum.bindings,
-                )
-            })
+            .map(|(rank, sum)| resolve(rank, sum))
             .collect::<Result<Vec<_>, _>>()?;
         let record = |stage: usize| -> Result<(), BundleAbiError> {
             for (rank, &stream) in streams.iter().enumerate() {
@@ -262,6 +320,12 @@ impl Call {
             }
             Ok(())
         };
+        // Every rank's rounded rows exist before any peer copies them.
+        for (rank, rounds) in rounds.iter().enumerate() {
+            for round in rounds {
+                round.submit(services, streams[rank])?;
+            }
+        }
         record(0)?;
         for phase in 0..3 {
             wait(phase)?;
@@ -278,7 +342,7 @@ impl Call {
             record(phase + 5)?;
         }
         // All peer reads have completed before any rank can reuse partials,
-        // outputs, inboxes, or this call's event records.
+        // rounded rows, outputs, inboxes, or this call's event records.
         wait(7)?;
         Ok(())
     }
@@ -337,6 +401,7 @@ impl Plan {
             .filter(|s| matches!(s, Stage::EmbeddingReduce | Stage::Reduce(..)))
         {
             let mut compute = Vec::new();
+            let mut collectives = Vec::new();
             for (rank, cursor) in cursors.iter_mut().enumerate() {
                 let begin = run.stages[rank]
                     .iter()
@@ -354,15 +419,22 @@ impl Plan {
                     return Err("DMA reduction stage order changed".into());
                 }
                 compute.push(copied(run, rank, *cursor..collective));
+                collectives.push(run.programs[rank][collective].symbol.as_str());
                 *cursor = end;
             }
-            let call = Call::prepare(
+            // A collective the transport does not replace keeps the whole
+            // step on the collectives.
+            let Some(call) = Call::prepare(
                 instance,
                 0,
                 run.phase.rows(),
                 stage == Stage::EmbeddingReduce,
+                &collectives,
+                true,
             )?
-            .ok_or("DMA call was not prepared")?;
+            else {
+                return Ok(None);
+            };
             blocks.push((compute, call));
         }
         let tail = cursors

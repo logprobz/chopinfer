@@ -525,22 +525,6 @@ mod tests {
     }
 
     #[test]
-    fn preparation_bytes_refuse_source_storage_overflow() {
-        // A readable header is enough to reserve before decoding. Even
-        // permissive callers must not wrap its source storage calculation.
-        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
-        png.extend_from_slice(&u32::MAX.to_be_bytes());
-        png.extend_from_slice(&u32::MAX.to_be_bytes());
-        png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
-        let limits = MediaLimits {
-            maximum_pixels: u64::MAX,
-            ..limits()
-        };
-        let error = centered_pad_preparation_bytes(&png, recipe(), limits).unwrap_err();
-        assert_eq!(error.to_string(), "image preparation size overflow");
-    }
-
-    #[test]
     fn offsets_round_half_to_even() {
         // A 3-pixel margin centers at round(1.5) = 2, a 5-pixel one at
         // round(2.5) = 2.

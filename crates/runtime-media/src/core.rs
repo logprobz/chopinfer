@@ -122,12 +122,30 @@ impl MediaLimits {
     }
 
     pub fn check_image(self, width: u32, height: u32) -> MediaResult<()> {
-        if width == 0 || height == 0 || u64::from(width) * u64::from(height) > self.maximum_pixels {
-            return Err(MediaError::new("decoded image pixel limit exceeded"));
+        self.check_named_image("decoded", width, height)
+    }
+
+    /// [`Self::check_image`] for an image whose refusal names its format
+    /// (`name`), its size and the limit that applied.
+    pub(crate) fn check_named_image(self, name: &str, width: u32, height: u32) -> MediaResult<()> {
+        if width == 0 || height == 0 {
+            return Err(MediaError::new(format!(
+                "{name} image {width} x {height} has no pixels"
+            )));
+        }
+        let pixels = u64::from(width) * u64::from(height);
+        if pixels > self.maximum_pixels {
+            return Err(MediaError::new(format!(
+                "{name} image {width} x {height} has {pixels} pixels, above the {}-pixel limit",
+                self.maximum_pixels
+            )));
         }
         let ratio = f64::from(width.max(height)) / f64::from(width.min(height));
         if !self.maximum_aspect_ratio.is_finite() || ratio > self.maximum_aspect_ratio {
-            return Err(MediaError::new("image aspect ratio limit exceeded"));
+            return Err(MediaError::new(format!(
+                "{name} image {width} x {height} has an aspect ratio above {}",
+                self.maximum_aspect_ratio
+            )));
         }
         Ok(())
     }
@@ -389,8 +407,7 @@ pub fn probe_oriented(
 ) -> MediaResult<Probe> {
     limits.check_bytes(bytes.len())?;
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let (width, height) = crate::png::probe(bytes)?;
-        limits.check_image(width, height)?;
+        let (width, height) = crate::png::probe(bytes, limits)?;
         Ok(Probe::Png { width, height })
     } else if bytes.starts_with(b"\xff\xd8") {
         let (width, height) = crate::jpeg::probe_oriented(bytes, limits, orientation)?;
@@ -411,17 +428,14 @@ pub fn probe_oriented(
 
 /// The decoder's host bytes for the image `probe` read from `bytes`, from
 /// its header alone: a JPEG's coefficients and planes per padded block and
-/// the RGB output ([`crate::jpeg::decode_storage_bytes`]); a PNG's
-/// scanlines, filter rows and RGB, its IDAT storage while it grows and the
-/// inflater's fixed workspace. The encoded source itself is not counted.
+/// the RGB output ([`crate::jpeg::decode_storage_bytes`]); a PNG's RGB
+/// output, the png crate's rows and the stream it inflates
+/// ([`crate::png::decode_storage_bytes`]). The encoded source itself is
+/// not counted.
 pub fn image_decode_bytes(bytes: &[u8], probe: Probe, limits: MediaLimits) -> MediaResult<u64> {
     match probe {
         Probe::Jpeg { .. } => crate::jpeg::decode_storage_bytes(bytes, limits),
-        Probe::Png { width, height } => (u64::from(width) * u64::from(height))
-            .checked_mul(crate::recipe::DECODE_BYTES_PER_PIXEL)
-            .and_then(|n| n.checked_add((bytes.len() as u64).checked_mul(2)?))
-            .and_then(|n| n.checked_add(32 * 1024))
-            .ok_or_else(|| MediaError::new("image preparation size overflow")),
+        Probe::Png { .. } => crate::png::decode_storage_bytes(bytes, limits),
         Probe::Wav { .. } => Err(MediaError::new("not an image")),
     }
 }

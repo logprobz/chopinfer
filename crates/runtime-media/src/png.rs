@@ -1,30 +1,15 @@
-//! Bounded PNG decoder. The inflate interface keeps compression separate from parsing.
+//! Bounded PNG decoding. A chunk walker checks every chunk's CRC and place
+//! and keeps the palette and the raw transparency chunk; the `png` crate
+//! inflates and unfilters a stream of only the critical chunks, row by row,
+//! and each row becomes RGB here.
 
-use crate::core::{try_filled, try_reserve, try_with_capacity};
+use std::io::Cursor;
+
+use crate::core::{try_filled, try_with_capacity};
 use crate::{Alpha, MediaError, MediaLimits, MediaResult, RgbImage};
 
-pub trait Inflate {
-    fn zlib_exact(&self, compressed: &[u8], expected: usize) -> MediaResult<Vec<u8>>;
-}
-
-pub struct MinizInflate;
-
-impl Inflate for MinizInflate {
-    fn zlib_exact(&self, compressed: &[u8], expected: usize) -> MediaResult<Vec<u8>> {
-        let mut bytes = try_filled(expected, 0_u8)?;
-        let written = miniz_oxide::inflate::decompress_slice_iter_to_slice(
-            &mut bytes,
-            std::iter::once(compressed),
-            true,
-            false,
-        )
-        .map_err(|_| MediaError::new("PNG inflate failed or exceeded decoded limit"))?;
-        if written != expected {
-            return Err(MediaError::new("PNG inflated byte count differs"));
-        }
-        Ok(bytes)
-    }
-}
+const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const IEND: &[u8; 12] = b"\0\0\0\0IEND\xae\x42\x60\x82";
 
 #[derive(Clone, Copy)]
 struct Header {
@@ -62,7 +47,7 @@ fn be32(bytes: &[u8]) -> u32 {
 
 fn header(bytes: &[u8]) -> MediaResult<Header> {
     if bytes.len() < 33
-        || !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || !bytes.starts_with(SIGNATURE)
         || be32(&bytes[8..12]) != 13
         || &bytes[12..16] != b"IHDR"
     {
@@ -80,6 +65,9 @@ fn header(bytes: &[u8]) -> MediaResult<Header> {
         2 | 4 | 6 => h.depth == 8,
         _ => false,
     };
+    if h.depth == 16 && matches!(h.color, 0 | 2 | 4 | 6) {
+        return Err(MediaError::new("PNG with 16-bit samples is not supported"));
+    }
     if h.width == 0
         || h.height == 0
         || !valid_depth
@@ -92,43 +80,27 @@ fn header(bytes: &[u8]) -> MediaResult<Header> {
     Ok(h)
 }
 
-pub fn probe(bytes: &[u8]) -> MediaResult<(u32, u32)> {
+/// The stored size from the IHDR, checked against `limits`.
+pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<(u32, u32)> {
     let h = header(bytes)?;
+    limits.check_named_image("PNG", h.width, h.height)?;
     Ok((h.width, h.height))
 }
 
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0_u32;
-    for &byte in data {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0xedb8_8320 & (0_u32.wrapping_sub(crc & 1)));
-        }
-    }
-    !crc
-}
-
-fn scanlines(h: Header) -> MediaResult<usize> {
-    let mut total = 0_usize;
-    for &(sx, sy, dx, dy) in passes(h.interlace) {
-        let w = pass_size(h.width, sx, dx) as usize;
-        let rows = pass_size(h.height, sy, dy) as usize;
-        if w == 0 || rows == 0 {
-            continue;
-        }
-        let stride = h
-            .row_bytes(w)?
-            .checked_add(1)
-            .ok_or_else(|| MediaError::new("PNG scanline overflow"))?;
-        total = total
-            .checked_add(
-                stride
-                    .checked_mul(rows)
-                    .ok_or_else(|| MediaError::new("PNG scanline overflow"))?,
-            )
-            .ok_or_else(|| MediaError::new("PNG scanline overflow"))?;
-    }
-    Ok(total)
+/// Decoder storage derived from the IHDR, before any allocation: the
+/// critical-chunk stream (at most the source), the RGB image, and the
+/// crate's working rows. Those are its unfiltering window of a few rows, at
+/// least 128 KiB, the inflater's 32 KiB lookback and one output row; the
+/// fixed allowance also covers the inflater's tables and the decoder state.
+pub fn decode_storage_bytes(bytes: &[u8], limits: MediaLimits) -> MediaResult<u64> {
+    limits.check_bytes(bytes.len())?;
+    let (width, height) = probe(bytes, limits)?;
+    let row = header(bytes)?.row_bytes(width as usize)? as u64 + 1;
+    (u64::from(width) * u64::from(height))
+        .checked_mul(3)
+        .and_then(|rgb| rgb.checked_add(row.checked_mul(16)?))
+        .and_then(|sum| sum.checked_add(bytes.len() as u64 + (1 << 20)))
+        .ok_or_else(|| MediaError::new("PNG decode size overflow"))
 }
 
 fn pass_size(size: u32, start: u32, step: u32) -> u32 {
@@ -139,6 +111,8 @@ fn pass_size(size: u32, start: u32, step: u32) -> u32 {
     }
 }
 
+/// Adam7's passes as (x start, y start, x step, y step), the order the
+/// crate returns their rows in.
 fn passes(interlace: u8) -> &'static [(u32, u32, u32, u32)] {
     const PLAIN: &[(u32, u32, u32, u32)] = &[(0, 0, 1, 1)];
     const ADAM7: &[(u32, u32, u32, u32)] = &[
@@ -162,7 +136,7 @@ fn sample(line: &[u8], index: usize, depth: u8) -> u8 {
     (line[bit / 8] >> shift) & ((1 << depth) - 1)
 }
 
-fn composite(rgb: [u8; 3], alpha: u8, policy: Alpha) -> [u8; 3] {
+pub(crate) fn composite(rgb: [u8; 3], alpha: u8, policy: Alpha) -> [u8; 3] {
     if policy == Alpha::Discard {
         return rgb;
     }
@@ -218,60 +192,26 @@ fn pixel(
     Ok(value)
 }
 
-fn unfilter(filter: u8, row: &mut [u8], previous: &[u8], bpp: usize) -> MediaResult<()> {
-    for i in 0..row.len() {
-        let left = if i >= bpp { row[i - bpp] } else { 0 };
-        let up = previous[i];
-        let upper_left = if i >= bpp { previous[i - bpp] } else { 0 };
-        let predictor = match filter {
-            0 => 0,
-            1 => left,
-            2 => up,
-            3 => ((u16::from(left) + u16::from(up)) / 2) as u8,
-            4 => {
-                let p = i32::from(left) + i32::from(up) - i32::from(upper_left);
-                let a = (p - i32::from(left)).abs();
-                let b = (p - i32::from(up)).abs();
-                let c = (p - i32::from(upper_left)).abs();
-                if a <= b && a <= c {
-                    left
-                } else if b <= c {
-                    up
-                } else {
-                    upper_left
-                }
-            }
-            _ => return Err(MediaError::new("unknown PNG row filter")),
-        };
-        row[i] = row[i].wrapping_add(predictor);
-    }
-    Ok(())
+/// What the chunk walker keeps: the palette, the raw transparency chunk
+/// (the crate keeps only the low byte of a gray or RGB key) and the stream
+/// the crate decodes.
+struct Chunks {
+    palette: Vec<[u8; 3]>,
+    transparency: Vec<u8>,
+    /// The signature, IHDR, an indexed image's PLTE, every IDAT and IEND,
+    /// so no ancillary chunk can change what the crate decodes.
+    stream: Vec<u8>,
 }
 
-/// Decodes with transparency composited onto white.
-pub fn decode(bytes: &[u8], limits: MediaLimits) -> MediaResult<RgbImage> {
-    decode_with_alpha(bytes, limits, Alpha::CompositeWhite)
-}
-
-/// Decodes with transparency (an alpha channel or a tRNS chunk) handled
-/// as `alpha` says.
-pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> MediaResult<RgbImage> {
-    decode_inner(bytes, limits, &MinizInflate, alpha)
-}
-
-fn decode_inner(
-    bytes: &[u8],
-    limits: MediaLimits,
-    inflate: &impl Inflate,
-    policy: Alpha,
-) -> MediaResult<RgbImage> {
-    limits.check_bytes(bytes.len())?;
-    let h = header(bytes)?;
-    limits.check_image(h.width, h.height)?;
+/// Walks every chunk, refusing a CRC mismatch anywhere, a misplaced or
+/// unknown critical chunk, data after IEND and an inconsistent chunk set.
+fn chunks(bytes: &[u8], h: Header) -> MediaResult<Chunks> {
+    let mut stream = try_with_capacity(bytes.len())?;
+    stream.extend_from_slice(&bytes[..33]);
     let mut pos = 8_usize;
     let mut palette = Vec::new();
+    let mut plte = 0..0;
     let mut transparency = Vec::new();
-    let mut idat = Vec::new();
     let mut seen_ihdr = false;
     let mut seen_iend = false;
     let mut seen_idat = false;
@@ -286,7 +226,7 @@ fn decode_inner(
         }
         let kind = &bytes[pos + 4..pos + 8];
         let data = &bytes[pos + 8..pos + 8 + len];
-        if crc32(&bytes[pos + 4..pos + 8 + len]) != be32(&bytes[pos + 8 + len..end]) {
+        if crc32fast::hash(&bytes[pos + 4..pos + 8 + len]) != be32(&bytes[pos + 8 + len..end]) {
             return Err(MediaError::new("PNG chunk CRC differs"));
         }
         match kind {
@@ -296,22 +236,18 @@ fn decode_inner(
             {
                 palette = try_with_capacity(len / 3)?;
                 palette.extend(data.chunks_exact(3).map(|rgb| [rgb[0], rgb[1], rgb[2]]));
+                plte = pos..end;
             }
             b"tRNS" if seen_ihdr && !seen_idat => {
                 transparency = try_with_capacity(len)?;
                 transparency.extend_from_slice(data);
             }
             b"IDAT" if seen_ihdr => {
-                seen_idat = true;
-                if idat
-                    .len()
-                    .checked_add(data.len())
-                    .is_none_or(|len| len > limits.maximum_bytes)
-                {
-                    return Err(MediaError::new("PNG IDAT byte limit exceeded"));
+                if !seen_idat && h.color == 3 {
+                    stream.extend_from_slice(&bytes[plte.clone()]);
                 }
-                try_reserve(&mut idat, data.len())?;
-                idat.extend_from_slice(data);
+                seen_idat = true;
+                stream.extend_from_slice(&bytes[pos..end]);
             }
             b"IEND" if seen_ihdr && len == 0 => {
                 seen_iend = true;
@@ -336,48 +272,81 @@ fn decode_inner(
             "PNG chunk set is incomplete or inconsistent",
         ));
     }
-    let raw = inflate.zlib_exact(&idat, scanlines(h)?)?;
-    let pixel_count = u64::from(h.width) * u64::from(h.height);
+    stream.extend_from_slice(IEND);
+    Ok(Chunks {
+        palette,
+        transparency,
+        stream,
+    })
+}
+
+fn invalid(error: ::png::DecodingError) -> MediaError {
+    MediaError::new(format!("PNG image data is invalid: {error}"))
+}
+
+/// Decodes with transparency composited onto white.
+pub fn decode(bytes: &[u8], limits: MediaLimits) -> MediaResult<RgbImage> {
+    decode_with_alpha(bytes, limits, Alpha::CompositeWhite)
+}
+
+/// Decodes with transparency (an alpha channel or a tRNS chunk) handled
+/// as `alpha` says.
+pub fn decode_with_alpha(bytes: &[u8], limits: MediaLimits, alpha: Alpha) -> MediaResult<RgbImage> {
+    limits.check_bytes(bytes.len())?;
+    let h = header(bytes)?;
+    limits.check_named_image("PNG", h.width, h.height)?;
+    let chunks = chunks(bytes, h)?;
+    let mut options = ::png::DecodeOptions::default();
+    options.set_ignore_adler32(false);
+    let mut decoder =
+        ::png::Decoder::new_with_options(Cursor::new(chunks.stream.as_slice()), options);
+    // The walker has bounded the stream and the size; the crate's own limit
+    // would refuse wide rows the bound already counts.
+    decoder.set_limits(::png::Limits { bytes: usize::MAX });
+    decoder.set_transformations(::png::Transformations::IDENTITY);
+    let mut reader = decoder.read_info().map_err(invalid)?;
+    let width = h.width as usize;
     let output_len = usize::try_from(
-        pixel_count
+        (u64::from(h.width) * u64::from(h.height))
             .checked_mul(3)
             .ok_or_else(|| MediaError::new("PNG pixel size overflow"))?,
     )
     .map_err(|_| MediaError::new("PNG pixel size overflow"))?;
     let mut rgb = try_filled(output_len, 0_u8)?;
-    let mut source = 0_usize;
-    let bpp = ((h.channels() * h.depth as usize).div_ceil(8)).max(1);
     for &(sx, sy, dx, dy) in passes(h.interlace) {
-        let width = pass_size(h.width, sx, dx) as usize;
-        let height = pass_size(h.height, sy, dy) as usize;
-        if width == 0 || height == 0 {
+        let pass_width = pass_size(h.width, sx, dx) as usize;
+        let pass_height = pass_size(h.height, sy, dy) as usize;
+        if pass_width == 0 || pass_height == 0 {
             continue;
         }
-        let stride = h.row_bytes(width)?;
-        let mut previous = try_filled(stride, 0_u8)?;
-        let mut row = try_filled(stride, 0_u8)?;
-        for y in 0..height {
-            let filter = raw[source];
-            source += 1;
-            row.copy_from_slice(&raw[source..source + stride]);
-            source += stride;
-            unfilter(filter, &mut row, &previous, bpp)?;
-            for x in 0..width {
-                let target_x = sx as usize + x * dx as usize;
-                let target_y = sy as usize + y * dy as usize;
-                let target = (target_y * h.width as usize + target_x) * 3;
+        let stride = h.row_bytes(pass_width)?;
+        for y in 0..pass_height {
+            let row = reader
+                .next_row()
+                .map_err(invalid)?
+                .ok_or_else(|| MediaError::new("PNG image data ends early"))?;
+            let line = row.data();
+            if line.len() != stride {
+                return Err(MediaError::new("PNG row size differs from its IHDR"));
+            }
+            let row_start = (sy as usize + y * dy as usize) * width;
+            for x in 0..pass_width {
+                let target = (row_start + sx as usize + x * dx as usize) * 3;
                 rgb[target..target + 3].copy_from_slice(&pixel(
-                    &row,
+                    line,
                     x,
                     h,
-                    &palette,
-                    &transparency,
-                    policy,
+                    &chunks.palette,
+                    &chunks.transparency,
+                    alpha,
                 )?);
             }
-            std::mem::swap(&mut previous, &mut row);
         }
     }
+    if reader.next_row().map_err(invalid)?.is_some() {
+        return Err(MediaError::new("PNG has more rows than its IHDR"));
+    }
+    reader.finish().map_err(invalid)?;
     RgbImage::new(h.width, h.height, rgb, limits)
 }
 
@@ -390,7 +359,7 @@ mod tests {
         output.extend_from_slice(kind);
         output.extend_from_slice(payload);
         let start = output.len() - payload.len() - 4;
-        output.extend_from_slice(&crc32(&output[start..]).to_be_bytes());
+        output.extend_from_slice(&crc32fast::hash(&output[start..]).to_be_bytes());
     }
 
     fn limits() -> MediaLimits {
@@ -404,19 +373,33 @@ mod tests {
         }
     }
 
+    fn png(ihdr: [u8; 13], chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let mut png = SIGNATURE.to_vec();
+        chunk(b"IHDR", &ihdr, &mut png);
+        for (kind, payload) in chunks {
+            chunk(kind, payload, &mut png);
+        }
+        png
+    }
+
+    fn ihdr(width: u32, height: u32, depth: u8, color: u8, interlace: u8) -> [u8; 13] {
+        let mut ihdr = [0; 13];
+        ihdr[..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8..].copy_from_slice(&[depth, color, 0, 0, interlace]);
+        ihdr
+    }
+
     #[test]
     fn large_rgba_allocation_failures_return_media_errors() {
         let (width, height) = (8192_u32, 512_u32);
         let stride = width as usize * 4;
         let raw = vec![0_u8; (stride + 1) * height as usize];
         let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
-        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-        let mut ihdr = width.to_be_bytes().to_vec();
-        ihdr.extend_from_slice(&height.to_be_bytes());
-        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
-        chunk(b"IHDR", &ihdr, &mut png);
-        chunk(b"IDAT", &compressed, &mut png);
-        chunk(b"IEND", &[], &mut png);
+        let png = png(
+            ihdr(width, height, 8, 6, 0),
+            &[(b"IDAT", &compressed), (b"IEND", &[])],
+        );
         let limits = MediaLimits {
             maximum_pixels: 1 << 24,
             ..limits()
@@ -426,46 +409,129 @@ mod tests {
             decode().unwrap().data.len(),
             width as usize * height as usize * 3
         );
-        // IDAT, inflated scanlines, RGB, and both filter-row buffers must
-        // report a fallible reservation failure instead of aborting.
-        for (size, skip) in [
-            (compressed.len(), 0),
-            (raw.len(), 0),
-            (width as usize * height as usize * 3, 0),
-            (stride, 0),
-            (stride, 1),
-        ] {
-            let result = crate::core::with_allocation_failure(size, skip, decode);
-            assert!(result.is_err(), "allocation {size}, {skip} was infallible");
+        // The critical-chunk stream and the RGB image must report a fallible
+        // reservation failure instead of aborting.
+        for size in [png.len(), width as usize * height as usize * 3] {
+            let result = crate::core::with_allocation_failure(size, 0, decode);
             assert_eq!(
                 result.unwrap_err().to_string(),
                 "media buffer allocation failed",
-                "{size}, {skip}"
+                "{size}"
             );
         }
     }
 
     #[test]
     fn adam7_palette_alpha_composites_on_white() {
-        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-        let mut ihdr = Vec::new();
-        ihdr.extend_from_slice(&1_u32.to_be_bytes());
-        ihdr.extend_from_slice(&1_u32.to_be_bytes());
-        ihdr.extend_from_slice(&[1, 3, 0, 0, 1]);
-        chunk(b"IHDR", &ihdr, &mut png);
-        chunk(b"PLTE", &[0, 0, 255, 255, 0, 0], &mut png);
-        chunk(b"tRNS", &[128, 255], &mut png);
-        chunk(
-            b"IDAT",
-            &miniz_oxide::deflate::compress_to_vec_zlib(&[0, 0], 6),
-            &mut png,
+        let png = png(
+            ihdr(1, 1, 1, 3, 1),
+            &[
+                (b"PLTE", &[0, 0, 255, 255, 0, 0]),
+                (b"tRNS", &[128, 255]),
+                (
+                    b"IDAT",
+                    &miniz_oxide::deflate::compress_to_vec_zlib(&[0, 0], 6),
+                ),
+                (b"IEND", &[]),
+            ],
         );
-        chunk(b"IEND", &[], &mut png);
         assert_eq!(decode(&png, limits()).unwrap().data, [127, 127, 255]);
         let discarded = decode_with_alpha(&png, limits(), Alpha::Discard).unwrap();
         assert_eq!(discarded.data, [0, 0, 255]);
         let mut bad = png;
         bad[29] ^= 1;
         assert!(decode(&bad, limits()).is_err());
+    }
+
+    /// A 16-bit tRNS key below 16-bit samples matches only when its high
+    /// byte is zero; the crate would keep its low byte alone.
+    #[test]
+    fn gray_key_uses_the_whole_trns_value() {
+        // Two 4-bit samples, 4 and 0.
+        let idat = miniz_oxide::deflate::compress_to_vec_zlib(&[0, 0x40], 6);
+        for (key, expected) in [([0, 4], [255; 3]), ([1, 4], [0x44; 3])] {
+            let png = png(
+                ihdr(2, 1, 4, 0, 0),
+                &[(b"tRNS", &key), (b"IDAT", &idat), (b"IEND", &[])],
+            );
+            let image = decode(&png, limits()).unwrap();
+            assert_eq!(image.data[..3], expected, "{key:?}");
+            assert_eq!(image.data[3..], [0; 3], "{key:?}");
+        }
+    }
+
+    /// Ancillary chunks never reach the crate: an APNG frame control that
+    /// names a smaller frame leaves the IHDR image as decoded.
+    #[test]
+    fn ancillary_chunks_do_not_change_the_image() {
+        let idat = miniz_oxide::deflate::compress_to_vec_zlib(&[0, 1, 2, 3, 0, 4, 5, 6], 6);
+        let plain = png(ihdr(1, 2, 8, 2, 0), &[(b"IDAT", &idat), (b"IEND", &[])]);
+        let mut fctl = [0_u8; 26];
+        fctl[4..8].copy_from_slice(&1_u32.to_be_bytes());
+        fctl[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        let animated = png(
+            ihdr(1, 2, 8, 2, 0),
+            &[
+                (b"acTL", &[0, 0, 0, 1, 0, 0, 0, 0]),
+                (b"fcTL", &fctl),
+                (b"eXIf", b"not TIFF"),
+                (b"IDAT", &idat),
+                (b"IEND", &[]),
+            ],
+        );
+        let expected = decode(&plain, limits()).unwrap();
+        assert_eq!(expected.data, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(decode(&animated, limits()).unwrap(), expected);
+    }
+
+    /// Image data whose zlib checksum is wrong, that inflates short, or
+    /// that follows IEND is refused, as the walker and inflater did before.
+    #[test]
+    fn checksums_truncation_and_trailing_data_are_refused() {
+        let mut idat = miniz_oxide::deflate::compress_to_vec_zlib(&[0, 1, 2, 3], 6);
+        let good = png(ihdr(1, 1, 8, 2, 0), &[(b"IDAT", &idat), (b"IEND", &[])]);
+        assert_eq!(decode(&good, limits()).unwrap().data, [1, 2, 3]);
+        let mut trailing = good.clone();
+        trailing.push(0);
+        assert!(decode(&trailing, limits()).is_err());
+        let short = miniz_oxide::deflate::compress_to_vec_zlib(&[0, 1, 2], 6);
+        let short = png(ihdr(1, 1, 8, 2, 0), &[(b"IDAT", &short), (b"IEND", &[])]);
+        assert!(decode(&short, limits()).is_err());
+        let last = idat.len() - 1;
+        idat[last] ^= 1;
+        let adler = png(ihdr(1, 1, 8, 2, 0), &[(b"IDAT", &idat), (b"IEND", &[])]);
+        assert!(decode(&adler, limits()).is_err());
+        for cut in 0..good.len() {
+            assert!(decode(&good[..cut], limits()).is_err(), "{cut}");
+        }
+    }
+
+    #[test]
+    fn storage_bound_refuses_header_overflow() {
+        // A readable header is enough to reserve before decoding. Even
+        // permissive callers must not wrap its storage calculation.
+        let png = png(ihdr(u32::MAX, u32::MAX, 8, 6, 0), &[]);
+        let limits = MediaLimits {
+            maximum_pixels: u64::MAX,
+            ..limits()
+        };
+        assert_eq!(
+            decode_storage_bytes(&png, limits).unwrap_err().to_string(),
+            "PNG decode size overflow"
+        );
+    }
+
+    #[test]
+    fn sixteen_bit_and_oversized_images_name_the_reason() {
+        let wide = png(ihdr(2, 1, 16, 2, 0), &[(b"IEND", &[])]);
+        assert_eq!(
+            probe(&wide, limits()).unwrap_err().to_string(),
+            "PNG with 16-bit samples is not supported"
+        );
+        let large = png(ihdr(2048, 1024, 8, 2, 0), &[(b"IEND", &[])]);
+        assert_eq!(
+            probe(&large, limits()).unwrap_err().to_string(),
+            "PNG image 2048 x 1024 has 2097152 pixels, above the 1048576-pixel limit"
+        );
     }
 }

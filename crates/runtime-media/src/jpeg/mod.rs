@@ -329,7 +329,11 @@ fn probe_header(bytes: &[u8], limits: MediaLimits) -> MediaResult<Header> {
                     return Err(MediaError::new("duplicate JPEG frame"));
                 }
                 let parsed = frame(marker, payload, orientation)?;
-                limits.check_image(u32::from(parsed.width), u32::from(parsed.height))?;
+                limits.check_named_image(
+                    "JPEG",
+                    u32::from(parsed.width),
+                    u32::from(parsed.height),
+                )?;
                 parsed.coefficient_bytes()?;
                 header = Some(parsed);
             }

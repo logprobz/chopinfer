@@ -23,6 +23,9 @@ APPROVED = {
     'Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT',
     # signal-hook's older spelling of MIT OR Apache-2.0.
     'Apache-2.0/MIT',
+    # zlib-rs, locked through flate2's weak `zlib-rs?/std` feature (png's
+    # encoder dependency) and never built.
+    'Zlib',
 }
 
 

@@ -3274,11 +3274,11 @@ fn video_admission_error_v1(error: crate::video::VideoErrorV1) -> AdmissionError
 /// Largest decoded image, before the recipe resizes it to its own pixel
 /// budget. vLLM resizes any image PIL opens, and PIL opens up to twice its
 /// `MAX_IMAGE_PIXELS` (warning above it); this is `MAX_IMAGE_PIXELS`, which
-/// bounds a decode at 256 MiB of RGB. The JPEG decoder keeps its own lower
-/// hard limit.
+/// bounds a decode at 256 MiB of RGB.
 const MAXIMUM_DECODED_IMAGE_PIXELS_V1: u64 = runtime_frontend::MAXIMUM_DECODED_IMAGE_PIXELS_V1;
 
-/// Largest decoded video frame, the JPEG decoder's hard limit.
+/// Largest decoded video frame (16 MiP), below the still-image limit since
+/// a video holds many frames. It matches the JPEG decoder's former limit.
 const MAXIMUM_DECODED_FRAME_PIXELS_V1: u64 = 1 << 24;
 
 /// vLLM's resize refuses aspect ratios above 200 and accepts the rest.
@@ -5153,10 +5153,11 @@ mod tests {
             Err(AdmissionError::Unavailable(_))
         ));
         drop(others);
-        // With room it reserves, then its pixel data fails to inflate.
+        // With room it reserves, then its pixel data fails to decode.
         let refused = prepare_image_v1(&near_limit, recipe, limits, &mut memory);
         assert!(
-            matches!(&refused, Err(AdmissionError::Rejected(message)) if message.contains("inflate")),
+            matches!(&refused, Err(AdmissionError::Rejected(message))
+                if message.starts_with("PNG image data is invalid")),
             "{refused:?}"
         );
         assert_eq!(pool.in_use(), cost);
@@ -5903,7 +5904,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(error, AdmissionError::Rejected(ref message) if message == "unsupported PNG IHDR"),
+            matches!(error, AdmissionError::Rejected(ref message)
+                if message == "PNG with 16-bit samples is not supported"),
             "{error:?}"
         );
     }

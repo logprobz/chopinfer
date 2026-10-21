@@ -42,7 +42,7 @@ fn div_ceil(x: usize, y: usize) -> MediaResult<usize> {
 
 impl Frame {
     fn new(header: Header, payload: &[u8], limits: MediaLimits) -> MediaResult<Self> {
-        limits.check_image(u32::from(header.width), u32::from(header.height))?;
+        limits.check_named_image("JPEG", u32::from(header.width), u32::from(header.height))?;
         header.coefficient_bytes()?;
         let (max_h, max_v) = header.maximum_sampling();
         let mcu_cols = div_ceil(usize::from(header.width), 8 * max_h)?;

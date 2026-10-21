@@ -182,7 +182,12 @@ pub fn build(
     let (exact, _) = arm(a)?;
     let (mut native_arm, q) = arm(a)?;
     let shapes = family::KINDS.map(|kind| family::shape(set, kind));
-    let tiles = family::KINDS.map(family::serving::tile);
+    // Fused steps keep the gate/up tile the fused ceil was qualified on.
+    let fused = fuses_ceil(set, rows);
+    let mut tiles = family::KINDS.map(family::serving::tile);
+    if fused {
+        tiles[0] = family::serving::GATE_UP_TILE;
+    }
     let queues = [
         queue(a, &shapes[0], &tiles[0])?,
         queue(a, &shapes[1], &tiles[1])?,
@@ -197,7 +202,7 @@ pub fn build(
         queues[0],
         None,
     );
-    native_arm.gate = if fuses_ceil(set, rows) {
+    native_arm.gate = if fused {
         bundle_deepseek41::sm120::moe_native_entries::ceil()
             .launches(
                 &shapes[0],

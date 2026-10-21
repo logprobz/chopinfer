@@ -215,7 +215,7 @@ async fn warmup_inner(
             } => maximum_generated_tokens,
             _ => usize::MAX,
         };
-        if admitted < verify_output(&verify) {
+        if admitted < verify_output(verify.maximum_draft_tokens) {
             eprintln!("startup verify warmup: skipped, the request profile admits too few tokens");
         } else {
             result = verify_waves(
@@ -240,8 +240,8 @@ async fn warmup_inner(
 /// Output tokens of a verify warmup request: one from prefill, then room for
 /// two steps at the deepest pin with every draft accepted, so the wave's
 /// requests, admitted together, share at least one step.
-fn verify_output(verify: &VerifyWarmup) -> usize {
-    2 * (verify.maximum_draft_tokens + 1) + 1
+fn verify_output(draft_tokens: usize) -> usize {
+    2 * (draft_tokens + 1) + 1
 }
 
 /// Runs one wave per verify shape, then the context ladder.
@@ -256,12 +256,16 @@ async fn verify_waves(
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
     let shapes = verify_shapes(sequences, verify);
-    let output = verify_output(verify);
+    let output = verify_output(verify.maximum_draft_tokens);
     if tokens.len() + output > limit {
         eprintln!("startup verify warmup: skipped, the context is too short");
         return Ok(());
     }
     for shape in &shapes {
+        // Use one budget for the whole wave, so even its deepest pin stays
+        // live for both steps when every draft is accepted. Shallower pins
+        // need not generate to the profile's maximum draft depth.
+        let output = verify_output(shape.drafts.iter().copied().max().unwrap_or(0));
         eprintln!(
             "startup verify warmup: rows {} items {} begin",
             shape.row_bucket, shape.item_bucket
@@ -488,6 +492,7 @@ mod wave_tests {
         /// The size of every group submitted together.
         groups: Mutex<Vec<usize>>,
         lifecycle: Mutex<Vec<bool>>,
+        outputs: Mutex<Vec<usize>>,
     }
 
     impl WaveBackend {
@@ -503,6 +508,7 @@ mod wave_tests {
                 state: Mutex::new((0, Vec::new(), Vec::new(), Vec::new())),
                 groups: Mutex::new(Vec::new()),
                 lifecycle: Mutex::new(Vec::new()),
+                outputs: Mutex::new(Vec::new()),
             }
         }
 
@@ -563,6 +569,7 @@ mod wave_tests {
             events: EventSender,
         ) -> BoxFuture<'_, Result<(), AdmissionError>> {
             let mut state = self.state.lock().unwrap();
+            self.outputs.lock().unwrap().push(request.max_new_tokens);
             let wave = self.expected[state.0];
             let prompt = match &request.prompt {
                 PreparedPrompt::TokenIds(tokens) => tokens.len(),
@@ -898,5 +905,50 @@ mod wave_tests {
         // Only the decode waves ran.
         assert_eq!(backend.pins().len(), waves(4).iter().sum::<usize>());
         assert!(backend.pins().iter().all(|(pin, _)| *pin == Some(0)));
+    }
+
+    #[test]
+    fn shallow_verify_waves_keep_two_steps_without_the_deepest_output_budget() {
+        for exact_graphs in [false, true] {
+            let verify = VerifyWarmup {
+                exact_graphs,
+                ..dflash()
+            };
+            let shapes = verify_shapes(4, &verify);
+            let ladder = context_ladder(32, 64 - 17);
+            let mut expected = waves(4);
+            expected.extend(shapes.iter().map(|shape| shape.drafts.len()));
+            expected.extend(ladder.iter().map(|_| 1));
+            let backend = WaveBackend::with_waves(expected, None);
+            run_with_mode(
+                &backend,
+                4,
+                RequestAcceptanceProfile::General,
+                false,
+                Some(verify),
+            )
+            .unwrap();
+            let outputs = backend.outputs.lock().unwrap();
+            let mut at = waves(4).iter().sum::<usize>();
+            let mut shortened = 0;
+            for shape in shapes {
+                let wave = &outputs[at..at + shape.drafts.len()];
+                assert!(wave.iter().all(|&output| output == wave[0]));
+                let deepest = *shape.drafts.iter().max().unwrap();
+                if deepest == 1 {
+                    assert_eq!(wave[0], 5, "one-draft warmup needs only five output tokens");
+                    shortened += 1;
+                }
+                // Prefill and a maximally accepted first step must still
+                // leave a complete second step for every request. Any
+                // rejected or partially accepted draft leaves more room.
+                for pin in shape.drafts {
+                    assert!(wave[0] - 1 - (pin + 1) >= pin + 1);
+                }
+                at += wave.len();
+            }
+            assert!(shortened > 0);
+            assert_eq!(&outputs[at..], vec![17; ladder.len()]);
+        }
     }
 }

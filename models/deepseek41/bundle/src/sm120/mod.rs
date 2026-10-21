@@ -163,6 +163,8 @@ pub mod ring_gather;
 pub mod ring_gather_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod routed_sum;
+pub mod router_norm;
+pub mod router_norm_entries;
 pub(crate) mod router_prefill;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
@@ -536,6 +538,8 @@ impl crate::Kernels {
             && (!cubin.starts_with("position_select_cached_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && (cubin != router_norm::CUBIN
+                || router_norm::applies(shape.geometry, shape.ranks(), router_norm::ROWS))
     }
 
     /// Model-qualified preparation ranges, in increasing capacity within

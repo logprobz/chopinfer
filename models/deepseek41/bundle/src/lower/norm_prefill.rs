@@ -29,21 +29,43 @@ impl Lowering<'_> {
             Sublayer::Attention => "attn_norm.weight",
             Sublayer::Mlp => "ffn_norm.weight",
         };
-        ops.launch(
-            phase.rows(),
-            RmsNormQuantizeBuffers {
-                input: row(s.collapsed),
-                weight: self.buffers.view(&layer_view(layer, weight))?,
-                normed: row(s.normed),
-                widened: widens(self.shape.geometry, layer, sublayer).then(|| row(s.normed_wide)),
-                codes: row(s.normed_codes),
-                scales: row(s.normed_scales),
-                live_rows: self.inputs.live_tokens,
-                status: self.carried(phase, s.row_status)?,
-                status_row_offset: 0,
-            },
-        )
-        .map(Some)
-        .map_err(|e| format!("prefill input norm quantize of layer {layer}: {e}"))
+        let views = RmsNormQuantizeBuffers {
+            input: row(s.collapsed),
+            weight: self.buffers.view(&layer_view(layer, weight))?,
+            normed: row(s.normed),
+            widened: widens(self.shape.geometry, layer, sublayer).then(|| row(s.normed_wide)),
+            codes: row(s.normed_codes),
+            scales: row(s.normed_scales),
+            live_rows: self.inputs.live_tokens,
+            status: self.carried(phase, s.row_status)?,
+            status_row_offset: 0,
+        };
+        let launched = if sublayer == Sublayer::Mlp && self.router_in_norm(phase) {
+            ops.launch_certified(phase.rows(), views, row(s.router_certified))
+        } else {
+            ops.launch(phase.rows(), views)
+        };
+        launched
+            .map(Some)
+            .map_err(|e| format!("prefill input norm quantize of layer {layer}: {e}"))
+    }
+
+    /// Whether `phase` runs the router in the MoE-input norm
+    /// (`sm120::router_norm`): the fused prefill norm and the exact F32
+    /// router are both lowered at its row count.
+    pub(super) fn router_in_norm(&self, phase: Phase) -> bool {
+        phase.prefill()
+            && qualified(self.shape.geometry, phase)
+            && self.ops.norm_prefill.is_some()
+            && self
+                .ops
+                .exact_f32
+                .as_ref()
+                .is_some_and(|ops| ops.projection("moe.router").is_some())
+            && crate::sm120::router_norm::applies(
+                self.shape.geometry,
+                self.shape.ranks(),
+                phase.rows(),
+            )
     }
 }

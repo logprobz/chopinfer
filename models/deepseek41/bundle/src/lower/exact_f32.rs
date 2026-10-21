@@ -71,6 +71,9 @@ impl Lowering<'_> {
         let weight = self
             .buffers
             .view(&layer_view(layer, &format!("{}.weight", dense.tensor)))?;
+        if id == "moe.router" && self.router_in_norm(phase) {
+            return self.certified_router(phase, layer, weight).map(Some);
+        }
         project(
             op,
             phase.rows(),
@@ -85,5 +88,35 @@ impl Lowering<'_> {
         )
         .map(Some)
         .map_err(|refusal| format!("{id} of layer {layer}: {refusal}"))
+    }
+
+    /// The router's certified projection over the MoE-input norm's BF16
+    /// rows and certificate (`sm120::router_norm`), which the norm stage
+    /// wrote in place of the zero-component prepare.
+    fn certified_router(
+        &self,
+        phase: Phase,
+        layer: u32,
+        weight: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, String> {
+        let scratch = &self.buffers.scratch;
+        let domain =
+            crate::ops::exact_f32::state(self.buffers, &layer_view(layer, "ffn.gate.weight"))
+                .weight_domain
+                .ok_or_else(|| format!("moe.router of layer {layer} has no weight domain"))?;
+        let mut bind = crate::ops::Bind::default();
+        let mut view = |span| bind.view(span);
+        let views = crate::sm120::router_norm::RouterViews {
+            widened: view(rows(scratch.normed_wide, phase.rows())),
+            normed: view(rows(scratch.normed, phase.rows())),
+            certified: view(rows(scratch.router_certified, phase.rows())),
+            weight: view(weight),
+            output: view(rows(scratch.router_logits, phase.rows())),
+            live_rows: view(self.inputs.live_tokens),
+            weight_domain: view(domain),
+        };
+        let launch = crate::sm120::router_norm::router_launch(&views)
+            .map_err(|refusal| format!("moe.router of layer {layer}: {refusal}"))?;
+        Ok(bind.lowered_launches(vec![launch]))
     }
 }

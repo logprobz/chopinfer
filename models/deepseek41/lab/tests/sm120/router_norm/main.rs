@@ -757,12 +757,12 @@ fn router_norm_cpu_plan() {
         for op in &ops {
             assert!(Runner::serving(&op.symbol), "{}", op.symbol);
         }
-        for op in &cand {
-            assert!(
-                lab.contains(&op.symbol) && !Runner::serving(&op.symbol),
-                "{}",
-                op.symbol
-            );
+        // The lab's certifying norm is its own entry; the certified
+        // projection is also the bundle's served entry (`sm120::router_norm`),
+        // which the runner then loads from the bundle.
+        for (op, served) in cand.iter().zip([false, true]) {
+            assert!(lab.contains(&op.symbol), "{}", op.symbol);
+            assert_eq!(Runner::serving(&op.symbol), served, "{}", op.symbol);
         }
         assert_eq!(ops[2].plan, cand[1].plan);
         assert_eq!(ops[0].plan, cand[0].plan);

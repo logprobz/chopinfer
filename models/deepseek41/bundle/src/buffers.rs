@@ -268,6 +268,11 @@ kernel_core::scratch_record! {
         pub decode_logits: value,
         /// The prefill's scored rows' full F32 logits, on rank 0.
         pub prefill_logits: value,
+        /// Each prefill row's U32 router certificate, which the MoE-input
+        /// norm writes and the router reads when the router runs in the
+        /// norm (`sm120::router_norm`): 1 where every normed element is an
+        /// exact F32 tensor operand.
+        pub router_certified: value,
     }
 }
 
@@ -413,6 +418,7 @@ impl Scratch<Allocation> {
             head: Allocation::bytes(u64::from(logits_rows()) * shard * F32),
             decode_logits: Allocation::bytes(u64::from(head_rows()) * vocab * F32),
             prefill_logits: Allocation::bytes(u64::from(SCORED_ROWS) * vocab * F32),
+            router_certified: row(U32),
         }
     }
 }

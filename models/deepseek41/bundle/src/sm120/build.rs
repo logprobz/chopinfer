@@ -191,6 +191,8 @@ mod reduce;
 #[path = "routed_sum.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod routed_sum;
+#[allow(dead_code)]
+mod router_norm_entries;
 #[path = "rows.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod rows;
@@ -483,6 +485,7 @@ pub fn selection(
             owners.push((f32_blocked::serving_cubin_name(geometry), geometry.id));
             owners.push((f32_wide::cubin_name(geometry), geometry.id));
             owners.push((f32_zero::CUBIN.into(), geometry.id));
+            owners.push((router_norm_entries::CUBIN.into(), geometry.id));
         }
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
@@ -636,6 +639,12 @@ pub fn selection(
             .expect("certified router prefill cubins")
             .into_iter()
             .map(|s| (f32_zero::FAMILY, s)),
+    );
+    specs.extend(
+        router_norm_entries::cubins(geometries)
+            .expect("router-in-norm cubins")
+            .into_iter()
+            .map(|s| (router_norm_entries::FAMILY, s)),
     );
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));

@@ -2,7 +2,8 @@
 //! the zero-component prefill's single chain over rows a producing norm
 //! certified, read as its BF16 output, without the prepare launch. Bitwise
 //! the zero-component prefill wherever the F32 activation is that BF16
-//! output widened. No catalog or backend selects it yet.
+//! output widened. No catalog or backend selects it; a bundle binds it
+//! directly over the norm it runs after.
 use super::{Entry, blocked, pointer};
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};

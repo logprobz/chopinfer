@@ -387,6 +387,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The cached query norm adds three resolves and four releases per rank, and
 /// its one-row decode runs the 16-warp entry (grid 1 x 1, block 512) with the
 /// served operands.
+/// after handle mapping. The router certificate adds one allocation and its
+/// release per rank, and at four ranks the router-in-norm module two
+/// resolves and three releases per rank; no launch changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22933, 0xf3b017b44088e4d5)),
     (Ranks::TP4, (56379, 0x0e9e8d56f95ae995)),

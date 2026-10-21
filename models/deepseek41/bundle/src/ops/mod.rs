@@ -696,6 +696,15 @@ impl Bind {
             .collect())
     }
 
+    /// Launches built over this binding's views by model code that
+    /// replaces an op's launches (`sm120::router_norm`).
+    pub(crate) fn lowered_launches(self, launches: Vec<Launch>) -> Vec<Lowered> {
+        launches
+            .into_iter()
+            .map(|launch| self.lowered(launch))
+            .collect()
+    }
+
     fn lowered(&self, launch: Launch) -> Lowered {
         Lowered {
             collective: launch.collective,

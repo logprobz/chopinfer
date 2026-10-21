@@ -195,7 +195,16 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
             .iter()
             .any(|&r| u64::from(r) == rows);
         assert_eq!(certified, !measured.is_empty(), "rows={rows}");
-        let suffix = if certified { "_zero_m32_v1" } else { "" };
+        // At 8192 rows the router runs in the MoE-input norm instead
+        // (`sm120::router_norm`), with no prepare.
+        let in_norm = rows == 8192;
+        let suffix = if in_norm {
+            "_certified_m32_v1"
+        } else if certified {
+            "_zero_m32_v1"
+        } else {
+            ""
+        };
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 1);
@@ -228,7 +237,7 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         assert!(calls.iter().all(|line| !line.contains("_wide_m")));
         assert_eq!(
             calls.iter().any(|line| line.contains("_zero_prepare_v1")),
-            certified,
+            certified && !in_norm,
             "rows={rows}"
         );
         drop(journal);
@@ -1026,6 +1035,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// per rank; these fixtures launch no C1 or C8 boundary.
 /// The cached query norm module adds three resolves and four releases per
 /// rank; these two-row decodes keep the served query norm.
+/// operation is identical after handle mapping. The router certificate
+/// (`router_certified`) adds one allocation and its release per rank; at
+/// four ranks the router-in-norm module (`sm120::router_norm`) adds two
+/// resolves and three releases per rank. No launch changes: only 8192-row
+/// steps run the router in the norm.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1206,6 +1220,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// Opting out retains the audited exact expert path and its resources.
 /// The HC boundary, cached ceil, prefill expand-mix and cached query norm
 /// modules change it exactly as they change the default-era TP4 lifecycle.
+/// router certificate and the router-in-norm module add one allocation, two
+/// resolves and four releases per rank there too, and no launch.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

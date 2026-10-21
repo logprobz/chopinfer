@@ -789,6 +789,22 @@ class NextestProfiles(unittest.TestCase):
             self.assertTrue(any(re.search(rf"#\[ignore[^\]]*\]\s*fn {function}\(", source) for source in declared),
                             (package, test))
 
+    def test_every_test_an_override_names_exists(self):
+        """An override naming a renamed or split test matches nothing, and its limit or group
+        silently stops applying."""
+        config = tomllib.loads((ROOT / ".config/nextest.toml").read_text())
+        packages = {tomllib.loads(path.read_text())["package"]["name"]: path.parent
+                    for path in [*ROOT.glob("crates/*/Cargo.toml"), *ROOT.glob("models/*/*/Cargo.toml")]}
+        clause = r"binary_id\(=?([\w-]+)(?:::[\w-]+)?\) & test\(=([\w:]+)\)"
+        named = [found for profile in config["profile"].values() for override in profile.get("overrides", [])
+                 for found in re.findall(clause, override["filter"])]
+        self.assertGreaterEqual(len(named), 3)
+        for package, test in named:
+            with self.subTest(package=package, test=test):
+                function = test.rsplit("::", 1)[-1]
+                self.assertTrue(any(re.search(rf"\bfn {function}\(", path.read_text())
+                                    for path in packages[package].rglob("*.rs")))
+
 
 class Inventory(unittest.TestCase):
     def test_every_declared_module_still_pins_its_gate_config(self):

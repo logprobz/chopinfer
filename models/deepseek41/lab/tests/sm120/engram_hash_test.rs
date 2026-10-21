@@ -326,7 +326,7 @@ fn engram_hash_gpu_matches_integer_oracle_under_poison_and_graph_replay() {
                     let invoke = |stream: &runtime_cuda::Stream| {
                         launch(
                             &session.context,
-                            &function,
+                            function,
                             stream,
                             call.plan,
                             &call.arguments,

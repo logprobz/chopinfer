@@ -213,9 +213,9 @@ fn dspark_markov_row_gpu_matches_the_per_row_step_and_oracle() {
                                 outputs[arm].copy_from_bytes(&poison, &s.stream).map_err(|e| e.to_string())?;
                                 bases[arm].copy_from_bytes(&floats(&b), &s.stream).map_err(|e| e.to_string())?;
                             }
-                            for arm in 0..2 {
+                            for (arm, exec) in graphs.iter().enumerate() {
                                 if graph {
-                                    graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?;
+                                    exec.launch(&s.stream).map_err(|e| e.to_string())?;
                                 } else {
                                     invoke(arm, &s.stream)?;
                                 }

@@ -179,9 +179,13 @@ fn prepare(
         // (DSpark C1 K3) the gate small queue ends 7.1..7.7 us sooner per
         // layer, every case bitwise and every candidate sample faster than
         // every served sample. Decode-1 is flat and keeps the direct gate.
+        // Verify-6 (DSpark C1 with five drafts; 6-row prefixes of the same
+        // captures, verify6-r1): over r2, the edge and the all-loads finisher
+        // the resident8 gate saves 0.33 ms per 40-layer step, 20 of 20
+        // layers, no slow sample, every case bitwise.
         if stage == Some(Stage::GateSmall)
             && entry.experts() == 384
-            && (rows == 32 || (phase == ExecutionPhase::Verify && rows == 4))
+            && (rows == 32 || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6)))
         {
             // The positional ABI is identical. Retain the floor binding's
             // view names for scales, sorted rows and padded rows.
@@ -199,12 +203,14 @@ fn prepare(
         // Decode-8 (finish-backbone-r1) it saves 1.75 us per layer, faster in
         // all 20 timed layers with no slow samples. At 32 rows (five CTAs per
         // SM; 960 CTAs exceed one wave) it is within noise and the served
-        // finisher stays. Other rows are unmeasured.
+        // finisher stays. At Verify-6 (verify6-r1) it saves 0.07 ms per
+        // 40-layer step over r2 with the edge; the three together save
+        // 0.72 ms, 20 of 20 layers. Other rows are unmeasured.
         if stage == Some(Stage::GateFinish)
             && entry.experts() == 384
             && matches!(
                 (phase, rows),
-                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4)
+                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4 | 6)
             )
         {
             spec = bandwidth::finish_loads_entry(entry);
@@ -417,7 +423,7 @@ mod tests {
                                     && matches!(
                                         (phase, rows),
                                         (ExecutionPhase::Decode, 1 | 8)
-                                            | (ExecutionPhase::Verify, 4)
+                                            | (ExecutionPhase::Verify, 4 | 6)
                                     ),
                                 "{phase:?} rows={rows}"
                             );
@@ -447,7 +453,8 @@ mod tests {
                                 call.launch.symbol.ends_with("_small_resident8_v1"),
                                 set.count == 384
                                     && ((rows == 32 && !absorbed)
-                                        || (phase == ExecutionPhase::Verify && rows == 4))
+                                        || (phase == ExecutionPhase::Verify
+                                            && matches!(rows, 4 | 6)))
                                     && point == Point::Gate
                             );
                             let items = set.count.min(rows * set.top_k)

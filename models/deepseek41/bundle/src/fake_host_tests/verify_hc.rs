@@ -46,9 +46,14 @@ use super::*;
 // handles only at the other rows.
 // The local C32 query module shifts resource identities only. These verify
 // launches and their operands retain the reference path at every row count.
+// Verify-6 serves the same C1 stack: per stream the same launches with the
+// same arguments, 160 router finishes renamed to r2v7 and 160 gate
+// finishers to the all-loads entry (same configuration), 160 gate small
+// launches to resident8 (same grid, flags 1 to 0); the gate launches move
+// after each join.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x5743860b1f2a7917)),
-    (6, (8040, 0xb4d2a3d1b3984c3e)),
+    (6, (8040, 0x5b292cb339e8cc36)),
     (8, (7572, 0x018de7e58f3cb59d)),
     (12, (9496, 0x8bb3d18a8e1bb3ce)),
     (16, (8852, 0xb9bca4dbf54c089a)),

@@ -5,6 +5,20 @@ decode state for multi-turn reuse. The exact dependency cone is implemented
 behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
 `tp4-dspark` profiles set. Their `-full-prefill` profiles keep full execution.
 
+A short upper-skip prefill reuses its plan instead of lowering every rank
+again (`bundle/src/instance/execute/plan_cache.rs`). A plan is kept for one
+AR text item at prefix 0 with at most 64 rows that scores its last row and
+has no media or prefill cache range; its rows and input layout then fix
+every input of the lowering. Token IDs, pages, slots, window and tail
+inputs, index tags and Engram rows are uploaded every step and are never
+part of a plan. One plan is kept per length, about 20 MiB of host memory
+each, so at most about 1.3 GiB per instance.
+`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE=0` lowers every prefill; `verify`
+lowers every reuse again and refuses the step if the fresh plan differs. The
+fake-host test issues the same device journal with and without kept plans
+over alternating prompts, slots and pages, mixed decode steps, a cancelled
+prefill and ineligible prefills.
+
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU
 work-count estimates. On 2026-10-19 at TP4 with 8192-row chunks and 250 W, the

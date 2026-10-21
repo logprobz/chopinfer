@@ -39,6 +39,7 @@ pub(crate) mod dma;
 mod indexer_workload_tests;
 mod micro;
 pub(crate) mod overlap;
+pub(crate) mod plan_cache;
 pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).
@@ -51,7 +52,7 @@ struct Run {
     prefill_engram: Option<super::prefill_engram::Plan>,
     indexer_route: IndexerRoute,
     dma: Option<dma::Plan>,
-    skip: Option<skip::Plan>,
+    skip: Option<std::rc::Rc<skip::Plan>>,
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
     inputs: PhaseInputs,
@@ -526,7 +527,7 @@ impl Instance {
             phase,
         };
         if skipping {
-            run.skip = Some(skip::Plan::prepare(self, &run).map_err(|error| {
+            run.skip = Some(self.plans.plan(self, &run).map_err(|error| {
                 self.log(&error);
                 BundleStatusV1::InternalError
             })?);

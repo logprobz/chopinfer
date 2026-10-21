@@ -360,6 +360,15 @@ impl Plan {
         })
     }
 
+    /// Whether `other` issues the same launches, copies and head.
+    pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
+        Ok(self.dma.is_none()
+            && other.dma.is_none()
+            && self.copies == other.copies
+            && super::plan_cache::same_programs(&self.body, &other.body)?
+            && super::plan_cache::same_programs(&self.head, &other.head)?)
+    }
+
     pub(super) fn body(&self) -> &Programs {
         &self.body
     }

@@ -123,6 +123,8 @@ pub struct Instance {
     layer_overlap: bool,
     prefill_reduce_runs: u64,
     prefill_engram: Option<prefill_engram::Gathers>,
+    /// Kept upper-skip plans of short prompts.
+    plans: execute::plan_cache::Cache,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -835,6 +837,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
+    let plans = execute::plan_cache::Cache::from_env().map_err(|error| {
+        log(&error);
+        BundleStatusV1::InvalidArgument
+    })?;
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);
@@ -896,6 +902,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         prefill_engram: None,
+        plans,
         partial,
         taps,
         engram,

@@ -4045,6 +4045,7 @@ mod tests {
         )
         .unwrap();
         assert!(image.inner.ranks[0].records[0].shared.is_none());
+        assert!(image.inner.ranks[0].records[0].packed_sources.is_empty());
         let index = image.inner.ranks[0].records[1].shared.unwrap();
         assert_eq!(
             image.inner.shared[index].state.lock().unwrap().remaining,

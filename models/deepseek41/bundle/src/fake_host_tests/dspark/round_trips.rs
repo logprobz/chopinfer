@@ -100,7 +100,7 @@ fn warm_cycle_host_boundary_inventory() {
                 let execute = &journal[start..commit];
                 let hash = execute
                     .iter()
-                    .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
+                    .position(|line| line.contains(crate::sm120::engram_hash_rows::SYMBOL))
                     .unwrap();
                 let before_hash: Vec<_> = execute[..hash]
                     .iter()

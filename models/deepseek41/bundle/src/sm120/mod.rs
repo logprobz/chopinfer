@@ -93,6 +93,7 @@ pub(crate) mod encoder;
 pub(crate) mod encoders;
 pub mod engram_hash;
 pub mod engram_hash_entries;
+pub mod engram_hash_rows;
 pub mod f32_blocked;
 pub mod f32_decode;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -456,11 +457,12 @@ impl crate::Kernels {
         cubin == host_acceptance_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
             || cubin == markov_tiled::CUBIN
-            || cubin == dspark_argmax::CUBIN
             || cubin == markov_row::CUBIN
+            || cubin == dspark_argmax::CUBIN
             || cubin == dspark_quantize::cubin_name(g)
             || cubin == dspark_peer_embedding::cubin_name(g)
             || cubin == engram_hash_entries::CUBIN
+            || cubin == engram_hash_rows::CUBIN
             || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)

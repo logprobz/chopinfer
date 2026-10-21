@@ -34,7 +34,7 @@ fn target_graphs_capture_each_exact_verify_width() {
         // Hashing separates the drafter graphs from the full target schedule.
         let hashed = step
             .iter()
-            .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
+            .position(|line| line.contains(crate::sm120::engram_hash_rows::SYMBOL))
             .unwrap();
         let target = &step[hashed + 1..];
         let handles = |event: &str| {
@@ -310,7 +310,7 @@ fn drafter_graph_cache_tracks_exact_items_and_reordered_slots() {
         let draft: Vec<_> = journal[start..]
             .iter()
             .take_while(|line| {
-                !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
+                !line.contains(crate::sm120::engram_hash_rows::SYMBOL)
                     && !line.starts_with("mapped gather")
             })
             .filter(|line| {
@@ -789,7 +789,7 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
         let journal = host.journal.borrow();
         catch_up.extend(catch_up::captured_catch_up(&journal[start..]));
         let draft = journal[start..].iter().take_while(|line| {
-            !line.contains(crate::sm120::engram_hash_entries::SYMBOL)
+            !line.contains(crate::sm120::engram_hash_rows::SYMBOL)
                 && !line.starts_with("mapped gather")
         });
         let mut capturing = false;

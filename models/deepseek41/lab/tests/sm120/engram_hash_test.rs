@@ -50,7 +50,11 @@ fn engram_hash_preparation_checks_every_span_alias_and_geometry() {
     let call = prepared.launches(&b, view(0, 0), Counts::rows(12)).unwrap();
     assert_eq!(call.len(), 1);
     assert!(call[0].plan.pdl);
-    assert_eq!(call[0].symbol, crate::engram_hash_entries::SYMBOL);
+    // Each row's (layer, column) tasks run in one CTA of whole warps.
+    assert_eq!(call[0].symbol, crate::engram_hash_rows::SYMBOL);
+    assert_eq!(call[0].plan.grid, [12, 1, 1]);
+    let tasks = op.layers * op.columns() as u32;
+    assert_eq!(call[0].plan.block, [tasks.div_ceil(32) * 32, 1, 1]);
     for index in 0..8 {
         let mut bad = b;
         let fields = [
@@ -202,6 +206,13 @@ fn engram_hash_gpu_matches_integer_oracle_under_poison_and_graph_replay() {
         let module = session.load_cubin(cubin)?;
         let probes = session.load_cubin(probes)?;
         let function = module.function(symbol).map_err(|e| e.to_string())?;
+        let (_, rows_cubin) =
+            bundle_deepseek41::sm120::fold_cubin_for_symbol(crate::engram_hash_rows::SYMBOL)
+                .ok_or("missing row-parallel Engram hash cubin")?;
+        let rows_module = session.load_cubin(rows_cubin)?;
+        let rows_function = rows_module
+            .function(crate::engram_hash_rows::SYMBOL)
+            .map_err(|e| e.to_string())?;
         let producer = LiveProducer::with_function(
             session,
             probes
@@ -260,105 +271,123 @@ fn engram_hash_gpu_matches_integer_oracle_under_poison_and_graph_replay() {
                     &mut expected_status,
                 )
                 .map_err(|e| e.to_string())?;
-                let images = replay_images(
-                    HashInput {
-                        tokens: &tokens,
-                        token_batch: &batch,
-                        q_start: &starts,
-                        history: &history,
-                        text: &text,
-                    },
-                    &seed,
-                );
-                let inputs = images
-                    .iter()
-                    .map(|bytes| upload(bytes))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let staged = images
-                    .iter()
-                    .map(|bytes| upload(bytes))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let rewrites =
-                    Rewrites::new(session, &staged.iter().zip(&inputs).collect::<Vec<_>>())?;
-                let output = session.allocate(op.output_bytes() as usize)?;
                 let prepared = crate::engram_hash::prepare(op, Need::rows(rows))
                     .map_err(|e| format!("{e:?}"))?;
                 let call = prepared
                     .launches(&buffers(op, rows), view(0, 0), Counts::rows(rows))
                     .map_err(|e| e.to_string())?
                     .remove(0);
-                let bindings = Bindings {
-                    buffers: BTreeMap::from([
-                        (1, &inputs[0]),
-                        (2, &inputs[1]),
-                        (3, &inputs[2]),
-                        (4, &inputs[3]),
-                        (5, &inputs[4]),
-                        (6, &constant_buffer),
-                        (7, &output),
-                        (8, &inputs[5]),
-                    ]),
+                // The served row-parallel entry and the serial entry it replaces
+                // both match the integer oracle under the same replays.
+                assert_eq!(call.symbol, crate::engram_hash_rows::SYMBOL);
+                let serial = kernel_core::backend::Launch {
+                    symbol: crate::engram_hash_entries::SYMBOL.into(),
+                    plan: kernel_core::contract::LaunchPlan {
+                        grid: [rows.div_ceil(crate::engram_hash_entries::THREADS), 1, 1],
+                        block: [crate::engram_hash_entries::THREADS, 1, 1],
+                        ..call.plan
+                    },
+                    ..call.clone()
                 };
-                let invoke = |stream: &runtime_cuda::Stream| {
-                    launch(
-                        &session.context,
-                        &function,
-                        stream,
-                        call.plan,
-                        &call.arguments,
-                        &bindings,
-                    )
-                };
-                let graph = session.capture(invoke)?;
-                let expected: Vec<_> = expected.iter().flat_map(|x| x.to_le_bytes()).collect();
-                let ranges = (0..op.layers)
-                    .map(|layer| {
-                        let start =
-                            (u64::from(layer) * u64::from(op.stride) * op.columns() * 4) as usize;
-                        start..start + (u64::from(rows) * op.columns() * 4) as usize
-                    })
-                    .collect::<Vec<_>>();
-                let mut replay = Replay::new(session).output_complement(
-                    "hash-indices",
-                    &output,
-                    WriteMap::of(DType::U8).ranges(ranges)?,
-                    expected.clone(),
-                );
-                replay.eager(|| invoke(&session.stream))?;
-                replay.relaunch(|| invoke(&session.stream))?;
-                for _ in 0..3 {
-                    replay.graph(&graph)?;
+                for (function, call) in [(&rows_function, &call), (&function, &serial)] {
+                    let images = replay_images(
+                        HashInput {
+                            tokens: &tokens,
+                            token_batch: &batch,
+                            q_start: &starts,
+                            history: &history,
+                            text: &text,
+                        },
+                        &seed,
+                    );
+                    let inputs = images
+                        .iter()
+                        .map(|bytes| upload(bytes))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let staged = images
+                        .iter()
+                        .map(|bytes| upload(bytes))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let rewrites =
+                        Rewrites::new(session, &staged.iter().zip(&inputs).collect::<Vec<_>>())?;
+                    let output = session.allocate(op.output_bytes() as usize)?;
+                    let bindings = Bindings {
+                        buffers: BTreeMap::from([
+                            (1, &inputs[0]),
+                            (2, &inputs[1]),
+                            (3, &inputs[2]),
+                            (4, &inputs[3]),
+                            (5, &inputs[4]),
+                            (6, &constant_buffer),
+                            (7, &output),
+                            (8, &inputs[5]),
+                        ]),
+                    };
+                    let invoke = |stream: &runtime_cuda::Stream| {
+                        launch(
+                            &session.context,
+                            &function,
+                            stream,
+                            call.plan,
+                            &call.arguments,
+                            &bindings,
+                        )
+                    };
+                    let graph = session.capture(invoke)?;
+                    let expected: Vec<_> = expected.iter().flat_map(|x| x.to_le_bytes()).collect();
+                    let ranges = (0..op.layers)
+                        .map(|layer| {
+                            let start = (u64::from(layer) * u64::from(op.stride) * op.columns() * 4)
+                                as usize;
+                            start..start + (u64::from(rows) * op.columns() * 4) as usize
+                        })
+                        .collect::<Vec<_>>();
+                    let mut replay = Replay::new(session).output_complement(
+                        "hash-indices",
+                        &output,
+                        WriteMap::of(DType::U8).ranges(ranges)?,
+                        expected.clone(),
+                    );
+                    replay.eager(|| invoke(&session.stream))?;
+                    replay.relaunch(|| invoke(&session.stream))?;
+                    for _ in 0..3 {
+                        replay.graph(&graph)?;
+                    }
+                    replay.pdl(
+                        || producer.launch_rewriting(session, &live, &rewrites),
+                        || invoke(&session.stream),
+                        call.plan.pdl,
+                    )?;
+                    let mut actual = vec![0; expected.len()];
+                    output
+                        .copy_to_bytes(&mut actual, &session.stream)
+                        .map_err(|e| e.to_string())?;
+                    if actual != expected {
+                        return Err(format!(
+                            "{} hash differs at items={items}, width={width}",
+                            call.symbol
+                        ));
+                    }
+                    let mut status = vec![0; rows as usize * 4];
+                    inputs[5]
+                        .copy_to_bytes(&mut status, &session.stream)
+                        .map_err(|e| e.to_string())?;
+                    let expected_status: Vec<_> = expected_status
+                        .iter()
+                        .flat_map(|x| x.to_le_bytes())
+                        .collect();
+                    if status != expected_status {
+                        return Err("hash sticky status differs".into());
+                    }
+                    let mut receipt = BTreeMap::from([
+                        ("items".into(), serde_json::json!(items)),
+                        ("width".into(), serde_json::json!(width)),
+                        ("bitwise_oracle".into(), serde_json::json!(true)),
+                        ("entry".into(), serde_json::json!(call.symbol)),
+                    ]);
+                    replay.record(&mut receipt);
+                    session.receipt("deepseek41-engram-device-hash", receipt)?;
                 }
-                replay.pdl(
-                    || producer.launch_rewriting(session, &live, &rewrites),
-                    || invoke(&session.stream),
-                    call.plan.pdl,
-                )?;
-                let mut actual = vec![0; expected.len()];
-                output
-                    .copy_to_bytes(&mut actual, &session.stream)
-                    .map_err(|e| e.to_string())?;
-                if actual != expected {
-                    return Err(format!("hash differs at items={items}, width={width}"));
-                }
-                let mut status = vec![0; rows as usize * 4];
-                inputs[5]
-                    .copy_to_bytes(&mut status, &session.stream)
-                    .map_err(|e| e.to_string())?;
-                let expected_status: Vec<_> = expected_status
-                    .iter()
-                    .flat_map(|x| x.to_le_bytes())
-                    .collect();
-                if status != expected_status {
-                    return Err("hash sticky status differs".into());
-                }
-                let mut receipt = BTreeMap::from([
-                    ("items".into(), serde_json::json!(items)),
-                    ("width".into(), serde_json::json!(width)),
-                    ("bitwise_oracle".into(), serde_json::json!(true)),
-                ]);
-                replay.record(&mut receipt);
-                session.receipt("deepseek41-engram-device-hash", receipt)?;
             }
         }
         Ok(())

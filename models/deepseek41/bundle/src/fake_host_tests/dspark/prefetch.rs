@@ -120,7 +120,7 @@ fn private_successor_restores_current_state_and_skips_the_next_draft() {
             let step = &journal[begin..];
             let hash = step
                 .iter()
-                .position(|s| s.contains(crate::sm120::engram_hash_entries::SYMBOL))
+                .position(|s| s.contains(crate::sm120::engram_hash_rows::SYMBOL))
                 .unwrap();
             assert!(
                 !step[..hash].iter().any(|s| s.starts_with("replay ")),
@@ -155,7 +155,7 @@ fn a_different_host_commit_discards_the_prediction_and_runs_normal_work() {
     let step = &journal[begin..];
     let hash = step
         .iter()
-        .position(|s| s.contains(crate::sm120::engram_hash_entries::SYMBOL))
+        .position(|s| s.contains(crate::sm120::engram_hash_rows::SYMBOL))
         .unwrap();
     assert_eq!(
         step[..hash]

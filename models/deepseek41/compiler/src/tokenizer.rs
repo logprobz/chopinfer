@@ -68,8 +68,20 @@ pub fn contract() -> runtime_tokenizer::Result<TokenizerContract> {
 /// declared boundary, and the end- and beginning-of-sequence identifiers,
 /// decode to their declared text.
 pub fn load(checkpoint: &Path) -> runtime_tokenizer::Result<Tokenizer> {
+    checked(Tokenizer::load(checkpoint, &contract()?)?)
+}
+
+/// Load the exact owned bytes that preparation hashed into its cache key.
+pub fn load_bytes(definition: &[u8], configuration: &[u8]) -> runtime_tokenizer::Result<Tokenizer> {
+    checked(Tokenizer::from_verified_bytes(
+        definition,
+        configuration,
+        &contract()?,
+    )?)
+}
+
+fn checked(tokenizer: Tokenizer) -> runtime_tokenizer::Result<Tokenizer> {
     let declared = declaration();
-    let tokenizer = Tokenizer::load(checkpoint, &contract()?)?;
     let vocabulary = &declared.vocabulary;
     let pins = vocabulary
         .boundary_tokens

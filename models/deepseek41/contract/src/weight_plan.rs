@@ -525,6 +525,82 @@ struct Planned {
 
 static PLANS: RequestCache<Planned> = RequestCache::new();
 
+/// Checkpoint binding reused while a helper tests supported topologies.
+/// Fit checks derive the same views as a full plan, but need neither encoded
+/// records nor rank indexes. This value retains no expanded rank plans.
+pub struct Preparation {
+    checkpoint: Checkpoint,
+    imported: projection_spec::derive::ImportedProjections,
+}
+
+impl Preparation {
+    pub fn new(request: &WeightPlanRequestV1) -> Result<Self, String> {
+        let checkpoint = Checkpoint::read(request)?;
+        let admitted = checkpoint.admitted();
+        let imported = declared::imported(
+            &checkpoint.declaration,
+            &checkpoint.bound,
+            &checkpoint.spec,
+            &admitted,
+        )
+        .map_err(|e| e.0)?;
+        Ok(Self {
+            checkpoint,
+            imported,
+        })
+    }
+
+    /// The largest device arena at this supported rank count. Derivations
+    /// run at most once per rank, and release their views before returning.
+    pub fn maximum_device_bytes(&self, ranks: u32) -> Result<u64, String> {
+        admission::check_ranks(self.checkpoint.geometry, ranks)?;
+        std::thread::scope(|threads| {
+            let work: Vec<_> = (0..ranks)
+                .map(|rank| {
+                    threads.spawn(move || {
+                        let views = self.checkpoint.views(&self.imported, ranks, rank)?;
+                        check_sources(&views, &self.checkpoint.files)?;
+                        let (positions, arena) = offsets(&views);
+                        let mut cut = 0;
+                        for (view, offset) in views.iter().zip(positions) {
+                            for piece in &view.pieces {
+                                // Keep the full plan's parameter admission even though
+                                // a fit check does not retain serialized records.
+                                piece.transform.encode_params().map_err(|e| e.to_string())?;
+                            }
+                            if view.mapped {
+                                cut += (offset + view.bytes)
+                                    .next_multiple_of(IMAGE_ALIGNMENT)
+                                    .min(arena)
+                                    - offset;
+                            }
+                        }
+                        Ok::<_, String>(arena - cut)
+                    })
+                })
+                .collect();
+            let mut most = 0;
+            for rank in work {
+                most = most.max(rank.join().map_err(|_| "a rank fit check panicked")??);
+            }
+            Ok(most)
+        })
+    }
+}
+
+fn check_sources(views: &[View], files: &BTreeMap<String, String>) -> Result<(), String> {
+    for view in views {
+        for piece in &view.pieces {
+            for source in &piece.sources {
+                if !files.contains_key(source) {
+                    return Err(format!("{}: {source} is in no file", view.name));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn planned(request: &WeightPlanRequestV1) -> Result<Arc<Planned>, String> {
     let mut key = RequestKey::new(b"deepseek41.weight-plan.v1", request);
     key.optional(request.document(CONFIG));
@@ -555,14 +631,8 @@ fn planned(request: &WeightPlanRequestV1) -> Result<Arc<Planned>, String> {
         })?;
         let files = checkpoint.files;
         // Every source the views read is in the checkpoint's files.
-        for view in ranks.iter().flatten() {
-            for piece in &view.pieces {
-                for source in &piece.sources {
-                    if !files.contains_key(source) {
-                        return Err(format!("{}: {source} is in no file", view.name));
-                    }
-                }
-            }
+        for views in &ranks {
+            check_sources(views, &files)?;
         }
         Ok(Planned { ranks, files })
     })

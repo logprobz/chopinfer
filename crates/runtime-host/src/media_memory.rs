@@ -15,7 +15,7 @@
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
-use runtime_server::{AdmissionError, CancellationSignal, MediaPayloadV1};
+use runtime_server::{AdmissionError, CancellationSignal, MediaPayloadSourceV1, MediaPayloadV1};
 
 /// Bytes every preparation and every live payload of the process may hold
 /// together: about three of the largest images a 16 MiP recipe prepares
@@ -174,6 +174,30 @@ impl Drop for LeasedBytes {
     }
 }
 
+/// A payload kept in another form than its bytes, with the bytes that form
+/// holds reserved until its last copy drops.
+struct LeasedSource<S> {
+    source: S,
+    retained: u64,
+    pool: Arc<MediaMemoryV1>,
+}
+
+impl<S: MediaPayloadSourceV1> MediaPayloadSourceV1 for LeasedSource<S> {
+    fn len(&self) -> usize {
+        self.source.len()
+    }
+
+    fn write_to(&self, out: &mut Vec<u8>) {
+        self.source.write_to(out);
+    }
+}
+
+impl<S> Drop for LeasedSource<S> {
+    fn drop(&mut self) {
+        self.pool.give(self.retained);
+    }
+}
+
 /// One request's reservations against the process pool.
 pub(crate) struct RequestMediaMemoryV1 {
     pool: Arc<MediaMemoryV1>,
@@ -250,6 +274,33 @@ impl RequestMediaMemoryV1 {
         bytes: Vec<u8>,
     ) -> Result<MediaPayloadV1, AdmissionError> {
         let kept = bytes.len() as u64;
+        self.lease(reserved, kept)?;
+        Ok(MediaPayloadV1::new(LeasedBytes {
+            bytes,
+            pool: Arc::clone(&self.pool),
+        }))
+    }
+
+    /// [`Self::retain`] for a payload `source` keeps in `kept` bytes, such
+    /// as an image's 8-bit canvas: those bytes, not the payload's length,
+    /// stay reserved until its last copy drops.
+    pub(crate) fn retain_source(
+        &mut self,
+        reserved: u64,
+        source: impl MediaPayloadSourceV1 + 'static,
+        kept: u64,
+    ) -> Result<MediaPayloadV1, AdmissionError> {
+        self.lease(reserved, kept)?;
+        Ok(MediaPayloadV1::from_source(LeasedSource {
+            source,
+            retained: kept,
+            pool: Arc::clone(&self.pool),
+        }))
+    }
+
+    /// Moves `kept` of an item's `reserved` preparation bytes into a lease
+    /// and releases the rest.
+    fn lease(&mut self, reserved: u64, kept: u64) -> Result<(), AdmissionError> {
         if kept > reserved {
             self.reserve(kept - reserved)?;
         }
@@ -259,10 +310,7 @@ impl RequestMediaMemoryV1 {
             self.pool.give(reserved - kept.min(reserved));
         }
         self.retained += kept;
-        Ok(MediaPayloadV1::new(LeasedBytes {
-            bytes,
-            pool: Arc::clone(&self.pool),
-        }))
+        Ok(())
     }
 }
 

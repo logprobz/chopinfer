@@ -686,24 +686,29 @@ impl EngineGenerationBackend {
             .ok_or(AdmissionError::InvalidPrompt)?;
         let encoder = &declared.encoders[usize::from(modality.encoder)];
         let reserved;
-        let (geometry, output_rows, values, columns) = match part.kind {
+        let (geometry, output_rows, rows, columns) = match part.kind {
             FrontendMediaPartKindV1::Image => {
                 let recipe = declared_image_recipe_v1(&modality.recipe)?;
                 if modality.layout.is_some() {
                     check_image_span_v1(&source, modality, recipe, limits)?;
                 }
-                let grid;
-                (grid, reserved) = prepare_image_v1(&source, recipe, limits, memory)?;
+                let image;
+                (image, reserved) = prepare_image_v1(&source, recipe, limits, memory)?;
+                let grid = image.grid();
                 let span = match modality.layout {
-                    None => grid.tokens,
-                    Some(_) => image_span_rows_v1(modality, recipe_merge_v1(recipe), grid.grid)
+                    None => image.tokens(),
+                    Some(_) => image_span_rows_v1(modality, recipe_merge_v1(recipe), grid)
                         .ok_or(AdmissionError::InvalidPrompt)?,
                 };
+                let columns = image.columns();
                 (
-                    [grid.grid[0], grid.grid[1], grid.grid[2], 0],
+                    [grid[0], grid[1], grid[2], 0],
                     u32::try_from(span).map_err(|_| AdmissionError::InvalidPrompt)?,
-                    grid.rows,
-                    grid.columns,
+                    match image {
+                        PreparedImageV1::Canvas(canvas) => PreparedRowsV1::Canvas(canvas),
+                        PreparedImageV1::Rows(grid) => PreparedRowsV1::Values(grid.rows),
+                    },
+                    columns,
                 )
             }
             FrontendMediaPartKindV1::Audio => {
@@ -728,7 +733,7 @@ impl EngineGenerationBackend {
                         0,
                     ],
                     u32::try_from(mel.tokens).map_err(|_| AdmissionError::InvalidPrompt)?,
-                    mel.values,
+                    PreparedRowsV1::Values(mel.values),
                     mel.bins,
                 )
             }
@@ -738,21 +743,50 @@ impl EngineGenerationBackend {
         if columns != encoder.payload_columns as usize || output_rows > modality.maximum_tokens {
             return Err(AdmissionError::InvalidPrompt);
         }
-        let payload = media_values_to_bytes_v1(values, encoder.payload_element)?;
-        if payload.len() > encoder.maximum_payload_bytes {
-            return Err(AdmissionError::InvalidPrompt);
-        }
-        let key = runtime_media::content_key(
-            &modality.recipe.tag,
-            &serde_json::to_vec(parameters).map_err(|_| AdmissionError::InvalidPrompt)?,
-            &payload,
-        );
+        let parameters =
+            serde_json::to_vec(parameters).map_err(|_| AdmissionError::InvalidPrompt)?;
+        let (key, payload) = match rows {
+            PreparedRowsV1::Values(values) => {
+                let payload = media_values_to_bytes_v1(values, encoder.payload_element)?;
+                if payload.len() > encoder.maximum_payload_bytes {
+                    return Err(AdmissionError::InvalidPrompt);
+                }
+                let key = runtime_media::content_key(&modality.recipe.tag, &parameters, &payload);
+                (key, memory.retain(reserved, payload)?)
+            }
+            PreparedRowsV1::Canvas(canvas) => {
+                let element = canvas_element_v1(encoder.payload_element);
+                let length = canvas.payload_len(element);
+                if length > encoder.maximum_payload_bytes {
+                    return Err(AdmissionError::InvalidPrompt);
+                }
+                // The key hashes the payload's bytes as a flat payload's key
+                // does, written in chunks rather than held whole.
+                let key = runtime_media::content_key_streamed(
+                    &modality.recipe.tag,
+                    &parameters,
+                    length as u64,
+                    |sink| {
+                        canvas.for_each_payload_chunk(
+                            element,
+                            runtime_media::recipe::CANVAS_HASH_CHUNK_BYTES,
+                            sink,
+                        );
+                    },
+                );
+                let kept = canvas.retained_bytes() as u64;
+                (
+                    key,
+                    memory.retain_source(reserved, CanvasPayloadV1 { canvas, element }, kept)?,
+                )
+            }
+        };
         let prepared: PreparedMediaInputV1 = MediaInputV1 {
             key,
             encoder: modality.encoder,
             geometry,
             output_rows,
-            payload: memory.retain(reserved, payload)?,
+            payload,
         }
         .into();
         if let Some(key) = cached {
@@ -2899,11 +2933,11 @@ fn media_values_to_bytes_v1(
         .map_err(|_| payload_allocation_failed_v1())?;
     match element {
         runtime_frontend::FrontendMediaElementV1::Bf16 => {
-            bytes.extend(values.into_iter().flat_map(|value| {
-                let bits = value.to_bits();
-                let rounded = bits.wrapping_add(0x7fff + ((bits >> 16) & 1));
-                ((rounded >> 16) as u16).to_le_bytes()
-            }));
+            bytes.extend(
+                values
+                    .into_iter()
+                    .flat_map(|value| runtime_media::recipe::bf16_bits(value).to_le_bytes()),
+            );
         }
         runtime_frontend::FrontendMediaElementV1::F32 => {
             bytes.extend(values.into_iter().flat_map(f32::to_le_bytes));
@@ -3014,57 +3048,162 @@ fn prepare_audio_v1(
     Ok((mel, reserved))
 }
 
+/// An image prepared under its recipe: the 8-bit canvas its rows are cut
+/// from, or the rows themselves for a recipe that resizes in F32.
+#[derive(Debug)]
+enum PreparedImageV1 {
+    Canvas(runtime_media::recipe::CanvasRows),
+    Rows(runtime_media::recipe::PatchGrid),
+}
+
+impl PreparedImageV1 {
+    fn grid(&self) -> [u32; 3] {
+        match self {
+            PreparedImageV1::Canvas(canvas) => canvas.grid(),
+            PreparedImageV1::Rows(grid) => grid.grid,
+        }
+    }
+
+    fn tokens(&self) -> u64 {
+        match self {
+            PreparedImageV1::Canvas(canvas) => canvas.tokens(),
+            PreparedImageV1::Rows(grid) => grid.tokens,
+        }
+    }
+
+    fn columns(&self) -> usize {
+        match self {
+            PreparedImageV1::Canvas(canvas) => canvas.columns(),
+            PreparedImageV1::Rows(grid) => grid.columns,
+        }
+    }
+
+    #[cfg(test)]
+    fn into_grid(self) -> runtime_media::recipe::PatchGrid {
+        match self {
+            PreparedImageV1::Canvas(canvas) => canvas.into_grid().unwrap(),
+            PreparedImageV1::Rows(grid) => grid,
+        }
+    }
+}
+
+/// A media item's prepared values: F32 rows, or an image's canvas.
+enum PreparedRowsV1 {
+    Values(Vec<f32>),
+    Canvas(runtime_media::recipe::CanvasRows),
+}
+
+/// An image payload kept as its canvas and written as `element` values.
+struct CanvasPayloadV1 {
+    canvas: runtime_media::recipe::CanvasRows,
+    element: runtime_media::recipe::PayloadElement,
+}
+
+impl runtime_server::MediaPayloadSourceV1 for CanvasPayloadV1 {
+    fn len(&self) -> usize {
+        self.canvas.payload_len(self.element)
+    }
+
+    fn write_to(&self, out: &mut Vec<u8>) {
+        self.canvas.write_payload(self.element, out);
+    }
+}
+
+fn canvas_element_v1(
+    element: runtime_frontend::FrontendMediaElementV1,
+) -> runtime_media::recipe::PayloadElement {
+    match element {
+        runtime_frontend::FrontendMediaElementV1::Bf16 => {
+            runtime_media::recipe::PayloadElement::Bf16
+        }
+        runtime_frontend::FrontendMediaElementV1::F32 => runtime_media::recipe::PayloadElement::F32,
+    }
+}
+
+/// The host bytes an image's preparation reserves before it decodes, from
+/// its header: the decoder's and the recipe's working sets and the encoded
+/// source. A canvas recipe keeps no F32 rows; a bilinear patch grid keeps
+/// its rows and payload, and its decoder share stays the per-pixel bound
+/// of [`runtime_media::recipe::image_preparation_bytes`].
+fn image_reservation_v1(
+    source: &[u8],
+    probe: runtime_media::Probe,
+    (width, height): (u32, u32),
+    recipe: ImageRecipeV1,
+    limits: runtime_media::MediaLimits,
+) -> runtime_media::MediaResult<u64> {
+    use runtime_media::recipe;
+    let decode = || runtime_media::image_decode_bytes(source, probe, limits);
+    let bytes = match recipe {
+        ImageRecipeV1::PatchGrid(recipe)
+            if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
+        {
+            recipe::image_canvas_preparation_bytes(width, height, recipe, limits)?
+                .checked_add(decode()?)
+        }
+        ImageRecipeV1::PatchGrid(recipe) => Some(recipe::image_preparation_bytes(
+            width, height, recipe, limits,
+        )?),
+        ImageRecipeV1::TokenBudget(recipe, _) => {
+            recipe::padded_canvas_preparation_bytes(width, height, recipe, limits)?
+                .checked_add(decode()?)
+        }
+        ImageRecipeV1::CenteredPad(recipe, _) => {
+            recipe::centered_pad_canvas_preparation_bytes(width, height, recipe, limits)?
+                .checked_add(decode()?)
+        }
+    };
+    bytes
+        .and_then(|bytes| bytes.checked_add(source.len() as u64))
+        .ok_or_else(|| runtime_media::MediaError("image preparation size overflow".to_owned()))
+}
+
 /// Reserves `memory` for an image's preparation from its header before it
-/// decodes, then decodes it and turns it into patch rows. Returns the grid and
-/// the bytes reserved.
+/// decodes, then decodes it and prepares its canvas (or, for a bilinear
+/// patch grid, its rows). Returns the prepared image and the bytes reserved.
 fn prepare_image_v1(
     source: &runtime_media::MediaSource,
     recipe: impl Into<ImageRecipeV1>,
     limits: runtime_media::MediaLimits,
     memory: &mut RequestMediaMemoryV1,
-) -> Result<(runtime_media::recipe::PatchGrid, u64), AdmissionError> {
+) -> Result<(PreparedImageV1, u64), AdmissionError> {
+    use runtime_media::recipe;
     let recipe = recipe.into();
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
     let orientation = image_orientation_v1(recipe);
-    let (width, height) = match runtime_media::probe_oriented(&source.bytes, limits, orientation)
-        .map_err(rejected)?
-    {
+    let probe =
+        runtime_media::probe_oriented(&source.bytes, limits, orientation).map_err(rejected)?;
+    let size = match probe {
         runtime_media::Probe::Png { width, height }
         | runtime_media::Probe::Jpeg { width, height } => (width, height),
         runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
     };
-    let bytes = match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => {
-            runtime_media::recipe::image_preparation_bytes(width, height, recipe, limits)
-        }
-        ImageRecipeV1::TokenBudget(recipe, _) => {
-            runtime_media::recipe::padded_preparation_bytes(width, height, recipe, limits)
-        }
-        ImageRecipeV1::CenteredPad(recipe, _) => {
-            runtime_media::recipe::centered_pad_preparation_bytes(&source.bytes, recipe, limits)
-        }
-    };
-    let reserved = bytes
-        .map_err(rejected)?
-        .saturating_add(source.bytes.len() as u64);
+    let reserved =
+        image_reservation_v1(&source.bytes, probe, size, recipe, limits).map_err(rejected)?;
     memory.reserve(reserved)?;
     let alpha = match recipe {
         ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
         ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => alpha,
     };
     let decoded = decode_image_v1(source, limits, alpha, orientation)?;
-    let grid = match recipe {
+    let image = match recipe {
+        ImageRecipeV1::PatchGrid(recipe)
+            if recipe.interpolation == recipe::Interpolation::BicubicAntialias =>
+        {
+            recipe::image_canvas(&decoded, recipe, limits).map(PreparedImageV1::Canvas)
+        }
         ImageRecipeV1::PatchGrid(recipe) => {
-            runtime_media::recipe::image_grid(&decoded, recipe, limits)
+            recipe::image_grid(&decoded, recipe, limits).map(PreparedImageV1::Rows)
         }
         ImageRecipeV1::TokenBudget(recipe, _) => {
-            runtime_media::recipe::padded_token_budget_grid(&decoded, recipe, limits)
+            recipe::padded_token_budget_canvas(&decoded, recipe, limits)
+                .map(PreparedImageV1::Canvas)
         }
         ImageRecipeV1::CenteredPad(recipe, _) => {
-            runtime_media::recipe::centered_pad_grid(&decoded, recipe, limits)
+            recipe::centered_pad_canvas(&decoded, recipe, limits).map(PreparedImageV1::Canvas)
         }
     };
-    Ok((grid.map_err(rejected)?, reserved))
+    Ok((image.map_err(rejected)?, reserved))
 }
 
 /// The EXIF orientation policy of a recipe's JPEG sources: the centered
@@ -4655,7 +4794,8 @@ mod tests {
             mime: "image/png".to_owned(),
             bytes: solid_png(256, 256, [1, 2, 3]),
         };
-        let (grid, reserved) = prepare_image_v1(&small, recipe, limits, &mut memory).unwrap();
+        let (image, reserved) = prepare_image_v1(&small, recipe, limits, &mut memory).unwrap();
+        let grid = image.into_grid();
         assert_eq!(pool.in_use(), reserved);
         // The payload keeps its bytes leased after the request's preparation
         // ends, until its last copy drops.
@@ -5117,6 +5257,7 @@ mod tests {
             prepare_image_v1(source, recipe, part_limits_v1(modality), &mut memory)
                 .unwrap()
                 .0
+                .into_grid()
         };
         let padded = |alpha| {
             let decoded =
@@ -5334,8 +5475,8 @@ mod tests {
         ));
         let pool = Arc::new(MediaMemoryV1::new(2_000_000));
         let mut memory = RequestMediaMemoryV1::new(pool, u64::MAX);
-        let (grid, reserved) = prepare_image_v1(&source, wrapped, limits, &mut memory).unwrap();
-        assert_eq!(grid.grid, [1, 1, 1]);
+        let (image, reserved) = prepare_image_v1(&source, wrapped, limits, &mut memory).unwrap();
+        assert_eq!(image.grid(), [1, 1, 1]);
         assert!(reserved >= 1_507_328 + source.bytes.len() as u64);
     }
 
@@ -5466,6 +5607,7 @@ mod tests {
             prepare_image_v1(&source, recipe, part_limits_v1(modality), &mut memory)
                 .unwrap()
                 .0
+                .into_grid()
         };
         let centered = |alpha| {
             let decoded =
@@ -5518,10 +5660,10 @@ mod tests {
         );
         let mut jpeg_memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
         let (stored, _) = prepare_image_v1(&jpeg, wrapped, limits, &mut jpeg_memory).unwrap();
-        assert_eq!(stored.grid, [1, 55, 28]);
+        assert_eq!(stored.grid(), [1, 55, 28]);
         assert_eq!(
             planned_image_grid_v1(8, 16, wrapped, limits).unwrap(),
-            stored.grid
+            stored.grid()
         );
         check_image_span_v1(&jpeg, modality, wrapped, limits).unwrap();
         let emits = |geometry| modality_emits_v1(modality, geometry);

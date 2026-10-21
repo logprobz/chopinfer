@@ -461,7 +461,7 @@ pub fn image_canvas(
 
 /// Bytes held while hashing a canvas's payload: the chunk of rows a
 /// content key reads at a time ([`CanvasRows::for_each_payload_chunk`]).
-pub const CANVAS_HASH_CHUNK_BYTES: usize = 1 << 20;
+pub const CANVAS_HASH_CHUNK_BYTES: usize = 64 << 10;
 
 /// The recipe's share of the host bytes an [`image_canvas`] preparation
 /// holds, beside the decoder's own ([`crate::image_decode_bytes`]): the

@@ -41,6 +41,35 @@ fn backend(
     pool: Arc<MediaMemoryV1>,
     request_bytes: u64,
 ) -> EngineGenerationBackend {
+    backend_for(
+        serde_json::json!({
+            "arena": {"rows": 65536, "page_rows": 64, "hidden": 8, "element": "bf16"},
+            "encoders": [{"name": "image", "payload_element": "bf16", "payload_columns": 1536,
+                "maximum_payload_bytes": 201_326_592, "cost_per_row_milli": 1}],
+            "modalities": [{"kind": "image", "part_types": ["image_url"],
+                "maximum_items": modality.items, "maximum_bytes": 64 << 20,
+                "maximum_tokens": 16_384, "encoder": 0,
+                "recipe": {"tag": "image.patch-grid.v1", "parameters": {
+                    "factor": 32, "minimum_pixels": modality.minimum_pixels,
+                    "maximum_pixels": modality.maximum_pixels,
+                    "interpolation": modality.interpolation, "upscale_small_side": false,
+                    "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
+                    "mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]}},
+                "render": {"pad": "[U]"}}]
+        }),
+        Some(root),
+        pool,
+        request_bytes,
+    )
+}
+
+/// A backend serving `multimodal` with a scripted engine.
+fn backend_for(
+    multimodal: serde_json::Value,
+    root: Option<&std::path::Path>,
+    pool: Arc<MediaMemoryV1>,
+    request_bytes: u64,
+) -> EngineGenerationBackend {
     let config = EngineConfig::new(
         SchedulerConfig::new(4, 16, 32, 32, 1).unwrap(),
         KvGeometry::new(4, 12).unwrap(),
@@ -58,24 +87,7 @@ fn backend(
     descriptor.vocabulary.eos_token_id = 1;
     descriptor.vocabulary.stop_token_ids = vec![1];
     descriptor.vocabulary.prompt_special_tokens = vec!["[BOS]".to_owned()];
-    descriptor.multimodal = Some(
-        serde_json::from_value(serde_json::json!({
-            "arena": {"rows": 65536, "page_rows": 64, "hidden": 8, "element": "bf16"},
-            "encoders": [{"name": "image", "payload_element": "bf16", "payload_columns": 1536,
-                "maximum_payload_bytes": 201_326_592, "cost_per_row_milli": 1}],
-            "modalities": [{"kind": "image", "part_types": ["image_url"],
-                "maximum_items": modality.items, "maximum_bytes": 64 << 20,
-                "maximum_tokens": 16_384, "encoder": 0,
-                "recipe": {"tag": "image.patch-grid.v1", "parameters": {
-                    "factor": 32, "minimum_pixels": modality.minimum_pixels,
-                    "maximum_pixels": modality.maximum_pixels,
-                    "interpolation": modality.interpolation, "upscale_small_side": false,
-                    "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
-                    "mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]}},
-                "render": {"pad": "[U]"}}]
-        }))
-        .unwrap(),
-    );
+    descriptor.multimodal = Some(serde_json::from_value(multimodal).unwrap());
     EngineGenerationBackend::new(
         super::stop_tests::tokenizer(),
         engine,
@@ -83,7 +95,7 @@ fn backend(
         EngineModelPolicyV1::from_declaration(&descriptor).with_media_inputs(true),
     )
     .unwrap()
-    .with_media_processing(Some(root.to_owned()), 0)
+    .with_media_processing(root.map(std::path::Path::to_owned), 0)
     .with_media_memory(pool, request_bytes)
 }
 
@@ -134,8 +146,19 @@ fn queued_requests_keep_their_payloads_leased_until_they_retire() {
         let (prepared, _) = probe
             .prepare_prompt(request(&root, modality.items, 0))
             .unwrap();
-        let per_request = payload_bytes(&prepared);
-        assert_eq!(unbounded.in_use(), per_request);
+        // A bicubic image keeps its 8-bit canvas and tables leased, far less
+        // than its payload's bytes; a bilinear one keeps its payload.
+        let per_request = unbounded.in_use();
+        if modality.interpolation == "bicubic-antialias" {
+            assert_eq!(
+                per_request,
+                modality.items as u64 * (256 * 256 * 3 + 3 * 256 * 4)
+            );
+            // BF16 payloads take 12 bytes per pixel, the canvas 3.
+            assert!(3 * per_request < payload_bytes(&prepared));
+        } else {
+            assert_eq!(per_request, payload_bytes(&prepared));
+        }
         drop(prepared);
         // The cache keeps the payloads, idle, until they are reclaimed.
         assert_eq!(unbounded.in_use(), per_request);
@@ -143,14 +166,23 @@ fn queued_requests_keep_their_payloads_leased_until_they_retire() {
         assert_eq!(unbounded.in_use(), 0);
 
         // Room for three requests' payloads plus one image's preparation.
-        let limit = 3 * per_request + per_request / modality.items as u64 * 8;
-        let pool = Arc::new(MediaMemoryV1::new(limit));
-        let backend = Arc::new(backend(
-            modality,
-            &root,
-            Arc::clone(&pool),
-            per_request + per_request / modality.items as u64 * 8,
-        ));
+        let preparation = {
+            let source = std::fs::read(root.join("0.png")).unwrap();
+            let modality = &probe
+                .policy
+                .declaration()
+                .multimodal
+                .as_ref()
+                .unwrap()
+                .modalities[0];
+            let limits = part_limits_v1(modality);
+            let probed = runtime_media::probe(&source, limits).unwrap();
+            let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
+            image_reservation_v1(&source, probed, (256, 256), recipe, limits).unwrap()
+        };
+        let allowance = per_request + preparation;
+        let pool = Arc::new(MediaMemoryV1::new(3 * per_request + preparation));
+        let backend = Arc::new(backend(modality, &root, Arc::clone(&pool), allowance));
         let mut queued = Vec::new();
         for next in 0..3 {
             queued.push(
@@ -159,7 +191,7 @@ fn queued_requests_keep_their_payloads_leased_until_they_retire() {
                     .unwrap()
                     .0,
             );
-            assert_eq!(pool.in_use(), queued.iter().map(payload_bytes).sum::<u64>());
+            assert_eq!(pool.in_use(), queued.len() as u64 * per_request);
         }
         let waiting = request(&root, modality.items, 3 * modality.items);
         let worker_backend = Arc::clone(&backend);
@@ -511,4 +543,173 @@ fn a_request_with_a_miss_waits_holding_none_of_its_hits() {
         .prepare_prompt(inline_colors(&[[9, 8, 7], [1, 2, 3]]))
         .unwrap();
     assert_eq!(media_inputs(&prepared), media_inputs(&expected));
+}
+
+/// One image modality of `recipe` whose encoder stores `element` values in
+/// rows of `columns`.
+fn image_modality(
+    recipe: serde_json::Value,
+    element: &str,
+    columns: u32,
+    tokens: u32,
+    layout: bool,
+) -> serde_json::Value {
+    let mut modality = serde_json::json!({"kind": "image", "part_types": ["image_url"],
+        "maximum_items": 4, "maximum_bytes": 64 << 20, "maximum_tokens": tokens, "encoder": 0,
+        "recipe": recipe, "render": {"pad": "[U]"}});
+    if layout {
+        modality["layout"] = "learned-delimiters.v1".into();
+    }
+    serde_json::json!({
+        "arena": {"rows": 65536, "page_rows": 64, "hidden": 8, "element": "bf16"},
+        "encoders": [{"name": "image", "payload_element": element, "payload_columns": columns,
+            "maximum_payload_bytes": 402_653_184_u64, "cost_per_row_milli": 1}],
+        "modalities": [modality]
+    })
+}
+
+/// A prepared image kept as its 8-bit canvas has the content key, geometry,
+/// rows and payload bytes of the F32 rows its recipe makes, for the recipes
+/// of each in-tree image model and both payload elements.
+#[test]
+fn canvas_payloads_keep_the_keys_rows_and_bytes_of_their_rows() {
+    let qwen = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
+        "factor": 32, "minimum_pixels": 65536, "maximum_pixels": 16_777_216,
+        "upscale_small_side": false, "interpolation": "bicubic-antialias",
+        "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 0.00392156862745098,
+        "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]}});
+    let mimo = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
+        "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 1_048_576,
+        "upscale_small_side": false, "interpolation": "bicubic-antialias",
+        "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
+        "mean": [123.675, 116.28, 103.53], "std": [58.395, 57.12, 57.375]}});
+    let glm = serde_json::json!({"tag": TOKEN_BUDGET_TAG_V1, "parameters": {
+        "patch": 14, "temporal_patch": 2, "merge": 2, "minimum_tokens": 16,
+        "maximum_tokens": 8000, "value_scale": 0.00392156862745098,
+        "mean": [0.48145466, 0.4578275, 0.40821073],
+        "std": [0.26862954, 0.26130258, 0.27577711], "alpha_background": "none"}});
+    let deepseek = serde_json::json!({"tag": CENTERED_PAD_TAG_V1, "parameters": {
+        "patch": 14, "downsample": 3, "minimum_pixels": 295_936, "maximum_tokens": 1024,
+        "pad": [127, 127, 127], "value_divisor": 255.0, "mean": [0.5, 0.5, 0.5],
+        "std": [0.5, 0.5, 0.5], "alpha_background": "none", "value_rounding": "bf16"}});
+    let declarations = [
+        (
+            "qwen38",
+            image_modality(qwen.clone(), "f32", 1536, 16_384, false),
+        ),
+        (
+            "qwen38-bf16",
+            image_modality(qwen, "bf16", 1536, 16_384, false),
+        ),
+        ("mimo26", image_modality(mimo, "f32", 1536, 1024, false)),
+        ("glm5next", image_modality(glm, "f32", 1176, 8000, false)),
+        (
+            "deepseek41",
+            image_modality(deepseek, "f32", 588, 1024, true),
+        ),
+    ];
+    let fixtures = [
+        (
+            "image/jpeg",
+            &include_bytes!(
+                "../../../runtime-media/tests/fixtures/centered-pad-jpeg-444-301x199.jpg"
+            )[..],
+        ),
+        (
+            "image/jpeg",
+            &include_bytes!(
+                "../../../runtime-media/tests/fixtures/centered-pad-jpeg-exif6-64x40.jpg"
+            )[..],
+        ),
+        (
+            "image/png",
+            &include_bytes!(
+                "../../../runtime-media/tests/fixtures/zero-padded-token-budget-rgba-translucent-64x50.png"
+            )[..],
+        ),
+    ];
+    for (name, multimodal) in declarations {
+        let declared: FrontendMultimodalV1 = serde_json::from_value(multimodal.clone()).unwrap();
+        let modality = &declared.modalities[0];
+        let pool = Arc::new(MediaMemoryV1::new(1 << 32));
+        let backend = backend_for(multimodal, None, Arc::clone(&pool), 1 << 32);
+        for (mime, bytes) in fixtures {
+            let source = runtime_media::MediaSource {
+                mime: mime.to_owned(),
+                bytes: bytes.to_vec(),
+            };
+            let request = PreparedPrompt::MediaChat {
+                segments: vec![
+                    PromptSegmentV1::Text("look".to_owned()),
+                    PromptSegmentV1::Media(0),
+                ],
+                media: vec![FrontendMediaPartV1 {
+                    kind: FrontendMediaPartKindV1::Image,
+                    part_type: "image_url".to_owned(),
+                    source: format!("data:{mime};base64,{}", base64(bytes)),
+                    format: None,
+                }],
+            };
+            let (prepared, _) = backend.prepare_prompt(request).unwrap();
+            let item = &media_inputs(&prepared)[0];
+
+            // The rows the recipe makes, as the flat payload carried them.
+            let limits = part_limits_v1(modality);
+            let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
+            let alpha = match recipe {
+                ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
+                ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => {
+                    alpha
+                }
+            };
+            let decoded =
+                decode_image_v1(&source, limits, alpha, image_orientation_v1(recipe)).unwrap();
+            let grid = match recipe {
+                ImageRecipeV1::PatchGrid(recipe) => runtime_media::recipe::patch_grid(
+                    &[decoded.clone(), decoded.clone()],
+                    recipe,
+                    limits,
+                ),
+                ImageRecipeV1::TokenBudget(recipe, _) => {
+                    runtime_media::recipe::padded_token_budget_grid(&decoded, recipe, limits)
+                }
+                ImageRecipeV1::CenteredPad(recipe, _) => {
+                    runtime_media::recipe::centered_pad_grid(&decoded, recipe, limits)
+                }
+            }
+            .unwrap();
+            let span = match modality.layout {
+                None => grid.tokens,
+                Some(_) => {
+                    image_span_rows_v1(modality, recipe_merge_v1(recipe), grid.grid).unwrap()
+                }
+            };
+            let encoder = &declared.encoders[0];
+            let flat = media_values_to_bytes_v1(grid.rows, encoder.payload_element).unwrap();
+            let key = runtime_media::content_key(
+                &modality.recipe.tag,
+                &serde_json::to_vec(&modality.recipe.parameters).unwrap(),
+                &flat,
+            );
+            assert_eq!(item.payload.len(), flat.len(), "{name} {mime}");
+            assert!(
+                item.payload.to_vec() == flat,
+                "{name} {mime}: payload bytes"
+            );
+            let mut written = vec![1, 2, 3];
+            item.payload.write_to(&mut written);
+            assert!(written[3..] == flat[..], "{name} {mime}: written bytes");
+            assert_eq!(item.key, key, "{name} {mime}: content key");
+            assert_eq!(
+                (item.geometry, item.output_rows),
+                ([grid.grid[0], grid.grid[1], grid.grid[2], 0], span as u32),
+                "{name} {mime}"
+            );
+            // The lease is the canvas, not the payload.
+            assert!(pool.in_use() < flat.len() as u64, "{name} {mime}");
+            drop(prepared);
+            backend.image_cache.reclaim_idle();
+            assert_eq!(pool.in_use(), 0, "{name} {mime}");
+        }
+    }
 }

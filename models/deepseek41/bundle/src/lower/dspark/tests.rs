@@ -279,3 +279,14 @@ fn draft_blocks_use_the_complete_ratio_zero_attention_and_expert_stage() {
         assert!(block_stages(g, 0, Phase::Verify { rows: 8, items: 2 }).is_err());
     }
 }
+
+#[test]
+fn catch_up_kv_projection_takes_decode_entries_up_to_their_capacity() {
+    let capacity = crate::Kernels::dense_decode_capacity();
+    for count in [1, 4, capacity] {
+        assert_eq!(projection_phase(count), Phase::Decode(count));
+    }
+    for count in [capacity + 1, 127, 128, 4096] {
+        assert_eq!(projection_phase(count), Phase::Prefill { rows: count });
+    }
+}

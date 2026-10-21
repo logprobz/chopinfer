@@ -156,7 +156,15 @@ fn prepare(
         // 708 captured full graphs bitwise. At 32 rows it saves 0.20..0.25 ms
         // over grid6 across 40 backbone layers, faster in 71..79 of 80 graphs
         // per arm. Decode-8 graphs are within noise (42 of 80) and keep grid6.
-        if stage == Some(Stage::GateSmall) && entry.experts() == 384 && rows == 32 {
+        // TP4, 250 W, 2026-10-21, graph-node trace of captured row prefixes
+        // over the r2 finish and edge (c1-queue-trace): at backbone Verify-4
+        // (DSpark C1 K3) the gate small queue ends 7.1..7.7 us sooner per
+        // layer, every case bitwise and every candidate sample faster than
+        // every served sample. Decode-1 is flat and keeps the direct gate.
+        if stage == Some(Stage::GateSmall)
+            && entry.experts() == 384
+            && (rows == 32 || (phase == ExecutionPhase::Verify && rows == 4))
+        {
             // The positional ABI is identical. Retain the floor binding's
             // view names for scales, sorted rows and padded rows.
             spec.symbol = kernels_sm120::moe::chained::streamed_resident::symbol(&entry.gate);
@@ -369,7 +377,10 @@ mod tests {
                             };
                             assert_eq!(
                                 call.launch.symbol.ends_with("_small_resident8_v1"),
-                                set.count == 384 && rows == 32 && point == Point::Gate
+                                set.count == 384
+                                    && (rows == 32
+                                        || (phase == ExecutionPhase::Verify && rows == 4))
+                                    && point == Point::Gate
                             );
                             let items = set.count.min(rows * set.top_k)
                                 * if point == Point::Gate { 9 * 40 } else { 80 * 5 };

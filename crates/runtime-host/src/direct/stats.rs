@@ -53,6 +53,8 @@ pub struct DirectLoadStatsV1 {
     /// Present only with `CHOPINFER_DIRECT_LOAD_TIMING=1`. These are summed
     /// worker seconds and overlap the existing read and shared counters.
     pub shared_timing: Option<SharedTiming>,
+    pub io_timing: Option<super::io_stats::IoTiming>,
+    pub buffer_timing: Option<super::packed_sources::BufferTiming>,
     /// Lifetime high-water mark, not an additive phase counter.
     #[serde(skip)]
     pub retained_peak_bytes: u64,
@@ -101,6 +103,12 @@ impl DirectLoadStatsV1 {
             shared_timing: self
                 .shared_timing
                 .map(|timing| timing.since(before.shared_timing.unwrap_or_default())),
+            io_timing: self
+                .io_timing
+                .map(|timing| timing.since(before.io_timing.unwrap_or_default())),
+            buffer_timing: self
+                .buffer_timing
+                .map(|timing| timing.since(before.buffer_timing.unwrap_or_default())),
             retained_peak_bytes: 0,
             pooled_peak_bytes: 0,
         }

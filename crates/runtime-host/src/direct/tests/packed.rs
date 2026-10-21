@@ -185,6 +185,59 @@ fn packed_rank_plans_and_images_keep_pre_change_digests() {
 }
 
 #[test]
+fn optional_io_diagnostics_preserve_bytes_and_count_real_reads() {
+    let (root, plans, expected, _) = fixture(4);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for detailed in [false, true] {
+        let mut image = sharing_image(&checkpoint, &plans, 2, 128 << 10);
+        let inner = Arc::get_mut(&mut image.inner).unwrap();
+        inner.detailed_timing = detailed;
+        inner.io_timing = detailed.then(io_stats::IoCounters::default);
+        let before = image.stats();
+        assert_eq!(waves(&image, 8192), expected);
+        let stats = image.stats();
+        let delta = stats.since(before);
+        assert_eq!(delta.io_timing.is_some(), detailed);
+        if let Some(io) = stats.io_timing {
+            assert!(io.buffered_calls > 0);
+            assert_eq!(io.direct_calls, 0);
+            assert_eq!(io.read_errors, 0);
+            assert_eq!(io.read_bytes, stats.file_read_bytes);
+            assert_eq!(io.request_sizes.iter().sum::<u64>(), stats.source_reads);
+            assert!(io.peak_reads > 0);
+            assert_eq!(delta.io_timing.unwrap().peak_reads, 0);
+        }
+    }
+}
+
+#[test]
+fn unused_companions_include_owed_sections_that_cannot_be_retained() {
+    let (root, plans, expected, _) = fixture(1);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let mut image = sharing_image(&checkpoint, &plans, 1, 128 << 10);
+    let inner = Arc::get_mut(&mut image.inner).unwrap();
+    inner.options.shared_bytes = 0;
+    inner.io_timing = Some(io_stats::IoCounters::default());
+    // Exercise whole production while a companion is still owed. With no
+    // shared budget, that companion is discarded despite having consumers.
+    let record = &mut inner.ranks[0].records[0];
+    record.has_code_section = false;
+    let shared = record.shared.unwrap();
+    let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform else {
+        panic!("packed fixture");
+    };
+    let sizes = operand.plan.section_bytes().unwrap();
+    inner.shared[shared].state.get_mut().unwrap().remaining[0] = sizes.codes;
+    let mut out = vec![0; sizes.local_scales as usize];
+    image.read(0, &mut out).unwrap();
+    assert_eq!(out, expected[0][..out.len()]);
+    assert_eq!(
+        image.stats().io_timing.unwrap().unused_section_bytes,
+        sizes.codes
+    );
+}
+
+#[test]
 fn scale_first_expert_banks_match_baseline_bytes_at_small_and_large_budgets() {
     let (root, plans, expected, unique) = fixture(32);
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());

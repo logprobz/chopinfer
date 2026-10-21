@@ -7,6 +7,39 @@ use std::collections::{BTreeSet, VecDeque};
 pub(super) struct PackedBuffers {
     limit: usize,
     state: Mutex<Buffers>,
+    timing: Option<BufferCounters>,
+}
+
+#[derive(Default)]
+struct BufferCounters {
+    allocations: AtomicU64,
+    allocated_bytes: AtomicU64,
+    reuse_hits: AtomicU64,
+    discarded_bytes: AtomicU64,
+    take_nanos: AtomicU64,
+}
+
+/// Optional allocation observations of the packed-buffer pool. Other
+/// allocations and active transaction outputs are not counted here.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct BufferTiming {
+    pub allocations: u64,
+    pub allocated_bytes: u64,
+    pub reuse_hits: u64,
+    pub discarded_bytes: u64,
+    pub take_seconds: f64,
+}
+
+impl BufferTiming {
+    pub(super) fn since(self, before: Self) -> Self {
+        Self {
+            allocations: self.allocations.saturating_sub(before.allocations),
+            allocated_bytes: self.allocated_bytes.saturating_sub(before.allocated_bytes),
+            reuse_hits: self.reuse_hits.saturating_sub(before.reuse_hits),
+            discarded_bytes: self.discarded_bytes.saturating_sub(before.discarded_bytes),
+            take_seconds: (self.take_seconds - before.take_seconds).max(0.0),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -21,10 +54,12 @@ impl PackedBuffers {
         Self {
             limit: shared_bytes.min(64 << 20) as usize,
             state: Mutex::default(),
+            timing: detailed_timing_v1().then(BufferCounters::default),
         }
     }
 
     pub fn take(&self, length: usize) -> Vec<u8> {
+        let start = self.timing.as_ref().map(|_| Instant::now());
         let mut state = self
             .state
             .lock()
@@ -39,11 +74,23 @@ impl PackedBuffers {
         };
         drop(state);
         bytes.resize(length, 0);
+        if let (Some(timing), Some(start)) = (&self.timing, start) {
+            elapsed_nanos(&timing.take_nanos, start);
+            if found.is_some() {
+                timing.reuse_hits.fetch_add(1, Ordering::Relaxed);
+            } else if bytes.capacity() > 0 {
+                timing.allocations.fetch_add(1, Ordering::Relaxed);
+                timing
+                    .allocated_bytes
+                    .fetch_add(bytes.capacity() as u64, Ordering::Relaxed);
+            }
+        }
         bytes
     }
 
     pub fn give(&self, bytes: Vec<u8>) {
         if bytes.capacity() == 0 || bytes.capacity() > self.limit {
+            self.discarded(bytes.capacity());
             return;
         }
         let mut state = self
@@ -54,7 +101,27 @@ impl PackedBuffers {
             state.bytes += bytes.capacity();
             state.peak = state.peak.max(state.bytes);
             state.buffers.push(bytes);
+        } else {
+            self.discarded(bytes.capacity());
         }
+    }
+
+    fn discarded(&self, capacity: usize) {
+        if let Some(timing) = &self.timing {
+            timing
+                .discarded_bytes
+                .fetch_add(capacity as u64, Ordering::Relaxed);
+        }
+    }
+
+    pub fn timing(&self) -> Option<BufferTiming> {
+        self.timing.as_ref().map(|timing| BufferTiming {
+            allocations: timing.allocations.load(Ordering::Relaxed),
+            allocated_bytes: timing.allocated_bytes.load(Ordering::Relaxed),
+            reuse_hits: timing.reuse_hits.load(Ordering::Relaxed),
+            discarded_bytes: timing.discarded_bytes.load(Ordering::Relaxed),
+            take_seconds: seconds(&timing.take_nanos),
+        })
     }
 
     pub fn clear(&self) {

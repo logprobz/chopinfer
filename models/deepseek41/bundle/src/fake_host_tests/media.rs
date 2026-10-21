@@ -404,9 +404,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// admission scans.
 /// The local C32 query module adds eight resolves and nine releases per
 /// TP4 rank; the full media history retains every launch and allocation.
+/// The 64-expert router renames the router-in-norm module's router resolve
+/// on each TP4 rank, nothing else.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
-    (Ranks::TP4, (57259, 0x955a10a91b5fcb5d)),
+    (Ranks::TP4, (57259, 0x37f4677c40bde565)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

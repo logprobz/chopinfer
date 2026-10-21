@@ -1110,6 +1110,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// The local C32 query module adds eight resolves and nine releases per
 /// TP4 rank. These short-row lifecycles retain every launch and allocation;
 /// the complete histories were compared under typed handle mapping.
+/// The router's 64-expert certified projection renames the module's router
+/// resolve on each TP4 rank (four lines), audited against the journals
+/// before it: no other line changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1136,12 +1139,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (85427, 0xc28ebd48dfadf797),
+        (85427, 0xad84ab0cd6c19d5f),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (83071, 0x360f57c8713b8907),
+        (83071, 0x63ad140f868b88b7),
     ),
 ];
 
@@ -1291,7 +1294,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// The HC boundary, cached ceil, prefill expand-mix and cached query norm
 /// modules change it exactly as they change the default-era TP4 lifecycle.
 /// router certificate and the router-in-norm module add one allocation, two
-/// resolves and four releases per rank there too, and no launch.
+/// resolves and four releases per rank there too, and no launch. The
+/// 64-expert router renames its resolve there too.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1299,7 +1303,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(83723, 0xc71c3da31c40df4f), (81367, 0x514545e654b62353)])
+            .zip([(83723, 0x5d3c30c18a4aabb9), (81367, 0xb8e18d56f6a6f905)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

@@ -2,6 +2,7 @@
 //! serving ops (`serving_op`), the lab's native launches, and the views
 //! their outputs land in.
 use super::*;
+use bundle_deepseek41::sm120::moe_native_entries as entries;
 use kernel_core::moe::RouteMetadata;
 use kernel_core::moe_experts::GatedMlpScratch;
 use kernel_core::precision::buffers::{ProjectionRouting, QuantizedWeights};
@@ -153,8 +154,10 @@ pub fn queue(a: &mut Arena<'_>, shape: &Shape, tile: &Tile) -> LabResult<View> {
 
 /// Both arms of a step of `rows` at `capacity`. The native arm is the lab's
 /// launches of the serving tiles, with the bundle's fused ceil tiles and
-/// fixup in place of the tiles and quantizer where the wrapper fuses them;
-/// for the target bank they must equal the wrapper's launches.
+/// fixup in place of the tiles and quantizer where the wrapper fuses them,
+/// and the lean loop (down on the two-CTA tile) in the target bank's
+/// unfused steps; for the target bank they must equal the wrapper's
+/// launches.
 pub fn build(
     a: &mut Arena<'_>,
     set: moe::Experts,
@@ -188,6 +191,27 @@ pub fn build(
     if fused {
         tiles[0] = family::serving::GATE_UP_TILE;
     }
+    let lean = set == family::serving::target_set()
+        && rows > bundle_deepseek41::sm120::moe_native::FUSED_CEIL_ROWS;
+    if lean {
+        tiles[1] = entries::PAIRED_DOWN_TILE;
+    }
+    // The served loop, or the unfused steps' lean loop.
+    let ops = |shape: &Shape, tile: &Tile, buffers: &native::Buffers| -> LabResult<Vec<Launch>> {
+        if lean {
+            native::tune_launches(
+                shape,
+                tile,
+                rows,
+                buffers,
+                entries::UNFUSED_LOOP,
+                Variant::Serving,
+            )
+            .map_err(|e| e.to_string())
+        } else {
+            native_ops(shape, tile, rows, buffers, Variant::Serving)
+        }
+    };
     let queues = [
         queue(a, &shapes[0], &tiles[0])?,
         queue(a, &shapes[1], &tiles[1])?,
@@ -213,16 +237,14 @@ pub fn build(
             )
             .map_err(|e| e.to_string())?
     } else {
-        let mut ops = native_ops(&shapes[0], &tiles[0], rows, &gate_buffers, Variant::Serving)?;
-        ops.extend(q.iter().cloned());
-        ops
+        let mut gate = ops(&shapes[0], &tiles[0], &gate_buffers)?;
+        gate.extend(q.iter().cloned());
+        gate
     };
-    native_arm.down = native_ops(
+    native_arm.down = ops(
         &shapes[1],
         &tiles[1],
-        rows,
         &native_buffers(i, false, out.codes, out.scales, out.down, queues[1], None),
-        Variant::Serving,
     )?;
     native_arm.workspaces = queues.to_vec();
     if set == family::serving::target_set() {

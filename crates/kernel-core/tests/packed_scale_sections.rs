@@ -278,6 +278,60 @@ fn streamed_rows_and_fragments_overwrite_caller_storage_exactly() {
     }
 }
 
+/// A refused row stream publishes no bytes, also when an earlier row run
+/// was already admitted: a scale no BF16 operand holds in the second run
+/// (source rows 8..13), or a failing read of that run's codes, leaves caller
+/// storage as it was, directly and through the prepared producer.
+#[test]
+fn a_refused_later_row_run_leaves_caller_storage_unchanged() {
+    use kernel_core::weight_transform::WeightTransformError;
+    let (mut operand, mut record, codes, mut scales) = record(DecodeOrder::ExactScaledOperand);
+    operand.section = PackedSection::Codes;
+    record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+    let rows = u64::from(operand.plan.rows);
+    let row_bytes = u64::from(operand.plan.k) / 2;
+    let fails = |codes: &[u8], scales: &[u8], late_read: bool| {
+        // 128 code bytes per source row: the second run reads from row 8.
+        let mut read = |index: usize, offset: u64, out: &mut [u8]| {
+            if late_read && index == 0 && offset >= 8 * 128 {
+                return Err(WeightTransformError("source read failed".into()));
+            }
+            let source = [codes, scales][index];
+            out.copy_from_slice(&source[offset as usize..offset as usize + out.len()]);
+            Ok(())
+        };
+        // The first run alone is admitted.
+        let mut first = vec![0xa5; (3 * row_bytes) as usize];
+        operand
+            .execute_code_rows_into(&record, 0..3, &mut first, &mut read)
+            .unwrap();
+        let mut whole = vec![0xa5; (rows * row_bytes) as usize];
+        assert!(
+            operand
+                .execute_code_rows_into(&record, 0..rows, &mut whole, &mut read)
+                .is_err()
+        );
+        assert!(whole.iter().all(|&b| b == 0xa5), "the direct stream wrote");
+        let prepared = record.clone().prepare(rows * row_bytes).unwrap();
+        for range in [0..rows * row_bytes, 1..rows * row_bytes - 1] {
+            let mut fragment = vec![0xa5; (range.end - range.start) as usize];
+            assert!(
+                prepared
+                    .produce(range.clone(), &mut fragment, &mut read, &mut Vec::new())
+                    .is_err()
+            );
+            assert!(
+                fragment.iter().all(|&b| b == 0xa5),
+                "the prepared producer wrote {range:?}"
+            );
+        }
+    };
+    fails(&codes, &scales, true);
+    // Eight scale bytes per source row.
+    scales[9 * 8..10 * 8].fill(255);
+    fails(&codes, &scales, false);
+}
+
 #[test]
 fn scale_section_keeps_full_source_validation_and_code_dependent_fallback() {
     let (operand, record, codes, mut scales) = record(DecodeOrder::ExactScaledOperand);

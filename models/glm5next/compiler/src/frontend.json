@@ -343,6 +343,12 @@
         "part_types": [
           "image_url"
         ],
+        "formats": [
+          "png",
+          "jpeg",
+          "gif",
+          "webp"
+        ],
         "maximum_items": 64,
         "maximum_bytes": 67108864,
         "maximum_tokens": 8000,

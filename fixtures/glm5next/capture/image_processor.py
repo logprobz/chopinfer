@@ -11,19 +11,30 @@ as the processor's callers do; PIL's convert("RGB") discards their alpha.
 CPU preprocessing only; no model runs:
 
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B fixtures/glm5next/capture/image_processor.py \
-        $CHOPINFER_GLM5NEXT_CHECKPOINT [--dump DIR]
+        $CHOPINFER_GLM5NEXT_CHECKPOINT [--dump DIR | --decode]
 
 `--dump` also saves each case's rows as raw little-endian F32 for diffing.
 The synthetic patterns match `pattern()` in the runtime-media test.
+
+`--decode` instead pins image decoding: tools/refrun/image_decode.py's
+`model_capture` runs transformers' `load_image` (the served reference
+loader) over runtime-media's image decode corpus, checks that this
+processor adds no decode step to `load_image`'s image, and checks the
+media gate's probes (models/glm5next/probe_images.py, and blue-square.png
+from `$CHOPINFER_MIMO_FIXTURES/functional`, which the media soak sends).
+It writes fixtures/glm5next/image-decode.json.
 """
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import random
 import re
+import sys
 from unittest.mock import patch
 
 import numpy as np
@@ -36,6 +47,7 @@ from transformers.image_processing_backends import TorchvisionBackend
 ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / "crates/runtime-media/tests/fixtures"
 NAME = "zero-padded-token-budget"
+DECODE = ROOT / "fixtures/glm5next/image-decode.json"
 
 # (name, pattern, width, height, mode); mode "RGB" cases are built in memory,
 # the others are written as PNG files. "RGBA" and "LA" take their alpha from
@@ -143,10 +155,25 @@ def sizes(processor):
     return rows
 
 
+def decode(processor):
+    sys.path.insert(0, str(ROOT))
+    from tools.refrun import image_decode
+    fixtures = os.environ.get("CHOPINFER_MIMO_FIXTURES")
+    if not fixtures:
+        raise SystemExit("--decode reads the media soak's blue-square.png from $CHOPINFER_MIMO_FIXTURES/functional")
+    spec = importlib.util.spec_from_file_location("probe_images", ROOT / "models/glm5next/probe_images.py")
+    probe_images = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe_images)
+    probes = {**probe_images.pngs(), "blue-square": (Path(fixtures) / "functional/blue-square.png").read_bytes()}
+    image_decode.model_capture("fixtures/glm5next/capture/image_processor.py --decode", processor, probes, DECODE)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("--dump", type=Path)
+    parser.add_argument("--decode", action="store_true",
+                        help="write fixtures/glm5next/image-decode.json instead of the recipe golden")
     args = parser.parse_args()
     torch.set_num_threads(8)
     processor = AutoImageProcessor.from_pretrained(args.checkpoint)
@@ -156,6 +183,9 @@ def main():
                 processor.patch_expand_factor)
     if settings != (14, 2, 2, 1):
         raise SystemExit(f"unexpected processor geometry {settings}")
+    if args.decode:
+        decode(processor)
+        return
     config = json.loads((args.checkpoint / "processor_config.json").read_text())["image_processor"]
     golden = {
         # The fixture lives in a model-neutral crate, so it names no model.

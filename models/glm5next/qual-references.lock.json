@@ -27,7 +27,7 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "ec51487ba74cc39814fb38c480412d34f51a831edee60b116b9176001d749f28"
+        ".": "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de"
       },
       "path": "models/glm5next/compiler/src/frontend.json"
     },
@@ -106,7 +106,7 @@
     "media_preprocessing_frontend": {
       "directory": false,
       "members": {
-        ".": "ec51487ba74cc39814fb38c480412d34f51a831edee60b116b9176001d749f28"
+        ".": "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de"
       },
       "path": "models/glm5next/compiler/src/frontend.json"
     },
@@ -937,14 +937,6 @@
   },
   "model": "glm5next",
   "objects": {
-    "ec51487ba74cc39814fb38c480412d34f51a831edee60b116b9176001d749f28": {
-      "production": {
-        "adoption_commit": "a205a9914b8dba7e5c1379a6840bdcd27949c768",
-        "adoption_date": "2026-10-15",
-        "producer": "legacy-unknown"
-      },
-      "schema": "chop-frontend-openai-v2"
-    },
     "e14d9fae8807dcb279501c0eda6e635de8ecb35a6ee22f549cc72b7ba8a6959b": {
       "schema": "chop-frontend-openai-v2"
     },
@@ -5355,6 +5347,9 @@
         "reference_sha256": "d15005590473a0e5b8632ed1ab700057c88ddb7923f2f48aa17605bfbc4bfe47"
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
+    },
+    "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de": {
+      "schema": "chop-frontend-openai-v2"
     }
   },
   "schema": "chopinfer-qual-references/v1"

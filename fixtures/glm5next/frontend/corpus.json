@@ -16923,5 +16923,87 @@
    "message": "invalid conversation field: continue_final_message requires a final message the template keeps whole",
    "parameter": "messages"
   }
+ },
+ {
+  "id": "image-gif",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/gif;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|><|begin_of_image|><|image|><|end_of_image|>Describe.<|assistant|><think>",
+  "token_ids": [
+   154822,
+   154824,
+   154826,
+   25062,
+   287,
+   29905,
+   371,
+   25,
+   7487,
+   154827,
+   154830,
+   154854,
+   154831,
+   74198,
+   13,
+   154828,
+   154841
+  ]
+ },
+ {
+  "id": "image-webp",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/webp;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "Describe."
+     }
+    ]
+   }
+  ],
+  "rendered_text": "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|><|begin_of_image|><|image|><|end_of_image|>Describe.<|assistant|><think>",
+  "token_ids": [
+   154822,
+   154824,
+   154826,
+   25062,
+   287,
+   29905,
+   371,
+   25,
+   7487,
+   154827,
+   154830,
+   154854,
+   154831,
+   74198,
+   13,
+   154828,
+   154841
+  ]
  }
 ]

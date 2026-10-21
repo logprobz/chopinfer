@@ -18,7 +18,7 @@
   "unicode": "15.0.0"
  },
  "seed": 0,
- "full_cases": 172,
+ "full_cases": 174,
  "lines_with_code": [
   2,
   3,
@@ -7532,6 +7532,84 @@
     259
    ],
    "reference": "refusal",
+   "divergence": null
+  },
+  "image-gif": {
+   "features": [
+    "fixed:image-gif",
+    "image:gif"
+   ],
+   "lines": [
+    2,
+    3,
+    4,
+    5,
+    51,
+    52,
+    53,
+    54,
+    55,
+    57,
+    58,
+    59,
+    60,
+    61,
+    63,
+    64,
+    75,
+    78,
+    95,
+    102,
+    105,
+    122,
+    132,
+    133,
+    134,
+    135,
+    138,
+    139,
+    259
+   ],
+   "reference": "render",
+   "divergence": null
+  },
+  "image-webp": {
+   "features": [
+    "fixed:image-webp",
+    "image:webp"
+   ],
+   "lines": [
+    2,
+    3,
+    4,
+    5,
+    51,
+    52,
+    53,
+    54,
+    55,
+    57,
+    58,
+    59,
+    60,
+    61,
+    63,
+    64,
+    75,
+    78,
+    95,
+    102,
+    105,
+    122,
+    132,
+    133,
+    134,
+    135,
+    138,
+    139,
+    259
+   ],
+   "reference": "render",
    "divergence": null
   }
  },

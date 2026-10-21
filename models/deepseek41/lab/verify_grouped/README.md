@@ -34,3 +34,41 @@ recorded comparable runs before submission.
 
 This is boundary-level kernel evidence. Served token/logprob equivalence
 and TTFT require a separate integration qualification.
+
+## Qualified four-row binding
+
+On 2026-10-21, the captured native TP4 four-row attention graphs passed
+memcheck and bitwise replay with eight heads per staged key tile. Each of
+the two correctness phases covered 24 captured records, 1536 poisoned
+comparisons, 96 partition comparisons and 24 dropped-key negative controls.
+The full check also covered 192 graph replays. All 288 paired timing cases
+reproduced the captured F32 partials and BF16 outputs after measurement.
+
+The layer-weighted warm attention totals were 2.2031 to 0.4838 ms at 8K and
+2.2229 to 0.4857 ms at 32K. These totals weight two window, eighteen mixed32
+and twenty mixed64 layers. Each warm graph repeats the cache producer,
+consumer and ordered merge 32 times. It includes no surrounding projection,
+KV write, RoPE producer, MoE or communication. Whole-model cycle speed and
+served token/logprob equivalence require integration qualification.
+
+Only native Flash TP4 Verify-4 selects the fixed eight-head entry. Verify-32
+was tied with its existing route and remains unchanged, as do decode and
+other widths. The existing selected-key allocation already fits these rows.
+The producer, consumer and merge use the rank compute stream; drafter and
+shared-expert side streams do not bind this allocation. The binding changes
+neither memory fractions nor cross-stream lifetimes.
+
+`audit_binding.py` compares full fake-host lifecycle journals and paired
+source routes before refreshing pins. It allows only the additive module,
+its resolves, shared-memory configurations and releases, then compares all
+retained operations through typed handle bijections. With `--verify-pre-arena`,
+`--verify-base` and `--verify-head`, it also proves that exact verify widths 6, 8, 16 and 32
+retain every operation and their phase lengths. Negative controls reject
+changed allocations, launches, merge shapes, mapped gathers and lifetimes.
+
+The unchanged-width audit separates the prior capacity-independent arena
+from the added grouped catalog. Its diagnostic baseline restores only the
+old one-item allocation guard. The six-row fixture admits one item and is
+unchanged; the other fixtures add exactly two prefill allocations per rank
+before KV sizing. All four original phase pins must match that baseline
+before either handle mapping is accepted.

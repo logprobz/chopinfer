@@ -11,6 +11,7 @@
 mod family;
 
 mod emulate;
+mod wide;
 
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan};

@@ -184,9 +184,11 @@ fn prepare(
         // the resident8 gate saves 0.33 ms per 40-layer step, 20 of 20
         // layers, no slow sample, every case bitwise. Verify-16 (verify16-r1,
         // 16-row prefixes): 0.80 ms over the same, 20 of 20 layers.
+        // Decode-16 (decode16-r1, 16 AR sequences): 0.85 ms, 20 of 20.
         if stage == Some(Stage::GateSmall)
             && entry.experts() == 384
-            && (rows == 32 || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6 | 16)))
+            && (matches!(rows, 16 | 32)
+                || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6)))
         {
             // The positional ABI is identical. Retain the floor binding's
             // view names for scales, sorted rows and padded rows.
@@ -208,12 +210,13 @@ fn prepare(
         // 40-layer step over r2 with the edge; the three together save
         // 0.72 ms, 20 of 20 layers. At Verify-16 the fused router with r2,
         // the edge and this finisher save 0.43 ms against the unfused
-        // router (verify16-r1). Other rows are unmeasured.
+        // router (verify16-r1), and 0.48 ms at Decode-16 (decode16-r1).
+        // Other rows are unmeasured.
         if stage == Some(Stage::GateFinish)
             && entry.experts() == 384
             && matches!(
                 (phase, rows),
-                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4 | 6 | 16)
+                (ExecutionPhase::Decode, 1 | 8 | 16) | (ExecutionPhase::Verify, 4 | 6 | 16)
             )
         {
             spec = bandwidth::finish_loads_entry(entry);
@@ -425,7 +428,7 @@ mod tests {
                                 set.count == 384
                                     && matches!(
                                         (phase, rows),
-                                        (ExecutionPhase::Decode, 1 | 8)
+                                        (ExecutionPhase::Decode, 1 | 8 | 16)
                                             | (ExecutionPhase::Verify, 4 | 6 | 16)
                                     ),
                                 "{phase:?} rows={rows}"
@@ -455,9 +458,10 @@ mod tests {
                             assert_eq!(
                                 call.launch.symbol.ends_with("_small_resident8_v1"),
                                 set.count == 384
-                                    && ((rows == 32 && !absorbed)
+                                    && (rows == 16
+                                        || (rows == 32 && !absorbed)
                                         || (phase == ExecutionPhase::Verify
-                                            && matches!(rows, 4 | 6 | 16)))
+                                            && matches!(rows, 4 | 6)))
                                     && point == Point::Gate
                             );
                             let items = set.count.min(rows * set.top_k)

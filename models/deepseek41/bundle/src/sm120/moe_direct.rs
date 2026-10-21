@@ -171,6 +171,22 @@ fn prepare(
             plan = kernels_sm120::moe::chained::streamed_resident::plan(&entry.gate, rows)?;
             plan.workspace_bytes = entry.workspace_bytes(rows)?;
         }
+        // TP4, 250 W, 2026-10-21, captured row prefixes over the r2 finish
+        // and edge (finish-loads-r1): the gate finisher that issues every
+        // partial load before its first add passed all 80 cases per GPU
+        // bitwise, memcheck clean. It saves 1.1 us per layer at backbone
+        // Decode-1 and 1.8 us at Verify-4 (sample means; faster in every
+        // timed layer). Same parameters, grid and PDL launch; the module is
+        // the qualified lab module's bytes. Other rows are unmeasured.
+        if stage == Some(Stage::GateFinish)
+            && entry.experts() == 384
+            && matches!(
+                (phase, rows),
+                (ExecutionPhase::Decode, 1) | (ExecutionPhase::Verify, 4)
+            )
+        {
+            spec = bandwidth::finish_loads_entry(entry);
+        }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
         }
@@ -365,6 +381,17 @@ mod tests {
                         })
                         .unwrap()
                     {
+                        if call.launch.symbol.contains("_gate_finish") {
+                            assert_eq!(
+                                call.launch.symbol.ends_with("_gate_finish_loads_v1"),
+                                set.count == 384
+                                    && matches!(
+                                        (phase, rows),
+                                        (ExecutionPhase::Decode, 1) | (ExecutionPhase::Verify, 4)
+                                    ),
+                                "{phase:?} rows={rows}"
+                            );
+                        }
                         if call.launch.symbol.contains("_small_") {
                             let resident = if set.count == 384
                                 && phase == ExecutionPhase::Decode

@@ -31,6 +31,11 @@ use super::*;
 // finish; no other line changes.
 // Staged-scale resources renumber handles. Verify bodies remain identical;
 // full creation histories differ only by audited short prefill substitutions.
+// verify widths. The r2 router finish module renumbers handles again. At
+// 32 rows its 160 finish launches change symbol to r2v7 with identical
+// config and operands, and each sublayer's join (record and wait) moves from
+// before the routed sum to directly after that finish; no other line changes.
+// The gate finisher loads module renumbers handles only.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0x638bb2c2a8532798)),
     (8, (8992, 0x277db75800aa1bbc)),

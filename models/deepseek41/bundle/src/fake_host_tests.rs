@@ -1019,6 +1019,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// operation is identical after handle mapping. The wide gate/up module
 /// (`moe_native_entries::WIDE_CUBIN`) adds two resolves and three releases
 /// per TP4 rank; steps above 2048 rows launch it, so these journals do not.
+/// The r2 router finish module adds one module, 14 resolves and 15 releases
+/// per TP4 rank; no launch or allocation changes. The gate finisher loads
+/// module adds one module, 2 resolves and 3 releases per TP4 rank.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1194,6 +1197,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// resolves and releases here (one module each; 2 and 14 resolves per rank).
 /// The native early-stop selectors add one module and six resolves per rank
 /// and rename the prefill selectors, as in the native default.
+/// resident small gate, r2 router finish and gate finisher loads modules
+/// add only their resolves and releases here (one module each; 2, 14 and 2
+/// resolves per rank).
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

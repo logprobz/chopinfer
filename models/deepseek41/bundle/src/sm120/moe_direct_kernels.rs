@@ -67,6 +67,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             ),
         ));
         specs.push((
+            "routed_moe_gate_finish_loads",
+            bandwidth::finish_loads_cubin_spec(
+                &format!("bandwidth_moe_{}_finish_loads_sm120", g.kernel_tag),
+                &entries,
+            ),
+        ));
+        specs.push((
             "routed_moe_router_finish",
             kernels_sm120::moe::chained::router_finish::cubin_spec(
                 &format!("router_finish_moe_{}_sm120", g.kernel_tag),

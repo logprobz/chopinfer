@@ -182,10 +182,11 @@ fn prepare(
         // Verify-6 (DSpark C1 with five drafts; 6-row prefixes of the same
         // captures, verify6-r1): over r2, the edge and the all-loads finisher
         // the resident8 gate saves 0.33 ms per 40-layer step, 20 of 20
-        // layers, no slow sample, every case bitwise.
+        // layers, no slow sample, every case bitwise. Verify-16 (verify16-r1,
+        // 16-row prefixes): 0.80 ms over the same, 20 of 20 layers.
         if stage == Some(Stage::GateSmall)
             && entry.experts() == 384
-            && (rows == 32 || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6)))
+            && (rows == 32 || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6 | 16)))
         {
             // The positional ABI is identical. Retain the floor binding's
             // view names for scales, sorted rows and padded rows.
@@ -205,12 +206,14 @@ fn prepare(
         // SM; 960 CTAs exceed one wave) it is within noise and the served
         // finisher stays. At Verify-6 (verify6-r1) it saves 0.07 ms per
         // 40-layer step over r2 with the edge; the three together save
-        // 0.72 ms, 20 of 20 layers. Other rows are unmeasured.
+        // 0.72 ms, 20 of 20 layers. At Verify-16 the fused router with r2,
+        // the edge and this finisher save 0.43 ms against the unfused
+        // router (verify16-r1). Other rows are unmeasured.
         if stage == Some(Stage::GateFinish)
             && entry.experts() == 384
             && matches!(
                 (phase, rows),
-                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4 | 6)
+                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4 | 6 | 16)
             )
         {
             spec = bandwidth::finish_loads_entry(entry);
@@ -423,7 +426,7 @@ mod tests {
                                     && matches!(
                                         (phase, rows),
                                         (ExecutionPhase::Decode, 1 | 8)
-                                            | (ExecutionPhase::Verify, 4 | 6)
+                                            | (ExecutionPhase::Verify, 4 | 6 | 16)
                                     ),
                                 "{phase:?} rows={rows}"
                             );
@@ -454,7 +457,7 @@ mod tests {
                                 set.count == 384
                                     && ((rows == 32 && !absorbed)
                                         || (phase == ExecutionPhase::Verify
-                                            && matches!(rows, 4 | 6)))
+                                            && matches!(rows, 4 | 6 | 16)))
                                     && point == Point::Gate
                             );
                             let items = set.count.min(rows * set.top_k)

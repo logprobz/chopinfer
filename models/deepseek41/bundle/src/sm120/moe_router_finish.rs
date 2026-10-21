@@ -17,7 +17,10 @@ use model_deepseek41_contract::moe::Experts;
 // Retain those paths. No unmeasured row counts are inferred.
 // TP4, 250 W, 2026-10-21, captured full MoE graphs (row prefixes of C8 K3
 // verify captures): at backbone Verify-4 (DSpark C1 K3) the fused router
-// alone saves 0.24 ms per 40-layer step, 20 of 20 layers, bitwise.
+// alone saves 0.24 ms per 40-layer step, 20 of 20 layers, bitwise. At
+// backbone Verify-16 (DSpark C8 with two drafting items; 16-row prefixes of
+// the same captures, verify16-r1) the fused router alone saves 0.30 ms
+// against the unfused one, 20 of 20 layers, no slow sample, bitwise.
 pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     #[cfg(test)]
     if DISABLED.get() {
@@ -25,7 +28,7 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     }
     match (set.count, set.top_k, phase) {
         (384, 6, ExecutionPhase::Decode) => [1, 8, 32].contains(&rows),
-        (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 32].contains(&rows),
+        (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
         (128, 3, ExecutionPhase::Decode) => rows == 1,
         _ => false,
     }
@@ -46,7 +49,9 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
 // TP4, 250 W, 2026-10-21, 6-row prefixes of the same verify captures
 // (verify6-r1; DSpark C1 with five drafts verifies 6 rows): r2 with the edge
 // saves 0.32 ms per 40-layer step against the fused v1 router, 20 of 20
-// layers, no sample above the served range, every case bitwise.
+// layers, no sample above the served range, every case bitwise. At
+// Verify-16 (verify16-r1) the full C1 stack saves 1.24 ms against the
+// unfused router and 0.94 over the fused v1 one, 20 of 20 layers.
 // Verify-8 and the drafter bank are unmeasured.
 // Served at Decode-8 and Decode-32 with a programmatic gate the pair lost
 // (TP4 AR, 2026-10-21, GPU-0 exclusive time over 20 full-concurrency decode
@@ -60,7 +65,7 @@ pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
         && matches!(
             (set.count, set.top_k, phase, rows),
             (384, 6, ExecutionPhase::Decode, 1 | 8 | 32)
-                | (384, 6, ExecutionPhase::Verify, 4 | 6 | 32)
+                | (384, 6, ExecutionPhase::Verify, 4 | 6 | 16 | 32)
         )
 }
 
@@ -201,7 +206,7 @@ mod tests {
                 for (phase, rows, op) in ops {
                     let wanted = match (set.count, phase) {
                         (384, ExecutionPhase::Decode) => [1, 8, 32].contains(&rows),
-                        (384, ExecutionPhase::Verify) => [4, 6, 8, 32].contains(&rows),
+                        (384, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
                         (128, ExecutionPhase::Decode) => rows == 1,
                         _ => false,
                     };
@@ -212,7 +217,7 @@ mod tests {
                         && matches!(
                             (phase, rows),
                             (ExecutionPhase::Decode, 1 | 8 | 32)
-                                | (ExecutionPhase::Verify, 4 | 6 | 32)
+                                | (ExecutionPhase::Verify, 4 | 6 | 16 | 32)
                         );
                     let finishes = op
                         .info
@@ -242,7 +247,7 @@ mod tests {
                 assert_eq!(qualified(set, ExecutionPhase::Verify, 4), set.count == 384);
                 assert!(!qualified(set, ExecutionPhase::Decode, 4));
                 assert!(!qualified(set, ExecutionPhase::Prefill, 4));
-                for rows in [0, 2, 3, 5, 7, 12, 16, 24, 48, 64, 192, 512, 8192] {
+                for rows in [0, 2, 3, 5, 7, 12, 24, 48, 64, 192, 512, 8192] {
                     for phase in [
                         ExecutionPhase::Decode,
                         ExecutionPhase::Verify,

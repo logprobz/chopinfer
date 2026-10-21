@@ -50,13 +50,17 @@ use super::*;
 // same arguments, 160 router finishes renamed to r2v7 and 160 gate
 // finishers to the all-loads entry (same configuration), 160 gate small
 // launches to resident8 (same grid, flags 1 to 0); the gate launches move
-// after each join.
+// after each join. Verify-16 also fuses the router: each layer's five
+// unfused router launches become the fused prepare, the same producer launch
+// and the r2v7 finish (160 groups, 320 fewer captured nodes); the routed
+// launches bind the same workspace spans 983552 bytes later (the fused
+// router's partials precede the route metadata); plus the Verify-6 renames.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x5743860b1f2a7917)),
     (6, (8040, 0x5b292cb339e8cc36)),
     (8, (7572, 0x018de7e58f3cb59d)),
     (12, (9496, 0x8bb3d18a8e1bb3ce)),
-    (16, (8852, 0xb9bca4dbf54c089a)),
+    (16, (8532, 0x8d6b3b1e2e54a274)),
     (32, (8384, 0xac5e0eada6606c97)),
 ];
 

@@ -38,12 +38,12 @@ use super::*;
 // Loading the one-launch boundary and cached query norm modules shifts their
 // resource ids only.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8200, 0x4efa233dfe08c9dc)),
-    (6, (8040, 0x62e4fef3e98f777f)),
-    (8, (7572, 0x8b5f622074d7ac10)),
-    (12, (9496, 0xf6b7a450bcc84a19)),
-    (16, (8852, 0x689fac76fff96554)),
-    (32, (8384, 0x2396e12bd25fbbc3)),
+    (4, (7880, 0xf9aacf33eacbfd14)),
+    (6, (8040, 0x2cb68ef90c9ccc65)),
+    (8, (7572, 0x98021a8896a42b94)),
+    (12, (9496, 0x36ae17ee47c848ea)),
+    (16, (8852, 0xce004c3207df2b4d)),
+    (32, (8384, 0x48558a9fb616eaf7)),
 ];
 
 #[test]

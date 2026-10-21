@@ -9,7 +9,10 @@ Each 128-K chain starts from +0 and is added into the F32 accumulator in
 ascending K order, the same fold structure as the exact BF16 engine; inside
 a 32-K group the instruction does its own reduction. Routing, the gate/up
 epilogue (clamp, SiLU, route weight, BF16), the intermediate ceil quantizer
-and the routed sum are unchanged. Native MoE prefill is the default for
+and the routed sum are unchanged. In steps of at most 2048 rows the
+quantizer runs in the gate/up tiles' epilogue with a fixup launch, bit for
+bit its separate launch (native_ceil.md); the lab's native arm launches
+the same fused entries there. Native MoE prefill is the default for
 Flash TP4 when `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` is unset. Set it
 to `0` for the exact BF16 expert path, or `1` to select native explicitly.
 Other explicit values still select the exact path. Decode, verify, the

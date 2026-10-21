@@ -448,24 +448,29 @@ fn cpu_plan() {
         let s = setup(&mut a, case, &[host_w.clone(), host_w], banks).unwrap();
         for (capacity, rows) in [(CAPACITY, CAPACITY), (CAPACITY, 65), (4096, 4096)] {
             let p = build(&mut a, set, capacity, rows, &s.inputs).unwrap();
+            let fused = super::pipeline::fuses_ceil(set, rows);
             for op in p.native.launches() {
                 op.plan.validate_geometry().unwrap();
                 assert!(op.plan.dynamic_shared_bytes <= native::MAX_SHARED_BYTES);
                 if op.symbol.starts_with("chop_moe_native_") {
-                    assert!(symbols.contains(&op.symbol), "{}", op.symbol);
-                    // Target-bank serving tiles run from the bundle.
+                    // Target-bank serving tiles run from the bundle; the
+                    // fused ceil entries are the bundle's alone.
                     assert_eq!(
                         Runner::serving(&op.symbol),
                         set == family::serving::target_set()
                     );
+                    assert!(symbols.contains(&op.symbol) || fused, "{}", op.symbol);
                 }
             }
-            assert!(
+            // Pack, tiles and quantizer, or pack, fused tiles and fixup.
+            assert_eq!(
                 p.native
                     .gate
                     .iter()
-                    .any(|o| o.symbol.contains("_moe_ceil_"))
+                    .any(|o| o.symbol.contains("_moe_ceil_")),
+                !fused
             );
+            assert_eq!(p.quantizer.len(), 1);
             assert_eq!(p.native.gate.len(), 3);
             assert_eq!(p.native.down.len(), 2);
         }

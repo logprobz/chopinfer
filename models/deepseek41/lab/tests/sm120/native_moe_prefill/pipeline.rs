@@ -50,6 +50,16 @@ pub struct Pipeline {
     pub rows: u32,
     pub exact: Arm,
     pub native: Arm,
+    /// The native arm's separate intermediate quantizer, which its gate/up
+    /// launches end with unless they fuse it ([`fuses_ceil`]).
+    pub quantizer: Vec<Launch>,
+}
+
+/// Whether the bundle's wrapper fuses the intermediate quantizer into a
+/// step's gate/up tiles (the target bank at most `FUSED_CEIL_ROWS` rows).
+pub fn fuses_ceil(set: moe::Experts, rows: u32) -> bool {
+    set == family::serving::target_set()
+        && rows <= bundle_deepseek41::sm120::moe_native::FUSED_CEIL_ROWS
 }
 
 fn outputs(
@@ -142,8 +152,9 @@ pub fn queue(a: &mut Arena<'_>, shape: &Shape, tile: &Tile) -> LabResult<View> {
 }
 
 /// Both arms of a step of `rows` at `capacity`. The native arm is the lab's
-/// launches of the serving tiles; for the target bank they must equal the
-/// bundle's opt-in wrapper's launches.
+/// launches of the serving tiles, with the bundle's fused ceil tiles and
+/// fixup in place of the tiles and quantizer where the wrapper fuses them;
+/// for the target bank they must equal the wrapper's launches.
 pub fn build(
     a: &mut Arena<'_>,
     set: moe::Experts,
@@ -177,22 +188,30 @@ pub fn build(
         queue(a, &shapes[1], &tiles[1])?,
     ];
     let out = native_arm.out;
-    native_arm.gate = native_ops(
-        &shapes[0],
-        &tiles[0],
-        rows,
-        &native_buffers(
-            i,
-            true,
-            i.codes,
-            i.scales,
-            out.intermediate,
-            queues[0],
-            None,
-        ),
-        Variant::Serving,
-    )?;
-    native_arm.gate.extend(q);
+    let gate_buffers = native_buffers(
+        i,
+        true,
+        i.codes,
+        i.scales,
+        out.intermediate,
+        queues[0],
+        None,
+    );
+    native_arm.gate = if fuses_ceil(set, rows) {
+        bundle_deepseek41::sm120::moe_native_entries::ceil()
+            .launches(
+                &shapes[0],
+                &tiles[0],
+                rows,
+                &gate_buffers,
+                (out.codes.handle, out.scales.handle, out.status.handle),
+            )
+            .map_err(|e| e.to_string())?
+    } else {
+        let mut ops = native_ops(&shapes[0], &tiles[0], rows, &gate_buffers, Variant::Serving)?;
+        ops.extend(q.iter().cloned());
+        ops
+    };
     native_arm.down = native_ops(
         &shapes[1],
         &tiles[1],
@@ -256,6 +275,7 @@ pub fn build(
         rows,
         exact,
         native: native_arm,
+        quantizer: q,
     })
 }
 

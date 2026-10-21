@@ -138,6 +138,9 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         # builds in a private target instead of invalidating the shared one.
         step("cuda-toolchain", ["bash", "tests/cuda-toolchain.sh"], weight=2,
              CARGO_TARGET_DIR=str(work / "cuda-toolchain-target")),
+        # kernel-core's NaN-order test needs an unoptimized build, in a target
+        # below the shared one.
+        step("kernel-core-unoptimized", ["bash", "tests/kernel-core-unoptimized.sh"]),
         step("concurrency-control", PY + ["tests/test_concurrency_control.py"]),
         step("heavy-launcher", PY + ["tests/test_heavy.py"]),
         step("validation-report", PY + ["tests/test_validation.py"], readers, **scoring),

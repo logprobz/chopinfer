@@ -419,8 +419,10 @@ fn yarn_outside_the_usual_band_is_refused() {
 
 /// Each legacy F64 order decides which of two NaN terms propagates in an
 /// unoptimized x86-64 build (addition returns its first NaN operand); an
-/// optimized build may commute the addition.
-#[cfg(all(debug_assertions, target_arch = "x86_64"))]
+/// optimized build may commute the addition. The CI profile optimizes this
+/// package, so the gate runs this test in its `kernel-core-unoptimized`
+/// step (build.rs).
+#[cfg(all(kernel_core_unoptimized, target_arch = "x86_64"))]
 #[test]
 fn legacy_f64_orders_keep_their_nan_operand() {
     let (left, right) = (

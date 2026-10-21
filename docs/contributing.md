@@ -57,6 +57,10 @@ The gate runs format, Clippy, Rust tests, boundary and layout guards,
 Python/shell checks, synthetic bundles, SDK recipes and leak checks. Its
 recipe tests use detached checkouts of HEAD: commit first and keep HEAD
 fixed until the gate finishes. `bash ci/cpu.sh --preflight` checks prerequisites.
+Both scripts build Rust with `ci/rust-profile.env`: opt-level 1 for every
+package, kernel-core included, with debug assertions and overflow checks on;
+release builds are unchanged. kernel-core's one test that needs opt-level 0
+runs in the gate's `kernel-core-unoptimized` step.
 
 ## Full CPU check prerequisites
 

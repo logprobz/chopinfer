@@ -201,7 +201,7 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         // (`sm120::router_norm`), with no prepare.
         let in_norm = rows == 8192;
         let suffix = if in_norm {
-            "_certified_m32_v1"
+            "_certified_m32_f64_normed_v1"
         } else if certified {
             "_zero_m32_v1"
         } else {

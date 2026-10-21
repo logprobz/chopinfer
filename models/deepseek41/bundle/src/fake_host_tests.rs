@@ -1112,7 +1112,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// the complete histories were compared under typed handle mapping.
 /// The router's 64-expert certified projection renames the module's router
 /// resolve on each TP4 rank (four lines), audited against the journals
-/// before it: no other line changes.
+/// before it: no other line changes. Its narrow form (no widened rows)
+/// renames the same four resolves again, nothing else.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1139,12 +1140,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (85427, 0xad84ab0cd6c19d5f),
+        (85427, 0x325468dbf48ac9ab),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (83071, 0x63ad140f868b88b7),
+        (83071, 0xf6552ee9ab6e973b),
     ),
 ];
 
@@ -1303,7 +1304,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(83723, 0x5d3c30c18a4aabb9), (81367, 0xb8e18d56f6a6f905)])
+            .zip([(83723, 0x14ef4b788c7043b7), (81367, 0xc7923a71d05a1e21)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

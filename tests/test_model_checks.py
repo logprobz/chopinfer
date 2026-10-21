@@ -18,11 +18,12 @@ from tools.model_sdk import inventory
 # Every shared reference-runner module CPU CI syntax-checks.
 REFRUN = ["tools/refrun/" + name for name in (
     "__init__.py", "__main__.py", "adapter.py", "cache.py", "calibrate.py", "dry_run.py", "emit.py", "encoder.py",
-    "encoder_ops.py", "frontend.py", "frontend_cases.py", "frontend_corpus.py", "keys.py", "margins.py",
+    "encoder_ops.py", "frontend.py", "frontend_cases.py", "frontend_corpus.py", "image_decode.py", "keys.py",
+    "margins.py",
     "mixed_answers.py", "modes.py", "ops.py", "place.py", "preprocessing.py", "preprocessing_ab.py",
     "python_semantics.py", "quant.py", "run.py", "score.py", "stamps.py", "taps.py", "template_coverage.py",
     "test_cache.py", "test_dry_run.py", "test_emit.py", "test_encoder.py", "test_frontend.py",
-    "test_frontend_corpus.py", "test_keys.py", "test_margins.py",
+    "test_frontend_corpus.py", "test_image_decode.py", "test_keys.py", "test_margins.py",
     "test_mixed_answers.py", "test_preprocessing.py", "test_preprocessing_ab.py", "test_quant.py", "test_runner.py",
     "test_stamps.py", "test_taps.py", "tiny.py", "workload.py")]
 

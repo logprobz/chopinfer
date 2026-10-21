@@ -43,16 +43,37 @@ fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
     for ranks in [Ranks::TP2, Ranks::TP4] {
         let serial = captured(Settings::OFF, ranks);
         let parallel = captured(Settings::ALL, ranks);
+        // Each launch with its config and operands. The routed gate after
+        // an r2 join (directly after its wait) drops programmatic
+        // serialization; restore it to compare.
         let launches = |lines: &[String]| {
+            let mut joined = 0;
             let mut values = lines
                 .iter()
-                .filter_map(|s| s.strip_prefix("launch "))
-                .map(|s| s.split_once(' ').unwrap().1.to_owned())
+                .enumerate()
+                .filter_map(|(i, s)| Some((i, s.strip_prefix("launch ")?)))
+                .map(|(i, s)| {
+                    let launch = s.split_once(' ').unwrap().1.to_owned();
+                    if i > 0 && lines[i - 1].starts_with("wait ") && launch.contains("flags: 0,") {
+                        joined += 1;
+                        launch.replacen("flags: 0,", "flags: 1,", 1)
+                    } else {
+                        launch
+                    }
+                })
                 .collect::<Vec<_>>();
             values.sort();
-            values
+            (values, joined)
         };
-        assert_eq!(launches(&serial), launches(&parallel));
+        let (serial_launches, unjoined) = launches(&serial);
+        let (parallel_launches, joined) = launches(&parallel);
+        assert_eq!(serial_launches, parallel_launches);
+        assert_eq!(unjoined, 0);
+        let finishes = parallel
+            .iter()
+            .filter(|s| s.starts_with("launch ") && s.contains("_finish_r2v"))
+            .count();
+        assert_eq!(joined, finishes);
         let waits = |lines: &[String]| lines.iter().filter(|s| s.starts_with("wait ")).count();
         assert!(waits(&parallel) > waits(&serial));
         let streams = |lines: &[String]| {

@@ -583,6 +583,17 @@ impl FakePackage for FakeHost {
                 config.flags, 0,
                 "operand preparation must serialize normally"
             );
+        } else if config.flags == 0
+            && symbol.contains("gate")
+            && self
+                .device
+                .journal
+                .borrow()
+                .last()
+                .is_some_and(|line| line.starts_with("wait "))
+        {
+            // The routed gate directly after an r2 shared-expert join
+            // waits for the shared expert in full.
         } else {
             self.device.check_launch_for(symbol, config);
         }

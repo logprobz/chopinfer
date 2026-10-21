@@ -395,6 +395,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// each. Every other operation is retained after typed handle mapping.
 /// Full-row Engram staged scales add one 68608-byte shared-memory configure
 /// per TP4 rank. These short-row lifecycles retain every other line exactly.
+/// The routed gate after each r2 shared-expert join launches without
+/// programmatic serialization: 160 TP4 Decode-1 gate launches change flags
+/// 1 to 0, nothing else.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
     (Ranks::TP4, (56407, 0x0eb86c1d57e06cb8)),

@@ -1,17 +1,21 @@
 //! Run the shared expert beside the routed experts inside decode and verify
 //! graphs. The input quantization precedes the fork, and the routed sum
 //! follows the join; after an r2 router finish the join precedes the gate,
-//! so only the router runs beside the shared expert. Each stream retains its
-//! arithmetic and stage order.
+//! so only the router runs beside the shared expert. That gate launches
+//! without programmatic serialization: launched programmatically in capture,
+//! it started beside the shared down kernel (which triggers its dependents
+//! at entry) in most layers of the round 10 decode profile, as if the join
+//! were a programmatic edge. Each stream retains its arithmetic and stage
+//! order.
 //! The shared expert owns separate backend workspace and row status.
 //! Capture pieces contain whole fork/join regions. Eager runs remain serial.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use bundle_runtime::dispatch::DispatchError;
+use bundle_runtime::dispatch::{self, DispatchError};
 use bundle_runtime::pipeline::PreparedLaunch;
-use kernel_core::contract::Argument;
+use kernel_core::contract::{Argument, LaunchPlan};
 use runtime_bundle_abi::{
     BundleCudaSymbolHandleV1, BundleEventHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1,
     HostServicesV1,
@@ -409,6 +413,47 @@ pub fn units(stages: &[Stage]) -> Result<Vec<Vec<Op>>, String> {
     Ok(units)
 }
 
+/// `launch_all` with the first launch's programmatic serialization off, so
+/// that it waits for the joined shared expert to complete. Every launch is
+/// resolved before the first is submitted.
+fn launch_after_join(
+    services: &HostServicesV1,
+    stream: BundleStreamHandleV1,
+    symbols: &BTreeMap<String, BundleCudaSymbolHandleV1>,
+    launches: &[PreparedLaunch],
+) -> Result<(), DispatchError> {
+    if launches.is_empty() || launches.iter().any(|launch| !launch.plan.pdl) {
+        return Err(DispatchError::InvalidPlan);
+    }
+    let resolved = launches
+        .iter()
+        .enumerate()
+        .map(|(i, launch)| {
+            let plan = LaunchPlan {
+                pdl: i != 0,
+                ..launch.plan
+            };
+            dispatch::resolve(
+                symbols,
+                &launch.symbol,
+                plan,
+                &launch.arguments,
+                &launch.bindings,
+            )
+            .inspect_err(|error| {
+                let _ =
+                    services.log(format!("launch {} failed: {error:?}", launch.symbol).as_bytes());
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for (launch, resolved) in launches.iter().zip(&resolved) {
+        resolved.submit(services, stream).inspect_err(|error| {
+            let _ = services.log(format!("launch {} failed: {error:?}", launch.symbol).as_bytes());
+        })?;
+    }
+    Ok(())
+}
+
 impl Lanes {
     /// Issues `unit`'s submissions of `program`. Once the fork reached the
     /// side stream, the join is issued last even after a failed submission,
@@ -422,9 +467,14 @@ impl Lanes {
         unit: &[Op],
     ) -> Result<(), DispatchError> {
         let mut forked = false;
+        let mut joined = false;
         let mut issued = Ok(());
         for op in unit {
             issued = match op {
+                // Only an r2 sublayer's gate onward follows a join in its unit.
+                Op::Compute(range) if joined => {
+                    launch_after_join(services, self.compute, symbols, &program[range.clone()])
+                }
                 Op::Compute(range) => {
                     launch_all(services, self.compute, symbols, &program[range.clone()])
                 }
@@ -440,6 +490,7 @@ impl Lanes {
                 }
                 Op::Join => {
                     forked = false;
+                    joined = true;
                     self.join(services)
                 }
             };

@@ -39,6 +39,8 @@ use super::*;
 // resource ids only.
 // Combined C1 query/KV adds private storage before capture. All six verify
 // bodies remain identical after typed handle mapping; no verify uses it.
+// At 4 and 32 rows the routed gate after each r2 join launches without
+// programmatic serialization: 160 gate launches change flags 1 to 0.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x7b5e9ae6a7c4e58c)),
     (6, (8040, 0x5edfaba614b6233c)),

@@ -228,6 +228,12 @@ fn tune_cpu_plan() {
     let symbols: std::collections::BTreeSet<String> =
         entries.iter().map(|e| e.symbol.clone()).collect();
     assert_eq!(symbols.len(), entries.len());
+    // The runner resolves these by name in the tuning cubin only.
+    let lab: std::collections::BTreeSet<String> = family::cubins()
+        .into_iter()
+        .flat_map(|s| s.entries.into_iter().map(|e| e.symbol))
+        .collect();
+    assert!(symbols.is_disjoint(&lab));
     let set = family::serving::target_set();
     for kind in family::KINDS {
         let shape = family::shape(set, kind);

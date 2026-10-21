@@ -102,6 +102,8 @@ pub struct Runner<'a> {
     lab: Module,
     /// The tuning cubin, when staged beside the lab cubin.
     tune: Option<Module>,
+    /// The tuning cubin's symbols, which resolve only there.
+    tune_symbols: std::collections::BTreeSet<String>,
     embedded: BTreeMap<&'static str, Module>,
     functions: BTreeMap<String, Function>,
 }
@@ -121,6 +123,10 @@ impl<'a> Runner<'a> {
             session,
             lab: session.load_cubin(&bytes)?,
             tune,
+            tune_symbols: tune_family::cubins()
+                .into_iter()
+                .flat_map(|s| s.entries.into_iter().map(|e| e.symbol))
+                .collect(),
             embedded: BTreeMap::new(),
             functions: BTreeMap::new(),
         })
@@ -141,11 +147,15 @@ impl<'a> Runner<'a> {
                     self.embedded.insert(name, self.session.load_cubin(bytes)?);
                 }
                 self.embedded[name].function(&op.symbol)
+            } else if self.tune_symbols.contains(&op.symbol) {
+                // Looked up by name in the cubin that defines it, so no
+                // driver lookup misses (the sanitizer reports those).
+                self.tune
+                    .as_ref()
+                    .ok_or_else(|| format!("{}: the tuning cubin is not staged", op.symbol))?
+                    .function(&op.symbol)
             } else {
-                match (self.lab.function(&op.symbol), &self.tune) {
-                    (Err(_), Some(tune)) => tune.function(&op.symbol),
-                    (found, _) => found,
-                }
+                self.lab.function(&op.symbol)
             }
             .map_err(|e| format!("{}: {e}", op.symbol))?;
             if op.plan.dynamic_shared_bytes > 0 {

@@ -34,8 +34,17 @@ pub fn has_tower(root: &Path, geometry: &Geometry) -> Result<bool, String> {
     if !encoder::serves(geometry) {
         return Ok(false);
     }
+    has_tower_in(&crate::checkpoint::metadata(root)?, geometry)
+}
+
+pub(crate) fn has_tower_in(
+    metadata: &projection_spec::bind::CheckpointMetadata,
+    geometry: &Geometry,
+) -> Result<bool, String> {
+    if !encoder::serves(geometry) {
+        return Ok(false);
+    }
     let tensors = encoder::tensors().map_err(|e| e.0)?;
-    let metadata = crate::checkpoint::metadata(root)?;
     Ok(tensors
         .iter()
         .any(|name| metadata.tensors.contains_key(name)))

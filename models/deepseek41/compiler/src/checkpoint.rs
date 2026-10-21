@@ -14,9 +14,6 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-/// The largest safetensors header read, as the host bounds it.
-const MAX_HEADER_BYTES: u64 = 256 << 20;
-
 /// The largest document read.
 const MAX_DOCUMENT_BYTES: u64 = 64 << 20;
 
@@ -34,35 +31,6 @@ pub fn document(root: &Path, name: &str) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("{name}: {e}"))
 }
 
-/// The safetensors file `name` as the host's checkpoint opener checks it
-/// (`runtime_weights::parse_safetensors_header` over the file's length):
-/// its length and its JSON header bytes.
-fn header_bytes(root: &Path, name: &str) -> Result<(u64, Vec<u8>), String> {
-    let at = |e: std::io::Error| format!("{name}: {e}");
-    let file = open(root, name)?;
-    let length = file.metadata().map_err(at)?.len();
-    let mut prefix = [0_u8; 8];
-    file.read_exact_at(&mut prefix, 0).map_err(at)?;
-    let header_length = u64::from_le_bytes(prefix);
-    if header_length == 0 || header_length > MAX_HEADER_BYTES || 8 + header_length > length {
-        return Err(format!(
-            "{name}: safetensors header length is outside the file"
-        ));
-    }
-    let mut bytes = vec![0; 8 + header_length as usize];
-    file.read_exact_at(&mut bytes, 0).map_err(at)?;
-    runtime_weights::parse_safetensors_header(&mut bytes.as_slice(), length)
-        .map_err(|e| format!("{name}: {e}"))?;
-    bytes.drain(..8);
-    Ok((length, bytes))
-}
-
-/// The JSON header of the safetensors file `name`.
-fn header(root: &Path, name: &str) -> Result<Value, String> {
-    let (_, bytes) = header_bytes(root, name)?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("{name}: {e}"))
-}
-
 /// The files the weight map names, in name order.
 fn weight_files(index: &Value) -> Result<std::collections::BTreeSet<String>, String> {
     index["weight_map"]
@@ -71,81 +39,220 @@ fn weight_files(index: &Value) -> Result<std::collections::BTreeSet<String>, Str
         .values()
         .map(|file| {
             file.as_str()
+                .filter(|name| {
+                    !name.contains(['/', '\\'])
+                        && Path::new(name).components().count() == 1
+                        && matches!(
+                            Path::new(name).components().next(),
+                            Some(std::path::Component::Normal(_))
+                        )
+                })
                 .map(str::to_owned)
-                .ok_or_else(|| "weight_map value is not a file name".to_owned())
+                .ok_or_else(|| "weight_map value is not one normal file name".to_owned())
         })
         .collect()
 }
 
-/// The plan request of the text image for rank `rank` of `ranks` of the
-/// checkpoint at `root`: every file the weight map names with its header,
-/// checked as the host checks it, and the config and weight map the plan
-/// reads.
-pub fn request(root: &Path, ranks: u32, rank: u32) -> Result<WeightPlanRequestV1, String> {
-    let read = |name: &str| {
-        open(root, name)?
-            .read_bounded(MAX_DOCUMENT_BYTES)
-            .map_err(|e| format!("{name}: {e}"))
-    };
-    let index = read(INDEX)?;
-    let parsed: Value = serde_json::from_slice(&index).map_err(|e| format!("{INDEX}: {e}"))?;
-    let files = weight_files(&parsed)?
-        .into_iter()
-        .map(|name| {
-            let (byte_length, header) = header_bytes(root, &name)?;
-            Ok(CheckpointFileV1 {
-                data_offset: 8 + header.len() as u64,
-                name,
-                byte_length,
-                header,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let checkpoint_identity = runtime_weights::checkpoint::header_identity(
-        files
-            .iter()
-            .map(|file| (file.name.as_str(), file.byte_length, file.header.as_slice())),
-    );
-    Ok(WeightPlanRequestV1 {
-        image_role: RANK_IMAGE_ROLE.into(),
-        ranks,
-        rank,
-        checkpoint_identity,
-        files,
-        documents: vec![
-            NamedBytesV1 {
-                name: CONFIG.into(),
-                bytes: read(CONFIG)?,
-            },
-            NamedBytesV1 {
-                name: INDEX.into(),
-                bytes: index,
-            },
-        ],
-        ..Default::default()
-    })
+/// One preparation operation's checked headers and documents. Descriptors
+/// keep their original identities until publication; no tensor payload is read.
+/// Rank requests reuse the same allocation rather than reopening each shard.
+pub struct Snapshot {
+    request: WeightPlanRequestV1,
+    inputs: Inputs,
+    config: Value,
+    metadata: CheckpointMetadata,
 }
 
-/// The checkpoint's binding metadata: every tensor of every file the weight
-/// map names, checked against that map.
-pub fn metadata(root: &Path) -> Result<CheckpointMetadata, String> {
-    let config = document(root, CONFIG)?;
-    let index = document(root, INDEX)?;
-    let files = weight_files(&index)?;
-    let headers = files
-        .iter()
-        .map(|file| Ok((file.clone(), header(root, file)?)))
-        .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let quantization = config
-        .get("quantization_config")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let metadata =
-        CheckpointMetadata::from_headers(&headers, Some(&index), quantization).map_err(|e| e.0)?;
-    if metadata.tensors.len() != index["weight_map"].as_object().map_or(0, |map| map.len()) {
-        return Err("the headers and the weight map name different tensors".into());
+enum Inputs {
+    Files(Vec<CheckpointFile>),
+    Captured(std::sync::Arc<model_compiler_sdk::preparation::direct::CheckpointSnapshot>),
+}
+
+impl Snapshot {
+    /// Standalone planning reads only its config, index and indexed shards.
+    /// Unrelated directory entries do not become planning requirements.
+    pub fn open(root: &Path) -> Result<Self, String> {
+        let mut inputs = Vec::new();
+        let mut document = |name| {
+            let file = open(root, name)?;
+            let bytes = file
+                .read_bounded(MAX_DOCUMENT_BYTES)
+                .map_err(|e| e.to_string())?;
+            inputs.push(file);
+            Ok::<_, String>(bytes)
+        };
+        let config = document(CONFIG)?;
+        let index_bytes = document(INDEX)?;
+        let index: Value = serde_json::from_slice(&index_bytes).map_err(|e| e.to_string())?;
+        let mut files = Vec::new();
+        for name in weight_files(&index)? {
+            let file = open(root, &name)?;
+            let byte_length = file.metadata().map_err(|e| e.to_string())?.len();
+            let mut prefix = [0; 8];
+            file.read_exact_at(&mut prefix, 0)
+                .map_err(|e| e.to_string())?;
+            let length = u64::from_le_bytes(prefix);
+            if length == 0 || length > 256 << 20 || length > byte_length.saturating_sub(8) {
+                return Err(format!(
+                    "{name}: safetensors header length is outside the file"
+                ));
+            }
+            let mut header = vec![0; length as usize];
+            file.read_exact_at(&mut header, 8)
+                .map_err(|e| e.to_string())?;
+            file.verify().map_err(|e| e.to_string())?;
+            inputs.push(file);
+            files.push(CheckpointFileV1 {
+                name,
+                byte_length,
+                data_offset: 8 + length,
+                header,
+            });
+        }
+        Self::from_parts(config, index_bytes, files, Inputs::Files(inputs))
     }
-    Ok(metadata)
+
+    /// Build rank requests from the SDK's already captured bytes. The
+    /// provider and the cache key observe exactly the same snapshot.
+    pub fn from_checkpoint(
+        captured: std::sync::Arc<model_compiler_sdk::preparation::direct::CheckpointSnapshot>,
+    ) -> Result<Self, String> {
+        let document = |name| {
+            captured
+                .document(name)
+                .map(Vec::from)
+                .map_err(|e| e.to_string())
+        };
+        let config = document(CONFIG)?;
+        let index_bytes = document(INDEX)?;
+        let index: Value = serde_json::from_slice(&index_bytes).map_err(|e| e.to_string())?;
+        let mut files = Vec::new();
+        for name in weight_files(&index)? {
+            let (byte_length, header) = captured
+                .headers()
+                .get(&name)
+                .ok_or_else(|| format!("missing checkpoint header {name}"))?;
+            files.push(CheckpointFileV1 {
+                name,
+                byte_length: *byte_length,
+                data_offset: 8 + header.len() as u64,
+                header: header.clone(),
+            });
+        }
+        Self::from_parts(config, index_bytes, files, Inputs::Captured(captured))
+    }
+
+    fn from_parts(
+        config_bytes: Vec<u8>,
+        index_bytes: Vec<u8>,
+        files: Vec<CheckpointFileV1>,
+        inputs: Inputs,
+    ) -> Result<Self, String> {
+        let config: Value = serde_json::from_slice(&config_bytes).map_err(|e| e.to_string())?;
+        let index: Value = serde_json::from_slice(&index_bytes).map_err(|e| e.to_string())?;
+        let mut headers = BTreeMap::new();
+        for file in &files {
+            let mut framed = (file.header.len() as u64).to_le_bytes().to_vec();
+            framed.extend_from_slice(&file.header);
+            runtime_weights::parse_safetensors_header(&mut framed.as_slice(), file.byte_length)
+                .map_err(|e| e.to_string())?;
+            headers.insert(
+                file.name.clone(),
+                serde_json::from_slice(&file.header).map_err(|e| e.to_string())?,
+            );
+        }
+        let metadata = CheckpointMetadata::from_headers(
+            &headers,
+            Some(&index),
+            config
+                .get("quantization_config")
+                .cloned()
+                .unwrap_or(Value::Null),
+        )
+        .map_err(|e| e.0)?;
+        if metadata.tensors.len() != index["weight_map"].as_object().map_or(0, |map| map.len()) {
+            return Err("the headers and the weight map name different tensors".into());
+        }
+        let checkpoint_identity = runtime_weights::checkpoint::header_identity(
+            files
+                .iter()
+                .map(|file| (file.name.as_str(), file.byte_length, file.header.as_slice())),
+        );
+        let snapshot = Self {
+            request: WeightPlanRequestV1 {
+                image_role: RANK_IMAGE_ROLE.into(),
+                ranks: 1,
+                checkpoint_identity,
+                files,
+                documents: vec![
+                    NamedBytesV1 {
+                        name: CONFIG.into(),
+                        bytes: config_bytes,
+                    },
+                    NamedBytesV1 {
+                        name: INDEX.into(),
+                        bytes: index_bytes,
+                    },
+                ],
+                ..Default::default()
+            },
+            inputs,
+            config,
+            metadata,
+        };
+        snapshot.verify()?;
+        Ok(snapshot)
+    }
+
+    pub fn config(&self) -> &Value {
+        &self.config
+    }
+
+    pub fn metadata(&self) -> &CheckpointMetadata {
+        &self.metadata
+    }
+
+    /// Retain additional metadata identities across a standalone operation,
+    /// or require them from the provider's already captured snapshot.
+    pub fn track_documents(&mut self, root: &Path, names: &[&str]) -> Result<(), String> {
+        for name in names {
+            match &mut self.inputs {
+                Inputs::Files(files) => files.push(open(root, name)?),
+                Inputs::Captured(captured) => {
+                    captured.document(name).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// All rank counts use the same owned header and document storage.
+    pub fn request(&mut self, ranks: u32, rank: u32) -> &WeightPlanRequestV1 {
+        self.request.ranks = ranks;
+        self.request.rank = rank;
+        &self.request
+    }
+
+    pub fn verify(&self) -> Result<(), String> {
+        match &self.inputs {
+            Inputs::Files(files) => files
+                .iter()
+                .try_for_each(|file| file.verify().map_err(|e| e.to_string())),
+            Inputs::Captured(captured) => captured.verify().map_err(|e| e.to_string()),
+        }
+    }
+}
+
+/// The text image's rank request, checked as the host checks its headers.
+pub fn request(root: &Path, ranks: u32, rank: u32) -> Result<WeightPlanRequestV1, String> {
+    let mut snapshot = Snapshot::open(root)?;
+    snapshot.request(ranks, rank);
+    Ok(snapshot.request)
+}
+
+/// The binding metadata of every tensor, checked against the weight map.
+pub fn metadata(root: &Path) -> Result<CheckpointMetadata, String> {
+    Ok(Snapshot::open(root)?.metadata)
 }
 
 /// Admit the checkpoint's config, then bind every tensor its headers name
@@ -157,12 +264,14 @@ pub fn bind(
     root: &Path,
     encoder: std::collections::BTreeSet<String>,
 ) -> Result<BoundDeclaration, String> {
-    let config = document(root, "config.json")?;
-    let mut metadata = metadata(root)?;
-    metadata
+    let mut snapshot = Snapshot::open(root)?;
+    snapshot
+        .metadata
         .validated_owners
         .insert(encoder_plan::OWNER.into(), encoder);
-    bind_metadata(&config, &metadata)
+    let bound = bind_metadata(snapshot.config(), snapshot.metadata())?;
+    snapshot.verify()?;
+    Ok(bound)
 }
 
 /// Bind `metadata` at the geometry `config` admits: an unknown tensor, a

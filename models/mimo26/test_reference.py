@@ -79,6 +79,24 @@ TOKENIZER = {"d_model": 32, "encoder_layers": 2, "encoder_attention_heads": 2, "
 MEL_FRAMES, IMAGE_GRID = 40, (1, 4, 4)
 
 
+class BindingTests(unittest.TestCase):
+    def test_the_committed_bindings_pin_this_adapter(self):
+        """Each reference binding under fixtures/mimo26 pins the adapter's
+        bytes. Any edit to reference.py, a comment included, stales them:
+        re-adopting a reference refuses until a GPU run rebinds it
+        (tools/refrun/cache.py verify)."""
+        adapter = "models/mimo26/reference.py"
+        digest = hashlib.sha256((ROOT / adapter).read_bytes()).hexdigest()
+        bound = {}
+        for path in sorted((ROOT / "fixtures/mimo26").rglob("*.json")):
+            value = json.loads(path.read_text())
+            binding = value.get("binding") if isinstance(value, dict) else None
+            if isinstance(binding, dict) and adapter in binding.get("key", {}).get("adapter", {}).get("files", {}):
+                bound[path.relative_to(ROOT).as_posix()] = binding["key"]["adapter"]["files"][adapter]
+        self.assertTrue(bound, "no committed binding pins the adapter")
+        self.assertEqual(bound, dict.fromkeys(bound, digest))
+
+
 class Files:
     """The part of place.Checkpoint the vendor loader reads, before any shard exists."""
 

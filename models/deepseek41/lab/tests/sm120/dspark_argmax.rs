@@ -250,9 +250,9 @@ fn dspark_argmax_wide_gpu_matches_the_serial_entry_and_oracle() {
                                         .map_err(|e| e.to_string())?;
                                 }
                             }
-                            for arm in 0..2 {
+                            for (arm, captured) in graphs.iter().enumerate().take(2) {
                                 if graph {
-                                    graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?;
+                                    captured.launch(&s.stream).map_err(|e| e.to_string())?;
                                 } else {
                                     invoke(arm, &s.stream)?;
                                 }

@@ -456,3 +456,71 @@ fn reused_row_major_groups_match_the_logical_oracle() {
         }
     }
 }
+
+#[test]
+fn requested_sections_keep_oracle_bytes_without_materializing_companions() {
+    for (mut operand, mut record, codes, scales) in seeded_cases() {
+        for layout in ["row-major", "row-major-groups"] {
+            operand.plan.layout.id = layout.into();
+            let expected = reference(&operand, &codes, &scales);
+            for (section, index) in [(PackedSection::Codes, 0), (PackedSection::LocalScales, 1)] {
+                operand.section = section;
+                record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+                for wanted in [[false; 3], [true; 3]] {
+                    let actual = operand
+                        .execute_needed_sections_reusing(
+                            &record,
+                            &[&codes, &scales],
+                            std::array::from_fn(|_| vec![255; 8192]),
+                            wanted,
+                        )
+                        .unwrap();
+                    for part in 0..3 {
+                        if part == index || wanted[part] {
+                            assert_eq!(actual[part], expected[part]);
+                        } else {
+                            assert!(actual[part].is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn omitted_sections_do_not_omit_payload_or_slice_admission() {
+    for section in [PackedSection::Codes, PackedSection::LocalScales] {
+        for bad in 0..5 {
+            let (mut operand, mut record, mut codes, mut scales) =
+                record(DecodeOrder::ExactScaledOperand);
+            operand.section = section;
+            match bad {
+                0 => scales[0] = 255,
+                1 => {
+                    operand.decode_order = DecodeOrder::ScaleThenCode;
+                    scales[0] = 254;
+                    codes[0] = 0x77;
+                }
+                2 => {
+                    codes.pop();
+                }
+                3 => operand.matrices[0].rows_kept = vec![15..17],
+                _ => operand.matrices[0].k_origin = u64::MAX - 31,
+            }
+            record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+            let expected = operand
+                .execute_sections(&record, &[&codes, &scales])
+                .unwrap_err();
+            let actual = operand
+                .execute_needed_sections_reusing(
+                    &record,
+                    &[&codes, &scales],
+                    std::array::from_fn(|_| vec![0xa5; 8192]),
+                    [false; 3],
+                )
+                .unwrap_err();
+            assert_eq!(actual, expected);
+        }
+    }
+}

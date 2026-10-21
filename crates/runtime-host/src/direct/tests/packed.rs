@@ -238,6 +238,105 @@ fn unused_companions_include_owed_sections_that_cannot_be_retained() {
 }
 
 #[test]
+fn consumed_scale_sections_are_not_repacked_by_whole_code_production() {
+    let (root, mut plans, expected, _) = fixture(1);
+    for plan in &mut plans {
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!()
+            };
+            operand.plan.layout.id = "row-major-groups".into();
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+        }
+    }
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let mut image = sharing_image(&checkpoint, &plans, 1, 0);
+    Arc::get_mut(&mut image.inner).unwrap().io_timing = Some(io_stats::IoCounters::default());
+    assert_eq!(waves(&image, 512), expected);
+    assert_eq!(image.stats().io_timing.unwrap().unused_section_bytes, 0);
+    image.release_buffers();
+    assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn independent_scale_fallback_reuses_its_admitted_input_without_a_shared_budget() {
+    let (root, mut plans, _, _) = fixture(1);
+    for plan in &mut plans {
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!()
+            };
+            operand.decode_order = DecodeOrder::ExactScaledOperand;
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+        }
+    }
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let shard = &checkpoint.shards[0];
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(root.0.join("model.safetensors"))
+        .unwrap();
+    let (codes, at) = &shard.tensors["e0.codes"];
+    file.write_all_at(&vec![0; codes.byte_length as usize], *at)
+        .unwrap();
+    file.write_all_at(&[254], shard.tensors["e0.scales"].1)
+        .unwrap();
+    let image = sharing_image(&checkpoint, &plans, 1, 0);
+    let mut scales = [0xa5; 512];
+    image.read(0, &mut scales).unwrap();
+    assert_eq!(scales[0], 254);
+    assert_eq!(image.stats().source_reads, 2);
+    assert_eq!(image.stats().retained_peak_bytes, 0);
+}
+
+#[test]
+fn owned_packed_sources_read_directly_and_charge_alignment_storage() {
+    let (root, mut plans, expected, _) = fixture(4);
+    for plan in &mut plans {
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!()
+            };
+            operand.plan.layout.id = "row-major-groups".into();
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+        }
+    }
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    if !direct_reads_supported(&checkpoint) {
+        eprintln!("skipped: no residency report or O_DIRECT on this file system");
+        return;
+    }
+    for budget in [0, 4096, 128 << 10] {
+        evict(&checkpoint);
+        let mut image = sharing_image(&checkpoint, &plans, 2, budget);
+        let inner = Arc::get_mut(&mut image.inner).unwrap();
+        inner.options.direct_reads = true;
+        inner.io_timing = Some(io_stats::IoCounters::default());
+        assert_eq!(waves(&image, 8192), expected);
+        let stats = image.stats();
+        assert!(stats.direct_bytes > 0);
+        assert_eq!(stats.io_timing.unwrap().bounce_bytes, 0);
+        assert!(stats.retained_peak_bytes <= budget);
+        assert!(image.inner.retained_held.peak.load(Ordering::Acquire) <= budget);
+        image.release_buffers();
+        assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+        assert_eq!(image.inner.retained_held.now.load(Ordering::Acquire), 0);
+    }
+}
+
+#[test]
 fn scale_first_expert_banks_match_baseline_bytes_at_small_and_large_budgets() {
     let (root, plans, expected, unique) = fixture(32);
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());

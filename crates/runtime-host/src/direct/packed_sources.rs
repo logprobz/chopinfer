@@ -152,6 +152,36 @@ struct SourceState {
     seen: BTreeSet<usize>,
 }
 
+/// Logical tensor bytes within an allocation that also holds direct-I/O
+/// alignment padding. The complete allocation is charged when shared.
+struct SourceStorage {
+    bytes: Vec<u8>,
+    range: Range<usize>,
+}
+
+impl SourceStorage {
+    fn new(inner: &InnerV1, source: SourceAtV1) -> Self {
+        let align = inner
+            .options
+            .direct_reads
+            .then(|| inner.checkpoint.shards[source.shard].direct_file())
+            .flatten()
+            .map_or(1, |direct| direct.alignment as usize);
+        let prefix = (source.begin % align as u64) as usize;
+        let window = (prefix + source.length as usize).next_multiple_of(align);
+        let bytes = inner.packed_buffers.take(window + align - 1);
+        let start = bytes.as_ptr().align_offset(align) + prefix;
+        Self {
+            range: start..start + source.length as usize,
+            bytes,
+        }
+    }
+
+    fn read(&mut self, inner: &InnerV1, source: SourceAtV1) -> Result<(), WeightTransformError> {
+        read_source_storage_v1(inner, source, 0, &mut self.bytes, self.range.clone())
+    }
+}
+
 pub(super) struct PackedSources {
     slots: Vec<Slot>,
     /// Slots with retained inputs, oldest first. Slots can appear again after
@@ -268,22 +298,26 @@ impl PackedSources {
                     .source_cache_bytes
                     .fetch_add(source.length, Ordering::Relaxed);
                 Some(Arc::clone(bytes))
-            } else if slot.consumers > 1 && self.reserve(inner, source.length) {
-                let mut data = inner.packed_buffers.take(source.length as usize);
-                if data.capacity() as u64 != source.length {
-                    inner.retained.fetch_sub(source.length, Ordering::AcqRel);
-                    read_source_v1(inner, source, 0, &mut data)?;
+            } else {
+                let mut data = SourceStorage::new(inner, source);
+                let charge = data.bytes.capacity() as u64;
+                let retained = slot.consumers > 1 && self.reserve(inner, charge);
+                if let Err(error) = data.read(inner, source) {
+                    inner.packed_buffers.give(data.bytes);
+                    if retained {
+                        inner.retained.fetch_sub(charge, Ordering::AcqRel);
+                    }
+                    return Err(error);
+                }
+                if !retained {
                     return Ok(Input {
                         inner,
                         bytes: Some(InputBytes::Own(data)),
                     });
                 }
-                if let Err(error) = read_source_v1(inner, source, 0, &mut data) {
-                    inner.packed_buffers.give(data);
-                    inner.retained.fetch_sub(source.length, Ordering::AcqRel);
-                    return Err(error);
-                }
-                let bytes = Arc::new(RetainedBytesV1::pooled(inner, data));
+                let mut held = RetainedBytesV1::pooled(inner, data.bytes);
+                held.range = data.range;
+                let bytes = Arc::new(held);
                 state.seen.clear();
                 state.bytes = Some(Arc::clone(&bytes));
                 self.retained
@@ -291,8 +325,6 @@ impl PackedSources {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push_back(slot_index);
                 Some(bytes)
-            } else {
-                None
             };
             if let Some(bytes) = bytes {
                 state.seen.insert(record.consumer);
@@ -312,8 +344,11 @@ impl PackedSources {
                 });
             }
         }
-        let mut bytes = inner.packed_buffers.take(source.length as usize);
-        read_source_v1(inner, source, 0, &mut bytes)?;
+        let mut bytes = SourceStorage::new(inner, source);
+        if let Err(error) = bytes.read(inner, source) {
+            inner.packed_buffers.give(bytes.bytes);
+            return Err(error);
+        }
         Ok(Input {
             inner,
             bytes: Some(InputBytes::Own(bytes)),
@@ -340,7 +375,7 @@ impl PackedSources {
 
 enum InputBytes {
     Shared(Arc<RetainedBytesV1>),
-    Own(Vec<u8>),
+    Own(SourceStorage),
 }
 
 pub(super) struct Input<'a> {
@@ -350,8 +385,8 @@ pub(super) struct Input<'a> {
 impl Input<'_> {
     pub fn bytes(&self) -> &[u8] {
         match self.bytes.as_ref().expect("input lives until dropped") {
-            InputBytes::Shared(bytes) => &bytes.bytes,
-            InputBytes::Own(bytes) => bytes,
+            InputBytes::Shared(bytes) => &bytes.bytes[bytes.range.clone()],
+            InputBytes::Own(bytes) => &bytes.bytes[bytes.range.clone()],
         }
     }
 }
@@ -359,7 +394,7 @@ impl Drop for Input<'_> {
     fn drop(&mut self) {
         match self.bytes.take().expect("input drops once") {
             InputBytes::Shared(bytes) => release_retained_v1(self.inner, bytes),
-            InputBytes::Own(bytes) => self.inner.packed_buffers.give(bytes),
+            InputBytes::Own(bytes) => self.inner.packed_buffers.give(bytes.bytes),
         }
     }
 }

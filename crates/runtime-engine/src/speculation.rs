@@ -71,8 +71,15 @@ const FRESH_RUN_STEPS: f64 = 16.0;
 const REALIZED_STEPS: u32 = 8;
 /// Caught-up measurements after a fresh probe of an already measured block.
 const BLOCK_RECHECKS: u8 = 2;
-/// Exponential weight of one step in a concurrency's realized throughput.
+/// Exponential weight of one AR step in a concurrency's realized throughput.
 const REALIZED_WEIGHT: f64 = 1.0 / 8.0;
+/// Request-steps a drafting average spans. Drafting throughput follows the
+/// acceptance of the text being drafted, which comes in runs: eight
+/// rejected steps in a row on a hard prompt (round 9's diverse-02, -04 and
+/// -10 at C1) must not outweigh the drafting that still beats AR over the
+/// request. A step of n items averages n requests, so the average spans
+/// 32 / n steps, and never fewer than eight.
+const REALIZED_DRAFT_SPAN: f64 = 32.0;
 /// Cost of one more drafting sequence in a block step of the same row
 /// bucket, relative to a one-row AR step. One batched pass drafts every
 /// sequence: kernel-lab measured 1.29 ms for one K7 block and 2.3 ms for 16,
@@ -132,6 +139,9 @@ impl Default for ZeroDraftState {
 struct Realized {
     ar: Option<f64>,
     drafting: Option<f64>,
+    /// The total weight of the drafting average's samples, so its first
+    /// steps average evenly instead of starting from the first one.
+    drafting_weight: f64,
     drafting_steps: u32,
 }
 
@@ -140,11 +150,31 @@ impl Realized {
         *average = Some(average.map_or(rate, |previous| previous + weight * (rate - previous)));
     }
 
+    fn record_drafting(&mut self, rate: f64, weight: f64) {
+        let kept = self.drafting_weight * (1.0 - weight);
+        let total = kept + weight;
+        self.drafting = Some((self.drafting.unwrap_or(0.0) * kept + weight * rate) / total);
+        self.drafting_weight = total;
+        self.drafting_steps = self.drafting_steps.saturating_add(1);
+    }
+
     /// Drafting at this concurrency emitted fewer tokens per unit of time
     /// than AR did, over enough steps to trust it.
     fn losing(&self) -> bool {
         self.drafting_steps >= REALIZED_STEPS
             && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting < ar)
+    }
+
+    /// Drafting at this concurrency emitted at least as many tokens per
+    /// unit of time as AR did, over enough steps to trust it.
+    fn holding(&self) -> bool {
+        self.drafting_steps >= REALIZED_STEPS
+            && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting >= ar)
+    }
+
+    /// The weight of one drafting step of `items` items.
+    fn draft_weight(items: usize) -> f64 {
+        (items as f64 / REALIZED_DRAFT_SPAN).clamp(1.0 / REALIZED_DRAFT_SPAN, REALIZED_WEIGHT)
     }
 }
 
@@ -934,9 +964,12 @@ impl SpeculationPolicy {
         } else {
             // A probe carries more weight: the drafting average it corrects
             // is stale.
-            let weight = if probe { 0.5 } else { REALIZED_WEIGHT };
-            Realized::record(&mut realized.drafting, rate, weight);
-            realized.drafting_steps = realized.drafting_steps.saturating_add(1);
+            let weight = if probe {
+                0.5
+            } else {
+                Realized::draft_weight(items)
+            };
+            realized.record_drafting(rate, weight);
             // Only a probe that clears the resume margin resets spacing.
             // Marginal gains keep backing off while drafting stays disabled.
             if probe
@@ -1288,8 +1321,10 @@ impl SpeculationPolicy {
         {
             state.remaining = 0;
             if let Some(realized) = self.realized.get_mut(&items) {
-                realized.drafting = None;
-                realized.drafting_steps = 0;
+                *realized = Realized {
+                    ar: realized.ar,
+                    ..Realized::default()
+                };
             }
         }
         // Backoff learned against faster AR can outlive that comparison.
@@ -1385,6 +1420,17 @@ impl SpeculationPolicy {
                     best = joint;
                 }
             }
+        }
+        // A request's estimate follows its last few verifications, so a run
+        // of rejected drafts can price drafting below AR while the realized
+        // drafting at these items still beats it. That evidence keeps the
+        // best drafting plan; only realized throughput below AR stops it.
+        if !probe
+            && best.drafts.iter().all(|&count| count == 0)
+            && self.realized.get(&items).is_some_and(Realized::holding)
+            && let Some(joint) = self.joint(candidates, &shares, remaining, false)
+        {
+            best = joint;
         }
         self.trace_candidate(&best);
         self.trace_reason("estimated_slower");
@@ -3670,6 +3716,7 @@ mod tests {
                 Realized {
                     ar: Some(1.0),
                     drafting: Some(0.5),
+                    drafting_weight: 1.0,
                     drafting_steps: REALIZED_STEPS,
                 },
             );

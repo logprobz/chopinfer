@@ -780,10 +780,11 @@ impl crate::Kernels {
                     (3, streams * streams * 4),
                     (4, flat),
                 ],
-                reduced: Some(1),
+                call_rows: Some(1),
                 live: 5,
                 row_offset: None,
                 optional: vec![],
+                capacity_views: false,
                 grid: (1, 1),
             },
             // x, fn, base, scale, pre_in, collapsed, pre, post, comb, live
@@ -798,10 +799,11 @@ impl crate::Kernels {
                     (7, streams * 4),
                     (8, streams * streams * 4),
                 ],
-                reduced: None,
+                call_rows: None,
                 live: 9,
                 row_offset: None,
                 optional: vec![],
+                capacity_views: false,
                 grid: (0, 8),
             },
             // input, weight, normed, widened (F32 copy of normed, or null),
@@ -827,13 +829,48 @@ impl crate::Kernels {
                         (5, hidden / 32),
                     ]
                 },
-                reduced: None,
+                call_rows: None,
                 live: 6,
                 row_offset: Some(8),
                 optional: vec![(3, hidden * 4)],
+                capacity_views: false,
                 grid: (0, 1),
             },
             _ => return None,
+        })
+    }
+
+    /// The row layout of `g`'s MoE route-row sum with its shared expert
+    /// addend (routed_sum_add.cuh, one CTA per token), the launch that
+    /// writes a MoE reduction's F32 partial rows: routed rows, route ids,
+    /// live tokens, rank, addend, output; grid one block per token.
+    pub(crate) fn prefill_dma_producer(
+        symbol: &str,
+        g: &model_deepseek41_contract::geometry::Geometry,
+    ) -> Option<crate::ops::RowLocal> {
+        use crate::ops::{RowLocal, RowLocalKind};
+        let sum = routed_sum::sum(g);
+        if symbol != sum.add_symbol(&routed_sum::prefix(g)) {
+            return None;
+        }
+        let (top_k, width) = (u64::from(sum.top_k), u64::from(sum.width));
+        Some(RowLocal {
+            kind: RowLocalKind::Produce,
+            rows: vec![
+                (0, top_k * width * 4),
+                (1, top_k * 4),
+                (4, width * 4),
+                (5, width * 4),
+            ],
+            call_rows: Some(5),
+            live: 2,
+            row_offset: None,
+            optional: vec![],
+            // The upper cone's sums read compact routed rows, route ids and
+            // addends from the start of their capacity buffers and write the
+            // cone's partial rows.
+            capacity_views: true,
+            grid: (0, 1),
         })
     }
 

@@ -25,7 +25,7 @@ pub(in crate::instance::execute) struct Consumers {
     launches: Vec<Vec<Vec<PreparedLaunch>>>,
 }
 
-fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
+pub(super) fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
     a.buffer == b.buffer
         && a.length != 0
         && b.length != 0
@@ -100,7 +100,7 @@ impl Consumers {
                     let Argument::DeviceBuffer(id) = argument else {
                         continue;
                     };
-                    if Some(index) == layout.reduced {
+                    if Some(index) == layout.call_rows {
                         continue;
                     }
                     let view = launch
@@ -149,12 +149,12 @@ impl Consumers {
 
 /// `launch` over rows `begin..begin + count` of its rows, or `None` where
 /// its arguments are not the row layout's.
-fn narrow(
+pub(super) fn narrow(
     instance: &Instance,
     rank: usize,
     launch: &PreparedLaunch,
     layout: &RowLocal,
-    reduced: DeviceBufferSpanV1,
+    call_rows: DeviceBufferSpanV1,
     begin: u32,
     count: u32,
 ) -> Result<Option<PreparedLaunch>, String> {
@@ -177,14 +177,19 @@ fn narrow(
             return Ok(None);
         };
         let span = view(id)?;
-        if span.length != rows * bytes || (Some(index) == layout.reduced && span != reduced) {
+        let fits = if layout.capacity_views && Some(index) != layout.call_rows {
+            span.length >= rows * bytes
+        } else {
+            span.length == rows * bytes
+        };
+        if !fits || (Some(index) == layout.call_rows && span != call_rows) {
             return Ok(None);
         }
         let part = subspan(span, u64::from(begin) * bytes, u64::from(count) * bytes)?;
         arguments.0[index] = Argument::DeviceBuffer(bindings.bind(part));
         seen.push(index);
     }
-    if layout.reduced.is_some_and(|index| !seen.contains(&index)) {
+    if layout.call_rows.is_some_and(|index| !seen.contains(&index)) {
         return Ok(None);
     }
     match launch.arguments.0.get(layout.live) {

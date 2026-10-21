@@ -1,7 +1,7 @@
 //! Replace only the existing cone's rounded reductions with ordered DMA.
 //! Every compute launch and persistent mutation retains its original rows.
 use super::{Instance, Programs, Run, Stage};
-use crate::instance::execute::dma::{Call, Consumers};
+use crate::instance::execute::dma::{Call, Consumers, Producers};
 use bundle_runtime::pipeline::PoisonOnUnwind;
 use kernel_core::contract::Argument;
 use model_deepseek41_contract::state::KvStorage;
@@ -107,6 +107,9 @@ struct Block {
     /// The row-local launches after the call, run per owner interval; their
     /// program launches are then skipped.
     consume: Option<Consumers>,
+    /// The launch before the call, run per owner interval inside it; its
+    /// program launch is then skipped.
+    produce: Option<Producers>,
 }
 
 pub(super) struct Plan {
@@ -174,12 +177,25 @@ impl Plan {
             } else {
                 0
             };
+            // The producer is the last launch of each rank's compute span.
+            let produce = if (0..4).all(|rank| ranks[rank][index].collective > cursors[rank]) {
+                let launches = (0..4)
+                    .map(|rank| &body.0[rank][ranks[rank][index].collective - 1])
+                    .collect::<Vec<_>>();
+                let flags = (0..4)
+                    .map(|rank| body.1[rank][ranks[rank][index].collective - 1])
+                    .collect::<Vec<_>>();
+                Producers::prepare(instance, &reduce, &launches, &flags)?
+            } else {
+                None
+            };
+            let given = usize::from(produce.is_some());
             let compute = cursors
                 .iter_mut()
                 .enumerate()
                 .map(|(rank, cursor)| {
                     let r = &ranks[rank][index];
-                    let span = *cursor..r.collective;
+                    let span = *cursor..r.collective - given;
                     *cursor = r.end + taken;
                     span
                 })
@@ -188,6 +204,7 @@ impl Plan {
                 compute,
                 reduce,
                 consume,
+                produce,
             });
         }
         let tail = cursors
@@ -226,9 +243,12 @@ impl Plan {
         let result = (|| {
             for block in &self.blocks {
                 issue(&block.compute)?;
-                block
-                    .reduce
-                    .execute(instance, &streams, block.consume.as_ref())?;
+                block.reduce.execute(
+                    instance,
+                    &streams,
+                    block.consume.as_ref(),
+                    block.produce.as_ref(),
+                )?;
             }
             issue(&self.tail)
         })();

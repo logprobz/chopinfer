@@ -488,3 +488,149 @@ fn dma_keeps_consumers_after_calls_it_cannot_split() {
     // 8191-row calls do not divide into whole eight-row mix tiles per owner.
     assert_eq!(capture_consumed(8191, true), capture_consumed(8191, false));
 }
+
+const PRODUCER: &str = "chop_moe_deepseek41_sum_add_f32_k6_w5120_l384_t8192_v1";
+
+fn producer(line: &str) -> bool {
+    line.starts_with("launch ") && line.contains(&format!(" {PRODUCER} "))
+}
+
+fn capture_produced(rows: u64, produce: bool) -> Vec<String> {
+    crate::ops::with_partial_setting(Some("prefill"), || {
+        crate::ops::with_dma_consume(true, || {
+            crate::ops::with_dma_produce(produce, || capture(rows, None))
+        })
+    })
+}
+
+/// Walk each stream's route-row sums in submission order: an unsplit
+/// launch is unchanged; a split one is four launches over the owner
+/// intervals in send order, the interval for scatter phase 0's destination
+/// first and the rank's own last. Returns the split launches.
+fn split_producers(serial: &[String], split: &[String]) -> Result<usize, String> {
+    let spans = super::super::shared_overlap::journal_spans;
+    let streams = serial
+        .iter()
+        .filter(|l| producer(l))
+        .map(|l| stream(l))
+        .collect::<BTreeSet<_>>();
+    let mut count = 0;
+    for st in streams {
+        let s = serial
+            .iter()
+            .filter(|l| producer(l) && stream(l) == st)
+            .collect::<Vec<_>>();
+        let p = split
+            .iter()
+            .filter(|l| producer(l) && stream(l) == st)
+            .collect::<Vec<_>>();
+        let (mut i, mut j) = (0, 0);
+        while i < s.len() {
+            if p.get(j) == Some(&s[i]) {
+                i += 1;
+                j += 1;
+                continue;
+            }
+            let parts = p
+                .get(j..j + 4)
+                .ok_or("a split producer has fewer than four parts")?;
+            let whole = spans(s[i]);
+            let mut quarters = Vec::new();
+            for part in parts {
+                let piece = spans(part);
+                if whole.len() != piece.len() {
+                    return Err(format!("argument count differs: {part}"));
+                }
+                let mut quarter = BTreeSet::new();
+                for (w, q) in whole.iter().zip(&piece) {
+                    if w == q || (w.2 == 4 && q.2 == 4) {
+                        // Shared arguments, and the live count cell.
+                        continue;
+                    }
+                    // Cone inputs are capacity views read from their first
+                    // row, so a quarter of the launch's rows may be less than
+                    // a quarter of the view.
+                    if q.0 != w.0 || q.2 * 4 > w.2 || q.1 < w.1 || q.1 + q.2 > w.1 + w.2 {
+                        return Err(format!("not an owner quarter: {part}"));
+                    }
+                    quarter.insert((q.1 - w.1) / q.2);
+                }
+                // Routed rows, route ids, addend and output, one quarter.
+                if quarter.len() != 1 {
+                    return Err(format!("row arguments cover different quarters: {part}"));
+                }
+                quarters.extend(quarter);
+            }
+            let own = quarters[3];
+            if quarters != (1..=4).map(|step| (own + step) % 4).collect::<Vec<_>>() {
+                return Err(format!("intervals out of send order: {quarters:?}"));
+            }
+            count += 1;
+            i += 1;
+            j += 4;
+        }
+        if j != p.len() {
+            return Err("extra producer launches".into());
+        }
+    }
+    Ok(count)
+}
+
+#[test]
+fn dma_produces_each_sent_interval_before_its_pull() {
+    let serial = capture_produced(8192, false);
+    let split = capture_produced(8192, true);
+    let others = |j: &[String]| {
+        compute(j)
+            .into_iter()
+            .filter(|l| !producer(l))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(others(&serial), others(&split));
+    let copies = |j: &[String]| j.iter().filter(|l| l.starts_with("peer-copy ")).count();
+    assert_eq!(copies(&serial), copies(&split));
+    let sums = |j: &[String]| j.iter().filter(|l| transport_launch(l)).count();
+    assert_eq!(sums(&serial), sums(&split));
+    let calls = split_producers(&serial, &split).unwrap();
+    // On every rank: the 20 full-row MoE calls and the 16 cone calls.
+    assert_eq!(calls, 36 * 4);
+    // A split call rounds each of its three sent intervals on its own; an
+    // unsplit one rounds the rows outside the rank's interval in one or two.
+    let rounds = |j: &[String]| {
+        j.iter()
+            .filter(|l| l.contains(&format!(" {BF16_ROUND} ")))
+            .count()
+    };
+    assert_eq!(rounds(&split) - rounds(&serial), 36 * 6);
+    audit(&split).unwrap();
+    // Skipping one interval's producer leaves rows a peer pulls unwritten.
+    let first = split.iter().position(|l| producer(l)).unwrap();
+    let skipped = split
+        .iter()
+        .enumerate()
+        .filter(|&(at, _)| at != first)
+        .map(|(_, l)| l.clone())
+        .collect::<Vec<_>>();
+    assert!(split_producers(&serial, &skipped).is_err());
+    // Without the waits before each pull, a peer copy reads rows its source
+    // may still be rounding.
+    let mut early = Vec::new();
+    for (at, line) in split.iter().enumerate() {
+        let next = split[at + 1..].iter().find(|l| !l.starts_with("wait "));
+        if line.starts_with("wait ")
+            && next.is_some_and(|n| n.starts_with("peer-copy ") && stream(n) == stream(line))
+        {
+            continue;
+        }
+        early.push(line.clone());
+    }
+    assert!(early.len() < split.len());
+    assert!(audit(&early).is_err());
+}
+
+#[test]
+fn dma_keeps_the_producer_before_calls_it_cannot_split() {
+    // 8191-row calls do not divide into whole 32-row owner intervals.
+    assert_eq!(capture_produced(8191, true), capture_produced(8191, false));
+}

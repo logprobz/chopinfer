@@ -228,31 +228,38 @@ impl DmaPayload {
     }
 }
 
-/// A row-local launch that may run on part of a reduced interval: which
+/// A row-local launch that may run on part of a DMA call's interval: which
 /// arguments hold rows and how many bytes each row takes there. Every other
 /// argument is the same for every row.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RowLocal {
     pub(crate) kind: RowLocalKind,
     pub(crate) rows: Vec<(usize, u64)>,
-    /// The argument reading the reduced rows, if this launch reads them.
-    pub(crate) reduced: Option<usize>,
+    /// The argument bound to the call's own rows, if any: the reduced rows a
+    /// consumer reads, or the partial rows a producer writes.
+    pub(crate) call_rows: Option<usize>,
     /// The device cell holding the live row count.
     pub(crate) live: usize,
     /// A U64 argument that addresses rows from an explicit first row.
     pub(crate) row_offset: Option<usize>,
     /// Row arguments that may instead be null.
     pub(crate) optional: Vec<(usize, u64)>,
+    /// Whether row views other than the call's rows may be longer than the
+    /// launch's rows: capacity views the launch reads from their first row.
+    pub(crate) capacity_views: bool,
     /// The grid dimension counting rows, and the rows each step covers.
     pub(crate) grid: (usize, u32),
 }
 
-/// The consumers that follow a hidden reduction, in their served order.
+/// The consumers that follow a hidden reduction, in their served order, and
+/// the producer of its partial rows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RowLocalKind {
     Expand,
     Mix,
     Norm,
+    /// The MoE route-row sum that writes the call's F32 partial rows.
+    Produce,
 }
 
 /// Whether DMA runs the row-local consumers of each gathered owner
@@ -278,6 +285,34 @@ pub(crate) fn with_dma_consume<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
         }
     }
     let _reset = Reset(CONSUME_IN_TESTS.replace(enabled));
+    run()
+}
+
+/// Whether DMA runs the producer of each interval a rank sends as its own
+/// launch, so each destination pulls that interval as soon as it is
+/// produced and rounded. Unset selects it; `0` keeps one producer launch
+/// before the call.
+pub(crate) fn dma_produce_requested() -> bool {
+    #[cfg(test)]
+    return PRODUCE_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static PRODUCE_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_produce<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PRODUCE_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(PRODUCE_IN_TESTS.replace(enabled));
     run()
 }
 

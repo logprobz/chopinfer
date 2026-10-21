@@ -140,6 +140,8 @@ pub(crate) trait ReclaimV1: Send + Sync {
 pub(crate) struct MediaMemoryV1 {
     limit: u64,
     used: Mutex<u64>,
+    /// The part of `used` that payload leases hold.
+    leased: std::sync::atomic::AtomicU64,
     available: Condvar,
     reclaimers: Mutex<Vec<Weak<dyn ReclaimV1>>>,
 }
@@ -150,14 +152,45 @@ pub(crate) const REQUEST_MEDIA_MEMORY_REFUSAL_V1: &str = "the request's media ne
 /// The refusal of a preparation whose client left.
 pub(crate) const MEDIA_PREPARATION_CANCELLED_V1: &str = "media preparation cancelled";
 
+/// What the pool holds, for metrics.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MediaMemorySnapshotV1 {
+    pub(crate) limit: u64,
+    /// Bytes preparations hold beyond their payloads.
+    pub(crate) preparing: u64,
+    /// Bytes payload leases hold, cached ones included.
+    pub(crate) leased: u64,
+}
+
 impl MediaMemoryV1 {
     pub(crate) fn new(limit: u64) -> Self {
         Self {
             limit,
             used: Mutex::new(0),
+            leased: std::sync::atomic::AtomicU64::new(0),
             available: Condvar::new(),
             reclaimers: Mutex::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn snapshot(&self) -> MediaMemorySnapshotV1 {
+        let used = *self
+            .used
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let leased = self.leased.load(std::sync::atomic::Ordering::Relaxed);
+        MediaMemorySnapshotV1 {
+            limit: self.limit,
+            preparing: used.saturating_sub(leased),
+            leased,
+        }
+    }
+
+    /// Gives back a payload lease's bytes.
+    fn release_lease(&self, bytes: u64) {
+        self.leased
+            .fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+        self.give(bytes);
     }
 
     /// Lets the pool drop `reclaimer`'s idle payloads when a reservation
@@ -280,7 +313,7 @@ impl AsRef<[u8]> for LeasedBytes {
 
 impl Drop for LeasedBytes {
     fn drop(&mut self) {
-        self.pool.give(self.bytes.len() as u64);
+        self.pool.release_lease(self.bytes.len() as u64);
     }
 }
 
@@ -304,7 +337,7 @@ impl<S: MediaPayloadSourceV1> MediaPayloadSourceV1 for LeasedSource<S> {
 
 impl<S> Drop for LeasedSource<S> {
     fn drop(&mut self) {
-        self.pool.give(self.retained);
+        self.pool.release_lease(self.retained);
     }
 }
 
@@ -421,6 +454,9 @@ impl RequestMediaMemoryV1 {
             self.pool.give(reserved - kept.min(reserved));
         }
         self.retained += kept;
+        self.pool
+            .leased
+            .fetch_add(kept, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

@@ -30,7 +30,7 @@ use runtime_tokenizer::Tokenizer;
 use tokio::sync::oneshot;
 
 use crate::media_memory::{
-    DecodeSlotsV1, MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1,
+    DecodeSlotsV1, MEDIA_PREPARATION_CANCELLED_V1, MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1,
     REQUEST_MEDIA_PREPARATION_BYTES_V1, RequestMediaMemoryV1,
 };
 pub use crate::watchdog::WorkerWatchdogV1;
@@ -354,6 +354,8 @@ pub struct EngineGenerationBackend {
     media_request_bytes: u64,
     /// Image decodes this process runs at once.
     decode_slots: Arc<DecodeSlotsV1>,
+    /// Media refusals by reason, for metrics.
+    media_refusals: Arc<MediaRefusalsV1>,
     /// Sources the plan pass holds decoded, for tests.
     #[cfg(test)]
     planning_sources: Arc<std::sync::atomic::AtomicUsize>,
@@ -550,6 +552,7 @@ impl EngineGenerationBackend {
             media_memory,
             media_request_bytes: REQUEST_MEDIA_PREPARATION_BYTES_V1,
             decode_slots: DecodeSlotsV1::process(),
+            media_refusals: Arc::default(),
             #[cfg(test)]
             planning_sources: Arc::default(),
             image_cache,
@@ -768,14 +771,15 @@ impl EngineGenerationBackend {
         }
         let parameters =
             serde_json::to_vec(parameters).map_err(|_| AdmissionError::InvalidPrompt)?;
-        let (key, payload) = match rows {
+        let (key, payload, kept) = match rows {
             PreparedRowsV1::Values(values) => {
                 let payload = media_values_to_bytes_v1(values, encoder.payload_element)?;
                 if payload.len() > encoder.maximum_payload_bytes {
                     return Err(AdmissionError::InvalidPrompt);
                 }
                 let key = runtime_media::content_key(&modality.recipe.tag, &parameters, &payload);
-                (key, memory.retain(reserved, payload)?)
+                let kept = payload.len() as u64;
+                (key, memory.retain(reserved, payload)?, kept)
             }
             PreparedRowsV1::Canvas(canvas) => {
                 let element = canvas_element_v1(encoder.payload_element);
@@ -801,6 +805,7 @@ impl EngineGenerationBackend {
                 (
                     key,
                     memory.retain_source(reserved, CanvasPayloadV1 { canvas, element }, kept)?,
+                    kept,
                 )
             }
         };
@@ -814,7 +819,7 @@ impl EngineGenerationBackend {
         .into();
         if let Some(key) = cached {
             self.image_cache
-                .insert(key, PreparedMediaInputV1::clone(&prepared));
+                .insert(key, PreparedMediaInputV1::clone(&prepared), kept);
         }
         Ok(prepared)
     }
@@ -906,7 +911,7 @@ impl EngineGenerationBackend {
     {
         let mut images = Vec::with_capacity(media.len());
         let mut hits = Vec::with_capacity(media.len());
-        for part in media {
+        for (index, part) in media.iter().enumerate() {
             let modality = declared
                 .modalities
                 .iter()
@@ -919,7 +924,9 @@ impl EngineGenerationBackend {
                 .encoders
                 .get(usize::from(modality.encoder))
                 .ok_or(AdmissionError::InvalidPrompt)?;
-            let (image, hit) = self.plan_inline_image_v1(part, modality, encoder)?;
+            let (image, hit) = self
+                .plan_inline_image_v1(part, modality, encoder)
+                .map_err(|error| self.media_refusals.part(error, part, index, media.len()))?;
             images.push(image);
             hits.push(hit);
         }
@@ -939,6 +946,7 @@ impl EngineGenerationBackend {
             }
         }
         if maximum_prompt_tokens.is_some_and(|ceiling| prompt_tokens > ceiling) {
+            self.media_refusals.context.fetch_add(1, Ordering::Relaxed);
             return Err(AdmissionError::PromptTooLong { prompt_tokens });
         }
         if hits.iter().all(Option::is_some) {
@@ -958,6 +966,7 @@ impl EngineGenerationBackend {
         for (index, image) in images.iter().enumerate() {
             let needed = retained.saturating_add(image.reserved);
             if needed > self.media_request_bytes {
+                self.media_refusals.memory.fetch_add(1, Ordering::Relaxed);
                 return Err(AdmissionError::Rejected(format!(
                     "image {} of {}: {REQUEST_MEDIA_MEMORY_REFUSAL_V1}{needed} bytes of host \
                      memory to prepare; the limit is {}",
@@ -1105,6 +1114,11 @@ impl EngineGenerationBackend {
             engine: self.metrics.clone(),
             kv: self.kv_metrics.clone(),
             state: Arc::clone(&self.state),
+            media: self.policy.media_inputs.then(|| MediaHostMetricsV1 {
+                pool: Arc::clone(&self.media_memory),
+                cache: Arc::clone(&self.image_cache),
+                refusals: Arc::clone(&self.media_refusals),
+            }),
         }
     }
 
@@ -1294,13 +1308,17 @@ impl GenerationBackend for EngineGenerationBackend {
                 |part, modality| {
                     let prepared = match cached.pop_front() {
                         Some(prepared) => prepared,
-                        None => self.preprocess_media_part_v1(
-                            part,
-                            modality,
-                            cancellation,
-                            request_deadline,
-                            &mut memory,
-                        )?,
+                        None => self
+                            .preprocess_media_part_v1(
+                                part,
+                                modality,
+                                cancellation,
+                                request_deadline,
+                                &mut memory,
+                            )
+                            .map_err(|error| {
+                                self.media_refusals.part(error, part, next, media.len())
+                            })?,
                     };
                     // A planned image prepares to what its header planned.
                     if let Some(image) = images.get(next) {
@@ -1584,6 +1602,97 @@ pub struct NativeRuntimeMetricsV1 {
     engine: EngineMetrics,
     kv: KvMetrics,
     state: Arc<AtomicU8>,
+    media: Option<MediaHostMetricsV1>,
+}
+
+/// The host memory media preparation holds and its refusals. The pool is the
+/// process's, so every backend of a process publishes the same bytes; they
+/// bound accounted media buffers, not the process's resident memory.
+#[derive(Clone)]
+struct MediaHostMetricsV1 {
+    pool: Arc<MediaMemoryV1>,
+    cache: Arc<crate::media_cache::PreparedImageCacheV1>,
+    refusals: Arc<MediaRefusalsV1>,
+}
+
+impl std::fmt::Debug for MediaHostMetricsV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MediaHostMetricsV1")
+            .field("pool", &self.pool.snapshot())
+            .field("cache_idle", &self.cache.idle())
+            .field("refusals", &self.refusals.counts())
+            .finish()
+    }
+}
+
+impl MediaHostMetricsV1 {
+    fn prometheus(&self) -> String {
+        let pool = self.pool.snapshot();
+        let (idle_images, idle_bytes) = self.cache.idle();
+        let mut output = String::new();
+        for (name, value) in [
+            ("chop_media_host_limit_bytes", pool.limit),
+            ("chop_media_host_preparing_bytes", pool.preparing),
+            ("chop_media_host_payload_bytes", pool.leased),
+            ("chop_media_host_cached_idle_images", idle_images as u64),
+            ("chop_media_host_cached_idle_bytes", idle_bytes),
+        ] {
+            output.push_str(&format!("# TYPE {name} gauge\n{name} {value}\n"));
+        }
+        output.push_str("# TYPE chop_media_refusals_total counter\n");
+        for (reason, value) in self.refusals.counts() {
+            output.push_str(&format!(
+                "chop_media_refusals_total{{reason=\"{reason}\"}} {value}\n"
+            ));
+        }
+        output
+    }
+}
+
+/// Media refusals by reason: a prompt over the context, media over the
+/// request's preparation memory, and a source that could not be read,
+/// probed or decoded.
+#[derive(Default)]
+struct MediaRefusalsV1 {
+    context: AtomicU64,
+    memory: AtomicU64,
+    codec: AtomicU64,
+}
+
+impl MediaRefusalsV1 {
+    fn counts(&self) -> [(&'static str, u64); 3] {
+        [
+            ("context", self.context.load(Ordering::Relaxed)),
+            ("memory", self.memory.load(Ordering::Relaxed)),
+            ("codec", self.codec.load(Ordering::Relaxed)),
+        ]
+    }
+
+    /// Names the part a client refusal came from, as `image 3 of 16: ...`,
+    /// and counts it by reason. A cancelled preparation is not a refusal.
+    fn part(
+        &self,
+        error: AdmissionError,
+        part: &FrontendMediaPartV1,
+        index: usize,
+        parts: usize,
+    ) -> AdmissionError {
+        let AdmissionError::Rejected(message) = error else {
+            return error;
+        };
+        if message.starts_with(REQUEST_MEDIA_MEMORY_REFUSAL_V1) {
+            self.memory.fetch_add(1, Ordering::Relaxed);
+        } else if message != MEDIA_PREPARATION_CANCELLED_V1 {
+            self.codec.fetch_add(1, Ordering::Relaxed);
+        }
+        let kind = match part.kind {
+            FrontendMediaPartKindV1::Image => "image",
+            FrontendMediaPartKindV1::Audio => "audio",
+            FrontendMediaPartKindV1::Video => "video",
+        };
+        AdmissionError::Rejected(format!("{kind} {} of {parts}: {message}", index + 1))
+    }
 }
 
 impl NativeRuntimeMetricsV1 {
@@ -1612,6 +1721,9 @@ impl NativeRuntimeMetricsV1 {
             ));
         }
         output.push_str(&self.engine.snapshot().prometheus());
+        if let Some(media) = &self.media {
+            output.push_str(&media.prometheus());
+        }
         let kv = self.kv.snapshot();
         output.push_str(&kv.prometheus());
         output.push_str(&self.engine.prometheus_compatibility(&self.model_name));

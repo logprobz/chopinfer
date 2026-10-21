@@ -91,6 +91,8 @@ count lookups; the vLLM ones count tokens.
 | `vllm:batch_refused_requests_total{model_name,engine}` | Requests failed in those refused batches, counted once per sequence |
 | `chop_requests_waiting`, `chop_requests_waiting_by_stage` | Requests waiting before they run, by stage ([request surface](serving-request-surface.md)) |
 | `chop_transport_buffer_budget_bytes`, `chop_transport_buffer_reserved_bytes`, `chop_transport_read_bytes_total` | Connection read-buffer budget, its reservations, and bytes read |
+| `chop_media_host_{limit,preparing,payload}_bytes`, `chop_media_host_cached_idle_{images,bytes}` | The process's media preparation budget, the bytes preparations hold beyond their payloads, the bytes prepared payloads keep (cached ones included), and the cached images no request holds. They bound accounted media buffers, not resident memory ([request surface](serving-request-surface.md)) |
+| `chop_media_refusals_total{reason}` | Media requests refused by the backend: `context` (a prompt of inline images over the context, before decoding), `memory` (media over the request's preparation memory) and `codec` (a source that could not be read, probed or decoded, or outside its modality's limits) |
 | `chop_process_uptime_seconds` | Seconds on the server's monotonic metrics clock, which starts when the listener opens; it resets when the server restarts |
 
 `chop_step_gpu_seconds` is absent with the native bundle executor, which

@@ -27,7 +27,8 @@ pub(crate) struct PreparedImageCacheV1 {
 
 #[derive(Default)]
 struct CacheInner {
-    entries: HashMap<[u8; 32], (PreparedMediaInputV1, u64)>,
+    /// Each entry's item, last use and the pool bytes its payload keeps.
+    entries: HashMap<[u8; 32], (PreparedMediaInputV1, u64, u64)>,
     tick: u64,
 }
 
@@ -56,17 +57,29 @@ impl PreparedImageCacheV1 {
         let mut inner = self.lock();
         inner.tick += 1;
         let tick = inner.tick;
-        inner.entries.get_mut(key).map(|(prepared, last_use)| {
+        inner.entries.get_mut(key).map(|(prepared, last_use, _)| {
             *last_use = tick;
             prepared.clone()
         })
     }
 
-    pub(crate) fn insert(&self, key: [u8; 32], prepared: PreparedMediaInputV1) {
+    /// Keeps `prepared`, whose payload holds `retained` pool bytes.
+    pub(crate) fn insert(&self, key: [u8; 32], prepared: PreparedMediaInputV1, retained: u64) {
         let mut inner = self.lock();
         inner.tick += 1;
         let tick = inner.tick;
-        inner.entries.insert(key, (prepared, tick));
+        inner.entries.insert(key, (prepared, tick, retained));
+    }
+
+    /// The entries no request holds and the pool bytes they keep.
+    pub(crate) fn idle(&self) -> (usize, u64) {
+        self.lock()
+            .entries
+            .values()
+            .filter(|(prepared, _, _)| !prepared.input.payload.is_shared())
+            .fold((0, 0), |(entries, bytes), (_, _, retained)| {
+                (entries + 1, bytes + retained)
+            })
     }
 
     #[cfg(test)]
@@ -94,8 +107,8 @@ impl ReclaimV1 for PreparedImageCacheV1 {
             let idle = inner
                 .entries
                 .iter()
-                .filter(|(_, (prepared, _))| !prepared.input.payload.is_shared())
-                .min_by_key(|(_, (_, last_use))| *last_use)
+                .filter(|(_, (prepared, _, _))| !prepared.input.payload.is_shared())
+                .min_by_key(|(_, (_, last_use, _))| *last_use)
                 .map(|(key, _)| *key);
             idle.and_then(|key| inner.entries.remove(&key))
         };

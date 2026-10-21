@@ -60,7 +60,9 @@ fixed until the gate finishes. `bash ci/cpu.sh --preflight` checks prerequisites
 Both scripts build Rust with `ci/rust-profile.env`: opt-level 1 for every
 package, kernel-core included, with debug assertions and overflow checks on;
 release builds are unchanged. kernel-core's one test that needs opt-level 0
-runs in the gate's `kernel-core-unoptimized` step.
+runs in the gate's `kernel-core-unoptimized` step. The gate's steps share
+`--jobs`, and no step counts for more than half of it, so the workspace tests
+start beside the long recipe steps whatever `--test-threads` says.
 
 ## Full CPU check prerequisites
 

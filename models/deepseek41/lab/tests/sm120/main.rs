@@ -42,6 +42,7 @@ use bundle_deepseek41::sm120::markov_tiled;
 mod dspark_argmax;
 mod dspark_catch_up_kv;
 mod dspark_heads;
+mod dspark_markov_row;
 mod dspark_peer_embedding;
 mod dspark_ring_gather;
 #[path = "../../../bundle/src/sm120/engram_hash.rs"]

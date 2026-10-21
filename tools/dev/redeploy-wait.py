@@ -81,6 +81,29 @@ def selected_uuids(gpus, serve_args, deadline):
     return ordered
 
 
+def process_state(pid):
+    """(state, start time) of `pid` from /proc/PID/stat, or None once it is
+    gone. A process reaped between opening and reading the file fails the
+    read with ESRCH (ProcessLookupError), not ENOENT."""
+    try:
+        suffix = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return suffix[0], suffix[19]
+
+
+def process_environment(pid):
+    """The NUL-separated environment of `pid`, or None once it is gone. An
+    exiting or reaped process's environment reads empty: its memory is gone.
+    A server this script started always has one, so None never lets the
+    caller signal a process it cannot identify."""
+    try:
+        environment = Path(f"/proc/{pid}/environ").read_bytes()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return environment.split(b"\0") if environment else None
+
+
 def wait_released(pid, pidfd, serve_args, deadline):
     poller = select.poll()
     if pidfd is not None:

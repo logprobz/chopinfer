@@ -114,5 +114,38 @@ class ReleaseWait(unittest.TestCase):
                 WAIT.wait_released(41, None, ["--devices", devices], 0.5)
 
 
+class ProcessFiles(unittest.TestCase):
+    """The redeploy stop path reads a server's /proc files while it exits."""
+
+    def test_a_running_process_reads_its_state_and_environment(self):
+        child = subprocess.Popen(["sleep", "60"], env={"CHOPINFER_TEST_MARK": "1"})
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        state, started = WAIT.process_state(child.pid)
+        self.assertIn(state, "RS")
+        self.assertTrue(started.isdigit())
+        self.assertIn(b"CHOPINFER_TEST_MARK=1", WAIT.process_environment(child.pid))
+
+    def test_a_process_reaped_during_a_read_is_gone(self):
+        # Reaping a process after its /proc files were opened fails the stat
+        # read with ESRCH, not ENOENT, and leaves its environment empty.
+        child = subprocess.Popen(["sleep", "60"])
+        with open(f"/proc/{child.pid}/stat") as stat, open(f"/proc/{child.pid}/environ", "rb") as environ:
+            child.kill()
+            child.wait()
+            with self.assertRaises(ProcessLookupError):
+                stat.read()
+            self.assertEqual(environ.read(), b"")
+        reaped = ProcessLookupError(3, "No such process")
+        with patch.object(WAIT.Path, "read_text", side_effect=reaped):
+            self.assertIsNone(WAIT.process_state(child.pid))
+        with patch.object(WAIT.Path, "read_bytes", side_effect=reaped):
+            self.assertIsNone(WAIT.process_environment(child.pid))
+        with patch.object(WAIT.Path, "read_bytes", return_value=b""):
+            self.assertIsNone(WAIT.process_environment(child.pid))
+        self.assertIsNone(WAIT.process_state(child.pid))
+        self.assertIsNone(WAIT.process_environment(child.pid))
+
+
 if __name__ == "__main__":
     unittest.main()

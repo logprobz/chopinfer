@@ -148,11 +148,7 @@ except ProcessLookupError:
     raise SystemExit(0)
 
 def state():
-    try:
-        suffix = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-        return suffix[0], suffix[19]
-    except FileNotFoundError:
-        return None
+    return helper.process_state(pid)
 
 try:
     current = state()
@@ -160,9 +156,8 @@ try:
         released(pid, pidfd)
         path.unlink()
         raise SystemExit(0)
-    try:
-        environment = pathlib.Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
-    except FileNotFoundError:
+    environment = helper.process_environment(pid)
+    if environment is None:
         released(pid, pidfd)
         path.unlink()
         raise SystemExit(0)

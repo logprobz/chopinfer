@@ -322,6 +322,40 @@ fn mxfp4_admission_keeps_the_scale_253_and_254_overflow_exclusions() {
 }
 
 #[test]
+fn exact_scale_grid_admission_matches_each_decoded_operand_at_every_exponent() {
+    for format in [
+        WeightFormat::Mxfp4,
+        WeightFormat::Mxfp8,
+        WeightFormat::Fp8Block32x32,
+    ] {
+        let four_bits = format == WeightFormat::Mxfp4;
+        for code in 0..if four_bits { 16 } else { 256 } {
+            for scale in 0..=255_u8 {
+                let code = code as u8;
+                let codes = vec![
+                    if four_bits { code | (code << 4) } else { code };
+                    if four_bits { 16 } else { 32 }
+                ];
+                let scales = [scale];
+                let view = MatrixView {
+                    format,
+                    ..source(&codes, &scales, 1, 32)
+                };
+                let expected = view
+                    .bf16_operand(0, 0, DecodeOrder::ExactScaledOperand)
+                    .is_ok();
+                assert_eq!(
+                    view.validate_bf16_operands(DecodeOrder::ExactScaledOperand)
+                        .is_ok(),
+                    expected,
+                    "{format:?} code={code} scale={scale}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn native_fold_payloads_are_admitted_before_whole_or_streamed_production() {
     use kernel_core::contract::SwigluColumns;
     use kernel_core::precision::WeightLayout;

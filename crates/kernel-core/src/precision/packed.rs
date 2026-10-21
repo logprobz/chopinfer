@@ -439,6 +439,22 @@ impl<'a> MatrixView<'a> {
         let Some(local) = self.local else {
             return Ok(());
         };
+        // In this exponent range every finite code is exactly representable
+        // in BF16. Inspect stored exponents without expanding a scale grid
+        // into floats and a per-group risk bitmap. Boundary exponents still
+        // take the actual-code checks below, including valid zero groups.
+        if order == DecodeOrder::ExactScaledOperand && local.dtype == DType::Ue8M0 {
+            let ordinary = match self.format {
+                WeightFormat::Mxfp4 => local.bytes.iter().all(|&scale| scale <= 252),
+                WeightFormat::Mxfp8 | WeightFormat::Fp8Block32x32 => {
+                    local.bytes.iter().all(|&scale| (3..=246).contains(&scale))
+                }
+                _ => false,
+            };
+            if ordinary {
+                return Ok(());
+            }
+        }
         let global = self
             .global
             .map(|g| g.value(0))

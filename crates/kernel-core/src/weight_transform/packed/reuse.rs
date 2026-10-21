@@ -55,7 +55,7 @@ impl PackedOperand {
             global: None,
         };
         let view = view.validated().map_err(precision)?;
-        if self.decode_order.scales_before_bf16_mma() {
+        if self.decode_order.has_bf16_weight_operand() {
             view.validate_bf16_operands(self.decode_order)
                 .map_err(precision)?;
         }

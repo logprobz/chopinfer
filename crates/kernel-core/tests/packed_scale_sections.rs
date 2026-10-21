@@ -524,3 +524,127 @@ fn omitted_sections_do_not_omit_payload_or_slice_admission() {
         }
     }
 }
+
+#[test]
+fn exact_bf16_admission_checks_whole_reused_and_streamed_mxfp4() {
+    for (code, scale, admitted) in [
+        (0x00, 254, true),
+        (0x33, 254, true),
+        (0x44, 254, false),
+        (0x55, 253, true),
+        (0x66, 253, false),
+        (0x77, 252, true),
+    ] {
+        for section in [PackedSection::Codes, PackedSection::LocalScales] {
+            for layout in ["row-major", "row-major-groups"] {
+                let (mut operand, mut record, mut codes, mut scales) =
+                    record(DecodeOrder::ExactScaledOperand);
+                operand.section = section;
+                operand.plan.layout.id = layout.into();
+                codes.fill(code);
+                scales.fill(scale);
+                record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+                let expected = reference(&operand, &codes, &scales);
+                let whole = operand.execute_sections(&record, &[&codes, &scales]);
+                assert_eq!(
+                    whole.is_ok(),
+                    admitted,
+                    "{section:?} {layout} {code} {scale}"
+                );
+                if admitted {
+                    assert_eq!(whole.unwrap(), expected);
+                }
+                let needed = operand.execute_needed_sections_reusing(
+                    &record,
+                    &[&codes, &scales],
+                    std::array::from_fn(|_| vec![0xa5; 8192]),
+                    [false; 3],
+                );
+                assert_eq!(needed.is_ok(), admitted);
+                let prepared = record
+                    .clone()
+                    .prepare(operand.output_bytes(&record).unwrap())
+                    .unwrap();
+                let mut out = vec![0xa5; prepared.byte_length() as usize];
+                let produced = prepared.produce(
+                    0..prepared.byte_length(),
+                    &mut out,
+                    &mut |index, at, out| {
+                        let source = [&codes, &scales][index];
+                        out.copy_from_slice(&source[at as usize..at as usize + out.len()]);
+                        Ok(())
+                    },
+                    &mut vec![],
+                );
+                assert_eq!(produced.is_ok(), admitted);
+                if admitted {
+                    assert_eq!(out, expected[section.index()]);
+                } else {
+                    assert!(out.iter().all(|b| *b == 0xa5));
+                }
+
+                // Two projections force the general bank materializer.
+                operand.plan.projections = 2;
+                let mut second = operand.matrices[0].clone();
+                second.projection = 1;
+                operand.matrices.push(second);
+                record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+                assert_eq!(
+                    operand
+                        .execute_sections(&record, &[&codes, &scales])
+                        .is_ok(),
+                    admitted
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_late_exact_bf16_refusal_leaves_the_entire_requested_span_unchanged() {
+    let (mut operand, mut record, mut codes, mut scales) = record(DecodeOrder::ExactScaledOperand);
+    operand.section = PackedSection::Codes;
+    // The first kept run is valid. The second has an overflowing code at a
+    // column outside the selected K slice, which still requires admission.
+    codes.fill(0);
+    scales.fill(127);
+    codes[8 * 128] = 0x77;
+    scales[8 * 8] = 254;
+    record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+    let prepared = record
+        .clone()
+        .prepare(operand.output_bytes(&record).unwrap())
+        .unwrap();
+    for range in [0..prepared.byte_length(), 1..prepared.byte_length() - 1] {
+        let mut out = vec![0xa5; (range.end - range.start) as usize];
+        let result = prepared.produce(
+            range,
+            &mut out,
+            &mut |index, at, out| {
+                let source = [&codes, &scales][index];
+                out.copy_from_slice(&source[at as usize..at as usize + out.len()]);
+                Ok(())
+            },
+            &mut vec![],
+        );
+        assert!(result.is_err());
+        assert!(out.iter().all(|b| *b == 0xa5));
+    }
+}
+
+#[test]
+fn independent_mxfp4_scales_cannot_hide_an_incompatible_exact_order() {
+    let (operand, record, codes, scales) = record(DecodeOrder::ExactLocalThenGlobal);
+    assert_eq!(operand.independent_scale_source(&record), None);
+    assert!(
+        operand
+            .independent_scales(&record, &scales, vec![])
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        operand
+            .execute_sections(&record, &[&codes, &scales])
+            .is_err()
+    );
+}

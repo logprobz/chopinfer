@@ -83,12 +83,28 @@ pub struct PackedMatrixSource {
 pub struct PackedOperand {
     pub plan: PackingPlan,
     pub section: PackedSection,
-    /// Checked before packing when scales apply before a BF16 MMA.
+    /// Checked before packing for every declared BF16 weight operand.
     pub decode_order: DecodeOrder,
     pub matrices: Vec<PackedMatrixSource>,
 }
 
 impl PackedOperand {
+    fn bf16_operand_error(&self, error: crate::precision::PrecisionError) -> WeightTransformError {
+        // Preserve the fold contract's refusal when admission happens on
+        // the source before its packed view is constructed.
+        if self.plan.format == WeightFormat::Mxfp8
+            && matches!(
+                self.plan.layout.id.as_str(),
+                "row-major" | "row-major-groups"
+            )
+            && self.decode_order == DecodeOrder::ExactScaledOperand
+        {
+            WeightTransformError(crate::mxfp8_gemm::OPERAND_REFUSAL.to_string())
+        } else {
+            precision(error)
+        }
+    }
+
     fn admit_fold_payload(
         &self,
         view: crate::precision::packed::MatrixView<'_>,
@@ -321,10 +337,10 @@ impl PackedOperand {
                 global,
             };
             let validated = view.validated().map_err(precision)?;
-            if self.decode_order.scales_before_bf16_mma() {
+            if self.decode_order.has_bf16_weight_operand() {
                 validated
                     .validate_bf16_operands(self.decode_order)
-                    .map_err(precision)?;
+                    .map_err(|error| self.bf16_operand_error(error))?;
             }
             let slice = MatrixSlice {
                 rows: matrix
@@ -725,10 +741,10 @@ impl PackedOperand {
                 }),
             };
             let validated = view.validated().map_err(precision)?;
-            if self.decode_order.scales_before_bf16_mma() {
+            if self.decode_order.has_bf16_weight_operand() {
                 validated
                     .validate_bf16_operands(self.decode_order)
-                    .map_err(precision)?;
+                    .map_err(|error| self.bf16_operand_error(error))?;
             }
             let packed = validated
                 .repack(&MatrixSlice {

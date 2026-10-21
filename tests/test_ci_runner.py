@@ -395,6 +395,21 @@ class ScorerDependencies(unittest.TestCase):
             steps = {step.name: step for step in self.planned(pathlib.Path(directory))}
             self.assertIn("profile-copy", steps["portable"].after)
 
+    def test_no_step_counts_for_more_than_half_the_budget(self):
+        """With as many test threads as the budget, the workspace tests start beside the long
+        independent steps instead of waiting until no other step runs."""
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            for jobs, threads, tests in ((32, 32, 16), (48, 16, 16), (8, 8, 4), (1, 16, 1)):
+                with self.subTest(jobs=jobs, threads=threads):
+                    steps = {step.name: step for step in cpu.order(*cpu.steps(work / "target", work, jobs,
+                                                                              threads, exhaustive=True))}
+                    self.assertEqual(steps["portable"].weight, tests)
+                    self.assertEqual(steps["exhaustive-comparisons"].weight, tests)
+                    self.assertLessEqual(max(step.weight for step in steps.values()), max(jobs // 2, 1))
+                    self.assertEqual(steps["portable"].env["CHOPINFER_CI_TEST_THREADS"], str(threads))
+                    self.assertIn(f"--test-threads {threads}", " ".join(steps["exhaustive-comparisons"].argv))
+
 
 class ReferencePrerequisites(unittest.TestCase):
     def python(self, script):

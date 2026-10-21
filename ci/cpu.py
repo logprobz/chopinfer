@@ -87,6 +87,10 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
     smoke = work / "external-sdk"
     # A step's weight is about the cores it keeps busy on average; its own
     # limits allow bursts above that. The Rust tests run test_threads at once.
+    # No step counts for more than half the budget: a step weighed at the
+    # whole budget starts only once no other step runs, so the workspace
+    # tests at --test-threads equal to --jobs waited for every long
+    # independent step (docs/contributing.md#checks).
     # Qualification runs this many modules at once, and the geometry lanes
     # share the whole budget for their Cargo and nvcc jobs, whose builds are
     # short bursts between single-threaded checks.
@@ -95,7 +99,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
 
     def step(name, argv, after=(), weight=1, skips=None, **variables):
         return runner.Step(name, argv, env={**env, **variables} if variables else None,
-                           cwd=str(ROOT), weight=weight, after=after, skips=skips)
+                           cwd=str(ROOT), weight=min(weight, max(jobs // 2, 1)), after=after, skips=skips)
 
     # The reference runner's tests need torch and tapdiff's need numpy, from
     # CHOPINFER_REFRUN_PYTHON (the runner's venv): its check runs first and

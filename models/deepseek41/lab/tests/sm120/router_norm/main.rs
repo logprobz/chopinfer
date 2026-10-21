@@ -11,6 +11,7 @@
 mod family;
 
 mod emulate;
+mod narrow;
 mod wide;
 
 use kernel_core::backend::{Launch, View};

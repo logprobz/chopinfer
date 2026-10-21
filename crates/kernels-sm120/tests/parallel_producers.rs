@@ -26,6 +26,7 @@ fn norm() -> rmsnorm_quantize_cached::Entry {
         )
         .unwrap(),
         prefix: "norm_cached".into(),
+        early_release: false,
     }
 }
 fn hc() -> round_chain_partials::Entry {

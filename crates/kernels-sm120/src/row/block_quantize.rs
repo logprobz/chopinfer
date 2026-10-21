@@ -25,6 +25,10 @@ pub struct Entry {
     pub cached_groups: bool,
     /// Prefill-only warp count, zero for the existing implementations.
     pub prefill_warps: u32,
+    /// Decode parallel or cached groups that signal dependents as soon as
+    /// their own producer wait returns, instead of after the row's stores.
+    /// Values and the row-status protocol are unchanged.
+    pub early_release: bool,
 }
 
 impl Entry {
@@ -40,6 +44,7 @@ impl Entry {
             parallel_groups: false,
             cached_groups: false,
             prefill_warps: 0,
+            early_release: false,
         };
         entry.validate()?;
         Ok(entry)
@@ -57,6 +62,14 @@ impl Entry {
     pub fn cached(mut self) -> Result<Self, Refusal> {
         self.parallel_groups = true;
         self.cached_groups = true;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Signal dependents once this entry's producer wait returns, so a
+    /// dependent loads its immutable operands while the rows quantize.
+    pub fn early_release(mut self) -> Result<Self, Refusal> {
+        self.early_release = true;
         self.validate()?;
         Ok(self)
     }
@@ -105,6 +118,11 @@ impl Entry {
                 || self.query.output != QuantizeOutput::Codes)
         {
             return Err(Refusal("parallel groups require ceil E4M3 code output"));
+        }
+        if self.early_release && (!self.parallel_groups || self.prefill_warps != 0) {
+            return Err(Refusal(
+                "early dependent release needs the parallel decode mapping",
+            ));
         }
         if self.capacity == 0 || self.capacity > crate::backend::MAX_CAPACITY {
             return Err(Refusal("block quantization capacity exceeds SM120 bounds"));
@@ -218,10 +236,12 @@ impl Entry {
         } else {
             (query.width, "")
         };
-        let prefill = if self.prefill_warps == 0 {
-            String::new()
-        } else {
+        let prefill = if self.prefill_warps != 0 {
             format!(",{}", self.prefill_warps)
+        } else if self.early_release {
+            ",true".into()
+        } else {
+            String::new()
         };
         EntrySpec::new(
             self.symbol.clone(),
@@ -421,6 +441,30 @@ mod cached_tests {
             format!("q{width}"),
         )
         .unwrap()
+    }
+    #[test]
+    fn early_release_changes_only_the_template_flag() {
+        for base in [
+            entry(8192, DType::Bf16).cached().unwrap(),
+            entry(2048, DType::F32).parallel().unwrap(),
+        ] {
+            let early = base.clone().early_release().unwrap();
+            assert_eq!(early.plan(8).unwrap(), base.plan(8).unwrap());
+            let (a, b) = (base.spec(), early.spec());
+            assert_eq!(
+                (a.symbol, a.params, a.max_threads),
+                (b.symbol, b.params, b.max_threads)
+            );
+            assert_eq!(a.body.replacen("u>(", "u,true>(", 1), b.body);
+        }
+        assert!(entry(2048, DType::F32).early_release().is_err());
+        assert!(
+            entry(512, DType::Bf16)
+                .prefill(8)
+                .unwrap()
+                .early_release()
+                .is_err()
+        );
     }
     #[test]
     fn cached_groups_keep_the_parallel_mapping_and_abi() {

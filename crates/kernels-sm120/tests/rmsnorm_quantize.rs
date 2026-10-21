@@ -241,6 +241,7 @@ fn cached_norm_selects_only_qualified_buckets_and_retains_alias_refusals() {
     let cached = kernels_sm120::row::rmsnorm_quantize_cached::Entry {
         reference: entry.clone(),
         prefix: "norm_cache".into(),
+        early_release: false,
     };
     let baseline = Sm120::new()
         .with_rmsnorm_quantize(entry.clone())
@@ -320,6 +321,7 @@ fn cached_f32_norm_keeps_the_bf16_spec_and_selects_only_qualified_buckets() {
     let cached = |input| kernels_sm120::row::rmsnorm_quantize_cached::Entry {
         reference: Entry::new(query(input), 32, "norm_reference").unwrap(),
         prefix: "norm_cache".into(),
+        early_release: false,
     };
     let bf16 = cached(DType::Bf16).cubin_spec("bf16").unwrap();
     assert_eq!(
@@ -390,6 +392,7 @@ fn cached_f32_norm_compiles_without_spills_or_stack() {
             kernels_sm120::row::rmsnorm_quantize_cached::Entry {
                 reference: Entry::new(q, 32, "norm_reference").unwrap(),
                 prefix: format!("norm_cache_{width}"),
+                early_release: false,
             }
             .cubin_spec(&format!("norm_cached_f32_{width}"))
             .unwrap(),

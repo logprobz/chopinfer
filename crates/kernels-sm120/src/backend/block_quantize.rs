@@ -288,6 +288,14 @@ mod tests {
                 }),
             ),
             (
+                "early_release",
+                Class::Launch,
+                Box::new(|e| {
+                    e.parallel_groups = true;
+                    e.early_release = true;
+                }),
+            ),
+            (
                 "query",
                 Class::Selects,
                 Box::new(|e| e.query.input = DType::Bf16),
@@ -308,7 +316,8 @@ mod tests {
                 symbol,
                 parallel_groups,
                 cached_groups,
-                prefill_warps
+                prefill_warps,
+                early_release
             }),
             fields,
             key,

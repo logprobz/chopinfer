@@ -10,6 +10,10 @@ use kernel_core::contract::{DType, LaunchPlan, Refusal};
 pub struct Entry {
     pub reference: rmsnorm_quantize::Entry,
     pub prefix: String,
+    /// F32 rows only: signal dependents once the producer wait returns, so
+    /// a dependent loads its immutable operands during the norm. Values and
+    /// the status protocol are unchanged.
+    pub early_release: bool,
 }
 impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -25,6 +29,11 @@ impl Entry {
         if !admitted {
             return Err(Refusal(
                 "cached norm needs BF16 rows in complete 256-column tiles or F32 rows of at most 2048 columns",
+            ));
+        }
+        if self.early_release && n.input != DType::F32 {
+            return Err(Refusal(
+                "early dependent release is limited to F32 cached norms",
             ));
         }
         Ok(())
@@ -78,6 +87,7 @@ impl Entry {
             .zip([8, 16, 32])
             .map(|(symbol, warps)| {
                 let threads = warps * 32;
+                let early = if self.early_release { ",true" } else { "" };
                 EntrySpec::new(
                     symbol,
                     self.reference.spec().params,
@@ -85,7 +95,7 @@ impl Entry {
                         "using namespace chop::row::rmsnorm_quantize_cached_f32;
                 if (blockDim.x!={threads} || gridDim.x!=1 || widened) asm volatile(\"trap;\");
                 __shared__ __align__(16) unsigned char arena[sizeof(Arena<{width},{warps}>)];
-                run<{width},{warps},{floor:#x}u>(static_cast<const float*>(input),weight,static_cast<float*>(normed),codes,scales,live_rows,status,status_row_offset,__uint_as_float(eps_bits),arena);"
+                run<{width},{warps},{floor:#x}u{early}>(static_cast<const float*>(input),weight,static_cast<float*>(normed),codes,scales,live_rows,status,status_row_offset,__uint_as_float(eps_bits),arena);"
                     ),
                     threads,
                     1,

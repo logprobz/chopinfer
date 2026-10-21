@@ -92,7 +92,9 @@ __device__ __forceinline__ uint32_t row_status(uint32_t flags, uint32_t* shared,
   __syncthreads();
   return shared[0];
 }
-template<int Width, int Format, bool F32Input, bool Fake, uint32_t FloorBits>
+// EarlyRelease: see rmsnorm_quantize_cached_f32.cuh.
+template<int Width, int Format, bool F32Input, bool Fake, uint32_t FloorBits,
+         bool EarlyRelease = false>
 __device__ void run(const void* input, void* output, uint8_t* scales,
                     const uint32_t* live_rows, uint32_t* status, uint64_t status_row_offset, uint32_t launch_width = 0) {
   static_assert(Width > 0 && Format == 0 && !Fake);
@@ -100,8 +102,12 @@ __device__ void run(const void* input, void* output, uint8_t* scales,
   __shared__ uint32_t shared_flags[Warps];
   constexpr uint32_t Group = Format == 1 ? 16 : 32;
   ptx::griddep_wait();
+  if constexpr (EarlyRelease) ptx::griddep_launch_dependents();
   const uint32_t row = blockIdx.x;
-  if (row >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  if (row >= *live_rows) {
+    if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
+    return;
+  }
   const uint32_t width = Width ? Width : launch_width;
   const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
   uint32_t flags = 0;
@@ -130,7 +136,7 @@ __device__ void run(const void* input, void* output, uint8_t* scales,
       } else reinterpret_cast<uint8_t*>(output)[at/2] = uint8_t(value.codes);
     }
   }
-  ptx::griddep_launch_dependents();
+  if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
 }
 } // namespace chop::row::block_quantize_parallel
 

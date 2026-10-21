@@ -14,7 +14,9 @@
 namespace chop::row::block_quantize_cached {
 using namespace block_quantize;
 
-template<int Width, int Format, bool F32Input, bool Fake, uint32_t FloorBits>
+// EarlyRelease: see rmsnorm_quantize_cached_f32.cuh.
+template<int Width, int Format, bool F32Input, bool Fake, uint32_t FloorBits,
+         bool EarlyRelease = false>
 __device__ void run(const void* input, void* output, uint8_t* scales, const uint32_t* live_rows,
                     uint32_t* status, uint64_t status_row_offset) {
   static_assert(Width > 0 && Width % 32 == 0 && Width <= 8192 && Format == 0 && !Fake);
@@ -24,8 +26,12 @@ __device__ void run(const void* input, void* output, uint8_t* scales, const uint
   constexpr uint32_t PerWarp = (Groups + Warps - 1) / Warps;
   __shared__ uint32_t shared_flags[Warps];
   ptx::griddep_wait();
+  if constexpr (EarlyRelease) ptx::griddep_launch_dependents();
   const uint32_t row = blockIdx.x;
-  if (row >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  if (row >= *live_rows) {
+    if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
+    return;
+  }
   const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
   constexpr uint32_t Bytes = F32Input ? 4 : 2;
   #pragma unroll
@@ -66,6 +72,6 @@ __device__ void run(const void* input, void* output, uint8_t* scales, const uint
       }
     }
   }
-  ptx::griddep_launch_dependents();
+  if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
 }
 } // namespace chop::row::block_quantize_cached

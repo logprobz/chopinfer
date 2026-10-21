@@ -2,7 +2,7 @@
 use super::{mxfp8_fold, mxfp8_fold_ticket};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::{
-    backend::{Launch, View},
+    backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
     contract::{Argument as A, ArgumentList, DType, LaunchPlan, Refusal},
     mxfp8_gemm::Mxfp8FoldGemmBuffers,
 };
@@ -28,6 +28,27 @@ impl Entry {
             ));
         }
         Ok(())
+    }
+    pub fn prepare(&self, need: Need) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
+        self.validate()?;
+        let legacy = crate::backend::Sm120::new()
+            .with_mxfp8_fold(self.base.clone())
+            .mxfp8_fold_gemm(&self.base.query, need)?;
+        let mut info = legacy.info().clone();
+        info.implementation = format!("sm120.mxfp8-fold.local-rows.v1:{self:?}");
+        info.workspace = self.workspace();
+        info.symbols = self
+            .specs()
+            .into_iter()
+            .take(2)
+            .map(|s| (s.symbol, 0))
+            .collect();
+        need.check(&info)?;
+        Ok(Box::new(Op {
+            entry: self.clone(),
+            info,
+            capacity: need.capacity,
+        }))
     }
     pub fn symbol(&self) -> String {
         format!("{}_local32_n{}_v1", self.base.symbol, self.tile_n)
@@ -82,6 +103,7 @@ impl Entry {
             .status_row_offset
             .checked_add(u64::from(rows))
             .and_then(|n| n.checked_mul(4))
+            .filter(|&n| n <= kernel_core::precision::MAX_TENSOR_BYTES)
             .ok_or(Refusal("local fold status extent overflows"))?;
         b.status.covers(status)?;
         work.covers(self.workspace())?;
@@ -192,6 +214,28 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     })
 }
 
+struct Op {
+    entry: Entry,
+    info: OpInfo,
+    capacity: u32,
+}
+impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
+    fn info(&self) -> &OpInfo {
+        &self.info
+    }
+    fn launches(
+        &self,
+        b: &Mxfp8FoldGemmBuffers<View>,
+        work: View,
+        counts: Counts,
+    ) -> Result<Vec<Launch>, Refusal> {
+        if counts.rows > self.capacity {
+            return Err(Refusal("local fold rows exceed prepared capacity"));
+        }
+        self.entry.launches(b, work, counts.rows)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +273,21 @@ mod tests {
                 };
                 let calls = e.launches(&b, v(8, 256), rows).unwrap();
                 assert_eq!(calls.len(), 2);
+                let op = e.prepare(Need::rows(32)).unwrap();
+                assert_eq!(op.info().workspace, 256);
+                assert_eq!(
+                    op.launches(&b, v(8, 256), Counts::rows(rows)).unwrap(),
+                    calls
+                );
+                assert!(e.prepare(Need::rows(33)).is_err());
+                if rows == 32 {
+                    assert!(
+                        e.prepare(Need::rows(8))
+                            .unwrap()
+                            .launches(&b, v(8, 256), Counts::rows(rows))
+                            .is_err()
+                    );
+                }
                 assert_eq!(calls[1].plan.grid, [8192 / tile_n, 1, 1]);
                 assert_eq!(calls[1].arguments.0[11], A::U32(0));
                 assert!(e.launches(&b, v(5, 256), rows).is_err());

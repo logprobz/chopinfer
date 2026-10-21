@@ -238,3 +238,39 @@ fn explicit_dma_keeps_the_existing_transport_controls() {
         );
     }
 }
+
+#[test]
+fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
+    use crate::ops::with_partial_setting;
+    let defaults = resolved(None);
+    let launches = |journal: &[String], symbol: &str| {
+        journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(&format!(" {symbol} ")))
+            .count()
+    };
+    for dspark in [false, true] {
+        // The unset partial setting is the served BF16 prefill default.
+        let (unset, explicit, off) = with_partial_setting(None, || {
+            (
+                capture_with(None, true, &defaults, 8192, dspark),
+                capture_with(Some("1"), true, &defaults, 8192, dspark),
+                capture_with(Some("0"), true, &defaults, 8192, dspark),
+            )
+        });
+        assert_eq!(unset, explicit, "dspark={dspark}");
+        assert_eq!(launches(&unset, BF16_SUM), 73 * 4);
+        assert_eq!(launches(&unset, BF16_ROUND), 73 * 6);
+        assert_eq!(launches(&unset, SUM), 0);
+        assert_eq!(
+            unset
+                .iter()
+                .filter(|line| line.starts_with("peer-copy "))
+                .count(),
+            73 * 24
+        );
+        assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+        assert!(!off.iter().any(|line| line.starts_with("peer-copy ")));
+        assert!(launches(&off, BF16_SUM) == 0 && launches(&off, BF16_ROUND) == 0);
+    }
+}

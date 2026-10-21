@@ -715,6 +715,7 @@ impl EngineGenerationBackend {
         let (geometry, output_rows, rows, columns) = match part.kind {
             FrontendMediaPartKindV1::Image => {
                 let recipe = declared_image_recipe_v1(&modality.recipe)?;
+                check_image_format_v1(&source, modality)?;
                 if modality.layout.is_some() {
                     check_image_span_v1(&source, modality, recipe, limits)?;
                 }
@@ -855,6 +856,7 @@ impl EngineGenerationBackend {
                 &source.bytes,
             ));
         let recipe = declared_image_recipe_v1(&modality.recipe)?;
+        check_image_format_v1(&source, modality)?;
         if modality.layout.is_some() {
             check_image_span_v1(&source, modality, recipe, limits)?;
         }
@@ -3604,6 +3606,31 @@ fn decode_image_v1(
         .map_err(|error| AdmissionError::Rejected(error.to_string()))
 }
 
+/// Refuses an image whose signature names a format the modality does not
+/// declare. The transport checks a data URL's declared type; this covers a
+/// mislabeled data URL and file or remote sources, which have none.
+fn check_image_format_v1(
+    source: &runtime_media::MediaSource,
+    modality: &runtime_frontend::FrontendMediaModalityV1,
+) -> Result<(), AdmissionError> {
+    let accepted = modality.image_formats();
+    match runtime_media::ImageFormat::sniff(&source.bytes) {
+        Some(format) if !accepted.contains(&format.name()) => {
+            let accepted = accepted
+                .iter()
+                .filter_map(|name| runtime_media::ImageFormat::from_name(name))
+                .map(runtime_media::ImageFormat::mime)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(AdmissionError::Rejected(format!(
+                "{} images are not accepted by this model, which accepts {accepted}",
+                format.mime()
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The tag of images fit into a zero-padded canvas within a token budget
 /// (`runtime_media::recipe::padded_token_budget_grid`).
 pub const TOKEN_BUDGET_TAG_V1: &str = "image.zero-padded-token-budget.v1";
@@ -5770,6 +5797,46 @@ mod tests {
             let error = validate_multimodal_recipes_v1(&media).unwrap_err();
             assert!(error.contains(message), "{error}");
         }
+    }
+
+    #[test]
+    fn images_outside_the_declared_formats_are_refused_by_signature() {
+        let modality = |formats: Option<&[&str]>| -> runtime_frontend::FrontendMediaModalityV1 {
+            let mut value = serde_json::json!({
+                "kind": "image", "part_types": ["image_url"], "maximum_items": 1,
+                "maximum_bytes": 1 << 20, "maximum_tokens": 1024, "encoder": 0,
+                "recipe": {"tag": CENTERED_PAD_TAG_V1, "parameters": {}},
+                "render": {"pad": "<image>"}
+            });
+            if let Some(formats) = formats {
+                value["formats"] = serde_json::json!(formats);
+            }
+            serde_json::from_value(value).unwrap()
+        };
+        // Every source claims PNG; only its signature counts.
+        let source = |bytes: &[u8]| runtime_media::MediaSource {
+            mime: "image/png".to_owned(),
+            bytes: bytes.to_vec(),
+        };
+        let png = source(&solid_png(1, 1, [0; 3]));
+        let gif = source(b"GIF89a\x01\0\x01\0");
+        let webp = source(b"RIFF\x04\0\0\0WEBPVP8 ");
+        let refusal = |image, modality| match check_image_format_v1(image, modality) {
+            Err(AdmissionError::Rejected(message)) => message,
+            other => panic!("{other:?}"),
+        };
+        let default = modality(None);
+        assert!(check_image_format_v1(&png, &default).is_ok());
+        assert_eq!(
+            refusal(&gif, &default),
+            "image/gif images are not accepted by this model, which accepts image/png, image/jpeg"
+        );
+        let declared = modality(Some(&["png", "gif"]));
+        assert!(check_image_format_v1(&gif, &declared).is_ok());
+        assert_eq!(
+            refusal(&webp, &declared),
+            "image/webp images are not accepted by this model, which accepts image/png, image/gif"
+        );
     }
 
     #[test]

@@ -459,6 +459,39 @@ fn a_cached_source_labelled_another_image_type_hits_its_signature_entry() {
     );
 }
 
+/// An image whose signature names a format the modality does not declare
+/// is refused by name, whatever type its data URL claims.
+#[test]
+fn an_undeclared_image_format_is_refused_whatever_its_label() {
+    let backend = backend(
+        &MODALITIES[1],
+        &std::env::temp_dir(),
+        Arc::new(MediaMemoryV1::new(u64::MAX)),
+        1 << 30,
+    );
+    // A 1 x 1 GIF.
+    let gif =
+        b"GIF89a\x01\0\x01\0\x80\0\0\xff\xff\xff\0\0\0,\0\0\0\0\x01\0\x01\0\0\x02\x02D\x01\0;";
+    let prompt = PreparedPrompt::MediaChat {
+        segments: vec![
+            PromptSegmentV1::Text("look".to_owned()),
+            PromptSegmentV1::Media(0),
+        ],
+        media: vec![FrontendMediaPartV1 {
+            kind: FrontendMediaPartKindV1::Image,
+            part_type: "image_url".to_owned(),
+            source: format!("data:image/png;base64,{}", base64(gif)),
+            format: None,
+        }],
+    };
+    assert!(matches!(
+        backend.prepare_prompt(prompt),
+        Err(AdmissionError::Rejected(message)) if message
+            == "image 1 of 1: image/gif images are not accepted by this model, which accepts \
+                image/png, image/jpeg"
+    ));
+}
+
 /// A request whose inline images all hit needs no preparation memory, so it
 /// does not wait for an allowance the pool cannot give now.
 #[test]

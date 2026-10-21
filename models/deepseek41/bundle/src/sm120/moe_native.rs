@@ -9,8 +9,10 @@
 //! gate/up tiles' epilogue (`native_grouped::Ceil`) with a fixup launch,
 //! bit for bit the serving quantizer's codes, scales and status
 //! (models/deepseek41/lab/native_ceil.md); larger steps keep the separate
-//! quantizer and run gate/up through the wider r2w6s3 tile, which gives
-//! the same bits. Decode, verify and the drafter's bank are unchanged.
+//! quantizer, run gate/up through the wider r2w6s3 tile and down through
+//! the 64-row r1w4s2 tile at two CTAs per SM, both with the lean inner
+//! loop (native_tune.md); every tile and loop gives the same bits. Decode,
+//! verify and the drafter's bank are unchanged.
 use super::moe_native_entries as entries;
 use kernel_core::backend::{Counts, Launch, OpInfo, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
@@ -27,6 +29,7 @@ pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL";
 pub const CUBIN: &str = entries::CUBIN;
 pub const CEIL_CUBIN: &str = entries::CEIL_CUBIN;
 pub const WIDE_CUBIN: &str = entries::WIDE_CUBIN;
+pub const LEAN_CUBIN: &str = entries::LEAN_CUBIN;
 /// The intermediate quantizer the gate/up op keeps after its tiles.
 const QUANTIZER: &str = "_moe_ceil_";
 /// The largest step whose gate/up runs the fused ceil. Its paired lab
@@ -118,13 +121,19 @@ pub fn wrap(
             "native prefill needs grouped tiles and the ceil quantizer",
         ));
     }
-    // Gate/up's fused steps keep the tile the fused ceil was qualified on.
+    // Gate/up's fused steps keep the tile the fused ceil was qualified on;
+    // unfused down steps run the two-CTA tile.
     let fused_tile = entries::GATE_UP_TILE;
-    let queue = if gate_up {
-        native::workspace_bytes(&shape, &tile).max(native::workspace_bytes(&shape, &fused_tile))
+    let unfused_tile = if gate_up {
+        tile
     } else {
-        native::workspace_bytes(&shape, &tile)
+        entries::PAIRED_DOWN_TILE
     };
+    let queue = [tile, fused_tile, unfused_tile]
+        .iter()
+        .map(|t| native::workspace_bytes(&shape, t))
+        .max()
+        .unwrap();
     let mut info = base.info().clone();
     info.implementation.push_str("+native_mxf8f6f4_prefill_v1");
     // The queue takes the workspace's first bytes. A base that carves
@@ -147,19 +156,36 @@ pub fn wrap(
             info.bytes.push((name, bytes));
         }
     }
-    let shared = native::shared_bytes(&shape, &tile);
-    // Pack and tiles, then gate/up's fused tiles and fixup for the steps
-    // that take them; gate/up keeps its quantizer for the larger steps.
-    let mut replaced = vec![
-        (
-            native::symbol(&shape, &tile, native::Stage::Pack, Variant::Serving),
-            0,
+    // Gate/up: the wide pack and lean tiles, then the fused steps' pack,
+    // tiles and fixup; it keeps its quantizer for the unfused steps. Down:
+    // the served pack and tiles, then the unfused steps' two-CTA pack and
+    // lean tiles.
+    let lean = (
+        native::tune_symbol(
+            &shape,
+            &unfused_tile,
+            entries::UNFUSED_LOOP,
+            Variant::Serving,
         ),
-        (
+        native::shared_bytes(&shape, &unfused_tile),
+    );
+    let mut replaced = vec![(
+        native::symbol(&shape, &tile, native::Stage::Pack, Variant::Serving),
+        0,
+    )];
+    if gate_up {
+        replaced.push(lean.clone());
+    } else {
+        replaced.push((
             native::symbol(&shape, &tile, native::Stage::Compute, Variant::Serving),
-            shared,
-        ),
-    ];
+            native::shared_bytes(&shape, &tile),
+        ));
+        replaced.push((
+            native::symbol(&shape, &unfused_tile, native::Stage::Pack, Variant::Serving),
+            0,
+        ));
+        replaced.push(lean.clone());
+    }
     if gate_up {
         let ceil = entries::ceil();
         replaced.push((
@@ -178,6 +204,7 @@ pub fn wrap(
         shape,
         tile,
         fused_tile,
+        unfused_tile,
         info,
         capacity: usage.capacity,
     }))
@@ -188,6 +215,8 @@ struct Prepared {
     shape: Shape,
     tile: Tile,
     fused_tile: Tile,
+    /// The tile of steps above [`FUSED_CEIL_ROWS`], run with the lean loop.
+    unfused_tile: Tile,
     info: OpInfo,
     capacity: u32,
 }
@@ -278,7 +307,8 @@ impl PreparedOp<GatedMlpBuffers<View>> for Prepared {
         if workspace.handle == 0 || operands.contains(&workspace.handle) {
             return Err(Refusal("native prefill queue aliases an operand"));
         }
-        let fused = self.shape.gate_up && counts.rows <= FUSED_CEIL_ROWS;
+        let small = counts.rows <= FUSED_CEIL_ROWS;
+        let fused = self.shape.gate_up && small;
         let mut launches = if fused {
             let outputs = fused_outputs(&quantizer, b)?;
             entries::ceil().launches(
@@ -288,12 +318,21 @@ impl PreparedOp<GatedMlpBuffers<View>> for Prepared {
                 &buffers,
                 outputs,
             )?
-        } else {
+        } else if small {
             native::launches(
                 &self.shape,
                 &self.tile,
                 counts.rows,
                 &buffers,
+                Variant::Serving,
+            )?
+        } else {
+            native::tune_launches(
+                &self.shape,
+                &self.unfused_tile,
+                counts.rows,
+                &buffers,
+                entries::UNFUSED_LOOP,
                 Variant::Serving,
             )?
         };
@@ -363,6 +402,7 @@ mod tests {
     use kernel_core::moe_experts::GatedMlpScratch;
     use kernel_core::precision::buffers::{ProjectionRouting, QuantizedWeights};
     use kernels_sm120::backend::Sm120;
+    use kernels_sm120::moe::native_grouped::Tune;
     use model_deepseek41_contract::moe;
 
     #[test]
@@ -515,11 +555,12 @@ mod tests {
                     .collect::<Vec<_>>();
                 let gate_up = kind == GatedMlpProjection::GateUp;
                 assert_eq!(quantizer.len(), usize::from(gate_up));
-                // Down: pack, tiles. Gate/up: the wide pack and tiles, the
-                // fused steps' pack, tiles and fixup, then the quantizer of
-                // the larger steps.
+                // Down: the served pack and tiles, then the unfused steps'
+                // two-CTA pack and lean tiles. Gate/up: the wide pack and
+                // lean tiles, the fused steps' pack, tiles and fixup, then
+                // the quantizer of the unfused steps.
                 let symbols = &op.info().symbols;
-                assert_eq!(symbols.len(), 2 + 4 * usize::from(gate_up));
+                assert_eq!(symbols.len(), 4 + 2 * usize::from(gate_up));
                 let shape = entries::shape(kind);
                 let tile = if gate_up {
                     entries::WIDE_GATE_UP_TILE
@@ -527,19 +568,44 @@ mod tests {
                     entries::DOWN_TILE
                 };
                 assert_eq!(entries::tile(kind), tile);
-                assert_eq!(
-                    symbols[..2],
-                    [
-                        (
-                            native::symbol(&shape, &tile, native::Stage::Pack, Variant::Serving),
-                            0
-                        ),
-                        (
-                            native::symbol(&shape, &tile, native::Stage::Compute, Variant::Serving),
-                            native::shared_bytes(&shape, &tile)
-                        ),
-                    ]
-                );
+                let pack = |t: &Tile| {
+                    (
+                        native::symbol(&shape, t, native::Stage::Pack, Variant::Serving),
+                        0,
+                    )
+                };
+                let lean = |t: &Tile| {
+                    (
+                        native::tune_symbol(&shape, t, Tune::Lean, Variant::Serving),
+                        native::shared_bytes(&shape, t),
+                    )
+                };
+                if gate_up {
+                    assert_eq!(symbols[..2], [pack(&tile), lean(&tile)]);
+                } else {
+                    let paired = entries::PAIRED_DOWN_TILE;
+                    assert_eq!(
+                        symbols[..],
+                        [
+                            pack(&tile),
+                            (
+                                native::symbol(
+                                    &shape,
+                                    &tile,
+                                    native::Stage::Compute,
+                                    Variant::Serving
+                                ),
+                                native::shared_bytes(&shape, &tile)
+                            ),
+                            pack(&paired),
+                            lean(&paired),
+                        ]
+                    );
+                    assert_eq!(
+                        native::grid(&shape, &paired),
+                        2 * native::grid(&shape, &tile)
+                    );
+                }
                 if gate_up {
                     let fused = entries::GATE_UP_TILE;
                     let ceil = entries::ceil();
@@ -587,8 +653,14 @@ mod tests {
                         .all(|l| op.info().symbols.iter().any(|(s, _)| s == &l.symbol))
                 );
                 let fused = gate_up && rows <= FUSED_CEIL_ROWS;
-                // The launches' pack and tiles: the fused ones, or the wide.
-                let first = if fused { 2 } else { 0 };
+                // The launches' pack and tiles: gate/up's fused ones or the
+                // wide lean ones; down's served ones up to the fused steps'
+                // rows, the two-CTA lean ones above.
+                let first = if fused || (!gate_up && rows > FUSED_CEIL_ROWS) {
+                    2
+                } else {
+                    0
+                };
                 assert_eq!(launches[0].symbol, op.info().symbols[first].0);
                 assert_eq!(launches[1].symbol, op.info().symbols[first + 1].0);
                 if fused {

@@ -44,17 +44,18 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
 // step at Decode-1 (AR C1) and 0.59 at Verify-4 (DSpark C1 K3, against the
 // unfused router), 20 of 20 layers each, no sample above the served range.
 // Verify-6/8 and the drafter bank are unmeasured.
-// Served at Decode-8 and Decode-32 the pair lost (TP4 AR, 2026-10-21, GPU-0
-// exclusive time over 20 full-concurrency decode cycles): 0.35 ms per step at
-// C8 and 1.0 ms at C32, because the routed kernels after the finish and the
-// reduce-scatter slowed by more than the finish saved. Those rows and
-// Verify-32 keep the round 9 finish and join; r2 binds only at Decode-1 and
-// Verify-4.
+// Served at Decode-8 and Decode-32 with a programmatic gate the pair lost
+// (TP4 AR, 2026-10-21, GPU-0 exclusive time over 20 full-concurrency decode
+// cycles): 0.35 ms per step at C8 and 1.0 ms at C32, because the routed gate
+// started beside the shared down kernel in most layers. With the gate after
+// the join launched as a full dependency (shared_overlap::Lanes::issue) no
+// gate starts early, and the pair gains 0.25 ms per C8 cycle and 0.29 ms per
+// C32 cycle (the finish saves 0.34 ms at C32; same profile, 2026-10-21).
 pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     qualified(set, phase, rows)
         && matches!(
             (set.count, set.top_k, phase, rows),
-            (384, 6, ExecutionPhase::Decode, 1) | (384, 6, ExecutionPhase::Verify, 4)
+            (384, 6, ExecutionPhase::Decode, 1 | 8 | 32) | (384, 6, ExecutionPhase::Verify, 4 | 32)
         )
 }
 
@@ -205,7 +206,7 @@ mod tests {
                     let r2 = set.count == 384
                         && matches!(
                             (phase, rows),
-                            (ExecutionPhase::Decode, 1) | (ExecutionPhase::Verify, 4)
+                            (ExecutionPhase::Decode, 1 | 8 | 32) | (ExecutionPhase::Verify, 4 | 32)
                         );
                     let finishes = op
                         .info

@@ -98,7 +98,14 @@ fn span_groups(origin: usize, length: usize, group: usize) -> Option<usize> {
         .checked_add(1)
 }
 
-impl MatrixView<'_> {
+impl<'a> MatrixView<'a> {
+    /// A validation capability tied to these immutable bytes and all view
+    /// coordinates. It cannot outlive or be applied to another input.
+    pub(crate) fn validated(self) -> Result<ValidatedMatrixView<'a>, PrecisionError> {
+        self.validate()?;
+        Ok(ValidatedMatrixView(self))
+    }
+
     fn error(self, field: &'static str, reason: impl Into<String>) -> PrecisionError {
         PrecisionError::new(self.tensor, field, reason)
     }
@@ -394,6 +401,14 @@ impl MatrixView<'_> {
     /// scales check actual codes so a valid zero group is not rejected by a
     /// worst-case nonzero code. No expanded weight buffer is allocated.
     pub fn validate_bf16_operands(self, order: DecodeOrder) -> Result<(), PrecisionError> {
+        self.validate_bf16_operands_impl(order, true)
+    }
+
+    fn validate_bf16_operands_impl(
+        self,
+        order: DecodeOrder,
+        check_payload: bool,
+    ) -> Result<(), PrecisionError> {
         if self.format == WeightFormat::F32 {
             return Err(self.error("operand", "raw F32 weights cannot be narrowed to BF16"));
         }
@@ -403,7 +418,9 @@ impl MatrixView<'_> {
                 "this arithmetic has no scaled BF16 weight operand before MMA",
             ));
         }
-        self.validate()?;
+        if check_payload {
+            self.validate()?;
+        }
         if (matches!(
             order,
             DecodeOrder::ExactLocalThenGlobal | DecodeOrder::ExactWeightToBf16
@@ -560,10 +577,18 @@ impl MatrixView<'_> {
     pub fn repack_reusing(
         self,
         slice: &MatrixSlice,
+        codes: Vec<u8>,
+        scales: Vec<u8>,
+    ) -> Result<PackedMatrix, PrecisionError> {
+        self.validated()?.repack_reusing(slice, codes, scales)
+    }
+
+    fn repack_validated(
+        self,
+        slice: &MatrixSlice,
         mut codes: Vec<u8>,
         mut scales: Vec<u8>,
     ) -> Result<PackedMatrix, PrecisionError> {
-        self.validate()?;
         if slice.rows.is_empty()
             || slice.rows.iter().any(|&r| r >= self.rows)
             || slice.k == 0
@@ -695,6 +720,30 @@ impl MatrixView<'_> {
             scales,
             global: self.global.map(|g| g.bytes.to_vec()),
         })
+    }
+}
+
+/// Constructible only by checking a complete borrowed input. Keeping this
+/// private to the crate prevents callers from claiming validation by digest.
+#[derive(Clone, Copy)]
+pub(crate) struct ValidatedMatrixView<'a>(MatrixView<'a>);
+
+impl ValidatedMatrixView<'_> {
+    pub(crate) fn validate_bf16_operands(self, order: DecodeOrder) -> Result<(), PrecisionError> {
+        self.0.validate_bf16_operands_impl(order, false)
+    }
+
+    pub(crate) fn repack(self, slice: &MatrixSlice) -> Result<PackedMatrix, PrecisionError> {
+        self.repack_reusing(slice, Vec::new(), Vec::new())
+    }
+
+    pub(crate) fn repack_reusing(
+        self,
+        slice: &MatrixSlice,
+        codes: Vec<u8>,
+        scales: Vec<u8>,
+    ) -> Result<PackedMatrix, PrecisionError> {
+        self.0.repack_validated(slice, codes, scales)
     }
 }
 

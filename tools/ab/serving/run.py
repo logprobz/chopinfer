@@ -28,7 +28,7 @@ import uuid
 from common import Refusal, need, read, loads, write, digest, regular, finite, keys, subset
 from evidence import (SMOKE, Comparator, phases_from, comparison_spec, acceptance, timing_summary, fixed_k_exposure,
                       SPECULATIVE_KINDS)
-from model import MODELS, facts, serves, serving
+from model import MODELS, check_options, facts, serves, serving
 from processes import Owned, Commands, TOKEN, capabilities
 
 HERE = Path(__file__).resolve().parent
@@ -518,6 +518,7 @@ class Runner:
         expected = {}
         for mapping in (self.c, self.c['installs'][arm['install']], variant):
             expected = merge(expected, mapping['expect'])
+        check_options(expected.pop('model_options', {}), live.get('model_options'))
         subset(expected, live)
         need(live['profile']['speculation'].get('drafter') == variant.get('drafter'), 'wrong served drafter')
         # Bind /health to the identity emitted by this owned launch, rather

@@ -33,6 +33,11 @@ pub enum AdmissionError {
         message: String,
         parameter: &'static str,
     },
+    /// The prompt takes `prompt_tokens` tokens, more than the caller's
+    /// ceiling: found before the costly part of its preparation.
+    PromptTooLong {
+        prompt_tokens: usize,
+    },
 }
 
 pub const NO_READY_LOCAL_REPLICAS_REASON: &str = "no local generation replica is ready";
@@ -514,6 +519,22 @@ pub trait GenerationBackend: Send + Sync + 'static {
         self.prepare_prompt(prompt)
     }
 
+    /// [`Self::prepare_prompt_cancellable`] for a prompt that may take at
+    /// most `maximum_prompt_tokens` tokens. A backend that can count a
+    /// prompt's tokens before the costly part of its preparation, such as
+    /// decoding its images, refuses a longer one with
+    /// [`AdmissionError::PromptTooLong`] first. The default prepares the
+    /// prompt and leaves the count to the caller.
+    fn prepare_prompt_within(
+        &self,
+        prompt: PreparedPrompt,
+        cancellation: &CancellationSignal,
+        maximum_prompt_tokens: Option<usize>,
+    ) -> Result<(PreparedPrompt, usize), AdmissionError> {
+        let _ = maximum_prompt_tokens;
+        self.prepare_prompt_cancellable(prompt, cancellation)
+    }
+
     /// Encodes text for the public tokenizer endpoint.
     fn tokenize(&self, text: &str, _add_special_tokens: bool) -> Result<Vec<u32>, AdmissionError> {
         match self.prepare_prompt(PreparedPrompt::Raw(text.to_owned()))?.0 {
@@ -678,8 +699,17 @@ impl<B: GenerationBackend + ?Sized> GenerationBackend for LocalReplicaPool<B> {
         prompt: PreparedPrompt,
         cancellation: &CancellationSignal,
     ) -> Result<(PreparedPrompt, usize), AdmissionError> {
+        self.prepare_prompt_within(prompt, cancellation, None)
+    }
+
+    fn prepare_prompt_within(
+        &self,
+        prompt: PreparedPrompt,
+        cancellation: &CancellationSignal,
+        maximum_prompt_tokens: Option<usize>,
+    ) -> Result<(PreparedPrompt, usize), AdmissionError> {
         let (prepared, count) =
-            self.replicas[0].prepare_prompt_cancellable(prompt, cancellation)?;
+            self.replicas[0].prepare_prompt_within(prompt, cancellation, maximum_prompt_tokens)?;
         for replica in &self.replicas[1..] {
             if replica.prompt_token_count(&prepared)? != count {
                 return Err(AdmissionError::InvalidRequest);

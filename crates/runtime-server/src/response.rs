@@ -996,16 +996,38 @@ fn prepare_prompt(
         &mut parsed.prepared.prompt,
         crate::PreparedPrompt::TokenIds(Vec::new()),
     );
-    let prompt_tokens = match state
-        .backend
-        .prepare_prompt_cancellable(prompt, &parsed.prepared.cancellation)
-    {
-        Ok((prepared, prompt_tokens)) => {
-            parsed.prepared.prompt = prepared;
-            prompt_tokens
+    // Without truncation or a profile's own prompt checks, the context
+    // bounds the prompt, so a backend may refuse a longer one before it
+    // decodes the prompt's media.
+    let ceiling = match state.acceptance_profile {
+        crate::RequestAcceptanceProfile::General
+        | crate::RequestAcceptanceProfile::ProfiledStreaming { .. }
+            if truncation_limit.is_none() =>
+        {
+            Some(if parsed.use_remaining_context {
+                state.maximum_context_tokens.saturating_sub(1)
+            } else {
+                state
+                    .maximum_context_tokens
+                    .saturating_sub(parsed.prepared.max_new_tokens)
+            })
         }
-        Err(error) => return Err(admission_error(error)),
+        _ => None,
     };
+    let prompt_tokens =
+        match state
+            .backend
+            .prepare_prompt_within(prompt, &parsed.prepared.cancellation, ceiling)
+        {
+            Ok((prepared, prompt_tokens)) => {
+                parsed.prepared.prompt = prepared;
+                prompt_tokens
+            }
+            Err(AdmissionError::PromptTooLong { prompt_tokens }) => {
+                return Err(prompt_too_long(state, parsed, prompt_tokens));
+            }
+            Err(error) => return Err(admission_error(error)),
+        };
     let prompt_tokens =
         parsed
             .truncation
@@ -1069,6 +1091,27 @@ fn prepare_prompt(
         return Err(ApiError::context_length(error.to_string()));
     }
     Ok(prompt_tokens)
+}
+
+/// The refusal of a prompt of `prompt_tokens` tokens that the backend found
+/// over the context before preparing it, worded as the checks after
+/// preparation word it.
+fn prompt_too_long(
+    state: &ServerState,
+    parsed: &request::ParsedRequest,
+    prompt_tokens: usize,
+) -> ApiError {
+    if parsed.use_remaining_context {
+        return ApiError::context_length("prompt leaves no room for generated tokens");
+    }
+    match crate::context::validate_total_tokens(
+        prompt_tokens,
+        parsed.prepared.max_new_tokens,
+        state.maximum_context_tokens,
+    ) {
+        Err(error) => ApiError::context_length(error.to_string()),
+        Ok(_) => admission_error(AdmissionError::PromptTooLong { prompt_tokens }),
+    }
 }
 
 type ChoiceStream = (
@@ -1277,6 +1320,9 @@ pub(crate) fn admission_error(error: AdmissionError) -> ApiError {
         AdmissionError::InvalidParameter { message, parameter } => {
             ApiError::invalid(message, Some(parameter))
         }
+        AdmissionError::PromptTooLong { prompt_tokens } => ApiError::context_length(format!(
+            "the prompt takes {prompt_tokens} tokens, more than the context allows"
+        )),
     }
 }
 

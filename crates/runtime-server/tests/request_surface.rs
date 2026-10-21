@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use axum::serve::Listener;
 use runtime_server::{
-    AdmissionError, BackendReadiness, BoxFuture, ChatStateV1, EventSender, FinishReason,
-    FrontendChatRequestV1, FrontendContentPartV1, FrontendErrorV1, FrontendModelV1,
+    AdmissionError, BackendReadiness, BoxFuture, CancellationSignal, ChatStateV1, EventSender,
+    FinishReason, FrontendChatRequestV1, FrontendContentPartV1, FrontendErrorV1, FrontendModelV1,
     FrontendRenderedChatV1, FrontendRoleV1, FrontendToolChoiceV1, GeneratedTokenLogprob,
     GenerationBackend, GenerationEvent, PreparedPrompt, PreparedRequest, PromptSegmentV1,
     PromptTokenLogprob, RequestSurfaceV1, SINGLE_TURN_PLAIN_CHAT_SURFACE_NAME_V1,
@@ -259,6 +259,9 @@ struct CountingBackendV1 {
     replay: Mutex<Option<Vec<GenerationEvent>>>,
     prompt_count: AtomicUsize,
     tokenize_prompts: AtomicBool,
+    /// While set, a prompt over the caller's ceiling is refused before it
+    /// is prepared, as a backend that counts media from headers does.
+    refuse_early: AtomicBool,
 }
 
 impl CountingBackendV1 {
@@ -273,6 +276,7 @@ impl CountingBackendV1 {
             replay: Mutex::new(None),
             prompt_count: AtomicUsize::new(PROMPT_TOKENS),
             tokenize_prompts: AtomicBool::new(false),
+            refuse_early: AtomicBool::new(false),
         })
     }
 
@@ -315,6 +319,21 @@ impl GenerationBackend for CountingBackendV1 {
     fn prompt_token_count(&self, _prompt: &PreparedPrompt) -> Result<usize, AdmissionError> {
         self.tokenizations.fetch_add(1, Ordering::Relaxed);
         Ok(self.prompt_count.load(Ordering::Relaxed))
+    }
+
+    fn prepare_prompt_within(
+        &self,
+        prompt: PreparedPrompt,
+        cancellation: &CancellationSignal,
+        maximum_prompt_tokens: Option<usize>,
+    ) -> Result<(PreparedPrompt, usize), AdmissionError> {
+        let prompt_tokens = self.prompt_count.load(Ordering::Relaxed);
+        if self.refuse_early.load(Ordering::Relaxed)
+            && maximum_prompt_tokens.is_some_and(|ceiling| prompt_tokens > ceiling)
+        {
+            return Err(AdmissionError::PromptTooLong { prompt_tokens });
+        }
+        self.prepare_prompt_cancellable(prompt, cancellation)
     }
 
     fn prepare_prompt(
@@ -1862,6 +1881,46 @@ async fn default_lengths_models_and_unknown_extensions_follow_the_reference() {
     assert_eq!(response.status, 400);
     assert_eq!(response.json()["error"]["code"], 400);
     assert_eq!(response.json()["error"]["param"], "use_beam_search");
+}
+
+/// A backend that refuses an over-context prompt before preparing it is
+/// answered exactly as the context check after preparation answers.
+#[tokio::test]
+async fn an_early_context_refusal_reads_as_the_late_one() {
+    for (endpoint, body, prompt_tokens) in [
+        (
+            "/v1/chat/completions",
+            r#"{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}"#,
+            MAXIMUM_TOTAL_TOKENS - 8,
+        ),
+        (
+            "/v1/chat/completions",
+            r#"{"messages":[{"role":"user","content":"hi"}]}"#,
+            MAXIMUM_TOTAL_TOKENS,
+        ),
+        (
+            "/v1/completions",
+            r#"{"prompt":"hello","max_tokens":16}"#,
+            MAXIMUM_TOTAL_TOKENS + 5,
+        ),
+    ] {
+        let mut answers = Vec::new();
+        for early in [false, true] {
+            let server = InProcessServerV1::full();
+            server
+                .backend
+                .prompt_count
+                .store(prompt_tokens, Ordering::Relaxed);
+            server.backend.refuse_early.store(early, Ordering::Relaxed);
+            let response = server.post(endpoint, body).await;
+            assert_eq!(response.status, 400, "{body}: {}", response.body);
+            assert_eq!(server.backend.submissions(), 0);
+            // Only the late check prepared the prompt.
+            assert_eq!(server.backend.tokenizations() == 0, early, "{body}");
+            answers.push(response.json()["error"].clone());
+        }
+        assert_eq!(answers[0], answers[1], "{body}");
+    }
 }
 
 #[tokio::test]

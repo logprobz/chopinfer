@@ -192,6 +192,38 @@ class Bf16Ordering(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'rounding overwrites rows still scattering'):
             peer_order.audit(self.path,1,'bf16')
 
+    def split(self, ranks=range(4)):
+        """Round each sent interval of call 0 on its own before its scatter."""
+        for rank in ranks:
+            self.change(f'DELETE FROM CUPTI_ACTIVITY_KIND_KERNEL WHERE shortName=6 AND deviceId={rank} AND start BETWEEN 980 AND 990')
+            for phase in range(3):
+                start=1000+phase*6-4
+                self.change(f'INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES ({start},{start+3},6,{rank},0)')
+
+    def test_split_rounds_each_precede_their_scatter(self):
+        self.split()
+        result=peer_order.audit(self.path,1,'bf16',split=True)
+        self.assertEqual(result['split_calls'],4)
+        self.assertEqual(result['rounds_checked'],73*6-6+12)
+        self.assertEqual(result['min_round_to_scatter_gap_ns'],1)
+        with self.assertRaisesRegex(RuntimeError,'wrong BF16 rounding counts'):
+            peer_order.audit(self.path,1,'bf16')
+        # Unsplit calls still pass, and the fixed form is the default.
+        other=Path(self.directory.name)/'plain.sqlite';fixture(other);bf16(other)
+        self.assertEqual(peer_order.audit(other,1,'bf16',split=True)['split_calls'],0)
+
+    def test_split_round_after_its_scatter_starts_is_rejected(self):
+        self.split()
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET end=1007 WHERE shortName=6 AND start=1002 AND deviceId=0')
+        with self.assertRaisesRegex(RuntimeError,'scatter reads unrounded rows'):
+            peer_order.audit(self.path,1,'bf16',split=True)
+
+    def test_split_missing_interval_round_is_rejected(self):
+        self.split()
+        self.change('DELETE FROM CUPTI_ACTIVITY_KIND_KERNEL WHERE shortName=6 AND deviceId=0 AND start=1008')
+        with self.assertRaisesRegex(RuntimeError,'scatter reads unrounded rows|wrong BF16 rounding counts'):
+            peer_order.audit(self.path,1,'bf16',split=True)
+
     def test_missing_rounds_are_rejected(self):
         self.change('DELETE FROM CUPTI_ACTIVITY_KIND_KERNEL WHERE shortName=6 AND deviceId=2 AND start=1085')
         with self.assertRaisesRegex(RuntimeError,'wrong BF16 rounding counts'):

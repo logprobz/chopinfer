@@ -21,8 +21,13 @@ def pieces(rank, ranks=4):
     return 1 if rank in (0, ranks - 1) else 2
 
 
-def audit(path, expected_chunks=4, payload='f32'):
+def audit(path, expected_chunks=4, payload='f32', split=False):
+    """With `split`, a BF16 call may instead round each of its three sent
+    intervals on its own, each before its own scatter reads it (a producer
+    run per interval); the call's rounds are then those between the
+    previous owner sum and its own."""
     require(payload in SUMS, 'unknown DMA payload')
+    require(not split or payload == 'bf16', 'split rounding needs the BF16 payload')
     def kernels(db, name):
         return db.execute('SELECT k.start,k.end,k.deviceId FROM CUPTI_ACTIVITY_KIND_KERNEL k '
                           'JOIN StringIds s ON s.id=k.shortName WHERE s.value=? ORDER BY k.start', (name,)).fetchall()
@@ -37,9 +42,11 @@ def audit(path, expected_chunks=4, payload='f32'):
     count = expected_chunks * len(ROWS)
     require(len(sums) == 4 * count and len(copies) == 4 * count * 6, 'wrong DMA trace counts')
     rounded = {rank: [k for k in rounds if k[2] == rank] for rank in range(4)}
-    if payload == 'bf16':
+    if payload == 'bf16' and not split:
         require(all(len(rounded[r]) == pieces(r) * count for r in range(4)), 'wrong BF16 rounding counts')
     rounding_gaps = []
+    split_calls = 0
+    assigned = {rank: 0 for rank in range(4)}
     require(all(c[2] == c[3] and c[3] != c[4] for c in copies), 'peer activity device is not its source')
     by_rank = {rank: [k for k in sums if k[2] == rank] for rank in range(4)}
     incoming = {rank: [c for c in copies if c[4] == rank] for rank in range(4)}
@@ -74,8 +81,19 @@ def audit(path, expected_chunks=4, payload='f32'):
             if payload == 'bf16':
                 # The rows a rank sends are rounded before its first scatter
                 # reads them, and after its previous scatters finished reading.
-                own = rounded[rank][pieces(rank) * index:pieces(rank) * (index + 1)]
-                gap = min(c[0] for c in tx[:3]) - max(k[1] for k in own)
+                if split:
+                    after_previous = by_rank[rank][index - 1][1] if index else float('-inf')
+                    own = [k for k in rounded[rank] if after_previous <= k[0] < kernel[0]]
+                    require(len(own) in (pieces(rank), 3), f'wrong BF16 rounding counts: rank={rank} index={index}')
+                    assigned[rank] += len(own)
+                else:
+                    own = rounded[rank][pieces(rank) * index:pieces(rank) * (index + 1)]
+                if split and len(own) == 3:
+                    # One rounding per sent interval, in scatter phase order.
+                    gap = min(tx[phase][0] - own[phase][1] for phase in range(3))
+                    split_calls += 1
+                else:
+                    gap = min(c[0] for c in tx[:3]) - max(k[1] for k in own)
                 require(gap >= 0, f'scatter reads unrounded rows: rank={rank} index={index} gap_ns={gap}')
                 if index:
                     previous = max(c[1] for c in outgoing[rank][6 * index - 6:6 * index - 3])
@@ -86,7 +104,8 @@ def audit(path, expected_chunks=4, payload='f32'):
         gap = min(outgoing[r][6 * index + p][0] for r in range(4) for p in [3, 4, 5]) - max(by_rank[r][index][1] for r in range(4))
         require(gap >= 0, f'gather precedes global sum join: index={index} gap_ns={gap}')
         global_gather.append(gap)
-    return dict(payload=payload, sums_checked=len(sums), rounds_checked=len(rounds),
+    require(not split or all(assigned[r] == len(rounded[r]) for r in range(4)), 'BF16 rounding outside any call')
+    return dict(payload=payload, sums_checked=len(sums), rounds_checked=len(rounds), split_calls=split_calls,
                 min_round_to_scatter_gap_ns=min(rounding_gaps) if rounding_gaps else None,
                 peer_copies_checked=len(copies), chunks=expected_chunks, ranks=4,
                 ordering_failures=[], min_incoming_scatter_to_sum_gap_ns=min(r['scatter_to_sum_gap_ns'] for r in dependencies),

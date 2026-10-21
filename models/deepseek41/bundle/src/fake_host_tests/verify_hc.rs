@@ -13,18 +13,16 @@ use super::*;
 // The resident small gate replaces those 160 launches' symbol and grid_x
 // (1128 to 1504) with identical operands. Its module renumbers buffer, stream,
 // event and graph handles at every width; no other line changes.
-// The prefill matrix module changes resource IDs only in these verify
-// bodies. Full creation histories and typed handles are audited separately.
-// The prefill matrix modules change resource IDs only in these verify
-// The fused candidate publisher's create-time module and resolve (one
-// each per rank) renumber later handles; every line is otherwise equal.
-// The prefill arena and grouped catalog only renumber resources here.
-// Full lifetime audits retain every operation at these verify widths.
+// The prefill matrix modules, the fused candidate publisher's create-time
+// module and resolve, the prefill arena and the verify-4 grouped catalog
+// only renumber resources in these verify bodies; every normalized line is
+// otherwise equal. Full lifetime audits retain every operation at these
+// verify widths.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
-    (6, (8040, 0x714dce83a886b344)),
-    (8, (8992, 0xf012aa2d5d361f44)),
-    (16, (9964, 0x791d21ae043a107b)),
-    (32, (8384, 0xe644cb12b6152af0)),
+    (6, (8040, 0x219d4c447b88ac2d)),
+    (8, (8992, 0x6c9dfa4610cc44e5)),
+    (16, (9964, 0x65059dc0b5516a51)),
+    (32, (8384, 0xc46885e93fba40aa)),
 ];
 
 #[test]

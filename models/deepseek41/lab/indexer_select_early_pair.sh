@@ -56,7 +56,7 @@ l4_gpu_started=1
 power before
 for l4_shard in 0 1; do
  CHOPINFER_KERNEL_GPU="$l4_shard" CHOPINFER_L4_SHARD="$l4_shard" \
-  setsid timeout --signal=TERM --kill-after=5s 820s /usr/bin/bash "$l4_root/snapshot/worker.sh" "$l4_root" "$l4_out" "$l4_shard" &
+  setsid timeout --signal=TERM --kill-after=5s 360s /usr/bin/bash "$l4_root/snapshot/worker.sh" "$l4_root" "$l4_out" "$l4_shard" &
  l4_pids+=("$!")
 done
 l4_failed=0

@@ -179,12 +179,13 @@ def validate(path):
     assert GPU_TEST in (root/'snapshot/worker.sh').read_text()
     text=subprocess.check_output([binary,CPU_TEST,'--exact','--nocapture'],text=True,timeout=120)
     assert re.findall(r'test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored',text)==[('ok','1','0','0')]
-    assert stage['job_timeout_seconds']==880 and stage['worker_timeout_seconds']==820
+    assert stage['job_timeout_seconds']==420 and stage['worker_timeout_seconds']==360
     assert stage['cases']==94 and stage['memcheck_cases']==26
-    # The tile run's 59-second matrices carried four arms and eight timing
-    # pairs per timed case; this job runs two arms and two pairs. Budget
-    # the full matrix twice, 12 s per memcheck case and 180 s of setup.
-    budget=2*59+26*12+180
+    # The recorded tile run took 58 s per shard for its full matrix (four
+    # arms, eight timing pairs per timed case) and 18 s for 23 memcheck
+    # cases; this job runs two arms and two pairs. Twice both, plus 120 s of
+    # setup, fits the worker; the memcheck pass has 180 s of its own.
+    budget=2*58+2*18+120
     assert budget<stage['worker_timeout_seconds']
     return dict(cases=94,memcheck_cases=26,crafted_cases=3,patterns=3*PATTERNS,timing_pairs=44,
                 raw_samples=264,conservative_budget_seconds=budget,gpu_launched=False)

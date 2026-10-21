@@ -59,7 +59,7 @@ def main():
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()
     source=a.root/'source.tar'
     subprocess.run(['git','archive','--format=tar','--output',str(source),head],cwd=repo,check=True)
-    stage=dict(head=head,profiles=previous['profiles'],job_timeout_seconds=880,worker_timeout_seconds=820,
+    stage=dict(head=head,profiles=previous['profiles'],job_timeout_seconds=420,worker_timeout_seconds=360,
                source_sha256=digest(source),cases=94,memcheck_cases=26,timing_pairs=44,raw_samples=264,
                input_scope='Ten sealed prefill captures, 84 synthetic chunk and edge fixtures and crafted score planes on three of them',
                lab_lock_cubin_sha256=lock_sha(lab/'kernels.lock.d/position_select_early.lock'),
@@ -71,7 +71,7 @@ def main():
         path.chmod(path.stat().st_mode&~0o022)
         if path.is_file():stage['sha256'][str(path.relative_to(a.root))]=digest(path)
     (a.root/'stage.json').write_text(json.dumps(stage,indent=2)+'\n')
-    (a.root/'pair.job').write_text(f'# timeout 880\n# gpus 2\nexec /usr/bin/bash {snap.resolve()}/run-pair.sh "$@"\n')
+    (a.root/'pair.job').write_text(f'# timeout 420\n# gpus 2\nexec /usr/bin/bash {snap.resolve()}/run-pair.sh "$@"\n')
     static=[*sorted(p for p in snap.rglob('*') if p.is_file()),a.root/'stage.json',a.root/'pair.job',source]
     (a.root/'stage.sha256').write_text(''.join(f'{digest(path)}  {path.resolve()}\n' for path in static))
     (a.root/'pair.job.sha256').write_text(f'{digest(a.root/"pair.job")}  {a.root.resolve()}/pair.job\n')

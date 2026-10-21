@@ -39,6 +39,7 @@ mod dspark_entries;
 use bundle_deepseek41::sm120::confidence_parallel;
 use bundle_deepseek41::sm120::markov_tiled;
 mod dspark_argmax;
+mod dspark_catch_up_kv;
 mod dspark_heads;
 mod dspark_peer_embedding;
 mod dspark_ring_gather;

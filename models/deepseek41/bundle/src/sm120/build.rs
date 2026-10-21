@@ -172,6 +172,8 @@ mod own_entries;
 mod prefill_matrix;
 #[allow(dead_code, reason = "the bundle selects the qualified TMA row bucket")]
 mod prefill_tma_matrix;
+#[allow(dead_code, reason = "the bundle selects measured staged-scale rows")]
+mod prefill_tma_scales;
 #[allow(dead_code)]
 mod projection_reuse;
 #[path = "reduce.rs"]
@@ -442,6 +444,7 @@ pub fn selection(
             owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
+            owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
         }
         owners.push((f32_split::cubin_name(geometry), geometry.id));
         for features in f32_prefill::TILE_FEATURES {
@@ -565,6 +568,7 @@ pub fn selection(
     specs.extend(
         prefill_tma_matrix::cubins(geometries).expect("qualified prefill TMA matrix cubin"),
     );
+    specs.extend(prefill_tma_scales::cubins(geometries).expect("qualified staged-scale cubin"));
     specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(

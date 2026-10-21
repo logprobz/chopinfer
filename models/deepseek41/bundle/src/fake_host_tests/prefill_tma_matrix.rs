@@ -101,37 +101,40 @@ fn audit(before: &[String], after: &[String]) -> Result<usize, String> {
 }
 #[test]
 fn preserve_exact_operands_and_dependencies_for_one_tma_bucket() {
-    for (kv, drafter) in [
-        (KV_LAYOUTS[0], false),
-        (KV_LAYOUTS[1], false),
-        (KV_LAYOUTS[0], true),
-    ] {
-        for rows in [192, 2496, 8192] {
-            let before =
-                crate::sm120::prefill_tma_matrix::with_reference(|| run(rows, kv, drafter, true));
-            let after = run(rows, kv, drafter, false);
-            let count = audit(&before, &after).unwrap();
-            if rows != 8192 {
-                assert_eq!(count, 0);
-                continue;
+    crate::sm120::prefill_tma_scales::with_reference(|| {
+        for (kv, drafter) in [
+            (KV_LAYOUTS[0], false),
+            (KV_LAYOUTS[1], false),
+            (KV_LAYOUTS[0], true),
+        ] {
+            for rows in [192, 2496, 8192] {
+                let before = crate::sm120::prefill_tma_matrix::with_reference(|| {
+                    run(rows, kv, drafter, true)
+                });
+                let after = run(rows, kv, drafter, false);
+                let count = audit(&before, &after).unwrap();
+                if rows != 8192 {
+                    assert_eq!(count, 0);
+                    continue;
+                }
+                assert!(count >= 4);
+                let at = after
+                    .iter()
+                    .position(|l| {
+                        l.starts_with("launch ")
+                            && l.contains("_tma_matrix_")
+                            && !l.contains("_admit_v1")
+                    })
+                    .unwrap();
+                let mut bad = after.clone();
+                bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
+                assert!(audit(&before, &bad).is_err());
+                let mut missing = after.clone();
+                missing.remove(at - 1);
+                assert!(audit(&before, &missing).is_err());
             }
-            assert!(count >= 4);
-            let at = after
-                .iter()
-                .position(|l| {
-                    l.starts_with("launch ")
-                        && l.contains("_tma_matrix_")
-                        && !l.contains("_admit_v1")
-                })
-                .unwrap();
-            let mut bad = after.clone();
-            bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
-            assert!(audit(&before, &bad).is_err());
-            let mut missing = after.clone();
-            missing.remove(at - 1);
-            assert!(audit(&before, &missing).is_err());
         }
-    }
+    });
 }
 #[test]
 fn retain_the_qualified_module_only_for_flash_tp4() {

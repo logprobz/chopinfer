@@ -17,7 +17,8 @@ captured verify operands for all four families, and whole verify-row
 repetitions at 2496 and 8192 rows. Eager and graph execution check status,
 invalid and inactive rows, output guards and omitted-fold controls.
 The synthetic 64-row prefill timing used the wrong serving dispatch and
-is excluded. No below-128 prefill selection is enabled.
+is excluded. The separately qualified exact-row route through 64 rows is
+described in [prefill-short.md](prefill-short.md).
 
 Weighting paired event medians by the first chunk's selected calls gives
 14.6-15.3 ms saved per 8192-row chunk. This is an additive kernel estimate,
@@ -34,3 +35,16 @@ BF16 AR and native DSpark prefill. Corrupted operands and missing admission
 calls fail the audit. Lifecycle, media and verify pins change only through
 one added module, 108 resolves, nine shared-memory configurations and
 109 releases per TP4 rank. Allocations remain unchanged.
+
+
+On 2026-10-21, producer-staged scales passed paired bitwise checks against
+these served entries. Flash TP4 selects the staged-scale kernel for all
+four Q/O shapes at 4096 and 8192 rows. The 128-row, two-stage TMA tile keeps
+four k32 MMAs from zero per 128-K block and the ordered F32 fold. Its
+producer stages the original scale bytes with the matrix tiles.
+
+The 8192-row warm sum for twenty calls of each shape improves by 4.6-4.8 ms
+per chunk in the pair lab. This is an additive kernel estimate. Smaller
+Q/O rows regress and keep their previous choices. The unchanged cubin also
+contains an Engram candidate, which is excluded from default selection
+until real-operand and served token/logprob-bit checks both pass.

@@ -47,6 +47,7 @@ mod prefill_selected;
 mod prefill_skip;
 mod prefill_tma;
 mod prefill_tma_matrix;
+mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
 mod router_prefill;

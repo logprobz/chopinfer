@@ -24,6 +24,7 @@ mod fold_local_rows_serving;
 pub mod hc_completion;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;
+pub mod hc_finish_twin;
 pub mod hc_mixer_probe;
 #[allow(dead_code, reason = "the build compiles the measured prefill module")]
 mod hc_prefill;

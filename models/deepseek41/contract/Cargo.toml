@@ -195,3 +195,7 @@ path = "examples/sm120/build_router_zero_serving.rs"
 [[example]]
 name = "build_hc_completion"
 path = "examples/sm120/build_hc_completion.rs"
+
+[[example]]
+name = "build_hc_finish_twin"
+path = "examples/sm120/build_hc_finish_twin.rs"

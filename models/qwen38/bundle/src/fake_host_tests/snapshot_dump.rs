@@ -592,12 +592,12 @@ fn every_geometry_snapshot_covers_fp8_and_mtp_layouts() {
 /// The lifecycle with each kind of prepared precision component: FP8 legacy
 /// projections at both degrees (BF16 and FP8 KV, with and without the MTP
 /// layout), NVFP4 experts, and NVFP4 experts with MXFP8 dense and the NVFP4
-/// n-gram lookup and its hash, at decode buckets up to 256. The dumps' SHA-256
-/// digests were recorded from the lowering before the shared projection
-/// runtime and must not change. `CHOPINFER_QWEN_PRECISION_DUMP` names a
-/// directory to write the dumps to.
-#[test]
-fn precision_lifecycles_keep_their_recorded_bytes() {
+/// n-gram lookup and its hash, at decode buckets up to 256, as
+/// (label, NVFP4 experts, MXFP8 dense, case). The dumps' SHA-256 digests
+/// were recorded from the lowering before the shared projection runtime and
+/// must not change; one test runs each group of them.
+/// `CHOPINFER_QWEN_PRECISION_DUMP` names a directory to write the dumps to.
+fn precision_cases() -> Vec<(&'static str, bool, bool, Case)> {
     let mut cases = Vec::new();
     let case = |shape, mtp_layout, fp8, served| Case {
         shape,
@@ -622,11 +622,40 @@ fn precision_lifecycles_keep_their_recorded_bytes() {
         }
         cases.push((label, true, mx, case(Shape::TP4, false, true, 100)));
     }
+    cases
+}
+
+fn precision_name(label: &str, case: Case) -> String {
+    format!("precision-{label}-{}", case.name())
+}
+
+const PRECISION_DIGESTS: &str = include_str!("../../tests/fixtures/precision-lifecycles.sha256");
+
+/// The groups of precision cases, one test each.
+const PRECISION_GROUPS: [&str; 5] = ["fp8-tp2", "fp8-tp4-32", "fp8-tp4-100", "nvfp4", "mxfp8"];
+
+fn precision_group(label: &'static str, case: &Case) -> &'static str {
+    match (label, case.shape.ranks(), case.served) {
+        ("fp8", 2, _) => "fp8-tp2",
+        ("fp8", 4, 32) => "fp8-tp4-32",
+        ("fp8", 4, 100) => "fp8-tp4-100",
+        ("fp8", ..) => "fp8",
+        _ => label,
+    }
+}
+
+/// Runs the cases of `group` and checks their dumps' digests against their
+/// lines of the recorded digests, in order.
+fn precision_lifecycles(group: &str) {
     let directory = std::env::var_os("CHOPINFER_QWEN_PRECISION_DUMP").map(std::path::PathBuf::from);
+    let mut names = Vec::new();
     let mut digests = String::new();
-    for (label, nv, mx, case) in cases {
+    for (label, nv, mx, case) in precision_cases() {
+        if precision_group(label, &case) != group {
+            continue;
+        }
         let document = super::precision::document_for(case.shape, nv, mx, false);
-        let name = format!("precision-{label}-{}", case.name());
+        let name = precision_name(label, case);
         let (dump, failures) = lifecycle(case, Some(document), Some(&name));
         assert!(
             failures.is_empty(),
@@ -642,10 +671,71 @@ fn precision_lifecycles_keep_their_recorded_bytes() {
             kernel_build::digest(dump.as_bytes())
         )
         .unwrap();
+        names.push(format!("{name}.txt"));
     }
-    assert_eq!(
-        digests,
-        include_str!("../../tests/fixtures/precision-lifecycles.sha256"),
-        "precision lifecycle dumps changed"
-    );
+    assert!(!names.is_empty());
+    let recorded = PRECISION_DIGESTS
+        .lines()
+        .filter(|line| {
+            names
+                .iter()
+                .any(|name| line.split_once("  ").unwrap().1 == name)
+        })
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    assert_eq!(digests, recorded, "precision lifecycle dumps changed");
+}
+
+/// Every case is in one of the groups below and the recorded digests name
+/// every case once, in case order, so the groups together check the whole
+/// file.
+#[test]
+fn precision_digests_record_every_case_in_order() {
+    let cases = precision_cases();
+    for (label, _, _, case) in &cases {
+        assert!(
+            PRECISION_GROUPS.contains(&precision_group(label, case)),
+            "{label} {case:?}"
+        );
+    }
+    let names = cases
+        .into_iter()
+        .map(|(label, _, _, case)| format!("{}.txt", precision_name(label, case)))
+        .collect::<Vec<_>>();
+    let mut recorded = Vec::new();
+    for line in PRECISION_DIGESTS.lines() {
+        let (digest, name) = line.split_once("  ").unwrap();
+        assert!(
+            digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{line}"
+        );
+        recorded.push(name.to_owned());
+    }
+    assert!(PRECISION_DIGESTS.ends_with('\n'));
+    assert_eq!(recorded, names);
+}
+
+#[test]
+fn precision_lifecycles_keep_their_recorded_bytes_fp8_tp2() {
+    precision_lifecycles("fp8-tp2");
+}
+
+#[test]
+fn precision_lifecycles_keep_their_recorded_bytes_fp8_tp4_32() {
+    precision_lifecycles("fp8-tp4-32");
+}
+
+#[test]
+fn precision_lifecycles_keep_their_recorded_bytes_fp8_tp4_100() {
+    precision_lifecycles("fp8-tp4-100");
+}
+
+#[test]
+fn precision_lifecycles_keep_their_recorded_bytes_nvfp4() {
+    precision_lifecycles("nvfp4");
+}
+
+#[test]
+fn precision_lifecycles_keep_their_recorded_bytes_mxfp8() {
+    precision_lifecycles("mxfp8");
 }

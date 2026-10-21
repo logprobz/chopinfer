@@ -9,7 +9,8 @@
 //! gate/up tiles' epilogue (`native_grouped::Ceil`) with a fixup launch,
 //! bit for bit the serving quantizer's codes, scales and status
 //! (models/deepseek41/lab/native_ceil.md); larger steps keep the separate
-//! quantizer. Decode, verify and the drafter's bank are unchanged.
+//! quantizer and run gate/up through the wider r2w6s3 tile, which gives
+//! the same bits. Decode, verify and the drafter's bank are unchanged.
 use super::moe_native_entries as entries;
 use kernel_core::backend::{Counts, Launch, OpInfo, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
@@ -25,6 +26,7 @@ use model_deepseek41_contract::{
 pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL";
 pub const CUBIN: &str = entries::CUBIN;
 pub const CEIL_CUBIN: &str = entries::CEIL_CUBIN;
+pub const WIDE_CUBIN: &str = entries::WIDE_CUBIN;
 /// The intermediate quantizer the gate/up op keeps after its tiles.
 const QUANTIZER: &str = "_moe_ceil_";
 /// The largest step whose gate/up runs the fused ceil. Its paired lab
@@ -116,7 +118,13 @@ pub fn wrap(
             "native prefill needs grouped tiles and the ceil quantizer",
         ));
     }
-    let queue = native::workspace_bytes(&shape, &tile);
+    // Gate/up's fused steps keep the tile the fused ceil was qualified on.
+    let fused_tile = entries::GATE_UP_TILE;
+    let queue = if gate_up {
+        native::workspace_bytes(&shape, &tile).max(native::workspace_bytes(&shape, &fused_tile))
+    } else {
+        native::workspace_bytes(&shape, &tile)
+    };
     let mut info = base.info().clone();
     info.implementation.push_str("+native_mxf8f6f4_prefill_v1");
     // The queue takes the workspace's first bytes. A base that carves
@@ -154,7 +162,14 @@ pub fn wrap(
     ];
     if gate_up {
         let ceil = entries::ceil();
-        replaced.push((ceil.tiles_symbol(&shape, &tile), shared));
+        replaced.push((
+            native::symbol(&shape, &fused_tile, native::Stage::Pack, Variant::Serving),
+            0,
+        ));
+        replaced.push((
+            ceil.tiles_symbol(&shape, &fused_tile),
+            native::shared_bytes(&shape, &fused_tile),
+        ));
         replaced.push((ceil.fixup_symbol(&shape), 0));
     }
     info.symbols.splice(..split, replaced);
@@ -162,6 +177,7 @@ pub fn wrap(
         base,
         shape,
         tile,
+        fused_tile,
         info,
         capacity: usage.capacity,
     }))
@@ -171,6 +187,7 @@ struct Prepared {
     base: Box<dyn PreparedExperts>,
     shape: Shape,
     tile: Tile,
+    fused_tile: Tile,
     info: OpInfo,
     capacity: u32,
 }
@@ -264,7 +281,13 @@ impl PreparedOp<GatedMlpBuffers<View>> for Prepared {
         let fused = self.shape.gate_up && counts.rows <= FUSED_CEIL_ROWS;
         let mut launches = if fused {
             let outputs = fused_outputs(&quantizer, b)?;
-            entries::ceil().launches(&self.shape, &self.tile, counts.rows, &buffers, outputs)?
+            entries::ceil().launches(
+                &self.shape,
+                &self.fused_tile,
+                counts.rows,
+                &buffers,
+                outputs,
+            )?
         } else {
             native::launches(
                 &self.shape,
@@ -492,17 +515,55 @@ mod tests {
                     .collect::<Vec<_>>();
                 let gate_up = kind == GatedMlpProjection::GateUp;
                 assert_eq!(quantizer.len(), usize::from(gate_up));
-                // Down: pack, tiles. Gate/up: pack, tiles, fused tiles,
-                // fixup, then the quantizer of the larger steps.
+                // Down: pack, tiles. Gate/up: the wide pack and tiles, the
+                // fused steps' pack, tiles and fixup, then the quantizer of
+                // the larger steps.
                 let symbols = &op.info().symbols;
-                assert_eq!(symbols.len(), 2 + 3 * usize::from(gate_up));
+                assert_eq!(symbols.len(), 2 + 4 * usize::from(gate_up));
+                let shape = entries::shape(kind);
+                let tile = if gate_up {
+                    entries::WIDE_GATE_UP_TILE
+                } else {
+                    entries::DOWN_TILE
+                };
+                assert_eq!(entries::tile(kind), tile);
+                assert_eq!(
+                    symbols[..2],
+                    [
+                        (
+                            native::symbol(&shape, &tile, native::Stage::Pack, Variant::Serving),
+                            0
+                        ),
+                        (
+                            native::symbol(&shape, &tile, native::Stage::Compute, Variant::Serving),
+                            native::shared_bytes(&shape, &tile)
+                        ),
+                    ]
+                );
                 if gate_up {
-                    let shape = entries::shape(kind);
-                    let tile = entries::tile(kind);
+                    let fused = entries::GATE_UP_TILE;
                     let ceil = entries::ceil();
-                    assert_eq!(symbols[2], (ceil.tiles_symbol(&shape, &tile), symbols[1].1));
-                    assert_eq!(symbols[3], (ceil.fixup_symbol(&shape), 0));
-                    assert_eq!(symbols[4..], quantizer[..]);
+                    assert_ne!(fused, tile);
+                    assert_eq!(
+                        symbols[2..5],
+                        [
+                            (
+                                native::symbol(
+                                    &shape,
+                                    &fused,
+                                    native::Stage::Pack,
+                                    Variant::Serving
+                                ),
+                                0
+                            ),
+                            (
+                                ceil.tiles_symbol(&shape, &fused),
+                                native::shared_bytes(&shape, &fused)
+                            ),
+                            (ceil.fixup_symbol(&shape), 0),
+                        ]
+                    );
+                    assert_eq!(symbols[5..], quantizer[..]);
                 } else {
                     assert!(symbols.iter().all(|(s, _)| !s.contains(QUANTIZER)));
                 }
@@ -525,16 +586,18 @@ mod tests {
                         .iter()
                         .all(|l| op.info().symbols.iter().any(|(s, _)| s == &l.symbol))
                 );
-                assert_eq!(launches[0].symbol, op.info().symbols[0].0);
                 let fused = gate_up && rows <= FUSED_CEIL_ROWS;
+                // The launches' pack and tiles: the fused ones, or the wide.
+                let first = if fused { 2 } else { 0 };
+                assert_eq!(launches[0].symbol, op.info().symbols[first].0);
+                assert_eq!(launches[1].symbol, op.info().symbols[first + 1].0);
                 if fused {
                     // The fused tiles and the fixup write the quantizer's
                     // codes, scales and status.
                     use kernel_core::contract::Argument;
                     let q = &old.last().unwrap().arguments.0;
                     assert!(old.last().unwrap().symbol.contains(QUANTIZER));
-                    assert_eq!(launches[1].symbol, op.info().symbols[2].0);
-                    assert_eq!(launches[2].symbol, op.info().symbols[3].0);
+                    assert_eq!(launches[2].symbol, op.info().symbols[4].0);
                     let tiles = &launches[1].arguments.0;
                     assert_eq!(
                         tiles[tiles.len() - 3..],
@@ -555,14 +618,13 @@ mod tests {
                     assert!(op.launches(&offset, workspace, Counts::rows(rows)).is_err());
                 } else {
                     // The served tiles, then the base's quantizer unchanged.
-                    assert_eq!(launches[1].symbol, op.info().symbols[1].0);
                     if gate_up {
                         assert_eq!(launches[2], *old.last().unwrap());
                     }
                 }
                 assert_eq!(
                     launches[1].plan.dynamic_shared_bytes,
-                    op.info().symbols[1].1
+                    op.info().symbols[first + 1].1
                 );
                 assert!(
                     launches[..2]

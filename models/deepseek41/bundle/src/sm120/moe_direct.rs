@@ -177,12 +177,16 @@ fn prepare(
         // bitwise, memcheck clean. It saves 1.1 us per layer at backbone
         // Decode-1 and 1.8 us at Verify-4 (sample means; faster in every
         // timed layer). Same parameters, grid and PDL launch; the module is
-        // the qualified lab module's bytes. Other rows are unmeasured.
+        // the qualified lab module's bytes. Over round 10 serving at backbone
+        // Decode-8 (finish-backbone-r1) it saves 1.75 us per layer, faster in
+        // all 20 timed layers with no slow samples. At 32 rows (five CTAs per
+        // SM; 960 CTAs exceed one wave) it is within noise and the served
+        // finisher stays. Other rows are unmeasured.
         if stage == Some(Stage::GateFinish)
             && entry.experts() == 384
             && matches!(
                 (phase, rows),
-                (ExecutionPhase::Decode, 1) | (ExecutionPhase::Verify, 4)
+                (ExecutionPhase::Decode, 1 | 8) | (ExecutionPhase::Verify, 4)
             )
         {
             spec = bandwidth::finish_loads_entry(entry);
@@ -387,7 +391,8 @@ mod tests {
                                 set.count == 384
                                     && matches!(
                                         (phase, rows),
-                                        (ExecutionPhase::Decode, 1) | (ExecutionPhase::Verify, 4)
+                                        (ExecutionPhase::Decode, 1 | 8)
+                                            | (ExecutionPhase::Verify, 4)
                                     ),
                                 "{phase:?} rows={rows}"
                             );

@@ -289,6 +289,12 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         async_heads,
         finish_heads,
     ];
+    // The verify-4 head-group cache module is embedded beside them.
+    let (_, group_bytes, group_symbols) = embedded
+        .iter()
+        .find(|(name, _, _)| *name == "latent_cache_groups_deepseek41_sm120")
+        .unwrap();
+    assert!(!group_bytes.is_empty() && !group_symbols.is_empty());
     assert_eq!(
         embedded.len(),
         GEOMETRIES
@@ -297,6 +303,7 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
             .sum::<usize>()
             + scheduled.len()
             + added.len()
+            + 1
     );
     for spec in scheduled.into_iter().chain(added) {
         let (_, bytes, symbols) = embedded

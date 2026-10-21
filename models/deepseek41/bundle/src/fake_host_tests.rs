@@ -1114,6 +1114,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// resolve on each TP4 rank (four lines), audited against the journals
 /// before it: no other line changes. Its narrow form (no widened rows)
 /// renames the same four resolves again, nothing else.
+/// The two-CTA HC finish module adds six resolves and seven releases per
+/// rank; these fixtures launch no Verify-6 tail.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1296,7 +1298,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// modules change it exactly as they change the default-era TP4 lifecycle.
 /// router certificate and the router-in-norm module add one allocation, two
 /// resolves and four releases per rank there too, and no launch. The
-/// 64-expert router renames its resolve there too.
+/// 64-expert router renames its resolve there too. The two-CTA HC finish
+/// module adds six resolves and seven releases per rank.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

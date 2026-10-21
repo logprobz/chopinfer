@@ -47,6 +47,8 @@ mod hc_completion;
 mod hc_expand_mix;
 #[allow(dead_code, reason = "the bundle selects measured fused tails")]
 mod hc_finish_norm;
+#[allow(dead_code, reason = "the bundle selects the measured two-CTA tails")]
+mod hc_finish_twin;
 #[allow(dead_code)]
 mod hc_mixer_probe;
 #[allow(
@@ -399,6 +401,7 @@ pub fn selection(
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
             owners.push((hc_completion::CUBIN.into(), geometry.id));
+            owners.push((hc_finish_twin::CUBIN.into(), geometry.id));
             owners.push((hc_round_rows::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
@@ -557,6 +560,10 @@ pub fn selection(
         specs.push((
             hc_completion::FAMILY,
             hc_completion::cubin().expect("one-launch HC boundary cubin"),
+        ));
+        specs.push((
+            hc_finish_twin::FAMILY,
+            hc_finish_twin::cubin().expect("two-CTA HC finish cubin"),
         ));
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))

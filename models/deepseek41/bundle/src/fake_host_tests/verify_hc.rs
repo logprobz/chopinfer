@@ -55,6 +55,7 @@ use super::*;
 // and the r2v7 finish (160 groups, 320 fewer captured nodes); the routed
 // launches bind the same workspace spans 983552 bytes later (the fused
 // router's partials precede the route metadata); plus the Verify-6 renames.
+// Loading the two-CTA HC finish module shifts their resource ids only.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0xcb6961ea7e70084d)),
     (6, (8040, 0x5a1a7f44672a098d)),

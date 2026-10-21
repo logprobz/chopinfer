@@ -398,7 +398,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// per TP4 rank. These short-row lifecycles retain every other line exactly.
 /// The routed gate after each r2 shared-expert join launches without
 /// programmatic serialization: 160 TP4 Decode-1 gate launches change flags
-/// 1 to 0, nothing else.
+/// 1 to 0, nothing else. The two-CTA HC finish module adds six resolves and
+/// seven releases per rank and shifts ids only.
 /// At four ranks the lean native module adds three resolves and four
 /// releases per rank and no launch, five and six with the scanned loop's
 /// admission scans.

@@ -55,6 +55,7 @@ pub struct PinnedChunkTransfer<'a> {
     _destination: DeviceBuffer,
     stream: Stream,
     event: Option<Event>,
+    start_event: Option<Event>,
 }
 
 impl DeviceBuffer {
@@ -66,6 +67,29 @@ impl DeviceBuffer {
         offset: usize,
         bytes: usize,
         stream: &Stream,
+    ) -> Result<PinnedChunkTransfer<'a>, CudaError> {
+        self.upload_chunk(chunk, offset, bytes, stream, false)
+    }
+
+    /// Diagnostic variant with device timestamps around the copy. No fence
+    /// is added; elapsed time is available after normal completion polling.
+    pub fn upload_pinned_chunk_timed<'a>(
+        &self,
+        chunk: PinnedChunk<'a>,
+        offset: usize,
+        bytes: usize,
+        stream: &Stream,
+    ) -> Result<PinnedChunkTransfer<'a>, CudaError> {
+        self.upload_chunk(chunk, offset, bytes, stream, true)
+    }
+
+    fn upload_chunk<'a>(
+        &self,
+        chunk: PinnedChunk<'a>,
+        offset: usize,
+        bytes: usize,
+        stream: &Stream,
+        timed: bool,
     ) -> Result<PinnedChunkTransfer<'a>, CudaError> {
         self.require_live()?;
         stream.require_live()?;
@@ -81,6 +105,17 @@ impl DeviceBuffer {
             _destination: self.clone(),
             stream: stream.clone(),
             event: None,
+            start_event: None,
+        };
+        // Allocate both timed events before submission so their creation
+        // cannot become part of the measured device interval.
+        let end = if timed {
+            transfer.start_event = Some(stream.context().timed_event()?);
+            let end = stream.context().timed_event()?;
+            transfer.start_event.as_ref().unwrap().record(stream)?;
+            Some(end)
+        } else {
+            None
         };
         let chunk = transfer
             .chunk
@@ -91,7 +126,10 @@ impl DeviceBuffer {
             "cuMemcpyHtoDAsync",
             ffi::copy_pinned_bytes_to_device(pointer, &chunk.bytes[..bytes], stream.inner.handle),
         )?;
-        let event = stream.context().event()?;
+        let event = match end {
+            Some(event) => event,
+            None => stream.context().event()?,
+        };
         event.record(stream)?;
         transfer.event = Some(event);
         Ok(transfer)
@@ -99,6 +137,23 @@ impl DeviceBuffer {
 }
 
 impl<'a> PinnedChunkTransfer<'a> {
+    /// The interval between device timestamps, when requested. Call only
+    /// after `ready` succeeds; this never synchronizes the stream.
+    pub fn elapsed_seconds(&self) -> Result<Option<f64>, CudaError> {
+        self.start_event
+            .as_ref()
+            .map(|start| {
+                start
+                    .elapsed_ms(
+                        self.event
+                            .as_ref()
+                            .expect("a returned transfer has an event"),
+                    )
+                    .map(|ms| f64::from(ms) * 1e-3)
+            })
+            .transpose()
+    }
+
     /// Polls this copy's event without waiting for other ranks or later work.
     pub fn ready(&self) -> Result<bool, CudaError> {
         self.event
@@ -142,6 +197,67 @@ impl Drop for PinnedChunkTransfer<'_> {
 mod tests {
     use super::*;
     use crate::{Driver, fake_driver};
+
+    #[test]
+    fn diagnostic_timestamps_preserve_copy_bytes_and_add_no_submission_fence() {
+        for timed in [false, true] {
+            fake_driver::reset();
+            let context = Driver::initialize()
+                .unwrap()
+                .retain_primary_context(0)
+                .unwrap();
+            let stream = context.stream().unwrap();
+            let destination = context
+                .default_memory_pool()
+                .unwrap()
+                .allocate(&stream, 8)
+                .unwrap();
+            destination.copy_from_bytes(&[0; 8], &stream).unwrap();
+            let mut staging = PinnedHostBuffer::new(&context, 4).unwrap();
+            staging.as_mut_slice().copy_from_slice(&[3, 5, 7, 9]);
+            let syncs = fake_driver::call_count(5);
+            let transfer = if timed {
+                destination.upload_pinned_chunk_timed(staging.lend(), 2, 4, &stream)
+            } else {
+                destination.upload_pinned_chunk(staging.lend(), 2, 4, &stream)
+            }
+            .unwrap();
+            assert_eq!(fake_driver::call_count(5), syncs);
+            while !transfer.ready().unwrap() {}
+            assert_eq!(transfer.elapsed_seconds().unwrap(), timed.then_some(0.012));
+            drop(transfer.finish());
+            let mut bytes = [0; 8];
+            destination.copy_to_bytes(&mut bytes, &stream).unwrap();
+            assert_eq!(bytes, [0, 0, 3, 5, 7, 9, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn failed_timed_uploads_release_staging_after_draining() {
+        for operation in [8, 30] {
+            fake_driver::reset();
+            let context = Driver::initialize()
+                .unwrap()
+                .retain_primary_context(0)
+                .unwrap();
+            let stream = context.stream().unwrap();
+            let destination = context
+                .default_memory_pool()
+                .unwrap()
+                .allocate(&stream, 4)
+                .unwrap();
+            let mut staging = PinnedHostBuffer::new(&context, 4).unwrap();
+            fake_driver::defer_host_copies(100);
+            fake_driver::fail_next(operation, 999);
+            assert!(
+                destination
+                    .upload_pinned_chunk_timed(staging.lend(), 0, 4, &stream)
+                    .is_err()
+            );
+            assert_eq!(fake_driver::pending_host_copies(), 0);
+            staging.as_mut_slice().fill(1);
+        }
+    }
 
     #[test]
     fn forgotten_transfers_prevent_pinned_owner_reuse_and_destruction() {

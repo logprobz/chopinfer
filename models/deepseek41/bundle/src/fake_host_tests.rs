@@ -1015,13 +1015,13 @@ fn journal_steps(host: &Rc<Host>) {
 /// the staged-scale journals alone: the selectors and the r2 module add
 /// exactly the resources and renames above, the short-row and staged-scale
 /// delta is the same with or without them, and every other operation is
-/// identical after handle mapping.
-/// operation is identical after handle mapping. The wide gate/up module
+/// identical after handle mapping. The wide gate/up module
 /// (`moe_native_entries::WIDE_CUBIN`) adds two resolves and three releases
-/// per TP4 rank; steps above 2048 rows launch it, so these journals do not.
-/// The r2 router finish module adds one module, 14 resolves and 15 releases
-/// per TP4 rank; no launch or allocation changes. The gate finisher loads
-/// module adds one module, 2 resolves and 3 releases per TP4 rank.
+/// per TP4 rank, and the shared-memory configure moves from the narrow
+/// gate/up tile to the wide one; steps above 2048 rows launch it, so these
+/// journals do not. The gate finisher loads module adds one module, 2
+/// resolves and 3 releases per TP4 rank. Each was audited against the
+/// combined journals before it: exactly these lines differ.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1048,12 +1048,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (84311, 0x826ecb5282198056),
+        (84351, 0x1591caa54865df11),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (81955, 0x91f2aa1b4c9494ad),
+        (81995, 0x8afb6f5bcab5a2ac),
     ),
 ];
 
@@ -1196,10 +1196,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// resident small gate and the r2 router finish modules add only their
 /// resolves and releases here (one module each; 2 and 14 resolves per rank).
 /// The native early-stop selectors add one module and six resolves per rank
-/// and rename the prefill selectors, as in the native default.
-/// resident small gate, r2 router finish and gate finisher loads modules
-/// add only their resolves and releases here (one module each; 2, 14 and 2
-/// resolves per rank).
+/// and rename the prefill selectors, as in the native default. The gate
+/// finisher loads module adds only its resolves and releases here (one
+/// module, 2 resolves per rank).
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1207,7 +1206,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(82655, 0x0a094718eb54873f), (80299, 0xb15336ca67570387)])
+            .zip([(82675, 0xaab081bd28462057), (80319, 0xd18b6e4628da7c45)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

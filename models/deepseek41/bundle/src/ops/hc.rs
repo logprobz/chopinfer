@@ -693,6 +693,20 @@ mod tests {
                     continue;
                 }
                 let chain = chain.unwrap();
+                // Measured verify buckets keep the producer and run the tail
+                // on two CTAs per row with the tail's own arguments.
+                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+                    .iter()
+                    .find(|(bucket, _)| *bucket == rows)
+                {
+                    let twin = crate::sm120::hc_finish_twin::served();
+                    assert_eq!(chain.len(), 2);
+                    assert!(chain[0].symbol.ends_with("hc_round_chain_w4_v1"));
+                    assert_eq!(chain[1].symbol, twin.symbol(warps));
+                    assert_eq!(chain[1].plan, twin.plan(rows, rows, warps).unwrap());
+                    assert_eq!(chain[1].arguments.0.len(), 18);
+                    continue;
+                }
                 if matches!(rows, 4 | 6 | 12 | 16 | 32) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));

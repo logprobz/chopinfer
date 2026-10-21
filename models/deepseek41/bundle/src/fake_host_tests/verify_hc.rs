@@ -4,6 +4,8 @@ use super::*;
 // launches and retain all original operands (the eight-warp chain at four
 // rows, the four-warp chain at six, 12 and 16, the two-row producer at 32).
 // Eight rows take the qualified one-launch C8 boundary with a zeroed ticket.
+// Six rows run each tail on two CTAs per row (fold and Sinkhorn beside the
+// collapse and norm) with the tail's own operands.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
 // Resources the prefill query fusion, grouped down and router bindings load
@@ -56,6 +58,8 @@ use super::*;
 // launches bind the same workspace spans 983552 bytes later (the fused
 // router's partials precede the route metadata); plus the Verify-6 renames.
 // Loading the two-CTA HC finish module shifts their resource ids only.
+// At 6 rows its 308 tails (77 per rank) change symbol to the 32-warp twin and
+// grid_x 1 to 2 with identical operands; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0xcb6961ea7e70084d)),
     (6, (8040, 0x5a1a7f44672a098d)),
@@ -129,8 +133,19 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
             let qualified = matches!(rows, 4 | 6 | 8 | 12 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
-            // Eight rows take the one-launch boundary of the C8 decode bucket.
-            let boundaries = count("hc_finish_norm_w32_v1") + count("hc_completion_split_w8_v1 ");
+            // Eight rows take the one-launch boundary of the C8 decode bucket;
+            // six rows run the tail on two CTAs per row.
+            let twin = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+                .iter()
+                .find(|(bucket, _)| *bucket == rows)
+                .map(|&(_, warps)| warps);
+            let twin_warps = twin.unwrap_or(32);
+            let twin_symbol = format!(
+                "{} ",
+                crate::sm120::hc_finish_twin::served().symbol(twin_warps)
+            );
+            let tails = count("hc_finish_norm_w32_v1") + count("_hc_finish_twin_");
+            let boundaries = tails + count("hc_completion_split_w8_v1 ");
             if boundaries != pairs {
                 missing.push((rows, kv.storage, boundaries, pairs));
             }
@@ -148,8 +163,22 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 );
                 assert_eq!(
                     count("hc_finish_norm_w32_v1"),
-                    if rows == 8 { 0 } else { pairs }
+                    if rows == 8 || twin.is_some() {
+                        0
+                    } else {
+                        pairs
+                    }
                 );
+                assert_eq!(twin.is_some(), rows == 6);
+                assert_eq!(count(&twin_symbol), if rows == 6 { pairs } else { 0 });
+                assert_eq!(count("_hc_finish_twin_"), count(&twin_symbol));
+                for line in launches.iter().filter(|l| l.contains(&twin_symbol)) {
+                    assert!(line.contains(&format!("grid_x: 2, grid_y: {rows}, grid_z: 1")));
+                    assert!(line.contains(&format!(
+                        "block_x: {}, block_y: 1, block_z: 1",
+                        twin_warps * 32
+                    )));
+                }
                 for line in launches
                     .iter()
                     .filter(|l| l.contains("hc_completion_split_w8_v1 "))

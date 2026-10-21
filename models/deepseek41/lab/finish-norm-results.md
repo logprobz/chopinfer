@@ -58,3 +58,32 @@ the unchanged atomic-overlap-unit partition rule. Allocation sizes and
 stream/event dependencies are
 unchanged. Scratch audits cover every router/shared-expert fork, including
 rejection controls for overlapping physical ranges.
+
+## Two-CTA tail at Verify-6
+
+The fused tail runs the fold and Sinkhorn on one warp while the other warps
+collapse, then the whole CTA runs the cached norm. The norm reads only the
+collapse, which uses the previous `pre`, so it need not wait for Sinkhorn.
+`sinkhorn_hc::finish_twin` keeps the tail's ABI and every expression and
+runs the two halves on two CTAs per row: CTA 0 the mixer half
+(`completion::mixer`), CTA 1 the collapse and the unchanged cached norm. The
+chain producer is unchanged.
+
+A 250 W pair run on 2026-10-21 compared it, and the one-launch boundaries,
+with the served producer plus fused tail on all 154 captured DSpark
+Verify-6 boundaries (C1, five drafts and the root). Both devices passed
+memcheck, 2464 bitwise reports (eager and two graph replays, served and
+flipped widening), 5288 invariance and control checks and 8 mutation
+controls, with identical outputs across devices. Paired event timings,
+saved us per 77-boundary verify cycle, ranges over the two devices:
+
+| Arm | Cold | Hot |
+| --- | ---: | ---: |
+| Served against itself | 0 | 85-89 |
+| Two-CTA tail, 32 warps | 344-360 | 404-411 |
+| Two-CTA tail, 16 warps | 254 | 251-253 |
+| One-launch split boundary, 8 warps | 154-157 | 183-193 |
+
+Serve the 32-warp two-CTA tail at Verify-6. The hot comparisons carry about
+1.1 us per boundary of arm bias, so the saving is 4.5-4.7 us per boundary,
+0.34-0.36 ms per cycle.

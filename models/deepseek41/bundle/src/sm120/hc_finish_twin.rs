@@ -117,12 +117,16 @@ mod tests {
             },
         };
         use kernels_sm120::backend::Sm120;
+        // The served registration without its two-CTA buckets.
         let base = || {
             let backend = b::norm_quantize::register(Sm120::new(), &FLASH).unwrap();
             let backend = b::norm_quantize_cached::register(backend, &FLASH);
             let backend = b::hc_round_expand_mix::register(backend, &FLASH);
             let backend = b::hc_round_chain::register(backend, &FLASH);
-            b::hc_finish_norm::register(backend, &FLASH)
+            b::hc_finish_norm::register_pair(backend, &FLASH).with_sinkhorn_finish_norm_completion(
+                b::hc_completion::served(),
+                b::hc_finish_norm::COMPLETION_BUCKETS.to_vec(),
+            )
         };
         let entry = b::hc_finish_norm::entry(&FLASH);
         let query = SinkhornRoundNormQuery {

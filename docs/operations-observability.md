@@ -175,6 +175,87 @@ four GPUs. Diagnostic readback and detailed timing counters were disabled in
 the performance runs. Every job passed its before/after power and Xid checks
 and released the GPUs. The quick and full CPU gates also passed.
 
+### Package reuse and packed-input follow-up
+
+A second comparison on 2026-10-21 used the round-9 serving baseline, including
+its wider 97-shape DSpark warmup. Both arms used the same serving code and
+the TP4 settings above. The follow-up reuses a verified direct package before
+emission, shares an owned checkpoint-header snapshot during preparation,
+reuses scale inputs across packed sections, omits unused packed outputs and
+reads cold input windows directly into owned aligned storage. Exact BF16
+operand admission remains mandatory, including code-dependent checks for
+extreme scales. Ordinary exact scale ranges avoid expanding a temporary
+floating-point grid.
+
+| Profile | Cache condition | Baseline mean (range), seconds | Follow-up mean (range), seconds | Mean reduction |
+|---|---|---:|---:|---:|
+| `tp4-dspark` | Cold payload, reused metadata | 137.5 (137.2-137.8) | 117.5 (117.4-117.6) | 14.5% |
+| `tp4-dspark` | Recent restart | 140.4 (137.3-143.4) | 120.3 (120.3-120.4) | 14.3% |
+| `tp4-dspark` | First package and plan, cold payload | 141.0 (139.6-142.4) | 132.7 (132.5-132.8) | 5.9% |
+| `tp4-ar` | Recent restart | 94.5 (93.4-95.6) | 76.6 (76.5-76.8) | 18.9% |
+
+Each condition used four starts in ABBA order on a quiet host, two per arm.
+Cold and first-preparation starts recorded zero resident checkpoint pages
+before launch after file-scoped eviction. Recent restarts followed a priming
+start and had 52-84 MiB of checkpoint pages resident, far less than the model.
+The first-preparation condition used a new private package and metadata-plan
+cache for each start. Diagnostic readbacks and detailed timing counters were
+disabled. These percentages compare only this matched serving baseline;
+the earlier round-8 figures used different warmup coverage.
+
+The recent-restart DSpark means break down as follows. The two residual rows
+subtract nested timers from their enclosing elapsed timer; they do not name
+individual functions. Reading, packing and transfers overlap within the
+weight pipeline and cannot be added as separate elapsed phases.
+
+| Startup work | Baseline, seconds | Follow-up, seconds |
+|---|---:|---:|
+| Package preparation/reuse | 12.1 | 0.5 |
+| Other host startup, residual | 2.3 | 1.6 |
+| Weight planning and validation | 1.9 | 2.0 |
+| Text-weight read, prepare and upload | 75.7 | 67.5 |
+| Encoder weight upload | 0.5 | 0.6 |
+| Other model initialization, residual | 2.3 | 2.3 |
+| Generation warmup | 45.5 | 45.9 |
+| Total readiness | 140.4 | 120.3 |
+
+First package preparation fell from 12.0 to 7.8 seconds; uncached host weight
+planning still took about 6.2 seconds in both arms. A valid package hit skips
+emission and topology planning, but still verifies its inputs and package.
+One package continues to serve its supported TP2 and TP4 topologies. Actual
+checkpoint dimensions, headers and precision contracts determine the layout.
+
+Text-weight source reads fell from 339.0 to 321.7 GB, and loader requests from
+143,948 to 96,995. The largest retained shared-input/output allocation across
+these timing runs rose from 0.58 to 0.80 GiB, within the unchanged 1 GiB cap.
+The idle buffer pool stayed within 64 MiB, and two 64 MiB pinned upload buffers
+per rank remain the limit. The largest server peak RSS observed by readiness
+was 16.59 versus 16.85 GiB for DSpark and 8.92 versus 8.79 GiB for AR.
+These are server process peaks, not aggregate peaks of exited preparation
+helpers. Live-process major faults were 1,127-1,128 in cold DSpark starts and
+zero in the recent-restart comparisons.
+
+Separate diagnostic starts matched all eight weight-arena digests and all
+1,088 token IDs and selected/top log-probability positions per profile,
+including 62 concurrent requests. DSpark captured the same 1,536 startup
+graph keys in both arms. The baseline graph cache was full: both arms refused
+100 capture attempts covering the same 13 keys. Concurrent serving formed
+different batches and therefore different later refusal sets, including
+between two executions of the unchanged baseline. Those dynamic refusals
+were recorded separately; exact startup coverage, no new serving captures,
+served bits, capture/release failures and pressure checks remained required.
+AR matched all 24 startup graph keys. The unequal-rank upload probe and five
+shared-format loading fixtures also passed. Every job checked the 250 W caps,
+Xid records and device release.
+
+Shorter per-shape warmup requests were rejected after GPU testing: some
+requests ended before an accepted draft exercised the required catch-up
+graphs. The retained change preserves the original output budgets and full
+warmup work. Larger source-read windows were also not retained: 4, 8 and
+16 MiB windows each delivered about 6.8 GB/s in a bounded 16 GiB source-only
+probe with four readers. This is a sampled storage rate, not an end-to-end
+startup guarantee.
+
 ## Readiness and shutdown
 
 The listener opens after engine construction and warmup. Warmup has one

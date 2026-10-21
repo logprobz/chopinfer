@@ -92,7 +92,7 @@ def proof(oldpath,newpath,completed=True):
  if old==new:
   assert a==b
   return dict(identical=True,changes=0)
- extra_modules={int(i) for i,n in b['modules'].items() if n=='fold_dual_sm120'}
+ extra_modules={int(i) for i,n in b['modules'].items() if n=='fold_dual_deepseek41_sm120'}
  assert len(extra_modules)==4
  ma=list(a['modules'].items());mb=[(i,n) for i,n in b['modules'].items() if int(i) not in extra_modules]
  assert [n for _,n in ma]==[n for _,n in mb]

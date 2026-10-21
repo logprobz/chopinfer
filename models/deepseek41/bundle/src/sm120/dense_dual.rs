@@ -3,7 +3,7 @@ use kernel_build::CubinSpec;
 use kernels_sm120::gemm::mxfp8_fold_dual::{self, Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_dual";
-pub const CUBIN: &str = "fold_dual_sm120";
+pub const CUBIN: &str = "fold_dual_deepseek41_sm120";
 pub fn entry() -> Entry {
     let catalog = super::mxfp8_fold_stream::catalog(&FLASH).unwrap();
     Entry {

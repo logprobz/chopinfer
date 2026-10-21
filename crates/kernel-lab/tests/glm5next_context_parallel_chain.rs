@@ -1274,19 +1274,10 @@ fn sparse_layer() -> u32 {
 
 // ----------------------------------------------------------- cpu check ----
 
-/// Every rank's lowered layer at sizes 1, 2 and 4, for the target's
-/// steps (prefill in three and two indexer pieces, every decode and verify
-/// bucket) and the drafter's passes: the same symbols in the same order on
-/// every rank of a group (the all-gathers pair up), `size + 3` group
-/// all-gathers per indexer piece (the pairs, the queries, one per owner and
-/// the barrier; a draft step selects nothing, so `size + 2`) and none at
-/// size 1, every symbol embedded, every argument resolvable, a draft step
-/// localizing `SharedKeyLists`, the oracle sampling every item's edge rows, the host tables covering each item's pages
-/// once per group, and the backed windows fitting a GPU.
+/// The target steps include every decode bucket and every verify token
+/// bucket, which [`the_layer_lowers`] lowers.
 #[test]
-fn the_layer_lowers_to_the_group_stage_sequence() {
-    let engines = Engines::new(SHAPE).unwrap();
-    // Every decode bucket and every verify token bucket.
+fn the_target_steps_cover_every_decode_and_verify_bucket() {
     let target = steps();
     let buckets = |verify: bool| {
         target
@@ -1300,160 +1291,189 @@ fn the_layer_lowers_to_the_group_stage_sequence() {
     };
     assert_eq!(buckets(false), BTreeSet::from([1, 2, 4, 8, 16, 32]));
     assert_eq!(buckets(true), BTreeSet::from([2, 4, 8, 16, 32]));
-    for scenario in [Scenario::Target, Scenario::Drafter] {
-        let steps = scenario.steps();
-        let lengths = final_lengths(&steps);
-        // The oracle gates every item's first and last rows of every step.
-        for step in &steps {
-            let rows = sampled(step, &mut Rng(0x5a));
-            let mut row = 0;
-            for &(item, _, count) in &step.items {
-                assert!(
-                    rows.contains(&row) && rows.contains(&(row + count - 1)),
-                    "{scenario:?} {:?}: item {item}'s edge rows are not sampled",
-                    step.phase
-                );
-                row += count;
-            }
-        }
-        for kv in [LatentKvFormat::Fp8E4M3Block128, LatentKvFormat::Bf16] {
-            for size in [1, 2, 4] {
-                let label = format!("{scenario:?} {kv:?} size {size}");
-                let handles = Handles::default();
-                let instance = Instance::new(
-                    &handles,
-                    size,
-                    scenario.format(kv).unwrap(),
-                    scenario.layer(),
-                    &lengths,
-                    &mut Rng(0x5eed + size as u64),
-                )
-                .unwrap();
-                // The continuation resumes item 2 at position 2178 across
-                // its internal cut, with live tail slots; no other cut does.
-                let cuts = steps
-                    .iter()
-                    .map(|step| live_tail_cuts(step, &instance.phase_inputs(step)).unwrap())
-                    .collect::<Vec<_>>()
-                    .concat();
-                match scenario {
-                    Scenario::Target => assert_eq!(cuts, [(1, 2, 2178)], "{label}"),
-                    Scenario::Drafter => assert!(cuts.is_empty(), "{label}"),
-                }
-                let localize = model_glm5next_contract::sm120::context_parallel::entries(SHAPE)
-                    .into_iter()
-                    .find(|entry| {
-                        entry.kind == CpKind::LocalizeKeys { ranks: size as u32 }
-                            && entry.geometry.list_width == list_width() as u32
-                    });
-                let steps_inputs = instance.steps_inputs(&steps).unwrap();
-                for (index, (step, inputs)) in steps.iter().zip(steps_inputs).enumerate() {
-                    let launches = instance.lower(&engines, step, &inputs, &handles).unwrap();
-                    // The first prefill's indexer runs in the bundle's three
-                    // pieces (a cut inside item 1, at a granule), the
-                    // continuation in two.
-                    let firsts = inputs[0].pieces.iter().map(|p| p.first).collect::<Vec<_>>();
-                    let pieces = match (scenario, index) {
-                        (Scenario::Target, 0) => vec![0, 2048, 4088],
-                        (Scenario::Target, 2) => vec![0, 2048],
-                        _ => vec![],
-                    };
-                    assert_eq!(firsts, pieces, "{label}");
-                    let symbols = launches
-                        .iter()
-                        .map(|rank| rank.iter().map(|l| l.symbol.clone()).collect::<Vec<_>>())
-                        .collect::<Vec<_>>();
-                    assert!(symbols.iter().all(|s| *s == symbols[0]), "{label}");
-                    let count = |symbol: &str| symbols[0].iter().filter(|s| *s == symbol).count();
-                    // Per piece: the phased gathers of the pairs (not in a
-                    // draft step) and the queries and the phased exchange of
-                    // the partial blocks, then the barrier.
-                    let phased_per_piece = match step.pass {
-                        Some(DraftPass::Step) => 2,
-                        _ => 3,
-                    };
-                    let pieces = if size == 1 {
-                        0
-                    } else {
-                        inputs[0].pieces.len().max(1)
-                    };
-                    assert_eq!(
-                        (count(phased::SYMBOL), count(ALLGATHER_SYMBOL)),
-                        (pieces * phased_per_piece, pieces),
-                        "{label} {:?}",
-                        step.phase
-                    );
-                    for symbol in &symbols[0] {
-                        assert!(
-                            bundle_glm5next::cubin_of(symbol).is_some(),
-                            "{symbol} is not embedded"
-                        );
-                    }
-                    for (rank, launches) in launches.iter().enumerate() {
-                        for launch in launches {
-                            Call::resolve(launch, &|span| Ok(span.offset)).unwrap();
-                        }
-                        // The attention localizes the lists the size-1
-                        // attention reads.
-                        if let Some(localize) = &localize {
-                            let read = match step.pass {
-                                Some(DraftPass::Step) => Buffer::SharedKeyLists,
-                                _ => Buffer::KeyLists,
-                            };
-                            let lists = localize
-                                .params()
-                                .iter()
-                                .position(|param| {
-                                    matches!(param, kernel_build::EntryParam::DevicePointer {
-                                        name, ..
-                                    } if name == "lists")
-                                })
-                                .unwrap();
-                            let bound = launches
-                                .iter()
-                                .filter(|launch| launch.symbol == localize.symbol())
-                                .map(|launch| {
-                                    dispatch::arguments(&launch.arguments, &launch.bindings)
-                                        .unwrap()[lists]
-                                        .clone()
-                                })
-                                .collect::<Vec<_>>();
-                            let own = instance.ranks[rank].buffers.get(read);
-                            assert!(!bound.is_empty(), "{label}");
-                            assert!(
-                                bound.iter().all(|argument| matches!(argument,
-                                    KernelArgumentV1::DeviceBuffer(span)
-                                        if span.buffer == own.buffer)),
-                                "{label} {:?} rank {rank}",
-                                step.pass
-                            );
-                        }
-                    }
-                }
-                for (item, &tokens) in lengths.iter().enumerate() {
-                    if tokens == 0 {
-                        continue;
-                    }
-                    for group in 0..RANKS / size {
-                        let mut physical = BTreeSet::new();
-                        for rank in group * size..(group + 1) * size {
-                            let pages = instance.rank_pages(rank, item, tokens).unwrap();
-                            let locals = pages.iter().map(|p| p.0).collect::<BTreeSet<_>>();
-                            assert_eq!(locals.len(), pages.len());
-                            for (_, page) in pages {
-                                assert_eq!(page % size, rank % size);
-                                assert!(physical.insert(page));
-                            }
-                        }
-                        assert_eq!(physical.len(), tokens.div_ceil(PAGE));
-                    }
-                }
-                for bytes in handles.bytes_per_rank() {
-                    assert!(bytes < 6 << 30, "{label}: {bytes} bytes");
-                }
-            }
+}
+
+/// Every rank's lowered layer at sizes 1, 2 and 4, for the target's
+/// steps (prefill in three and two indexer pieces, every decode and verify
+/// bucket) and the drafter's passes: the same symbols in the same order on
+/// every rank of a group (the all-gathers pair up), `size + 3` group
+/// all-gathers per indexer piece (the pairs, the queries, one per owner and
+/// the barrier; a draft step selects nothing, so `size + 2`) and none at
+/// size 1, every symbol embedded, every argument resolvable, a draft step
+/// localizing `SharedKeyLists`, the oracle sampling every item's edge rows, the host tables covering each item's pages
+/// once per group, and the backed windows fitting a GPU.
+/// One test per scenario and KV format.
+fn the_layer_lowers(scenario: Scenario, kv: LatentKvFormat) {
+    let engines = Engines::new(SHAPE).unwrap();
+    let steps = scenario.steps();
+    let lengths = final_lengths(&steps);
+    // The oracle gates every item's first and last rows of every step.
+    for step in &steps {
+        let rows = sampled(step, &mut Rng(0x5a));
+        let mut row = 0;
+        for &(item, _, count) in &step.items {
+            assert!(
+                rows.contains(&row) && rows.contains(&(row + count - 1)),
+                "{scenario:?} {:?}: item {item}'s edge rows are not sampled",
+                step.phase
+            );
+            row += count;
         }
     }
+    for size in [1, 2, 4] {
+        let label = format!("{scenario:?} {kv:?} size {size}");
+        let handles = Handles::default();
+        let instance = Instance::new(
+            &handles,
+            size,
+            scenario.format(kv).unwrap(),
+            scenario.layer(),
+            &lengths,
+            &mut Rng(0x5eed + size as u64),
+        )
+        .unwrap();
+        // The continuation resumes item 2 at position 2178 across
+        // its internal cut, with live tail slots; no other cut does.
+        let cuts = steps
+            .iter()
+            .map(|step| live_tail_cuts(step, &instance.phase_inputs(step)).unwrap())
+            .collect::<Vec<_>>()
+            .concat();
+        match scenario {
+            Scenario::Target => assert_eq!(cuts, [(1, 2, 2178)], "{label}"),
+            Scenario::Drafter => assert!(cuts.is_empty(), "{label}"),
+        }
+        let localize = model_glm5next_contract::sm120::context_parallel::entries(SHAPE)
+            .into_iter()
+            .find(|entry| {
+                entry.kind == CpKind::LocalizeKeys { ranks: size as u32 }
+                    && entry.geometry.list_width == list_width() as u32
+            });
+        let steps_inputs = instance.steps_inputs(&steps).unwrap();
+        for (index, (step, inputs)) in steps.iter().zip(steps_inputs).enumerate() {
+            let launches = instance.lower(&engines, step, &inputs, &handles).unwrap();
+            // The first prefill's indexer runs in the bundle's three
+            // pieces (a cut inside item 1, at a granule), the
+            // continuation in two.
+            let firsts = inputs[0].pieces.iter().map(|p| p.first).collect::<Vec<_>>();
+            let pieces = match (scenario, index) {
+                (Scenario::Target, 0) => vec![0, 2048, 4088],
+                (Scenario::Target, 2) => vec![0, 2048],
+                _ => vec![],
+            };
+            assert_eq!(firsts, pieces, "{label}");
+            let symbols = launches
+                .iter()
+                .map(|rank| rank.iter().map(|l| l.symbol.clone()).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            assert!(symbols.iter().all(|s| *s == symbols[0]), "{label}");
+            let count = |symbol: &str| symbols[0].iter().filter(|s| *s == symbol).count();
+            // Per piece: the phased gathers of the pairs (not in a
+            // draft step) and the queries and the phased exchange of
+            // the partial blocks, then the barrier.
+            let phased_per_piece = match step.pass {
+                Some(DraftPass::Step) => 2,
+                _ => 3,
+            };
+            let pieces = if size == 1 {
+                0
+            } else {
+                inputs[0].pieces.len().max(1)
+            };
+            assert_eq!(
+                (count(phased::SYMBOL), count(ALLGATHER_SYMBOL)),
+                (pieces * phased_per_piece, pieces),
+                "{label} {:?}",
+                step.phase
+            );
+            for symbol in &symbols[0] {
+                assert!(
+                    bundle_glm5next::cubin_of(symbol).is_some(),
+                    "{symbol} is not embedded"
+                );
+            }
+            for (rank, launches) in launches.iter().enumerate() {
+                for launch in launches {
+                    Call::resolve(launch, &|span| Ok(span.offset)).unwrap();
+                }
+                // The attention localizes the lists the size-1
+                // attention reads.
+                if let Some(localize) = &localize {
+                    let read = match step.pass {
+                        Some(DraftPass::Step) => Buffer::SharedKeyLists,
+                        _ => Buffer::KeyLists,
+                    };
+                    let lists = localize
+                        .params()
+                        .iter()
+                        .position(|param| {
+                            matches!(param, kernel_build::EntryParam::DevicePointer {
+                                name, ..
+                            } if name == "lists")
+                        })
+                        .unwrap();
+                    let bound = launches
+                        .iter()
+                        .filter(|launch| launch.symbol == localize.symbol())
+                        .map(|launch| {
+                            dispatch::arguments(&launch.arguments, &launch.bindings).unwrap()[lists]
+                                .clone()
+                        })
+                        .collect::<Vec<_>>();
+                    let own = instance.ranks[rank].buffers.get(read);
+                    assert!(!bound.is_empty(), "{label}");
+                    assert!(
+                        bound.iter().all(|argument| matches!(argument,
+                            KernelArgumentV1::DeviceBuffer(span)
+                                if span.buffer == own.buffer)),
+                        "{label} {:?} rank {rank}",
+                        step.pass
+                    );
+                }
+            }
+        }
+        for (item, &tokens) in lengths.iter().enumerate() {
+            if tokens == 0 {
+                continue;
+            }
+            for group in 0..RANKS / size {
+                let mut physical = BTreeSet::new();
+                for rank in group * size..(group + 1) * size {
+                    let pages = instance.rank_pages(rank, item, tokens).unwrap();
+                    let locals = pages.iter().map(|p| p.0).collect::<BTreeSet<_>>();
+                    assert_eq!(locals.len(), pages.len());
+                    for (_, page) in pages {
+                        assert_eq!(page % size, rank % size);
+                        assert!(physical.insert(page));
+                    }
+                }
+                assert_eq!(physical.len(), tokens.div_ceil(PAGE));
+            }
+        }
+        for bytes in handles.bytes_per_rank() {
+            assert!(bytes < 6 << 30, "{label}: {bytes} bytes");
+        }
+    }
+}
+
+#[test]
+fn the_layer_lowers_to_the_group_stage_sequence_target_fp8() {
+    the_layer_lowers(Scenario::Target, LatentKvFormat::Fp8E4M3Block128);
+}
+
+#[test]
+fn the_layer_lowers_to_the_group_stage_sequence_target_bf16() {
+    the_layer_lowers(Scenario::Target, LatentKvFormat::Bf16);
+}
+
+#[test]
+fn the_layer_lowers_to_the_group_stage_sequence_drafter_fp8() {
+    the_layer_lowers(Scenario::Drafter, LatentKvFormat::Fp8E4M3Block128);
+}
+
+#[test]
+fn the_layer_lowers_to_the_group_stage_sequence_drafter_bf16() {
+    the_layer_lowers(Scenario::Drafter, LatentKvFormat::Bf16);
 }
 
 // ----------------------------------------------------------- gpu memory ----

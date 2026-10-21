@@ -346,8 +346,59 @@ resources left and no Xids. That job stopped at its first served arm on a
 pinned KV page count, so the TTFT ABBA and Nsight profiles of this port
 remain to be measured, now against the unset default.
 
+### Consuming gathered intervals as they land
+
+After each hidden reduction the served graph runs only row-local kernels
+before the next projection: the HC expand of the reduced rows, the prefill
+mix and the next sublayer's cached norm-ceil. Where every rank's next three
+launches are exactly the expand, the r8 c4 prefill mix and the cached
+norm-ceil, each sized to the call's rows, and the rows divide into whole
+eight-row mix tiles per owner, the DMA call runs them per owner interval.
+Each rank's gather copies move to its own copy lane, which records an event
+after each phase. Its main stream runs the chain on its own interval right
+after its sum, then on each other interval once that interval's copy event
+fires, while the later copies proceed. The final peer-read join is
+unchanged. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME=0` keeps the chain
+after the call.
+
+Each interval's launch keeps the original symbol and arguments. Its row
+views are narrowed to the interval, its live count is read from the prefill
+count table, the norm's status rows are addressed through its row offset,
+and its row grid is sized to the interval. These entries compute every row
+from that row's inputs alone: the expand indexes rows by block, the mix
+keeps per-row accumulators in eight-row tiles with zeroed padding, and the
+norm-ceil runs one block per row. No argument of the chain other than the
+expand's reduced rows may overlap anything the call reads or writes. Any
+other chain, the embedding reduction and odd chunks keep the serial order.
+At package defaults on an 8192-row chunk this splits 40 calls per rank: the
+38 full-row calls the chain follows and the 2240- and 2496-row cone calls.
+
+The CPU journal audit distinguishes reads (peer-copy sources and the
+expand's reduced rows) from writes and checks every consumer against every
+copy and owner sum. Removing the waits before the interval consumers must
+expose an alias.
+
+On 2026-10-21 at 250 W, a four-GPU probe ran the BF16 DMA reduction followed
+by these entries, compiled from the same headers with the bundle cubins'
+registers and shared memory, serially and per interval. At all 18
+reduction sizes of a chunk, in two passes, the per-interval outputs (HC
+streams, collapsed rows, pre, post, comb, normed rows, codes, scales and
+status) equalled the serial ones byte for byte on every rank, every rank's
+digest equalled rank 0's, the reduced rows matched the host fold, and a run
+that skipped one interval differed. At 8192 rows the serial reduction and
+chain took 4.10 ms and the per-interval form 3.19 ms; over a chunk's
+reductions the chain's 66.7 ms was 58% hidden, a 38.7 ms saving. Below
+about 1400 rows the per-interval form was slower; the admitted cone calls
+are above that. The probe's norm-ceil had no widened output; 24 of the 41
+full-row chains here also write one, addressed per row the same way.
+
 That evidence, and every earlier DMA measurement here, used F32 partials.
 Native Flash TP4 prefill now defaults to BF16 partials, which the transport
-carries as BF16. Its bitwise and TTFT qualification against the
-within-bound head is pending; the BF16 scatter moves half the F32 bytes, so
-the earlier timings do not carry over.
+carries as BF16. On 2026-10-21 at 250 W, the BF16-payload DMA build passed
+all 40 raw-state artifacts against its base and a quiet-host tp4-ar ABBA
+(bitwise tokens and logprobs in all four arms; 1168 BF16 owner sums, 1752
+roundings and 7008 peer copies audited in a profile). Its TTFT gain over
+the base's BF16-partial collectives was 3.6 ms at 8K and 8.9 ms at 32K:
+both move 3 bytes per element, and the profile's 137.4 ms of communication
+per chunk was 135.6 ms outside compute. DMA's value is that it leaves the
+SMs free for the interval consumers above.

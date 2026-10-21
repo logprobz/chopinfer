@@ -24,6 +24,10 @@ use super::*;
 // the previous ones.
 // The early-stop selectors' module and six resolves per rank do the same;
 // verify launches keep the served selectors.
+// verify widths. The r2 router finish module renumbers handles again. At
+// 32 rows its 160 finish launches change symbol to r2v7 with identical
+// config and operands, and each sublayer's join (record and wait) moves from
+// before the routed sum to directly after that finish; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 4] = [
     (6, (8040, 0x219d4c447b88ac2d)),
     (8, (8992, 0x6c9dfa4610cc44e5)),

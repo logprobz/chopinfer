@@ -1,4 +1,5 @@
 //! Bind the measured exact router epilogue beside the cached partial producer.
+use super::moe_direct_kernels::R2_VARIANT;
 use crate::ops::moe::direct::{Call, Point, Pointer, Source};
 use kernel_core::backend::{Launch, Refused};
 use kernel_core::contract::{Argument, ArgumentList};
@@ -27,6 +28,24 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     }
 }
 
+// TP4, 250 W, 2026-10-21, captured full MoE graphs, every case bitwise
+// (outputs and all route metadata, eager and graphs, memcheck clean). The
+// r2 finish ends 7-9 us sooner, before the shared expert, so it binds only
+// with the gate joined after the shared expert
+// (`shared_overlap::joins_before_gate`). Together they save 0.32 ms per
+// 40-layer step at Decode-8, 0.25 at Decode-32 and 0.19 at Verify-32 (C8),
+// faster in 20 of 20 layers each with no candidate sample above the served
+// range; the gate never starts beside the shared expert. Alone the r2
+// finish loses at these rows (the gate starts beside the shared expert's
+// down). Decode-1, Verify-4/6/8 and the drafter bank are unmeasured.
+pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    qualified(set, phase, rows)
+        && matches!(
+            (set.count, set.top_k, phase, rows),
+            (384, 6, ExecutionPhase::Decode, 8 | 32) | (384, 6, ExecutionPhase::Verify, 32)
+        )
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Layout {
     pub partial_bytes: u64,
@@ -44,13 +63,17 @@ pub(crate) fn layout(entry: &Entry, rows: u32) -> Layout {
     }
 }
 
-pub(super) fn calls(e: &Entry, rows: u32, scale_bits: u32) -> Result<Vec<Call>, Refused> {
+pub(super) fn calls(e: &Entry, rows: u32, scale_bits: u32, r2: bool) -> Result<Vec<Call>, Refused> {
     let layout = layout(e, rows);
     let tickets = layout.routed + e.workspace_bytes(rows)?.next_multiple_of(256);
     kernel::STAGES
         .into_iter()
         .map(|stage| {
-            let spec = kernel::entry(e, stage);
+            let spec = if r2 && stage == kernel::Stage::Finish {
+                kernel::r2_entry(e, R2_VARIANT, false)
+            } else {
+                kernel::entry(e, stage)
+            };
             let plan = kernel::plan(e, stage, rows)?;
             let pointers = spec
                 .params
@@ -165,6 +188,37 @@ mod tests {
                         _ => false,
                     };
                     assert_eq!(op.fuses_router(), wanted);
+                    // The r2 finish only where it was measured with the
+                    // gate joined after the shared expert.
+                    let r2 = set.count == 384
+                        && matches!(
+                            (phase, rows),
+                            (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
+                        );
+                    let finishes = op
+                        .info
+                        .symbols
+                        .iter()
+                        .filter(|(s, _)| s.contains("_router_finish_") && !s.contains("_prepare_"))
+                        .map(|(s, _)| s.as_str())
+                        .collect::<Vec<_>>();
+                    let expected = if r2 {
+                        vec!["chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_v1"]
+                    } else if wanted {
+                        vec![if set.count == 384 {
+                            "chop_deepseek41_moe_router_finish_e384_k6_finish_v1"
+                        } else {
+                            "chop_deepseek41_moe_router_finish_e128_k3_finish_v1"
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+                    assert_eq!(finishes, expected, "{phase:?} {rows}");
+                    assert!(
+                        finishes
+                            .iter()
+                            .all(|s| crate::shared_overlap::joins_before_gate(s) == r2)
+                    );
                 }
                 for rows in [0, 2, 3, 4, 5, 7, 12, 16, 24, 48, 64, 192, 512, 8192] {
                     for phase in [
@@ -176,10 +230,12 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(
-                crate::Kernels::loads("router_finish_moe_deepseek41_sm120", &shape),
-                ranks == Ranks::TP4
-            );
+            for cubin in [
+                "router_finish_moe_deepseek41_sm120",
+                "router_finish_moe_deepseek41_r2_sm120",
+            ] {
+                assert_eq!(crate::Kernels::loads(cubin, &shape), ranks == Ranks::TP4);
+            }
         }
     }
 }

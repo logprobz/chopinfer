@@ -1005,6 +1005,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// The early-stop selectors add one module, six resolves and seven releases
 /// per native rank, and rename each prefill local selector and merge; their
 /// streams, grids and arguments are unchanged.
+/// The r2 router finish module adds one module, 14 resolves and 15 releases
+/// per TP4 rank; no launch or allocation changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1031,12 +1033,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78083, 0xd769028884a19237),
+        (78199, 0x9b16096f5eadd8bd),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75779, 0x10c6eecc7e12442f),
+        (75895, 0x5c5cc0907d09ba3e),
     ),
 ];
 
@@ -1175,7 +1177,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-/// Opting out retains the audited exact expert path and its resources.
+/// Opting out retains the audited exact expert path and its resources. The
+/// resident small gate and the r2 router finish modules add only their
+/// resolves and releases here (one module each; 2 and 14 resolves per rank).
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1183,7 +1187,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(76427, 0xf437de2792bcee7e), (74123, 0x79c9e5cbd20d362a)])
+            .zip([(76543, 0xd76955200f3e15ce), (74239, 0x9ccb208f068e8cb3)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

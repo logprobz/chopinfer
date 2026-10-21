@@ -1,0 +1,1601 @@
+[
+  {
+    "name": "router_finish_moe_deepseek41_r2_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v3_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v0_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v1_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v3_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v3_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v7_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v0_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v1_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v3_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v7_stamped_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "gate_tickets",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "arrived",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 192,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "25db0e09379477cdf61fb633b2d69bbef38bac6018ada7d799d4d6fec152367c",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v1_v1",
+        "registers": 64,
+        "shared_static_bytes": 16392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v3_v1",
+        "registers": 70,
+        "shared_static_bytes": 16536,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_v1",
+        "registers": 70,
+        "shared_static_bytes": 19608,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v0_stamped_v1",
+        "registers": 71,
+        "shared_static_bytes": 16392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v1_stamped_v1",
+        "registers": 71,
+        "shared_static_bytes": 16392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v3_stamped_v1",
+        "registers": 83,
+        "shared_static_bytes": 16536,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_stamped_v1",
+        "registers": 83,
+        "shared_static_bytes": 19608,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v1_v1",
+        "registers": 56,
+        "shared_static_bytes": 4616,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v3_v1",
+        "registers": 70,
+        "shared_static_bytes": 4664,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v7_v1",
+        "registers": 70,
+        "shared_static_bytes": 5688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v0_stamped_v1",
+        "registers": 48,
+        "shared_static_bytes": 4616,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v1_stamped_v1",
+        "registers": 64,
+        "shared_static_bytes": 4616,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v3_stamped_v1",
+        "registers": 83,
+        "shared_static_bytes": 4664,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_moe_router_finish_e128_k3_finish_r2v7_stamped_v1",
+        "registers": 83,
+        "shared_static_bytes": 5688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 192,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

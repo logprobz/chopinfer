@@ -308,16 +308,29 @@ chat media part outside that set returns 400 before any fetch or decode.
 
 - Images: PNG (1 to 8-bit, any color type, interlaced or not; not 16-bit)
   and JPEG (8-bit baseline or progressive Huffman), up to 89,478,485 pixels;
-  the model's recipe resizes them. A model may also declare GIF and WebP, as
-  DeepSeek V4.1 Flash does. A GIF is its first frame on its logical screen,
-  grown to cover that frame, with the rest in the transparency index's
-  color (else index 0's). A WebP may be lossy, lossless or with alpha; an
-  animated one is its first frame on a transparent black canvas. WebP's EXIF
-  orientation is not read, so only recipes that keep the stored orientation
-  may declare it. Lossless WebP data (VP8L and alpha) reserves 1 KiB of
-  preparation memory per compressed byte, because its Huffman tables can
-  grow with the bytes that declare them rather than with the image, so a
-  lossless WebP over about 4 MB exceeds one request's 4 GiB.
+  the model's recipe resizes them. A model may also declare GIF and WebP;
+  DeepSeek V4.1 Flash, Qwen3.8, MiMo and GLM 5.3 declare all four formats.
+  A GIF is its first frame on its logical screen, grown to cover that frame,
+  with the rest in the transparency index's color (else index 0's). A WebP
+  may be lossy, lossless or with alpha; an animated one is its first frame
+  on a transparent black canvas. Lossless WebP data (VP8L and alpha)
+  reserves 1 KiB of preparation memory per compressed byte, because its
+  Huffman tables can grow with the bytes that declare them rather than with
+  the image, so a lossless WebP over about 4 MB exceeds one request's 4 GiB.
+- Every in-tree model discards alpha, keeping each pixel's stored color, as
+  Pillow's `convert("RGB")` does. DeepSeek V4.1 Flash keeps the stored
+  orientation, as its reference's `Image.open` does. Qwen3.8, MiMo and
+  GLM 5.3 orient an image as transformers' `load_image` does
+  (`ImageOps.exif_transpose` under Pillow 12.3): from the EXIF orientation
+  in a PNG (an eXIf chunk, or text keyed `exif` or `Raw profile type exif`),
+  a JPEG (APP1 segments before the first scan) or a WebP (an EXIF chunk its
+  VP8X header flags), else from XMP `tiff:Orientation`. A GIF has no
+  orientation. Where Pillow raises on the orientation metadata itself (a
+  malformed TIFF header, an `exif` text value or invalid raw-profile hex),
+  the image keeps its stored orientation instead of being refused.
+  Compressed PNG text that holds orientation may inflate to 1 MiB per chunk
+  and 4 MiB in total; other compressed text is not read, where Pillow
+  refuses any over 1 MiB.
 - An image decodes by its signature, as Pillow chooses, so a data URL whose
   type names another image format decodes as what it is; a format the model
   does not declare is refused by name, for example `image/webp images are

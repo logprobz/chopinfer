@@ -140,4 +140,62 @@ class Ordering(unittest.TestCase):
         self.assertEqual(chunks[0]['kernels'][p.SUM]['launches'], 73)
 
 
+def bf16(path):
+    """The fixture with BF16 partials: rounded sends, half the scatter bytes."""
+    with sqlite3.connect(path) as db:
+        db.execute('UPDATE StringIds SET value=? WHERE id=2',(peer_order.BF16_SUM,))
+        db.execute('INSERT INTO StringIds VALUES (6,?)',(peer_order.BF16_ROUND,))
+        for index,rows in enumerate(p.ROWS):
+            first=1000+index*100
+            db.execute('UPDATE CUPTI_ACTIVITY_KIND_MEMCPY SET bytes=? WHERE start BETWEEN ? AND ?',
+                       (rows//4*p.HIDDEN*2,first,first+12))
+            for rank in range(4):
+                for piece in range(peer_order.pieces(rank)):
+                    start=first-20+piece*5
+                    db.execute('INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (?,?,6,?,0)',(start,start+4,rank))
+
+
+class Bf16Ordering(unittest.TestCase):
+    def setUp(self):
+        self.directory=tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path=Path(self.directory.name)/'trace.sqlite'
+        fixture(self.path);bf16(self.path)
+
+    def change(self,sql):
+        with sqlite3.connect(self.path) as db:db.execute(sql)
+
+    def test_bf16_payload_rounds_before_its_scatters(self):
+        result=peer_order.audit(self.path,1,'bf16')
+        self.assertEqual((result['payload'],result['sums_checked'],result['rounds_checked']),('bf16',73*4,73*6))
+        self.assertEqual(result['peer_copies_checked'],73*24)
+        self.assertEqual(result['min_round_to_scatter_gap_ns'],11)
+
+    def test_payloads_do_not_pass_for_each_other(self):
+        with self.assertRaisesRegex(RuntimeError,'another DMA payload executed'):
+            peer_order.audit(self.path,1,'f32')
+        other=Path(self.directory.name)/'f32.sqlite';fixture(other)
+        with self.assertRaisesRegex(RuntimeError,'another DMA payload executed'):
+            peer_order.audit(other,1,'bf16')
+
+    def test_f32_scatter_bytes_are_rejected(self):
+        self.change(f'UPDATE CUPTI_ACTIVITY_KIND_MEMCPY SET bytes=8192/4*{p.HIDDEN}*4 WHERE start=1000 AND srcDeviceId=0')
+        with self.assertRaisesRegex(RuntimeError,'peer bytes differ'):
+            peer_order.audit(self.path,1,'bf16')
+
+    def test_rounding_order_is_checked(self):
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET end=1001 WHERE shortName=6 AND start=980 AND deviceId=0')
+        with self.assertRaisesRegex(RuntimeError,'scatter reads unrounded rows'):
+            peer_order.audit(self.path,1,'bf16')
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET end=984 WHERE shortName=6 AND start=980 AND deviceId=0')
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_KERNEL SET start=1010,end=1014 WHERE shortName=6 AND start=1080 AND deviceId=1')
+        with self.assertRaisesRegex(RuntimeError,'rounding overwrites rows still scattering'):
+            peer_order.audit(self.path,1,'bf16')
+
+    def test_missing_rounds_are_rejected(self):
+        self.change('DELETE FROM CUPTI_ACTIVITY_KIND_KERNEL WHERE shortName=6 AND deviceId=2 AND start=1085')
+        with self.assertRaisesRegex(RuntimeError,'wrong BF16 rounding counts'):
+            peer_order.audit(self.path,1,'bf16')
+
+
 if __name__=='__main__':unittest.main(verbosity=2)

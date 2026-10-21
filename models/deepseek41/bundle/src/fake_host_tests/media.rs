@@ -353,22 +353,19 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The dedicated prefill arena adds two allocations and releases per rank.
 /// The full journal audit preserves every other operation after handle mapping.
 /// The resident small gate adds one module, two resolves and three releases
-/// per TP4 rank; no launch or allocation changes.
-/// Prefill matrix tiles add the same TP4 module resources as the text
-/// lifecycle. Every image allocation, launch and dependency is retained.
-/// The fused candidate publisher adds one module, one resolve and two
-/// releases per rank, and replaces each layer-20 producer triple with one
-/// launch.
-/// allocations match the exact path after handle normalization. The fused
-/// ceil replaces the 320 gate/up tile and intermediate quantizer launches
-/// with fused tiles and fixups, and adds 8 resolves, 12 releases and four
-/// configures.
-/// The dedicated arena adds two allocations and releases per native TP4 rank.
-/// Verify4 grouping adds 24 resolves, three configures and 25 releases per rank.
-/// Full lifecycle audits preserve every retained operation after handle mapping.
+/// per TP4 rank; no launch or allocation changes. Prefill matrix tiles add
+/// the same TP4 module resources as the text lifecycle. The fused candidate
+/// publisher adds one module, one resolve and two releases per rank, and
+/// replaces each layer-20 producer triple with one launch. At four ranks the
+/// fused ceil replaces the 320 gate/up tile and intermediate quantizer
+/// launches with fused tiles and fixups (8 resolves, 12 releases and four
+/// configures), the dedicated arena adds two allocations and releases per
+/// rank, and verify-4 grouping adds 24 resolves, three configures and 25
+/// releases per rank. Full lifecycle audits preserve every other operation
+/// after handle mapping.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22971, 0xab7198a258ab8fb4)),
-    (Ranks::TP4, (51643, 0x2f536f7c0df50c2a)),
+    (Ranks::TP2, (22969, 0x55b7d35a6d64a12a)),
+    (Ranks::TP4, (53035, 0x9d865ae5659aaa4d)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -987,23 +987,21 @@ fn journal_steps(host: &Rc<Host>) {
 /// launches with native pack and tile launches, adds 16 resolves and 20
 /// releases, and removes four shared-memory configures: 1632 lines.
 /// The resident small gate adds one module, two resolves and three releases
-/// per TP4 rank; no lifecycle launch or allocation changes.
-/// Qualified prefill matrix tiles add one module, 108 resolves, nine
-/// shared-memory configurations and 109 releases per TP4 rank. This
-/// Qualified matrix and TMA tiles add two modules, 138 resolves, ten
-/// shared-memory configurations and 140 releases per TP4 rank. This
-/// short-row lifecycle keeps every allocation, launch and dependency.
-/// The fused candidate publisher adds one module, one resolve and two
+/// per TP4 rank; no lifecycle launch or allocation changes. Qualified matrix
+/// and TMA tiles add two modules, 138 resolves, ten shared-memory
+/// configurations and 140 releases per TP4 rank; no short-row step launches
+/// them. The fused candidate publisher adds one module, one resolve and two
 /// releases per native rank, and replaces each layer-20 producer triple
-/// (scores, local gather, merge) with one launch on the merge's spans.
-/// releases, and removes four shared-memory configures: 1632 lines. In
-/// these steps of at most 2048 rows the fused ceil then replaces the 800
-/// gate/up tile launches with the fused tiles and the 800 intermediate
-/// quantizer launches with its fixup, and adds 8 resolves, 12 releases and
-/// four configures: 24 more lines.
-/// The dedicated arena adds two allocations and releases per native TP4 rank.
-/// Verify4 grouping adds 24 resolves, three configures and 25 releases per rank.
-/// Full lifecycle audits preserve every retained operation after handle mapping.
+/// (scores, local gather, merge) with one launch on the merge's spans. In
+/// these steps of at most 2048 rows the fused ceil replaces the 800 gate/up
+/// tile launches with the fused tiles and the 800 intermediate quantizer
+/// launches with its fixup, and adds one module, two resolves, one configure
+/// and three releases per TP4 rank. Per native TP4 rank the dedicated prefill
+/// arena adds two allocations and their releases, and verify-4 head grouping
+/// adds one module, 24 resolves, three configures and 25 releases; no step
+/// here verifies four rows. The combined journals were audited against
+/// main's: after removing exactly these resources and swaps, every other
+/// operation is identical after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1030,12 +1028,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (76699, 0x0b4afe51e1e5460e),
+        (78083, 0xd769028884a19237),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (74607, 0x9fa61d210d8cd514),
+        (75779, 0x10c6eecc7e12442f),
     ),
 ];
 
@@ -1182,7 +1180,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(75291, 0xb0ca413ac3a37f82), (72951, 0xbfe081704a05bca6)])
+            .zip([(76427, 0xf437de2792bcee7e), (74123, 0x79c9e5cbd20d362a)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

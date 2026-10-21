@@ -105,9 +105,9 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
     )
 }
 
-/// Lab variant of the gate finisher with the same bits
+/// The gate finisher with the same bits and fewer serial L2 round trips
 /// (`gate_finish_loads.cuh`): every K-block partial and the route weight
-/// load before the first add. Same parameters and launch as the served
+/// load before the first add. Same parameters and launch as the bandwidth
 /// finisher ([`plan`] with [`Stage::GateFinish`]).
 pub fn finish_loads_symbol(e: &Entry) -> String {
     symbol(e, Stage::GateFinish, Loads::Direct).replace("_gate_finish_v1", "_gate_finish_loads_v1")

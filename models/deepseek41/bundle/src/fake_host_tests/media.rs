@@ -374,6 +374,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// module resources match the text lifecycle, with all allocations retained.
 /// after handle mapping. At four ranks the wide gate/up module adds two
 /// resolves and three releases per rank and no launch.
+/// record/wait pairs, nothing else. The gate finisher loads module adds one
+/// module, 2 resolves and 3 releases per TP4 rank, and at backbone Decode-1
+/// the TP4 gate finisher becomes the loads entry: 160 renamed launches with
+/// identical config and operands, nothing else.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22995, 0x22ce5e76aa434247)),
     (Ranks::TP4, (56463, 0x4c54a13f7adb5aac)),

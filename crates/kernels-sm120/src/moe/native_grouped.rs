@@ -560,14 +560,19 @@ pub enum Tune {
     NoGlobal,
     /// MMAs on register operands only: no loads and no checks.
     MmaOnly,
+    /// The lean loop without the activation NaN check, behind a
+    /// [`nan_scan_symbol`] launch over the same input: the served outputs
+    /// and refusals bit for bit.
+    NoNan,
 }
 impl Tune {
-    pub const ALL: [Tune; 5] = [
+    pub const ALL: [Tune; 6] = [
         Tune::Lean,
         Tune::NoChecks,
         Tune::NoMma,
         Tune::NoGlobal,
         Tune::MmaOnly,
+        Tune::NoNan,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -576,6 +581,7 @@ impl Tune {
             Tune::NoMma => "no_mma",
             Tune::NoGlobal => "no_global",
             Tune::MmaOnly => "mma_only",
+            Tune::NoNan => "no_nan",
         }
     }
     fn policy(self) -> &'static str {
@@ -585,33 +591,42 @@ impl Tune {
             Tune::NoMma => "NoMma",
             Tune::NoGlobal => "NoGlobal",
             Tune::MmaOnly => "MmaOnly",
+            Tune::NoNan => "NoNan",
         }
     }
 }
 
-pub fn tune_symbol(shape: &Shape, tile: &Tile, tune: Tune) -> String {
-    symbol(shape, tile, Stage::Compute, Variant::Serving)
-        .replace("_tiles_v1", &format!("_tiles_{}_v1", tune.name()))
+pub fn tune_symbol(shape: &Shape, tile: &Tile, tune: Tune, variant: Variant) -> String {
+    symbol(shape, tile, Stage::Compute, variant)
+        .replace("_tiles_", &format!("_tiles_{}_", tune.name()))
 }
 
-/// The compute entries of `tunes` at `tile`, beside the serving entries.
-pub fn tune_entries(shape: &Shape, tile: &Tile, tunes: &[Tune]) -> Result<Vec<EntrySpec>, Refusal> {
-    let serving = entries(shape, tile, false)?
-        .pop()
+/// The `variant` compute entries of `tunes` at `tile`, beside the lab's
+/// entries of that variant.
+pub fn tune_entries(
+    shape: &Shape,
+    tile: &Tile,
+    tunes: &[Tune],
+    variant: Variant,
+) -> Result<Vec<EntrySpec>, Refusal> {
+    let base_symbol = symbol(shape, tile, Stage::Compute, variant);
+    let base = entries(shape, tile, variant != Variant::Serving)?
+        .into_iter()
+        .find(|e| e.symbol == base_symbol)
         .ok_or(Refusal("native compute entry is missing"))?;
-    let from = ",false,false>(arena,";
-    if serving.body.matches(from).count() != 1 {
+    let from = ">(arena,";
+    if base.body.matches(from).count() != 1 {
         return Err(Refusal("native compute entry body changed"));
     }
     Ok(tunes
         .iter()
         .map(|&tune| {
-            let mut e = serving.clone();
-            e.symbol = tune_symbol(shape, tile, tune);
-            e.body = serving.body.replace(
+            let mut e = base.clone();
+            e.symbol = tune_symbol(shape, tile, tune, variant);
+            e.body = base.body.replace(
                 from,
                 &format!(
-                    ",false,false,chop::moe::native_grouped::NoCeil,chop::moe::native_grouped::{}>(arena,",
+                    ",chop::moe::native_grouped::NoCeil,chop::moe::native_grouped::{}>(arena,",
                     tune.policy()
                 ),
             );
@@ -620,17 +635,54 @@ pub fn tune_entries(shape: &Shape, tile: &Tile, tunes: &[Tune]) -> Result<Vec<En
         .collect())
 }
 
-/// The serving launches with the compute entry of `tune`.
+/// The `variant` launches with the compute entry of `tune`; [`Tune::NoNan`]
+/// starts with the NaN scan of the input.
 pub fn tune_launches(
     shape: &Shape,
     tile: &Tile,
     rows: u32,
     b: &Buffers,
     tune: Tune,
+    variant: Variant,
 ) -> Result<Vec<Launch>, Refusal> {
-    let mut ops = launches(shape, tile, rows, b, Variant::Serving)?;
-    ops[1].symbol = tune_symbol(shape, tile, tune);
+    let mut ops = launches(shape, tile, rows, b, variant)?;
+    ops[1].symbol = tune_symbol(shape, tile, tune, variant);
+    if tune == Tune::NoNan {
+        let mut scan = ops[0].clone();
+        scan.symbol = nan_scan_symbol(shape);
+        scan.plan.grid = [SM_COUNT * NAN_SCAN_BLOCKS_PER_SM, 1, 1];
+        scan.plan.block = [NAN_SCAN_THREADS, 1, 1];
+        scan.plan.validate()?;
+        scan.arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(b.input),
+            Argument::DeviceBuffer(b.live_tokens),
+        ]);
+        scan.arguments.validate()?;
+        ops.insert(0, scan);
+    }
     Ok(ops)
+}
+
+const NAN_SCAN_THREADS: u32 = 512;
+const NAN_SCAN_BLOCKS_PER_SM: u32 = 2;
+
+pub fn nan_scan_symbol(shape: &Shape) -> String {
+    format!("chop_moe_native_{}_nan_scan_v1", shape.tag())
+}
+
+/// The NaN scan of `shape`'s input (`native_grouped::nan_scan`).
+pub fn nan_scan_entry(shape: &Shape) -> EntrySpec {
+    EntrySpec::new(
+        nan_scan_symbol(shape),
+        vec![ptr("input", "const uint8_t"), ptr("live", "const int")],
+        format!(
+            "chop::ptx::griddep_launch_dependents(); chop::ptx::griddep_wait(); \
+             chop::moe::native_grouped::nan_scan<{}>(input,live);",
+            shape.config()
+        ),
+        NAN_SCAN_THREADS,
+        1,
+    )
 }
 
 /// Gate/up tiles with the E4M3/32 ceil quantizer in their epilogue
@@ -1013,17 +1065,22 @@ mod tests {
 
     #[test]
     fn tune_entries_change_only_the_loop_policy() {
-        for (shape, tile) in [
-            (flash(true), GATE_UP_TILES[2]),
-            (flash(false), DOWN_TILES[0]),
+        for (shape, tile, variant) in [
+            (flash(true), GATE_UP_TILES[2], Variant::Serving),
+            (flash(true), GATE_UP_TILES[2], Variant::Raw),
+            (flash(false), DOWN_TILES[0], Variant::Serving),
         ] {
-            let serving = entries(&shape, &tile, false).unwrap().pop().unwrap();
-            let tuned = tune_entries(&shape, &tile, &Tune::ALL).unwrap();
+            let lab = entries(&shape, &tile, true).unwrap();
+            let base = lab
+                .iter()
+                .find(|e| e.symbol == symbol(&shape, &tile, Stage::Compute, variant))
+                .unwrap();
+            let tuned = tune_entries(&shape, &tile, &Tune::ALL, variant).unwrap();
             assert_eq!(tuned.len(), Tune::ALL.len());
             for (entry, tune) in tuned.iter().zip(Tune::ALL) {
-                assert_eq!(entry.symbol, tune_symbol(&shape, &tile, tune));
-                assert_ne!(entry.symbol, serving.symbol);
-                assert_eq!(entry.params, serving.params);
+                assert_eq!(entry.symbol, tune_symbol(&shape, &tile, tune, variant));
+                assert!(lab.iter().all(|e| e.symbol != entry.symbol));
+                assert_eq!(entry.params, base.params);
                 assert_eq!(
                     entry.body.replace(
                         &format!(
@@ -1032,9 +1089,24 @@ mod tests {
                         ),
                         ">"
                     ),
-                    serving.body
+                    base.body
                 );
             }
         }
+        assert_eq!(
+            tune_symbol(
+                &flash(true),
+                &GATE_UP_TILES[2],
+                Tune::Lean,
+                Variant::Serving
+            ),
+            symbol(
+                &flash(true),
+                &GATE_UP_TILES[2],
+                Stage::Compute,
+                Variant::Serving
+            )
+            .replace("_tiles_v1", "_tiles_lean_v1")
+        );
     }
 }

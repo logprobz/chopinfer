@@ -34,20 +34,24 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 // SM120, 250 W: all selected rows win on both devices with cold and warm
 // caches. Four Q/O shapes pass captured verify operands at 8192 rows.
-// Smaller Q/O rows regress, and Engram still needs captured operands.
+// Engram at 8192 rows also passes captured operands and served token/logprob bits.
 pub fn choice(g: &Geometry, ranks: u32, q: Mxfp8FoldGemmQuery, rows: u32) -> bool {
+    let engram = (q.n, q.k, q.groups) == (25600, 6144, 1);
+    #[cfg(test)]
+    if engram && ENGRAM_REFERENCE.with(|f| f.get()) {
+        return false;
+    }
     g.id == FLASH.id
         && ranks == 4
-        && matches!(rows, 4096 | 8192)
-        && matches!(
-            (q.n, q.k, q.groups),
-            (1280, 5120, 1) | (8192, 1280, 1) | (1024, 4096, 2) | (5120, 2048, 1)
-        )
+        && ((matches!(rows, 4096 | 8192)
+            && matches!(
+                (q.n, q.k, q.groups),
+                (1280, 5120, 1) | (8192, 1280, 1) | (1024, 4096, 2) | (5120, 2048, 1)
+            ))
+            || (engram && rows == 8192))
 }
-/// Describe the round candidate without enabling it in serving. Promotion
-/// requires real-operand bitwise evidence, then equal served token IDs and
-/// logprob bits against the accepted round head. The default register path
-/// never consumes this candidate.
+/// The full-row Engram entry qualified on captured operands and served
+/// token IDs and logprob bits. The lab uses this descriptor for comparisons.
 pub fn engram_candidate(g: &Geometry, ranks: u32) -> Option<(Entry, u32)> {
     if g.id != FLASH.id || ranks != 4 {
         return None;
@@ -87,6 +91,20 @@ pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
+std::thread_local! {static ENGRAM_REFERENCE:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
+#[cfg(test)]
+pub(crate) fn with_engram_reference<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ENGRAM_REFERENCE.with(|f| f.set(self.0));
+        }
+    }
+    let _restore = Restore(ENGRAM_REFERENCE.with(|f| f.replace(true)));
+    run()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use kernel_core::{
@@ -95,11 +113,23 @@ mod tests {
     };
 
     #[test]
-    fn engram_candidate_is_absent_from_default_selection() {
+    fn select_engram_only_at_the_qualified_full_row_bucket() {
         let (candidate, rows) = engram_candidate(&FLASH, 4).unwrap();
         assert_eq!(rows, 8192);
-        assert!(!choice(&FLASH, 4, candidate.base.query, rows));
+        for ranks in [1, 2, 4] {
+            for rows in [1, 8, 32, 64, 2496, 4096, 8191, 8192, 8193] {
+                assert_eq!(
+                    choice(&FLASH, ranks, candidate.base.query, rows),
+                    ranks == 4 && rows == 8192
+                );
+            }
+        }
         assert!(engram_candidate(&FLASH, 2).is_none());
+        let other = Geometry {
+            id: "unqualified",
+            ..FLASH
+        };
+        assert!(!choice(&other, 4, candidate.base.query, rows));
     }
 
     #[test]
@@ -160,6 +190,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(changed.len(), 8);
+        assert_eq!(changed.len(), 9);
     }
 }

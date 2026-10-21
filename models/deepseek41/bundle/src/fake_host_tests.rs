@@ -1044,6 +1044,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// allocations per TP4 rank (108175360 bytes), with 40 weight initializers.
 /// Full lifecycle audits retain every other operation after handle mapping;
 /// each C1 query plus KV triple becomes one launch with identical operands.
+/// Full-row Engram staged scales add one 68608-byte shared-memory configure
+/// per TP4 rank. These short-row lifecycles retain every other line exactly.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

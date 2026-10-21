@@ -3,6 +3,9 @@ use super::shared_overlap::journal_spans;
 use super::*;
 
 fn run(rows: u32, kv: KvLayout, drafter: bool, reference: bool) -> Vec<String> {
+    run_case(rows, kv, drafter, reference, "")
+}
+fn run_case(rows: u32, kv: KvLayout, drafter: bool, reference: bool, prefix: &str) -> Vec<String> {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, kv);
     host.drafter.set(drafter);
@@ -29,7 +32,7 @@ fn run(rows: u32, kv: KvLayout, drafter: bool, reference: bool) -> Vec<String> {
         let root = std::path::PathBuf::from(root);
         std::fs::create_dir_all(&root).unwrap();
         let name = format!(
-            "rows{rows}-{:?}-draft{drafter}-reference{reference}.journal",
+            "{prefix}rows{rows}-{:?}-draft{drafter}-reference{reference}.journal",
             kv.storage
         );
         std::fs::write(root.join(&name), lines.join("\n")).unwrap();
@@ -45,7 +48,10 @@ fn symbol(line: &str) -> &str {
 }
 fn compute_spans(line: &str) -> Result<Vec<(u64, u64, u64)>, String> {
     let mut spans = journal_spans(line);
-    if line.contains("_tma_matrix_") || line.contains("_tma_scales_") {
+    if line.contains("_tma_matrix_")
+        || line.contains("_tma_scales_")
+        || line.contains("_prefill_tma_")
+    {
         // TMA descriptors repeat A and W before the pointer operands.
         if spans.len() != 9 || spans[0] != spans[2] || spans[1] != spans[3] {
             return Err("TMA descriptors differ from pointer operands".into());
@@ -69,6 +75,13 @@ fn audit(before: &[String], after: &[String]) -> Result<usize, String> {
         let prior = symbol(a)
             .split_once("_tma_matrix_")
             .or_else(|| symbol(a).split_once("_matrix_"))
+            .or_else(|| {
+                // The full-row Engram baseline uses the native TMA entry.
+                symbol(a)
+                    .contains("_n25600_k6144_g1_")
+                    .then(|| symbol(a).split_once("_prefill_tma_"))
+                    .flatten()
+            })
             .map(|(base, _)| base);
         let next = symbol(b).split_once("_tma_scales_").map(|(base, _)| base);
         if prior.is_none()
@@ -151,5 +164,44 @@ fn retain_the_qualified_module_only_for_flash_tp4() {
             crate::Kernels::loads(name, &shape),
             shape.geometry.id == FLASH.id && shape.ranks() == 4
         );
+    }
+}
+
+#[test]
+fn engram_changes_only_both_full_row_projection_sites() {
+    for (kv, drafter) in [
+        (KV_LAYOUTS[0], false),
+        (KV_LAYOUTS[1], false),
+        (KV_LAYOUTS[0], true),
+    ] {
+        for rows in [4096, 8192] {
+            let before = crate::sm120::prefill_tma_scales::with_engram_reference(|| {
+                run_case(rows, kv, drafter, true, "engram-")
+            });
+            let after = run_case(rows, kv, drafter, false, "engram-");
+            assert_eq!(
+                audit(&before, &after).unwrap(),
+                if rows == 8192 { 8 } else { 0 }
+            );
+            let selected = |line: &&String| {
+                line.starts_with("launch ")
+                    && line.contains("_n25600_k6144_g1_")
+                    && line.contains("_tma_scales_s2_v1 ")
+            };
+            assert_eq!(before.iter().filter(selected).count(), 0);
+            assert_eq!(
+                after.iter().filter(selected).count(),
+                if rows == 8192 { 8 } else { 0 }
+            );
+            if rows == 8192 {
+                let at = after.iter().position(|line| selected(&line)).unwrap();
+                let mut corrupt = after.clone();
+                corrupt[at] = corrupt[at].replacen("offset: ", "offset: 1", 1);
+                assert!(audit(&before, &corrupt).is_err());
+                let mut missing = after.clone();
+                missing.remove(at - 1);
+                assert!(audit(&before, &missing).is_err());
+            }
+        }
     }
 }

@@ -393,6 +393,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The combined C1 query/KV adds the same private resources as the text
 /// lifecycle and replaces 40 projection triples per rank with one launch
 /// each. Every other operation is retained after typed handle mapping.
+/// Full-row Engram staged scales add one 68608-byte shared-memory configure
+/// per TP4 rank. These short-row lifecycles retain every other line exactly.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
     (Ranks::TP4, (56407, 0x0eb86c1d57e06cb8)),

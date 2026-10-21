@@ -14,6 +14,9 @@ struct RankTiming {
     ready_wait_seconds: f64,
     buffer_wait_seconds: f64,
     transfer_wait_seconds: f64,
+    submit_seconds: f64,
+    device_copy_seconds: f64,
+    frontier_wait_seconds: f64,
 }
 
 pub(super) fn upload(
@@ -70,6 +73,7 @@ struct Rank<'a> {
     submitted_chunks: u64,
     reading: usize,
     buffer_wait: Option<Instant>,
+    frontier_wait: Option<Instant>,
 }
 
 fn upload_chunks(
@@ -160,6 +164,7 @@ fn upload_chunks(
                 submitted_chunks: 0,
                 reading: 0,
                 buffer_wait: None,
+                frontier_wait: None,
             });
         }
         drop(ready_tx);
@@ -212,6 +217,15 @@ fn coordinate<'a>(
                 .transpose()?
                 .unwrap_or(false)
             {
+                if let Some(timing) = &mut *timing {
+                    timing[rank].device_copy_seconds += state
+                        .pending
+                        .front()
+                        .unwrap()
+                        .elapsed_seconds()
+                        .map_err(driver_status)?
+                        .unwrap_or(0.0);
+                }
                 let start = timing.is_some().then(Instant::now);
                 state.free.push(state.pending.pop_front().unwrap().finish());
                 if let (Some(timing), Some(start)) = (&mut *timing, start) {
@@ -229,6 +243,16 @@ fn coordinate<'a>(
             .min()
             .unwrap_or(u64::MAX);
         for (rank, (state, source)) in ranks.iter_mut().zip(sources).enumerate() {
+            let frontier_blocked = state.next < source.bytes
+                && !state.free.is_empty()
+                && state.issued >= frontier.saturating_add(2);
+            if let Some(timing) = &mut *timing {
+                if frontier_blocked {
+                    state.frontier_wait.get_or_insert_with(Instant::now);
+                } else if let Some(start) = state.frontier_wait.take() {
+                    timing[rank].frontier_wait_seconds += start.elapsed().as_secs_f64();
+                }
+            }
             if (!state.free.is_empty() || state.next == source.bytes)
                 && let (Some(start), Some(timing)) = (state.buffer_wait.take(), &mut *timing)
             {
@@ -285,9 +309,26 @@ fn coordinate<'a>(
             timing[rank].chunks += 1;
             timing[rank].bytes += read.count as u64;
         }
-        let transfer = destinations[rank]
-            .upload_pinned_chunk(read.chunk, read.target, read.count, &streams[rank])
-            .map_err(driver_status)?;
+        let start = timing.is_some().then(Instant::now);
+        let transfer = if timing.is_some() {
+            destinations[rank].upload_pinned_chunk_timed(
+                read.chunk,
+                read.target,
+                read.count,
+                &streams[rank],
+            )
+        } else {
+            destinations[rank].upload_pinned_chunk(
+                read.chunk,
+                read.target,
+                read.count,
+                &streams[rank],
+            )
+        }
+        .map_err(driver_status)?;
+        if let (Some(start), Some(timing)) = (start, &mut *timing) {
+            timing[rank].submit_seconds += start.elapsed().as_secs_f64();
+        }
         state.pending.push_back(transfer);
         state.reading -= 1;
         state.submitted += read.count as u64;

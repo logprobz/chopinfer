@@ -403,3 +403,44 @@ the base's BF16-partial collectives was 3.6 ms at 8K and 8.9 ms at 32K:
 both move 3 bytes per element, and the profile's 137.4 ms of communication
 per chunk was 135.6 ms outside compute. DMA's value is that it leaves the
 SMs free for the interval consumers above.
+
+### Producing sent intervals before their pulls
+
+Before most MoE reductions the last launch on every rank is the route-row
+sum that writes the call's F32 partial rows (the routed rows of each token
+in top-k order plus the shared expert's addend). Where it is exactly that
+sum, sized to the call's rows and writing exactly the call's partial rows,
+the call has a BF16 payload, and the rows divide into 32-row owner
+intervals, the DMA call runs the sum per owner interval. Each rank's main
+stream produces and rounds the interval it sends in scatter phase 0, then
+phase 1, then phase 2, recording an event after each, and produces its own
+interval last. Each destination pulls on its copy lane, each pull waiting
+only for its own source's event for that phase; the lane first waits for
+its rank's main stream to reach the call. The owner sum waits for the
+rank's own interval and its three pulls, and still adds every rank's rows
+in rank order. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE=0` keeps one sum
+launch before the call.
+
+Each interval's launch keeps the original symbol and arguments, with its
+row views narrowed to the interval, its live count read from the prefill
+count table and one block per token. In the upper cone the sums read
+compact routed rows, route ids and addends from the start of their capacity
+buffers; those views narrow the same way. The sum computes every token from
+that token's routes and addend alone, so each row's bytes are unchanged. No
+argument of the sum other than its partial rows may overlap anything the
+call reads or writes. At package defaults on an 8192-row chunk this splits
+36 calls per rank: the 20 full-row MoE calls and the 16 cone calls. The CPU
+journal audit checks every pull after its source's rounding, and removing
+the waits before the pulls must expose an alias; dropping one interval's
+launch fails the split coverage check.
+
+On 2026-10-21 at 250 W, a four-GPU probe ran the served sum in its served
+input state (all six routes of every token read, 0.857 ms at 8192 rows, as
+served) feeding the BF16 DMA reduction, serially and per interval. At all 18
+reduction sizes in two passes the reduced rows matched the host fold on
+every rank, the per-interval F32 partial rows equalled the serial ones byte
+for byte, and a run that skipped one interval's sum differed. At 8192 rows
+the serial sum and reduction took 3.58 ms and the per-interval form 3.04 ms;
+over a chunk's 36 MoE reductions that is 83.0 against 70.4 ms, a 12.6 ms
+saving with 65% of the sum hidden. The attention output fold before the
+other reductions takes TMA maps and is not split.

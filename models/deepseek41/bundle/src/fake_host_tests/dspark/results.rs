@@ -241,7 +241,7 @@ fn c8_device_feedback_queues_a_successor_after_current_completion() {
         if cycle == 1 {
             let hash = step
                 .iter()
-                .position(|s| s.contains(crate::sm120::engram_hash_entries::SYMBOL))
+                .position(|s| s.contains(crate::sm120::engram_hash_rows::SYMBOL))
                 .unwrap();
             assert!(!step[..hash].iter().any(|s| s.starts_with("replay ")));
         }

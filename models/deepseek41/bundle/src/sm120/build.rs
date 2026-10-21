@@ -34,6 +34,8 @@ mod dspark_router;
 mod encoder;
 mod engram_hash_cubin;
 mod engram_hash_entries;
+#[allow(dead_code, reason = "the bundle dispatches the row-parallel hash")]
+mod engram_hash_rows;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
@@ -215,6 +217,7 @@ pub fn selection(
         engram_hash_entries::FAMILY,
         engram_hash_cubin::cubin_spec(manifest),
     ));
+    specs.push((engram_hash_rows::FAMILY, engram_hash_rows::cubin_spec(manifest)));
     specs.push((
         acceptance_entries::FAMILY,
         acceptance_cubin::cubin_spec(manifest),

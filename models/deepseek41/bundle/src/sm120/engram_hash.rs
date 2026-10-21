@@ -1,4 +1,5 @@
 use super::engram_hash_entries::{SYMBOL, THREADS};
+use super::engram_hash_rows;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
 use kernel_core::properties::Invariance;
@@ -15,7 +16,7 @@ pub fn prepare(op: EngramHash, need: Need) -> Result<Prepared<EngramHashBuffers<
     let info = OpInfo::new(
         CONTRACT,
         Invariance::any_rows(need.capacity),
-        vec![(SYMBOL.into(), 0)],
+        vec![(SYMBOL.into(), 0), (engram_hash_rows::SYMBOL.into(), 0)],
     );
     need.check(&info)?;
     Ok(Box::new(Hash {
@@ -88,12 +89,19 @@ impl PreparedOp<EngramHashBuffers<View>> for Hash {
             .into_iter()
             .map(Argument::U32),
         );
+        // A row's (layer, column) tasks run in parallel where they fit one
+        // CTA; both entries give the same integers.
+        let columns = (op.ngram - 1) * op.heads;
+        let (symbol, grid, block) = match engram_hash_rows::threads(op.layers, columns) {
+            Some(threads) => (engram_hash_rows::SYMBOL, counts.rows, threads),
+            None => (SYMBOL, counts.rows.div_ceil(THREADS), THREADS),
+        };
         Ok(vec![Launch {
-            symbol: SYMBOL.into(),
+            symbol: symbol.into(),
             rows: counts.rows,
             plan: LaunchPlan {
-                grid: [counts.rows.div_ceil(THREADS), 1, 1],
-                block: [THREADS, 1, 1],
+                grid: [grid, 1, 1],
+                block: [block, 1, 1],
                 dynamic_shared_bytes: 0,
                 workspace_bytes: 0,
                 cluster: [1; 3],

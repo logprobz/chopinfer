@@ -413,7 +413,7 @@ fn verify32_after_full_prefill_reserves_the_selected_context_bank() {
         let step = &journal[begin..];
         let hashed = step
             .iter()
-            .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
+            .position(|line| line.contains(crate::sm120::engram_hash_rows::SYMBOL))
             .unwrap();
         let target = &step[hashed + 1..];
         assert_eq!(

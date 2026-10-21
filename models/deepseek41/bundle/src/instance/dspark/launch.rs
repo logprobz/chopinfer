@@ -451,12 +451,16 @@ impl Instance {
             arrays.push((stored.inputs.live_tokens, live.to_le_bytes().to_vec()));
             arrays.push((stored.live_items, items.to_le_bytes().to_vec()));
             self.upload_drafter_metadata(rank, arrays)?;
-            upload(
-                &self.services,
-                stream,
-                self.buffers[rank].scratch.bias_select,
-                &meta.bias_select,
-            )?;
+            // Drafts take the text bias. The flags are zero unless a
+            // prefill's image flags may still be set.
+            if self.image_flags.get() {
+                upload(
+                    &self.services,
+                    stream,
+                    self.buffers[rank].scratch.bias_select,
+                    &meta.bias_select,
+                )?;
+            }
             self.services
                 .zero_device_buffer(stream, rows(self.buffers[rank].scratch.row_status, live))
                 .map_err(|e| format!("DSpark status clear: {e:?}"))?;

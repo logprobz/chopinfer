@@ -2,7 +2,7 @@ use super::*;
 use crate::dspark::execution::Input;
 use crate::dspark::prefetch::{Feedback, with_enabled};
 use crate::dspark::state::{Kind, Rows};
-use crate::instance::dspark_prefetch_for_test;
+use crate::instance::{dspark_prefetch_for_test, set_image_flags_for_test};
 use runtime_bundle_abi::device_results::*;
 
 fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
@@ -107,8 +107,8 @@ fn private_successor_restores_current_state_and_skips_the_next_draft() {
                     .iter()
                     .filter(|line| line.starts_with("upload "))
                     .count(),
-                ranks.count() * 3,
-                "one metadata upload for projection, one for drafting, and one bias selector"
+                ranks.count() * 2,
+                "one metadata upload for projection and one for drafting; text flags are zero"
             );
             drop(journal);
             instance.commit_accepted(&[kept(1, accepted + 1)]).unwrap();
@@ -196,4 +196,35 @@ fn cancellation_and_slot_reuse_cannot_consume_a_private_successor() {
     instance.retire_request(2).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// While a prefill's image flags may still be set, a draft writes its rows'
+/// text bias choice; once they are clear it uploads none.
+#[test]
+fn drafts_restore_the_text_bias_only_while_image_flags_may_be_set() {
+    for (flags, uploads) in [(false, 2), (true, 3)] {
+        let ranks = Ranks::TP4;
+        let (host, mut instance) = with_enabled(true, || {
+            create_with_limits(Shape::new(&FLASH, ranks).unwrap(), 1, 32)
+        });
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(1, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 3, 5));
+        set_image_flags_for_test(instance.handle(), flags);
+        let begin = host.journal.borrow().len();
+        dspark_prefetch_for_test(instance.handle(), feedback(1, 3, 2), true);
+        let journal = host.journal.borrow();
+        assert_eq!(
+            journal[begin..]
+                .iter()
+                .filter(|line| line.starts_with("upload "))
+                .count(),
+            ranks.count() * uploads,
+            "image flags {flags}"
+        );
+    }
 }

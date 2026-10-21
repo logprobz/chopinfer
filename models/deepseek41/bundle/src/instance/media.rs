@@ -123,6 +123,7 @@ impl Instance {
     ) -> Result<(), BundleAbiError> {
         let (_, _, stream) = self.ranks[rank];
         let scratch = &self.buffers[rank].scratch;
+        self.image_flags.set(true);
         bundle_runtime::resources::upload_bytes(
             &self.services,
             stream,
@@ -142,6 +143,7 @@ impl Instance {
             self.services
                 .zero_device_buffer(stream, self.buffers[rank].scratch.bias_select)?;
         }
+        self.image_flags.set(false);
         Ok(())
     }
 }

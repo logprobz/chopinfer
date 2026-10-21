@@ -15,6 +15,9 @@ use model_deepseek41_contract::moe::Experts;
 // this selector never enables a previously unqualified direct bucket.
 // Drafter 8/32 has mixed results; Verify-6's smallest gain is only 0.2%.
 // Retain those paths. No unmeasured row counts are inferred.
+// TP4, 250 W, 2026-10-21, captured full MoE graphs (row prefixes of C8 K3
+// verify captures): at backbone Verify-4 (DSpark C1 K3) the fused router
+// alone saves 0.24 ms per 40-layer step, 20 of 20 layers, bitwise.
 pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     #[cfg(test)]
     if DISABLED.get() {
@@ -22,7 +25,7 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     }
     match (set.count, set.top_k, phase) {
         (384, 6, ExecutionPhase::Decode) => [1, 8, 32].contains(&rows),
-        (384, 6, ExecutionPhase::Verify) => [6, 8, 32].contains(&rows),
+        (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 32].contains(&rows),
         (128, 3, ExecutionPhase::Decode) => rows == 1,
         _ => false,
     }
@@ -37,12 +40,15 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
 // faster in 20 of 20 layers each with no candidate sample above the served
 // range; the gate never starts beside the shared expert. Alone the r2
 // finish loses at these rows (the gate starts beside the shared expert's
-// down). Decode-1, Verify-4/6/8 and the drafter bank are unmeasured.
+// down). Row prefixes of the same captures (c1-router-r1): 0.39 ms per
+// step at Decode-1 (AR C1) and 0.59 at Verify-4 (DSpark C1 K3, against the
+// unfused router), 20 of 20 layers each, no sample above the served range.
+// Verify-6/8 and the drafter bank are unmeasured.
 pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     qualified(set, phase, rows)
         && matches!(
             (set.count, set.top_k, phase, rows),
-            (384, 6, ExecutionPhase::Decode, 8 | 32) | (384, 6, ExecutionPhase::Verify, 32)
+            (384, 6, ExecutionPhase::Decode, 1 | 8 | 32) | (384, 6, ExecutionPhase::Verify, 4 | 32)
         )
 }
 
@@ -183,7 +189,7 @@ mod tests {
                 for (phase, rows, op) in ops {
                     let wanted = match (set.count, phase) {
                         (384, ExecutionPhase::Decode) => [1, 8, 32].contains(&rows),
-                        (384, ExecutionPhase::Verify) => [6, 8, 32].contains(&rows),
+                        (384, ExecutionPhase::Verify) => [4, 6, 8, 32].contains(&rows),
                         (128, ExecutionPhase::Decode) => rows == 1,
                         _ => false,
                     };
@@ -193,7 +199,7 @@ mod tests {
                     let r2 = set.count == 384
                         && matches!(
                             (phase, rows),
-                            (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
+                            (ExecutionPhase::Decode, 1 | 8 | 32) | (ExecutionPhase::Verify, 4 | 32)
                         );
                     let finishes = op
                         .info
@@ -220,7 +226,10 @@ mod tests {
                             .all(|s| crate::shared_overlap::joins_before_gate(s) == r2)
                     );
                 }
-                for rows in [0, 2, 3, 4, 5, 7, 12, 16, 24, 48, 64, 192, 512, 8192] {
+                assert_eq!(qualified(set, ExecutionPhase::Verify, 4), set.count == 384);
+                assert!(!qualified(set, ExecutionPhase::Decode, 4));
+                assert!(!qualified(set, ExecutionPhase::Prefill, 4));
+                for rows in [0, 2, 3, 5, 7, 12, 16, 24, 48, 64, 192, 512, 8192] {
                     for phase in [
                         ExecutionPhase::Decode,
                         ExecutionPhase::Verify,

@@ -26,6 +26,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, channel, sync_chan
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod io_stats;
 mod packed_sources;
 mod plan_cache;
 mod stats;
@@ -740,6 +741,7 @@ struct InnerV1 {
     shared_nanos: AtomicU64,
     rank_nanos: AtomicU64,
     detailed_timing: bool,
+    io_timing: Option<io_stats::IoCounters>,
     output_wait_nanos: AtomicU64,
     materialize_nanos: AtomicU64,
     input_wait_nanos: AtomicU64,
@@ -1231,6 +1233,7 @@ impl PlannedImageV1 {
             shared_nanos: AtomicU64::new(0),
             rank_nanos: AtomicU64::new(0),
             detailed_timing: detailed_timing_v1(),
+            io_timing: detailed_timing_v1().then(io_stats::IoCounters::default),
             output_wait_nanos: AtomicU64::new(0),
             materialize_nanos: AtomicU64::new(0),
             input_wait_nanos: AtomicU64::new(0),
@@ -1412,6 +1415,12 @@ impl PlannedImageV1 {
                 materialize_seconds: seconds(&self.inner.materialize_nanos),
                 input_wait_seconds: seconds(&self.inner.input_wait_nanos),
             }),
+            io_timing: self
+                .inner
+                .io_timing
+                .as_ref()
+                .map(io_stats::IoCounters::snapshot),
+            buffer_timing: self.inner.packed_buffers.timing(),
             retained_peak_bytes: self.inner.retained_peak.load(Ordering::Relaxed),
             pooled_peak_bytes: self.inner.packed_buffers.peak(),
         }
@@ -1455,6 +1464,33 @@ fn elapsed_nanos(counter: &AtomicU64, since: Instant) {
     counter.fetch_add(since.elapsed().as_nanos() as u64, Ordering::Relaxed);
 }
 
+/// Time CPU packing after inputs are acquired. Streamed production below
+/// instead subtracts its own nested read time, never another worker's totals.
+fn packing_timed_v1<T>(inner: &InnerV1, work: impl FnOnce() -> T) -> T {
+    let start = inner.io_timing.as_ref().map(|_| Instant::now());
+    let result = work();
+    if let (Some(timing), Some(start)) = (&inner.io_timing, start) {
+        elapsed_nanos(&timing.packing_nanos, start);
+    }
+    result
+}
+
+fn read_buffered_v1(
+    file: &std::fs::File,
+    buffer: &mut [u8],
+    at: u64,
+    timing: Option<&io_stats::IoCounters>,
+) -> std::io::Result<()> {
+    match timing {
+        Some(timing) => io_stats::read_exact(
+            |buffer, at| timing.read(false, || file.read_at(buffer, at)),
+            buffer,
+            at,
+        ),
+        None => file.read_exact_at(buffer, at),
+    }
+}
+
 /// Reads source bytes of one record.
 fn read_source_v1(
     inner: &InnerV1,
@@ -1483,6 +1519,7 @@ fn read_source_v1(
             std::io::Error::from_raw_os_error(5)
         )));
     }
+    let residency_started = inner.io_timing.as_ref().map(|_| Instant::now());
     // Runs the cache holds are copied from it; cold runs are read past it.
     let direct = inner
         .options
@@ -1493,6 +1530,10 @@ fn read_source_v1(
         Some(_) => residency_runs_v1(&shard.file, at, buffer.len() as u64),
         None => vec![(buffer.len() as u64, false)],
     };
+    if let (Some(timing), Some(start)) = (&inner.io_timing, residency_started) {
+        elapsed_nanos(&timing.residency_nanos, start);
+        timing.request(source.shard, at, buffer.len() as u64);
+    }
     let mut rest = &mut *buffer;
     let mut run_at = at;
     for (length, cold) in runs {
@@ -1501,7 +1542,15 @@ fn read_source_v1(
         // of it too.
         let read_direct = direct
             .filter(|direct| cold && !direct.off.load(Ordering::Relaxed))
-            .map(|direct| read_direct_v1(&inner.direct_buffers, direct, run_at, part));
+            .map(|direct| {
+                read_direct_v1(
+                    &inner.direct_buffers,
+                    direct,
+                    run_at,
+                    part,
+                    inner.io_timing.as_ref(),
+                )
+            });
         match read_direct {
             Some(Ok(bytes)) => {
                 inner.file_read_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -1520,9 +1569,7 @@ fn read_source_v1(
                         shard.name
                     );
                 }
-                shard
-                    .file
-                    .read_exact_at(part, run_at)
+                read_buffered_v1(&shard.file, part, run_at, inner.io_timing.as_ref())
                     .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
                 inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
             }
@@ -1533,9 +1580,7 @@ fn read_source_v1(
                 )));
             }
             None => {
-                shard
-                    .file
-                    .read_exact_at(part, run_at)
+                read_buffered_v1(&shard.file, part, run_at, inner.io_timing.as_ref())
                     .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
                 inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
             }
@@ -1659,6 +1704,7 @@ fn read_direct_v1(
     direct: &DirectFileV1,
     at: u64,
     buffer: &mut [u8],
+    timing: Option<&io_stats::IoCounters>,
 ) -> std::io::Result<u64> {
     let (file, align) = (&direct.file, direct.alignment);
     let needed = (DIRECT_READ_BYTES + align) as usize;
@@ -1682,7 +1728,11 @@ fn read_direct_v1(
             // file, which is short.
             let mut filled = 0;
             while filled < window.len() {
-                let count = file.read_at(&mut window[filled..], start + filled as u64)?;
+                let mut read = || file.read_at(&mut window[filled..], start + filled as u64);
+                let count = match timing {
+                    Some(timing) => timing.read(true, read),
+                    None => read(),
+                }?;
                 filled += count;
                 read_bytes += count as u64;
                 if count == 0 || count as u64 % align != 0 {
@@ -1694,7 +1744,14 @@ fn read_direct_v1(
                 return Err(std::io::ErrorKind::UnexpectedEof.into());
             }
             let count = (filled - skip).min(buffer.len() - done);
+            let copying = timing.map(|_| Instant::now());
             buffer[done..done + count].copy_from_slice(&window[skip..skip + count]);
+            if let (Some(timing), Some(start)) = (timing, copying) {
+                timing
+                    .bounce_bytes
+                    .fetch_add(count as u64, Ordering::Relaxed);
+                elapsed_nanos(&timing.bounce_nanos, start);
+            }
             done += count;
         }
         Ok(read_bytes)
@@ -1742,9 +1799,10 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
             let buffer = inner
                 .packed_buffers
                 .take(record.prepared.byte_length() as usize);
-            if let Some(scales) = operand
-                .independent_scales(described, input.bytes(), buffer)
-                .map_err(&error)?
+            if let Some(scales) = packing_timed_v1(inner, || {
+                operand.independent_scales(described, input.bytes(), buffer)
+            })
+            .map_err(&error)?
             {
                 return Ok(vec![Vec::new(), scales, Vec::new()]);
             }
@@ -1757,10 +1815,11 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
         let sizes = operand.plan.section_bytes().map_err(|e| e.to_string())?;
         let buffers = [sizes.codes, sizes.local_scales, sizes.global_scales]
             .map(|size| inner.packed_buffers.take(size as usize));
-        return operand
-            .execute_sections_reusing(described, &views, buffers)
-            .map(|sections| sections.into())
-            .map_err(error);
+        return packing_timed_v1(inner, || {
+            operand.execute_sections_reusing(described, &views, buffers)
+        })
+        .map(|sections| sections.into())
+        .map_err(error);
     }
     record.prepared.produce_sections(&mut read).map_err(error)
 }
@@ -1941,6 +2000,11 @@ fn produce_from_shared_source_v1(
             let mut read = |_: usize, offset: u64, buffer: &mut [u8]| {
                 let from = offset as usize;
                 buffer.copy_from_slice(&bytes.bytes[from..from + buffer.len()]);
+                if let Some(timing) = &inner.io_timing {
+                    timing
+                        .source_copy_bytes
+                        .fetch_add(buffer.len() as u64, Ordering::Relaxed);
+                }
                 Ok(())
             };
             record.prepared.produce(range, out, &mut read, scratch)
@@ -2059,18 +2123,27 @@ fn copy_shared_v1(
                     } else {
                         state.remaining[section] > 0
                     };
-                    let data =
-                        if owed && state.sections[section].is_none() && reserve_v1(inner, charge) {
-                            let held = Arc::new(if pooled {
-                                RetainedBytesV1::pooled(inner, data)
-                            } else {
-                                RetainedBytesV1::new(inner, data)
-                            });
-                            state.sections[section] = Some(Arc::clone(&held));
-                            SectionV1::Retained(held)
+                    let retained =
+                        owed && state.sections[section].is_none() && reserve_v1(inner, charge);
+                    if section != wanted
+                        && !retained
+                        && let Some(timing) = &inner.io_timing
+                    {
+                        timing
+                            .unused_section_bytes
+                            .fetch_add(data.len() as u64, Ordering::Relaxed);
+                    }
+                    let data = if retained {
+                        let held = Arc::new(if pooled {
+                            RetainedBytesV1::pooled(inner, data)
                         } else {
-                            SectionV1::Own(data)
-                        };
+                            RetainedBytesV1::new(inner, data)
+                        });
+                        state.sections[section] = Some(Arc::clone(&held));
+                        SectionV1::Retained(held)
+                    } else {
+                        SectionV1::Own(data)
+                    };
                     if section == wanted {
                         wanted_bytes = Some(data);
                     }
@@ -2088,6 +2161,11 @@ fn copy_shared_v1(
     };
     let result = if bytes.bytes().len() as u64 == record.prepared.byte_length() {
         out.copy_from_slice(&bytes.bytes()[range.start as usize..range.end as usize]);
+        if let Some(timing) = &inner.io_timing {
+            timing
+                .output_copy_bytes
+                .fetch_add(out.len() as u64, Ordering::Relaxed);
+        }
         Ok(())
     } else {
         Err(transform_error(record.offset)(WeightTransformError(
@@ -2197,13 +2275,26 @@ fn read_rank_parts_v1(
         let result = if let Some(index) = record.source_share {
             produce_from_shared_source_v1(inner, record, index, task.range, task.out, scratch)
         } else {
+            let mut reading = Duration::ZERO;
             let mut read = |index: usize, offset: u64, buffer: &mut [u8]| {
-                read_source_v1(inner, record.sources[index], offset, buffer)
+                let start = inner.io_timing.as_ref().map(|_| Instant::now());
+                let result = read_source_v1(inner, record.sources[index], offset, buffer);
+                if let Some(start) = start {
+                    reading += start.elapsed();
+                }
+                result
             };
-            record
+            let result = record
                 .prepared
                 .produce(task.range, task.out, &mut read, scratch)
-                .map_err(transform_error(record.offset))
+                .map_err(transform_error(record.offset));
+            if let Some(timing) = &inner.io_timing {
+                timing.packing_nanos.fetch_add(
+                    started.elapsed().saturating_sub(reading).as_nanos() as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            result
         };
         elapsed_nanos(&inner.produce_nanos, started);
         result
@@ -2824,11 +2915,11 @@ mod tests {
             let mut buffered = vec![0; count as usize];
             shard.file.read_exact_at(&mut buffered, at).unwrap();
             let mut read = vec![0xee; count as usize];
-            read_direct_v1(&buffers, direct, at, &mut read).unwrap();
+            read_direct_v1(&buffers, direct, at, &mut read, None).unwrap();
             assert!(read == buffered, "{at} + {count}");
         }
         let mut past = vec![0; 2];
-        assert!(read_direct_v1(&buffers, direct, file_length - 1, &mut past).is_err());
+        assert!(read_direct_v1(&buffers, direct, file_length - 1, &mut past, None).is_err());
     }
 
     /// A range the cache holds in the middle splits into a cold run, a

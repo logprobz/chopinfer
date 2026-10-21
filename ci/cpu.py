@@ -59,6 +59,15 @@ PREREQUISITES = ("reference-prerequisites",)
 # Steps that prepare what later steps read. ci/quick.sh runs the ones its
 # selected checks run after.
 SETUP = ("profile-cli-build", "preparation-fixture-build", "profile-copy") + PREREQUISITES
+# Steps that read what other steps leave in the shared target or the work
+# directory, beyond SETUP. `--only` refuses such a step without its producers,
+# or adds them with --with-producers (docs/contributing.md#checks).
+PRODUCERS = {
+    # The workspace tests' kernel build reports and the external SDK smoke's.
+    "kernel-report-integration": ("portable", "external-model-smoke"),
+    # The runtime-host binaries the lifecycle test builds with the fixture services.
+    "deploy-entrypoint": ("process-lifecycle",),
+}
 # The reference checks are required: each must execute tests and may skip only
 # cases whose reason names the opt-in input that enables them, a checkpoint or
 # a model's extra checkpoints (CHOPINFER_CI_CHECKPOINT_TESTS=1) or a CUDA round
@@ -298,7 +307,8 @@ def order(shared, independent):
 
 
 def select(planned, names):
-    """The named steps and their transitive setup, waiting only for selected steps."""
+    """The named steps and their transitive setup. Each waits for the
+    selected steps it follows, directly or through unselected ones."""
     chosen = set(names)
     steps = {item.name: item for item in planned}
     pending = list(chosen)
@@ -307,10 +317,40 @@ def select(planned, names):
             if name in SETUP and name not in chosen:
                 chosen.add(name)
                 pending.append(name)
+    nearest = {}
+
+    def follows(name):
+        if name not in nearest:
+            found = []
+            for before in steps[name].after:
+                for step in (before,) if before in chosen else follows(before):
+                    if step not in found:
+                        found.append(step)
+            nearest[name] = tuple(found)
+        return nearest[name]
+
+    after = {name: follows(name) for name in chosen}
     planned = [item for item in planned if item.name in chosen]
     for item in planned:
-        item.after = tuple(name for name in item.after if name in chosen)
+        item.after = after[item.name]
     return planned
+
+
+def with_producers(names):
+    """`names` and the steps whose outputs they read (PRODUCERS), transitively."""
+    chosen, pending = list(names), list(names)
+    while pending:
+        for producer in PRODUCERS.get(pending.pop(), ()):
+            if producer not in chosen:
+                chosen.append(producer)
+                pending.append(producer)
+    return chosen
+
+
+def missing_producers(names):
+    """{step: its unselected producers} for the steps among `names` that read another's outputs."""
+    return {name: [producer for producer in PRODUCERS[name] if producer not in names]
+            for name in names if any(producer not in names for producer in PRODUCERS.get(name, ()))}
 
 
 class HeadWatch(threading.Thread):
@@ -397,6 +437,8 @@ def main(arguments=None):
                         default=os.environ.get("CHOPINFER_CI_EXHAUSTIVE") == "1",
                         help="Also run the exhaustive comparisons the gate ignores (or CHOPINFER_CI_EXHAUSTIVE=1)")
     parser.add_argument("--only", action="append", default=[], help="Run only these steps (repeatable)")
+    parser.add_argument("--with-producers", action="store_true",
+                        help="With --only, also run the steps whose outputs the selected steps read")
     parser.add_argument("--work", type=pathlib.Path, help="Keep step logs in this directory")
     parser.add_argument("--summary", type=pathlib.Path, default=os.environ.get("CHOPINFER_CI_SUMMARY"),
                         help="Write each step's status, time, CPU time and peak memory as JSON")
@@ -414,11 +456,17 @@ def main(arguments=None):
         print(json.dumps({item.name: list(item.after) for item in order(shared, independent)}, indent=1))
         return 0
     names = [item.name for item in order(shared, independent)]
+    only = with_producers(args.only) if args.with_producers else args.only
     if args.only:
         unknown = set(args.only) - set(names)
         if unknown:
             parser.error("unknown steps: " + ", ".join(sorted(unknown)))
-        names = [item.name for item in select(order(shared, independent), args.only)]
+        missing = missing_producers(only)
+        if missing:
+            parser.error("; ".join(f"{name} reads the outputs of {', '.join(producers)}"
+                                   for name, producers in missing.items())
+                         + ": add them with --only, or pass --with-producers")
+        names = [item.name for item in select(order(shared, independent), only)]
     problems = preflight.problems(names)
     for problem in problems:
         print("cpu-ci preflight: " + problem, file=sys.stderr)
@@ -434,7 +482,7 @@ def main(arguments=None):
     shared, independent = steps(target, work, args.jobs, args.test_threads, args.exhaustive)
     planned = order(shared, independent)
     if args.only:
-        planned = select(planned, args.only)
+        planned = select(planned, only)
     started = time.monotonic()
     began = time.time()
     status = 1

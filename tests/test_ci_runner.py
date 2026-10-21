@@ -448,6 +448,39 @@ class ReferencePrerequisites(unittest.TestCase):
         planned = cpu.select(cpu.order(shared, independent), ["leak-guard"])
         self.assertEqual([item.name for item in planned], ["leak-guard"])
 
+    def test_a_step_selected_without_its_producers_is_refused_naming_them(self):
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+            cpu.main(["--only", "kernel-report-integration", "--only", "deploy-entrypoint",
+                      "--only", "process-lifecycle"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("kernel-report-integration reads the outputs of portable, external-model-smoke: add them "
+                      "with --only, or pass --with-producers", stderr.getvalue())
+        self.assertNotIn("deploy-entrypoint reads", stderr.getvalue())
+
+    def test_with_producers_a_reader_runs_after_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)
+        names = cpu.with_producers(["kernel-report-integration"])
+        self.assertEqual(cpu.missing_producers(names), {})
+        steps = {item.name: item for item in cpu.select(cpu.order(shared, independent), names)}
+        self.assertEqual(set(steps), {"kernel-report-integration", "portable", "external-model-smoke",
+                                      *cpu.SETUP} - set(cpu.PREREQUISITES))
+        # The reader followed portable through the unselected fixture builds.
+        self.assertEqual(set(steps["kernel-report-integration"].after), {"portable", "external-model-smoke"})
+
+    def test_every_producer_precedes_its_reader_in_the_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)
+        steps = {item.name: item for item in cpu.order(shared, independent)}
+
+        def before(name):
+            return {earlier for step in steps[name].after for earlier in (step, *before(step))}
+
+        for reader, producers in cpu.PRODUCERS.items():
+            with self.subTest(reader=reader):
+                self.assertLessEqual(set(producers), before(reader))
+
     def test_the_gate_step_reports_the_missing_prerequisite(self):
         env = {key: value for key, value in os.environ.items() if key != "CHOPINFER_REFRUN_PYTHON"}
         result = subprocess.run([sys.executable, "-B", "ci/model_checks.py", "prerequisites"], cwd=ROOT, env=env,

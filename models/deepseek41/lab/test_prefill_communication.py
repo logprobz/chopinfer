@@ -86,6 +86,25 @@ class Ordering(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'gather precedes global sum join'):
             p.analyze(self.path,True,1)
 
+    def test_pushed_copies_may_arrive_out_of_phase_order(self):
+        # Rank 2 sends its first call's scatters 7 ns earlier, in its own
+        # phase order, so rank 0 receives rank 2's before rank 3's: three
+        # sources issue a destination's incoming copies when each pushes.
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_MEMCPY SET start=start-7,end=end-7 '
+                    'WHERE srcDeviceId=2 AND start BETWEEN 1000 AND 1012')
+        with self.assertRaisesRegex(RuntimeError,'peer phases differ'):
+            peer_order.audit(self.path,1)
+        self.assertEqual(peer_order.audit(self.path,1,issuer='source')['issuer'],'source')
+
+    def test_the_issuer_keeps_the_phase_order(self):
+        # Rank 0 sends its second phase first: wrong for either issuer.
+        self.change('UPDATE CUPTI_ACTIVITY_KIND_MEMCPY SET start=999 WHERE srcDeviceId=0 AND dstDeviceId=2 AND start=1006')
+        for issuer in ('destination','source'):
+            with self.assertRaisesRegex(RuntimeError,'peer phases differ'):
+                peer_order.audit(self.path,1,issuer=issuer)
+        with self.assertRaisesRegex(RuntimeError,'unknown copy issuer'):
+            peer_order.audit(self.path,1,issuer='peer')
+
     def test_wrong_bytes_are_rejected(self):
         self.change('UPDATE CUPTI_ACTIVITY_KIND_MEMCPY SET bytes=bytes+4 WHERE start=1000 AND srcDeviceId=0')
         with self.assertRaisesRegex(RuntimeError,'peer bytes differ'):

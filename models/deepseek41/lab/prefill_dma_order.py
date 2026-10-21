@@ -21,11 +21,17 @@ def pieces(rank, ranks=4):
     return 1 if rank in (0, ranks - 1) else 2
 
 
-def audit(path, expected_chunks=4, payload='f32', split=False):
+def audit(path, expected_chunks=4, payload='f32', split=False, issuer='destination'):
     """With `split`, a BF16 call may instead round each of its three sent
     intervals on its own, each before its own scatter reads it (a producer
     run per interval); the call's rounds are then those between the
-    previous owner sum and its own."""
+    previous owner sum and its own.
+
+    `issuer` names the rank whose streams issue each copy: the destination
+    (pull) or the source (push). The issuer's copies of a phase triple
+    start in the direct schedule's phase order; the other side's arrive
+    from three issuers, so only their set of peers is fixed."""
+    require(issuer in ('destination', 'source'), 'unknown copy issuer')
     require(payload in SUMS, 'unknown DMA payload')
     require(not split or payload == 'bf16', 'split rounding needs the BF16 payload')
     def kernels(db, name):
@@ -65,8 +71,13 @@ def audit(path, expected_chunks=4, payload='f32', split=False):
             tx = outgoing[rank][6 * index:6 * index + 6]
             require([c[5] for c in rx] == expected and [c[5] for c in tx] == expected,
                     'peer bytes differ from the cone interval')
-            require([c[3] for c in rx] == [(rank + 3 - phase) % 4 for phase in range(3)] * 2
-                    and [c[4] for c in tx] == [(rank + 1 + phase) % 4 for phase in range(3)] * 2,
+            sources = [(rank + 3 - phase) % 4 for phase in range(3)]
+            destinations = [(rank + 1 + phase) % 4 for phase in range(3)]
+            received, sent = [c[3] for c in rx], [c[4] for c in tx]
+            ordered, peers = (received, sent) if issuer == 'destination' else (sent, received)
+            schedule, others = (sources, destinations) if issuer == 'destination' else (destinations, sources)
+            require(ordered == schedule * 2
+                    and sorted(peers[:3]) == sorted(peers[3:]) == sorted(others),
                     'peer phases differ from the direct schedule')
             scatter_end = max(c[1] for c in rx[:3])
             gather_start = min(c[0] for c in tx[3:])
@@ -105,7 +116,7 @@ def audit(path, expected_chunks=4, payload='f32', split=False):
         require(gap >= 0, f'gather precedes global sum join: index={index} gap_ns={gap}')
         global_gather.append(gap)
     require(not split or all(assigned[r] == len(rounded[r]) for r in range(4)), 'BF16 rounding outside any call')
-    return dict(payload=payload, sums_checked=len(sums), rounds_checked=len(rounds), split_calls=split_calls,
+    return dict(payload=payload, issuer=issuer, sums_checked=len(sums), rounds_checked=len(rounds), split_calls=split_calls,
                 min_round_to_scatter_gap_ns=min(rounding_gaps) if rounding_gaps else None,
                 peer_copies_checked=len(copies), chunks=expected_chunks, ranks=4,
                 ordering_failures=[], min_incoming_scatter_to_sum_gap_ns=min(r['scatter_to_sum_gap_ns'] for r in dependencies),

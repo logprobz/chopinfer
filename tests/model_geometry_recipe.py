@@ -153,7 +153,7 @@ def qwen_refusals(helper, config, flash, scratch, env, geometry_id):
 
 def file_pins(root):
     pins = {}
-    for path in sorted(root.rglob("*")):
+    for path in sorted(root.rglob("*")):  # check-inputs: walks outside the repository
         if not path.is_file():
             continue
         digest = hashlib.sha256()

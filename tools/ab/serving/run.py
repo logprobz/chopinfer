@@ -88,7 +88,7 @@ def verify_install(root, model):
         need(type(sha) is str and re.fullmatch('[0-9a-f]{64}', sha), f'invalid digest: {name}')
         expected.add(name)
         expected.update(str(p) for p in relative.parents if str(p) != '.')
-    actual = {str(p.relative_to(root)) for top in ('bin', 'lib') for p in [root / top, *(root / top).rglob('*')]}
+    actual = {str(p.relative_to(root)) for top in ('bin', 'lib') for p in [root / top, *(root / top).rglob('*')]}  # check-inputs: walks outside the repository
     need(expected == actual, 'install bin/lib inventory differs from its receipt')
     for p in [root, *(root / name for name in actual)]:
         mode = p.lstat().st_mode
@@ -123,7 +123,7 @@ def snapshot_install(source, destination, receipt, model):
         need(digest(target) == sha, 'install changed while being snapshotted')
         target.chmod(0o555 if relative.startswith('bin/') else 0o444)
     write(destination / 'INSTALL.json', {k: v for k, v in receipt.items() if k not in ('path', 'receipt_sha256')}, 0o444)
-    for directory in sorted((p for p in destination.rglob('*') if p.is_dir()), reverse=True):
+    for directory in sorted((p for p in destination.rglob('*') if p.is_dir()), reverse=True):  # check-inputs: walks outside the repository
         directory.chmod(0o555)
     destination.chmod(0o555)
     return verify_install(destination, model)

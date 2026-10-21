@@ -176,7 +176,7 @@ CITED = re.compile(r'\b[0-9a-f]{9,40}\b')
 
 
 def tracked():
-    out = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, check=True, capture_output=True).stdout
+    out = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, check=True, capture_output=True).stdout  # check-inputs: walks the repository
     return [name for name in out.decode().split('\0') if name and (ROOT / name).is_file()]
 
 

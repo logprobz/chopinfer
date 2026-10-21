@@ -53,6 +53,11 @@ bash ci/cpu.sh            # full CPU gate on a clean committed HEAD
 ```
 
 `--base REF` selects a comparison point; `--all` selects the whole workspace.
+`ci/check_inputs.py` derives each Python or shell check's inputs from its
+code. A walk (rglob, os.walk or a Git listing) that reads only directories
+outside the tree, or only some repository directories, says so on its line
+with `# check-inputs: walks outside the repository` or
+`# check-inputs: walks DIR`, so source edits elsewhere do not select it.
 The gate runs format, Clippy, Rust tests, boundary and layout guards,
 Python/shell checks, synthetic bundles, SDK recipes and leak checks. Its
 recipe tests use detached checkouts of HEAD: commit first and keep HEAD

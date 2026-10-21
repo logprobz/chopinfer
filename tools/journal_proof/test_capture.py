@@ -137,7 +137,7 @@ class CaptureTests(Harness):
         revision = self.commit(self.base)
         serial = self.capture(self.base, revision)
         parallel = self.capture(self.base, revision, runner='nextest', jobs=8)
-        files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))
+        files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))  # check-inputs: walks outside the repository
                               if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.pin', '.site') or p.name == 'index.json')}
         self.assertEqual(files(serial[1]), files(parallel[1]))
         self.assertEqual((serial[2]['runner'], parallel[2]['runner']), ('libtest', 'nextest'))
@@ -655,7 +655,7 @@ class ReviewTests(Harness):
         destination = self.root / 'archive'
         destination.mkdir()
         capture.archive(self.repo.repo, revision, destination)
-        written = {str(p.relative_to(destination)): p.read_bytes() for p in destination.rglob('*') if p.is_file()}
+        written = {str(p.relative_to(destination)): p.read_bytes() for p in destination.rglob('*') if p.is_file()}  # check-inputs: walks outside the repository
         self.assertEqual(written, committed)
         seen = {}
         def dump(out):
@@ -735,7 +735,7 @@ class RepeatTests(Harness):
             write_dump(out, self.base, test='b::real')
             write_dump(out, self.base, test='a::synthetic')
         _, two, _ = self.capture(self.base, revision, dump=reverse)
-        files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))
+        files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))  # check-inputs: walks outside the repository
                               if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.pin', '.site'))}
         self.assertEqual(files(one), files(two))
         index = lambda root: {k: v for k, v in json.loads((root / 'index.json').read_text()).items() if k != 'attestation'}

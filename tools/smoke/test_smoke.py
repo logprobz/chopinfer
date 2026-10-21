@@ -35,7 +35,7 @@ DECLARED = {'tp4-spec-fast': profile(4, 'drafter-b', 7, status='experimental'),
 
 
 def commit_source(source, message):
-    files = [str(path.relative_to(source)) for path in source.rglob('*')
+    files = [str(path.relative_to(source)) for path in source.rglob('*')  # check-inputs: walks outside the repository
              if path.is_file() and '.git' not in path.relative_to(source).parts]
     subprocess.run(['git', '-C', str(source), 'add', '--', *files], env=smoke.git_environment(),
                    check=True, capture_output=True)

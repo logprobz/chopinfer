@@ -517,7 +517,7 @@ def bound_refsets(repo, refs):
     and hold a readable top-level binding, or gc refuses to run."""
     found = {}
     for ref in refs:
-        listed = subprocess.run(["git", "grep", "-l", "--fixed-strings", BINDING, ref, "--",
+        listed = subprocess.run(["git", "grep", "-l", "--fixed-strings", BINDING, ref, "--",  # check-inputs: walks fixtures
                                  ":(glob)fixtures/**/*.json"], cwd=repo, capture_output=True, text=True)
         if listed.returncode not in (0, 1):
             raise RuntimeError(f"git grep at {ref}: {listed.stderr.strip()}")

@@ -23,6 +23,7 @@ import subprocess
 import time
 
 CASES = ("e384-balanced", "e384-skewed", "e128-skewed")
+TARGET_CASES = ("e384-balanced", "e384-skewed")  # the serving bank
 MEMCHECK_LIVES = (1, 65, 513, 2048)
 LAYERS = (0, 13, 14, 39)
 CHUNKS = (("input-0", 0, 8192), ("input-1", 8192, 65), ("input-2", 8192, 257))
@@ -97,10 +98,15 @@ def check_stage(stage, label):
         raise ValueError(f"{label}: oracle bound or cosine failure")
 
 
-def check_qualified(row, label, oracle):
+def check_qualified(row, label, oracle, target=True):
+    """`target`: the row is of the target bank, which also runs the binding
+    candidates' loops."""
     if row["failures"] or not row["passed"] or not row["serving_gate_matches_raw"]:
         raise ValueError(f"{label}: failed checks {row['failures']}")
-    if len(row["variants"]) != VARIANTS or not all(v["bitwise"] for v in row["variants"]):
+    loops = [v.get("loop", "served") for v in row["variants"]]
+    if len(loops) != (VARIANTS if target else TILE_VARIANTS) or loops.count("served") != TILE_VARIANTS:
+        raise ValueError(f"{label}: missing or extra tile variants")
+    if not all(v["bitwise"] for v in row["variants"]):
         raise ValueError(f"{label}: tile variants differ")
     if oracle:
         o = row["oracle"]
@@ -129,7 +135,7 @@ def analyze_synthetic(text, memcheck, oracle, timing, probe):
         label = f"{r['case']} live {r['live']}"
         if r["memcheck"] != memcheck:
             raise ValueError(f"{label}: wrong mode")
-        check_qualified(r, label, oracle)
+        check_qualified(r, label, oracle, r["case"] in TARGET_CASES)
         if oracle:
             inv = r["invariance"]
             if [p["live"] for p in inv["prefixes"]] != [4097, 65, 1] or not all(p["bitwise_prefix"] for p in inv["prefixes"]) \

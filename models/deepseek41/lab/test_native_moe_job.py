@@ -22,8 +22,11 @@ def report_only():
     return {"native": stage(), "exact": stage(), "rmse_ratio": 1.0, "max_abs_ratio": 1.0, "no_larger_error": True, "gate": False}
 
 
-def qualified(live, oracle):
-    row = {"live": live, "variants": [{"kind": "GateUp", "tile": "t", "bitwise": True}] * job.VARIANTS,
+def qualified(live, oracle, target=True):
+    variants = [{"kind": "GateUp", "tile": "t", "loop": "served", "bitwise": True}] * job.TILE_VARIANTS
+    if target:
+        variants += [{"kind": "GateUp", "tile": "t", "loop": "lean", "bitwise": True}] * (job.VARIANTS - job.TILE_VARIANTS)
+    row = {"live": live, "variants": variants,
            "serving_gate_matches_raw": True, "failures": [], "passed": True}
     if oracle:
         row["oracle"] = {"sampled_tokens": min(32, live), "routes": 6 * min(32, live), "gate_up": stage(), "down": stage(),
@@ -40,7 +43,7 @@ def synthetic_log(memcheck, oracle, timed, probe):
     lives = job.MEMCHECK_LIVES if memcheck else (8192,)
     for case in job.CASES:
         for live in lives:
-            row = qualified(live, oracle)
+            row = qualified(live, oracle, case in job.TARGET_CASES)
             row.update(case=case, memcheck=memcheck)
             if oracle:
                 row["invariance"] = {"prefixes": [{"live": l, "bitwise_prefix": True} for l in (4097, 65, 1)],
@@ -161,6 +164,9 @@ class Analyzers(unittest.TestCase):
             mutate(good, "native_moe_synthetic", lambda r: r["oracle"].update(omit_first_rejected=False)),
             mutate(good, "native_moe_synthetic", lambda r: r["invariance"]["prefixes"][1].update(bitwise_prefix=False)),
             mutate(good, "native_moe_synthetic", lambda r: r["variants"][2].update(bitwise=False)),
+            mutate(good, "native_moe_synthetic", lambda r: r["variants"][-1].update(bitwise=False)),
+            mutate(good, "native_moe_synthetic", lambda r: r["variants"].pop() if r["case"] != "e128-skewed" else None),
+            mutate(good, "native_moe_synthetic", lambda r: r["variants"].append(r["variants"][-1]) if r["case"] == "e128-skewed" else None),
             mutate(good, "native_moe_synthetic", lambda r: r.update(serving_gate_matches_raw=False)),
             mutate(good, "native_moe_probe", lambda r: r.update(failures=1)),
             mutate(good, "native_moe_synthetic_done", lambda r: r.update(cases=2)),

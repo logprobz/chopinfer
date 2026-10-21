@@ -136,9 +136,10 @@ pub fn qualify(
     }
     let raw_host = floats(&a.read(raw)?);
     let down_x_host = a.read(down_x)?;
-    // Every other tile, and each binding candidate's loop on its tile
-    // (super::tune_family::candidates), gives the same bits.
+    // Every other tile, and on the target bank each binding candidate's
+    // loop on its tile (super::tune_family::candidates), gives the same bits.
     let mut variants = Vec::new();
+    let target = set == family::serving::target_set();
     let others = family::KINDS
         .into_iter()
         .flat_map(|kind| {
@@ -150,6 +151,7 @@ pub fn qualify(
         .chain(
             super::tune_family::candidates()
                 .into_iter()
+                .filter(|_| target)
                 .map(|(kind, tile, tune)| (kind, tile, Some(tune))),
         );
     for (kind, tile, tune) in others {

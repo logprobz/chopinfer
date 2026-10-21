@@ -1008,13 +1008,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// per native rank, and rename each prefill local selector and merge; their
 /// streams, grids and arguments are unchanged. The r2 router finish module
 /// adds one module, 14 resolves and 15 releases per TP4 rank; no launch or
-/// allocation changes. The combined journals were audited against main's
-/// again: the selectors and the r2 module add exactly these resources and
-/// renames, and every other operation is identical after handle mapping.
-/// Exact-row folds replace only qualified short prefill launches. Staged
-/// scales add one module, fifteen resolves, four configurations and sixteen
-/// releases per TP4 rank. The combined audit preserves allocations and every
-/// other operation after typed handle mapping.
+/// allocation changes. Exact-row folds replace only qualified short prefill
+/// launches. Staged scales add one module, fifteen resolves, four
+/// configurations and sixteen releases per TP4 rank, and allocations are
+/// unchanged. The combined journals were audited against main's and against
+/// the staged-scale journals alone: the selectors and the r2 module add
+/// exactly the resources and renames above, the short-row and staged-scale
+/// delta is the same with or without them, and every other operation is
+/// identical after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1041,12 +1042,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78251, 0xc1fb6e3b19fe652d),
+        (84311, 0x826ecb5282198056),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75895, 0x5c5cc0907d09ba3e),
+        (81955, 0x91f2aa1b4c9494ad),
     ),
 ];
 
@@ -1197,7 +1198,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(76595, 0xd49d48c90f81e383), (74239, 0x9ccb208f068e8cb3)])
+            .zip([(82655, 0x0a094718eb54873f), (80299, 0xb15336ca67570387)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

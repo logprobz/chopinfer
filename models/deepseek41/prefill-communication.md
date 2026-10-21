@@ -444,3 +444,45 @@ the serial sum and reduction took 3.58 ms and the per-interval form 3.04 ms;
 over a chunk's 36 MoE reductions that is 83.0 against 70.4 ms, a 12.6 ms
 saving with 65% of the sum hidden. The attention output fold before the
 other reductions takes TMA maps and is not split.
+
+In the served job on 2026-10-21 (whole machine, 250 W, ABBA over one
+install, the producer form against one sum before each call) the 40 raw
+state artifacts and all tokens and logprobs matched byte for byte, and TTFT
+fell from 2.921 to 2.881 s at 32K (39.8 ms) and from 0.718 to 0.707 s at 8K.
+
+### Pushing copies from each source
+
+Every peer copy can run on its source's stream instead of its destination's.
+The host's peer-copy service accepts a stream of either end's context (the
+destination's pulls, the source's pushes) and refuses any other; the
+issuing context needs the directed lease and pool grant to the other end's
+allocation, which the instance grants on every pair. At creation the
+instance pushes 16 bytes once per ordered pair between the DMA inboxes. A
+host from before pushes refuses the first with `InvalidArgument` before
+submitting anything, and the instance then pulls; a later refusal fails
+creation, never a step. The bundle logs the direction it chose ("prefill
+DMA copies: pushed by each source" or "pulled by each destination").
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH=0` keeps every copy a pull.
+
+A pushing call issues the same copies with the same bytes, in the same
+permutation order, each on its source's main stream (or its lane where the
+call produces or consumes intervals). Each destination waits for the copy
+event its sender records after that phase's copy, before its sum or that
+interval's consumers. A lane that pushes a produced interval also waits for
+its destination to reach the call, so the copy cannot overwrite an inbox
+the destination's previous sum still reads. Launches are unchanged. The CPU
+journal audit checks every owner sum after the copies into its inbox, and
+removing the waits before the sums must expose an alias.
+
+On 2026-10-21 at 250 W, a four-GPU probe replayed one call's copies on the
+served schedule (three scatter and three gather permutations, each rank's
+copies in phase order on one stream, no barrier between phases), pulled and
+pushed, at 8192, 8191, 2496, 1600 and 576 rows in two passes, with every
+copied row checked in both modes. Pushes took 1.21 ms for the three
+full-row phases of either part (0.40 ms a phase, about 52 GB/s on every
+pair), against 1.59 to 1.95 ms pulled, and 0.37 against 0.55 to 0.61 ms at
+2496 rows. Pulled phases fall into steps one phase apart, and the fastest
+equal the pushed ones: pulls of different destinations pile up on one
+source's link when the phases drift, while each source's pushes stay in
+order on its stream. In served prefill the copies sourced from GPU 0 ran at
+41 to 46 GB/s against up to 52 GB/s for the others.

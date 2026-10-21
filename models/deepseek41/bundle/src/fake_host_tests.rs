@@ -381,6 +381,9 @@ pub(crate) struct FakeHost {
     memory: RefCell<Memory>,
     /// Layout IDs that replace a view's own in every rank index.
     layouts: RefCell<BTreeMap<String, String>>,
+    /// Refuse a peer copy on the source's stream, as a host from before
+    /// pushes does.
+    pub pull_only: Cell<bool>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -551,6 +554,7 @@ impl FakeHost {
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(BTreeMap::new()),
+            pull_only: Cell::new(false),
         }))
     }
 
@@ -695,6 +699,16 @@ impl FakePackage for FakeHost {
         source_context: BundleContextHandleV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        // The destination's stream pulls, the source's pushes.
+        let issuer = self.device.stream_ranks.borrow()[&stream.slot()];
+        let (to, from) = (destination_context.slot() - 1, source_context.slot() - 1);
+        assert!(
+            issuer == to || issuer == from,
+            "a peer copy on a third rank's stream"
+        );
+        if issuer != to && self.pull_only.get() {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
         if self.device.fail_copy.fails() {
             return Err(BundleStatusV1::HostError);
         }

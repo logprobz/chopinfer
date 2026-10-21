@@ -27,9 +27,26 @@ fn transport_launch(line: &str) -> bool {
     line.starts_with("launch ") && [SUM, BF16_SUM].iter().any(|s| line.contains(s))
 }
 
+/// Each peer copy's issuing, source and destination rank, in order.
+fn copy_ranks(host: &Host, journal: &[String]) -> Vec<(u32, u32, u32)> {
+    let ranks = host.device.stream_ranks.borrow();
+    journal
+        .iter()
+        .filter(|l| l.starts_with("peer-copy "))
+        .map(|l| {
+            let words = l.split_whitespace().collect::<Vec<_>>();
+            let number = |at: usize| words[at].parse::<u32>().unwrap();
+            (ranks[&number(1)], number(2) - 1, number(3) - 1)
+        })
+        .collect()
+}
+
 fn capture(mode: u8, rows: u64) -> Vec<String> {
-    let host = host();
-    let mut instance = with_dma(true, || with_mode(mode, || create(&host, 4)));
+    capture_on(&host(), mode, rows)
+}
+
+fn capture_on(host: &Rc<Host>, mode: u8, rows: u64) -> Vec<String> {
+    let mut instance = with_dma(true, || with_mode(mode, || create(host, 4)));
     host.device.journal.borrow_mut().clear();
     let batch = prompt(7, 0, 0, rows, true);
     instance
@@ -61,6 +78,16 @@ fn intersects(a: Span, b: Span) -> bool {
 /// spans while retaining only histories subsumed by later ordered accesses.
 /// Two reads never conflict.
 fn audit(journal: &[String]) -> Result<usize, String> {
+    audit_with(journal, false)
+}
+
+/// As `audit`, and also between transport accesses: each owner sum after
+/// the copies into its inbox, each gather after the sum it reads.
+fn audit_transport(journal: &[String]) -> Result<usize, String> {
+    audit_with(journal, true)
+}
+
+fn audit_with(journal: &[String], transport_too: bool) -> Result<usize, String> {
     let spans = super::shared_overlap::journal_spans;
     let relevant = |s: &&String| {
         matches!(
@@ -112,14 +139,13 @@ fn audit(journal: &[String]) -> Result<usize, String> {
             let read = read_only(line, index);
             let previous = history.entry(span.0).or_default();
             for (other, clock, other_transport, other_read) in previous.iter() {
-                if transport != *other_transport
+                if (transport != *other_transport
+                    || (transport_too && transport && *other_transport))
                     && !(read && *other_read)
                     && intersects(span, *other)
                     && !ordered(clock, &clocks[stream])
                 {
-                    return Err(format!(
-                        "unordered compute/DMA alias {span:?} and {other:?}: {line}"
-                    ));
+                    return Err(format!("unordered alias {span:?} and {other:?}: {line}"));
                 }
             }
             // A later read never stands in for an earlier write.
@@ -177,6 +203,63 @@ fn prefill_dma_preserves_all_owner_intervals_and_orders_every_transfer() {
             audit(&missing_waits).is_err(),
             "a removed producer/join wait must fail ordering"
         );
+    }
+}
+
+/// Creation pushes once per ordered pair where the host allows it, and
+/// every step's copy then runs on its source's stream; a host that refuses
+/// the first push leaves the instance pulling, step for step as before.
+#[test]
+fn prefill_dma_pushes_only_where_the_host_allows_it() {
+    for (mode, rows) in [(0, 8192), (0, 8191), (2, 8191)] {
+        let pulled = capture(mode, rows);
+        for pull_only in [false, true] {
+            let host = host();
+            host.pull_only.set(pull_only);
+            let journal = crate::ops::with_dma_push(true, || capture_on(&host, mode, rows));
+            if pull_only {
+                assert_eq!(journal, pulled);
+                continue;
+            }
+            let issued = copy_ranks(&host, &journal);
+            assert_eq!(issued.len(), copy_ranks(&host, &pulled).len());
+            assert!(issued.iter().all(|&(issuer, from, _)| issuer == from));
+            assert_eq!(audit(&journal), audit(&pulled));
+            assert!(audit_transport(&pulled).is_ok());
+            assert_eq!(audit_transport(&journal), audit_transport(&pulled));
+            let missing_waits = journal
+                .into_iter()
+                .filter(|s| !s.starts_with("wait "))
+                .collect::<Vec<_>>();
+            assert!(audit(&missing_waits).is_err());
+        }
+    }
+    // The setup pushes: one per ordered pair, each on its source's owner
+    // stream, or none past the refused first.
+    for (pull_only, pushes) in [(false, 12), (true, 0)] {
+        let host = host();
+        host.pull_only.set(pull_only);
+        let mut instance = with_dma(true, || {
+            crate::ops::with_dma_push(true, || create(&host, 4))
+        });
+        let journal = host.device.journal.borrow().clone();
+        let issued = copy_ranks(&host, &journal);
+        assert_eq!(issued.len(), pushes);
+        assert!(
+            issued
+                .iter()
+                .all(|&(issuer, from, to)| issuer == from && from != to)
+        );
+        assert_eq!(
+            issued
+                .iter()
+                .map(|&(_, from, to)| (from, to))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            pushes
+        );
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 

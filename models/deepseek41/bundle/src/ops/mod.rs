@@ -37,12 +37,14 @@ pub(crate) use reduce::bf16_partials_requested;
 pub(crate) use reduce::with_bf16_gather;
 pub(crate) use reduce::{
     DmaPayload, PeerViews, PrefillDma, ReduceViews, RowLocal, RowLocalKind, WidenViews,
-    dma_consume_requested, dma_produce_requested,
+    dma_consume_requested, dma_produce_requested, dma_push_requested,
 };
 #[cfg(test)]
 pub(crate) use reduce::{with_bf16_partials, with_partial_setting};
 #[cfg(test)]
-pub(crate) use reduce::{with_dma, with_dma_consume, with_dma_produce, with_dma_setting};
+pub(crate) use reduce::{
+    with_dma, with_dma_consume, with_dma_produce, with_dma_push, with_dma_setting,
+};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
 
 use std::cell::RefCell;

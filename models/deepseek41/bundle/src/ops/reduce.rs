@@ -316,6 +316,33 @@ pub(crate) fn with_dma_produce<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
     run()
 }
 
+/// Whether DMA issues each peer copy on its source's stream, where the
+/// host allows it (`execute::dma::pushes`). Unset selects it; `0` keeps
+/// every copy on its destination's stream.
+pub(crate) fn dma_push_requested() -> bool {
+    #[cfg(test)]
+    return PUSH_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static PUSH_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_push<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PUSH_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(PUSH_IN_TESTS.replace(enabled));
+    run()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,

@@ -118,6 +118,8 @@ pub struct Instance {
     image_flags: std::cell::Cell<bool>,
     overlap: Vec<execute::overlap::Rank>,
     dma: Vec<execute::dma::Rank>,
+    /// DMA issues each peer copy on its source's stream.
+    dma_push: bool,
     layer_overlap: bool,
     prefill_reduce_runs: u64,
     prefill_engram: Option<prefill_engram::Gathers>,
@@ -274,6 +276,14 @@ impl Instance {
         if self.ops.prefill_dma.enabled() {
             self.dma =
                 execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
+            self.dma_push = crate::ops::dma_push_requested()
+                && execute::dma::pushes(services, &ranks, &self.dma)?;
+            let copies = if self.dma_push {
+                "pushed by each source"
+            } else {
+                "pulled by each destination"
+            };
+            let _ = services.log(format!("{NAME}: prefill DMA copies: {copies}").as_bytes());
         }
         let limits = model_limits(&self.config);
         let layouts = [
@@ -882,6 +892,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         image_flags: std::cell::Cell::new(false),
         overlap: Vec::new(),
         dma: Vec::new(),
+        dma_push: false,
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         prefill_engram: None,

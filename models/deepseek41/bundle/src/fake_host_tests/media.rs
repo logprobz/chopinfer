@@ -67,6 +67,7 @@ impl MediaHost {
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(std::collections::BTreeMap::new()),
+            pull_only: Cell::new(false),
         };
         Rc::new(Backend::new(MediaHost {
             host,

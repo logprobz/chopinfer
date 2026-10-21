@@ -10,7 +10,8 @@ use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch};
 use bundle_runtime::resources::{Held, allocate_span};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
-    BundleAbiError, BundleEventHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, HostServicesV1,
+    BundleAbiError, BundleEventHandleV1, BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1,
+    HostServicesV1,
 };
 
 pub(crate) struct Rank {
@@ -18,14 +19,16 @@ pub(crate) struct Rank {
     /// this off both active lanes avoids serializing disjoint row parts.
     pub(crate) owner: BundleStreamHandleV1,
     /// Gather copies when the rank's main stream consumes each gathered
-    /// interval as it lands; idle otherwise.
+    /// interval as it lands, and scatter copies when it produces each sent
+    /// interval before its copy; idle otherwise.
     lane: BundleStreamHandleV1,
     inbox: DeviceBufferSpanV1,
     /// 0, 4 and 7 join the call's phases across ranks; 1 to 3, 5 and 6 order
     /// the per-interval producer form (`Call::produce`).
     events: [BundleEventHandleV1; 8],
-    /// One per gather phase, recorded on the lane after its copy.
-    gathered: [BundleEventHandleV1; 3],
+    /// One per copy phase, recorded on the lane after the copies this rank
+    /// issued in that phase.
+    copied: [BundleEventHandleV1; 3],
 }
 
 pub(crate) fn acquire(
@@ -54,16 +57,56 @@ pub(crate) fn acquire(
                 held.push(Held::Event(event));
                 events.push(event);
             }
-            let gathered = events.split_off(8);
+            let copied = events.split_off(8);
             Ok(Rank {
                 owner,
                 lane,
                 inbox,
                 events: events.try_into().expect("eight DMA events"),
-                gathered: gathered.try_into().expect("three gather events"),
+                copied: copied.try_into().expect("three copy events"),
             })
         })
         .collect()
+}
+
+/// Whether the host copies on a source's stream. One 16-byte push per
+/// ordered pair of ranks, between their inboxes, before either holds data.
+/// A host from before pushes refuses the first with `InvalidArgument`
+/// before submitting anything, and the instance then pulls; any later
+/// refusal fails creation, never a step.
+pub(crate) fn pushes(
+    services: &HostServicesV1,
+    ranks: &[RankHandles],
+    dma: &[Rank],
+) -> Result<bool, BundleAbiError> {
+    let probe = |span| subspan(span, 0, 16).map_err(|_| BundleAbiError::InvalidRange("DMA inbox"));
+    for (source, from) in dma.iter().enumerate() {
+        for (destination, to) in dma.iter().enumerate() {
+            if source == destination {
+                continue;
+            }
+            // The destination's inbox exists once its owner stream has
+            // allocated it.
+            services.record_event(to.events[0], to.owner)?;
+            services.wait_event(from.owner, to.events[0])?;
+            match services.copy_peer_to_peer(
+                from.owner,
+                ranks[destination].0,
+                probe(to.inbox)?,
+                ranks[source].0,
+                probe(from.inbox)?,
+            ) {
+                Ok(()) => {}
+                Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+                    if (source, destination) == (0, 1) =>
+                {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) fn drain(instance: &Instance) -> Result<(), BundleAbiError> {
@@ -116,6 +159,18 @@ struct Transfer {
     destination: usize,
     input: DeviceBufferSpanV1,
     output: DeviceBufferSpanV1,
+}
+
+impl Transfer {
+    /// The rank whose stream issues the copy.
+    fn issuer(&self, push: bool) -> usize {
+        if push { self.source } else { self.destination }
+    }
+}
+
+/// The rank that copies into `rank` in copy phase `phase`.
+fn sender(rank: usize, phase: usize) -> usize {
+    (rank + 3 - phase) % 4
 }
 
 pub(super) struct Call {
@@ -306,11 +361,14 @@ impl Call {
 
     /// Run the call. With `producers`, each rank's main stream produces and
     /// rounds the interval it sends in each scatter phase in phase order,
-    /// then its own, and each destination pulls on its lane once that
-    /// source has rounded that interval. With `consumers`, each rank's
-    /// gather copies move to its lane and its main stream runs the
-    /// consumers of its own interval after its sum and of every other
-    /// interval after that interval's copy.
+    /// then its own, and each copy of that interval runs on a lane once that
+    /// source has rounded it. With `consumers`, the gather copies move to
+    /// the lanes and each rank's main stream runs the consumers of its own
+    /// interval after its sum and of every other interval after that
+    /// interval's copy. With `instance.dma_push`, every copy runs on its
+    /// source's stream or lane instead of its destination's, in the same
+    /// permutation order, and each destination waits for its source's copy
+    /// in that phase.
     pub(super) fn execute(
         &self,
         instance: &Instance,
@@ -357,12 +415,13 @@ impl Call {
             }
             Ok(())
         };
+        let push = instance.dma_push;
         let copies = |transfers: &[Transfer],
                       streams: &[BundleStreamHandleV1]|
          -> Result<(), BundleAbiError> {
             for transfer in transfers {
                 services.copy_peer_to_peer(
-                    streams[transfer.destination],
+                    streams[transfer.issuer(push)],
                     instance.ranks[transfer.destination].0,
                     transfer.output,
                     instance.ranks[transfer.source].0,
@@ -388,12 +447,21 @@ impl Call {
             // Every partial is complete before any rank reads a peer's.
             record(0)?;
             wait(0)?;
-            // A rank's three scatter copies all land in its own inbox from
+            // A rank's three scatter pulls all land in its own inbox from
             // its own stream, so its sum follows them without a cross-rank
             // barrier between permutations; the permutation order is
-            // unchanged.
+            // unchanged. Pushes keep that order on each source's stream, and
+            // each destination waits for the source that sent it each phase.
             for phase in 0..3 {
                 copies(&self.scatter[phase], streams)?;
+                if push {
+                    for (rank, dma) in instance.dma.iter().enumerate() {
+                        services.record_event(dma.copied[phase], streams[rank])?;
+                    }
+                }
+            }
+            if push {
+                self.receive(instance, streams)?;
             }
         }
         for (rank, sum) in sums.iter().enumerate() {
@@ -428,12 +496,13 @@ impl Call {
         for phase in 0..3 {
             copies(&self.gather[phase], &lanes)?;
             for (rank, dma) in instance.dma.iter().enumerate() {
-                services.record_event(dma.gathered[phase], lanes[rank])?;
+                services.record_event(dma.copied[phase], lanes[rank])?;
             }
         }
         for phase in 0..3 {
             for (rank, &stream) in streams.iter().enumerate() {
-                services.wait_event(stream, instance.dma[rank].gathered[phase])?;
+                let issuer = if push { sender(rank, phase) } else { rank };
+                services.wait_event(stream, instance.dma[issuer].copied[phase])?;
                 for launch in &resolved[rank][(rank + 3 - phase) % 4] {
                     launch.submit(services, stream)?;
                 }
@@ -448,10 +517,12 @@ impl Call {
     }
 
     /// Each rank's interval producers and roundings on its main stream, and
-    /// each destination's scatter pulls on its lane. Event 5 marks a rank's
-    /// main stream at the call, events 1 to 3 its interval for each scatter
-    /// phase, event 6 its three pulls. Ends with every rank's main stream
-    /// after its own interval's producer and its pulls.
+    /// the scatter copies on the lanes: each destination's pulls on its own,
+    /// or each source's pushes on its own. Event 5 marks a rank's main
+    /// stream at the call, events 1 to 3 its interval for each scatter
+    /// phase, event 6 a destination's three pulls. Ends with every rank's
+    /// main stream after its own interval's producer and the copies into
+    /// its inbox.
     fn produce(
         &self,
         instance: &Instance,
@@ -488,12 +559,15 @@ impl Call {
         if produced.len() != 4 || sends.len() != 4 {
             return Err(DispatchError::InvalidPlan);
         }
+        let push = instance.dma_push;
         for (rank, &stream) in streams.iter().enumerate() {
             let dma = &instance.dma[rank];
             // A lane writes this rank's inbox only after the rank's main
             // stream has reached the call: its previous sums have read it.
             services.record_event(dma.events[5], stream)?;
-            services.wait_event(lanes[rank], dma.events[5])?;
+            if !push {
+                services.wait_event(lanes[rank], dma.events[5])?;
+            }
             for phase in 0..3 {
                 let to = (rank + 1 + phase) % 4;
                 let round = sends[rank][to].as_ref().ok_or(DispatchError::InvalidPlan)?;
@@ -503,12 +577,16 @@ impl Call {
             }
             produced[rank][3].submit(services, stream)?;
         }
-        // Each pull waits only for its own source's interval; a destination's
-        // pulls keep the permutation order on its lane.
+        // Each copy waits only for its own source's interval; a lane keeps
+        // its copies in permutation order. A push also waits for its
+        // destination to reach the call.
         for phase in 0..3 {
             for transfer in &self.scatter[phase] {
-                let lane = lanes[transfer.destination];
+                let lane = lanes[transfer.issuer(push)];
                 services.wait_event(lane, instance.dma[transfer.source].events[1 + phase])?;
+                if push {
+                    services.wait_event(lane, instance.dma[transfer.destination].events[5])?;
+                }
                 services.copy_peer_to_peer(
                     lane,
                     instance.ranks[transfer.destination].0,
@@ -516,12 +594,36 @@ impl Call {
                     instance.ranks[transfer.source].0,
                     transfer.input,
                 )?;
+                if push {
+                    services.record_event(instance.dma[transfer.source].copied[phase], lane)?;
+                }
             }
+        }
+        if push {
+            self.receive(instance, streams)?;
+            return Ok(());
         }
         for (rank, &stream) in streams.iter().enumerate() {
             let dma = &instance.dma[rank];
             services.record_event(dma.events[6], lanes[rank])?;
             services.wait_event(stream, dma.events[6])?;
+        }
+        Ok(())
+    }
+
+    /// Each rank's main stream waits for the push into its inbox in every
+    /// scatter phase, recorded as that phase's copy event of its sender.
+    fn receive(
+        &self,
+        instance: &Instance,
+        streams: &[BundleStreamHandleV1],
+    ) -> Result<(), BundleAbiError> {
+        for phase in 0..3 {
+            for (rank, &stream) in streams.iter().enumerate() {
+                instance
+                    .services
+                    .wait_event(stream, instance.dma[sender(rank, phase)].copied[phase])?;
+            }
         }
         Ok(())
     }

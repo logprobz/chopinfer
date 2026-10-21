@@ -40,7 +40,10 @@ fn capture(rows: u64, enabled: Option<bool>) -> Vec<String> {
 /// `dspark` creates a drafter instance through the mapped Engram host, so
 /// the prefill is a DSpark target chunk with its feature captures.
 fn capture_with(rows: u64, enabled: Option<bool>, dspark: bool) -> Vec<String> {
-    let host = host();
+    capture_on(&host(), rows, enabled, dspark)
+}
+
+fn capture_on(host: &Rc<Host>, rows: u64, enabled: Option<bool>, dspark: bool) -> Vec<String> {
     if dspark {
         host.drafter.set(true);
         host.speculation.set(Some((5, 32)));
@@ -54,10 +57,10 @@ fn capture_with(rows: u64, enabled: Option<bool>, dspark: bool) -> Vec<String> {
         ..BundleRawClusterResidencyV1::unreported()
     }));
     let mut instance = if dspark {
-        let services = dspark::host::MappedHost::with_peer_copies(Rc::clone(&host));
-        create_with_services(&host, HostServicesTableV1::new(Rc::new(services)))
+        let services = dspark::host::MappedHost::with_peer_copies(Rc::clone(host));
+        create_with_services(host, HostServicesTableV1::new(Rc::new(services)))
     } else {
-        create_sparse(&host)
+        create_sparse(host)
     };
     assert_eq!(instance.prefill_policy().unwrap().chunk_tokens, 8192);
     host.device.journal.borrow_mut().clear();
@@ -633,4 +636,72 @@ fn dma_produces_each_sent_interval_before_its_pull() {
 fn dma_keeps_the_producer_before_calls_it_cannot_split() {
     // 8191-row calls do not divide into whole 32-row owner intervals.
     assert_eq!(capture_produced(8191, true), capture_produced(8191, false));
+}
+
+/// The served transports with every copy pushed against pulled: the same
+/// launches and the same copies, each issued by its source, ordered.
+#[test]
+fn dma_pushes_every_copy_from_its_source() {
+    let served = |rows: u64, consume: bool, produce: bool, push: bool| {
+        let host = host();
+        let journal = crate::ops::with_partial_setting(Some("prefill"), || {
+            crate::ops::with_dma_consume(consume, || {
+                crate::ops::with_dma_produce(produce, || {
+                    crate::ops::with_dma_push(push, || capture_on(&host, rows, None, false))
+                })
+            })
+        });
+        let issued = super::copy_ranks(&host, &journal);
+        (journal, issued)
+    };
+    for (rows, consume, produce) in [
+        (8192, false, false),
+        (8192, true, false),
+        (8192, true, true),
+        (8191, true, true),
+    ] {
+        let (pulled, pulls) = served(rows, consume, produce, false);
+        let (pushed, pushes) = served(rows, consume, produce, true);
+        let launches = |j: &[String]| {
+            j.iter()
+                .filter(|l| l.starts_with("launch "))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(launches(&pulled), launches(&pushed));
+        let copies = |j: &[String]| {
+            let mut c = j
+                .iter()
+                .filter(|l| l.starts_with("peer-copy "))
+                .map(|l| l.splitn(3, ' ').nth(2).unwrap().to_owned())
+                .collect::<Vec<_>>();
+            c.sort();
+            c
+        };
+        assert_eq!(copies(&pulled), copies(&pushed));
+        assert_eq!(pulls.len(), 73 * 24);
+        assert!(pulls.iter().all(|&(issuer, _, to)| issuer == to));
+        assert!(pushes.iter().all(|&(issuer, from, _)| issuer == from));
+        assert_eq!(audit(&pushed), audit(&pulled));
+        audit_transport(&pulled).unwrap();
+        assert_eq!(audit_transport(&pushed), audit_transport(&pulled));
+        // Without each destination's waits for the pushes into its inbox,
+        // its sum reads rows a peer may still be writing.
+        let mut early = Vec::new();
+        for (at, line) in pushed.iter().enumerate() {
+            let on = |l: &&String| l.split_whitespace().nth(1) == line.split_whitespace().nth(1);
+            let next = pushed[at + 1..]
+                .iter()
+                .find(|l| on(l) && !l.starts_with("wait "));
+            if line.starts_with("wait ") && next.is_some_and(|n| transport_launch(n)) {
+                continue;
+            }
+            early.push(line.clone());
+        }
+        assert!(early.len() < pushed.len());
+        assert!(
+            audit_transport(&early).is_err(),
+            "{rows} {consume} {produce}"
+        );
+    }
 }

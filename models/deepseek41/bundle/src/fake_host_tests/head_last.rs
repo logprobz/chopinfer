@@ -91,13 +91,14 @@ fn run_case(reference: bool) -> Vec<String> {
         }
         let lines = host.device.journal.borrow();
         // AR pads to its graph capacity; verification retains the exact
-        // row width. A repeated capacity replays the already checked graph.
+        // row width, with one graph for every item count of those rows. A
+        // repeated capacity replays the already checked graph.
         let capacity = if width == 1 {
             rows.next_power_of_two()
         } else {
             rows
         };
-        let first = captured.insert((capacity, if width == 1 { 0 } else { count }));
+        let first = captured.insert((capacity, width > 1));
         let selected = !reference && first && [1, 8, 32].contains(&capacity);
         assert_eq!(
             lines[from..]

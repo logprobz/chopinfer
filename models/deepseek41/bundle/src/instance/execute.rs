@@ -61,8 +61,9 @@ struct Run {
     layout: InputLayout,
     /// Rows the head scores.
     head_rows: u32,
-    /// A decode or verify phase's graph bucket: (tokens, items), items 0
-    /// for decode. An eager prefill has none.
+    /// A decode or verify phase's graph key in `indexer_route`'s bank:
+    /// (tokens, 0) for decode, `verify_graph_key` for verify. An eager
+    /// prefill has none.
     graph: Option<(u32, u32)>,
     capture: Option<GraphReservation>,
     /// Each rank's launches and whether each waits for its peers: empty
@@ -188,6 +189,18 @@ type PhasePlan = (Phase, usize, InputLayout, Option<(u32, u32)>);
 type Programs = (Vec<Vec<PreparedLaunch>>, Vec<Vec<bool>>, Vec<Vec<Stage>>);
 
 /// `values` as little-endian bytes.
+/// A verify phase's graph key within the bank of its indexer route
+/// (`Route::select`, which `plan_run` hands lowering and the graph caches
+/// alike). Lowering reads the live item count only to select that route,
+/// so one graph of the rows replays at every item count: the key is
+/// (route, rows). The cache needs a nonzero item slot that can carry the
+/// rows; the fewest items is a fixed slot, not a live count. Device inputs
+/// keep their fixed allocation and are uploaded every step.
+/// `target_programs_are_a_function_of_their_graph_key` pins this.
+fn verify_graph_key(rows: u32) -> (u32, u32) {
+    (rows, rows.div_ceil(MAX_VERIFY_ROWS))
+}
+
 fn i32_bytes(values: &[i32]) -> Vec<u8> {
     values
         .iter()
@@ -285,14 +298,12 @@ impl Instance {
                 items,
             )
             .ok_or(BundleStatusV1::InvalidArgument)?;
-            // Every verify graph holds the exact rows and items. Device
-            // inputs keep their fixed allocation, independent of this key.
             if live == 0 || live > items.get() || rows < live || rows > live * MAX_VERIFY_ROWS {
                 return Err(BundleStatusV1::InvalidArgument);
             }
             let layout = InputLayout::verify_within::<DeepSeek>(items);
             let phase = Phase::Verify { rows, items: live };
-            Ok((phase, VERIFY, layout, Some((rows, live))))
+            Ok((phase, VERIFY, layout, Some(verify_graph_key(rows))))
         } else {
             let bucket = items.bucket(live).ok_or(BundleStatusV1::InvalidArgument)?;
             Ok((

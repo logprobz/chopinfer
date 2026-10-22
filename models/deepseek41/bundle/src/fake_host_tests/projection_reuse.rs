@@ -23,6 +23,7 @@ fn run_without_last(reference: bool) -> Vec<String> {
     }
     let mut ends = [1u64; 32];
     let mut records = Vec::new();
+    let mut captured = std::collections::BTreeSet::new();
     for (rows, width) in [
         (1u32, 1u32),
         (8, 1),
@@ -69,12 +70,18 @@ fn run_without_last(reference: bool) -> Vec<String> {
             .iter()
             .filter(|l| l.starts_with("launch ") && l.contains("_reuse32_"))
             .count();
-        if reference || rows <= 8 {
+        // One verify graph serves every item count of its rows: a repeated
+        // key replays the graph checked at its capture.
+        let first = captured.insert((rows, width > 1));
+        if !first {
+            assert_eq!(changed, 0, "rows={rows} width={width}");
+            assert!(lines.iter().any(|line| line.starts_with("replay ")));
+        } else if reference || rows <= 8 {
             assert_eq!(changed, 0, "rows={rows}");
         } else {
             assert!(changed >= 4, "row bucket must reach the reuse head");
         }
-        if !reference && rows == 32 {
+        if first && !reference && rows == 32 {
             assert_eq!(
                 changed,
                 4 * (40 * 4 + 1),

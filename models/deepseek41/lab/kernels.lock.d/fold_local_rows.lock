@@ -442,7 +442,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "094e8025820bc9baa26a2c19cdfa3e4b687d913baf16186b243a47fe2f2086d5",
+    "cubin_sha256": "ec7cd1ebd9ab40f9f5532d82468cea3b879a89ccac49d8f180f5b66ec9de7756",
     "resources": [
       {
         "symbol": "chop_fold_local_n8192_k1280_g1_f32_local32_n16_v1_admit_v1",
@@ -455,7 +455,7 @@
       },
       {
         "symbol": "chop_fold_local_n8192_k1280_g1_f32_local32_n16_v1",
-        "registers": 72,
+        "registers": 77,
         "shared_static_bytes": 20160,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -464,7 +464,7 @@
       },
       {
         "symbol": "chop_fold_local_n8192_k1280_g1_f32_local32_n16_v1_omit_v1",
-        "registers": 75,
+        "registers": 80,
         "shared_static_bytes": 20160,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -491,7 +491,7 @@
       },
       {
         "symbol": "chop_fold_local_n8192_k1280_g1_f32_local32_n32_v1",
-        "registers": 72,
+        "registers": 77,
         "shared_static_bytes": 26496,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -500,7 +500,7 @@
       },
       {
         "symbol": "chop_fold_local_n8192_k1280_g1_f32_local32_n32_v1_omit_v1",
-        "registers": 75,
+        "registers": 80,
         "shared_static_bytes": 26496,
         "local_bytes": 0,
         "stack_bytes": 0,

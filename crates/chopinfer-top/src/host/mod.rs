@@ -228,9 +228,9 @@ fn warm_hot(limit: Option<f64>) -> (f64, f64) {
     })
 }
 
-/// Where a temperature on a chip of `kind` is reported: 3C under the
-/// limit for a CPU, 95C without one; for any other chip, where it turns
-/// warm.
+/// Where a temperature on a chip of `kind` is reported: 3C under its
+/// limit for a CPU, or 92C (3C under 95C) without one; for any other
+/// chip, where it turns warm.
 pub fn alert(kind: Kind, limit: Option<f64>) -> f64 {
     let (warm, hot) = warm_hot(limit);
     if kind == Kind::Cpu {

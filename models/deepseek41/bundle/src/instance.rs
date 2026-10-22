@@ -1250,3 +1250,14 @@ pub(crate) fn dspark_graphs_for_test(
         instance.graphs.stats()
     })
 }
+
+/// Releases every graph in the instance's ledger, so its next steps
+/// capture afresh.
+#[cfg(test)]
+pub(crate) fn release_graphs_for_test(handle: runtime_bundle_abi::BundleHandleV1) {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        instance.graphs.release_all(&instance.services).unwrap();
+    })
+}

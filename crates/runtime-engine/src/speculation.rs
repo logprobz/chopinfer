@@ -66,8 +66,11 @@ const FIRST_PROBE: u16 = 16;
 /// history, so a plan charges each step this share of it: a drafting run of
 /// this many steps.
 const FRESH_RUN_STEPS: f64 = 16.0;
-/// Drafting steps a concurrency must realize before its measured throughput
-/// can switch drafting off.
+/// Steady drafting steps a concurrency must realize before its measured
+/// throughput can switch drafting off or keep it on. Probes vote in that
+/// throughput but do not count toward these steps: at DeepSeek C16 a probe
+/// weighed four steady steps, and seven losing probes with four steady steps
+/// that beat AR made a verdict against drafting.
 const REALIZED_STEPS: u32 = 8;
 /// Caught-up measurements after a fresh probe of an already measured block.
 const BLOCK_RECHECKS: u8 = 2;
@@ -142,6 +145,7 @@ struct Realized {
     /// The total weight of the drafting average's samples, so its first
     /// steps average evenly instead of starting from the first one.
     drafting_weight: f64,
+    /// Steady drafting steps in the average; probes are not counted.
     drafting_steps: u32,
 }
 
@@ -151,24 +155,34 @@ impl Realized {
     }
 
     fn record_drafting(&mut self, rate: f64, weight: f64) {
+        self.record_probe(rate, weight);
+        self.drafting_steps = self.drafting_steps.saturating_add(1);
+    }
+
+    /// A probe votes in the drafting average without counting as a step.
+    fn record_probe(&mut self, rate: f64, weight: f64) {
         let kept = self.drafting_weight * (1.0 - weight);
         let total = kept + weight;
         self.drafting = Some((self.drafting.unwrap_or(0.0) * kept + weight * rate) / total);
         self.drafting_weight = total;
-        self.drafting_steps = self.drafting_steps.saturating_add(1);
+    }
+
+    /// Enough steady steps to trust the drafting average either way.
+    const fn decided(&self) -> bool {
+        self.drafting_steps >= REALIZED_STEPS
     }
 
     /// Drafting at this concurrency emitted fewer tokens per unit of time
     /// than AR did, over enough steps to trust it.
     fn losing(&self) -> bool {
-        self.drafting_steps >= REALIZED_STEPS
+        self.decided()
             && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting < ar)
     }
 
     /// Drafting at this concurrency emitted at least as many tokens per
     /// unit of time as AR did, over enough steps to trust it.
     fn holding(&self) -> bool {
-        self.drafting_steps >= REALIZED_STEPS
+        self.decided()
             && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting >= ar)
     }
 
@@ -974,19 +988,15 @@ impl SpeculationPolicy {
         let realized = self.realized.entry(items).or_default();
         if shape.work() == 0 {
             Realized::record(&mut realized.ar, rate, REALIZED_WEIGHT);
+        } else if !probe {
+            realized.record_drafting(rate, Realized::draft_weight(items));
         } else {
             // A probe carries more weight: the drafting average it corrects
             // is stale.
-            let weight = if probe {
-                0.5
-            } else {
-                Realized::draft_weight(items)
-            };
-            realized.record_drafting(rate, weight);
+            realized.record_probe(rate, 0.5);
             // Only a probe that clears the resume margin resets spacing.
             // Marginal gains keep backing off while drafting stays disabled.
-            if probe
-                && realized.ar.is_some_and(|ar| rate > ar * RESUME_GAIN)
+            if realized.ar.is_some_and(|ar| rate > ar * RESUME_GAIN)
                 && let Some(state) = self.zero_draft.get_mut(items)
             {
                 state.probe_interval = spaced;

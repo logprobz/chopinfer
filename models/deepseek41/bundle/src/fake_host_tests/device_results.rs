@@ -193,8 +193,14 @@ fn default_device_results_only_select_qualified_topologies_and_kv() {
 /// uploads again.
 #[test]
 fn ready_ar_steps_complete_their_per_layer_engram_uploads() {
+    // Decode-8, and the one-row bucket a single request decodes in.
+    for count in [8, 1] {
+        ready_ar_steps_at(count);
+    }
+}
+
+fn ready_ar_steps_at(count: u32) {
     use super::ar_engram::{launches, order};
-    let count = 8_u32;
     let run = |on: bool| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(true);

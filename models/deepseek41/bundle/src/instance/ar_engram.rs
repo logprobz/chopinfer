@@ -102,9 +102,11 @@ pub(crate) struct State {
 
 impl State {
     /// Whether decode graphs of `(bucket, items)` join their layers here:
-    /// every multi-row decode bucket. One row keeps the synchronous route.
+    /// every decode bucket, one row included. A one-row step's synchronous
+    /// gather faults each row in on the engine thread, one at a time; here
+    /// the read pool overlaps them and the graph prefix hides them.
     pub(crate) fn serves(&self, (bucket, items): (u32, u32)) -> bool {
-        items == 0 && bucket > 1 && bucket <= self.capacity && !self.layers.is_empty()
+        items == 0 && bucket >= 1 && bucket <= self.capacity && !self.layers.is_empty()
     }
 
     fn idle(&self) -> bool {
@@ -261,7 +263,7 @@ impl Instance {
         }
         self.ar_engram = Some(state);
         self.log(&format!(
-            "{SWITCH}: decode buckets 2..={capacity} join {} Engram layers at their consumers",
+            "{SWITCH}: decode buckets 1..={capacity} join {} Engram layers at their consumers",
             tables.len()
         ));
         Ok(())

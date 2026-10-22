@@ -120,7 +120,7 @@ fn schedule(ranks: Ranks, items: u32, steps: &[u64], on: bool) -> Run {
         step(&mut instance, &decode_step(&positions, live), &mut views);
         assert_eq!(u64::from(views.rows()), live);
         journals.push(host.device.journal.borrow()[begin..].to_vec());
-        if on && live > 1 {
+        if on {
             let (span, layers) = spans.as_ref().unwrap();
             let hashed = oracle_ids(&positions, live);
             let columns = hashed.ids().len() / hashed.rows() / layers.len();
@@ -197,13 +197,15 @@ pub(super) fn order(lines: &[String]) -> Vec<&'static str> {
 #[test]
 fn ar_decode_joins_each_engram_layer_without_changing_launches() {
     // (ranks, items, live rows of each decode step): a capture, a replay,
-    // a smaller bucket, a one-row step on the synchronous route, then the
-    // first bucket again.
+    // a smaller bucket, a one-row step, then the first bucket again.
     for (ranks, items, steps) in [
         (Ranks::TP4, 32, &[32, 32, 13, 1, 32][..]),
         (Ranks::TP4, 16, &[16, 16, 2][..]),
         (Ranks::TP2, 8, &[8, 5, 1, 8][..]),
         (Ranks::TP1, 4, &[3, 4][..]),
+        // C1: a one-row capture and its replay, a wider step, one row again.
+        (Ranks::TP4, 4, &[1, 1, 4, 1][..]),
+        (Ranks::TP1, 2, &[1, 1][..]),
     ] {
         let Run {
             host: off_host,
@@ -230,10 +232,6 @@ fn ar_decode_joins_each_engram_layer_without_changing_launches() {
             let off = order(off);
             let on = order(on);
             assert!(!off.contains(&"ids") && !off.contains(&"wait"));
-            if live == 1 {
-                assert_eq!(on, off, "a one-row step keeps the synchronous route");
-                continue;
-            }
             // Ids, both layers enqueued, then the prefix pieces; every rank
             // joins layer 1, the middle pieces run; every rank joins layer
             // 14, the last pieces run; both gathers complete.
@@ -264,13 +262,12 @@ fn ar_decode_joins_each_engram_layer_without_changing_launches() {
             .filter(|line| line.contains("chopinfer.deepseek41.ar-engram.v1"))
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        let served: Vec<u64> = steps.iter().copied().filter(|&live| live > 1).collect();
         assert_eq!(
             traced
                 .iter()
                 .map(|value| value["rows"].as_u64().unwrap())
                 .collect::<Vec<_>>(),
-            served
+            steps
         );
         for value in &traced {
             let layers: Vec<u64> = value["layers"]

@@ -15,7 +15,8 @@ pub const CUBIN: &str = "fold_local_rows_deepseek41_sm120";
 // rejected rows, delayed admission and captured decode and verify operands.
 // Columns: projection, rows, N, K, column tile, folds in flight (0 keeps
 // the pair loop; a deep ring swizzles its shared rows). Other buckets keep
-// their route.
+// their route. The cluster folds (`fold_cluster::SERVED`) are chosen first
+// and now serve o-b at 16 and 32 rows; its rings stay the reference there.
 #[rustfmt::skip]
 pub const SERVED: &[(&str, u32, u32, u32, u32, u32)] = &[
     ("attention.q-b", 16, 8192, 1280, 32, 3),

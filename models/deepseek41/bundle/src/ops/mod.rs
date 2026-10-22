@@ -102,8 +102,8 @@ pub struct Ops {
 impl Ops {
     /// The largest prepared shared projection or activation workspace,
     /// including paired gate/up and every decode bucket the backend offers,
-    /// and the window KV projection's decode buckets, which bind it too
-    /// (`shared_overlap::kv_relocated`).
+    /// and the window KV projection's decode buckets and their measured
+    /// local folds, which bind it too (`shared_overlap::kv_relocated`).
     pub(crate) fn shared_workspace(&self) -> u64 {
         self.asked
             .iter()
@@ -112,6 +112,7 @@ impl Ops {
                     || asked.what.starts_with("dense.shared-pair")
                     || asked.what.starts_with("shared.")
                     || asked.what.starts_with("dense.attention.kv decode ")
+                    || asked.what.starts_with("dense.attention.kv local ")
             })
             .map(|asked| asked.workspace)
             .max()

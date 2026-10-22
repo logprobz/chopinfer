@@ -26,6 +26,7 @@ mod decode_attention;
 mod decode_join;
 mod device_results;
 mod dspark;
+mod fold_cluster;
 mod fold_local_rows;
 mod fold_stream;
 mod head_last;
@@ -1134,6 +1135,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// bucket.
 /// The column-block HC pair's two modules add fourteen resolves and sixteen
 /// releases per rank; every other line is retained after handle mapping.
+/// bucket. The cluster folds (`fold_cluster::SERVED`) add sixteen resolves,
+/// one configure (WQ_a's 32-row ring) and seventeen releases per TP4 rank
+/// and shift ids only.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1322,6 +1326,11 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// routed down module adds two resolves and three releases per rank. The
 /// window KV projection beside the query chain and the row-local rings
 /// change it as in `FLASH_JOURNALS`.
+/// module adds six resolves and seven releases per rank. The two-strip
+/// routed down module adds two resolves and three releases per rank.
+/// module adds six resolves and seven releases per rank. The window KV
+/// projection beside the query chain, the row-local rings and the cluster
+/// folds change it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

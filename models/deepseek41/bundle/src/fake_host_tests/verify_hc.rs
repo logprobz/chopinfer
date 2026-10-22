@@ -77,6 +77,10 @@ use super::*;
 // becomes the column-block producer (grid 40 x rows/4, 256 threads) and the
 // split finish (grid_x 1 to 2) with identical operands; no other line
 // changes.
+// The cluster folds' sixteen resolves shift ids only. At 16 and 32 rows the
+// WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
+// WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
+// audited by `fold_cluster::cluster_folds_change_only_measured_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0xf2b05982463a2227)),
     (6, (8680, 0xc24f3c56d43b3cd7)),

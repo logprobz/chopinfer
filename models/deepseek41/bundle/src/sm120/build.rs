@@ -138,6 +138,8 @@ mod f32_wide;
 #[allow(dead_code)]
 mod f32_zero;
 #[allow(dead_code)]
+mod fold_cluster;
+#[allow(dead_code)]
 mod fold_local_rows;
 #[allow(dead_code)]
 mod head_last;
@@ -495,6 +497,7 @@ pub fn selection(
             owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
             owners.push((fold_local_rows::CUBIN.into(), geometry.id));
+            owners.push((fold_cluster::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
             owners.push((dense_dual::CUBIN.into(), geometry.id));
@@ -646,6 +649,7 @@ pub fn selection(
     specs.extend(prefill_tma_scales::cubins(geometries).expect("qualified staged-scale cubin"));
     specs.extend(dense_dual::cubins(geometries).expect("captured dual fold cubin"));
     specs.extend(fold_local_rows::cubins(geometries).expect("captured row-local fold cubin"));
+    specs.extend(fold_cluster::cubins(geometries).expect("measured cluster fold cubin"));
     specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(

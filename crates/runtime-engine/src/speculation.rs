@@ -861,6 +861,19 @@ impl SpeculationPolicy {
         });
     }
 
+    /// Ends a step whose time trains nothing because it also prefilled:
+    /// the drafts its items accepted are not credited to the next timed
+    /// step's realized throughput.
+    pub(crate) fn untimed_step(&mut self) {
+        self.step_accepted = 0;
+    }
+
+    /// Accepted drafts waiting for the next timed step.
+    #[cfg(test)]
+    pub(crate) fn pending_accepted(&self) -> usize {
+        self.step_accepted
+    }
+
     /// Records the time of a step whose items were all decode or verify
     /// items, `fresh` of whose drafting items were fresh.
     ///

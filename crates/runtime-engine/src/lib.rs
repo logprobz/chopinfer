@@ -2805,12 +2805,15 @@ impl<E: ModelExecutor> Engine<E> {
                 }
             }
         }
-        if let Some(policy) = self.speculation.as_mut()
-            && batch
-                .items()
-                .iter()
-                .all(|item| !matches!(item.phase(), BatchPhase::Prefill { .. }))
-        {
+        let prefilled = batch
+            .items()
+            .iter()
+            .any(|item| matches!(item.phase(), BatchPhase::Prefill { .. }));
+        if let Some(policy) = self.speculation.as_mut().filter(|_| prefilled) {
+            // A step that also prefilled trains no step time; the drafts it
+            // accepted must not count toward the next timed step.
+            policy.untimed_step();
+        } else if let Some(policy) = self.speculation.as_mut() {
             let drafts = batch
                 .items()
                 .iter()
@@ -4983,6 +4986,115 @@ mod transaction_tests {
                 fixed
             );
         }
+    }
+
+    /// Emits, for every row, the token that follows a history of its
+    /// length; its host drafter proposes the same tokens, so every draft is
+    /// accepted. Records whether each batch prefilled and verified.
+    #[derive(Default)]
+    struct Successor {
+        batches: Vec<(bool, bool)>,
+    }
+
+    fn successor(length: usize) -> u32 {
+        (length % 6 + 2) as u32
+    }
+
+    impl ModelExecutor for Successor {
+        fn draft_tokens_v1(
+            &mut self,
+            _id: RequestId,
+            history: &[u32],
+            maximum: usize,
+        ) -> Result<Vec<u32>, ExecutorError> {
+            Ok((0..maximum).map(|k| successor(history.len() + k)).collect())
+        }
+
+        type TransactionState<'a> = NoopModelTransactionState;
+
+        fn execute<'a>(
+            &'a mut self,
+            items: &[ModelBatchItem],
+            _kv_plan: &PreparedAppendBatch,
+        ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+            let phase = |verify: bool| {
+                items.iter().any(|item| {
+                    matches!(item.phase(), BatchPhase::Verify { .. }) == verify
+                        && (verify || matches!(item.phase(), BatchPhase::Prefill { .. }))
+                })
+            };
+            self.batches.push((phase(false), phase(true)));
+            let mut rows = Vec::new();
+            for item in items {
+                let Some(work) = item.sampling() else {
+                    continue;
+                };
+                let drafts = match item.draft() {
+                    Some(_) => item.input_tokens()[1..].to_vec(),
+                    None => Vec::new(),
+                };
+                for row in 0..=drafts.len() {
+                    let mut logits = vec![0.0; 8];
+                    let length = work.for_verify_row(&drafts, row).history.len();
+                    logits[successor(length) as usize] = 4.0;
+                    rows.push(LogitsRow::new(item.request_id(), logits).unwrap());
+                }
+            }
+            Ok(ModelTransaction::no_op(rows))
+        }
+    }
+
+    /// Drafts a step accepted beside a prefill train no step time, so they
+    /// must not inflate the realized throughput of the next timed step.
+    #[test]
+    fn drafts_accepted_beside_a_prefill_do_not_carry_into_the_next_step() {
+        let vocabulary = ModelVocabulary::new(8).unwrap();
+        let config = EngineConfig::new(
+            SchedulerConfig::new(2, 4, 16, 16, 1).unwrap(),
+            KvGeometry::new(4, 16).unwrap(),
+            vocabulary,
+            64,
+            4,
+        )
+        .unwrap()
+        .with_speculation(
+            SpeculationConfig::new(2, 16, SpeculationMode::Fixed, DraftSource::Host).unwrap(),
+        );
+        let mut engine = Engine::new(config, Successor::default()).unwrap();
+        let request = |id| {
+            EngineRequest::new(
+                RequestId::new(id),
+                vec![1, 2, 3, 4],
+                12,
+                SamplingParameters::new(0.0).unwrap(),
+                1,
+                Vec::new(),
+                vocabulary,
+            )
+            .unwrap()
+        };
+        engine.submit(request(1)).unwrap();
+        // The first request prefills, then verifies alone.
+        while !engine
+            .executor
+            .batches
+            .last()
+            .is_some_and(|&(_, verify)| verify)
+        {
+            engine.step().unwrap();
+            let _ = engine.drain_events();
+        }
+        assert_eq!(engine.speculation.as_ref().unwrap().pending_accepted(), 0);
+        let first = RequestId::new(1);
+        let before = engine.requests[&first].history.len();
+        engine.submit(request(2)).unwrap();
+        engine.step().unwrap();
+        let _ = engine.drain_events();
+        // The second request's prefill shares a step with the first's
+        // verification, which accepted both of its drafts.
+        assert_eq!(engine.executor.batches.last(), Some(&(true, true)));
+        assert_eq!(engine.requests[&first].history.len(), before + 3);
+        assert_eq!(engine.speculation.as_ref().unwrap().pending_accepted(), 0);
     }
 
     #[test]

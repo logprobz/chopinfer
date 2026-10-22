@@ -334,6 +334,14 @@ fn load(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16,
     );
     let kv = figures.kv().unwrap_or(0.0);
     buffer.put(x + 2, y + 2, "KV cache", dim());
+    // The pool's size in tokens after the share used, while the bar keeps
+    // eight cells.
+    let used = format!("{:>5}", percent(Some(kv)));
+    let label = figures
+        .kv_capacity()
+        .map(|tokens| format!("{:>4} of {}", percent(Some(kv)), count(tokens, 4)))
+        .filter(|label| usize::from(gauge_width) >= label.chars().count() + 1 + 8)
+        .unwrap_or(used);
     gauge(
         buffer,
         column,
@@ -341,7 +349,7 @@ fn load(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16,
         gauge_width,
         kv,
         if kv > 0.9 { Color::Red } else { Color::Green },
-        &format!("{:>5}", percent(Some(kv))),
+        &label,
     );
     let gauges = figures.latest().map(|s| &s.gauges);
     let intake = gauges.and_then(|g| Some((g.intake_used?, g.intake_budget?)));

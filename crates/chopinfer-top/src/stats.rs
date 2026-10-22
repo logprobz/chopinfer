@@ -99,6 +99,9 @@ pub struct Gauges {
     pub waiting: Option<f64>,
     /// Occupied KV blocks over capacity, from 0 to 1.
     pub kv_usage: Option<f64>,
+    /// Tokens the KV page pool can hold: its pages times the tokens of a
+    /// page (a context-parallel group's stripe).
+    pub kv_capacity_tokens: Option<f64>,
     pub prefix_anchors: Option<f64>,
     pub prefix_blocks: Option<f64>,
     pub intake_used: Option<f64>,
@@ -179,6 +182,7 @@ pub const SERIES: &[&str] = &[
     "vllm:num_requests_running",
     "vllm:num_requests_waiting",
     "vllm:kv_cache_usage_perc",
+    "chop_kv_capacity_tokens",
     "chop_intake_used_bytes",
     "chop_intake_budget_bytes",
     "chop_transport_buffer_reserved_bytes",
@@ -269,6 +273,7 @@ impl Snapshot {
                 running: gauge("vllm:num_requests_running"),
                 waiting: gauge("vllm:num_requests_waiting"),
                 kv_usage: gauge("vllm:kv_cache_usage_perc"),
+                kv_capacity_tokens: gauge("chop_kv_capacity_tokens"),
                 prefix_anchors: gauge("chop_prefix_cache_anchors"),
                 prefix_blocks: gauge("chop_prefix_cache_blocks"),
                 intake_used: gauge("chop_intake_used_bytes"),
@@ -977,7 +982,7 @@ mod tests {
              chop_step_execution_seconds_bucket{model_name=\"m\",engine=\"0\",phase=\"mixed\",le=\"+Inf\"} 3\n\
              chop_request_decode_tokens_total{model_name=\"m\",engine=\"0\"} 39\n\
              chop_request_decode_seconds_total{model_name=\"m\",engine=\"0\"} 4.875\n\
-             chop_requests_submitted_total 7\n\
+             chop_requests_submitted_total 7\nchop_kv_capacity_tokens 7340032\n\
              chop_spec_verify_items_total 10\nchop_spec_emitted_tokens_total 19\n\
              vllm:request_prompt_tokens_bucket{model_name=\"m\",engine=\"0\",le=\"+Inf\"} 2\n\
              vllm:request_prompt_tokens_sum{model_name=\"m\",engine=\"0\"} 3000\n\
@@ -997,6 +1002,7 @@ mod tests {
         assert_eq!(snapshot.counters.decode_tokens, 39.0);
         assert_eq!(snapshot.counters.decode_seconds, 4.875);
         assert_eq!(snapshot.counters.requests_submitted, 7.0);
+        assert_eq!(snapshot.gauges.kv_capacity_tokens, Some(7_340_032.0));
         assert_eq!(snapshot.counters.spec_verify_items, 10.0);
         assert_eq!(snapshot.counters.spec_emitted_tokens, 19.0);
         assert_eq!(snapshot.histograms.prompt_tokens.unwrap().sum, 3000.0);

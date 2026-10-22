@@ -88,6 +88,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_prefix_cache_{captures,capture_failures,restore_failures,evictions}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, evictions, and the anchors and pages held now |
 | `chop_errors_total`, `chop_cancellations_total` | Engine errors and cancelled sequences |
 | `chop_requests_submitted_total` | Engine sequences submitted, counted at admission |
+| `chop_kv_tokens`, `chop_kv_capacity_tokens` | Tokens the KV page pool holds now, and the tokens it can hold: its pages times the tokens of a page, a context-parallel group's stripe. `vllm:kv_cache_usage_perc` is the same pool's used pages over its pages |
 | `chop_request_decode_tokens_total{model_name,engine}`, `chop_request_decode_seconds_total{model_name,engine}` | Generated tokens after each sequence's first, and the seconds between each sequence's consecutive outputs, counted as outputs commit. Their ratio is the time-weighted decode speed per sequence: the terms `vllm:request_time_per_output_token_seconds` divides, without waiting for sequences to finish |
 | `chop_spec_{verify_items,emitted_tokens}_total` | Verify items that checked drafts, and the tokens they emitted after stop and length cuts; published once a draft is verified |
 | `vllm:batch_refusals_total{model_name,engine}` | Batches safely refused before device work, including the refusal that trips the loop guard |

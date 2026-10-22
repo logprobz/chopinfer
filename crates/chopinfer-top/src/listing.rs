@@ -403,6 +403,7 @@ fn row(instance: &Instance, now: f64) -> Value {
             "running": figures.running(),
             "waiting": figures.waiting(),
             "kv_usage": figures.kv(),
+            "kv_capacity_tokens": figures.kv_capacity(),
         },
         "ratios": {
             "prefix_token_hits": figures.token_hits(),

@@ -334,6 +334,13 @@ impl<'a> Figures<'a> {
         self.latest().and_then(|s| s.gauges.kv_usage)
     }
 
+    /// Tokens the KV page pool can hold; `None` when not published.
+    pub fn kv_capacity(&self) -> Option<f64> {
+        self.latest()
+            .and_then(|s| s.gauges.kv_capacity_tokens)
+            .filter(|tokens| *tokens > 0.0)
+    }
+
     pub fn max_sequences(&self) -> Option<u64> {
         self.instance
             .health

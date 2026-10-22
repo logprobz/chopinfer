@@ -109,6 +109,7 @@ fn busy(seconds: f64, rate: f64, running: f64) -> Snapshot {
             running: Some(running),
             waiting: Some(2.0),
             kv_usage: Some(0.64),
+            kv_capacity_tokens: Some(7_340_032.0),
             prefix_anchors: Some(1204.0),
             prefix_blocks: Some(18_330.0),
             intake_used: Some(6.0 * 1024.0 * 1024.0),

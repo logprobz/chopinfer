@@ -23,7 +23,7 @@ use model_deepseek41::synthetic;
 use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE};
-use model_deepseek41_contract::weight_plan::plan;
+use model_deepseek41_contract::weight_plan::{RoutedLayout, plan, plan_with};
 use runtime_bundle_abi::weight_plan::WeightPlanV1;
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
@@ -36,12 +36,27 @@ use support::sparse;
 /// Every rank's plan of the checkpoint at `root`, prepared as the host
 /// prepares it before create.
 fn prepare(root: &Path, ranks: u32) -> Result<(PlannedImageV1, Vec<WeightPlanV1>), String> {
+    prepare_with(root, ranks, None)
+}
+
+/// [`prepare`] with the backbone's routed gate/up bank in `routed`, or as
+/// the served [`plan`] stores it.
+fn prepare_with(
+    root: &Path,
+    ranks: u32,
+    routed: Option<RoutedLayout>,
+) -> Result<(PlannedImageV1, Vec<WeightPlanV1>), String> {
     let checkpoint = Arc::new(DirectCheckpointV1::open(root)?);
     let implementation = implementation_v1([0; 32]);
     let plans = (0..ranks)
         .map(|rank| {
-            plan(&checkpoint.request(RANK_IMAGE_ROLE, ranks, rank, implementation, vec![], vec![]))
-                .map(|plan| plan.expect("the text image is planned"))
+            let request =
+                checkpoint.request(RANK_IMAGE_ROLE, ranks, rank, implementation, vec![], vec![]);
+            match routed {
+                Some(routed) => plan_with(&request, routed),
+                None => plan(&request),
+            }
+            .map(|plan| plan.expect("the text image is planned"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let image = PlannedImageV1::new(
@@ -81,6 +96,92 @@ fn every_rank_prepares_from_the_headers() {
         }
         std::fs::remove_dir_all(&root).unwrap();
     }
+}
+
+/// The backbone's routed gate/up bank in row tiles changes nothing but its
+/// own records' parameters (the packing layout), its views' index layouts
+/// and so every rank's identity: the arena, every view's place and size and
+/// every other record stay as the row-major plan's. The served plan stores
+/// rows until every routed consumer reads tiles. The host prepares the
+/// tiled plan from the headers at every supported rank count.
+#[test]
+fn row_tiles_change_only_the_backbone_gate_up_records_and_identity() {
+    use kernel_core::precision::layout::ROW_TILES_64X128;
+    use kernel_core::weight_transform::WeightTransform;
+    let geometry = &model_deepseek41_contract::geometry::FLASH;
+    let root = sparse(geometry);
+    let [codes, scales] = RoutedLayout::Tiles.view_layouts().unwrap();
+    for &ranks in SUPPORTED_RANKS {
+        assert_eq!(RoutedLayout::served(ranks), RoutedLayout::Rows);
+        let (served, served_plans) = prepare(&root, ranks).unwrap();
+        let (rows, rows_plans) = prepare_with(&root, ranks, Some(RoutedLayout::Rows)).unwrap();
+        let (tiles, tiles_plans) = prepare_with(&root, ranks, Some(RoutedLayout::Tiles)).unwrap();
+        assert_eq!(served_plans, rows_plans);
+        for (rank, (row, tile)) in rows_plans.iter().zip(&tiles_plans).enumerate() {
+            let at = format!("tp{ranks} rank {rank}");
+            assert_eq!(served.identity(rank), rows.identity(rank), "{at}");
+            assert_ne!(rows.identity(rank), tiles.identity(rank), "{at}");
+            assert_eq!(
+                (row.arena_bytes, &row.views, row.records.len()),
+                (tile.arena_bytes, &tile.views, tile.records.len()),
+                "{at}"
+            );
+            let index = |plan: &WeightPlanV1| {
+                bundle_runtime::index::parse(&plan.components[0].bytes, rank as u32, INDEX_SCHEMA)
+                    .unwrap()
+            };
+            let (row_index, tile_index) = (index(row), index(tile));
+            assert_ne!(row_index.direct_identity, tile_index.direct_identity);
+            // The byte ranges of the tiled views.
+            let mut banks = Vec::new();
+            for (name, view) in &tile_index.views {
+                let mut expected = row_index.views[name].clone();
+                if let Some(bank) = name
+                    .strip_suffix(".ffn.experts.gate_up.weight")
+                    .or_else(|| name.strip_suffix(".ffn.experts.gate_up.scale"))
+                    && bank.starts_with("layers.")
+                {
+                    expected.layout_id = if name.ends_with(".weight") {
+                        codes
+                    } else {
+                        scales
+                    }
+                    .into();
+                    banks.push(view.offset..view.offset + view.bytes);
+                }
+                assert_eq!(*view, expected, "{at} {name}");
+            }
+            assert_eq!(banks.len(), 2 * geometry.shape.layers as usize, "{at}");
+            let mut tiled = 0;
+            for (row, tile) in row.records.iter().zip(&tile.records) {
+                let banked = banks.iter().any(|bank| bank.contains(&row.arena_offset));
+                if !banked {
+                    assert_eq!(row, tile, "{at} record at {}", row.arena_offset);
+                    continue;
+                }
+                tiled += 1;
+                let decode = |record: &runtime_bundle_abi::weight_plan::WeightRecordV1| {
+                    match WeightTransform::decode(record.transform, &record.params).unwrap() {
+                        WeightTransform::PackedOperand(operand) => operand,
+                        other => panic!("{at}: a bank record is {other:?}"),
+                    }
+                };
+                let (mut expected, operand) = (decode(row), decode(tile));
+                assert_eq!(expected.plan.layout.id, "row-major-groups");
+                expected.plan.layout.id = ROW_TILES_64X128.into();
+                assert_eq!(operand, expected, "{at}");
+                assert_eq!(
+                    (&row.sources, row.byte_length),
+                    (&tile.sources, tile.byte_length)
+                );
+            }
+            // Two sections of each expert's two operands, every layer.
+            let experts = u64::from(geometry.shape.moe.experts);
+            let layers = u64::from(geometry.shape.layers);
+            assert_eq!(tiled, layers * experts * 4, "{at}");
+        }
+    }
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 /// One tensor of the checkpoint: its header entry and bytes.
@@ -294,13 +395,15 @@ fn varied_checkpoint(
 /// each row carrying its own 32x32 block's scales, replicated, split by rows,
 /// by K or by groups; BF16 matrices in MMA fragment order; expert banks
 /// expert-major, each expert's operands split by rows (gate-up) or K (down),
-/// codes and scales in rows. The checkpoint's scales vary per
-/// block, so a slice that starts in the wrong block fails. Runs when a
-/// synthetic geometry is compiled.
+/// codes and scales in rows, the backbone's gate/up bank also planned in
+/// row tiles. The checkpoint's scales vary per block, so a slice that
+/// starts in the wrong block fails. Runs when a synthetic geometry is
+/// compiled.
 #[test]
 fn every_planned_view_is_the_checkpoint_s() {
+    use kernel_core::precision::layout::{ROW_TILE_CODES_VIEW, ROW_TILE_SCALES_VIEW};
     use kernel_core::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
-    use kernel_core::transform::{Layout, Packed, Transform};
+    use kernel_core::transform::{Layout, Packed, RowTileLayout, Transform};
     use kernel_core::weight_transform::mxfp8_fold::{LAYOUT_ID as FOLD_LAYOUT, Mxfp8FoldLayout};
     let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
         eprintln!("no synthetic geometry is compiled: skipped");
@@ -311,12 +414,13 @@ fn every_planned_view_is_the_checkpoint_s() {
     let (header, data) = header(&root);
     let tensor = |name: &str| source(&root, &header, data, name);
     let mut groups = std::collections::BTreeSet::new();
-    for &ranks in SUPPORTED_RANKS {
+    let routed = [None, Some(RoutedLayout::Tiles)];
+    for (&ranks, routed) in SUPPORTED_RANKS.iter().flat_map(|r| routed.map(|l| (r, l))) {
         if check_ranks(geometry, ranks).is_err() {
             continue;
         }
         let n = u64::from(ranks);
-        let (image, plans) = prepare(&root, ranks).unwrap();
+        let (image, plans) = prepare_with(&root, ranks, routed).unwrap();
         let mut start = 0;
         for (rank, plan) in plans.iter().enumerate() {
             let r = rank as u64;
@@ -426,7 +530,19 @@ fn every_planned_view_is_the_checkpoint_s() {
                             columns.start * 2..columns.end * 2,
                         )
                     }
-                    "mxfp4_e2m1_rows_v1" | "mxfp4_ue8m0_scale_rows_v1" => {
+                    "mxfp4_e2m1_rows_v1"
+                    | "mxfp4_ue8m0_scale_rows_v1"
+                    | ROW_TILE_CODES_VIEW
+                    | ROW_TILE_SCALES_VIEW => {
+                        let tiled = view.layout_id.starts_with("mxfp4_e2m1_row_tiles")
+                            || view.layout_id.starts_with("mxfp4_ue8m0_scale_row_tiles");
+                        assert_eq!(
+                            tiled,
+                            routed.is_some()
+                                && name.starts_with("layers.")
+                                && name.contains(".experts.gate_up."),
+                            "{at}"
+                        );
                         let (prefix, bank) = name.split_once(".experts.").unwrap();
                         let (bank, part) = bank.split_once('.').unwrap();
                         let operands: &[&str] = if bank == "gate_up" {
@@ -453,16 +569,31 @@ fn every_planned_view_is_the_checkpoint_s() {
                                 } else {
                                     (0..rows, share(k, r, n))
                                 };
-                                if part == "weight" {
-                                    expected.extend(block(
+                                let height = (rows.end - rows.start) as usize;
+                                let (matrix, row_bytes, tile_bytes) = if part == "weight" {
+                                    let row_bytes = (columns.end - columns.start) / 2;
+                                    let codes = block(
                                         &codes.bytes,
                                         k / 2,
                                         rows,
                                         columns.start / 2..columns.end / 2,
-                                    ));
+                                    );
+                                    (codes, row_bytes, 64)
                                 } else {
                                     let blocks = columns.start / 32..columns.end / 32;
-                                    expected.extend(block(&scales.bytes, k / 32, rows, blocks));
+                                    let row_bytes = blocks.end - blocks.start;
+                                    (block(&scales.bytes, k / 32, rows, blocks), row_bytes, 4)
+                                };
+                                if tiled {
+                                    let tiles = RowTileLayout {
+                                        rows: height,
+                                        row_bytes: row_bytes as usize,
+                                        tile_rows: 64,
+                                        tile_bytes,
+                                    };
+                                    expected.extend(tiles.pack(&matrix).unwrap().bytes);
+                                } else {
+                                    expected.extend(matrix);
                                 }
                             }
                         }
@@ -474,7 +605,7 @@ fn every_planned_view_is_the_checkpoint_s() {
             }
             start += plan.arena_bytes;
         }
-        eprintln!("tp{ranks}: every planned view matches the checkpoint");
+        eprintln!("tp{ranks} {routed:?}: every planned view matches the checkpoint");
     }
     eprintln!("{} view groups: {groups:?}", groups.len());
     std::fs::remove_dir_all(&root).unwrap();

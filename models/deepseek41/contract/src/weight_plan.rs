@@ -13,8 +13,9 @@
 //!   destination matrix: the rank's rows or K slice, a grouped projection's
 //!   groups one after another) and its UE8M0 scales, one per row and 32 K,
 //!   as one packed operand piece per matrix; a BF16 dense projection is its
-//!   rows, an expert bank expert-major packed pieces, a lookup table its
-//!   rows;
+//!   rows, an expert bank expert-major packed pieces (the backbone's
+//!   gate/up bank in rows or row tiles, [`RoutedLayout`]), a lookup table
+//!   its rows;
 //! - every side tensor's rank copy (norms, the mixers, the router biases,
 //!   and the attention sinks of the rank's heads).
 //!
@@ -42,6 +43,7 @@ use std::sync::Arc;
 
 use kernel_core::contract::WeightFormat;
 use kernel_core::precision::format::{KernelFamily, registry};
+use kernel_core::precision::layout::{ROW_TILE_CODES_VIEW, ROW_TILE_SCALES_VIEW, ROW_TILES_64X128};
 use kernel_core::weight_transform::{PackedSection, WeightTransform};
 use model_compiler_sdk::quantization::declared::{self, Admitted};
 use model_compiler_sdk::quantization::import::ImportedOperand;
@@ -77,6 +79,55 @@ const INDEX: &str = "model.safetensors.index.json";
 /// The projections whose rows the host gathers from the mapped checkpoint
 /// instead of the image: their views are mapped.
 const HOST_GATHERED: [&str; 2] = ["engram.table_0", "engram.table_1"];
+
+/// The backbone's routed gate/up bank, which [`RoutedLayout::Tiles`] tiles.
+const BACKBONE_GATE_UP: &str = "layer.experts.gate-up";
+
+/// How a rank image stores the backbone's routed gate/up bank. The
+/// drafter's bank, the down banks and every other projection keep their
+/// layouts either way.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum RoutedLayout {
+    /// One row-major MXFP4 matrix per expert and operand.
+    #[default]
+    Rows,
+    /// Each of those matrices in 64-row by 128-K tiles
+    /// ([`ROW_TILES_64X128`]), so a kernel's row block of 64 rows reads one
+    /// contiguous tile. The rank index names the tiled layouts
+    /// ([`ROW_TILE_CODES_VIEW`], [`ROW_TILE_SCALES_VIEW`]).
+    Tiles,
+}
+
+impl RoutedLayout {
+    /// The layout [`plan`] stores at `ranks`: rows at every rank count until
+    /// every routed consumer of the backbone gate/up bank reads tiles.
+    #[must_use]
+    pub const fn served(ranks: u32) -> Self {
+        let _ = ranks;
+        Self::Rows
+    }
+
+    /// The rank index layouts of the bank's codes and scales.
+    pub fn view_layouts(self) -> Result<[&'static str; 2], String> {
+        Ok(match self {
+            Self::Rows => {
+                let rows = registry::by_format(WeightFormat::Mxfp4)
+                    .and_then(|format| format.layout(KernelFamily::Row, None))
+                    .map_err(|e| e.to_string())?;
+                [
+                    rows.codes,
+                    rows.local_scales.ok_or("MXFP4 rows have no scale layout")?,
+                ]
+            }
+            Self::Tiles => [ROW_TILE_CODES_VIEW, ROW_TILE_SCALES_VIEW],
+        })
+    }
+
+    /// Whether `projection`'s records are tiled.
+    fn tiles(self, projection: &str) -> bool {
+        self == Self::Tiles && projection == BACKBONE_GATE_UP
+    }
+}
 
 /// The declaration registers no variants.
 struct NoVariants;
@@ -140,15 +191,20 @@ pub fn policy(family: KernelFamily, operands: u32, format: WeightFormat) -> Opti
 }
 
 /// Bind the records to this model's consumers. Chained experts decode
-/// row-major codes and scales; the standard grouped format instead tiles
-/// scales for block-scaled MMA. Keep packed pieces so code/scale admission
-/// and the source K slice remain checked together. A BF16 dense projection
-/// read as rows is sized as rows too, not padded to the fragment packing's
-/// row tiles.
+/// row-major codes and scales, or with `tiles` the same rows in 64-row by
+/// 128-K tiles; the standard grouped format instead tiles scales for
+/// block-scaled MMA. Keep packed pieces so code/scale admission and the
+/// source K slice remain checked together. A BF16 dense projection read as
+/// rows is sized as rows too, not padded to the fragment packing's row
+/// tiles.
 pub fn bind_policy(
     mut operation: DerivedOperation,
     operands: u32,
+    tiles: bool,
 ) -> Result<DerivedOperation, String> {
+    if tiles && operation.family != KernelFamily::GroupedExpert {
+        return Err("only an expert bank is stored in row tiles".into());
+    }
     let rows = match operation.family {
         KernelFamily::GroupedExpert => true,
         KernelFamily::Dense => operands == 1 && operation.packing.format == WeightFormat::Bf16,
@@ -162,7 +218,12 @@ pub fn bind_policy(
         operation.packing.layout = layout.weight;
         if operation.family == KernelFamily::GroupedExpert {
             // One row-major matrix per expert and operand, placed by PackedPieces.
-            operation.packing.layout.id = "row-major-groups".into();
+            operation.packing.layout.id = if tiles {
+                ROW_TILES_64X128
+            } else {
+                "row-major-groups"
+            }
+            .into();
         } else {
             // The live matrix the slices fill, without the MMA tile padding
             // the dense derivation added to its destination.
@@ -183,6 +244,10 @@ pub fn bind_policy(
                 continue;
             };
             let (bytes, id) = match section {
+                PackedSection::Codes if tiles => (sizes.codes, Some(ROW_TILE_CODES_VIEW)),
+                PackedSection::LocalScales if tiles => {
+                    (sizes.local_scales, Some(ROW_TILE_SCALES_VIEW))
+                }
                 PackedSection::Codes => (sizes.codes, Some(layout.codes)),
                 PackedSection::LocalScales => (sizes.local_scales, layout.local_scales),
                 PackedSection::GlobalScales => (sizes.global_scales, layout.global_scales),
@@ -336,12 +401,14 @@ impl Checkpoint {
         admitted
     }
 
-    /// Rank `rank` of `ranks`'s views, ordered by name.
+    /// Rank `rank` of `ranks`'s views, ordered by name, the backbone's
+    /// routed gate/up bank stored in `routed`.
     fn views(
         &self,
         imported: &projection_spec::derive::ImportedProjections,
         ranks: u32,
         rank: u32,
+        routed: RoutedLayout,
     ) -> Result<Vec<View>, String> {
         let registry = Registry::default();
         let topology = Topology { ranks, rank };
@@ -366,8 +433,12 @@ impl Checkpoint {
                 .find(|p| p.id == *projection)
                 .ok_or_else(|| format!("{projection}: derived without a declaration"))?;
             let at = |e: model_compiler_sdk::CompilerError| format!("{projection}: {e}");
-            let operation = bind_policy(operation.clone(), declared.operand_count())
-                .map_err(|e| format!("{projection}: {e}"))?;
+            let operation = bind_policy(
+                operation.clone(),
+                declared.operand_count(),
+                routed.tiles(projection),
+            )
+            .map_err(|e| format!("{projection}: {e}"))?;
             let layouts: BTreeMap<_, _> = operation
                 .views
                 .iter()
@@ -570,7 +641,12 @@ impl Preparation {
             let work: Vec<_> = (0..ranks)
                 .map(|rank| {
                     threads.spawn(move || {
-                        let views = self.checkpoint.views(&self.imported, ranks, rank)?;
+                        let views = self.checkpoint.views(
+                            &self.imported,
+                            ranks,
+                            rank,
+                            RoutedLayout::served(ranks),
+                        )?;
                         check_sources(&views, &self.checkpoint.files)?;
                         let (positions, arena) = offsets(&views);
                         let mut cut = 0;
@@ -613,11 +689,12 @@ fn check_sources(views: &[View], files: &BTreeMap<String, String>) -> Result<(),
     Ok(())
 }
 
-fn planned(request: &WeightPlanRequestV1) -> Result<Arc<Planned>, String> {
+fn planned(request: &WeightPlanRequestV1, routed: RoutedLayout) -> Result<Arc<Planned>, String> {
     let mut key = RequestKey::new(b"deepseek41.weight-plan.v1", request);
     key.optional(request.document(CONFIG));
     key.optional(request.document(INDEX));
     key.bytes(&request.ranks.to_le_bytes());
+    key.bytes(&[routed as u8]);
     PLANS.get_or_build(key.finish(), || {
         let checkpoint = Checkpoint::read(request)?;
         admission::check_ranks(checkpoint.geometry, request.ranks)?;
@@ -633,7 +710,7 @@ fn planned(request: &WeightPlanRequestV1) -> Result<Arc<Planned>, String> {
             let ranks: Vec<_> = (0..request.ranks)
                 .map(|rank| {
                     let (checkpoint, imported) = (&checkpoint, &imported);
-                    threads.spawn(move || checkpoint.views(imported, request.ranks, rank))
+                    threads.spawn(move || checkpoint.views(imported, request.ranks, rank, routed))
                 })
                 .collect();
             ranks
@@ -753,7 +830,7 @@ pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, S
             request.rank, request.ranks
         ));
     }
-    let planned = planned(request)?;
+    let planned = planned(request, RoutedLayout::served(request.ranks))?;
     let census = rank_census(request, &planned)?;
     Ok((!census.items.is_empty()).then_some(census))
 }
@@ -931,11 +1008,20 @@ fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String
 
 /// The text image's plan for the request's rank, the encoder image's
 /// (`encoder_plan`), or `None` for another image role. The primary image
-/// (an empty role) is the text image. With a census from the host, the
-/// routed expert scale banks are stored encoded ([`encode_banks`]); the
-/// cached derivation stays census-free, so a census changes only this
-/// rank's last step.
+/// (an empty role) is the text image. The backbone's routed gate/up bank is
+/// stored as the served kernels read it ([`RoutedLayout::served`]). With a
+/// census from the host, the routed expert scale banks are stored encoded
+/// ([`encode_banks`]); the cached derivation stays census-free, so a census
+/// changes only this rank's last step.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
+    plan_with(request, RoutedLayout::served(request.ranks))
+}
+
+/// [`plan`] with the backbone's routed gate/up bank stored in `routed`.
+pub fn plan_with(
+    request: &WeightPlanRequestV1,
+    routed: RoutedLayout,
+) -> Result<Option<WeightPlanV1>, String> {
     if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
         return encoder_plan::plan(request).map(Some);
     }
@@ -948,7 +1034,7 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
             request.rank, request.ranks
         ));
     }
-    let planned = planned(request)?;
+    let planned = planned(request, routed)?;
     let raw = &planned.ranks[request.rank as usize];
     let encoded = if request.census.is_empty() {
         None

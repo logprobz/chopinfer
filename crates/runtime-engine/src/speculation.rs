@@ -19,6 +19,8 @@ mod low_concurrency_tests;
 mod realized_tests;
 #[cfg(test)]
 mod refresh_tests;
+#[cfg(test)]
+mod trial_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
@@ -72,6 +74,19 @@ const FRESH_RUN_STEPS: f64 = 16.0;
 /// weighed four steady steps, and seven losing probes with four steady steps
 /// that beat AR made a verdict against drafting.
 const REALIZED_STEPS: u32 = 8;
+/// A concurrency whose drafting is off runs its best drafting plan as a
+/// trial when that plan is estimated at this share of AR or more, though
+/// below the resume margin. Estimates can miss by more than the margin:
+/// a request that never verified is priced at the shared prior, and a probe
+/// times its drafters fresh. At DeepSeek DSpark C8 one process priced
+/// drafting at 0.91 to 0.94 of AR and kept AR, while another, whose
+/// estimate happened to clear the margin, realized 1.25 times AR.
+const TRIAL_BAND: f64 = 0.9;
+/// Plans without drafting before the next trial, after a trial whose
+/// realized throughput lost to AR. The wait doubles after every lost trial,
+/// up to `MAX_PROBE_INTERVAL`, and a trial that holds resets it, so trials
+/// where drafting loses take a small and shrinking share of plans.
+const TRIAL_INTERVAL: u16 = 128;
 /// Caught-up measurements after a fresh probe of an already measured block.
 const BLOCK_RECHECKS: u8 = 2;
 /// Exponential weight of one AR step in a concurrency's realized throughput.
@@ -117,11 +132,19 @@ struct ZeroDraftState {
     rechecks: u8,
     /// Total time of that refresh, charged to the next probe interval.
     recheck_micros: u64,
+    /// Steady steps left in a trial: a drafting run that started while
+    /// drafting was off keeps drafting for `REALIZED_STEPS` steady steps of
+    /// its own, then its realized verdict decides whether drafting holds.
+    trial: u32,
+    /// Plans without drafting before a trial may start.
+    trial_wait: u16,
+    /// The wait that the next lost trial sets.
+    trial_interval: u16,
 }
 
 impl Default for ZeroDraftState {
     /// A concurrency starts as if drafting had lost: its first drafting plan
-    /// must clear the resume margin.
+    /// must clear the resume margin or run as a trial.
     fn default() -> Self {
         Self {
             disabled: true,
@@ -132,7 +155,30 @@ impl Default for ZeroDraftState {
             again: false,
             rechecks: 0,
             recheck_micros: 0,
+            trial: 0,
+            trial_wait: 0,
+            trial_interval: TRIAL_INTERVAL,
         }
+    }
+}
+
+impl ZeroDraftState {
+    /// Ends a trial whose realized drafting held.
+    fn trial_held(&mut self) {
+        self.trial = 0;
+        self.trial_wait = 0;
+        self.trial_interval = TRIAL_INTERVAL;
+    }
+
+    /// Ends a trial without a verdict that drafting holds: the next trial
+    /// waits, by twice as long as after the previous loss.
+    fn trial_lost(&mut self) {
+        self.trial = 0;
+        self.trial_wait = self.trial_interval;
+        self.trial_interval = self
+            .trial_interval
+            .saturating_mul(2)
+            .min(MAX_PROBE_INTERVAL);
     }
 }
 
@@ -990,6 +1036,20 @@ impl SpeculationPolicy {
             Realized::record(&mut realized.ar, rate, REALIZED_WEIGHT);
         } else if !probe {
             realized.record_drafting(rate, Realized::draft_weight(items));
+            // A trial ends at its verdict. One that lost delays the next
+            // trial, by longer after every loss.
+            if let Some(state) = self.zero_draft.get_mut(items)
+                && state.trial > 0
+            {
+                state.trial -= 1;
+                if state.trial == 0 {
+                    if realized.holding() {
+                        state.trial_held();
+                    } else {
+                        state.trial_lost();
+                    }
+                }
+            }
         } else {
             // A probe carries more weight: the drafting average it corrects
             // is stale.
@@ -1381,6 +1441,7 @@ impl SpeculationPolicy {
         let resume_gain = if let Some(state) = self.zero_draft.get_mut(items) {
             if state.disabled {
                 state.idle = state.idle.saturating_add(1);
+                state.trial_wait = state.trial_wait.saturating_sub(1);
                 let first = state.idle == FIRST_PROBE
                     && (token_probe.is_some()
                         || (self.config.draft_cost_model == DraftCostModel::PerBlock
@@ -1397,7 +1458,7 @@ impl SpeculationPolicy {
                 probe = may_probe
                     && (rechecking || state.idle >= state.probe_interval || first || slower_ar);
             }
-            if state.remaining > 0 && !probe {
+            if state.remaining > 0 && !probe && state.trial == 0 {
                 state.remaining -= 1;
                 self.trace_reason("cooldown");
                 return vec![0; items];
@@ -1406,12 +1467,27 @@ impl SpeculationPolicy {
         } else {
             1.0
         };
+        let trial = self
+            .zero_draft
+            .get(items)
+            .is_some_and(|state| state.trial > 0);
+        // Drafting off, no trial pending and none waiting: a plan priced
+        // within the trial band of AR may start one.
+        let band_trial = may_probe
+            && !probe
+            && self
+                .zero_draft
+                .get(items)
+                .is_some_and(|state| state.disabled && state.trial == 0 && state.trial_wait == 0);
         // Whatever the estimates say, drafting stays off where its realized
         // throughput is below AR's; only probes measure it again.
         if !probe && self.realized.get(&items).is_some_and(Realized::losing) {
             if let Some(state) = self.zero_draft.get_mut(items) {
                 state.disabled = true;
                 state.remaining = ZERO_DRAFT_RECHECK;
+                if state.trial > 0 {
+                    state.trial_lost();
+                }
             }
             self.trace_reason("realized_slower");
             return vec![0; items];
@@ -1435,6 +1511,7 @@ impl SpeculationPolicy {
         let baseline = empty.rate();
         let margin = if probe { 0.0 } else { resume_gain };
         let mut best = self.extend(candidates, &shares, empty, remaining, margin);
+        let mut band = None;
         if let Some(joint) = self.joint(candidates, &shares, remaining, false) {
             self.trace_candidate(&joint);
             if joint.rate() > margin * baseline {
@@ -1442,18 +1519,40 @@ impl SpeculationPolicy {
                 if joint.rate() > best.rate() {
                     best = joint;
                 }
+            } else if trial || band_trial {
+                // The plan a trial drafts, if it is priced within the band.
+                let plan = self.extend(candidates, &shares, joint, remaining, 1.0);
+                let priced = plan.rate() >= TRIAL_BAND * baseline;
+                // A trial starts only where the price rests on the shared
+                // prior, and on a step cost measured at these items: a plan
+                // of requests priced by their own verifications needs none,
+                // and an unmeasured bucket gets a probe first.
+                let prior = || {
+                    plan.drafts
+                        .iter()
+                        .zip(candidates)
+                        .any(|(&count, candidate)| count > 0 && candidate.acceptance.unverified)
+                };
+                band = (priced && (trial || (prior() && self.measured_step(items, &plan.drafts))))
+                    .then_some(plan);
             }
         }
         // A request's estimate follows its last few verifications, so a run
         // of rejected drafts can price drafting below AR while the realized
         // drafting at these items still beats it. That evidence keeps the
-        // best drafting plan; only realized throughput below AR stops it.
-        if !probe
-            && best.drafts.iter().all(|&count| count == 0)
-            && self.realized.get(&items).is_some_and(Realized::holding)
-            && let Some(joint) = self.joint(candidates, &shares, remaining, false)
-        {
-            best = joint;
+        // best drafting plan; only realized throughput below AR stops it. A
+        // trial drafts its best plan while that stays within the trial band
+        // until its own verdict; measurements that price it lower end it.
+        let mut trial_plan = false;
+        if !probe && best.drafts.iter().all(|&count| count == 0) {
+            if self.realized.get(&items).is_some_and(Realized::holding)
+                && let Some(joint) = self.joint(candidates, &shares, remaining, false)
+            {
+                best = joint;
+            } else if let Some(band) = band {
+                best = band;
+                trial_plan = true;
+            }
         }
         self.trace_candidate(&best);
         self.trace_reason("estimated_slower");
@@ -1488,7 +1587,12 @@ impl SpeculationPolicy {
         }
         let drafting = drafts.iter().any(|&draft| draft > 0);
         if drafting {
-            self.trace_reason(if probe { "probe" } else { "drafting" });
+            self.trace_reason(match (probe, trial_plan) {
+                (true, _) => "probe",
+                // Only a trial, pending or starting, made this plan draft.
+                (false, true) => "trial",
+                (false, false) => "drafting",
+            });
         }
         if drafting && !measurement_probe {
             if probe {
@@ -1542,15 +1646,64 @@ impl SpeculationPolicy {
                 // mostly as requests finish, often cohorts later with other
                 // requests, so skipping its next plans there would repeat
                 // a stale choice.
+                //
+                // Drafting that starts while it is off is a trial: it drafts
+                // until steady steps decide whether drafting holds, so a dip
+                // in the estimates cannot stop it short of `REALIZED_STEPS`
+                // steps; only estimates below the trial band can. A batch
+                // that also prefills times nothing, so it ends no trial.
+                let starts = drafting && state.disabled && state.trial == 0;
+                if state.trial > 0 && !drafting && may_probe {
+                    state.trial_lost();
+                }
+                if starts {
+                    state.trial = REALIZED_STEPS;
+                }
+                // An average of probes alone would outweigh the trial's
+                // steps: at DeepSeek C16 seven losing probes outvoted eight
+                // steady steps that beat AR. The trial's own steps decide.
+                if starts
+                    && let Some(realized) = self.realized.get_mut(&items)
+                    && realized.drafting_steps == 0
+                {
+                    *realized = Realized {
+                        ar: realized.ar,
+                        ..Realized::default()
+                    };
+                }
                 state.disabled = !drafting;
                 state.remaining = 0;
                 if drafting {
                     state.idle = 0;
-                    state.probe_interval = PROBE_INTERVAL;
+                    // Drafting that holds resets probe spacing; a trial has
+                    // not held yet, so probes that keep losing back off.
+                    if state.trial == 0 {
+                        state.probe_interval = PROBE_INTERVAL;
+                    }
                 }
             }
         }
         drafts
+    }
+
+    /// A step of these draft counts is priced from a measurement of its row
+    /// bucket at these items, not borrowed from other items or buckets.
+    fn measured_step(&self, items: usize, drafts: &[usize]) -> bool {
+        let bucket = self.bucket(items + drafts.iter().sum::<usize>());
+        match self.config.draft_cost_model {
+            DraftCostModel::PerBlock => self.block_steps.measured(items, bucket),
+            DraftCostModel::PerToken => self
+                .draft_costs
+                .micros
+                .range(
+                    DraftKey {
+                        items,
+                        shape: DraftShape::default(),
+                    }..,
+                )
+                .take_while(|(known, _)| known.items == items)
+                .any(|(known, _)| self.bucket(items + known.shape.work()) == bucket),
+        }
     }
 
     /// The widest row bucket above `above` rows that a block step at these
@@ -2342,6 +2495,9 @@ mod tests {
                 fresh: false,
                 remaining_tokens: usize::MAX,
             }];
+            // A lost trial still waits, so only the estimates decide whether
+            // drafting resumes.
+            policy.zero_draft[1].trial_wait = u16::MAX;
             set_draft_cost(&mut policy, &[1], 700.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [0]);
             // A marginal positive estimate must not flap back into drafting.
@@ -2355,7 +2511,12 @@ mod tests {
             // Once active, a smaller positive gain can keep drafting enabled.
             set_draft_cost(&mut policy, &[1], 550.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [1]);
+            // The resumed run is a trial: priced below AR but within the
+            // trial band it drafts on to its verdict, and below the band it
+            // stops.
             set_draft_cost(&mut policy, &[1], 700.0);
+            assert_eq!(policy.plan(&candidates, budget(1, 1)), [1]);
+            set_draft_cost(&mut policy, &[1], 1_000.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [0]);
             set_draft_cost(&mut policy, &[1], 200.0);
             let other = [
@@ -4122,7 +4283,13 @@ mod tests {
             policy.step_cost(16, DraftShape::from_counts(&small), 0.0),
             16_000.0
         );
+        // While a lost trial waits, the estimates keep AR.
+        policy.zero_draft[16].trial_wait = u16::MAX;
         assert_eq!(policy.plan(&candidates, budget(16, 16)), [0; 16]);
+        // A trial runs the measured small shape, priced near AR, never the
+        // full K1 its borrowed price makes lose.
+        policy.zero_draft[16].trial_wait = 0;
+        assert_eq!(policy.plan(&candidates, budget(16, 16)), small);
         // Once this exact shape is measured, use its own time without scaling.
         for _ in 0..2 {
             policy.observe_step(&[1; 16], 0, 24_000);

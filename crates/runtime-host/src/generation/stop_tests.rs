@@ -1256,6 +1256,7 @@ fn startup_warmup_uses_real_group_admission_with_a_small_kv_pool() {
     )
     .unwrap();
     assert_eq!(backend.startup_wave_capacity(21), 2);
+    let steps = backend.startup_step_log();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1275,9 +1276,17 @@ fn startup_warmup_uses_real_group_admission_with_a_small_kv_pool() {
                 drafting_items: Some(4),
                 exact_graphs: false,
             }),
+            Some(&steps),
         ))
         .unwrap();
     assert_eq!(backend.readiness(), BackendReadiness::Ready);
+    // The engine reported the warmup's steps, a prefill first.
+    assert!(
+        steps
+            .since(0)
+            .first()
+            .is_some_and(|step| step.prefill_tokens > 0)
+    );
     assert_eq!(metrics.snapshot(), before);
     assert_eq!(kv.snapshot(), kv_before);
     assert!(batches.lock().unwrap().contains(&2));
@@ -1330,6 +1339,7 @@ fn startup_warmup_recomputes_forced_preemptions() {
         EngineModelPolicyV1::from_declaration(&descriptor),
     )
     .unwrap();
+    let steps = backend.startup_step_log();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1348,6 +1358,7 @@ fn startup_warmup_recomputes_forced_preemptions() {
             drafting_items: Some(4),
             exact_graphs: false,
         }),
+        Some(&steps),
     ));
     assert!(result.is_ok(), "{result:?}");
     assert_eq!(backend.readiness(), BackendReadiness::Ready);

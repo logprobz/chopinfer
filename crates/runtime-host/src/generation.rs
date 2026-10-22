@@ -356,6 +356,8 @@ pub struct EngineGenerationBackend {
     image_cache: Arc<crate::media_cache::PreparedImageCacheV1>,
     video: Option<crate::video::VideoDecodeServiceV1>,
     video_unavailable: Option<String>,
+    /// The steps the engine runs during startup warmup.
+    startup_steps: Arc<crate::startup::StartupStepLog>,
 }
 
 impl EngineGenerationBackend {
@@ -413,6 +415,8 @@ impl EngineGenerationBackend {
         let worker_state = Arc::clone(&state);
         let progress = WorkerProgress::new();
         let worker_progress = Arc::clone(&progress);
+        let startup_steps = Arc::new(crate::startup::StartupStepLog::default());
+        let worker_steps = Arc::clone(&startup_steps);
         // The watchdog starts before the engine is built, so building it is
         // observed too.
         if let Some(watchdog) = config.watchdog {
@@ -460,6 +464,7 @@ impl EngineGenerationBackend {
                     // what the batch does.
                     let batches = Arc::clone(&worker_progress);
                     engine.observe_batches(Box::new(move |prefill| batches.batch(prefill)));
+                    engine.observe_startup_steps(Box::new(move |step| worker_steps.push(step)));
                     // A watchdog that failed a slow startup keeps it failed.
                     if worker_state
                         .compare_exchange(STARTING, READY, Ordering::AcqRel, Ordering::Acquire)
@@ -546,7 +551,14 @@ impl EngineGenerationBackend {
             image_cache,
             video: None,
             video_unavailable: None,
+            startup_steps,
         })
+    }
+
+    /// The steps the engine reports during startup warmup, which verify
+    /// warmup reads to end a wave once it has run what it is for.
+    pub(crate) fn startup_step_log(&self) -> Arc<crate::startup::StartupStepLog> {
+        Arc::clone(&self.startup_steps)
     }
 
     /// Media memory budgets other than the process's, for tests.

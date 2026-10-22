@@ -2578,6 +2578,7 @@ fn serve_v1(
     // What the metrics endpoint answers with is this worker's own engine, KV
     // and lifecycle state, taken before the backend is handed to the transport.
     let metrics = Arc::new(backend.runtime_metrics(&http_options.served_model_names));
+    let warmup_steps = backend.startup_step_log();
     let backend = Arc::new(backend);
     let result = serve_transport_v1(
         readiness_started,
@@ -2593,6 +2594,7 @@ fn serve_v1(
         http_options,
         warmup_sequences,
         verify_warmup,
+        Some(warmup_steps),
     );
     if backend.is_stalled() {
         // The watchdog has set an exit deadline. Exit now without waiting on
@@ -2637,6 +2639,7 @@ fn serve_transport_v1(
     http_options: runtime_server::HttpOptions,
     warmup_sequences: usize,
     verify_warmup: Option<runtime_engine::warmup::VerifyWarmup>,
+    warmup_steps: Option<Arc<crate::startup::StartupStepLog>>,
 ) -> Result<String, HostCommandErrorV1> {
     let skip_warmup = crate::startup::development_skip_warmup(
         std::env::var_os("CHOPINFER_DEV_SKIP_WARMUP").as_deref(),
@@ -2665,6 +2668,7 @@ fn serve_transport_v1(
                 warmup_sequences,
                 skip_warmup,
                 verify_warmup,
+                warmup_steps.as_deref(),
             ) => {
                 result.map_err(|error| run_error(format!("startup warmup failed: {error}")))?;
             }

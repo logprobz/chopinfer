@@ -19,8 +19,16 @@
 //! depths and verify rows allow. Single requests with prompts of growing
 //! length then give a drafter that catches up on context a first step of
 //! each size. Warmup outputs are discarded.
+//!
+//! A verify wave whose engine reports its steps ([`StartupStepLog`]) ends
+//! as soon as it has run what it is for (see [`WaveProgress`]); its
+//! remaining steps only replay graphs it has already captured, so the rest
+//! of its requests are cancelled. Without step reports a wave runs until its
+//! requests finish.
+use std::sync::Mutex;
+
 use runtime_bundle_sdk::warmup::waves;
-use runtime_engine::warmup::{VerifyWarmup, context_ladder, verify_shapes};
+use runtime_engine::warmup::{StartupStep, VerifyWarmup, context_ladder, verify_shapes};
 use runtime_server::{
     CancellationSignal, EventSender, GenerationBackend, GenerationEvent, PreparedPrompt,
     PreparedRequest, RequestAcceptanceProfile, RequestedLogprobs,
@@ -35,6 +43,101 @@ const WAVE_MINIMUM_OUTPUT_TOKENS: usize = 4;
 
 /// All decode, verify and context waves share this startup allowance.
 const WARMUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// How often a verify wave reads the steps its engine has reported.
+const WAVE_POLL: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// The steps an engine executed during startup warmup, in order, as its
+/// worker thread reports them.
+#[derive(Debug, Default)]
+pub(crate) struct StartupStepLog {
+    steps: Mutex<Vec<StartupStep>>,
+}
+
+impl StartupStepLog {
+    pub(crate) fn push(&self, step: StartupStep) {
+        self.lock().push(step);
+    }
+
+    fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    /// The steps reported from index `from` on.
+    pub(crate) fn since(&self, from: usize) -> Vec<StartupStep> {
+        self.lock().get(from..).map_or_else(Vec::new, <[_]>::to_vec)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<StartupStep>> {
+        self.steps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// How far a verify wave has got: whether its prefill has run, how often
+/// its pinned shape has run, and how many steps followed the first that
+/// accepted drafts.
+///
+/// The wave has run what it is for once its shape has run twice (the first
+/// step captures the shape's graphs, the second replays them, so serving
+/// never pays a first launch) and one step has followed the first step that
+/// accepted drafts (a drafter catching up on accepted tokens reaches other
+/// graph shapes there). Later steps replay the same graphs or narrower ones
+/// as requests finish. Steps before the wave's prefill belong to the wave
+/// before it.
+#[derive(Debug)]
+struct WaveProgress {
+    /// Items and rows of a step at the wave's pinned shape.
+    shape: (usize, usize),
+    prefilled: bool,
+    at_shape: usize,
+    accepted: bool,
+    after_accepted: usize,
+}
+
+impl WaveProgress {
+    fn new(drafts: &[usize]) -> Self {
+        Self {
+            shape: (drafts.len(), drafts.len() + drafts.iter().sum::<usize>()),
+            prefilled: false,
+            at_shape: 0,
+            accepted: false,
+            after_accepted: 0,
+        }
+    }
+
+    fn observe(&mut self, step: &StartupStep) {
+        if !self.prefilled {
+            self.prefilled = step.prefill_tokens > 0;
+            return;
+        }
+        if self.accepted {
+            self.after_accepted += 1;
+        }
+        let shape = (
+            step.verify_items + step.decode_rows,
+            step.verify_rows + step.decode_rows,
+        );
+        if step.prefill_tokens == 0 && step.verify_items > 0 && shape == self.shape {
+            self.at_shape += 1;
+        }
+        if self.at_shape > 0 && step.accepted_tokens > 0 {
+            self.accepted = true;
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.at_shape >= 2 && self.after_accepted >= 1
+    }
+
+    fn steps(&self) -> String {
+        format!(
+            "shape steps {}, steps after acceptance {}",
+            self.at_shape, self.after_accepted
+        )
+    }
+}
 
 struct WarmupDeadline {
     at: tokio::time::Instant,
@@ -67,6 +170,7 @@ pub(crate) fn development_skip_warmup(value: Option<&std::ffi::OsStr>) -> Result
 
 /// Cleanup is a worker barrier: readiness alone cannot prove a timed-out
 /// request has retired or distinguish a pending failure from a healthy worker.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn warmup(
     backend: &dyn GenerationBackend,
     model: String,
@@ -75,6 +179,7 @@ pub(crate) async fn warmup(
     sequences: usize,
     skip_warmup: bool,
     verify: Option<VerifyWarmup>,
+    steps: Option<&StartupStepLog>,
 ) -> Result<(), String> {
     if skip_warmup {
         eprintln!(
@@ -93,6 +198,7 @@ pub(crate) async fn warmup(
         profile,
         sequences,
         verify,
+        steps,
         &mut deadline,
     )
     .await;
@@ -116,6 +222,7 @@ async fn finish_warmup(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn warmup_inner(
     backend: &dyn GenerationBackend,
     model: String,
@@ -123,6 +230,7 @@ async fn warmup_inner(
     profile: RequestAcceptanceProfile,
     sequences: usize,
     verify: Option<VerifyWarmup>,
+    steps: Option<&StartupStepLog>,
     deadline: &mut WarmupDeadline,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
@@ -187,6 +295,7 @@ async fn warmup_inner(
             &requests,
             output_tokens.min(limit - prompt_tokens),
             deadline,
+            None,
         )
         .await;
         eprintln!(
@@ -219,7 +328,7 @@ async fn warmup_inner(
             eprintln!("startup verify warmup: skipped, the request profile admits too few tokens");
         } else {
             result = verify_waves(
-                backend, &model, &tokens, limit, sequences, &verify, deadline,
+                backend, &model, &tokens, limit, sequences, &verify, steps, deadline,
             )
             .await;
         }
@@ -245,6 +354,7 @@ fn verify_output(verify: &VerifyWarmup) -> usize {
 }
 
 /// Runs one wave per verify shape, then the context ladder.
+#[allow(clippy::too_many_arguments)]
 async fn verify_waves(
     backend: &dyn GenerationBackend,
     model: &str,
@@ -252,6 +362,7 @@ async fn verify_waves(
     limit: usize,
     sequences: usize,
     verify: &VerifyWarmup,
+    steps: Option<&StartupStepLog>,
     deadline: &mut WarmupDeadline,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
@@ -273,7 +384,8 @@ async fn verify_waves(
             .map(|&drafts| (tokens.to_vec(), Some(drafts)))
             .collect::<Vec<_>>();
         let label = format!("verify-{}-{}", shape.row_bucket, shape.item_bucket);
-        let result = run_wave(backend, model, &label, &requests, output, deadline).await;
+        let stop = steps.map(|steps| (steps, WaveProgress::new(&shape.drafts)));
+        let result = run_wave(backend, model, &label, &requests, output, deadline, stop).await;
         eprintln!(
             "startup verify warmup: rows {} items {} end, {:.3}s",
             shape.row_bucket,
@@ -310,6 +422,7 @@ async fn verify_waves(
                 &[request],
                 output,
                 deadline,
+                None,
             )
             .await;
             eprintln!(
@@ -334,7 +447,9 @@ async fn verify_waves(
 }
 
 /// Submits the wave's requests, each a prompt and an optional draft pin,
-/// back to back and waits for all of them to generate a token.
+/// back to back and waits for all of them to generate a token. With `stop`,
+/// the wave also ends, cancelling its requests, once the steps its engine
+/// reports show it has run what it is for.
 async fn run_wave(
     backend: &dyn GenerationBackend,
     model: &str,
@@ -342,6 +457,7 @@ async fn run_wave(
     requests: &[(Vec<u32>, Option<usize>)],
     max_new_tokens: usize,
     deadline: &mut WarmupDeadline,
+    stop: Option<(&StartupStepLog, WaveProgress)>,
 ) -> Result<(), String> {
     // An expired timeout can still poll a ready future once. Check before
     // submission so even an immediately ready backend cannot start more work.
@@ -367,6 +483,8 @@ async fn run_wave(
         return Ok(());
     }
     let cancellation = CancellationSignal::new();
+    // Steps reported before this wave's requests are submitted are not its.
+    let stop = stop.map(|(steps, progress)| (steps, steps.len(), progress));
     let run = async {
         let mut streams = Vec::with_capacity(wave);
         let mut batch = Vec::with_capacity(wave);
@@ -415,8 +533,15 @@ async fn run_wave(
         for admission in backend.submit_batch(batch) {
             admission.await.map_err(|error| format!("{error:?}"))?;
         }
-        for events in &mut streams {
-            finished(events).await?;
+        match stop {
+            None => {
+                for events in &mut streams {
+                    finished(events).await?;
+                }
+            }
+            Some((steps, from, progress)) => {
+                finished_or_done(&mut streams, steps, from, progress, &cancellation, label).await?;
+            }
         }
         Ok::<(), String>(())
     };
@@ -426,6 +551,63 @@ async fn run_wave(
         .and_then(|result| result.map_err(|error| format!("key {label} not warmed: {error}")));
     cancellation.cancel();
     result
+}
+
+/// Waits until every request of the wave has generated a token and
+/// finished, or until `progress` says the wave has run what it is for; then
+/// cancels the wave and waits for its requests to leave, which closes their
+/// event streams.
+async fn finished_or_done(
+    streams: &mut [tokio::sync::mpsc::Receiver<GenerationEvent>],
+    steps: &StartupStepLog,
+    mut from: usize,
+    mut progress: WaveProgress,
+    cancellation: &CancellationSignal,
+    label: &str,
+) -> Result<(), String> {
+    use tokio::sync::mpsc::error::TryRecvError;
+    let mut open = vec![true; streams.len()];
+    loop {
+        for (events, open) in streams.iter_mut().zip(open.iter_mut()) {
+            while *open {
+                match events.try_recv() {
+                    Ok(GenerationEvent::Finished { usage, .. }) if usage.completion_tokens > 0 => {
+                        *open = false;
+                    }
+                    Ok(GenerationEvent::Failed { message, .. }) => return Err(message),
+                    Ok(_) => {}
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        return Err("warmup ended without a generated token".to_owned());
+                    }
+                }
+            }
+        }
+        if !open.contains(&true) {
+            return Ok(());
+        }
+        let new = steps.since(from);
+        from += new.len();
+        for step in &new {
+            progress.observe(step);
+        }
+        if progress.done() {
+            cancellation.cancel();
+            for (events, open) in streams.iter_mut().zip(&open) {
+                while *open && let Some(event) = events.recv().await {
+                    if let GenerationEvent::Failed { message, .. } = event {
+                        return Err(message);
+                    }
+                }
+            }
+            eprintln!(
+                "startup verify warmup: {label} ended early ({})",
+                progress.steps()
+            );
+            return Ok(());
+        }
+        tokio::time::sleep(WAVE_POLL).await;
+    }
 }
 
 async fn finished(events: &mut tokio::sync::mpsc::Receiver<GenerationEvent>) -> Result<(), String> {
@@ -627,6 +809,7 @@ mod wave_tests {
                         sequences,
                         skip_warmup,
                         verify,
+                        None,
                     ),
                 )
                 .await
@@ -688,6 +871,7 @@ mod wave_tests {
                     &[(vec![5, 6], None)],
                     2,
                     &mut super::WarmupDeadline::new(std::time::Duration::from_millis(1)),
+                    None,
                 )
                 .await
             })
@@ -748,6 +932,7 @@ mod wave_tests {
                         RequestAcceptanceProfile::General,
                         4,
                         Some(dflash()),
+                        None,
                         &mut deadline,
                     ),
                 )
@@ -793,6 +978,7 @@ mod wave_tests {
                     &[(vec![5, 6], None)],
                     2,
                     &mut deadline,
+                    None,
                 )
                 .await;
                 assert!(result.unwrap_err().contains("key 1 not warmed"));
@@ -898,5 +1084,325 @@ mod wave_tests {
         // Only the decode waves ran.
         assert_eq!(backend.pins().len(), waves(4).iter().sum::<usize>());
         assert!(backend.pins().iter().all(|(pin, _)| *pin == Some(0)));
+    }
+}
+
+#[cfg(test)]
+mod wave_stop_tests {
+    use std::sync::{Arc, Mutex};
+
+    use runtime_engine::warmup::{StartupStep, VerifyWarmup, context_ladder, verify_shapes};
+    use runtime_server::{
+        AdmissionError, BackendReadiness, BoxFuture, EventSender, FinishReason, GenerationBackend,
+        GenerationEvent, PreparedPrompt, PreparedRequest, RequestAcceptanceProfile, TokenUsage,
+    };
+
+    use super::{StartupStepLog, WarmupDeadline, WaveProgress, run_wave, warmup, waves};
+
+    /// Prefill of `items` one-token prompts.
+    fn prefill(items: usize) -> StartupStep {
+        StartupStep {
+            prefill_tokens: items,
+            ..StartupStep::default()
+        }
+    }
+
+    /// A step of requests pinned to `drafts`, accepting `accepted` drafts.
+    fn shape(drafts: &[usize], accepted: usize) -> StartupStep {
+        StartupStep {
+            prefill_tokens: 0,
+            decode_rows: drafts.iter().filter(|&&d| d == 0).count(),
+            verify_items: drafts.iter().filter(|&&d| d > 0).count(),
+            verify_rows: drafts.iter().filter(|&&d| d > 0).map(|d| d + 1).sum(),
+            accepted_tokens: accepted,
+        }
+    }
+
+    /// The step script the engine reports for one wave: its prefill, its
+    /// shape twice, one acceptance and then more steps at the shape.
+    fn script(drafts: &[usize]) -> Vec<StartupStep> {
+        let mut steps = vec![prefill(drafts.len())];
+        steps.extend([
+            shape(drafts, 0),
+            shape(drafts, 0),
+            shape(drafts, 1),
+            shape(drafts, 0),
+            shape(drafts, 0),
+            shape(drafts, 0),
+        ]);
+        steps
+    }
+
+    /// Reports each verify wave's scripted steps when the wave is submitted
+    /// and holds its streams until the wave is cancelled, unless `finish`;
+    /// finishes decode and context waves at once.
+    struct StepBackend {
+        steps: Arc<StartupStepLog>,
+        script: fn(&[usize]) -> Vec<StartupStep>,
+        finish: bool,
+        fail: bool,
+        cancelled: Arc<Mutex<usize>>,
+        finished: Mutex<usize>,
+        held: Mutex<Vec<EventSender>>,
+        groups: Mutex<Vec<Vec<usize>>>,
+    }
+
+    impl StepBackend {
+        fn new(script: fn(&[usize]) -> Vec<StartupStep>, finish: bool) -> Self {
+            Self {
+                steps: Arc::new(StartupStepLog::default()),
+                script,
+                finish,
+                fail: false,
+                cancelled: Arc::new(Mutex::new(0)),
+                finished: Mutex::new(0),
+                held: Mutex::new(Vec::new()),
+                groups: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn cancelled(&self) -> usize {
+            *self.cancelled.lock().unwrap()
+        }
+    }
+
+    fn done(events: &EventSender) {
+        events
+            .try_emit(GenerationEvent::Finished {
+                reason: FinishReason::Length,
+                usage: TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    cached_tokens: None,
+                },
+            })
+            .unwrap();
+    }
+
+    impl GenerationBackend for StepBackend {
+        fn readiness(&self) -> BackendReadiness {
+            BackendReadiness::Ready
+        }
+
+        fn maximum_sequence_tokens(&self) -> usize {
+            1024
+        }
+
+        fn prompt_token_count(&self, _prompt: &PreparedPrompt) -> Result<usize, AdmissionError> {
+            Ok(1)
+        }
+
+        fn prepare_prompt(
+            &self,
+            _prompt: PreparedPrompt,
+        ) -> Result<(PreparedPrompt, usize), AdmissionError> {
+            Ok((PreparedPrompt::TokenIds(vec![5]), 1))
+        }
+
+        fn submit_batch(
+            &self,
+            requests: Vec<(PreparedRequest, EventSender)>,
+        ) -> Vec<BoxFuture<'_, Result<(), AdmissionError>>> {
+            let drafts: Vec<usize> = requests
+                .iter()
+                .map(|(request, _)| request.decoding.warmup_draft_tokens.unwrap_or(0))
+                .collect();
+            let context = requests
+                .iter()
+                .any(|(request, _)| request.request_id.contains("-context-"));
+            self.groups.lock().unwrap().push(drafts.clone());
+            // Decode waves pin no drafts and the context ladder's waves
+            // (whose shortest prompt is as long as a verify wave's) read no
+            // steps, so both finish on their own.
+            let verify = drafts.iter().any(|&d| d > 0) && !context;
+            if verify {
+                for step in (self.script)(&drafts) {
+                    self.steps.push(step);
+                }
+            }
+            for (request, events) in requests {
+                if self.fail {
+                    events
+                        .try_emit(GenerationEvent::Failed {
+                            message: "request failed".to_owned(),
+                            code: None,
+                        })
+                        .unwrap();
+                    self.held.lock().unwrap().push(events);
+                } else if !verify || self.finish {
+                    done(&events);
+                    *self.finished.lock().unwrap() += 1;
+                    self.held.lock().unwrap().push(events);
+                } else {
+                    let cancelled = Arc::clone(&self.cancelled);
+                    let cancellation = request.cancellation.clone();
+                    tokio::spawn(async move {
+                        cancellation.cancelled().await;
+                        *cancelled.lock().unwrap() += 1;
+                        drop(events);
+                    });
+                }
+            }
+            vec![]
+        }
+
+        fn submit(
+            &self,
+            _request: PreparedRequest,
+            _events: EventSender,
+        ) -> BoxFuture<'_, Result<(), AdmissionError>> {
+            unreachable!("warmup submits whole waves")
+        }
+    }
+
+    fn paused() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+    }
+
+    fn wave(backend: &StepBackend, drafts: &[usize], seconds: u64) -> Result<(), String> {
+        let requests: Vec<_> = drafts.iter().map(|&d| (vec![5], Some(d))).collect();
+        paused().block_on(async {
+            let mut deadline = WarmupDeadline::new(std::time::Duration::from_secs(seconds));
+            run_wave(
+                backend,
+                "model",
+                "verify-test",
+                &requests,
+                13,
+                &mut deadline,
+                Some((&backend.steps, WaveProgress::new(drafts))),
+            )
+            .await
+        })
+    }
+
+    #[test]
+    fn a_wave_is_done_after_its_shape_replays_and_a_step_follows_an_acceptance() {
+        let drafts = [3, 0];
+        let mut progress = WaveProgress::new(&drafts);
+        let mut done_after = None;
+        for (index, step) in script(&drafts).iter().enumerate() {
+            progress.observe(step);
+            if progress.done() && done_after.is_none() {
+                done_after = Some(index);
+            }
+        }
+        // Prefill, shape, shape, the acceptance and one step after it.
+        assert_eq!(done_after, Some(4));
+        // An acceptance before the shape has run once does not count, nor
+        // do steps of another shape.
+        let mut progress = WaveProgress::new(&drafts);
+        for step in [
+            prefill(2),
+            shape(&[1, 0], 1),
+            shape(&[1, 0], 0),
+            shape(&drafts, 0),
+            shape(&drafts, 0),
+        ] {
+            progress.observe(&step);
+        }
+        assert!(!progress.done());
+    }
+
+    #[test]
+    fn steps_before_the_wave_prefill_belong_to_the_wave_before() {
+        let drafts = [2];
+        let mut progress = WaveProgress::new(&drafts);
+        for step in [
+            shape(&drafts, 0),
+            shape(&drafts, 2),
+            shape(&drafts, 0),
+            shape(&drafts, 0),
+        ] {
+            progress.observe(&step);
+        }
+        assert!(!progress.done());
+        for step in [prefill(1), shape(&drafts, 0), shape(&drafts, 1)] {
+            progress.observe(&step);
+            assert!(!progress.done());
+        }
+        progress.observe(&shape(&drafts, 0));
+        assert!(progress.done());
+    }
+
+    #[test]
+    fn a_wave_that_has_run_what_it_is_for_is_cancelled() {
+        let backend = StepBackend::new(script, false);
+        assert_eq!(wave(&backend, &[3, 0], 5), Ok(()));
+        // Both requests were cancelled and their streams closed.
+        assert_eq!(backend.cancelled(), 2);
+    }
+
+    #[test]
+    fn a_wave_without_an_acceptance_runs_until_its_requests_finish() {
+        fn unaccepted(drafts: &[usize]) -> Vec<StartupStep> {
+            let mut steps = vec![prefill(drafts.len())];
+            steps.extend(std::iter::repeat_n(shape(drafts, 0), 8));
+            steps
+        }
+        let backend = StepBackend::new(unaccepted, true);
+        assert_eq!(wave(&backend, &[3, 0], 5), Ok(()));
+        assert_eq!(backend.cancelled(), 0);
+        assert_eq!(*backend.finished.lock().unwrap(), 2);
+        // Held open, it is not cut short: the deadline ends it.
+        let backend = StepBackend::new(unaccepted, false);
+        let error = wave(&backend, &[3, 0], 1).unwrap_err();
+        assert!(error.contains("total warmup deadline expired"), "{error}");
+    }
+
+    #[test]
+    fn a_failed_request_still_fails_a_wave_that_reads_steps() {
+        let mut backend = StepBackend::new(script, false);
+        backend.fail = true;
+        assert_eq!(
+            wave(&backend, &[3, 0], 5),
+            Err("key verify-test not warmed: request failed".to_owned())
+        );
+    }
+
+    fn eagle() -> VerifyWarmup {
+        VerifyWarmup {
+            item_rows: vec![2, 3, 4],
+            maximum_draft_tokens: 3,
+            step_rows: 8,
+            drafting_items: None,
+            exact_graphs: true,
+        }
+    }
+
+    #[test]
+    fn startup_ends_every_verify_wave_early_and_waits_for_the_others() {
+        let backend = StepBackend::new(script, false);
+        let result = paused().block_on(warmup(
+            &backend,
+            "model".to_owned(),
+            64,
+            RequestAcceptanceProfile::General,
+            4,
+            false,
+            Some(eagle()),
+            Some(&backend.steps),
+        ));
+        assert_eq!(result, Ok(()));
+        let shapes = verify_shapes(4, &eagle());
+        let groups = backend.groups.lock().unwrap().clone();
+        let decode = waves(4);
+        let ladder = context_ladder(8, 64 - super::verify_output(&eagle()));
+        // Every decode wave, verify shape and context length still ran, in
+        // order.
+        assert_eq!(groups.len(), decode.len() + shapes.len() + ladder.len());
+        let verify: Vec<_> = shapes.iter().map(|shape| shape.drafts.clone()).collect();
+        assert_eq!(groups[decode.len()..decode.len() + shapes.len()], verify);
+        // Every verify request was cancelled; the others finished.
+        let verify_requests: usize = shapes.iter().map(|shape| shape.drafts.len()).sum();
+        assert_eq!(backend.cancelled(), verify_requests);
+        assert_eq!(
+            *backend.finished.lock().unwrap(),
+            decode.iter().sum::<usize>() + ladder.len()
+        );
     }
 }

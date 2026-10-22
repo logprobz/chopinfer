@@ -6,6 +6,7 @@ pub mod fused;
 pub mod mid;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_cluster;
+pub mod mxfp8_fold_cluster_fused;
 pub mod mxfp8_fold_decode;
 pub mod mxfp8_fold_direct;
 pub mod mxfp8_fold_dual;

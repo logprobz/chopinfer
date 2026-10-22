@@ -348,6 +348,11 @@ fn row(instance: &Instance, now: f64) -> Value {
                     "drafter": speculation.drafter,
                 })),
                 "kv_cache_dtype": profile.kv_cache_dtype,
+                "kv_cache_planes": profile.kv_cache_planes.iter().map(|plane| json!({
+                    "name": plane.name,
+                    "code": plane.code,
+                    "bytes_per_token": plane.bytes_per_token,
+                })).collect::<Vec<_>>(),
                 "prefix_cache": profile.prefix_cache,
                 "max_sequences": profile.max_sequences,
                 "served_model_names": serving.served_model_names,
@@ -392,6 +397,7 @@ fn row(instance: &Instance, now: f64) -> Value {
         "rates": {
             "decode_tokens_per_second": figures.decode(),
             "prefill_tokens_per_second": figures.prefill(),
+            "decode_tokens_per_second_per_stream": instance.stats.stream_rate(),
         },
         "gauges": {
             "running": figures.running(),
@@ -422,7 +428,8 @@ mod tests {
         let server = FakeServer::start(
             Some("aa"),
             HEALTH,
-            "chop_process_uptime_seconds 10\nvllm:generation_tokens_total 40\nvllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:kv_cache_usage_perc 0.5\n",
+            "chop_process_uptime_seconds 10\nvllm:generation_tokens_total 40\nvllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:kv_cache_usage_perc 0.5\n\
+             chop_request_decode_tokens_total 39\nchop_request_decode_seconds_total 2.5\n",
         );
         let dead = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -452,6 +459,13 @@ mod tests {
         assert_eq!(first["identity"]["startup_nonce"], "aa");
         assert_eq!(first["totals"]["generation_tokens"], 40.0);
         assert_eq!(first["gauges"]["kv_usage"], 0.5);
+        assert_eq!(first["identity"]["kv_cache_planes"], serde_json::json!([]));
+        // The fake server's counters never move, so there is no decode time
+        // between polls to divide by.
+        assert_eq!(
+            first["rates"]["decode_tokens_per_second_per_stream"],
+            Value::Null
+        );
         assert_eq!(document["instances"][1]["state"], "unreachable");
         assert_eq!(document["events"][0]["what"], "note");
     }

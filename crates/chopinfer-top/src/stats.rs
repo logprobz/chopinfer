@@ -81,6 +81,15 @@ pub struct Counters {
     pub prefill_only_batches: f64,
     pub decode_only_batches: f64,
     pub mixed_batches: f64,
+    /// Generated tokens after each sequence's first, and the seconds
+    /// between each sequence's consecutive outputs.
+    pub decode_tokens: f64,
+    pub decode_seconds: f64,
+    /// Engine sequences submitted.
+    pub requests_submitted: f64,
+    /// Verify items that checked drafts, and the tokens they emitted.
+    pub spec_verify_items: f64,
+    pub spec_emitted_tokens: f64,
 }
 
 /// Gauge values of one scrape.
@@ -113,6 +122,15 @@ pub struct Histograms {
     pub step_decode: Option<Histogram>,
     pub step_mixed: Option<Histogram>,
     pub step_prefill: Option<Histogram>,
+    /// Full prompt and generated tokens per finished sequence.
+    pub prompt_tokens: Option<Histogram>,
+    pub output_tokens: Option<Histogram>,
+    /// Prompt tokens per prefill-bearing step.
+    pub step_prefill_tokens: Option<Histogram>,
+    /// The prefill cap selected beside decoding requests.
+    pub prefill_cap: Option<Histogram>,
+    /// A TBT mixed step's execution time over its prediction.
+    pub mixed_over_predicted: Option<Histogram>,
 }
 
 /// What one poll keeps of a scrape.
@@ -177,6 +195,15 @@ pub const SERIES: &[&str] = &[
     "vllm:request_prefill_time_seconds",
     "vllm:request_time_per_output_token_seconds",
     "chop_step_execution_seconds",
+    "chop_request_decode_tokens_total",
+    "chop_request_decode_seconds_total",
+    "chop_requests_submitted_total",
+    "chop_spec_verify_items_total",
+    "chop_spec_emitted_tokens_total",
+    "vllm:request_prompt_tokens",
+    "vllm:request_generation_tokens",
+    "chop_prefill_budget_selected_tokens",
+    "chop_mixed_step_actual_over_predicted",
 ];
 
 impl Snapshot {
@@ -232,6 +259,11 @@ impl Snapshot {
                 prefill_only_batches: counter("chop_prefill_only_batches_total"),
                 decode_only_batches: counter("chop_decode_only_batches_total"),
                 mixed_batches: counter("chop_mixed_batches_total"),
+                decode_tokens: counter("chop_request_decode_tokens_total"),
+                decode_seconds: counter("chop_request_decode_seconds_total"),
+                requests_submitted: counter("chop_requests_submitted_total"),
+                spec_verify_items: counter("chop_spec_verify_items_total"),
+                spec_emitted_tokens: counter("chop_spec_emitted_tokens_total"),
             },
             gauges: Gauges {
                 running: gauge("vllm:num_requests_running"),
@@ -257,6 +289,12 @@ impl Snapshot {
                 step_decode: step("decode"),
                 step_mixed: step("mixed"),
                 step_prefill: step("prefill"),
+                prompt_tokens: scrape.histogram("vllm:request_prompt_tokens", &[]),
+                output_tokens: scrape.histogram("vllm:request_generation_tokens", &[]),
+                step_prefill_tokens: scrape.histogram("chop_step_prefill_tokens", &[]),
+                prefill_cap: scrape.histogram("chop_prefill_budget_selected_tokens", &[]),
+                mixed_over_predicted: scrape
+                    .histogram("chop_mixed_step_actual_over_predicted", &[]),
             },
         }
     }
@@ -286,6 +324,25 @@ pub struct Coverage {
     pub seconds: f64,
     /// Whether that history spans the whole window.
     pub complete: bool,
+}
+
+/// Engine wall time over a window: the shares spent executing decode-only,
+/// mixed and prefill-only steps, and the rest, outside step execution
+/// (scheduling and host work between steps, or no work).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StepTime {
+    pub decode: f64,
+    pub mixed: f64,
+    pub prefill: f64,
+    pub outside: f64,
+}
+
+/// Decode tokens per second of decoding, per sequence, between two
+/// snapshots; `None` when no decode time accrued between them.
+fn stream_between(before: &Snapshot, after: &Snapshot) -> Option<f64> {
+    let seconds = after.counters.decode_seconds - before.counters.decode_seconds;
+    (seconds > 0.0)
+        .then(|| (after.counters.decode_tokens - before.counters.decode_tokens).max(0.0) / seconds)
 }
 
 /// One instance's recent snapshots.
@@ -486,6 +543,59 @@ impl Stats {
                 }
             })
             .collect()
+    }
+
+    /// The decode speed of the average sequence over the last three polls:
+    /// decode tokens over the time between each sequence's outputs.
+    pub fn stream_rate(&self) -> Option<f64> {
+        let latest = self.ring.back()?;
+        let earlier = self
+            .ring
+            .get(self.ring.len().saturating_sub(RATE_POLLS + 1))?;
+        stream_between(earlier, latest)
+    }
+
+    /// The same across every poll held.
+    pub fn stream_average(&self) -> Option<f64> {
+        stream_between(self.ring.front()?, self.ring.back()?)
+    }
+
+    /// The same between each pair of polls.
+    pub fn stream_series(&self) -> Vec<Option<f64>> {
+        self.ring
+            .iter()
+            .zip(self.ring.iter().skip(1))
+            .map(|(before, after)| stream_between(before, after))
+            .collect()
+    }
+
+    /// How the engine's wall time over `window` divides between executing
+    /// each kind of step and the rest; `None` without step time in it.
+    pub fn step_time(&self, window: Window) -> Option<StepTime> {
+        let seconds = self.coverage(window)?.seconds;
+        if !(seconds.is_finite() && seconds > 0.0) {
+            return None;
+        }
+        let spent = |histogram: HistogramOf| {
+            self.histogram(window, histogram)
+                .map_or(0.0, |histogram| histogram.sum)
+        };
+        let decode = spent(|s| s.histograms.step_decode.as_ref());
+        let mixed = spent(|s| s.histograms.step_mixed.as_ref());
+        let prefill = spent(|s| s.histograms.step_prefill.as_ref());
+        let busy = decode + mixed + prefill;
+        if busy <= 0.0 {
+            return None;
+        }
+        // Steps timed at their edges can sum past the window; they then
+        // fill it.
+        let whole = busy.max(seconds);
+        Some(StepTime {
+            decode: decode / whole,
+            mixed: mixed / whole,
+            prefill: prefill / whole,
+            outside: (seconds - busy).max(0.0) / whole,
+        })
     }
 
     /// `value` at each poll.
@@ -744,6 +854,115 @@ mod tests {
         );
     }
 
+    /// A poll at `second` whose decode counters stand at `tokens` and
+    /// `seconds`.
+    fn decoding(second: f64, tokens: f64, seconds: f64) -> Snapshot {
+        let mut snapshot = snapshot(second, tokens);
+        snapshot.counters.decode_tokens = tokens;
+        snapshot.counters.decode_seconds = seconds;
+        snapshot
+    }
+
+    #[test]
+    fn stream_speed_is_decode_tokens_over_decode_time() {
+        let mut stats = Stats::new(1.0);
+        assert_eq!(stats.stream_rate(), None);
+        // Ten sequences at 8 tok/s each: 80 tokens over 10 decode-seconds a
+        // poll; then one finishes and nine run at 6 tok/s.
+        let polls = [
+            (0.0, 0.0),
+            (80.0, 10.0),
+            (160.0, 20.0),
+            (240.0, 30.0),
+            (294.0, 39.0),
+            (348.0, 48.0),
+            (402.0, 57.0),
+        ];
+        for (second, (tokens, seconds)) in polls.into_iter().enumerate() {
+            stats.push(Some("a"), decoding(second as f64, tokens, seconds));
+        }
+        assert_eq!(stats.stream_rate(), Some(6.0));
+        assert_eq!(stats.stream_average(), Some(402.0 / 57.0));
+        let series = stats.stream_series();
+        assert_eq!(series.len(), 6);
+        assert_eq!(series[0], Some(8.0));
+        assert_eq!(series[5], Some(6.0));
+    }
+
+    #[test]
+    fn a_request_between_polls_counts_and_no_decoding_is_no_figure() {
+        let mut stats = Stats::new(1.0);
+        stats.push(Some("a"), decoding(0.0, 0.0, 0.0));
+        // A request that decoded 20 tokens in 0.5 s and finished between
+        // two polls still counts.
+        stats.push(Some("a"), decoding(1.0, 20.0, 0.5));
+        // Nothing decodes for a poll.
+        stats.push(Some("a"), decoding(2.0, 20.0, 0.5));
+        assert_eq!(stats.stream_series(), [Some(40.0), None]);
+        assert_eq!(stats.stream_rate(), Some(40.0));
+        // A server without the counters has no figure.
+        let mut old = Stats::new(1.0);
+        for second in 0..5 {
+            old.push(
+                Some("a"),
+                snapshot(f64::from(second), f64::from(second) * 100.0),
+            );
+        }
+        assert_eq!(old.stream_rate(), None);
+        assert_eq!(old.stream_average(), None);
+        assert!(old.stream_series().iter().all(Option::is_none));
+    }
+
+    /// A step histogram whose `count` steps took `seconds` in all.
+    fn steps(count: f64, seconds: f64) -> Option<Histogram> {
+        Some(Histogram {
+            buckets: vec![(1.0, count), (f64::INFINITY, count)],
+            sum: seconds,
+            count,
+        })
+    }
+
+    #[test]
+    fn step_time_divides_the_window_by_step_kind() {
+        let mut stats = Stats::new(1.0);
+        assert_eq!(stats.step_time(Window::Minute), None);
+        for second in 0..=120 {
+            let t = f64::from(second);
+            let mut snapshot = snapshot(1000.0 + t, 0.0);
+            // Each second: 0.25 s of decode steps and 0.3 s of mixed ones.
+            snapshot.histograms.step_decode = steps(5.0 * t, 0.25 * t);
+            snapshot.histograms.step_mixed = steps(t, 0.3 * t);
+            stats.push(Some("a"), snapshot);
+        }
+        let time = stats.step_time(Window::Minute).unwrap();
+        let close = |left: f64, right: f64| (left - right).abs() < 1e-9;
+        assert!(close(time.decode, 0.25), "{time:?}");
+        assert!(close(time.mixed, 0.3), "{time:?}");
+        assert_eq!(time.prefill, 0.0);
+        assert!(close(time.outside, 0.45), "{time:?}");
+        // Steps that add up past the window fill it.
+        let mut over = Stats::new(1.0);
+        for second in 0..=70 {
+            let t = f64::from(second);
+            let mut snapshot = snapshot(1000.0 + t, 0.0);
+            snapshot.histograms.step_decode = steps(t, 0.9 * t);
+            snapshot.histograms.step_prefill = steps(t, 0.3 * t);
+            over.push(Some("a"), snapshot);
+        }
+        let time = over.step_time(Window::Minute).unwrap();
+        assert!(close(time.decode, 0.75), "{time:?}");
+        assert!(close(time.prefill, 0.25), "{time:?}");
+        assert_eq!(time.outside, 0.0);
+        // A window without step time has no split.
+        let mut idle = Stats::new(1.0);
+        for second in 0..3 {
+            let mut snapshot = snapshot(1000.0 + f64::from(second), 0.0);
+            snapshot.histograms.step_decode = steps(4.0, 0.2);
+            idle.push(Some("a"), snapshot);
+        }
+        assert_eq!(idle.step_time(Window::Minute), None);
+    }
+
     #[test]
     fn snapshots_read_the_published_series() {
         let scrape = Exposition::parse(
@@ -755,7 +974,14 @@ mod tests {
              chop_generation_worker_starting 0\nchop_generation_worker_ready 1\n\
              chop_instance_poisoned{model_name=\"m\",engine=\"0\"} 0\n\
              vllm:kv_cache_usage_perc{model_name=\"m\",engine=\"0\"} 0.25\n\
-             chop_step_execution_seconds_bucket{model_name=\"m\",engine=\"0\",phase=\"mixed\",le=\"+Inf\"} 3\n",
+             chop_step_execution_seconds_bucket{model_name=\"m\",engine=\"0\",phase=\"mixed\",le=\"+Inf\"} 3\n\
+             chop_request_decode_tokens_total{model_name=\"m\",engine=\"0\"} 39\n\
+             chop_request_decode_seconds_total{model_name=\"m\",engine=\"0\"} 4.875\n\
+             chop_requests_submitted_total 7\n\
+             chop_spec_verify_items_total 10\nchop_spec_emitted_tokens_total 19\n\
+             vllm:request_prompt_tokens_bucket{model_name=\"m\",engine=\"0\",le=\"+Inf\"} 2\n\
+             vllm:request_prompt_tokens_sum{model_name=\"m\",engine=\"0\"} 3000\n\
+             chop_mixed_step_actual_over_predicted_bucket{model_name=\"m\",engine=\"0\",le=\"1.0\"} 4\n",
         );
         let snapshot = Snapshot::from_exposition(&scrape, 1.0);
         assert_eq!(snapshot.server_seconds, Some(5.5));
@@ -768,5 +994,13 @@ mod tests {
         assert_eq!(snapshot.gauges.running, None);
         assert!(snapshot.histograms.step_mixed.is_some());
         assert!(snapshot.histograms.step_decode.is_none());
+        assert_eq!(snapshot.counters.decode_tokens, 39.0);
+        assert_eq!(snapshot.counters.decode_seconds, 4.875);
+        assert_eq!(snapshot.counters.requests_submitted, 7.0);
+        assert_eq!(snapshot.counters.spec_verify_items, 10.0);
+        assert_eq!(snapshot.counters.spec_emitted_tokens, 19.0);
+        assert_eq!(snapshot.histograms.prompt_tokens.unwrap().sum, 3000.0);
+        assert!(snapshot.histograms.mixed_over_predicted.is_some());
+        assert!(snapshot.histograms.prefill_cap.is_none());
     }
 }

@@ -41,8 +41,51 @@ pub struct Profile {
     pub context_parallel_size: Option<u64>,
     pub speculation: Option<Speculation>,
     pub kv_cache_dtype: Option<String>,
+    /// A mixed-plane element's planes, in the order reported.
+    pub kv_cache_planes: Vec<KvPlane>,
     pub prefix_cache: Option<bool>,
     pub max_sequences: Option<u64>,
+}
+
+/// One plane of a mixed-plane KV element.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KvPlane {
+    pub name: String,
+    /// `bf16`, `fp8_e4m3` or `fp4_e2m1`.
+    pub code: String,
+    pub bytes_per_token: u64,
+}
+
+impl Profile {
+    /// The KV cache codes as shown: a mixed-plane element's codes, the one
+    /// holding the most bytes per token first (`fp4`, `fp8+bf16`), else
+    /// `kv_cache_dtype`.
+    pub fn kv_label(&self) -> Option<String> {
+        if self.kv_cache_planes.is_empty() {
+            return self.kv_cache_dtype.clone();
+        }
+        let mut codes: Vec<(&str, u64)> = Vec::new();
+        for plane in &self.kv_cache_planes {
+            let code = match plane.code.as_str() {
+                "fp4_e2m1" => "fp4",
+                "fp8_e4m3" => "fp8",
+                code => code,
+            };
+            match codes.iter_mut().find(|(seen, _)| *seen == code) {
+                Some((_, bytes)) => *bytes += plane.bytes_per_token,
+                None => codes.push((code, plane.bytes_per_token)),
+            }
+        }
+        // Stable, so codes of equal size keep their reported order.
+        codes.sort_by(|left, right| right.1.cmp(&left.1));
+        Some(
+            codes
+                .into_iter()
+                .map(|(code, _)| code)
+                .collect::<Vec<_>>()
+                .join("+"),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -106,6 +149,23 @@ impl Health {
                                 drafter: text(&speculation["drafter"]),
                             }),
                             kv_cache_dtype: text(&profile["kv_cache_dtype"]),
+                            kv_cache_planes: profile["kv_cache_planes"]
+                                .as_array()
+                                .map(|planes| {
+                                    planes
+                                        .iter()
+                                        .filter_map(|plane| {
+                                            Some(KvPlane {
+                                                name: text(&plane["name"]).unwrap_or_default(),
+                                                code: text(&plane["code"])?,
+                                                bytes_per_token: plane["bytes_per_token"]
+                                                    .as_u64()
+                                                    .unwrap_or(0),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                             prefix_cache: profile["prefix_cache"].as_bool(),
                             max_sequences: profile["max_sequences"].as_u64(),
                         },
@@ -184,10 +244,54 @@ mod tests {
                     drafter: Some("mtp".to_owned()),
                 }),
                 kv_cache_dtype: Some("fp8".to_owned()),
+                kv_cache_planes: Vec::new(),
                 prefix_cache: Some(true),
                 max_sequences: Some(32),
             }
         );
+        assert_eq!(serving.profile.kv_label().as_deref(), Some("fp8"));
+    }
+
+    #[test]
+    fn a_mixed_element_is_shown_by_the_codes_of_its_planes() {
+        let mut value: Value = serde_json::from_str(READY).unwrap();
+        let profile = &mut value["serving"]["profile"];
+        profile["kv_cache_dtype"] = "mixed".into();
+        // DeepSeek's two planes, both FP4 with different scales.
+        profile["kv_cache_planes"] = serde_json::json!([
+            {"name": "compressed", "code": "fp4_e2m1",
+             "scale": {"format": "e4m3", "block": 16}, "bytes_per_token": 288},
+            {"name": "index", "code": "fp4_e2m1",
+             "scale": {"format": "ue8m0", "block": 32}, "bytes_per_token": 68},
+        ]);
+        let health = Health::parse(value.to_string().as_bytes()).unwrap();
+        let profile = health.serving.unwrap().profile;
+        assert_eq!(profile.kv_cache_planes.len(), 2);
+        assert_eq!(profile.kv_cache_planes[1].name, "index");
+        assert_eq!(profile.kv_label().as_deref(), Some("fp4"));
+        // Planes of different codes, the larger first; a plane without a
+        // code is skipped.
+        let planes = |list: serde_json::Value| {
+            let mut value: Value = serde_json::from_str(READY).unwrap();
+            value["serving"]["profile"]["kv_cache_planes"] = list;
+            Health::parse(value.to_string().as_bytes())
+                .unwrap()
+                .serving
+                .unwrap()
+                .profile
+                .kv_label()
+        };
+        assert_eq!(
+            planes(serde_json::json!([
+                {"name": "window", "code": "bf16", "bytes_per_token": 16},
+                {"name": "compressed", "code": "fp4_e2m1", "bytes_per_token": 18},
+                {"name": "broken", "bytes_per_token": 99},
+            ]))
+            .as_deref(),
+            Some("fp4+bf16")
+        );
+        // A server that predates the field shows its element.
+        assert_eq!(planes(serde_json::json!(null)).as_deref(), Some("fp8"));
     }
 
     #[test]

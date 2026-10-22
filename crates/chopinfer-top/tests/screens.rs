@@ -105,6 +105,7 @@ fn busy(seconds: f64, rate: f64, running: f64) -> Snapshot {
             step_decode: Some(histogram(&STEP, &[1.0, 30.0, 5.0, 0.0, 0.0, 0.0, 0.0], t)),
             step_mixed: Some(histogram(&STEP, &[0.0, 0.0, 2.0, 6.0, 1.0, 0.0, 0.0], t)),
             step_prefill: Some(histogram(&STEP, &[0.0, 0.0, 0.0, 0.5, 1.5, 0.0, 0.0], t)),
+            ..Histograms::default()
         },
     }
 }

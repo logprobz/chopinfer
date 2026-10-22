@@ -1,5 +1,5 @@
-//! Per-layer Engram uploads for AR decode graphs, opt-in through
-//! `CHOPINFER_DEEPSEEK41_AR_ENGRAM=1`.
+//! Per-layer Engram uploads for AR decode graphs. They are the default;
+//! `CHOPINFER_DEEPSEEK41_AR_ENGRAM=0` keeps the synchronous route.
 //!
 //! The synchronous route has the engine thread gather every Engram layer's
 //! table rows for every rank before the step's first launch. Here the host
@@ -25,40 +25,54 @@ const SWITCH: &str = "CHOPINFER_DEEPSEEK41_AR_ENGRAM";
 /// Logs each step's per-layer host and exposed wait times when set to 1.
 const TRACE: &str = "CHOPINFER_DEEPSEEK41_AR_ENGRAM_TRACE";
 
+/// The switch's decision for its raw value: absent or `1` serves AR decode
+/// through the per-layer route, `0` keeps the synchronous route.
+fn decide(value: Option<&str>) -> Result<bool, BundleStatusV1> {
+    match value {
+        None | Some("1") => Ok(true),
+        Some("0") => Ok(false),
+        Some(_) => Err(BundleStatusV1::InvalidArgument),
+    }
+}
+
 pub(super) fn enabled() -> Result<bool, BundleStatusV1> {
     #[cfg(test)]
-    if let Some(value) = IN_TESTS.get() {
-        return Ok(value);
-    }
-    match std::env::var(SWITCH).as_deref() {
-        Ok("1") => Ok(true),
-        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
-        _ => Err(BundleStatusV1::InvalidArgument),
+    return decide(IN_TESTS.get());
+    #[cfg(not(test))]
+    match std::env::var(SWITCH) {
+        Ok(value) => decide(Some(&value)),
+        Err(std::env::VarError::NotPresent) => decide(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(BundleStatusV1::InvalidArgument),
     }
 }
 
 fn traced() -> bool {
-    #[cfg(test)]
-    if IN_TESTS.get().is_some() {
-        return true;
-    }
-    std::env::var_os(TRACE).is_some_and(|value| value == "1")
+    cfg!(test) || std::env::var_os(TRACE).is_some_and(|value| value == "1")
 }
 
 #[cfg(test)]
 thread_local! {
-    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+    /// The switch's raw value in tests, `None` being unset. Tests keep the
+    /// synchronous route unless they set it, so their pinned journals stay
+    /// that route's.
+    static IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) };
 }
 
 #[cfg(test)]
 pub(crate) fn with_enabled<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
+    with_switch(Some(if value { "1" } else { "0" }), run)
+}
+
+/// Runs `run` as if the switch held `value`.
+#[cfg(test)]
+pub(crate) fn with_switch<T>(value: Option<&'static str>, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<&'static str>);
     impl Drop for Restore {
         fn drop(&mut self) {
             IN_TESTS.set(self.0);
         }
     }
-    let _restore = Restore(IN_TESTS.replace(Some(value)));
+    let _restore = Restore(IN_TESTS.replace(value));
     run()
 }
 

@@ -5,19 +5,28 @@
 //! consumer and before the piece that holds it.
 use super::*;
 use crate::engram_rows::{EngramRows, Step};
-use crate::instance::ar_engram::{indices, with_enabled};
+use crate::instance::ar_engram::{indices, with_switch};
 use model_deepseek41_contract::own_ops::engram::HashTables;
 
 fn create_mapped(host: &Rc<Host>, items: u32, on: bool) -> BundleInstanceV1 {
+    create_switched(host, items, Some(if on { "1" } else { "0" }))
+        .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()))
+}
+
+/// An AR instance on mapped tables created as if the switch held `value`.
+fn create_switched(
+    host: &Rc<Host>,
+    items: u32,
+    value: Option<&'static str>,
+) -> Result<BundleInstanceV1, BundleAbiError> {
     host.drafter.set(true);
     let record = crate::config::tests::record(&host.shape, host.kv, items, false);
-    with_enabled(on, || {
+    with_switch(value, || {
         api().create(
             HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
             &record,
         )
     })
-    .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()))
 }
 
 /// Each stream's launch lines from `from` on, in journal order.
@@ -335,5 +344,28 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     instance.retire_request(9).unwrap();
     instance.retire_request(10).unwrap();
     instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// The per-layer route serves AR decode when the switch is unset or 1, `0`
+/// keeps the synchronous route, and any other value refuses creation.
+#[test]
+fn the_per_layer_route_is_the_default_and_zero_disables_it() {
+    for (value, prepared) in [(None, true), (Some("1"), true), (Some("0"), false)] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP2).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = create_switched(&host, 8, value)
+            .unwrap_or_else(|error| panic!("{value:?}: {error:?}: {:?}", host.logs.borrow()));
+        assert_eq!(indices(instance.handle()).is_some(), prepared, "{value:?}");
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP2).unwrap(), KV_LAYOUTS[0]);
+    let error = create_switched(&host, 8, Some("yes"))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(
+        error,
+        BundleAbiError::Status(BundleStatusV1::InvalidArgument)
+    );
     assert_eq!(host.acquired.get(), host.released.get());
 }

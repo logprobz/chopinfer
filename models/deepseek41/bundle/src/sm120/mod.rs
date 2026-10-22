@@ -21,6 +21,7 @@ pub mod dspark_quantize;
 mod dspark_router;
 pub mod fold_local_rows;
 mod fold_local_rows_serving;
+pub mod hc_cols;
 pub mod hc_completion;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;

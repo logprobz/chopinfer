@@ -15,7 +15,7 @@
 //! (the query-down projection through the query RoPE) and joins before the
 //! window KV stage that reads it. Like the shared expert, it binds the
 //! independent workspace and row status in decode and verify phases of at
-//! most `KV_ROWS` rows ([`kv_relocated`]).
+//! most [`kv_rows`] rows ([`kv_relocated`]).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -42,7 +42,9 @@ pub const KV_SWITCH: &str = "CHOPINFER_DEEPSEEK41_KV_OVERLAP";
 
 /// The largest decode or verify phase whose window KV projection binds the
 /// shared expert's workspace and row status: the dense decode buckets.
-pub const KV_ROWS: u32 = crate::sm120::mxfp8_fold::SMALL_CAPACITY;
+pub fn kv_rows() -> u32 {
+    crate::Kernels::dense_decode_capacity()
+}
 
 /// Whether `phase`'s window KV projection binds the independent workspace
 /// and row status, which lets it run beside the query chain.
@@ -51,7 +53,7 @@ pub(crate) fn kv_relocated(phase: crate::program::Phase) -> bool {
     if KV_REFERENCE.get() {
         return false;
     }
-    !phase.prefill() && phase.rows() <= KV_ROWS
+    !phase.prefill() && phase.rows() <= kv_rows()
 }
 
 #[cfg(test)]
@@ -80,7 +82,7 @@ pub struct Settings {
     /// The largest bucket's rows that overlap; 0 for none.
     pub max_rows: u32,
     /// Whether the window KV projection runs beside the query chain in the
-    /// overlapped buckets of at most [`KV_ROWS`] rows.
+    /// overlapped buckets of at most [`kv_rows`] rows.
     pub kv: bool,
 }
 
@@ -132,7 +134,7 @@ impl Settings {
     /// Whether a graph bucket of `rows` rows runs its window KV projections
     /// beside the query chains.
     pub fn serves_kv(self, rows: u32) -> bool {
-        self.kv && self.serves(rows) && rows <= KV_ROWS
+        self.kv && self.serves(rows) && rows <= kv_rows()
     }
 }
 

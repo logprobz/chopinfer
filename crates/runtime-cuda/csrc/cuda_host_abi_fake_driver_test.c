@@ -1316,6 +1316,26 @@ static void test_vmm_lending_helpers(void) {
     const char* expected[] = {"release"};
     vmm_expect(expected, 1);
   }
+
+  /* Unmap keeps the handle: it unmaps and frees the range, reporting the
+     first failure but still attempting the free. */
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_unmap(0x7f0000000000ull, bytes) != CUDA_SUCCESS) abort();
+  {
+    const char* expected[] = {"unmap", "free"};
+    vmm_expect(expected, 2);
+  }
+  if (vmm_released_count != 0) abort();
+  {
+    const char* fail[] = {"unmap", "free"};
+    for (size_t i = 0; i < 2; ++i) {
+      vmm_reset(fail[i]);
+      if (runtime_cuda_vmm_unmap(0x7f0000000000ull, bytes) != CUDA_ERROR_OUT_OF_MEMORY) abort();
+      const char* expected[] = {"unmap", "free"};
+      vmm_expect(expected, 2);
+      if (vmm_released_count != 0) abort();
+    }
+  }
 }
 
 int main(void) {

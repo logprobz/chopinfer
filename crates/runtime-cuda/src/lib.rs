@@ -771,6 +771,19 @@ impl MemoryPool {
 /// The most page-locked memory one host-byte write stages at a time.
 const HOST_BYTE_STAGING_BYTES: usize = 64 << 20;
 
+/// Device memory this process keeps for the descriptors it exported, with no
+/// mapping and no context ([`DeviceBuffer::hold_lent`]). Dropping it releases
+/// the handle; the memory goes once no other process maps it.
+pub struct HeldDeviceMemory(ffi::HeldAllocation);
+
+impl HeldDeviceMemory {
+    /// Releases the handle now, reporting a driver failure that a drop would
+    /// ignore.
+    pub fn release(mut self) -> Result<(), CudaError> {
+        checked("cuMemRelease", self.0.release())
+    }
+}
+
 #[derive(Clone)]
 pub struct DeviceBuffer {
     pointer: ffi::DevicePointer,
@@ -1271,6 +1284,28 @@ impl DeviceBuffer {
         let (code, fd) = lent.export();
         checked("cuMemExportToShareableHandle", code)?;
         fd.ok_or(CudaError::InvalidLaunch)
+    }
+
+    /// Unmaps a lendable allocation no clone shares and returns its handle,
+    /// which keeps the memory and every descriptor exported from it alive
+    /// without a mapping or a context in this process: the process can then
+    /// release its contexts and still lend the memory. The buffer is
+    /// released. On failure it stays live.
+    pub fn hold_lent(&self) -> Result<HeldDeviceMemory, CudaError> {
+        self.require_live()?;
+        if Rc::strong_count(&self.allocation) != 1 || Rc::strong_count(&self.allocation_state) != 1
+        {
+            return Err(CudaError::ResourceShared("device allocation"));
+        }
+        let lent = self.lent.as_ref().ok_or(CudaError::InvalidLaunch)?;
+        set_current_inner(&self.stream.context)?;
+        // Kernels on any stream may still read the mapping.
+        checked("cuCtxSynchronize", ffi::context_synchronize())?;
+        let (code, held) = lent.hold();
+        checked("cuMemUnmap", code)?;
+        let held = held.ok_or(CudaError::InvalidLaunch)?;
+        self.allocation_state.set(2);
+        Ok(HeldDeviceMemory(held))
     }
 
     /// Lends the host bytes of a mapped host allocation no clone shares yet,
@@ -2510,6 +2545,59 @@ mod tests {
         assert_eq!(read[5], 0xa5);
         lent.release().unwrap();
         assert!(lent.export_lent().is_err());
+    }
+
+    #[cfg(feature = "fake-driver-tests")]
+    #[test]
+    fn held_lent_memory_outlives_its_mapping_and_its_context() {
+        use std::os::fd::AsFd;
+        ffi::fake_driver_reset();
+        let driver = Driver::initialize().unwrap();
+        let bytes = (0..3 << 20)
+            .map(|i: usize| (i * 13 % 251) as u8)
+            .collect::<Vec<_>>();
+        let (fd, held) = {
+            let context = driver.retain_primary_context(0).unwrap();
+            let stream = context.stream().unwrap();
+            let lent = DeviceBuffer::allocate_lendable(&stream, 3 << 20).unwrap();
+            lent.copy_from_bytes(&bytes, &stream).unwrap();
+            let fd = lent.export_lent().unwrap();
+            let clone = lent.clone();
+            assert!(matches!(
+                lent.hold_lent(),
+                Err(CudaError::ResourceShared(_))
+            ));
+            drop(clone);
+            let pool = context
+                .default_memory_pool()
+                .unwrap()
+                .allocate(&stream, 64)
+                .unwrap();
+            assert!(matches!(pool.hold_lent(), Err(CudaError::InvalidLaunch)));
+            pool.release().unwrap();
+            let held = lent.hold_lent().unwrap();
+            // The buffer is released; its memory is not.
+            assert!(lent.hold_lent().is_err());
+            assert!(lent.export_lent().is_err());
+            let mut read = vec![0; 16];
+            assert!(lent.copy_to_bytes(&mut read, &stream).is_err());
+            (fd, held)
+        };
+        // The owner's buffer, stream and context are gone; its export still
+        // maps the bytes it wrote.
+        let context = driver.retain_primary_context(1).unwrap();
+        let stream = context.stream().unwrap();
+        let imported =
+            DeviceBuffer::import_lent(&stream, fd.as_fd(), 4 << 20, 3 << 20, &[1], true).unwrap();
+        drop(fd);
+        let mut read = vec![0; 3 << 20];
+        imported.copy_to_bytes(&mut read, &stream).unwrap();
+        assert_eq!(read, bytes);
+        held.release().unwrap();
+        // The importer's mapping keeps the memory after the holder lets go.
+        imported.copy_to_bytes(&mut read, &stream).unwrap();
+        assert_eq!(read, bytes);
+        imported.release().unwrap();
     }
 
     #[cfg(feature = "fake-driver-tests")]

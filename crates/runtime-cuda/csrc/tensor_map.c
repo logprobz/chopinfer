@@ -580,15 +580,16 @@ CUresult runtime_cuda_vmm_set_access(CUdeviceptr address, size_t bytes,
   return cuMemSetAccess(address, bytes, access, count);
 }
 
+CUresult runtime_cuda_vmm_unmap(CUdeviceptr address, size_t bytes) {
+  CUresult first = cuMemUnmap(address, bytes);
+  CUresult result = cuMemAddressFree(address, bytes);
+  return first != CUDA_SUCCESS ? first : result;
+}
+
 CUresult runtime_cuda_vmm_release(uint64_t handle, CUdeviceptr address,
                                   size_t bytes) {
-  CUresult first = CUDA_SUCCESS;
-  if (address != 0) {
-    CUresult result = cuMemUnmap(address, bytes);
-    if (result != CUDA_SUCCESS) first = result;
-    result = cuMemAddressFree(address, bytes);
-    if (result != CUDA_SUCCESS && first == CUDA_SUCCESS) first = result;
-  }
+  CUresult first =
+      address != 0 ? runtime_cuda_vmm_unmap(address, bytes) : CUDA_SUCCESS;
   CUresult result = cuMemRelease((CUmemGenericAllocationHandle)handle);
   if (result != CUDA_SUCCESS && first == CUDA_SUCCESS) first = result;
   return first;

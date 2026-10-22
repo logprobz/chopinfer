@@ -319,6 +319,7 @@ unsafe extern "C" {
         count: usize,
         read_only: c_int,
     ) -> raw::CUresult;
+    fn runtime_cuda_vmm_unmap(address: DevicePointer, bytes: usize) -> raw::CUresult;
     fn runtime_cuda_vmm_release(handle: u64, address: DevicePointer, bytes: usize)
     -> raw::CUresult;
     fn runtime_cuda_launch_kernel_pdl(
@@ -1012,6 +1013,31 @@ impl LentAllocation {
         self.bytes
     }
 
+    /// Unmaps the allocation and keeps its handle in what this returns, so
+    /// the memory and its exports outlive this mapping and the context that
+    /// made it; the caller has synchronized every reader in this process.
+    /// On failure the allocation stays mapped and is released as before; a
+    /// released allocation has nothing to hold.
+    pub fn hold(&self) -> (c_int, Option<HeldAllocation>) {
+        if self.released.get() {
+            return (CUDA_SUCCESS, None);
+        }
+        // SAFETY-REVIEWED: the mapping came from create or import and is live
+        // until release; the shim touches only that range.
+        let code = result_code(unsafe { runtime_cuda_vmm_unmap(self.address, self.bytes) });
+        if code != CUDA_SUCCESS {
+            return (code, None);
+        }
+        self.released.set(true);
+        (
+            code,
+            Some(HeldAllocation {
+                handle: self.handle,
+                released: false,
+            }),
+        )
+    }
+
     /// Unmaps the allocation and releases this process's handle once; the
     /// caller has synchronized every reader in this process.
     pub fn release(&self) -> c_int {
@@ -1028,6 +1054,34 @@ impl LentAllocation {
 }
 
 impl Drop for LentAllocation {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+/// A lendable allocation's handle without a mapping in this process: it keeps
+/// the memory alive for the descriptors exported from it, and needs no
+/// context, so the process can release its contexts while holding it.
+pub struct HeldAllocation {
+    handle: u64,
+    released: bool,
+}
+
+impl HeldAllocation {
+    /// Releases the handle once; the memory goes when no other process holds
+    /// a handle or mapping of it.
+    pub fn release(&mut self) -> c_int {
+        if self.released {
+            return CUDA_SUCCESS;
+        }
+        self.released = true;
+        // SAFETY-REVIEWED: the handle came from a held lendable allocation and
+        // is released once; a zero address skips the unmap.
+        result_code(unsafe { runtime_cuda_vmm_release(self.handle, 0, 0) })
+    }
+}
+
+impl Drop for HeldAllocation {
     fn drop(&mut self) {
         let _ = self.release();
     }

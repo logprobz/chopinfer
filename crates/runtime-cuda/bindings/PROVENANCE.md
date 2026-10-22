@@ -58,7 +58,8 @@ both passed; this is not a claim that regeneration ran.
 The lendable device memory addition uses the same C-helper boundary in
 `csrc/tensor_map.c`. `runtime_cuda_vmm_granularity`, `runtime_cuda_vmm_create`,
 `runtime_cuda_vmm_export`, `runtime_cuda_vmm_import`,
-`runtime_cuda_vmm_set_access` and `runtime_cuda_vmm_release` call
+`runtime_cuda_vmm_set_access`, `runtime_cuda_vmm_unmap` and
+`runtime_cuda_vmm_release` call
 `cuMemGetAllocationGranularity`, `cuMemCreate`, `cuMemAddressReserve`,
 `cuMemMap`, `cuMemSetAccess`, `cuMemExportToShareableHandle`,
 `cuMemImportFromShareableHandle`, `cuMemUnmap`, `cuMemAddressFree` and

@@ -262,6 +262,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
                                      "nvdec::tests::a_host_without_the_decoder_library_is_refused_cleanly",
                                      "tests::mapped_host_buffers_free_only_after_a_successful_fence",
                                      "tests::lent_memory_is_shared_through_its_descriptor_and_released_by_its_last_owner",
+                                     "tests::held_lent_memory_outlives_its_mapping_and_its_context",
                                      "tests::a_failed_graph_release_keeps_the_graph_live_for_a_retry",
                                      "page_copy::tests", "--test-threads=1"], fixtures, weight=2),
         step("cuda-launch-arguments", ["cargo", "test", "-p", "runtime-cuda", "--lib", *LOCKED,

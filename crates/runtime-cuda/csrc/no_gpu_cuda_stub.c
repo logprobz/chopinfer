@@ -822,6 +822,9 @@ int runtime_cuda_vmm_set_access(uint64_t address, size_t bytes, const int* ordin
   if (ordinals == NULL || count == 0 || count > 16) return 1;
   return mprotect((void*)(uintptr_t)address, bytes, read_only ? PROT_READ : PROT_READ | PROT_WRITE) == 0 ? 0 : 1;
 }
+int runtime_cuda_vmm_unmap(uint64_t address, size_t bytes) {
+  return munmap((void*)(uintptr_t)address, bytes) == 0 ? 0 : 1;
+}
 int runtime_cuda_vmm_release(uint64_t handle, uint64_t address, size_t bytes) {
   int first = 0;
   if (address != 0 && munmap((void*)(uintptr_t)address, bytes) != 0) first = 1;

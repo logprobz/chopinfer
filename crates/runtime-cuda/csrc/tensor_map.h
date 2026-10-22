@@ -168,6 +168,10 @@ CUresult runtime_cuda_vmm_import(int fd, size_t bytes, uint64_t* handle,
 CUresult runtime_cuda_vmm_set_access(CUdeviceptr address, size_t bytes,
                                      const int* ordinals, size_t count,
                                      int read_only);
+/* Unmaps `address` and frees its range, keeping the handle: the allocation
+   stays for its handles and exports without a mapping in this process.
+   Reports the first failure but still attempts the free. */
+CUresult runtime_cuda_vmm_unmap(CUdeviceptr address, size_t bytes);
 /* Unmaps and frees `address` (when nonzero) and releases `handle`. */
 CUresult runtime_cuda_vmm_release(uint64_t handle, CUdeviceptr address,
                                   size_t bytes);

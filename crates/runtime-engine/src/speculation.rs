@@ -20,6 +20,8 @@ mod realized_tests;
 #[cfg(test)]
 mod refresh_tests;
 #[cfg(test)]
+mod shape_tests;
+#[cfg(test)]
 mod trial_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
@@ -104,6 +106,10 @@ const REALIZED_DRAFT_SPAN: f64 = 32.0;
 /// and a caught-up sequence adds about 0.12 ms of catch-up, together about
 /// 1/20 of a 4 ms AR step per sequence.
 const PRIOR_SEQUENCE_COST: f64 = 1.0 / 16.0;
+/// Weight of `PRIOR_SEQUENCE_COST` in a bucket's fitted cost per drafting
+/// sequence, in squared sequences of spread: steady steps at two counts four
+/// sequences apart outweigh it two to one, counts one apart do not.
+const SEQUENCE_PRIOR_WEIGHT: f64 = 4.0;
 /// A row bucket not measured at a concurrency is priced from its measured
 /// neighbours there: a wider one at this factor per doubling of rows over
 /// the nearest narrower one, a narrower one at the nearest wider one divided
@@ -657,6 +663,13 @@ impl DraftCostTable {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct BlockStepTable {
     steps: BTreeMap<(usize, usize), BlockStep>,
+    /// Steady steps by drafting sequences as well: steps whose drafters all
+    /// caught up, outside probes, which can carry catch-up or a stale level.
+    counts: BTreeMap<(usize, usize, usize), BlockStep>,
+    /// For each items and row bucket measured at two or more sequence
+    /// counts, the spread of those counts and its covariance with their
+    /// times: the least-squares fit of the cost of a drafting sequence.
+    fits: BTreeMap<(usize, usize), (f64, f64)>,
 }
 
 impl BlockStepTable {
@@ -664,11 +677,97 @@ impl BlockStepTable {
         if self.steps.len() >= MAX_COST_ROWS && !self.steps.contains_key(&key) {
             self.steps.pop_first();
         }
-        let sequences = sequences as f64;
         self.steps
             .entry(key)
-            .and_modify(|step| step.record(micros, sequences, weight))
-            .or_insert_with(|| BlockStep::new(micros, sequences));
+            .and_modify(|step| step.record(micros, sequences as f64, weight))
+            .or_insert_with(|| BlockStep::new(micros, sequences as f64));
+    }
+
+    /// Records a steady step, whose drafters all caught up, outside a probe:
+    /// it prices its bucket and the cost of a drafting sequence there.
+    fn record_steady(&mut self, key: (usize, usize), micros: f64, sequences: usize, weight: f64) {
+        self.record(key, micros, sequences, weight);
+        let count = (key.0, key.1, sequences);
+        if self.counts.len() >= MAX_COST_ROWS
+            && !self.counts.contains_key(&count)
+            && let Some(((items, bucket, _), _)) = self.counts.pop_first()
+        {
+            self.fit(items, bucket);
+        }
+        self.counts
+            .entry(count)
+            .and_modify(|step| step.record(micros, sequences as f64, weight))
+            .or_insert_with(|| BlockStep::new(micros, sequences as f64));
+        self.fit(key.0, key.1);
+    }
+
+    /// Refits the cost of a drafting sequence at these items and bucket
+    /// from the times of its sequence counts, each once its median of
+    /// three samples rejects outliers.
+    fn fit(&mut self, items: usize, bucket: usize) {
+        let points = self
+            .counts
+            .range((items, bucket, 0)..(items, bucket + 1, 0))
+            .filter(|(_, step)| step.filtered())
+            .map(|(&(_, _, sequences), step)| (sequences as f64, step.micros))
+            .collect::<Vec<_>>();
+        if points.len() < 2 {
+            self.fits.remove(&(items, bucket));
+            return;
+        }
+        let n = points.len() as f64;
+        let mean = |value: fn(&(f64, f64)) -> f64| points.iter().map(value).sum::<f64>() / n;
+        let (sequences, micros) = (mean(|point| point.0), mean(|point| point.1));
+        let spread = points.iter().map(|p| (p.0 - sequences).powi(2)).sum();
+        let covariance = points
+            .iter()
+            .map(|p| (p.0 - sequences) * (p.1 - micros))
+            .sum();
+        self.fits.insert((items, bucket), (spread, covariance));
+    }
+
+    /// The measured cost of one more drafting sequence for a step of these
+    /// items in this bucket: the fit of this bucket, else of the nearest
+    /// bucket at these items, else of the nearest item count, each pulled
+    /// toward `prior` by `SEQUENCE_PRIOR_WEIGHT` and never negative. None
+    /// where no bucket was measured at two sequence counts.
+    fn sequence_cost(&self, items: usize, bucket: usize, prior: f64) -> Option<f64> {
+        let nearest = |items: usize| {
+            let below = self.fits.range((items, 0)..=(items, bucket)).next_back();
+            let above = self.fits.range((items, bucket + 1)..(items + 1, 0)).next();
+            match (below, above) {
+                (Some(below), Some(above)) => Some(
+                    if doublings(below.0.1, bucket) <= doublings(bucket, above.0.1) {
+                        below
+                    } else {
+                        above
+                    },
+                ),
+                (below, above) => below.or(above),
+            }
+        };
+        let fit = nearest(items).or_else(|| {
+            let below = self
+                .fits
+                .range(..(items, 0))
+                .next_back()
+                .map(|(key, _)| key.0);
+            let above = self
+                .fits
+                .range((items + 1, 0)..)
+                .next()
+                .map(|(key, _)| key.0);
+            [below, above]
+                .into_iter()
+                .flatten()
+                .min_by_key(|known| known.abs_diff(items))
+                .and_then(nearest)
+        })?;
+        let &(spread, covariance) = fit.1;
+        Some(
+            ((covariance + SEQUENCE_PRIOR_WEIGHT * prior) / (spread + SEQUENCE_PRIOR_WEIGHT))
+                .max(0.0),
+        )
     }
 
     fn measured(&self, items: usize, bucket: usize) -> bool {
@@ -683,18 +782,18 @@ impl BlockStepTable {
         items: usize,
         bucket: usize,
         (wider, narrower): (f64, f64),
-        value: impl Fn(&BlockStep) -> f64,
+        value: impl Fn((usize, usize), &BlockStep) -> f64,
     ) -> Option<f64> {
         let from_narrower = self
             .steps
             .range((items, 0)..(items, bucket))
             .next_back()
-            .map(|(&(_, known), step)| value(step) * wider.powf(doublings(known, bucket)));
+            .map(|(&key, step)| value(key, step) * wider.powf(doublings(key.1, bucket)));
         let from_wider = self
             .steps
             .range((items, bucket + 1)..(items + 1, 0))
             .next()
-            .map(|(&(_, known), step)| value(step) / narrower.powf(doublings(bucket, known)));
+            .map(|(&key, step)| value(key, step) / narrower.powf(doublings(bucket, key.1)));
         match (from_narrower, from_wider) {
             (Some(narrower), Some(wider)) => Some(narrower.min(wider)),
             (narrower, wider) => narrower.or(wider),
@@ -706,7 +805,7 @@ impl BlockStepTable {
     /// without any, the AR step `ar` in `ar_bucket` scaled up.
     fn optimistic(&self, items: usize, bucket: usize, ar: f64, ar_bucket: usize) -> f64 {
         let ratios = (OPTIMISTIC_WIDER_RATIO, OPTIMISTIC_NARROWER_RATIO);
-        self.scaled(items, bucket, ratios, |step| step.micros)
+        self.scaled(items, bucket, ratios, |_, step| step.micros)
             .unwrap_or_else(|| {
                 ar * OPTIMISTIC_WIDER_RATIO.powf(doublings(ar_bucket, bucket).max(0.0))
             })
@@ -716,9 +815,14 @@ impl BlockStepTable {
     /// Estimated time of a step of `items` items whose `sequences` drafting
     /// sequences bring it to row bucket `bucket`.
     ///
-    /// A measured bucket uses its average, plus `sequence_cost` for each
-    /// drafting sequence above the ones it averaged; fewer sequences cost
-    /// no less, as the bucket's rows still run. Otherwise the same bucket
+    /// A measured bucket uses its average, plus the cost of a drafting
+    /// sequence for each sequence more, or minus it for each fewer, than it
+    /// averaged. That cost is fitted where steady steps of a bucket ran at
+    /// two or more sequence counts (`sequence_cost`): at DeepSeek C16, 32
+    /// rows took 37 ms with four drafting sequences and 40 ms with eight;
+    /// priced alike, plans kept the eight. Without any fit, sequences
+    /// above the average add `prior_sequence_cost` each, and fewer cost no
+    /// less, as the bucket's rows still run. Otherwise the same bucket
     /// measured at the nearest other item count lends its time: the bucket
     /// fixes the target graph, and at TP4 a 128-row verify step took 37 ms
     /// at 16 and at 32 items. Without one, the nearest measured buckets at
@@ -735,22 +839,25 @@ impl BlockStepTable {
         bucket: usize,
         sequences: usize,
         ar: &StepCostTable,
-        sequence_cost: f64,
+        prior_sequence_cost: f64,
     ) -> f64 {
-        let more = |step: &BlockStep| {
-            step.micros + (sequences as f64 - step.sequences).max(0.0) * sequence_cost
+        let more = |(known_items, known_bucket): (usize, usize), step: &BlockStep| {
+            let extra = sequences as f64 - step.sequences;
+            match self.sequence_cost(known_items, known_bucket, prior_sequence_cost) {
+                Some(cost) => step.micros + extra * cost,
+                None => step.micros + extra.max(0.0) * prior_sequence_cost,
+            }
         };
         if let Some(step) = self.steps.get(&(items, bucket)) {
-            return more(step);
+            return more((items, bucket), step);
         }
-        if let Some(step) = self
+        if let Some((&key, step)) = self
             .steps
             .iter()
             .filter(|&(&(_, known), _)| known == bucket)
             .min_by_key(|&(&(known, _), _)| known.abs_diff(items))
-            .map(|(_, step)| step)
         {
-            return more(step);
+            return more(key, step);
         }
         let ratios = (WIDER_BUCKET_RATIO, NARROWER_BUCKET_RATIO);
         if let Some(estimate) = self.scaled(items, bucket, ratios, more) {
@@ -762,8 +869,8 @@ impl BlockStepTable {
             .min_by_key(|&(&(known_items, known_bucket), _)| {
                 (known_items.abs_diff(items), known_bucket.abs_diff(bucket))
             })
-            .map_or(0.0, |(&(_, known_bucket), step)| {
-                (more(step) - ar.estimate(known_bucket)).max(0.0)
+            .map_or(0.0, |(&key, step)| {
+                (more(key, step) - ar.estimate(key.1)).max(0.0)
             });
         ar.estimate(bucket) + borrowed
     }
@@ -1149,9 +1256,13 @@ impl SpeculationPolicy {
                 let excess = micros - self.costs.estimate(bucket);
                 self.draft_costs.record(key, excess, weight);
             }
-            (_, DraftCostModel::PerBlock) => {
+            (_, DraftCostModel::PerBlock) if probe => {
                 self.block_steps
                     .record((items, bucket), micros, shape.0[0], weight);
+            }
+            (_, DraftCostModel::PerBlock) => {
+                self.block_steps
+                    .record_steady((items, bucket), micros, shape.0[0], weight);
             }
         }
     }

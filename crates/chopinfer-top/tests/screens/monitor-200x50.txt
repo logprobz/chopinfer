@@ -36,9 +36,9 @@
 │ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211              ││ 5m00s ago  GPUs   4 found, driver 615.71.09                                      ││   CPUTIN     ━━━━━━━━━━━━──────────────  45C │
 │ 2210    G      0.1 GiB  Xorg  not an instance                    ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flash           ││   AUXTIN0    ━━━━━━━━━━━───────────────  41C │
 │                                                                  ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6-Flash       ││ Disks  used of each filesystem               │
-│                                                                  ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090 MHz, 2C und ││   /          ━━━━─────────────── 0.4/1.8 TiB │
-│                                                                  ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C                          ││   /boot      ━━━━─────────────── 0.4/1.9 GiB │
-│                                                                  ││                                                                                  ││   /data      ━━━━━━━━━━━━━━━━─── 2.9/3.6 TiB │
+│                                                                  ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090 MHz, 2C     ││   /          ━━━━─────────────── 0.4/1.8 TiB │
+│                                                                  ││                   under the limit                                                ││   /boot      ━━━━─────────────── 0.4/1.9 GiB │
+│                                                                  ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C                          ││   /data      ━━━━━━━━━━━━━━━━─── 2.9/3.6 TiB │
 │                                                                  ││                                                                                  ││   /dev/shm   ━──────────────────── 3/126 GiB │
 │                                                                  ││                                                                                  ││ Power                                        │
 │                                                                  ││                                                                                  ││   CPU package: needs root (RAPL)             │

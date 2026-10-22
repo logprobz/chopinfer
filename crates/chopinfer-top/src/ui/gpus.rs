@@ -5,7 +5,7 @@ use super::buffer::{Buffer, Color, Style};
 use super::list::{Column, SPARK_MINIMUM, first_row, layout};
 use super::widgets::{
     age, boxed, buckets, bytes, gauge, groups, integer, nice_ceiling, pad, percent, right,
-    sanitize, sparkline,
+    sanitize, sparkline, wrap,
 };
 use super::{Figures, shown_name, tone_color};
 use crate::app::App;
@@ -1209,28 +1209,39 @@ fn events(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     }
     let room = usize::from(height - 2);
     let end = x + width - 2;
-    for (line, event) in events[events.len().saturating_sub(room)..]
-        .iter()
-        .enumerate()
-    {
-        let line_y = y + 1 + line as u16;
+    // The text follows the time, ten cells from x + 1, a gap and the who.
+    let text_x = x + 20;
+    let text_width = usize::from(end.saturating_sub(text_x));
+    // The latest events whose wrapped lines fit, the latest first; one
+    // taller than the panel shows its first lines.
+    let mut shown = Vec::new();
+    let mut used = 0;
+    for event in events.iter().rev() {
+        let mut lines = wrap(&sanitize(&event.what), text_width);
+        if used + lines.len() > room {
+            if used == 0 {
+                lines.truncate(room);
+                shown.push((event, lines));
+            }
+            break;
+        }
+        used += lines.len();
+        shown.push((event, lines));
+    }
+    let mut line_y = y + 1;
+    for (event, lines) in shown.into_iter().rev() {
         let when = format!("{} ago", age(now - event.at));
-        let column = buffer.put(x + 1, line_y, &right(&when, 10), dim());
-        let column = buffer.put(
-            column + 2,
-            line_y,
-            &pad(&sanitize(&event.who), 7),
-            Style::PLAIN,
-        );
-        buffer.put(
-            column,
-            line_y,
-            &pad(
-                &sanitize(&event.what),
-                usize::from(end.saturating_sub(column)),
-            ),
-            Style::fg(tone_color(event.tone)),
-        );
+        buffer.put(x + 1, line_y, &right(&when, 10), dim());
+        buffer.put(x + 13, line_y, &pad(&sanitize(&event.who), 7), Style::PLAIN);
+        for text in lines {
+            buffer.put(
+                text_x,
+                line_y,
+                &pad(&text, text_width),
+                Style::fg(tone_color(event.tone)),
+            );
+            line_y += 1;
+        }
     }
 }
 

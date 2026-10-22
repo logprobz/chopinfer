@@ -28,11 +28,11 @@
 │ PCIe         gen 5 x16   ECC off                                     ││                                                          │
 └──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 ┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ Events  host and GPUs ───────────────────────────────────────────────┐
-│ PID     TYPE      VRAM  PROCESS                         ││ 5m00s ago  host   48 CPUs, 251 GiB; 28 sensors on 14 chips            │
-│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 5m00s ago  GPUs   4 found, driver 615.71.09                           │
-│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flas │
-│                                                         ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6- │
-│                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│ PID     TYPE      VRAM  PROCESS                         ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside            │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││                   MiMo-V2.6-Flash                                     │
+│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│                                                         ││                   MHz, 2C under the limit                             │
 │                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+│                                                         ││                                                                       │
 └─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
  Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

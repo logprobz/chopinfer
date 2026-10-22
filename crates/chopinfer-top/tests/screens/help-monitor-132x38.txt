@@ -28,11 +28,11 @@
 │ PCIe         gen 5│                                                                                          │                   │
 └───────────────────│ /proc, /sys and NVML are read once a poll, GPM counters only while                       │───────────────────┘
 ┌─ Processes  on GPU│ this view is open. GPU numbers are nvidia-smi's, not CUDA ordinals.                      │───────────────────┐
-│ PID     TYPE      │ In a container, CPU, memory, disk I/O and sensors are the host's.                        │4 chips            │
+│ PID     TYPE      │ In a container, CPU, memory, disk I/O and sensors are the host's.                        │ beside            │
 │ 48211   C     86.9│                                                                                          │                   │
-│ 2210    G      0.1│ Press any key to close.                                                                  │ide MiMo-V2.6-Flas │
-│                   └──────────────────────────────────────────────────────────────────────────────────────────┘ beside MiMo-V2.6- │
-│                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│ 2210    G      0.1│ Press any key to close.                                                                  │ck 1,650 of 3,090  │
+│                   └──────────────────────────────────────────────────────────────────────────────────────────┘                   │
 │                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+│                                                         ││                                                                       │
 └─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
  Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

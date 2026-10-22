@@ -25,6 +25,38 @@ pub fn pad(text: &str, width: usize) -> String {
     out
 }
 
+/// `text` in lines of at most `width` characters, broken at spaces; a
+/// word longer than a line is split. Text that fits is kept as it is.
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 || text.chars().count() <= width {
+        return vec![text.chars().take(width).collect()];
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut length = 0;
+    for word in text.split_whitespace() {
+        let mut word = word.chars().collect::<Vec<_>>();
+        if length > 0 && length + 1 + word.len() <= width {
+            line.push(' ');
+            line.extend(&word);
+            length += 1 + word.len();
+            continue;
+        }
+        if length > 0 {
+            lines.push(std::mem::take(&mut line));
+        }
+        while word.len() > width {
+            lines.push(word.drain(..width).collect());
+        }
+        length = word.len();
+        line = word.into_iter().collect();
+    }
+    if length > 0 {
+        lines.push(line);
+    }
+    lines
+}
+
 /// `text` cut on the right, padded on the left, to `width` characters.
 pub fn right(text: &str, width: usize) -> String {
     let cut = text.chars().take(width).collect::<String>();
@@ -329,6 +361,18 @@ pub fn bar(ratio: f64, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrapping_breaks_at_spaces_and_splits_long_words() {
+        assert_eq!(wrap("fits as  it is", 14), ["fits as  it is"]);
+        assert_eq!(
+            wrap("SM clock 1,650 of 3,090 MHz, 2C under", 16),
+            ["SM clock 1,650", "of 3,090 MHz, 2C", "under"]
+        );
+        assert_eq!(wrap("a 0123456789ab c", 5), ["a", "01234", "56789", "ab c"]);
+        assert_eq!(wrap("", 8), [""]);
+        assert_eq!(wrap("text", 0), [""]);
+    }
 
     #[test]
     fn sanitizing_keeps_printable_ascii_only() {

@@ -1,4 +1,6 @@
-//! Target graph pieces join each mapped layer immediately before its consumer.
+//! Target graph pieces join each mapped layer immediately before its
+//! consumer: DSpark's target steps, and AR decode steps whose Engram rows
+//! upload per layer (`instance::ar_engram`).
 mod audit;
 use super::Instance;
 use crate::program::Stage;
@@ -10,8 +12,27 @@ use runtime_bundle_abi::{
 };
 
 impl Instance {
+    /// The prepared layer gathers of a layered target launch: DSpark's, or
+    /// AR's.
+    fn target_layers(&self) -> Result<&[crate::dspark::cycle::LayerGather], DispatchError> {
+        match (&self.dspark, &self.ar_engram) {
+            (Some(device), _) => Ok(&device.cycle.layers),
+            (None, Some(state)) => Ok(&state.layers),
+            (None, None) => Err(DispatchError::InvalidPlan),
+        }
+    }
+
+    /// Joins layer `layer`'s upload on every rank's stream.
+    fn wait_target_rows(&self, layer: usize) -> Result<(), BundleAbiError> {
+        if self.dspark.is_some() {
+            self.wait_dspark_rows(layer)
+        } else {
+            self.wait_ar_rows(layer)
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn launch_dspark_target(
+    pub(crate) fn launch_layered_target(
         &mut self,
         streams: &[BundleStreamHandleV1],
         graph: Option<(u32, u32)>,
@@ -24,12 +45,7 @@ impl Instance {
         if self.collectives.is_poisoned() {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
         }
-        let layers = &self
-            .dspark
-            .as_ref()
-            .ok_or(DispatchError::InvalidPlan)?
-            .cycle
-            .layers;
+        let layers = self.target_layers()?;
         if layers.is_empty() {
             return Err(DispatchError::InvalidPlan);
         }
@@ -83,7 +99,7 @@ impl Instance {
             let Some((bucket, items)) = graph else {
                 for piece in 0..pieces {
                     if piece > 0 {
-                        self.wait_dspark_rows(piece - 1)?;
+                        self.wait_target_rows(piece - 1)?;
                     }
                     let ops = (0..streams.len())
                         .map(|rank| &programs[rank][ranges[rank][piece].clone()])
@@ -147,12 +163,13 @@ impl Instance {
                     // Every piece contains whole shared-expert fork/join regions.
                     let cache = if piece == 0 {
                         &mut self.graphs
+                    } else if let Some(device) = self.dspark.as_mut() {
+                        &mut device.cycle.layers[piece - 1].graphs
                     } else {
                         &mut self
-                            .dspark
+                            .ar_engram
                             .as_mut()
                             .ok_or(DispatchError::InvalidPlan)?
-                            .cycle
                             .layers[piece - 1]
                             .graphs
                     };
@@ -174,18 +191,12 @@ impl Instance {
         let mut unit = Unit::default();
         for piece in 0..pieces {
             if piece > 0 {
-                self.wait_dspark_rows(piece - 1)?;
+                self.wait_target_rows(piece - 1)?;
             }
             let cache = if piece == 0 {
                 &self.graphs
             } else {
-                &self
-                    .dspark
-                    .as_ref()
-                    .ok_or(DispatchError::InvalidPlan)?
-                    .cycle
-                    .layers[piece - 1]
-                    .graphs
+                &self.target_layers()?[piece - 1].graphs
             };
             let replayed = unit.record(
                 &self.collectives,

@@ -53,6 +53,9 @@ const VERIFY: usize = 2;
 /// One phase of a step, planned before the step opens.
 struct Run {
     prefill_engram: Option<super::prefill_engram::Plan>,
+    /// A decode phase whose Engram rows upload per layer and join at their
+    /// consumers (`super::ar_engram`) instead of before the first launch.
+    ar_engram: bool,
     indexer_route: IndexerRoute,
     dma: Option<dma::Plan>,
     skip: Option<std::rc::Rc<skip::Plan>>,
@@ -442,12 +445,21 @@ impl Instance {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
         let indexer_route =
             IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
+        let ar_engram = arena == DECODE && self.ar_engram_serves(graph);
         let capture = if self.dspark.is_some() {
             graph.and_then(|key| {
                 let reservation = self.reserve_dspark_target(key, indexer_route);
                 if reservation.is_none() {
                     // Decide before lowering, so no cached rank leaves an
                     // empty program in an eager fallback. Keep exact widths.
+                    graph = None;
+                }
+                reservation
+            })
+        } else if ar_engram {
+            graph.and_then(|key| {
+                let reservation = self.reserve_ar_engram(key, indexer_route);
+                if reservation.is_none() {
                     graph = None;
                 }
                 reservation
@@ -518,6 +530,7 @@ impl Instance {
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             prefill_engram: None,
+            ar_engram,
             indexer_route,
             dma: None,
             skip: None,
@@ -716,7 +729,9 @@ impl Instance {
                 }
                 if let (Some(engram), Some(hashed), Some(image)) = (
                     &self.engram,
-                    run.engram.as_ref().filter(|_| run.prefill_engram.is_none()),
+                    run.engram
+                        .as_ref()
+                        .filter(|_| run.prefill_engram.is_none() && !run.ar_engram),
                     self.image,
                 ) {
                     engram
@@ -809,14 +824,14 @@ impl Instance {
         if self.taps.text() && run.arena == PREFILL {
             return self.launch_tapped(&streams, run, &programs, &collectives);
         }
-        if self.dspark.is_some() && run.arena != PREFILL {
+        if run.ar_engram || (self.dspark.is_some() && run.arena != PREFILL) {
             let live_tokens = (0..streams.len())
                 .map(|rank| {
                     DeviceInputs::within(self.arenas[run.arena][rank], &run.layout).live_tokens
                 })
                 .collect::<Vec<_>>();
             return self
-                .launch_dspark_target(
+                .launch_layered_target(
                     &streams,
                     run.graph,
                     run.capture.as_mut(),
@@ -1208,6 +1223,10 @@ impl Instance {
         {
             return BundleStatusV1::InvalidState;
         }
+        if let Err(error) = self.settle_ar_engram() {
+            self.log(&format!("AR Engram: a failed step's uploads: {error}"));
+            return status(error);
+        }
         // Taps a failed execute left are removed, never published.
         #[cfg(feature = "diagnostic-taps")]
         if let Err(error) = self.taps.abandon() {
@@ -1352,6 +1371,13 @@ impl Instance {
         };
         for run in runs.iter_mut() {
             self.upload(run)?;
+            if run.ar_engram {
+                self.begin_ar_engram(
+                    run.engram
+                        .as_ref()
+                        .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
+                )?;
+            }
             if run.prefill_engram.is_some() {
                 self.prefill_engram
                     .as_ref()
@@ -1378,6 +1404,9 @@ impl Instance {
             if ready_epoch.is_none() {
                 self.check_index_status(run)?;
                 self.check_row_status(run)?;
+                if run.ar_engram {
+                    self.finish_ar_engram()?;
+                }
                 if run.prefill_engram.is_some() {
                     self.prefill_engram
                         .as_ref()
@@ -1415,6 +1444,9 @@ impl Instance {
                 for run in runs.iter() {
                     self.check_index_status(run)?;
                     self.check_row_status(run)?;
+                    if run.ar_engram {
+                        self.finish_ar_engram()?;
+                    }
                     if run.prefill_engram.is_some() {
                         self.prefill_engram
                             .as_ref()

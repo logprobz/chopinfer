@@ -16,6 +16,7 @@
 //! request is the host's (`engram`): a commit adds the kept tokens, and a
 //! freed slot or a retire forgets it.
 
+pub(crate) mod ar_engram;
 mod dspark;
 mod engram;
 pub(crate) mod execute;
@@ -123,6 +124,8 @@ pub struct Instance {
     layer_overlap: bool,
     prefill_reduce_runs: u64,
     prefill_engram: Option<prefill_engram::Gathers>,
+    /// AR decode's per-layer Engram uploads, when switched on.
+    ar_engram: Option<ar_engram::State>,
     /// Kept upper-skip plans of short prompts.
     plans: execute::plan_cache::Cache,
     /// Run the lowered stages alone (`PARTIAL`).
@@ -902,6 +905,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         prefill_engram: None,
+        ar_engram: None,
         plans,
         partial,
         taps,
@@ -929,6 +933,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     }
     if let Err(error) = instance.prepare_prefill_engram() {
         instance.log(&format!("create failed preparing prefill Engram: {error}"));
+        return Err(Failed::releasing(instance, status(error)));
+    }
+    if let Err(error) = instance.prepare_ar_engram() {
+        instance.log(&format!("create failed preparing AR Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
     }
     if let Err(error) = instance.configure_dspark_graphs() {
@@ -961,6 +969,8 @@ impl Bundle for Instance {
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
         execute::dma::drain(self)?;
         self.graphs.release_all(&self.services)?;
+        // AR's gathers are the newest: the host releases newest first.
+        self.release_ar_engram()?;
         if let Some(gathers) = &mut self.prefill_engram {
             gathers.release(&self.services)?;
         }

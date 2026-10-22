@@ -12,6 +12,7 @@ pub mod cli;
 pub mod discover;
 pub mod gpu;
 pub mod health;
+pub mod host;
 pub mod http;
 pub mod instances;
 pub mod listing;

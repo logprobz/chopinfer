@@ -288,6 +288,7 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "crossterm",
  "libc",
+ "rustix",
  "serde_json",
  "signal-hook",
 ]

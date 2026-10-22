@@ -13,6 +13,8 @@ license.workspace = true
 crossterm.workspace = true
 # dlopen for NVML, read only when the driver is present.
 libc.workspace = true
+# statvfs for disk space, without unsafe code; already locked through crossterm.
+rustix.workspace = true
 serde_json.workspace = true
 # Restores the terminal on SIGTERM and SIGHUP; already locked through crossterm.
 signal-hook.workspace = true

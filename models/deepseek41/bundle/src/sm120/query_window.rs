@@ -2,9 +2,8 @@
 //! clustered launch (`kernels_sm120::latent::query_window_twin`): the
 //! served RoPE (`latent_scheduled::query`) and the served fused window
 //! write (`window_fused`) of the layer, with the window's first status
-//! commit after the RoPE's, as served. The twins are compiled and embedded
-//! for the lab pair; an instance loads and registers them only where they
-//! serve ([`serves`]).
+//! commit after the RoPE's, as served. An instance loads and registers the
+//! twins only where they serve ([`serves`]).
 use kernel_build::CubinSpec;
 use kernels_sm120::latent::query_window_twin::{self, Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
@@ -16,8 +15,9 @@ pub const CUBIN: &str = "query_window_twin_deepseek41_sm120";
 /// dual fold writes before the query chain.
 pub const ROWS: u32 = 1;
 
-/// Whether the twins serve; not until the lab pair has measured them.
-pub const SERVED: bool = false;
+/// Whether the twins serve: the lab pair (d2-0463g3h) kept every output
+/// bit and saved 2 us per layer.
+pub const SERVED: bool = true;
 
 /// Set to zero to keep the served RoPE and window write apart.
 pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_QUERY_WINDOW_TWIN";
@@ -40,25 +40,32 @@ pub fn entries() -> Vec<Entry> {
 /// Whether `g` at `ranks` runs the twins: Flash TP4 once they serve, unless
 /// [`SWITCH`] is zero.
 pub fn serves(g: &Geometry, ranks: u32) -> bool {
-    #[cfg(test)]
-    if let Some(forced) = FORCED.with(|f| f.get()) {
-        return forced && g.id == FLASH.id && ranks == 4;
+    if g.id != FLASH.id || ranks != 4 {
+        return false;
     }
-    SERVED && g.id == FLASH.id && ranks == 4 && std::env::var(SWITCH).as_deref() != Ok("0")
+    #[cfg(test)]
+    if let Some(forced) = FORCED.get() {
+        return forced;
+    }
+    SERVED && std::env::var(SWITCH).as_deref() != Ok("0")
 }
 #[cfg(test)]
-std::thread_local! {static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };}
+std::thread_local! {
+    /// Tests keep the served RoPE and window write apart unless they serve
+    /// the twins, so their pinned journals stay the pair's.
+    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+}
 /// Run `run` with the twins served (`true`) or kept apart (`false`),
-/// whatever [`SERVED`] says.
+/// whatever [`SERVED`] and [`SWITCH`] say.
 #[cfg(test)]
 pub(crate) fn with_served<T>(served: bool, run: impl FnOnce() -> T) -> T {
     struct Restore(Option<bool>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            FORCED.with(|f| f.set(self.0));
+            FORCED.set(self.0);
         }
     }
-    let _restore = Restore(FORCED.with(|f| f.replace(Some(served))));
+    let _restore = Restore(FORCED.replace(Some(served)));
     run()
 }
 

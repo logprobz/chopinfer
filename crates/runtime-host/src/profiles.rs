@@ -43,7 +43,8 @@ pub(crate) struct Profile {
     /// tensor-parallel size, and the package must declare it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_parallel_size: Option<usize>,
-    pub kv_memory_fraction: f64,
+    /// `--gpu-memory-utilization`.
+    pub gpu_memory_utilization: f64,
     pub status: Status,
     pub evidence: Vec<String>,
 }
@@ -119,6 +120,15 @@ impl Profiles {
         if value["schema"] == "chopinfer-serve-profiles-v1" {
             return Err(error(
                 "profile schema v1 is no longer supported: drop fold_ranks and set schema to chopinfer-serve-profiles-v2; use one distinct device per rank",
+            ));
+        }
+        if value["profiles"].as_object().is_some_and(|profiles| {
+            profiles
+                .values()
+                .any(|p| p.get("kv_memory_fraction").is_some())
+        }) {
+            return Err(error(
+                "kv_memory_fraction is gone: set gpu_memory_utilization, the share of each GPU's total memory the server's own allocations may take (1.0 takes all of it but a 1 GiB reserve)",
             ));
         }
         let file: Self =
@@ -252,7 +262,10 @@ impl Profile {
                 "--prefill-chunk-tokens",
                 self.prefill_chunk_tokens.to_string(),
             ),
-            ("--kv-memory-fraction", self.kv_memory_fraction.to_string()),
+            (
+                "--gpu-memory-utilization",
+                self.gpu_memory_utilization.to_string(),
+            ),
             ("--kv-cache-dtype", self.kv_cache_dtype.clone()),
             (
                 "--prefix-cache",
@@ -753,7 +766,7 @@ mod tests {
                 "speculation":{"mode":"adaptive","tokens":3,"draft_cost":"per-token","drafter":"test"},
                 "max_sequences":8,"qualified_max_sequences":8,"qualification":"CPU fixture only",
                 "kv_cache_dtype":"bf16","prefix_cache":false,"max_batch_tokens":8192,
-                "prefill_chunk_tokens":2048,"queue_depth":1024,"kv_memory_fraction":0.9,
+                "prefill_chunk_tokens":2048,"queue_depth":1024,"gpu_memory_utilization":1.0,
                 "status":"experimental","evidence":["fixture"]
             }}
         })
@@ -1666,7 +1679,10 @@ mod tests {
             ("/profiles/test/max_sequences", serde_json::json!(0)),
             ("/profiles/test/kv_cache_dtype", serde_json::json!("typo")),
             ("/profiles/test/devices", serde_json::json!([0, 0])),
-            ("/profiles/test/kv_memory_fraction", serde_json::json!(1.1)),
+            (
+                "/profiles/test/gpu_memory_utilization",
+                serde_json::json!(1.1),
+            ),
         ] {
             let mut value = fixture();
             *value.pointer_mut(pointer).unwrap() = replacement;
@@ -1675,6 +1691,22 @@ mod tests {
                 "{pointer}"
             );
         }
+        // The replaced field names its replacement.
+        let mut value = fixture();
+        let profile = value
+            .pointer_mut("/profiles/test")
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        profile.remove("gpu_memory_utilization");
+        profile.insert("kv_memory_fraction".into(), 0.9.into());
+        let refusal = Profiles::parse(&serde_json::to_vec(&value).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refusal.contains("kv_memory_fraction is gone: set gpu_memory_utilization"),
+            "{refusal}"
+        );
     }
     #[test]
     fn explicit_overrides_in_either_order_and_ar_disables_policy() {

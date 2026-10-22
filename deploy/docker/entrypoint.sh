@@ -111,7 +111,7 @@ overrides=()
 for pair in \
     MAX_SEQUENCES:max-sequences MAX_BATCH_TOKENS:max-batch-tokens \
     PREFILL_CHUNK_TOKENS:prefill-chunk-tokens QUEUE_DEPTH:queue-depth \
-    KV_MEMORY_FRACTION:kv-memory-fraction KV_CACHE_DTYPE:kv-cache-dtype \
+    GPU_MEMORY_UTILIZATION:gpu-memory-utilization KV_CACHE_DTYPE:kv-cache-dtype \
     MODALITIES:modalities \
     MAX_CONTEXT_TOKENS:max-context-tokens DRAIN_TIMEOUT_MS:drain-timeout-ms \
     SPECULATIVE_TOKENS:speculative-tokens SPECULATION:speculation DRAFT_COST:draft-cost; do

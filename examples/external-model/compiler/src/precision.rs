@@ -49,7 +49,7 @@ const PROFILES: &str = r#"{"schema":"chopinfer-serve-profiles-v2","model":"examp
  "devices":[0],"speculation":{"mode":"fixed","tokens":0,"draft_cost":"per-token","drafter":"none"},
  "max_sequences":4,"qualified_max_sequences":null,"qualification":"Synthetic precision exercise, not qualified",
  "kv_cache_dtype":"auto","prefix_cache":false,"max_batch_tokens":512,"prefill_chunk_tokens":512,"queue_depth":8,
- "kv_memory_fraction":0.9,"status":"experimental","evidence":["tests/precision_preparation.py"]}
+ "gpu_memory_utilization":1.0,"status":"experimental","evidence":["tests/precision_preparation.py"]}
 }}"#;
 
 #[derive(Clone, Serialize, Deserialize)]

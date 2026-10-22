@@ -5,8 +5,8 @@
 //! bundle's weights, workspaces and request state (docs/numerics.md#kv-offload-and-prefix-state):
 //! create allocates the recurrent state before the pool
 //! (docs/numerics.md#recurrent-state, `chop.recurrent-state.preallocated.v1`),
-//! and the host subtracts a 1 GiB reserve, takes 90 % and divides by the page
-//! bytes. A slot holds one state copy without speculation and `rows + 1` with
+//! and the host subtracts a 1 GiB reserve and divides the rest by the page
+//! bytes. The plan conservatively counts 90 % of that rest. A slot holds one state copy without speculation and `rows + 1` with
 //! it, `rows = draft_tokens + 1` (the committed copy and a checkpoint per
 //! verify row), so drafting costs a full state copy per verify row; the
 //! [`ANCHOR_ITEMS`] anchor spares hold one more copy each.
@@ -87,14 +87,15 @@ pub struct Device {
     pub bytes: u64,
     /// Free memory the host keeps before sizing the KV pool.
     pub reserve: u64,
-    /// Share of the rest the KV pool takes (`--kv-memory-fraction`).
+    /// Share of the rest the plan counts for the KV pool: a conservative
+    /// planning margin, below the host's default of all of it.
     pub fraction_millionths: u32,
 }
 
 /// A conservative 94 GiB usable per 96 GB device, the qwen38 package
 /// plan's default (the board reports 97,887 MiB; GLM's free memory after
 /// the driver and CUDA context is not measured yet), with the host's
-/// defaults.
+/// reserve and a 90 % planning share.
 pub const DEVICE: Device = Device {
     bytes: model_compiler_sdk::device::DEVICE_BYTES,
     reserve: model_compiler_sdk::device::HOST_RESERVE_BYTES,

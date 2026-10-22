@@ -111,9 +111,29 @@ def cases():
                     yield index, bundle, drafter, arguments
 
 
+# Shared variables renamed since the recording, with the flag each sets. A
+# recorded case runs under the new name, and its recorded refusal and serve
+# command are read with the new name and flag. The old name is refused as gone
+# (test_deploy_entrypoint).
+RENAMED = {'KV_MEMORY_FRACTION': ('GPU_MEMORY_UTILIZATION', '--kv-memory-fraction',
+                                  '--gpu-memory-utilization')}
+
+
+def renamed_pairs(pairs):
+    return [[RENAMED[name][0] if name in RENAMED else name, value] for name, value in pairs]
+
+
+def renamed(recorded):
+    text = json.dumps(recorded)
+    for old, (new, old_flag, new_flag) in RENAMED.items():
+        text = text.replace(old, new).replace(old_flag, new_flag)
+    return json.loads(text)
+
+
 @contextlib.contextmanager
 def environment(pairs):
-    with patch.dict(os.environ, {'CHOPINFER_' + name: value for name, value in pairs}, clear=True):
+    with patch.dict(os.environ, {'CHOPINFER_' + name: value for name, value in renamed_pairs(pairs)},
+                    clear=True):
         yield
 
 
@@ -150,7 +170,7 @@ class DeploymentPolicyEquality(unittest.TestCase):
         self.assertEqual(len(self.frozen['late']), len(list(cases())))
 
     def test_every_case_refuses_or_accepts_as_the_image_policies_did(self):
-        deployment, messages = self.deployment, self.frozen['messages']
+        deployment, messages = self.deployment, renamed(self.frozen['messages'])
         packages = {bundle: deployment.policy(policy_bytes(model), 'package')
                     for bundle, model in BUNDLES.items()}
         early = iter(self.frozen['early'])
@@ -194,8 +214,9 @@ class EntrypointCommandEquality(unittest.TestCase):
             harness = Harness(Path(directory), ROOT / 'deploy/docker/entrypoint.sh', policies=True)
             for case in recorded:
                 with self.subTest(case=case['name']):
-                    self.assertEqual(harness.run(case['bundle'], case['drafter'], case['env'], case['args']),
-                                     case['result'])
+                    self.assertEqual(
+                        harness.run(case['bundle'], case['drafter'], renamed_pairs(case['env']), case['args']),
+                        renamed(case['result']))
 
 
 ENTRYPOINT_CASES = [

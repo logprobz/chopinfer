@@ -108,6 +108,8 @@ removed_flag_message() {
             echo '--architecture is gone: it selected the installation, which serve --model does not use' ;;
         --topology)
             echo '--topology is gone: --ranks N selects the topology and its profile' ;;
+        --kv-memory-fraction)
+            echo '--kv-memory-fraction is gone: pass --gpu-memory-utilization F, the share of each GPU the server may take' ;;
     esac
 }
 
@@ -299,7 +301,7 @@ redeploy_serving_options() {
     [[ -z $max_batch_tokens ]] || serving_options+=(--max-batch-tokens "$max_batch_tokens")
     [[ -z $prefill_chunk_tokens ]] || serving_options+=(--prefill-chunk-tokens "$prefill_chunk_tokens")
     [[ -z $queue_depth ]] || serving_options+=(--queue-depth "$queue_depth")
-    [[ -z $kv_memory_fraction ]] || serving_options+=(--kv-memory-fraction "$kv_memory_fraction")
+    [[ -z $gpu_memory_utilization ]] || serving_options+=(--gpu-memory-utilization "$gpu_memory_utilization")
     [[ -z $kv_cache_dtype ]] || serving_options+=(--kv-cache-dtype "$kv_cache_dtype")
     [[ -z $prefix_cache ]] || serving_options+=(--prefix-cache "$prefix_cache")
     [[ -z $load_threads ]] || serving_options+=(--load-threads "$load_threads")
@@ -309,7 +311,7 @@ redeploy_serving_options() {
 # existing script variables so preparation and serving retain their defaults.
 parse_redeploy_options() {
     local extra_options=$1 option name variable message
-    local value_options='ranks checkpoint model-cache-dir work-dir drafter activation-policy load-threads devices logs-dir port listen-host max-sequences max-batch-tokens prefill-chunk-tokens queue-depth kv-memory-fraction startup-timeout release-timeout prefix-cache kv-cache-dtype'
+    local value_options='ranks checkpoint model-cache-dir work-dir drafter activation-policy load-threads devices logs-dir port listen-host max-sequences max-batch-tokens prefill-chunk-tokens queue-depth gpu-memory-utilization startup-timeout release-timeout prefix-cache kv-cache-dtype'
     shift
     while (($#)); do
         message=$(removed_flag_message "$1")

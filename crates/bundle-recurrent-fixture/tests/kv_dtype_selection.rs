@@ -80,7 +80,7 @@ fn run_child(package: &Path, checkpoint: &Path) {
                 sampling_vocabulary: None,
                 maximum_context_tokens: None,
                 state_reserved_bytes: 0,
-                fraction_millionths: 1_000_000,
+                utilization_millionths: 1_000_000,
                 maximum_pages: None,
             });
             let (backend, mut instance) = loaded

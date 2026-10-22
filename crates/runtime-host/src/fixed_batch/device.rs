@@ -489,7 +489,7 @@ fn replay_installed_trace_gpu() -> Result<()> {
             sampling_vocabulary: Some(vocabulary),
             maximum_context_tokens: None,
             state_reserved_bytes: slots.as_ref().map_or(0, |p| p.reserved_bytes_per_rank()),
-            fraction_millionths: 650_000,
+            utilization_millionths: 1_000_000,
             maximum_pages: Some(pages as u64),
         }),
         speculation,

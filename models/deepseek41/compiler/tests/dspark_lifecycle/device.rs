@@ -133,7 +133,7 @@ impl Fixture {
                 sampling_vocabulary: Some(vocabulary as usize),
                 maximum_context_tokens: Some(QUOTA),
                 state_reserved_bytes: 0,
-                fraction_millionths: 650_000,
+                utilization_millionths: 1_000_000,
                 maximum_pages: Some(DEVICE_PAGES),
             }),
             speculation,

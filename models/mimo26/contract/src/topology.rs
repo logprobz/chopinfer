@@ -86,8 +86,9 @@ const AVERAGE_CONTEXT_TOKENS: u64 = 8192;
 /// What the host keeps before it sizes the KV pool: its reserve and the
 /// 512 MiB sampling workspace.
 const HOST_RESERVED_BYTES: u64 = model_compiler_sdk::device::HOST_RESERVE_BYTES + (1 << 29);
-/// The share of the rest the host's default `--kv-memory-fraction` gives
-/// the KV pool, in tenths.
+/// The share of the rest the package's memory estimate counts for the KV
+/// pool, in tenths: a conservative planning margin, below the host's default
+/// of all of it.
 const KV_TENTHS: u64 = 9;
 
 /// The device memory one rank may take: a device's [`DEVICE_BYTES`].

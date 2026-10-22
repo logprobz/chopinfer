@@ -48,9 +48,11 @@ GONE = {
     'BUNDLE_FORCE_FULL_VERIFY': 'set CHOPINFER_VERIFY_MODEL=1 to check the checkpoint files',
     'MODULE': 'the model helper packages the module installed beside it',
     'VIDEO_INPUT': 'set CHOPINFER_MODALITIES=all, or a list naming video, to serve video',
+    'KV_MEMORY_FRACTION': 'set CHOPINFER_GPU_MEMORY_UTILIZATION, the share of each GPU\'s total '
+                          'memory the server\'s own allocations may take (1.0, the default, takes all of it)',
 }
 KNOWN = {'MODEL_OPTIONS'} | PATHS | BOOLEANS | PRESENCE | NUMBERS.keys() | CHOICES.keys() | {
-    'API_KEY', 'LISTEN', 'KV_MEMORY_FRACTION', 'SERVE_ARGS', 'EXPECTED_BUNDLE_ID', 'MODALITIES'}
+    'API_KEY', 'LISTEN', 'GPU_MEMORY_UTILIZATION', 'SERVE_ARGS', 'EXPECTED_BUNDLE_ID', 'MODALITIES'}
 # Every shared name. A model policy may neither declare one nor own a
 # prefix one starts with, so no policy changes a shared constraint; the
 # compiler's reader (deployment_policy.rs SHARED_VARIABLES) holds the same
@@ -336,7 +338,7 @@ def validate(bundle=None, drafter=None, arguments=(), policies=(), package=None)
                        + ' that includes text, each once')
         if name == 'LISTEN':
             health_url(value)
-        if name == 'KV_MEMORY_FRACTION':
+        if name == 'GPU_MEMORY_UTILIZATION':
             try:
                 valid = math.isfinite(float(value)) and 0 < float(value) <= 1
             except ValueError:

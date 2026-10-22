@@ -8,6 +8,9 @@ use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::{finish_split, round_cols};
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "sinkhorn_hc_cols";
+/// Measured decode buckets of the pair (rows, rows per producer CTA,
+/// butterfly, finish warps); none is served yet.
+pub const BUCKETS: &[finish_split::Bucket] = &[];
 pub const PRODUCER_CUBIN: &str = "sinkhorn_hc_deepseek41_round_cols_sm120";
 pub const FINISH_CUBIN: &str = "sinkhorn_hc_deepseek41_finish_split_sm120";
 

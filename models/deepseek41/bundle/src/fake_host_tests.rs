@@ -59,6 +59,7 @@ mod selected_cache;
 mod shared_overlap;
 mod short_prefill;
 mod verify_hc;
+mod wide_hc;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
 

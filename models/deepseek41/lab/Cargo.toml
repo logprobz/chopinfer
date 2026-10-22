@@ -239,3 +239,7 @@ path = "examples/sm120/build_fold_local_rows.rs"
 [[example]]
 name = "build_fold_deep"
 path = "examples/sm120/build_fold_deep.rs"
+
+[[example]]
+name = "build_fold_plain"
+path = "examples/sm120/build_fold_plain.rs"

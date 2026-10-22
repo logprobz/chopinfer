@@ -24,6 +24,9 @@ mod deep_family;
 mod family;
 #[path = "../../../sm120/fold_local_rows.rs"]
 mod local_family;
+mod plain;
+#[path = "../../../sm120/fold_plain.rs"]
+mod plain_family;
 mod profile;
 mod timing;
 use arena::Arena;

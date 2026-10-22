@@ -250,6 +250,7 @@ pub struct Sm120 {
     finish_norm_rows: Vec<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     finish_norm_completions: Vec<(crate::sinkhorn_hc::completion::Entry, Vec<(u32, u32)>)>,
     finish_norm_twins: Vec<(crate::sinkhorn_hc::finish_twin::Entry, Vec<(u32, u32)>)>,
+    finish_norm_cols: Vec<sinkhorn_finish_norm::Cols>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -453,6 +454,24 @@ impl Sm120 {
         buckets: Vec<(u32, u32)>,
     ) -> Self {
         self.finish_norm_twins.push((entry, buckets));
+        self
+    }
+
+    /// Replace the producer and the fused tail at measured buckets with the
+    /// column-block producer and the split finish (a matched pair: the
+    /// producer leaves the RMS lanes to that finish). Each bucket names its
+    /// rows, rows per producer CTA, butterfly and finish warp count.
+    pub fn with_sinkhorn_finish_norm_cols(
+        mut self,
+        producer: crate::sinkhorn_hc::round_cols::Entry,
+        finish: crate::sinkhorn_hc::finish_split::Entry,
+        buckets: Vec<crate::sinkhorn_hc::finish_split::Bucket>,
+    ) -> Self {
+        self.finish_norm_cols.push(sinkhorn_finish_norm::Cols {
+            producer,
+            finish,
+            buckets,
+        });
         self
     }
 

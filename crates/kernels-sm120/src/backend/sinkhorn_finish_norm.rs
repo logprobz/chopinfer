@@ -173,6 +173,59 @@ pub(super) fn prepare(
         }
         twin = Some((candidate.clone(), tiles.clone()));
     }
+    let mut cols = None;
+    for registered in backend
+        .finish_norm_cols
+        .iter()
+        .filter(|c| c.producer.reference.reference.query == query.mixer)
+    {
+        let Cols {
+            producer,
+            finish,
+            buckets: pairs,
+        } = registered;
+        producer.validate()?;
+        finish.validate()?;
+        if pairs.is_empty()
+            || pairs.windows(2).any(|p| p[0].rows >= p[1].rows)
+            || producer.reference.reference.symbol != entry.mixer.symbol
+            || producer.reference.reference.capacity != entry.mixer.capacity
+            || producer.reference.reference.probe
+            || finish.reference.symbols() != entry.symbols()
+            || finish.reference.mixer.symbol != entry.mixer.symbol
+            || finish.reference.mixer.capacity != entry.mixer.capacity
+            || producer.mutation != crate::sinkhorn_hc::round_cols::Mutation::None
+            || finish.mutation != crate::sinkhorn_hc::finish_split::Mutation::None
+        {
+            return Err(Refusal("invalid HC column-block pair buckets").into());
+        }
+        if cols.is_some() {
+            return Err(Refusal("ambiguous HC column-block pairs").into());
+        }
+        let replaced: Vec<u32> = completion
+            .iter()
+            .flat_map(|(_, t)| t.iter().map(|&(r, _)| r))
+            .chain(twin.iter().flat_map(|(_, t)| t.iter().map(|&(r, _)| r)))
+            .collect();
+        for b in pairs {
+            if !buckets.contains(&b.rows) || replaced.contains(&b.rows) {
+                return Err(
+                    Refusal("HC column-block bucket lacks the served two-launch pair").into(),
+                );
+            }
+            producer.plan(b.rows, b.rows, b.tile, b.transposed)?;
+            finish.plan(b.rows, b.rows, b.warps)?;
+            for symbol in [
+                producer.symbol(b.tile, b.transposed),
+                finish.symbol(b.warps),
+            ] {
+                if !symbols.contains(&(symbol.clone(), 0)) {
+                    symbols.push((symbol, 0));
+                }
+            }
+        }
+        cols = Some(registered.clone());
+    }
     let mut info = OpInfo::new(
         "sm120.sinkhorn.round-expand-mix.norm-tree256.ceil32.v1",
         guarantees,
@@ -204,8 +257,17 @@ pub(super) fn prepare(
         row_tiles,
         completion,
         twin,
+        cols,
         info,
     }))
+}
+
+/// A registered column-block producer and split finish with their buckets.
+#[derive(Clone, Debug)]
+pub(crate) struct Cols {
+    pub producer: crate::sinkhorn_hc::round_cols::Entry,
+    pub finish: crate::sinkhorn_hc::finish_split::Entry,
+    pub buckets: Vec<crate::sinkhorn_hc::finish_split::Bucket>,
 }
 struct Op {
     hc: Prepared<SinkhornRoundExpandMixBuffers<View>>,
@@ -215,6 +277,7 @@ struct Op {
     row_tiles: Option<(crate::sinkhorn_hc::round_rows::Entry, Vec<(u32, u32)>)>,
     completion: Option<(crate::sinkhorn_hc::completion::Entry, Vec<(u32, u32)>)>,
     twin: Option<(crate::sinkhorn_hc::finish_twin::Entry, Vec<(u32, u32)>)>,
+    cols: Option<Cols>,
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
@@ -319,6 +382,24 @@ impl PreparedOp<Buffers<View>> for Op {
         }) {
             let tail = hc.pop().unwrap();
             hc.push(entry.compose(&tail, warps)?);
+        }
+        // The column-block pair replaces both validated launches over their
+        // own arguments; it serves only as a pair.
+        if let Some((c, b)) = self.cols.as_ref().and_then(|c| {
+            c.buckets
+                .iter()
+                .find(|b| b.rows == counts.rows)
+                .map(|b| (c, *b))
+        }) {
+            if hc.len() != 2 {
+                return Err(Refusal(
+                    "HC column-block pair needs the two-launch boundary",
+                ));
+            }
+            let tail = hc.pop().unwrap();
+            let producer = hc.pop().unwrap();
+            hc.push(c.producer.compose(&producer, b.tile, b.transposed)?);
+            hc.push(c.finish.compose(&tail, b.warps)?);
         }
         Ok(hc)
     }

@@ -8,6 +8,9 @@ mod hc_expand_mix;
 #[path = "../../../bundle/src/sm120/hc_finish_norm.rs"]
 #[allow(dead_code)]
 mod hc_finish_norm;
+#[path = "../../../bundle/src/sm120/hc_finish_twin.rs"]
+#[allow(dead_code)]
+mod hc_finish_twin;
 #[path = "../../../bundle/src/sm120/hc_round_chain.rs"]
 #[allow(dead_code)]
 mod hc_round_chain;

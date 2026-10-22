@@ -148,7 +148,7 @@ fn modules_retain_the_gpu_qualified_bytes() {
     for (name, expected) in [
         (
             "mxfp8_fold_reuse_deepseek41_sm120",
-            "d662749709d266d62049d699c40687c1166b0adf6de44435a3b693c391a5dd54",
+            "640d2fa0b820958c2ecd2ec674481785b01eea2a03d73271c783f66300641b85",
         ),
         (
             "f32_decode_reuse_deepseek41_sm120",

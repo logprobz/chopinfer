@@ -74,7 +74,7 @@ __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations
       const bool valid = fold < end && col < K && row < (a ? live : N) && (!a || !row_failed[r]);
       const uint64_t at = a ? uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col
                             : (uint64_t(g) * N + row) * K + col;
-      copy16(codes[stage] + chunk * 16, (a ? activations : weights) + (valid ? at : 0), valid);
+      copy16(codes[stage] + fold_row_chunk(r, chunk % 8), (a ? activations : weights) + (valid ? at : 0), valid);
     }
     for (uint32_t r = threadIdx.x; r < 32 + TileN; r += Threads) {
       const bool a = r < 32;
@@ -119,11 +119,11 @@ __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations
 #pragma unroll
         for (int i = 0; i < 4; ++i)
           af.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
-              (group * 16 + quad + (i % 2) * 8) * 128 + step * 32 + (i / 2) * 16 + lane4 * 4);
+              fold_row_chunk(group * 16 + quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
 #pragma unroll
         for (int i = 0; i < 2; ++i)
           bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
-              (32 + warp * 8 + quad) * 128 + step * 32 + i * 16 + lane4 * 4);
+              fold_row_chunk(32 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
         const uint32_t sa = scales[slot][(group * 16 + quad + (lane4 & 1) * 8) * 4 + step];
         const uint32_t sb = scales[slot][(32 + warp * 8 + quad) * 4 + step];
         ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(raw[pair][group], af, bf, sa, sb);

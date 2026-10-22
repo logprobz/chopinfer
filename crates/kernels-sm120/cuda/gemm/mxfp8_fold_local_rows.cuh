@@ -1,4 +1,5 @@
 #pragma once
+#include "fold_rows.cuh"
 #include "mxfp8_fold_resident.cuh"
 
 namespace chop::gemm::mxfp8_fold_local_rows {
@@ -38,7 +39,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const uint32_t row = column_base + chunk / 8;
       const bool valid = fold < Folds && row < N;
       const uint64_t at = (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + 32 * 128 + chunk * 16,
+      mxfp8_fold_ticket::copy16(codes[slot] + fold_row_chunk(32 + chunk / 8, chunk % 8),
                               weights + (valid ? at : 0), valid);
     }
     if (threadIdx.x < TileN) {
@@ -69,7 +70,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const bool valid = fold < Folds && row < live && !failed[row];
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride
           + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + chunk * 16,
+      mxfp8_fold_ticket::copy16(codes[slot] + fold_row_chunk(chunk / 8, chunk % 8),
                               activations + (valid ? at : 0), valid);
     }
     for (uint32_t row = threadIdx.x; row < 32; row += Threads) {
@@ -102,7 +103,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
 #pragma unroll
         for (int v = 0; v < 2; ++v)
           bf.v[v] = *reinterpret_cast<const uint32_t*>(codes[slot]
-              + (32 + warp * 8 + quad) * 128 + step * 32 + v * 16 + lane4 * 4);
+              + fold_row_chunk(32 + warp * 8 + quad, step * 2 + v) + lane4 * 4);
         const uint32_t sb = scales[slot][(32 + warp * 8 + quad) * 4 + step];
 #pragma unroll
         for (int group = 0; group < 2; ++group) {
@@ -111,8 +112,8 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
 #pragma unroll
           for (int v = 0; v < 4; ++v)
             af.v[v] = *reinterpret_cast<const uint32_t*>(codes[slot]
-                + (group * 16 + quad + (v % 2) * 8) * 128
-                + step * 32 + (v / 2) * 16 + lane4 * 4);
+                + fold_row_chunk(group * 16 + quad + (v % 2) * 8, step * 2 + v / 2)
+                + lane4 * 4);
           const uint32_t sa = scales[slot][(group * 16 + quad + (lane4 & 1) * 8) * 4 + step];
           ptx::mma_mxf8f6f4<ptx::Element::e4m3,ptx::Element::e4m3>(raw[pair][group],af,bf,sa,sb);
         }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fold_rows.cuh"
 #include "mxfp8_fold.cuh"
 
 namespace chop::gemm::mxfp8_fold_decode {
@@ -73,7 +74,7 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
       const uint64_t at = a ? uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col
                             : (uint64_t(g) * N + row) * K + col;
       const uint8_t* src = a ? activations : weights;
-      copy16(codes[stage] + chunk * 16, src + (valid ? at : 0), valid);
+      copy16(codes[stage] + fold_row_chunk(r, chunk % 8), src + (valid ? at : 0), valid);
     }
     for (int i = threadIdx.x; i < 32 * 4; i += 64) {
       const uint32_t r = i / 4;
@@ -104,11 +105,11 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
 #pragma unroll
       for (int i = 0; i < 4; ++i)
         af.v[i] = *reinterpret_cast<const uint32_t*>(codes[stage] +
-            (quad + (i % 2) * 8) * 128 + step * 32 + (i / 2) * 16 + lane4 * 4);
+            fold_row_chunk(quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
 #pragma unroll
       for (int i = 0; i < 2; ++i)
         bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[stage] +
-            (16 + warp * 8 + quad) * 128 + step * 32 + i * 16 + lane4 * 4);
+            fold_row_chunk(16 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
       const uint32_t sa = scales[stage][(quad + (lane4 & 1) * 8) * 4 + step];
       const uint32_t sb = scales[stage][(16 + warp * 8 + quad) * 4 + step];
       ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(partial, af, bf, sa, sb);

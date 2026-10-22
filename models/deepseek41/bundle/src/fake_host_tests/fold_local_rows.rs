@@ -140,7 +140,7 @@ fn local_rows_retain_the_measured_cubin_only_at_flash_tp4() {
         .unwrap();
     assert_eq!(
         kernel_build::digest(cubin.bytes),
-        "094e8025820bc9baa26a2c19cdfa3e4b687d913baf16186b243a47fe2f2086d5"
+        "ec7cd1ebd9ab40f9f5532d82468cea3b879a89ccac49d8f180f5b66ec9de7756"
     );
     for shape in crate::shape::topologies() {
         assert_eq!(

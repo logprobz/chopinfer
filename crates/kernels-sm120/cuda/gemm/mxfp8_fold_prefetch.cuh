@@ -75,7 +75,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const uint32_t col = fold * 128 + (chunk % 8) * 16;
       const bool valid = fold < end && row < N && col < K;
       const uint64_t at = (uint64_t(g) * N + row) * K + col;
-      copy16(codes[stage] + 16 * 128 + chunk * 16, weights + (valid ? at : 0), valid);
+      copy16(codes[stage] + fold_row_chunk(16 + chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
     }
     if (threadIdx.x < TileN) {
       const uint32_t row = column_base + threadIdx.x;
@@ -124,7 +124,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const uint32_t col = fold * 128 + (chunk % 8) * 16;
       const bool valid = fold < end && row < live && col < K && !row_failed[r];
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col;
-      copy16(codes[stage] + chunk * 16, activations + (valid ? at : 0), valid);
+      copy16(codes[stage] + fold_row_chunk(r, chunk % 8), activations + (valid ? at : 0), valid);
     }
     if (threadIdx.x < 16) {
       const uint32_t row = token_base + threadIdx.x;
@@ -168,11 +168,11 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
 #pragma unroll
         for (int i = 0; i < 4; ++i)
           af.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
-              (quad + (i % 2) * 8) * 128 + step * 32 + (i / 2) * 16 + lane4 * 4);
+              fold_row_chunk(quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
 #pragma unroll
         for (int i = 0; i < 2; ++i)
           bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
-              (16 + warp * 8 + quad) * 128 + step * 32 + i * 16 + lane4 * 4);
+              fold_row_chunk(16 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
         const uint32_t sa = scales[slot][(quad + (lane4 & 1) * 8) * 4 + step];
         const uint32_t sb = scales[slot][(16 + warp * 8 + quad) * 4 + step];
         ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(raw[pair], af, bf, sa, sb);

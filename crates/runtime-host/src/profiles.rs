@@ -623,7 +623,10 @@ impl PackageFacts {
     }
 }
 
-/// Options `serve --model` hands its family helper instead of serving with.
+/// Options `serve --model` hands its family helper instead of serving with,
+/// or applies itself before the package serves: load threads and the weight
+/// keeper are selected for the process, and the package's own parse has no
+/// checkpoint flag for a keeper to lend to.
 const MODEL_OPTIONS: &[&str] = &[
     "--model",
     "--model-cache-dir",
@@ -631,6 +634,8 @@ const MODEL_OPTIONS: &[&str] = &[
     "--activation-policy",
     "--modalities",
     "--load-threads",
+    "--weight-keeper",
+    "--weight-keeper-policy",
 ];
 
 /// The serve options of a `serve --model` invocation other than the model

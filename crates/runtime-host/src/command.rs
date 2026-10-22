@@ -6020,6 +6020,52 @@ mod tests {
     }
 
     #[test]
+    fn a_model_serve_selects_its_keeper_and_hands_the_package_no_keeper_flag() {
+        let words = arguments(&[
+            "serve",
+            "--model",
+            "checkpoint",
+            "--weight-keeper",
+            "keeper",
+            "--weight-keeper-policy",
+            "require",
+            "--max-sequences",
+            "3",
+        ]);
+        let HostCommandV1::Serve {
+            selection: super::ServeSelection::Model(model),
+            weight_keeper,
+            ..
+        } = parse_host_command_v1(&words).unwrap()
+        else {
+            panic!("expected a model");
+        };
+        assert_eq!(
+            weight_keeper,
+            Some((
+                PathBuf::from("keeper"),
+                crate::weight_keeper::KeeperPolicyV1::Require
+            ))
+        );
+        // The keeper is selected before the package serves; the package's
+        // own parse, which names no checkpoint, gets no keeper flag.
+        assert_eq!(model.serve_arguments, ["--max-sequences", "3"]);
+        let mut package = arguments(&["serve", "--bundle", "package"]);
+        package.extend(model.serve_arguments);
+        parse_host_command_v1(&package).unwrap();
+        assert!(
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "package",
+                "--weight-keeper",
+                "keeper",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn the_modalities_flag_names_the_package_a_model_serves() {
         use runtime_bundle::preparation::Modality::*;
         use runtime_bundle::preparation::ModalitySelection::{All, Auto, Only};

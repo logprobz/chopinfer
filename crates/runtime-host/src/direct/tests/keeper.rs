@@ -71,25 +71,45 @@ fn fixture() -> (Temp, Vec<WeightPlanV1>, Vec<Vec<u8>>) {
     (root, plans, expected)
 }
 
-/// Loads the fixture's images as a keeper would, lets `edit` change what
-/// the keeper claims to hold, and serves them from `directory` on a thread
-/// that frees the keeper at once when it exits.
+/// A keeper serving on a thread, and the count of the memory it holds.
+struct KeepingV1 {
+    thread: std::thread::JoinHandle<Result<KeeperExitV1, String>>,
+    held: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl KeepingV1 {
+    /// Waits for the keeper to exit, which frees what it held.
+    fn join(self) -> Result<KeeperExitV1, String> {
+        let exit = self.thread.join().unwrap();
+        assert_eq!(self.held.load(std::sync::atomic::Ordering::SeqCst), 0);
+        exit
+    }
+}
+
+/// Loads the fixture's images as a keeper would, holding their memory and
+/// dropping its backend, lets `edit` change what the keeper claims to hold,
+/// and serves them from `directory` on a thread.
 fn keep(
     root: &Path,
     plans: &[WeightPlanV1],
     directory: &Path,
     edit: impl FnOnce(&mut [weight_keeper::KeptImageV1]),
-) -> std::thread::JoinHandle<Result<KeeperExitV1, String>> {
+) -> KeepingV1 {
     let opened = Arc::new(DirectCheckpointV1::open(root).unwrap());
     let keeper = host(
         Arc::new(sharing_image(&opened, plans, 2, 128 << 10)),
         ArenaSourceV1::Lend,
     );
     let mut images = weight_keeper::load::load_v1(&keeper, &[0, 1, 2, 3]).unwrap();
+    // Every arena is held, not live, so the backend can go.
     assert_eq!(
         keeper.with_device(FakeHostDeviceV1::lent_allocation_counts),
-        (4, 0)
+        (0, 0)
     );
+    let held = keeper.with_device(FakeHostDeviceV1::held_allocations);
+    assert_eq!(held.load(std::sync::atomic::Ordering::SeqCst), 4);
+    drop(keeper);
+    assert!(images.iter().all(|kept| kept.held.is_some()));
     edit(&mut images);
     let stamps = Arc::clone(&opened);
     let lending = KeeperV1 {
@@ -103,13 +123,13 @@ fn keep(
         read_only: true,
         about: serde_json::Map::new(),
     };
-    let handle = std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let exited = weight_keeper::serve_v1(lending)?;
         Ok(exited.exit)
     });
     for _ in 0..500 {
         if weight_keeper::status_v1(directory).is_ok() {
-            return handle;
+            return KeepingV1 { thread, held };
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -126,9 +146,9 @@ fn wait_for_leases(directory: &Path, count: u64) {
     panic!("the keeper never held {count} leases");
 }
 
-fn stop(directory: &Path, keeper: std::thread::JoinHandle<Result<KeeperExitV1, String>>) {
+fn stop(directory: &Path, keeper: KeepingV1) {
     weight_keeper::stop_v1(directory).unwrap();
-    assert_eq!(keeper.join().unwrap(), Ok(KeeperExitV1::Stopped));
+    assert_eq!(keeper.join(), Ok(KeeperExitV1::Stopped));
 }
 
 #[test]
@@ -173,6 +193,8 @@ fn a_borrowing_host_maps_every_lent_arena_and_reads_no_checkpoint_byte() {
         borrower.with_device(FakeHostDeviceV1::lent_allocation_counts),
         (0, 0)
     );
+    drop(borrower);
+    wait_for_leases(&directory.0, 0);
     stop(&directory.0, keeper);
 }
 
@@ -217,6 +239,7 @@ fn a_borrower_loads_what_is_not_lent_unless_it_requires_every_image() {
     // refused start's lease ended with its connection.
     wait_for_leases(&directory.0, 1);
     drop(preferred);
+    wait_for_leases(&directory.0, 0);
     stop(&directory.0, keeper);
 }
 
@@ -239,7 +262,7 @@ fn a_keeper_that_lends_nothing_is_released_before_the_borrower_loads() {
         },
     );
     let arenas = upload(&borrower).unwrap();
-    assert_eq!(keeper.join().unwrap(), Ok(KeeperExitV1::Released));
+    assert_eq!(keeper.join(), Ok(KeeperExitV1::Released));
     for (rank, arena) in arenas.iter().enumerate() {
         let (bytes, lent, _) = borrower.rank_arena_v1(*arena);
         assert!(!lent);

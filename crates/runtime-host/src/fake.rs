@@ -210,6 +210,18 @@ pub struct FakeHostDeviceV1 {
     /// Each live imported allocation's reader devices and whether it is
     /// read-only.
     imported: BTreeMap<u64, (Vec<i32>, bool)>,
+    /// How many held lendable allocations ([`HostDeviceBackendV1::hold_device_buffer`])
+    /// are not yet dropped, wherever they went; made by the first hold.
+    held: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+/// A fake held allocation: it only counts itself.
+struct FakeHeldV1(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for FakeHeldV1 {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// One host transfer this backend accepted without performing.
@@ -275,6 +287,7 @@ impl FakeHostDeviceV1 {
             context_devices: BTreeMap::new(),
             lendable: BTreeMap::new(),
             imported: BTreeMap::new(),
+            held: None,
         }
     }
 
@@ -289,6 +302,13 @@ impl FakeHostDeviceV1 {
     #[must_use]
     pub fn lent_allocation_counts(&self) -> (usize, usize) {
         (self.lendable.len(), self.imported.len())
+    }
+
+    /// The count of held allocations not yet dropped, which outlives this
+    /// backend as the allocations do; zero and unshared before any hold.
+    #[must_use]
+    pub fn held_allocations(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        self.held.clone().unwrap_or_default()
     }
 
     /// Every live context this backend issued, in the order it issued them.
@@ -1199,6 +1219,28 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         let fd = crate::weight_keeper::fds::anonymous_file(bytes, mapped)
             .map_err(|_| BundleStatusV1::HostError)?;
         Ok((fd, mapped))
+    }
+
+    fn hold_device_buffer(
+        &mut self,
+        buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<crate::device::HeldDeviceMemoryV1> {
+        self.check(FakeRefusalV1::ReleaseDeviceBuffer)?;
+        if !self.lendable.contains_key(&buffer.get()) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let byte_length = self
+            .objects
+            .get(&buffer.get())
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .logical_byte_length;
+        let plan = self.ledger.plan_release(buffer.get(), byte_length)?;
+        self.destroy(buffer, FakeObjectKindV1::Buffer)?;
+        self.ledger.commit_release(buffer.get(), plan);
+        self.lendable.remove(&buffer.get());
+        let held = self.held.get_or_insert_with(std::sync::Arc::default);
+        held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(FakeHeldV1(std::sync::Arc::clone(held))))
     }
 
     #[allow(clippy::too_many_arguments)]

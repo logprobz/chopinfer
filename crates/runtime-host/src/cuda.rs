@@ -1247,6 +1247,28 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         Ok((fd, mapped as u64))
     }
 
+    fn hold_device_buffer(
+        &mut self,
+        buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<crate::device::HeldDeviceMemoryV1> {
+        // As a release: nothing this backend runs may still read the buffer.
+        self.drain_peer_copies()?;
+        for sampler in self.samplers.values_mut() {
+            sampler.retire_completed_device_submissions()?;
+        }
+        self.upload_rings
+            .values_mut()
+            .chain(self.fill_rings.values_mut())
+            .for_each(PinnedUploadRing::synchronize);
+        let byte_length = self.buffer(buffer)?.byte_len() as u64;
+        let plan = self.ledger.plan_release(buffer.get(), byte_length)?;
+        let held = self.buffer(buffer)?.hold_lent().map_err(driver_status)?;
+        self.objects.remove(&buffer.get());
+        // The memory stays on the device, but no longer as this backend's.
+        self.ledger.commit_release(buffer.get(), plan);
+        Ok(Box::new(held))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn import_device_buffer(
         &mut self,
@@ -2485,11 +2507,35 @@ mod lendable_tests {
             .allocate_device_buffer(pool, Some(streams[1]), 64, 1)
             .unwrap();
         assert!(device.export_device_buffer(pooled).is_err());
+        assert!(device.hold_device_buffer(pooled).is_err());
         device.release_device_buffer(pooled).unwrap();
 
         device.release_device_buffer(imported).unwrap();
         assert_eq!(device.current_device_memory_bytes(), 3000);
-        device.release_device_buffer(lent).unwrap();
+        // Held, the lent memory leaves this backend and its ledger but stays
+        // for its export.
+        let (fd, _) = device.export_device_buffer(lent).unwrap();
+        let held = device.hold_device_buffer(lent).unwrap();
+        assert_eq!(device.current_device_memory_bytes(), 0);
+        assert!(device.export_device_buffer(lent).is_err());
+        assert!(device.release_device_buffer(lent).is_err());
+        let again = device
+            .import_device_buffer(
+                contexts[1],
+                streams[1],
+                fd.as_fd(),
+                mapped,
+                3000,
+                &[1],
+                true,
+            )
+            .unwrap();
+        device
+            .copy_device_to_host(streams[1], &mut read, range(again))
+            .unwrap();
+        assert_eq!(read, bytes);
+        drop(held);
+        device.release_device_buffer(again).unwrap();
         assert_eq!(device.current_device_memory_bytes(), 0);
     }
 }

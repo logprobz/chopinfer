@@ -3564,8 +3564,11 @@ fn keep_on_device_v1<D: crate::HostDeviceBackendV1>(
     let backend = crate::HostServicesV1Backend::new(device, config);
     let images = crate::weight_keeper::load::load_v1(&backend, &topology.device_ordinals)
         .map_err(run_error)?;
+    // The images hold their memory without a context, so every context goes
+    // with the backend and the keeper is no compute process while it lends.
+    drop(backend);
     eprintln!(
-        "weight keeper: loaded {} rank images, {} bytes, in {:.3}s",
+        "weight keeper: loaded {} rank images, {} bytes, in {:.3}s; device contexts released",
         images.len(),
         images
             .iter()
@@ -3586,8 +3589,7 @@ fn keep_on_device_v1<D: crate::HostDeviceBackendV1>(
         about,
     })
     .map_err(run_error)?;
-    // The memory goes before the connection that waits for it.
-    drop(backend);
+    // `serve_v1` dropped the images, and their memory, first.
     drop(exited.waiting);
     Ok(match exited.exit {
         crate::weight_keeper::KeeperExitV1::Released => "weight keeper released".to_owned(),

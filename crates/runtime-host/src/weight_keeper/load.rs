@@ -22,7 +22,9 @@ fn failed(what: &'static str) -> impl Fn(BundleStatusV1) -> String {
 
 /// Loads every planned rank image for the ranks on `device_ordinals`, one
 /// upload per image across all ranks, and returns each rank's arena with
-/// the descriptor that lends it. `backend` must take its arenas from
+/// the descriptor that lends it, holding its memory. Every arena and image
+/// is released, so dropping `backend` afterwards releases every context
+/// while the memory stays. `backend` must take its arenas from
 /// [`super::ArenaSourceV1::Lend`].
 pub(crate) fn load_v1<D: HostDeviceBackendV1>(
     backend: &HostServicesV1Backend<D>,
@@ -46,6 +48,7 @@ pub(crate) fn load_v1<D: HostDeviceBackendV1>(
     if roles.is_empty() {
         return Err("the package plans no rank image from the checkpoint".to_owned());
     }
+    let mut opened = Vec::with_capacity(roles.len());
     for role in roles {
         let image = backend
             .open_compiled_image(&role)
@@ -60,9 +63,21 @@ pub(crate) fn load_v1<D: HostDeviceBackendV1>(
                 rank,
             })
             .collect();
-        backend
+        let arenas = backend
             .upload_rank_arenas(&uploads)
             .map_err(failed("upload"))?;
+        opened.push((image, arenas));
     }
-    backend.export_rank_arenas_v1().map_err(failed("export"))
+    // Newest first, as the host releases everything.
+    let mut kept = Vec::new();
+    for (image, arenas) in opened.into_iter().rev() {
+        for arena in arenas.into_iter().rev() {
+            kept.push(backend.hold_rank_arena_v1(arena).map_err(failed("hold"))?);
+        }
+        backend
+            .release_compiled_image(image)
+            .map_err(failed("image release"))?;
+    }
+    kept.reverse();
+    Ok(kept)
 }

@@ -459,13 +459,26 @@ pub(crate) fn status_v1(directory: &Path) -> Result<serde_json::Value, String> {
         .ok_or_else(|| "the keeper sent no registry".to_owned())
 }
 
-/// One rank image a keeper holds: what it was planned as, and a descriptor
-/// of the device memory that holds it.
-#[derive(Debug)]
+/// One rank image a keeper holds: what it was planned as, a descriptor of
+/// the device memory that holds it, and that memory, held without a mapping
+/// or a context so the keeper is no compute process while it lends.
 pub(crate) struct KeptImageV1 {
     pub(crate) image: RankImageV1,
     pub(crate) fd: OwnedFd,
     pub(crate) mapped_bytes: u64,
+    pub(crate) held: Option<crate::device::HeldDeviceMemoryV1>,
+}
+
+impl std::fmt::Debug for KeptImageV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("KeptImageV1")
+            .field("image", &self.image)
+            .field("fd", &self.fd)
+            .field("mapped_bytes", &self.mapped_bytes)
+            .field("held", &self.held.is_some())
+            .finish()
+    }
 }
 
 /// Fresh stamps of the keeper's checkpoint files, or why they are not the
@@ -836,6 +849,15 @@ pub(crate) fn serve_v1(keeper: KeeperV1) -> Result<KeeperExitedV1, String> {
     };
     let _ = std::fs::remove_file(&socket);
     let _ = std::fs::remove_file(directory.join(REGISTRY_NAME_V1));
+    // The images, and the memory they hold, go before the caller answers
+    // whoever waits for that: connection threads still finishing hold them,
+    // so wait for those, but not for open leases, whose borrowers map the
+    // memory until they return it anyway.
+    let deadline = Instant::now() + ANSWER_TIMEOUT + ACCEPT_POLL;
+    while Arc::strong_count(&shared) > 1 + shared.state().leases && Instant::now() < deadline {
+        std::thread::sleep(ACCEPT_POLL);
+    }
+    drop(shared);
     Ok(KeeperExitedV1 { exit, waiting })
 }
 

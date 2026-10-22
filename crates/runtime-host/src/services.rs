@@ -2169,54 +2169,63 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             .collect()
     }
 
-    /// Every live rank arena of a planned image, as the plan names it, with
-    /// a descriptor through which another process maps its device memory.
-    /// Only a keeper's arenas ([`crate::weight_keeper::ArenaSourceV1::Lend`])
-    /// can be exported.
-    pub(crate) fn export_rank_arenas_v1(
+    /// Releases one rank arena of a planned image but keeps its device
+    /// memory, unmapped, for a descriptor another process maps it through,
+    /// and returns both with the image the plan names. Like any release it
+    /// must be the newest live resource. Held memory needs no context, so
+    /// once every arena is held and its image released, the backend and
+    /// every context can go while the memory stays. Only a keeper's arenas
+    /// ([`crate::weight_keeper::ArenaSourceV1::Lend`]) can be held.
+    pub(crate) fn hold_rank_arena_v1(
         &self,
-    ) -> HostServiceResultV1<Vec<crate::weight_keeper::KeptImageV1>> {
+        arena: BundleRankArenaHandleV1,
+    ) -> HostServiceResultV1<crate::weight_keeper::KeptImageV1> {
         let mut state = self.state.borrow_mut();
-        let mut found = Vec::new();
-        for arena in state.arenas.values() {
-            let record = state.images.get(arena.image)?;
-            let ComponentStorageV1::Planned(image) = &record.storage else {
-                continue;
-            };
-            let identity = image
-                .identity(arena.rank as usize)
-                .ok_or(BundleStatusV1::InvalidArgument)?
-                .to_owned();
-            let context = *state
-                .context_by_rank
-                .get(&arena.rank)
-                .ok_or(BundleStatusV1::InvalidState)?;
-            found.push((
-                image.image_role().to_owned(),
-                arena.rank,
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let key = slot_key_v1(arena.generation(), arena.slot())?;
+        let record = state.arenas.get(key)?;
+        let (order, buffer, host_buffer, rank) =
+            (record.order, record.buffer, record.host_buffer, record.rank);
+        let byte_length = record.layout.device_bytes();
+        let ComponentStorageV1::Planned(image) = &state.images.get(record.image)?.storage else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        let identity = image
+            .identity(rank as usize)
+            .ok_or(BundleStatusV1::InvalidArgument)?
+            .to_owned();
+        let image_role = image.image_role().to_owned();
+        state.order.preflight(order)?;
+        let context = *state
+            .context_by_rank
+            .get(&rank)
+            .ok_or(BundleStatusV1::InvalidState)?;
+        let context = state.contexts.get(context)?.object;
+        let device = state.device.device_identity(context)?;
+        let object = state.buffers.get(buffer)?.object;
+        let (fd, mapped_bytes) = state.device.export_device_buffer(object)?;
+        if let Some(host_buffer) = host_buffer {
+            state.release_host_buffer(host_buffer)?;
+            state.arenas.get_mut(key)?.host_buffer = None;
+        }
+        let held = state.device.hold_device_buffer(object)?;
+        state.buffers.remove(buffer)?;
+        state.order.release(order)?;
+        state.arenas.remove(key)?;
+        Ok(crate::weight_keeper::KeptImageV1 {
+            image: crate::weight_keeper::RankImageV1 {
+                image_role,
+                rank,
                 identity,
-                state.contexts.get(context)?.object,
-                state.buffers.get(arena.buffer)?.object,
-                arena.layout.device_bytes(),
-            ));
-        }
-        let mut kept = Vec::with_capacity(found.len());
-        for (image_role, rank, identity, context, buffer, byte_length) in found {
-            let device = state.device.device_identity(context)?;
-            let (fd, mapped_bytes) = state.device.export_device_buffer(buffer)?;
-            kept.push(crate::weight_keeper::KeptImageV1 {
-                image: crate::weight_keeper::RankImageV1 {
-                    image_role,
-                    rank,
-                    identity,
-                    device,
-                    byte_length,
-                },
-                fd,
-                mapped_bytes,
-            });
-        }
-        Ok(kept)
+                device,
+                byte_length,
+            },
+            fd,
+            mapped_bytes,
+            held: Some(held),
+        })
     }
 
     /// Runs one closure against the device backend for inspection.

@@ -57,6 +57,7 @@ fn keeper(directory: &Path, stamps: Arc<Mutex<Result<Vec<String>, String>>>) -> 
                 image: image(rank),
                 fd: fds::anonymous_file(&bytes(rank), 4096).unwrap(),
                 mapped_bytes: 4096,
+                held: None,
             })
             .collect(),
         read_only: true,

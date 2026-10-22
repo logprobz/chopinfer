@@ -4,12 +4,14 @@
 //! `skip::Plan::prepare` reads the phase's rows, item extents, prefix
 //! lengths, positions, logits rows, input layout and cache range, and
 //! otherwise only state the instance fixes at create (buffers, arenas, ops,
-//! KV extent, prefill counts). An eligible run starts its one item at row
-//! zero with no prefix and positions `0..rows`, has no prefill cache range,
-//! media, position axes or DSpark, and scores only its last row, so its rows
-//! and layout fix every input; they are the key. Token IDs, block tables, slots, window
-//! and tail inputs, index tags and Engram rows reach the kernels through
-//! the per-step uploads and are never part of a plan.
+//! KV extent, prefill counts, and a DSpark target's tap, feature and Engram
+//! staging spans). An eligible run starts its one item at row zero with no
+//! prefix and positions `0..rows`, has no prefill cache range, media or
+//! position axes, and scores only its last row, so its rows and layout fix
+//! every input, a DSpark target's retained feature rows included; they are
+//! the key. Token IDs, block tables, slots, window and tail inputs, index
+//! tags and Engram rows reach the kernels through the per-step uploads and
+//! are never part of a plan.
 //!
 //! `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE`: unset or `1` keeps plans,
 //! `0` lowers every step, `verify` keeps plans and lowers every hit again,
@@ -116,7 +118,7 @@ impl Cache {
     pub(super) fn plan(&self, instance: &Instance, run: &Run) -> Result<Rc<skip::Plan>, String> {
         let key = match self.mode {
             Mode::Off => None,
-            Mode::On | Mode::Verify => key(instance, run),
+            Mode::On | Mode::Verify => key(run),
         };
         let Some(key) = key else {
             return skip::Plan::prepare(instance, run).map(Rc::new);
@@ -153,13 +155,12 @@ impl Cache {
 }
 
 /// `run`'s key, or `None` if its plan may depend on more than the key.
-fn key(instance: &Instance, run: &Run) -> Option<Key> {
+fn key(run: &Run) -> Option<Key> {
     let inputs = &run.inputs;
     let rows = inputs.live_tokens();
     let eligible = run.arena == PREFILL
         && run.phase == Phase::Prefill { rows }
         && (1..=MAX_ROWS).contains(&rows)
-        && instance.dspark.is_none()
         && run.media.is_none()
         && run.cache.is_none()
         && inputs.request_ids.len() == 1

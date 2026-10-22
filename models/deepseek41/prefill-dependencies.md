@@ -7,9 +7,10 @@ behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
 
 A short upper-skip prefill reuses its plan instead of lowering every rank
 again (`bundle/src/instance/execute/plan_cache.rs`). A plan is kept for one
-AR text item at prefix 0 with at most 64 rows that scores its last row and
-has no media or prefill cache range; its rows and input layout then fix
-every input of the lowering. Token IDs, pages, slots, window and tail
+text item at prefix 0 with at most 64 rows that scores its last row and has
+no media or prefill cache range, on AR and DSpark targets alike; its rows and
+input layout then fix every input of the lowering, a DSpark target's
+retained feature rows included. Token IDs, pages, slots, window and tail
 inputs, index tags and Engram rows are uploaded every step and are never
 part of a plan. One plan is kept per length, about 20 MiB of host memory
 each, so at most about 1.3 GiB per instance.
@@ -17,7 +18,8 @@ each, so at most about 1.3 GiB per instance.
 lowers every reuse again and refuses the step if the fresh plan differs. The
 fake-host test issues the same device journal with and without kept plans
 over alternating prompts, slots and pages, mixed decode steps, a cancelled
-prefill and ineligible prefills.
+prefill and ineligible prefills, and on a DSpark target also beside a verify
+item with drafts.
 
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU

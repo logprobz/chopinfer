@@ -85,17 +85,61 @@ fn counts(instance: &BundleInstanceV1) -> (u64, u64) {
 enum Then {
     Commit,
     Cancel,
+    /// Commit a DSpark verify step keeping one row of `request`.
+    Accept(u64),
+}
+
+/// A short prompt beside a verify item of `request` in `slot` with 5 drafts
+/// after `start` tokens, on `page`.
+fn beside_verify(prompt: Prompt, request: u64, slot: u64, start: u64, page: u64) -> Vec<u8> {
+    let mut items = vec![
+        BatchItemV1::new(
+            prompt.request,
+            false,
+            prompt.rows,
+            true,
+            (prompt.first..prompt.first + prompt.rows).collect(),
+        ),
+        BatchItemV1::verify(request, 6, true, vec![7]),
+    ];
+    let rows = u64::from(prompt.rows);
+    let appends = vec![
+        BatchAppendV1::new(0, rows, rows, prompt.pages.clone(), None),
+        BatchAppendV1::new(start, 6, start + 6, vec![page], None),
+    ];
+    let original = BatchRequestV1::new(BatchWireVersionV1::V3, std::mem::take(&mut items), appends)
+        .with_state_slots(vec![prompt.slot, slot])
+        .encode()
+        .unwrap();
+    encode(
+        &original,
+        &[Boundary {
+            request_id: prompt.request,
+            prompt_tokens: rows,
+            chunk_end: rows,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap()
 }
 
 /// Steps over alternating prompts, slots and pages: repeated shapes, mixed
 /// steps, a cancelled prefill and ineligible prefills. Returns the journal
 /// and the instance's (hits, misses).
 fn lifecycle(mode: Mode) -> (Vec<String>, (u64, u64)) {
+    lifecycle_on(mode, false)
+}
+
+fn lifecycle_on(mode: Mode, dspark: bool) -> (Vec<String>, (u64, u64)) {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    host.drafter.set(dspark);
+    if dspark {
+        host.speculation.set(Some((5, 32)));
+    }
     let mut instance = plan_cache::with_mode(mode, || {
         super::prefill_skip::create_profile(&host, 8192, true)
     });
-    let steps: Vec<(Vec<u8>, Then, &[u64])> = vec![
+    let mut steps: Vec<(Vec<u8>, Then, &[u64])> = vec![
         (batch(&[prompt(1, 0, 22, 100, 0)], &[]), Then::Commit, &[]),
         (batch(&[prompt(2, 1, 22, 300, 9)], &[]), Then::Commit, &[]),
         (
@@ -189,6 +233,15 @@ fn lifecycle(mode: Mode) -> (Vec<String>, (u64, u64)) {
             &[1, 2, 10],
         ),
     ];
+    if dspark {
+        // A prefill beside a verify item with drafts, reusing the 22-row plan.
+        steps.push((batch(&[prompt(21, 0, 22, 2000, 0)], &[]), Then::Commit, &[]));
+        steps.push((
+            beside_verify(prompt(22, 1, 22, 2100, 9), 21, 0, 22, 0),
+            Then::Accept(21),
+            &[21, 22],
+        ));
+    }
     for (request, then, retire) in steps {
         let mut sink = Sink::default();
         instance
@@ -197,6 +250,15 @@ fn lifecycle(mode: Mode) -> (Vec<String>, (u64, u64)) {
         match then {
             Then::Commit => instance.commit().unwrap(),
             Then::Cancel => instance.cancel().unwrap(),
+            Then::Accept(request) => instance
+                .commit_accepted(&[BundleKeptRowsV1 {
+                    struct_size: std::mem::size_of::<BundleKeptRowsV1>() as u32,
+                    reserved: 0,
+                    request_id: request,
+                    kept_rows: 1,
+                    reserved_tail: 0,
+                }])
+                .unwrap(),
         }
         for &request in retire {
             instance.retire_request(request).unwrap();
@@ -227,5 +289,24 @@ fn kept_plans_issue_the_fresh_lowerings_journal() {
             );
         }
         assert_eq!(counts, (7, 4), "{mode:?}");
+    }
+}
+
+#[test]
+fn a_dspark_target_keeps_plans_with_the_fresh_lowerings_journal() {
+    let (fresh, counts) = lifecycle_on(Mode::Off, true);
+    assert_eq!(counts, (0, 0));
+    // The same plans as without DSpark, and the 22-row plan reused beside a
+    // verify item with drafts.
+    for mode in [Mode::On, Mode::Verify] {
+        let (kept, counts) = lifecycle_on(mode, true);
+        assert_eq!(kept.len(), fresh.len(), "{mode:?}");
+        if let Some(at) = (0..fresh.len()).find(|&at| kept[at] != fresh[at]) {
+            panic!(
+                "{mode:?} journal line {at}: {} against {}",
+                kept[at], fresh[at]
+            );
+        }
+        assert_eq!(counts, (9, 4), "{mode:?}");
     }
 }

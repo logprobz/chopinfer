@@ -13,9 +13,8 @@ use super::Run;
 use crate::dspark::device::slice;
 use crate::instance::Instance;
 
-/// Whether AR steps read their status back in one packet; not until the
-/// served pair has measured it.
-pub(crate) const SERVED: bool = false;
+/// Whether AR steps read their status back in one packet.
+pub(crate) const SERVED: bool = true;
 
 /// Set to zero to keep the separate status reads.
 pub(crate) const SWITCH: &str = "CHOPINFER_DEEPSEEK41_AR_STATUS_PACKET";

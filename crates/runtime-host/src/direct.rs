@@ -398,6 +398,33 @@ impl DirectCheckpointV1 {
     pub fn verify_unchanged(&self) -> Result<(), String> {
         self.shards.iter().try_for_each(ShardV1::verify_unchanged)
     }
+
+    /// Each file's name and what names its bytes on this host (device,
+    /// inode, length, modification and change times), read from the open
+    /// file, so two processes can tell they opened the same files unchanged.
+    pub fn stamps(&self) -> Result<Vec<String>, String> {
+        use std::os::unix::fs::MetadataExt;
+        self.shards
+            .iter()
+            .map(|shard| {
+                let metadata = shard
+                    .file
+                    .metadata()
+                    .map_err(|error| format!("checkpoint file {}: {error}", shard.name))?;
+                Ok(format!(
+                    "{} {} {} {} {}.{:09} {}.{:09}",
+                    shard.name,
+                    metadata.dev(),
+                    metadata.ino(),
+                    metadata.len(),
+                    metadata.mtime(),
+                    metadata.mtime_nsec(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec(),
+                ))
+            })
+            .collect()
+    }
 }
 
 impl ShardV1 {
@@ -2617,6 +2644,7 @@ pub fn plan_image_v1(
             "ranks": ranks, "records": records, "shared_outputs": image.inner.shared.len(),
             "metadata_cache_enabled": cache.is_some(), "metadata_cache_hits": cache_hits,
             "checkpoint_identity": image.checkpoint().identity_hex(),
+            "identities": image.identities,
             "threads_per_rank": image.inner.options.threads_per_rank,
             "cpus": process_cpus_v1(),
             "read_ahead": image.inner.options.read_ahead,
@@ -2660,6 +2688,8 @@ pub(crate) fn selected_checkpoint_v1() -> Result<Option<Arc<DirectCheckpointV1>>
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    mod keeper;
     mod packed;
     use super::*;
     use kernel_core::transform::Transform;

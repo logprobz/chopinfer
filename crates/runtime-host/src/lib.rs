@@ -65,6 +65,7 @@ mod startup;
 mod topology;
 pub mod video;
 mod watchdog;
+pub mod weight_keeper;
 
 pub use topology::DeviceSelectionV1;
 

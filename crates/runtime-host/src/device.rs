@@ -363,6 +363,63 @@ pub trait HostDeviceBackendV1 {
         Err(BundleStatusV1::Unsupported)
     }
 
+    /// Allocates `byte_length` bytes of `context`'s device memory that
+    /// another process can map through [`Self::export_device_buffer`],
+    /// readable and writable from this device only. Unlike a pool
+    /// allocation it exists once this returns, so `stream` orders nothing.
+    ///
+    /// Every buffer operation accepts the answer, and
+    /// [`Self::release_device_buffer`] releases it. A backend without
+    /// lendable memory keeps the default.
+    fn allocate_lendable_device_buffer(
+        &mut self,
+        _context: DeviceObjectV1,
+        _stream: DeviceObjectV1,
+        _byte_length: u64,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// A new descriptor through which another process maps one lendable
+    /// allocation, and the size of the mapping it names, which is at least
+    /// the allocation's length.
+    fn export_device_buffer(
+        &mut self,
+        _buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<(std::os::fd::OwnedFd, u64)> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Maps device memory another process lent as `fd`, a mapping of
+    /// `mapped_bytes` whose first `byte_length` bytes are used, into
+    /// `context`. Work on `context`'s device and on the devices `readers`
+    /// names (ordinals) may read it; none may write it if `read_only`. The
+    /// caller keeps `fd`.
+    ///
+    /// The memory stays mapped until [`Self::release_device_buffer`], however
+    /// long the lender lives. A backend without lendable memory keeps the
+    /// default.
+    #[allow(clippy::too_many_arguments)]
+    fn import_device_buffer(
+        &mut self,
+        _context: DeviceObjectV1,
+        _stream: DeviceObjectV1,
+        _fd: std::os::fd::BorrowedFd<'_>,
+        _mapped_bytes: u64,
+        _byte_length: u64,
+        _readers: &[i32],
+        _read_only: bool,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Names the physical device of one context the same way in every
+    /// process on this host, so a lender and a borrower can tell they hold
+    /// the same device whatever ordinals they see.
+    fn device_identity(&self, _context: DeviceObjectV1) -> HostDeviceResultV1<String> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     /// Free bytes in this rank's context after bundle allocations are resident.
     fn free_device_memory(&self, _context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
         Err(runtime_bundle_abi::BundleStatusV1::Unsupported)

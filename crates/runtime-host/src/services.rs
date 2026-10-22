@@ -677,6 +677,9 @@ pub struct HostInstanceConfigV1 {
     /// Ranks of one context-parallel group; 1 keeps every KV page on every
     /// rank and adds nothing to the create record.
     context_parallel_size: usize,
+    /// Where rank arenas come from; the host's own choice, never encoded
+    /// for the bundle.
+    arena_source: crate::weight_keeper::ArenaSourceV1,
 }
 
 /// The host's serving-only share of free rank memory after a fixed 1 GiB reserve.
@@ -722,6 +725,7 @@ impl HostInstanceConfigV1 {
             model_options: None,
             context_parallel_size: 1,
             batch_limits: runtime_bundle_abi::BundleRawBatchLimitsV1::unreported(),
+            arena_source: crate::weight_keeper::ArenaSourceV1::Load,
         }
     }
 
@@ -888,6 +892,13 @@ impl HostInstanceConfigV1 {
         speculation: runtime_bundle_abi::BundleRawSpeculationV1,
     ) -> Self {
         self.speculation = speculation;
+        self
+    }
+
+    /// Takes rank arenas from `source` ([`crate::weight_keeper`]).
+    #[must_use]
+    pub fn with_arena_source(mut self, source: crate::weight_keeper::ArenaSourceV1) -> Self {
+        self.arena_source = source;
         self
     }
 
@@ -1133,6 +1144,9 @@ struct DeviceBufferRecordV1 {
 struct BufferOriginV1 {
     context: SlotKeyV1,
     pool: SlotKeyV1,
+    /// Mapped from memory another process lent, with read access for every
+    /// device of the topology set as it was mapped; no pool grant governs it.
+    lent: bool,
 }
 
 struct CompiledImageRecordV1 {
@@ -1166,6 +1180,8 @@ struct PreparedRankUploadV1 {
     storage: ComponentStorageV1,
     /// Component ranges `(offset, length)` the arena receives, in order.
     segments: Vec<(u64, u64)>,
+    /// The arena maps memory a keeper lent, which already holds them.
+    lent: bool,
 }
 
 impl PreparedRankUploadV1 {
@@ -1181,6 +1197,111 @@ impl PreparedRankUploadV1 {
             _ => 0,
         }
     }
+}
+
+/// Asks the selected keeper for the planned rank images `uploads` would
+/// load, when this instance borrows its arenas, and returns what it lent, by
+/// upload. The lease stays open while the instance lives. Under the require
+/// policy, an image the keeper does not lend fails the uploads; under
+/// prefer, it is loaded, and a keeper that lent nothing is first asked to
+/// free its memory, which it does only while no lease is open.
+fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
+    state: &mut HostStateV1<D>,
+    uploads: &[RankArenaUploadV1],
+) -> HostServiceResultV1<Vec<Option<crate::weight_keeper::LentImageV1>>> {
+    use crate::weight_keeper::{ArenaSourceV1, CheckpointV1, KeeperPolicyV1, RankImageV1};
+    let mut lent: Vec<Option<crate::weight_keeper::LentImageV1>> =
+        uploads.iter().map(|_| None).collect();
+    let ArenaSourceV1::Borrow { directory, policy } = state.config.arena_source.clone() else {
+        return Ok(lent);
+    };
+    let started = std::time::Instant::now();
+    let mut asked: Vec<(usize, RankImageV1)> = Vec::new();
+    let mut checkpoint = None;
+    for (index, upload) in uploads.iter().enumerate() {
+        let record = state
+            .images
+            .get(slot_key_v1(upload.image.generation(), upload.image.slot())?)?;
+        let ComponentStorageV1::Planned(image) = &record.storage else {
+            continue;
+        };
+        let description = record
+            .description
+            .as_ref()
+            .ok_or(BundleStatusV1::Unsupported)?;
+        let byte_length = description.rank_layout(upload.rank)?.device_bytes();
+        let identity = image
+            .identity(upload.rank as usize)
+            .ok_or(BundleStatusV1::InvalidArgument)?
+            .to_owned();
+        let image_role = image.image_role().to_owned();
+        if checkpoint.is_none() {
+            checkpoint = Some((
+                image.checkpoint().identity_hex(),
+                image.checkpoint().stamps(),
+            ));
+        }
+        let context = state
+            .contexts
+            .get(slot_key_v1(
+                upload.context.generation(),
+                upload.context.slot(),
+            )?)?
+            .object;
+        let device = state.device.device_identity(context)?;
+        asked.push((
+            index,
+            RankImageV1 {
+                image_role,
+                rank: upload.rank,
+                identity,
+                device,
+                byte_length,
+            },
+        ));
+    }
+    let Some((identity, stamps)) = checkpoint else {
+        return Ok(lent);
+    };
+    let images: Vec<RankImageV1> = asked.iter().map(|(_, image)| image.clone()).collect();
+    let outcome = stamps.and_then(|stamps| {
+        crate::weight_keeper::lease_v1(&directory, CheckpointV1 { identity, stamps }, images)
+    });
+    let (mut taken, mut refused, mut error, mut connection) = (Vec::new(), Vec::new(), None, None);
+    match outcome {
+        Ok(lease) => {
+            for item in lease.lent {
+                taken.push((item.image.clone(), item.mapped_bytes, item.read_only));
+                if let Some((index, _)) = asked.iter().find(|(_, image)| *image == item.image) {
+                    lent[*index] = Some(item);
+                }
+            }
+            refused = lease.refused;
+            connection = lease.connection;
+        }
+        Err(message) => error = Some(message),
+    }
+    let released = (policy == KeeperPolicyV1::Prefer && taken.is_empty() && !refused.is_empty())
+        .then(|| crate::weight_keeper::release_v1(&directory));
+    eprintln!(
+        "startup weight_keeper: {}",
+        crate::weight_keeper::report_v1(
+            policy,
+            started,
+            &taken,
+            &refused,
+            error.as_deref(),
+            released.as_ref()
+        )
+    );
+    if policy == KeeperPolicyV1::Require && (error.is_some() || !refused.is_empty()) {
+        eprintln!(
+            "host weight keeper: --weight-keeper-policy require refuses to load a rank image the keeper did not lend"
+        );
+        return Err(BundleStatusV1::HostError);
+    }
+    state.keeper_leases.extend(connection);
+    Ok(lent)
 }
 
 /// Uploads one prepared arena: its single component range as before, or its
@@ -1334,9 +1455,12 @@ impl DirectLoadTimingV1 {
     }
 }
 
+/// Prepares one rank's arena: allocates its buffers and records it. With
+/// `lent`, the arena maps memory a keeper lent and needs no upload.
 fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
     state: &mut HostStateV1<D>,
     upload: RankArenaUploadV1,
+    lent: Option<crate::weight_keeper::LentImageV1>,
 ) -> HostServiceResultV1<PreparedRankUploadV1> {
     let context_key = slot_key_v1(upload.context.generation(), upload.context.slot())?;
     let image_key = slot_key_v1(upload.image.generation(), upload.image.slot())?;
@@ -1363,17 +1487,69 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
         rank_image.offset,
         rank_image.byte_length,
     )?;
-    let origin = Some(BufferOriginV1 {
+    let origin = BufferOriginV1 {
         context: context_key,
         pool: pool_key,
-    });
-    let buffer = state.allocate_host_buffer(
-        pool_object,
-        origin,
-        Some(stream),
-        layout.device_bytes(),
-        alignment,
-    )?;
+        lent: false,
+    };
+    let context_object = state.contexts.get(context_key)?.object;
+    let imported = match lent {
+        Some(lent) => {
+            let mapped = if lent.image.byte_length == layout.device_bytes() {
+                state.import_host_buffer(
+                    context_object,
+                    stream,
+                    &lent,
+                    alignment,
+                    BufferOriginV1 {
+                        lent: true,
+                        ..origin
+                    },
+                )
+            } else {
+                Err(BundleStatusV1::InvalidArgument)
+            };
+            match mapped {
+                Ok(key) => Some(key),
+                Err(status) => {
+                    eprintln!(
+                        "host weight keeper: rank {} could not map its lent image: {}",
+                        upload.rank,
+                        status.name().unwrap_or("unknown status")
+                    );
+                    if let crate::weight_keeper::ArenaSourceV1::Borrow {
+                        policy: crate::weight_keeper::KeeperPolicyV1::Require,
+                        ..
+                    } = state.config.arena_source
+                    {
+                        return Err(status);
+                    }
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    let borrowed = imported.is_some();
+    let buffer = match imported {
+        Some(key) => key,
+        None if state.config.arena_source == crate::weight_keeper::ArenaSourceV1::Lend => state
+            .allocate_lendable_host_buffer(
+                context_object,
+                stream,
+                layout.device_bytes(),
+                alignment,
+                origin,
+            )?,
+        None => state.allocate_host_buffer(
+            pool_object,
+            Some(origin),
+            Some(stream),
+            layout.device_bytes(),
+            alignment,
+        )?,
+    };
+    let origin = Some(origin);
     let destination = state.buffers.get(buffer)?.object;
     let host_buffer = if layout.cuts.is_empty() {
         None
@@ -1446,6 +1622,7 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
         destination,
         storage,
         segments,
+        lent: borrowed,
     })
 }
 
@@ -1712,6 +1889,9 @@ struct HostStateV1<D> {
     states: SlotTableV1<StateRecordV1>,
     mapped_gathers: SlotTableV1<MappedGatherRecordV1>,
     collectives: SlotTableV1<CollectiveRecordV1>,
+    /// The connections that hold this instance's leases of lent rank
+    /// images, open for as long as the instance lives.
+    keeper_leases: Vec<std::os::unix::net::UnixStream>,
     #[cfg(test)]
     probe_fault: Option<HostDeviceProbeServiceFaultV1>,
     #[cfg(test)]
@@ -1734,6 +1914,29 @@ pub struct HostMemoryV1 {
 /// One bundle instance's complete model-neutral host service table.
 pub struct HostServicesV1Backend<D: HostDeviceBackendV1> {
     state: RefCell<HostStateV1<D>>,
+}
+
+#[cfg(test)]
+impl HostServicesV1Backend<crate::fake::FakeHostDeviceV1> {
+    /// One rank arena's device bytes, whether its memory is lent, and its
+    /// device object, for tests.
+    pub(crate) fn rank_arena_v1(
+        &self,
+        arena: BundleRankArenaHandleV1,
+    ) -> (Vec<u8>, bool, DeviceObjectV1) {
+        let state = self.state.borrow();
+        let record = state
+            .arenas
+            .get(slot_key_v1(arena.generation(), arena.slot()).unwrap())
+            .unwrap();
+        let buffer = state.buffers.get(record.buffer).unwrap();
+        let bytes = state.device.buffer_bytes(buffer.object).unwrap().to_vec();
+        (
+            bytes,
+            buffer.origin.is_some_and(|origin| origin.lent),
+            buffer.object,
+        )
+    }
 }
 
 impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
@@ -1889,6 +2092,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 states: SlotTableV1::new(),
                 mapped_gathers: SlotTableV1::new(),
                 collectives: SlotTableV1::new(),
+                keeper_leases: Vec::new(),
                 #[cfg(test)]
                 probe_fault: None,
                 #[cfg(test)]
@@ -1947,6 +2151,72 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
     #[must_use]
     pub fn live_resource_count(&self) -> usize {
         self.state.borrow().order.live_count()
+    }
+
+    /// The roles of the rank images this instance's weight plans produce,
+    /// in role order.
+    pub(crate) fn planned_image_roles_v1(&self) -> Vec<Vec<u8>> {
+        self.state
+            .borrow()
+            .config
+            .components
+            .iter()
+            .filter(|(_, record)| {
+                record.description.is_some()
+                    && matches!(record.storage, ComponentStorageV1::Planned(_))
+            })
+            .map(|(role, _)| role.clone())
+            .collect()
+    }
+
+    /// Every live rank arena of a planned image, as the plan names it, with
+    /// a descriptor through which another process maps its device memory.
+    /// Only a keeper's arenas ([`crate::weight_keeper::ArenaSourceV1::Lend`])
+    /// can be exported.
+    pub(crate) fn export_rank_arenas_v1(
+        &self,
+    ) -> HostServiceResultV1<Vec<crate::weight_keeper::KeptImageV1>> {
+        let mut state = self.state.borrow_mut();
+        let mut found = Vec::new();
+        for arena in state.arenas.values() {
+            let record = state.images.get(arena.image)?;
+            let ComponentStorageV1::Planned(image) = &record.storage else {
+                continue;
+            };
+            let identity = image
+                .identity(arena.rank as usize)
+                .ok_or(BundleStatusV1::InvalidArgument)?
+                .to_owned();
+            let context = *state
+                .context_by_rank
+                .get(&arena.rank)
+                .ok_or(BundleStatusV1::InvalidState)?;
+            found.push((
+                image.image_role().to_owned(),
+                arena.rank,
+                identity,
+                state.contexts.get(context)?.object,
+                state.buffers.get(arena.buffer)?.object,
+                arena.layout.device_bytes(),
+            ));
+        }
+        let mut kept = Vec::with_capacity(found.len());
+        for (image_role, rank, identity, context, buffer, byte_length) in found {
+            let device = state.device.device_identity(context)?;
+            let (fd, mapped_bytes) = state.device.export_device_buffer(buffer)?;
+            kept.push(crate::weight_keeper::KeptImageV1 {
+                image: crate::weight_keeper::RankImageV1 {
+                    image_role,
+                    rank,
+                    identity,
+                    device,
+                    byte_length,
+                },
+                fd,
+                mapped_bytes,
+            });
+        }
+        Ok(kept)
     }
 
     /// Runs one closure against the device backend for inspection.
@@ -2490,10 +2760,11 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
                 owner: consumer,
                 peer: origin_device,
             });
-        let granted = self.pool_peer_leases.contains_key(&PoolPeerEdgeKeyV1 {
-            pool: origin_device,
-            peer: consumer,
-        });
+        let granted = origin.lent
+            || self.pool_peer_leases.contains_key(&PoolPeerEdgeKeyV1 {
+                pool: origin_device,
+                peer: consumer,
+            });
         if leased && granted {
             Ok(())
         } else {
@@ -2906,6 +3177,87 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         }
     }
 
+    /// Allocates one host-owned buffer of `context`'s device that another
+    /// process can map, for a keeper's rank arena.
+    fn allocate_lendable_host_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        byte_length: u64,
+        alignment: u64,
+        origin: BufferOriginV1,
+    ) -> HostServiceResultV1<SlotKeyV1> {
+        let object = self
+            .device
+            .allocate_lendable_device_buffer(context, stream, byte_length)?;
+        self.record_host_buffer(object, byte_length, alignment, origin)
+    }
+
+    /// Maps one rank image a keeper lent as a host-owned buffer of
+    /// `context`, readable from every device of the topology, so peer reads
+    /// of the arena work as they do for a loaded one.
+    fn import_host_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        lent: &crate::weight_keeper::LentImageV1,
+        alignment: u64,
+        origin: BufferOriginV1,
+    ) -> HostServiceResultV1<SlotKeyV1> {
+        use std::os::fd::AsFd;
+        let topology = &self.config.topology;
+        let readers: Vec<i32> = (0..topology.rank_count())
+            .filter_map(|rank| topology.device_ordinal(rank))
+            .collect();
+        let object = self.device.import_device_buffer(
+            context,
+            stream,
+            lent.fd.as_fd(),
+            lent.mapped_bytes,
+            lent.image.byte_length,
+            &readers,
+            lent.read_only,
+        )?;
+        self.record_host_buffer(object, lent.image.byte_length, alignment, origin)
+    }
+
+    /// Records one host-owned allocation once its address carries
+    /// `alignment`, and releases it otherwise.
+    fn record_host_buffer(
+        &mut self,
+        object: DeviceObjectV1,
+        byte_length: u64,
+        alignment: u64,
+        origin: BufferOriginV1,
+    ) -> HostServiceResultV1<SlotKeyV1> {
+        match self
+            .device
+            .allocation_satisfies_alignment(object, alignment)
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = self.device.release_device_buffer(object);
+                return Err(BundleStatusV1::Unsupported);
+            }
+            Err(status) => {
+                let _ = self.device.release_device_buffer(object);
+                return Err(status);
+            }
+        }
+        match self.buffers.insert(DeviceBufferRecordV1 {
+            object,
+            byte_length,
+            owner: BufferOwnerV1::Host,
+            origin: Some(origin),
+        }) {
+            Ok(key) => Ok(key),
+            Err(status) => {
+                let _ = self.device.release_device_buffer(object);
+                Err(status)
+            }
+        }
+    }
+
     /// Allocates and fills one host-owned mapped host buffer on `stream`'s
     /// context.
     fn allocate_mapped_host_buffer(
@@ -3239,6 +3591,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 let origin = BufferOriginV1 {
                     context: context_key,
                     pool: pool_key,
+                    lent: false,
                 };
                 match state.allocate_host_buffer(
                     pool,
@@ -3501,6 +3854,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let pool_origin = BufferOriginV1 {
             context: pool_record.context,
             pool: pool_key,
+            lent: false,
         };
         let stream_object = if stream.is_valid() {
             Some(state.stream_object(stream)?)
@@ -3596,8 +3950,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             image,
             rank,
         };
+        let lent = borrow_rank_images_v1(&mut state, &[upload])?
+            .pop()
+            .flatten();
         let mut timing = DirectLoadTimingV1::new(&state, &[upload]);
-        let prepared = match prepare_rank_upload_v1(&mut state, upload) {
+        let prepared = match prepare_rank_upload_v1(&mut state, upload, lent) {
             Ok(prepared) => prepared,
             Err(status) => {
                 for (image, _) in &timing.images {
@@ -3611,6 +3968,8 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let sparse = state.device.uses_sparse_probe_allocations();
         let result = if sparse {
             Ok(())
+        } else if prepared.lent {
+            verify_direct_sources_v1(&prepared.storage)
         } else {
             upload_prepared_rank_v1(&mut state.device, &prepared)
                 .and_then(|()| state.device.synchronize_stream(prepared.stream))
@@ -3627,7 +3986,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             "startup weight_upload: {}",
             serde_json::json!({
                 "seconds":upload_seconds, "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
-                "planned_bytes":prepared.byte_length(), "uploaded_bytes":result.as_ref().ok().map(|_| if sparse {0} else {prepared.byte_length()}),
+                "planned_bytes":prepared.byte_length(),
+                "uploaded_bytes":result.as_ref().ok().map(|_| if sparse || prepared.lent {0} else {prepared.byte_length()}),
+                "lent_bytes":if prepared.lent {prepared.byte_length()} else {0},
             })
         );
         drop(state);
@@ -3643,11 +4004,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         uploads: &[RankArenaUploadV1],
     ) -> HostServiceResultV1<Vec<BundleRankArenaHandleV1>> {
         let mut state = self.state.borrow_mut();
+        let lent = borrow_rank_images_v1(&mut state, uploads)?;
         let mut timing = DirectLoadTimingV1::new(&state, uploads);
         let mut prepared = Vec::with_capacity(uploads.len());
         let mut result = Ok(());
-        for upload in uploads {
-            match prepare_rank_upload_v1(&mut state, *upload) {
+        for (upload, lent) in uploads.iter().zip(lent) {
+            match prepare_rank_upload_v1(&mut state, *upload, lent) {
                 Ok(rank) => prepared.push(rank),
                 Err(status) => {
                     result = Err(status);
@@ -3657,8 +4019,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         timing.prepared();
         let started = std::time::Instant::now();
-        if result.is_ok() && !state.device.uses_sparse_probe_allocations() {
-            let mut readers: Vec<FileChunkReaderV1<'_>> = prepared
+        // Lent arenas already hold their bytes.
+        let loading: Vec<&PreparedRankUploadV1> =
+            prepared.iter().filter(|rank| !rank.lent).collect();
+        if result.is_ok() && !state.device.uses_sparse_probe_allocations() && !loading.is_empty() {
+            let mut readers: Vec<FileChunkReaderV1<'_>> = loading
                 .iter()
                 .map(|rank| {
                     let storage = &rank.storage;
@@ -3672,11 +4037,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     }) as FileChunkReaderV1<'_>
                 })
                 .collect();
-            if prepared
+            if loading
                 .iter()
                 .all(|rank| matches!(rank.storage, ComponentStorageV1::Planned(_)))
             {
-                let mut ranges: Vec<_> = prepared
+                let mut ranges: Vec<_> = loading
                     .iter()
                     .zip(readers.iter_mut())
                     .map(|(rank, read)| PinnedFileUploadV1 {
@@ -3690,7 +4055,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 if let Some(uploaded) = state.device.upload_pinned_file_ranges(&mut ranges) {
                     result = uploaded;
                 } else {
-                    for rank in &prepared {
+                    for rank in &loading {
                         if let Err(status) = upload_prepared_rank_v1(&mut state.device, rank) {
                             result = Err(status);
                             break;
@@ -3698,7 +4063,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     }
                 }
             } else {
-                for rank in &prepared {
+                for rank in &loading {
                     if let Err(status) = upload_prepared_rank_v1(&mut state.device, rank) {
                         result = Err(status);
                         break;
@@ -3733,12 +4098,17 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     prepared.destination,
                     prepared.byte_length(),
                 );
+                let image_role = match &prepared.storage {
+                    ComponentStorageV1::Planned(image) => Some(image.image_role()),
+                    ComponentStorageV1::Bytes(_) => None,
+                };
                 eprintln!(
                     "startup arena_digest: {}",
                     serde_json::json!({
                         "rank": rank, "bytes": prepared.byte_length(),
                         "sha256": digest.as_ref().ok(), "error": digest.as_ref().err().map(|s| s.name()),
                         "seconds": started.elapsed().as_secs_f64(),
+                        "image_role": image_role, "lent": prepared.lent,
                     })
                 );
             }
@@ -3753,11 +4123,17 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         timing.report(upload_seconds, digest_seconds);
         let planned: u64 = prepared.iter().map(PreparedRankUploadV1::byte_length).sum();
+        let lent: u64 = prepared
+            .iter()
+            .filter(|rank| rank.lent)
+            .map(PreparedRankUploadV1::byte_length)
+            .sum();
         eprintln!(
             "startup weight_upload: {}",
             serde_json::json!({
                 "seconds":upload_seconds, "digest_seconds":digest_seconds, "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
-                "planned_bytes":planned, "uploaded_bytes":result.as_ref().ok().map(|_| if sparse {0} else {planned}),
+                "planned_bytes":planned, "uploaded_bytes":result.as_ref().ok().map(|_| if sparse {0} else {planned - lent}),
+                "lent_bytes":lent,
             })
         );
         let arenas: Vec<_> = prepared.iter().map(|rank| rank.arena).collect();

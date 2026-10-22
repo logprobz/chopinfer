@@ -1209,6 +1209,87 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         Ok(DeviceObjectV1::new(identity))
     }
 
+    fn allocate_lendable_device_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        byte_length: u64,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        if byte_length == 0 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let bytes = usize::try_from(byte_length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        if self.context(context)?.device_ordinal()
+            != self.stream(stream)?.context().device_ordinal()
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let plan = self
+            .ledger
+            .plan_allocation(Some(context.get()), byte_length)?;
+        let identity = self.reserve_identity()?;
+        let buffer =
+            DeviceBuffer::allocate_lendable(self.stream(stream)?, bytes).map_err(driver_status)?;
+        self.insert_reserved(identity, CudaObjectV1::Buffer(buffer));
+        self.ledger.commit_allocation(identity, plan);
+        Ok(DeviceObjectV1::new(identity))
+    }
+
+    fn export_device_buffer(
+        &mut self,
+        buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<(std::os::fd::OwnedFd, u64)> {
+        let buffer = self.buffer(buffer)?;
+        let mapped = buffer
+            .lent_byte_len()
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        let fd = buffer.export_lent().map_err(driver_status)?;
+        Ok((fd, mapped as u64))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn import_device_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        fd: std::os::fd::BorrowedFd<'_>,
+        mapped_bytes: u64,
+        byte_length: u64,
+        readers: &[i32],
+        read_only: bool,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        let mapped =
+            usize::try_from(mapped_bytes).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let bytes = usize::try_from(byte_length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        if bytes == 0 || bytes > mapped {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        if self.context(context)?.device_ordinal()
+            != self.stream(stream)?.context().device_ordinal()
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        // Imported memory is counted against the rank that maps it, as a
+        // load would have counted the arena it replaces.
+        let plan = self
+            .ledger
+            .plan_allocation(Some(context.get()), byte_length)?;
+        let identity = self.reserve_identity()?;
+        let buffer =
+            DeviceBuffer::import_lent(self.stream(stream)?, fd, mapped, bytes, readers, read_only)
+                .map_err(driver_status)?;
+        self.insert_reserved(identity, CudaObjectV1::Buffer(buffer));
+        self.ledger.commit_allocation(identity, plan);
+        Ok(DeviceObjectV1::new(identity))
+    }
+
+    fn device_identity(&self, context: DeviceObjectV1) -> HostDeviceResultV1<String> {
+        let ordinal = self.context(context)?.device_ordinal();
+        self.driver
+            .device_pci_bus_id(ordinal)
+            .map_err(driver_status)
+    }
+
     fn release_device_buffer(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.drain_peer_copies()?;
         // Result packets can finish on another rank. Retire only completed
@@ -2303,6 +2384,113 @@ mod sampler_reservation_tests {
         );
         device.release_context(context).unwrap();
         assert!(device.samplers.is_empty());
+    }
+}
+
+#[cfg(all(test, feature = "cuda-fake-driver-tests"))]
+mod lendable_tests {
+    use super::*;
+    use crate::probe::HostDeviceMemoryUsageV1;
+    use std::os::fd::AsFd;
+
+    /// A lendable buffer on rank 0 mapped by rank 1's context through its
+    /// descriptor: the same bytes, each mapping counted against the rank
+    /// that holds it, and each released by its own owner.
+    #[test]
+    fn a_lent_buffer_maps_the_same_bytes_into_another_context() {
+        runtime_cuda::fake_driver::reset();
+        let mut device = CudaHostDeviceV1::new().unwrap();
+        let contexts: Vec<_> = (0..2)
+            .map(|rank| device.create_context(rank, rank as i32).unwrap())
+            .collect();
+        let streams: Vec<_> = contexts
+            .iter()
+            .map(|&context| device.create_stream(context, 0).unwrap())
+            .collect();
+        let identities: Vec<_> = contexts
+            .iter()
+            .map(|&context| device.device_identity(context).unwrap())
+            .collect();
+        assert!(identities[0].starts_with("0000:") && identities[0] != identities[1]);
+        assert_eq!(
+            device.allocate_lendable_device_buffer(contexts[0], streams[1], 64),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        assert_eq!(
+            device.allocate_lendable_device_buffer(contexts[0], streams[0], 0),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        let lent = device
+            .allocate_lendable_device_buffer(contexts[0], streams[0], 3000)
+            .unwrap();
+        let bytes: Vec<u8> = (0..3000).map(|index| (index % 251) as u8).collect();
+        let range = |object| DeviceRangeV1 {
+            object,
+            offset: 0,
+            length: 3000,
+        };
+        device
+            .copy_host_to_device(streams[0], range(lent), &bytes)
+            .unwrap();
+        device.synchronize_stream(streams[0]).unwrap();
+        assert_eq!(device.current_device_memory_bytes(), 3000);
+
+        let (fd, mapped) = device.export_device_buffer(lent).unwrap();
+        assert_eq!(mapped, 2 << 20);
+        assert_eq!(
+            device.import_device_buffer(
+                contexts[1],
+                streams[1],
+                fd.as_fd(),
+                mapped,
+                mapped + 1,
+                &[0, 1],
+                true
+            ),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        assert_eq!(
+            device.import_device_buffer(
+                contexts[1],
+                streams[0],
+                fd.as_fd(),
+                mapped,
+                3000,
+                &[0, 1],
+                true
+            ),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        let imported = device
+            .import_device_buffer(
+                contexts[1],
+                streams[1],
+                fd.as_fd(),
+                mapped,
+                3000,
+                &[0, 1],
+                true,
+            )
+            .unwrap();
+        drop(fd);
+        assert_eq!(device.current_device_memory_bytes(), 6000);
+        let mut read = vec![0; 3000];
+        device
+            .copy_device_to_host(streams[1], &mut read, range(imported))
+            .unwrap();
+        assert_eq!(read, bytes);
+        // Only a lendable allocation has a descriptor to export.
+        let pool = device.create_memory_pool(contexts[1]).unwrap();
+        let pooled = device
+            .allocate_device_buffer(pool, Some(streams[1]), 64, 1)
+            .unwrap();
+        assert!(device.export_device_buffer(pooled).is_err());
+        device.release_device_buffer(pooled).unwrap();
+
+        device.release_device_buffer(imported).unwrap();
+        assert_eq!(device.current_device_memory_bytes(), 3000);
+        device.release_device_buffer(lent).unwrap();
+        assert_eq!(device.current_device_memory_bytes(), 0);
     }
 }
 

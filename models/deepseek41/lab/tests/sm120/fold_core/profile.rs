@@ -114,12 +114,7 @@ fn case(s: &Session, base: &mxfp8_fold::Entry, rows: u32, eager: bool) -> LabRes
     let calls = served(&mut a, base, &b, rows)?;
     let deep = deep(base)
         .into_iter()
-        .map(|e| {
-            Ok((
-                format!("deep32n{}s{}", e.tile_n, e.stages),
-                deep_calls(&mut a, &e, &b, rows)?,
-            ))
-        })
+        .map(|e| Ok((deep_family::label(&e), deep_calls(&mut a, &e, &b, rows)?)))
         .collect::<LabResult<Vec<_>>>()?;
     let all = calls
         .init

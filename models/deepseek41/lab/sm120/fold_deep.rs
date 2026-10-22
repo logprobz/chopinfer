@@ -5,18 +5,22 @@ use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_local_rows::Entry};
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "fold_deep";
 pub const CUBIN: &str = "fold_deep_sm120";
-/// (N, K, groups, column tile, folds in flight).
-pub const SHAPES: &[(u32, u32, u32, u32, u32)] = &[
-    (8192, 1280, 1, 32, 5),
-    (8192, 1280, 1, 16, 6),
-    (5120, 2048, 1, 32, 5),
-    (5120, 2048, 1, 16, 6),
+/// (N, K, groups, column tile, folds in flight, swizzled rows). The plain
+/// rings are the fastest of the first pair at each shape.
+pub const SHAPES: &[(u32, u32, u32, u32, u32, bool)] = &[
+    (8192, 1280, 1, 32, 5, false),
+    (8192, 1280, 1, 32, 5, true),
+    (8192, 1280, 1, 32, 3, true),
+    (8192, 1280, 1, 16, 6, true),
+    (5120, 2048, 1, 16, 6, false),
+    (5120, 2048, 1, 16, 6, true),
+    (5120, 2048, 1, 32, 5, true),
 ];
 pub fn entries() -> Vec<Entry> {
     let bases = bundle_deepseek41::sm120::mxfp8_fold::prefill_entries(&FLASH, 4).unwrap();
     SHAPES
         .iter()
-        .map(|&(n, k, groups, tile_n, stages)| {
+        .map(|&(n, k, groups, tile_n, stages, swizzle)| {
             let base = bases
                 .iter()
                 .find(|e| (e.query.n, e.query.k, e.query.groups) == (n, k, groups))
@@ -28,9 +32,14 @@ pub fn entries() -> Vec<Entry> {
                     .unwrap(),
                 tile_n,
                 stages,
+                swizzle,
             }
         })
         .collect()
+}
+pub fn label(e: &Entry) -> String {
+    let x = if e.swizzle { "x" } else { "" };
+    format!("deep32n{}s{}{x}", e.tile_n, e.stages)
 }
 pub fn cubins() -> Vec<CubinSpec> {
     vec![kernels_sm120::gemm::mxfp8_fold_local_rows::cubin_spec(CUBIN, &entries()).unwrap()]

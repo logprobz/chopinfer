@@ -63,7 +63,7 @@ impl Candidate {
         match self {
             Self::Decode(e) => e.schedule.name().into(),
             Self::Prefill(e) => format!("m{}s{}", e.tile_rows, e.stages),
-            Self::LocalRows(e) if e.stages > 0 => format!("deep32n{}s{}", e.tile_n, e.stages),
+            Self::LocalRows(e) if e.stages > 0 => deep_family::label(e),
             Self::LocalRows(e) => format!("local32n{}", e.tile_n),
         }
     }

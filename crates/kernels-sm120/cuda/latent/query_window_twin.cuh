@@ -6,56 +6,44 @@
 // store on its first 256 threads, and its other threads exit.
 //
 // Served, the RoPE commits its flags to the row status before the window
-// write starts, and every window commit sees them. Here the RoPE's commit
-// (its thread 0's atomic OR) is followed by a release store into the window
-// CTA's shared memory, and the window's first commit (its thread 0, in
-// norm_rotate) waits for it with an acquire load before its own atomic OR,
-// so every commit returns the served value and the status ends the same.
-// Neither half reads what the other writes, so every rotated query, native
-// query head, latent, code, scale and stored window cell is the served
-// pair's. The window CTA zeroes the signal before a cluster barrier that
-// precedes the producer wait; only the window CTA's shared memory is read
-// remotely, and it waits for that store before it leaves. The RoPE releases
-// dependents early, as served; the window CTA only after its stores, so the
-// grid's dependents launch after the window write, as they do served.
+// write starts, and every window commit sees them. Here one cluster barrier
+// orders them: every RoPE thread arrives with release semantics right after
+// the RoPE's commit (its thread 0's atomic OR), the window threads arrive at
+// their start, and the window's thread 0 waits on the barrier, with acquire
+// semantics, before its first atomic OR (in norm_rotate). So every commit
+// returns the served value and the status ends the same. Neither half reads
+// what the other writes, so every rotated query, native query head, latent,
+// code, scale and stored window cell is the served pair's. An idle row's
+// RoPE arrives without committing. Every thread waits on the barrier once
+// before it leaves, and exited threads count as arrived; no shared memory is
+// read across the cluster. The RoPE releases dependents early, as served;
+// the window CTA only after its stores, so the grid's dependents launch
+// after the window write, as they do served.
 #include "../common/ptx_control.cuh"
 #include "../common/row_status.cuh"
 #include "window_fused.cuh"
 
 namespace chop::latent::query_window_twin {
-constexpr uint32_t Committed = 0x600du;
-__shared__ uint32_t rope_committed;
-
-// The RoPE's status update: the served atomic OR, then the signal.
-struct RopeStatus {
-  static __device__ __forceinline__ uint32_t update(uint32_t* status, uint64_t row, uint32_t flags) {
-    const uint32_t value = chop::row::block_quantize::StatusOr::update(status, row, flags);
-    asm volatile("st.release.cluster.shared::cluster.u32 [%0], %1;"
-                 :: "r"(ptx::cluster_map_shared(&rope_committed, 1)), "r"(Committed) : "memory");
-    return value;
-  }
-};
-// The window's status update: wait for the RoPE's commit, then the served
-// atomic OR. Later window commits follow it in the same thread.
+// The window's first status update: wait for the RoPE's commit, then the
+// served atomic OR. Later window commits follow it in the same thread.
 struct WindowStatus {
   static __device__ __forceinline__ uint32_t update(uint32_t* status, uint64_t row, uint32_t flags) {
-    uint32_t seen;
-    do {
-      asm volatile("ld.acquire.cluster.shared::cta.u32 %0, [%1];"
-                   : "=r"(seen) : "r"(ptx::shared_address(&rope_committed)) : "memory");
-    } while (seen != Committed);
+    ptx::cluster_wait_acquire();
     return chop::row::block_quantize::StatusOr::update(status, row, flags);
   }
 };
 } // namespace chop::latent::query_window_twin
 
 namespace chop::row_status {
+// The RoPE's commit, which every RoPE thread makes, then its arrival.
 __device__ __forceinline__ uint32_t twin_rope_commit(uint32_t flags, uint32_t* status, uint64_t row) {
-  return commit<chop::latent::query_window_twin::RopeStatus>(flags, status, row);
+  const uint32_t failed = commit(flags, status, row);
+  ptx::cluster_arrive_release();
+  return failed;
 }
 } // namespace chop::row_status
 
-// The served RoPE text with its one commit routed through RopeStatus.
+// The served RoPE text with its one commit routed through twin_rope_commit.
 #define commit twin_rope_commit
 #include "query_parallel.cuh"
 #undef commit
@@ -71,17 +59,22 @@ __device__ void run(float* query, uint16_t* native_q, const float* query_cos_sin
     const int32_t* first_positions, const int32_t* last_positions,
     uint8_t* codes, uint8_t* scales, uint32_t sequences, uint32_t slots,
     uint32_t circular, uint64_t code_stride, uint64_t scale_stride) {
-  if (blockIdx.y == 1 && threadIdx.x == 0) rope_committed = 0;
-  ptx::cluster_arrive_release();
-  ptx::cluster_wait_acquire();
   if (blockIdx.y == 0) {
     query_parallel::rotate(query, native_q, query_cos_sin, live_rows, heads, status, status_row_offset);
+    if (blockIdx.x >= *live_rows) ptx::cluster_arrive_relaxed();
+    ptx::cluster_wait_acquire();
     return;
   }
   if (threadIdx.x >= 256) return;
+  // The window publishes nothing to the RoPE.
+  ptx::cluster_arrive_relaxed();
   // window_fused::run with the window's first commit after the RoPE's.
   ptx::griddep_wait();
-  if (blockIdx.x >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  if (blockIdx.x >= *live_rows) {
+    ptx::griddep_launch_dependents();
+    ptx::cluster_wait_acquire();
+    return;
+  }
   glue::norm_rotate<false, WindowStatus>(input,weight,latent,cos_sin,live_rows,__uint_as_float(eps_bits),status,status_row_offset);
   __syncthreads();
   chop::row::ceil_epilogue<512,true,0x38d1b717u>(latent,quantized_codes,quantized_scales,status,status_row_offset);
@@ -94,6 +87,8 @@ __device__ void run(float* query, uint16_t* native_q, const float* query_cos_sin
     glue::store(quantized_codes,quantized_scales,positions,row_batch,
         first_positions,last_positions,codes,scales,live_rows,sequences,slots,
         circular,code_stride,scale_stride,status,status_row_offset);
+  // Thread 0 waited in its first commit.
+  if (threadIdx.x != 0) ptx::cluster_wait_acquire();
   ptx::griddep_launch_dependents();
 }
 } // namespace chop::latent::query_window_twin

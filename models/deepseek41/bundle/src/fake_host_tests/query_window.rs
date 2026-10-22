@@ -8,13 +8,13 @@ const ROPE: &str = "chop_deepseek41_latent_query_rope_heads_v1";
 const WINDOW: &str = "chop_deepseek41_window_fused_";
 const TWIN: &str = "chop_deepseek41_query_window_twin_";
 
-fn symbol(line: &str) -> &str {
+pub(super) fn symbol(line: &str) -> &str {
     line.split_whitespace().nth(2).unwrap_or_default()
 }
 
 /// The top-level items of a journal line's argument list (its last
 /// bracketed list).
-fn arguments(line: &str) -> Vec<String> {
+pub(super) fn arguments(line: &str) -> Vec<String> {
     let bytes = line.as_bytes();
     assert_eq!(bytes.last(), Some(&b']'), "{line}");
     let mut depth = 0_i32;
@@ -53,76 +53,85 @@ fn arguments(line: &str) -> Vec<String> {
 /// rows, on an instance of `layout` with the twins served or apart.
 fn run_case(layout: KvLayout, served: bool) -> Vec<Vec<String>> {
     crate::sm120::query_window::with_served(served, || {
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let host = FakeHost::new(shape, layout);
-        let mut instance = create(&host, 8);
+        let (cubins, steps) = decode_steps(layout);
         assert_eq!(
-            host.device
-                .module_cubins
-                .borrow()
-                .values()
-                .any(|name| *name == crate::sm120::query_window::CUBIN),
+            cubins.contains(&crate::sm120::query_window::CUBIN.to_owned()),
             served
         );
-        for slot in 0..8 {
-            step(
-                &mut instance,
-                &prompt(slot + 1, slot, 0, 1, true),
-                &mut Views::default(),
-            );
-        }
-        let mut ends = [1_u64; 8];
-        let mut steps = Vec::new();
-        for rows in [1_u32, 2, 8, 1] {
-            let from = host.device.journal.borrow().len();
-            let items = (0..rows)
-                .map(|slot| (u64::from(slot) + 1, u64::from(slot), ends[slot as usize], 7))
-                .collect::<Vec<_>>();
-            instance
-                .execute(&decode(&items), &mut Views::default())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "served={served} rows={rows}: {e:?}: {:?}",
-                        host.logs.borrow()
-                    )
-                });
-            instance.commit().unwrap();
-            steps.push(
-                host.device.journal.borrow()[from..]
-                    .iter()
-                    .filter(|l| l.starts_with("launch "))
-                    .cloned()
-                    .collect(),
-            );
-            for end in &mut ends[..rows as usize] {
-                *end += 1;
-            }
-        }
-        for id in 1..=8 {
-            instance.retire_request(id).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-        assert_launches_fit_configured_shared(&host.device.journal.borrow(), &shape.topology());
         steps
     })
 }
 
-fn replaced(line: &str) -> bool {
+/// The cubins a Flash TP4 instance of `layout` loads, and each decode
+/// step's launch lines, steps of 1, 2, 8 and again 1 live rows (the last
+/// replaying the first's graph).
+pub(super) fn decode_steps(layout: KvLayout) -> (Vec<String>, Vec<Vec<String>>) {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, layout);
+    let mut instance = create(&host, 8);
+    let cubins = host
+        .device
+        .module_cubins
+        .borrow()
+        .values()
+        .map(|name| name.to_string())
+        .collect();
+    for slot in 0..8 {
+        step(
+            &mut instance,
+            &prompt(slot + 1, slot, 0, 1, true),
+            &mut Views::default(),
+        );
+    }
+    let mut ends = [1_u64; 8];
+    let mut steps = Vec::new();
+    for rows in [1_u32, 2, 8, 1] {
+        let from = host.device.journal.borrow().len();
+        let items = (0..rows)
+            .map(|slot| (u64::from(slot) + 1, u64::from(slot), ends[slot as usize], 7))
+            .collect::<Vec<_>>();
+        instance
+            .execute(&decode(&items), &mut Views::default())
+            .unwrap_or_else(|e| panic!("rows={rows}: {e:?}: {:?}", host.logs.borrow()));
+        instance.commit().unwrap();
+        steps.push(
+            host.device.journal.borrow()[from..]
+                .iter()
+                .filter(|l| l.starts_with("launch "))
+                .cloned()
+                .collect(),
+        );
+        for end in &mut ends[..rows as usize] {
+            *end += 1;
+        }
+    }
+    for id in 1..=8 {
+        instance.retire_request(id).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    assert_launches_fit_configured_shared(&host.device.journal.borrow(), &shape.topology());
+    (cubins, steps)
+}
+
+pub(super) fn replaced(line: &str) -> bool {
     let s = symbol(line);
     s == ROPE || s.starts_with(WINDOW) || s.starts_with(TWIN)
 }
 
-fn stream(line: &str) -> &str {
+pub(super) fn stream(line: &str) -> &str {
     line.split_whitespace().nth(1).unwrap_or_default()
 }
 
 /// A run's steps with every stream and buffer handle renumbered by first
-/// use: first over the launches the twin does not replace, then over the
-/// rest, in order. The twin's module load takes fake handles, so raw
+/// use: first over the launches a twin does not replace (`replaced`), then
+/// over the rest, in order. A twin's module load takes fake handles, so raw
 /// numbers shift between runs while the streams and buffers they name do
 /// not.
-fn canonical(steps: &[Vec<String>]) -> Vec<Vec<String>> {
+pub(super) fn canonical(
+    steps: &[Vec<String>],
+    replaced: impl Fn(&str) -> bool,
+) -> Vec<Vec<String>> {
     let mut streams = BTreeMap::<String, usize>::new();
     let mut buffers = BTreeMap::<String, usize>::new();
     let mut number = |line: &str| {
@@ -165,7 +174,7 @@ fn canonical(steps: &[Vec<String>]) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn first_difference(what: &str, a: &[String], b: &[String]) {
+pub(super) fn first_difference(what: &str, a: &[String], b: &[String]) {
     if let Some(at) = (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)) {
         panic!(
             "{what} differ at {at} of {}/{}:\n{:?}\n{:?}",
@@ -180,8 +189,8 @@ fn first_difference(what: &str, a: &[String], b: &[String]) {
 #[test]
 fn one_row_decode_runs_each_layers_rope_and_window_write_as_one_twin_launch() {
     for layout in KV_LAYOUTS {
-        let reference = canonical(&run_case(layout, false));
-        let serving = canonical(&run_case(layout, true));
+        let reference = canonical(&run_case(layout, false), replaced);
+        let serving = canonical(&run_case(layout, true), replaced);
         let count = |lines: &[String], prefix: &str| {
             lines
                 .iter()

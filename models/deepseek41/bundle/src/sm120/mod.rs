@@ -485,6 +485,16 @@ impl crate::Kernels {
         mxfp8_fold::SMALL_CAPACITY
     }
 
+    /// Whether `shape` quantizes one dense row of `width` columns of
+    /// `input` with its own one-row op (`ceil_split::serves_width`).
+    pub(crate) fn dense_quantize_one_row(
+        shape: &crate::shape::Shape,
+        width: u32,
+        input: kernel_core::contract::DType,
+    ) -> bool {
+        ceil_split::serves_width(shape.geometry, shape.ranks(), width, input)
+    }
+
     /// Select the qualified dense fold query for an exact decode row count.
     pub(crate) fn dense_decode_query(
         query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,

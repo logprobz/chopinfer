@@ -208,6 +208,30 @@ impl Instance {
         let _ = self.services.log(format!("{NAME}: {message}").as_bytes());
     }
 
+    /// Names the one-row decode twins the instance serves, so a served run
+    /// shows what it measured.
+    fn log_one_row_twins(&self) {
+        use crate::sm120::{ceil_split, query_window};
+        let shape = &self.config.shape;
+        if crate::Kernels::query_window_serves(shape) {
+            self.log(&format!(
+                "{}: one-row decode runs each layer's query RoPE and window write as one launch",
+                query_window::SWITCH
+            ));
+        }
+        if ceil_split::serves(shape.geometry, shape.ranks()) {
+            let widths = ceil_split::SERVED
+                .iter()
+                .map(|(width, input, parts)| format!("w{width} {input:?} over {parts} CTAs"))
+                .collect::<Vec<_>>();
+            self.log(&format!(
+                "{}: one-row dense quantizers split: {}",
+                ceil_split::SWITCH,
+                widths.join(", ")
+            ));
+        }
+    }
+
     fn acquire(&mut self) -> Result<(), BundleAbiError> {
         let services = &self.services;
         let held = &mut self.held;
@@ -948,6 +972,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         ));
         return Err(Failed::releasing(instance, status(error)));
     }
+    instance.log_one_row_twins();
     if let Err(error) = instance.configure_dspark_graphs() {
         instance.log(&format!("create failed configuring DSpark graphs: {error}"));
         return Err(Failed::releasing(instance, status(error)));

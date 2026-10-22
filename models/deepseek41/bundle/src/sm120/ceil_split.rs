@@ -26,8 +26,9 @@ pub const WIDTHS: [(u32, DType); 2] = [(8192, DType::Bf16), (2048, DType::F32)];
 /// The part counts compiled for every width.
 pub const PARTS: [u32; 3] = [2, 4, 8];
 
-/// The part count registered for each width; none until measured.
-pub const SERVED: [(u32, DType, u32); 0] = [];
+/// The part count registered for each width: the lab pair's fastest
+/// (d2-0463g1).
+pub const SERVED: [(u32, DType, u32); 2] = [(8192, DType::Bf16, 8), (2048, DType::F32, 8)];
 
 /// Set to zero to keep the served one-CTA quantizers at one row.
 pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_CEIL_SPLIT";
@@ -45,12 +46,42 @@ pub fn is_cubin(cubin: &str) -> bool {
 /// Whether `g` at `ranks` registers [`SERVED`] twins: Flash TP4 once a
 /// width is measured, unless [`SWITCH`] is zero.
 pub fn serves(g: &Geometry, ranks: u32) -> bool {
-    g.id == FLASH.id
-        && ranks == 4
-        && SERVED
-            .iter()
-            .any(|&(width, input, _)| WIDTHS.contains(&(width, input)))
+    if g.id != FLASH.id || ranks != 4 {
+        return false;
+    }
+    #[cfg(test)]
+    if let Some(forced) = FORCED.get() {
+        return forced;
+    }
+    SERVED
+        .iter()
+        .any(|&(width, input, _)| WIDTHS.contains(&(width, input)))
         && std::env::var(SWITCH).as_deref() != Ok("0")
+}
+#[cfg(test)]
+std::thread_local! {
+    /// Tests keep the served one-CTA quantizers unless they serve the twins,
+    /// so their pinned journals stay those quantizers'.
+    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+}
+/// Run `run` with the twins served (`true`) or not (`false`), whatever
+/// [`SERVED`] and [`SWITCH`] say.
+#[cfg(test)]
+pub(crate) fn with_served<T>(served: bool, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FORCED.set(self.0);
+        }
+    }
+    let _restore = Restore(FORCED.replace(Some(served)));
+    run()
+}
+
+/// Whether `g` at `ranks` quantizes one row of `width` columns of `input`
+/// with a split twin.
+pub fn serves_width(g: &Geometry, ranks: u32, width: u32, input: DType) -> bool {
+    serves(g, ranks) && SERVED.iter().any(|&(w, i, _)| (w, i) == (width, input))
 }
 
 /// The served one-row entry of `parallel`, a served parallel quantizer:
@@ -130,8 +161,8 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 
 /// The [`SERVED`] twins of `g` at `ranks`. They hold one row, so only a
-/// quantizer prepared for one row selects them; the dense quantizers'
-/// smallest bucket today holds the 32-row decode batch.
+/// quantizer prepared for one row selects them: the dense quantizers'
+/// one-row op at the widths that serve ([`serves_width`]).
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     if !serves(g, ranks) {
         return Ok(backend);

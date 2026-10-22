@@ -22,6 +22,7 @@ mod ar_status;
 mod batch_limits;
 mod bf16_decode;
 mod bf16_partials;
+mod ceil_split;
 mod conformance;
 mod decode_attention;
 mod decode_join;

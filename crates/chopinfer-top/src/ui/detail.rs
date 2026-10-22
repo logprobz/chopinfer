@@ -3,8 +3,8 @@
 use super::buffer::{Buffer, Color, Style};
 use super::list::status_lines;
 use super::widgets::{
-    age, bar, boxed, buckets, bytes, count, gauge, integer, latency, pad, percent, rate, right,
-    sanitize, sparkline,
+    age, bar, boxed, buckets, bytes, count, gauge, groups, integer, latency, pad, percent, rate,
+    right, sanitize, sparkline,
 };
 use super::{Figures, LATENCIES, footer, header, shown_name, tone_color};
 use crate::app::App;
@@ -105,7 +105,7 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
         for (panel, panel_width) in panels {
             let area = (x, y, panel_width, row_height);
             match panel {
-                Panel::Throughput => throughput(buffer, row, area),
+                Panel::Throughput => throughput(buffer, row, &figures, area),
                 Panel::Load => load(buffer, row, &figures, area),
                 Panel::Latency => latencies(buffer, &figures, area),
                 Panel::Requests => requests(buffer, row, area),
@@ -229,7 +229,7 @@ fn pair(buffer: &mut Buffer, x: u16, y: u16, width: u16, label: &str, value: &st
     );
 }
 
-fn throughput(buffer: &mut Buffer, row: &Instance, area: (u16, u16, u16, u16)) {
+fn throughput(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16, u16, u16)) {
     let (x, y, width, height) = area;
     boxed(
         buffer,
@@ -255,7 +255,7 @@ fn throughput(buffer: &mut Buffer, row: &Instance, area: (u16, u16, u16, u16)) {
         let average =
             (!series.is_empty()).then(|| series.iter().sum::<f64>() / series.len() as f64);
         let maximum = series.iter().copied().fold(0.0_f64, f64::max);
-        buffer.pieces(
+        let end = buffer.pieces(
             x + 2,
             top,
             &[
@@ -274,6 +274,9 @@ fn throughput(buffer: &mut Buffer, row: &Instance, area: (u16, u16, u16, u16)) {
                 (&right(&integer(maximum), 6), Style::PLAIN),
             ],
         );
+        if index == 1 {
+            tbt_accuracy(buffer, figures, end, top, x + width - 2);
+        }
         let color = if index == 0 {
             Color::Cyan
         } else {
@@ -369,9 +372,10 @@ fn load(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16,
             Style::PLAIN
         },
     );
-    // Stage lines end above requests/s, or above the bottom border.
-    let requests_shown = area.3 > 10;
-    let last = if requests_shown {
+    // Rows below the stage lines, as many as the height allows; the stage
+    // lines end above them, or above the bottom border.
+    let below = usize::from(area.3.saturating_sub(10)).min(3);
+    let last = if below > 0 {
         y + 8
     } else {
         (y + area.3).saturating_sub(2)
@@ -403,17 +407,86 @@ fn load(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16,
             buffer.put(column, line, &pad(text, room), Style::PLAIN);
         }
     }
-    let finished = row
-        .stats
-        .rate(|s| s.counters.finished.iter().map(|(_, value)| value).sum());
-    if requests_shown {
-        buffer.put(x + 2, y + 9, "requests/s", dim());
-        buffer.put(
-            column,
-            y + 9,
-            &finished.map(rate).unwrap_or_else(|| "-".into()),
-            Style::PLAIN,
-        );
+    let shown =
+        |value: Option<f64>, format: fn(f64) -> String| value.map_or_else(|| "-".into(), format);
+    let speed = |value: f64| {
+        if value >= 100.0 {
+            integer(value)
+        } else {
+            format!("{value:.1}")
+        }
+    };
+    let stats = &row.stats;
+    let (now, average) = (stats.stream_rate(), stats.stream_average());
+    let fastest = stats.stream_series().into_iter().flatten().reduce(f64::max);
+    let streams = if now.or(average).is_none() {
+        vec![vec![("-".to_owned(), dim())]]
+    } else {
+        vec![
+            vec![
+                ("now ".to_owned(), dim()),
+                (shown(now, speed), Style::fg(Color::White).bold()),
+            ],
+            vec![
+                ("  avg ".to_owned(), dim()),
+                (shown(average, speed), Style::PLAIN),
+            ],
+            vec![
+                ("  max ".to_owned(), dim()),
+                (shown(fastest, speed), Style::PLAIN),
+            ],
+            vec![(" tok/s".to_owned(), dim())],
+        ]
+    };
+    let finished = stats.rate(|s| s.counters.finished.iter().map(|(_, value)| value).sum());
+    let requests = vec![
+        vec![
+            ("in ".to_owned(), dim()),
+            (
+                shown(stats.rate(|s| s.counters.requests_submitted), rate),
+                Style::PLAIN,
+            ),
+        ],
+        vec![
+            ("  done ".to_owned(), dim()),
+            (shown(finished, rate), Style::PLAIN),
+        ],
+    ];
+    let tokens = vec![
+        vec![
+            ("prompt ".to_owned(), dim()),
+            (
+                shown(
+                    figures.mean(|s| s.histograms.prompt_tokens.as_ref()),
+                    integer,
+                ),
+                Style::PLAIN,
+            ),
+        ],
+        vec![
+            ("  output ".to_owned(), dim()),
+            (
+                shown(
+                    figures.mean(|s| s.histograms.output_tokens.as_ref()),
+                    integer,
+                ),
+                Style::PLAIN,
+            ),
+        ],
+    ];
+    let end = x + width.saturating_sub(2);
+    for (index, (label, pieces)) in [
+        ("per stream", streams),
+        ("requests/s", requests),
+        ("avg tokens", tokens),
+    ]
+    .into_iter()
+    .take(below)
+    .enumerate()
+    {
+        let line = y + 9 + index as u16;
+        buffer.put(x + 2, line, label, dim());
+        groups(buffer, column, line, &pieces, end);
     }
 }
 
@@ -756,7 +829,7 @@ fn speculation(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u1
         buffer.put(x + 2, y + 2, "off (autoregressive)", dim());
         return;
     }
-    buffer.pieces(
+    let end = buffer.pieces(
         x + 2,
         y + 1,
         &[
@@ -767,6 +840,30 @@ fn speculation(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u1
             ),
         ],
     );
+    // Tokens emitted per verify item, after stop and length cuts.
+    let per_verify = row
+        .stats
+        .delta(figures.window, |s| s.counters.spec_verify_items)
+        .filter(|items| *items > 0.0)
+        .map(|items| {
+            row.stats
+                .delta(figures.window, |s| s.counters.spec_emitted_tokens)
+                .unwrap_or(0.0)
+                / items
+        });
+    if let Some(per_verify) = per_verify {
+        groups(
+            buffer,
+            end,
+            y + 1,
+            &[vec![
+                ("  ".to_owned(), dim()),
+                (format!("{per_verify:.2}"), Style::PLAIN),
+                (" tok/verify".to_owned(), dim()),
+            ]],
+            x + width - 2,
+        );
+    }
     buffer.put(x + 2, y + 2, "by position", dim());
     let positions = row.stats.acceptance_by_position(figures.window);
     let column_width = (width - 4) / 2;
@@ -804,101 +901,187 @@ fn speculation(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u1
     }
 }
 
+/// TBT's actual over predicted mixed-step time, right-aligned to `end` on
+/// line `y` when the window has mixed steps it predicted and the text fits
+/// two cells after column `after`.
+fn tbt_accuracy(buffer: &mut Buffer, figures: &Figures, after: u16, y: u16, end: u16) {
+    let ratio: HistogramOf = |s| s.histograms.mixed_over_predicted.as_ref();
+    let (Some(p50), Some(p99)) = (figures.quantile(ratio, 0.5), figures.quantile(ratio, 0.99))
+    else {
+        return;
+    };
+    let (p50, p99) = (format!("{p50:.1}x"), format!("{p99:.1}x"));
+    let pieces = [
+        ("tbt actual/pred p50 ", dim()),
+        (p50.as_str(), Style::PLAIN),
+        ("  p99 ", dim()),
+        (p99.as_str(), Style::PLAIN),
+    ];
+    let length: usize = pieces.iter().map(|(text, _)| text.chars().count()).sum();
+    let start = usize::from(end).saturating_sub(length);
+    if start >= usize::from(after) + 2 {
+        buffer.pieces(start as u16, y, &pieces);
+    }
+}
+
 fn steps(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16, u16, u16)) {
     let (x, y, width, _) = area;
+    let batches = row
+        .stats
+        .rate(|s| s.counters.batches)
+        .map_or_else(|| "-".into(), rate);
     boxed(
         buffer,
         area,
         &[
             title("Steps"),
             (&format!("  {}", figures.window.label()), dim()),
+            (&format!("  {batches} batches/s"), dim()),
         ],
         false,
     );
-    buffer.pieces(
-        x + 2,
-        y + 1,
-        &[
-            ("batches/s ", dim()),
-            (
-                &row.stats
-                    .rate(|s| s.counters.batches)
-                    .map_or_else(|| "-".into(), rate),
-                Style::PLAIN,
-            ),
-        ],
-    );
+    let inner = width.saturating_sub(4);
     let window = figures.window;
-    let shares = [
-        (
-            "decode",
-            row.stats.delta(window, |s| s.counters.decode_only_batches),
-            Color::Cyan,
-        ),
-        (
-            "mixed",
-            row.stats.delta(window, |s| s.counters.mixed_batches),
-            Color::Blue,
-        ),
-        (
-            "prefill",
-            row.stats.delta(window, |s| s.counters.prefill_only_batches),
-            Color::Magenta,
-        ),
+    // Wall time by step kind, then the time outside step execution.
+    let Some(time) = row.stats.step_time(window) else {
+        buffer.put(x + 2, y + 1, "no steps in the window", dim());
+        return;
+    };
+    let kinds = [
+        ("decode", time.decode, Color::Cyan),
+        ("mixed", time.mixed, Color::Blue),
+        ("prefill", time.prefill, Color::Magenta),
     ];
-    let total: f64 = shares.iter().filter_map(|(_, value, _)| *value).sum();
-    buffer.put(x + 2, y + 2, "mix", dim());
-    if total > 0.0 {
-        let room = f64::from(width - 10);
-        let mut column = x + 6;
-        for (_, value, color) in &shares {
-            let cells = (value.unwrap_or(0.0) / total * room).round() as usize;
-            column = buffer.put(column, y + 2, &"█".repeat(cells), Style::fg(*color));
-        }
-        // As many labels as fit inside the box.
-        let room = usize::from(width.saturating_sub(8));
-        let mut labels = String::new();
-        for (name, value, _) in &shares {
-            let label = format!("{name} {}", percent(Some(value.unwrap_or(0.0) / total)));
-            let gap = if labels.is_empty() { "" } else { "  " };
-            if labels.len() + gap.len() + label.len() > room {
-                break;
-            }
-            labels.push_str(gap);
-            labels.push_str(&label);
-        }
-        buffer.put(x + 6, y + 3, &labels, dim());
+    // The bar, and after it the share outside steps, named in full when
+    // that leaves the bar 16 cells.
+    let outside = percent(Some(time.outside));
+    let span = usize::from(inner.saturating_sub(5));
+    let name = if span.saturating_sub(15 + outside.len()) >= 16 {
+        "outside steps"
     } else {
-        buffer.put(x + 6, y + 2, "no batches in the window", dim());
+        "outside"
+    };
+    let room = span.saturating_sub(name.len() + outside.len() + 2);
+    buffer.put(x + 2, y + 1, "time", dim());
+    let (mut column, mut share, mut cells) = (x + 7, 0.0, 0);
+    for (_, part, color) in kinds {
+        share += part;
+        let upto = ((share * room as f64).round() as usize).clamp(cells, room);
+        column = buffer.put(column, y + 1, &"█".repeat(upto - cells), Style::fg(color));
+        cells = upto;
     }
+    column = buffer.put(column, y + 1, &"─".repeat(room - cells), dim());
+    buffer.pieces(
+        column + 1,
+        y + 1,
+        &[(&format!("{name} "), dim()), (&outside, Style::PLAIN)],
+    );
+    // The legend of the step kinds that took time, double-spaced when that
+    // fits. Blue text is too dark to read, so mixed is named in plain text.
+    let legend = |gap: usize| {
+        kinds
+            .iter()
+            .filter(|(_, part, _)| *part > 0.0)
+            .enumerate()
+            .map(|(index, (name, part, color))| {
+                let color = if *color == Color::Blue {
+                    Color::Default
+                } else {
+                    *color
+                };
+                vec![
+                    (" ".repeat(if index > 0 { gap } else { 0 }), Style::PLAIN),
+                    (format!("{name} "), Style::fg(color)),
+                    (percent(Some(*part)), Style::PLAIN),
+                ]
+            })
+            .collect::<Vec<_>>()
+    };
+    let wide = legend(2);
+    let length: usize = wide
+        .iter()
+        .flatten()
+        .map(|(text, _)| text.chars().count())
+        .sum();
+    let fitting = if length <= usize::from(inner) {
+        wide
+    } else {
+        legend(1)
+    };
+    groups(buffer, x + 2, y + 2, &fitting, x + 2 + inner);
+    // A table by step kind: share of steps, then step time.
+    let column = if inner >= 39 { 9 } else { 8 };
+    let label = usize::from(inner).saturating_sub(3 * column).min(13);
     buffer.put(
         x + 2,
-        y + 4,
+        y + 3,
         &format!(
-            "{}{}{}",
-            pad("step time", 12),
-            right("p50", 9),
-            right("p99", 9)
+            "{}{}{}{}",
+            pad("", label),
+            right("decode", column),
+            right("mixed", column),
+            right("prefill", column)
         ),
         dim().bold(),
     );
-    let phases: [(&str, HistogramOf); 3] = [
-        ("decode", |s| s.histograms.step_decode.as_ref()),
-        ("mixed", |s| s.histograms.step_mixed.as_ref()),
-        ("prefill", |s| s.histograms.step_prefill.as_ref()),
+    let counts = [
+        row.stats.delta(window, |s| s.counters.decode_only_batches),
+        row.stats.delta(window, |s| s.counters.mixed_batches),
+        row.stats.delta(window, |s| s.counters.prefill_only_batches),
     ];
-    for (index, (phase, histogram)) in phases.into_iter().enumerate() {
-        let line = y + 5 + index as u16;
-        buffer.put(x + 2, line, &pad(phase, 12), dim());
-        let p50 = figures.quantile(histogram, 0.5);
-        let p99 = figures.quantile(histogram, 0.99);
-        buffer.put(
-            x + 14,
-            line,
-            &format!("{}{}", right(&latency(p50), 9), right(&latency(p99), 9)),
-            if p50.is_some() { Style::PLAIN } else { dim() },
-        );
+    let total: f64 = counts.iter().flatten().sum();
+    let shares = counts.map(|count| (total > 0.0).then(|| count.unwrap_or(0.0) / total));
+    let phases: [HistogramOf; 3] = [
+        |s| s.histograms.step_decode.as_ref(),
+        |s| s.histograms.step_mixed.as_ref(),
+        |s| s.histograms.step_prefill.as_ref(),
+    ];
+    // Each cell's text, and whether it holds more than nothing.
+    let cells = |values: [Option<f64>; 3], format: fn(Option<f64>) -> String| {
+        values.map(|value| (format(value), value.is_some_and(|value| value > 0.0)))
+    };
+    let rows = [
+        ("share", cells(shares, percent)),
+        (
+            "p50",
+            cells(phases.map(|phase| figures.quantile(phase, 0.5)), latency),
+        ),
+        (
+            "p99",
+            cells(phases.map(|phase| figures.quantile(phase, 0.99)), latency),
+        ),
+    ];
+    for (index, (name, values)) in rows.into_iter().enumerate() {
+        let line = y + 4 + index as u16;
+        buffer.put(x + 2, line, &pad(name, label), dim());
+        for (position, (text, filled)) in values.into_iter().enumerate() {
+            buffer.put(
+                x + 2 + (label + position * column) as u16,
+                line,
+                &right(&text, column),
+                if filled { Style::PLAIN } else { dim() },
+            );
+        }
     }
+    // Prompt tokens per prefill-bearing step, and the cap selected beside
+    // decoding requests where the budget publishes one.
+    let mut prefill = vec![vec![
+        ("prefill ".to_owned(), dim()),
+        (
+            figures
+                .mean(|s| s.histograms.step_prefill_tokens.as_ref())
+                .map_or_else(|| "-".into(), integer),
+            Style::PLAIN,
+        ),
+        (" tok/step".to_owned(), dim()),
+    ]];
+    if let Some(cap) = figures.mean(|s| s.histograms.prefill_cap.as_ref()) {
+        prefill.push(vec![
+            ("  cap ".to_owned(), dim()),
+            (integer(cap), Style::PLAIN),
+        ]);
+    }
+    groups(buffer, x + 2, y + 7, &prefill, x + 2 + inner);
 }
 
 /// The instance's identity; `gpus` are the GPUs of this host it holds.
@@ -936,7 +1119,7 @@ fn identity(buffer: &mut Buffer, row: &Instance, gpus: &[u32], area: (u16, u16, 
             ("bundle".into(), text(serving.bundle_id.as_deref())),
             ("profile".into(), text(profile.name.as_deref())),
             ("ranks".into(), ranks),
-            ("kv".into(), text(profile.kv_cache_dtype.as_deref())),
+            ("kv".into(), text(profile.kv_label().as_deref())),
             (
                 "max seq".into(),
                 profile

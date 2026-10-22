@@ -5,12 +5,12 @@
 │ ████████████████████████████████████████████████████████████████████████████████ ││ intake     ━──────────────────────────    2% │
 │ ████████████████████████████████████████████████████████████████████████████████ ││                                              │
 │ ████████████████████████████████████████████████████████████████████████████████ ││ waiting    2                                 │
-│ PREFILL now  5,200  avg  7,900  max 35,200                                       ││   by stage transport 0  intake 0             │
+│ PREFILL now  5,200  avg  7,900  max 35,200    tbt actual/pred p50 1.0x  p99 2.0x ││   by stage transport 0  intake 0             │
 │   ▃  ▃  ▃  █  ▃  ▃  ▃  █  ▃  ▃  ▃ ▃  ▃  ▃  █  ▃  ▃  ▃  █  ▃  ▃  ▃  █  ▃  ▃  ▃ ▃  ││            preparation 0  staging 0          │
 │   █  █  █  █  █  █  █  █  █  █  █ █  █  █  █  █  █  █  █  █  █  █  █  █  █  █ █  ││            storage 0  backend 2              │
-│ ▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃█▃ ││ requests/s 5.33                              │
-│ ████████████████████████████████████████████████████████████████████████████████ ││                                              │
-│                                                                                  ││                                              │
+│ ▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃▃█▃█▃ ││ per stream now 77.8  avg 78.0  max 78.3      │
+│ ████████████████████████████████████████████████████████████████████████████████ ││ requests/s in 5.20  done 5.33                │
+│                                                                                  ││ avg tokens prompt 2,794  output 466          │
 └──────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────┘
 ┌─ Latency  window 60s ───────────────────────────────────────┐┌─ Requests  since start ────────┐┌─ Health ────────────────────────┐
 │                      p50      p90      p99    count         ││ finished stop           51,979 ││ worker         ready            │
@@ -21,14 +21,14 @@
 │ prefill            100ms    375ms    875ms      300         ││ engine errors                0 ││ version        0.1.0-alpha.2    │
 │ per output tok       8ms     23ms     46ms      294         ││ refused                      4 ││ metrics        read             │
 └─────────────────────────────────────────────────────────────┘└────────────────────────────────┘└─────────────────────────────────┘
-┌─ Prefix cache  60s ──────────────────────┐┌─ Speculation  adaptive K<=7 dflash ──────┐┌─ Steps  60s ─────────────────────────────┐
-│ reused / queried tok                 71% ││ accepted drafts 59%                      ││ batches/s 47.0                           │
-│ lookups that hit                     83% ││ by position                              ││ mix ██████████████████████████████████   │
-│ reused tok/s                       3,700 ││ 0 █████████▌   86%  4 ██▉          26%   ││     decode 77%  mixed 19%  prefill 4%    │
-│ recompute seen tok/s                 150 ││ 1 ████████▏    74%                       ││ step time         p50      p99           │
-│ anchors / pages           1,204 / 18,330 ││ 2 ██████▉      63%                       ││ decode           19ms     48ms           │
-│ evictions/s                         0.40 ││ 3 █████        46%                       ││ mixed            71ms    237ms           │
-│ capture/restore fail               0 / 0 ││ K chosen: 0 4%  3 22%  5 30%  7 44%      ││ prefill         150ms    248ms           │
+┌─ Prefix cache  60s ──────────────────────┐┌─ Speculation  adaptive K<=7 dflash ──────┐┌─ Steps  60s  47.0 batches/s ─────────────┐
+│ reused / queried tok                 71% ││ accepted drafts 59%  2.78 tok/verify     ││ time ███████████████── outside steps 12% │
+│ lookups that hit                     83% ││ by position                              ││ decode 38%  mixed 39%  prefill 11%       │
+│ reused tok/s                       3,700 ││ 0 █████████▌   86%  4 ██▉          26%   ││                 decode    mixed  prefill │
+│ recompute seen tok/s                 150 ││ 1 ████████▏    74%                       ││ share              77%      19%       4% │
+│ anchors / pages           1,204 / 18,330 ││ 2 ██████▉      63%                       ││ p50                9ms     40ms     50ms │
+│ evictions/s                         0.40 ││ 3 █████        46%                       ││ p99               25ms     98ms     99ms │
+│ capture/restore fail               0 / 0 ││ K chosen: 0 4%  3 22%  5 30%  7 44%      ││ prefill 535 tok/step  cap 1,536          │
 └──────────────────────────────────────────┘└──────────────────────────────────────────┘└──────────────────────────────────────────┘
 ┌─ Identity ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ bundle mimo26   profile tp4-dflash   ranks TP4   kv fp8   max seq 32   page 64 tok   prefix cache on                             │

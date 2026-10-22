@@ -316,6 +316,12 @@ impl<'a> Figures<'a> {
         self.instance.stats.quantile(self.window, histogram, q)
     }
 
+    /// The mean observation of a histogram within the window.
+    pub fn mean(&self, histogram: HistogramOf) -> Option<f64> {
+        let window = self.instance.stats.histogram(self.window, histogram)?;
+        (window.count > 0.0).then(|| window.sum / window.count)
+    }
+
     pub fn running(&self) -> Option<f64> {
         self.latest().and_then(|s| s.gauges.running)
     }

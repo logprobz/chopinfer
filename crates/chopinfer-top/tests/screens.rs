@@ -9,7 +9,7 @@ use chopinfer_top::discover::docker::ServeContainer;
 use chopinfer_top::discover::proc::ServeProcess;
 use chopinfer_top::gpu::poll::Report;
 use chopinfer_top::gpu::{Activity, Device, Gpus, Kind, Owner, Process, Reading, Reasons, Status};
-use chopinfer_top::health::Health;
+use chopinfer_top::health::{Health, KvPlane};
 use chopinfer_top::instances::Registry;
 use chopinfer_top::poll::{Answer, Poll};
 use chopinfer_top::prometheus::Histogram;
@@ -20,15 +20,25 @@ use chopinfer_top::ui;
 /// Seconds of history the fleet has when the screens are drawn.
 const NOW: f64 = 300.0;
 
+/// `per_second` observations in each bucket of `bounds` and `+Inf`, for
+/// `seconds`; each observation counts at its bucket's middle, or at the
+/// highest bound past it.
 fn histogram(bounds: &[f64], per_second: &[f64], seconds: f64) -> Histogram {
-    let mut cumulative = 0.0;
+    let (mut cumulative, mut sum, mut lower) = (0.0, 0.0, 0.0);
     let mut buckets = Vec::new();
     for (bound, count) in bounds.iter().chain([f64::INFINITY].iter()).zip(per_second) {
         cumulative += count * seconds;
+        let middle = if bound.is_finite() {
+            (lower + bound) / 2.0
+        } else {
+            lower
+        };
+        sum += count * seconds * middle;
+        lower = if bound.is_finite() { *bound } else { lower };
         buckets.push((*bound, cumulative));
     }
     Histogram {
-        sum: 0.0,
+        sum,
         count: cumulative,
         buckets,
     }
@@ -37,6 +47,11 @@ fn histogram(bounds: &[f64], per_second: &[f64], seconds: f64) -> Histogram {
 const LATENCY: [f64; 6] = [0.05, 0.1, 0.25, 0.5, 1.0, 2.5];
 const LONG: [f64; 6] = [1.0, 2.5, 5.0, 10.0, 20.0, 40.0];
 const STEP: [f64; 6] = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5];
+const PROMPT: [f64; 4] = [256.0, 1024.0, 4096.0, 16_384.0];
+const OUTPUT: [f64; 4] = [64.0, 256.0, 1024.0, 4096.0];
+const STEP_TOKENS: [f64; 5] = [256.0, 1024.0, 2048.0, 4096.0, 8192.0];
+const CAP: [f64; 4] = [512.0, 1024.0, 2048.0, 4096.0];
+const RATIO: [f64; 6] = [0.9, 1.0, 1.1, 1.25, 1.5, 2.0];
 
 /// A busy server `seconds` into its life, generating about `rate` tokens a
 /// second with `running` sequences.
@@ -80,6 +95,14 @@ fn busy(seconds: f64, rate: f64, running: f64) -> Snapshot {
             decode_only_batches: 36.0 * t,
             mixed_batches: 9.0 * t,
             prefill_only_batches: 2.0 * t,
+            // Every running sequence but one decodes; each started one
+            // adds its first token without decode time.
+            decode_tokens: (rate * t + 200.0 * wobble(37.0) * t.min(37.0) / 37.0 - 5.0 * t)
+                .max(0.0),
+            decode_seconds: (running - 1.0).max(0.0) * t,
+            requests_submitted: 5.2 * t,
+            spec_verify_items: 330.0 * t,
+            spec_emitted_tokens: 917.0 * t,
             ..Counters::default()
         },
         gauges: Gauges {
@@ -102,10 +125,16 @@ fn busy(seconds: f64, rate: f64, running: f64) -> Snapshot {
             queue: Some(histogram(&LATENCY, &[4.0, 0.4, 0.3, 0.1, 0.0, 0.0, 0.0], t)),
             prefill: Some(histogram(&LATENCY, &[0.5, 2.0, 1.7, 0.6, 0.2, 0.0, 0.0], t)),
             per_output_token: Some(histogram(&STEP, &[3.0, 1.6, 0.3, 0.0, 0.0, 0.0, 0.0], t)),
-            step_decode: Some(histogram(&STEP, &[1.0, 30.0, 5.0, 0.0, 0.0, 0.0, 0.0], t)),
-            step_mixed: Some(histogram(&STEP, &[0.0, 0.0, 2.0, 6.0, 1.0, 0.0, 0.0], t)),
-            step_prefill: Some(histogram(&STEP, &[0.0, 0.0, 0.0, 0.5, 1.5, 0.0, 0.0], t)),
-            ..Histograms::default()
+            // 36 decode, 9 mixed and 2 prefill steps a second take 0.38,
+            // 0.3925 and 0.1125 s of it.
+            step_decode: Some(histogram(&STEP, &[20.0, 16.0, 0.0, 0.0, 0.0, 0.0, 0.0], t)),
+            step_mixed: Some(histogram(&STEP, &[0.0, 1.0, 6.0, 2.0, 0.0, 0.0, 0.0], t)),
+            step_prefill: Some(histogram(&STEP, &[0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0], t)),
+            prompt_tokens: Some(histogram(&PROMPT, &[0.5, 1.5, 2.5, 0.6, 0.05], t)),
+            output_tokens: Some(histogram(&OUTPUT, &[1.0, 2.0, 1.8, 0.35, 0.0], t)),
+            step_prefill_tokens: Some(histogram(&STEP_TOKENS, &[4.0, 6.0, 1.0, 0.0, 0.0, 0.0], t)),
+            prefill_cap: Some(histogram(&CAP, &[0.0, 10.0, 30.0, 5.0, 0.0], t)),
+            mixed_over_predicted: Some(histogram(&RATIO, &[1.0, 3.0, 3.0, 1.0, 0.6, 0.3, 0.1], t)),
         },
     }
 }
@@ -455,6 +484,42 @@ fn detail_view() {
     // A loading process shows its status instead of panels.
     app.selected = Some(4);
     check("detail-loading-132x38", &app, 132, 38);
+}
+
+#[test]
+fn a_mixed_kv_element_and_an_idle_instance_in_the_detail_view() {
+    let mut app = fleet();
+    app.view = View::Detail;
+    let selected = app.selected.unwrap();
+    let instance = app
+        .registry
+        .instances
+        .iter_mut()
+        .find(|instance| instance.id == selected)
+        .unwrap();
+    let profile = &mut instance
+        .health
+        .as_mut()
+        .unwrap()
+        .serving
+        .as_mut()
+        .unwrap()
+        .profile;
+    // DeepSeek's KV pages: two FP4 planes with different scales.
+    profile.kv_cache_dtype = Some("mixed".to_owned());
+    profile.kv_cache_planes = [("compressed", 288), ("index", 68)]
+        .map(|(name, bytes_per_token)| KvPlane {
+            name: name.to_owned(),
+            code: "fp4_e2m1".to_owned(),
+            bytes_per_token,
+        })
+        .to_vec();
+    let text = ui::draw(&app, 132, 38, NOW).text();
+    assert!(text.contains("ranks TP4   kv fp4   max seq 32"), "{text}");
+    // The idle GLM container decodes nothing, so it has no stream speed.
+    app.selected = Some(5);
+    let text = ui::draw(&app, 132, 38, NOW).text();
+    assert!(text.contains("│ per stream -"), "{text}");
 }
 
 #[test]

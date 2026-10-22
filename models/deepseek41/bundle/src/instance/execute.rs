@@ -35,6 +35,9 @@ use crate::program::{Phase, Stage};
 
 pub(crate) mod dma;
 #[cfg(test)]
+#[path = "graph_key_tests.rs"]
+mod graph_key_tests;
+#[cfg(test)]
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
 mod micro;

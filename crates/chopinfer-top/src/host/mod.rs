@@ -205,6 +205,9 @@ pub const WARM_CELSIUS: f64 = 85.0;
 pub const HOT_CELSIUS: f64 = 95.0;
 /// Degrees under a chip's limit where it turns warm.
 pub const WARM_HEADROOM: f64 = 10.0;
+/// Degrees under its limit where a CPU's temperature is reported. CPUs
+/// boost until they near their limit, so their warm level is normal load.
+pub const CPU_HEADROOM: f64 = 3.0;
 
 /// Warm 10C under the chip's limit and hot at it; without a limit, warm
 /// from 85C and hot from 95C.
@@ -223,6 +226,30 @@ fn warm_hot(limit: Option<f64>) -> (f64, f64) {
     limit.map_or((WARM_CELSIUS, HOT_CELSIUS), |limit| {
         (limit - WARM_HEADROOM, limit)
     })
+}
+
+/// Where a temperature on a chip of `kind` is reported: 3C under the
+/// limit for a CPU, 95C without one; for any other chip, where it turns
+/// warm.
+pub fn alert(kind: Kind, limit: Option<f64>) -> f64 {
+    let (warm, hot) = warm_hot(limit);
+    if kind == Kind::Cpu {
+        hot - CPU_HEADROOM
+    } else {
+        warm
+    }
+}
+
+/// How far `celsius` is from `limit`, named `what`, in whole degrees.
+fn margin(celsius: f64, limit: f64, what: &str) -> String {
+    let under = (limit - celsius).round();
+    if under > 0.0 {
+        format!("{under:.0}C under {what}")
+    } else if under < 0.0 {
+        format!("{:.0}C over {what}", -under)
+    } else {
+        format!("at {what}")
+    }
 }
 
 /// How full a filesystem is: warm from 90%, hot from 95%.
@@ -435,7 +462,7 @@ impl Host {
     }
 
     /// Takes a report at `now`, noting in `registry` what changed: the
-    /// host found, a chip's main temperature reaching its warning level and
+    /// host found, a chip's main temperature reaching its alert level and
     /// leaving it, memory nearly full, swap in use, a fan stopping and
     /// starting, and a filesystem nearly full.
     pub fn apply(&mut self, report: Report, registry: &mut Registry, now: f64) {
@@ -545,20 +572,30 @@ impl Host {
                     // A chip's main temperature speaks for it: Tctl is the
                     // hottest CCD's, Composite the drive's.
                     Quantity::Celsius if sensor.primary => {
-                        let (warm, _) = warm_hot(sensor.limit);
-                        if !self.watch.warm.contains(&key) && value >= warm {
+                        let alert = alert(chip.kind, sensor.limit);
+                        if !self.watch.warm.contains(&key) && value >= alert {
                             self.watch.warm.insert(key);
                             let what = match sensor.limit {
-                                Some(limit) => format!(
-                                    "{name} {value:.0}C, {:.0}C under its limit",
-                                    (limit - value).max(0.0)
+                                Some(limit) => {
+                                    format!(
+                                        "{name} {value:.0}C, {}",
+                                        margin(value, limit, "its limit")
+                                    )
+                                }
+                                None if chip.kind == Kind::Cpu => format!(
+                                    "{name} {value:.0}C, {} (no limit exposed)",
+                                    margin(value, HOT_CELSIUS, &format!("{HOT_CELSIUS:.0}C"))
                                 ),
                                 None => format!(
                                     "{name} {value:.0}C, over {WARM_CELSIUS:.0}C (no limit exposed)"
                                 ),
                             };
                             registry.note(now, "host", what, Tone::Warning);
-                        } else if self.watch.warm.contains(&key) && value < warm - COOLED {
+                        } else if self.watch.warm.contains(&key)
+                            // Rounded as shown, so the event never names
+                            // the level it went under.
+                            && value.round() < alert - COOLED
+                        {
                             self.watch.warm.remove(&key);
                             registry.note(
                                 now,
@@ -693,6 +730,11 @@ mod tests {
         assert_eq!(level(84.0, None), Level::Normal);
         assert_eq!(level(93.0, None), Level::Warm);
         assert_eq!(level(95.0, None), Level::Hot);
+        // A CPU is reported only near its limit.
+        assert_eq!(alert(Kind::Cpu, None), 92.0);
+        assert_eq!(alert(Kind::Cpu, Some(100.0)), 97.0);
+        assert_eq!(alert(Kind::Nvme, Some(85.0)), 75.0);
+        assert_eq!(alert(Kind::Nvme, None), 85.0);
         assert_eq!(fullness(0.89), Level::Normal);
         assert_eq!(fullness(0.90), Level::Warm);
         assert_eq!(fullness(0.97), Level::Hot);
@@ -752,12 +794,14 @@ mod tests {
         };
         let board = |rpm| chip(Kind::Board, "nct6799", vec![fan(rpm)]);
         let steps = [
-            (calm, 60.0, 40.0, 0.0),
+            // A CPU at 88C, warm but boosting as designed, is not reported.
+            (calm, 88.0, 40.0, 0.0),
             (pressed, 93.0, 77.0, 0.0),
             (pressed, 94.0, 78.0, 1200.0),
-            // Under the warning level, but not by the 5C that ends it.
-            (eased, 82.0, 72.0, 0.0),
-            (eased, 79.0, 69.0, 0.0),
+            // Under the alert level, but not by the 5C that ends it: 86.6C
+            // shows as 87C, which is not under 92 - 5.
+            (eased, 86.6, 72.0, 0.0),
+            (eased, 86.0, 69.0, 0.0),
             (calm, 70.0, 60.0, 1180.0),
         ];
         for (second, (memory, celsius, drive, rpm)) in steps.into_iter().enumerate() {
@@ -785,7 +829,7 @@ mod tests {
                 ),
                 ("swap in use: 2.0 GiB".to_owned(), Tone::Warning),
                 (
-                    "CPU Tctl 93C, over 85C (no limit exposed)".to_owned(),
+                    "CPU Tctl 93C, 2C under 95C (no limit exposed)".to_owned(),
                     Tone::Warning
                 ),
                 (
@@ -795,7 +839,7 @@ mod tests {
                 // 40 MiB of swap is under 64 but not under 32: still in use.
                 ("memory back to 88% in use".to_owned(), Tone::Normal),
                 ("nct6799 fan2 stopped: 0 rpm".to_owned(), Tone::Warning),
-                ("CPU Tctl back to 79C".to_owned(), Tone::Normal),
+                ("CPU Tctl back to 86C".to_owned(), Tone::Normal),
                 ("NVMe 0 Composite back to 69C".to_owned(), Tone::Normal),
                 ("swap back under 32 MiB".to_owned(), Tone::Normal),
                 (

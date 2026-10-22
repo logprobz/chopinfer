@@ -328,7 +328,9 @@ fn crumbs(app: &App, width: u16) -> Vec<(String, Style)> {
         }
     }
     if let Some(sensor) = cpu_temperature(host)
-        && temperature_level(sensor) > Level::Normal
+        && sensor
+            .value
+            .is_some_and(|celsius| celsius >= host::alert(Kind::Cpu, sensor.limit))
     {
         crumbs.push(piece(
             format!("  CPU {}", celsius(sensor.value)),

@@ -30,7 +30,7 @@
 ┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ Events  host and GPUs ───────────────────────────────────────────────┐
 │ PID     TYPE      VRAM  PROCESS                         ││ 2m00s ago  host   swap in use: 1.4 GiB                                │
 │ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 2m00s ago  host   NVMe 0 Composite 77C, 8C under its limit            │
-│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 2m00s ago  host   CPU Tctl 93C, over 85C (no limit exposed)           │
+│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 2m00s ago  host   CPU Tctl 93C, 2C under 95C (no limit exposed)       │
 │                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
 │                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
 │                                                         ││    0s ago  host   /data 97% full, 113 GiB free                        │

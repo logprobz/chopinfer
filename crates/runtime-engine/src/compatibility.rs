@@ -186,6 +186,12 @@ pub(crate) struct CompatibilityMetrics {
     pub(crate) trace_enabled: bool,
     prompt_tokens: u64,
     cached_tokens: u64,
+    /// Generated tokens after each request's first, and the time between
+    /// each request's consecutive outputs: the terms of
+    /// `vllm:request_time_per_output_token_seconds`, counted as outputs
+    /// commit rather than when requests finish.
+    decode_tokens: u64,
+    decode_micros: u64,
     request_prompt: Histogram,
     request_generation: Histogram,
     request_max: Histogram,
@@ -226,6 +232,8 @@ impl Default for CompatibilityMetrics {
             live: BTreeMap::new(),
             prompt_tokens: 0,
             cached_tokens: 0,
+            decode_tokens: 0,
+            decode_micros: 0,
             request_prompt: Histogram::new(&[]),
             request_generation: Histogram::new(&[]),
             request_max: Histogram::new(&[]),
@@ -510,13 +518,23 @@ impl CompatibilityMetrics {
         if count > 0
             && let Some(request) = self.live.get_mut(&id)
         {
-            if request.first_token.is_none() {
-                self.prompt_tokens = self
-                    .prompt_tokens
-                    .saturating_add(request.prompt_tokens as u64);
-                self.cached_tokens = self
-                    .cached_tokens
-                    .saturating_add(request.cached_tokens as u64);
+            match request.last_token {
+                None => {
+                    self.prompt_tokens = self
+                        .prompt_tokens
+                        .saturating_add(request.prompt_tokens as u64);
+                    self.cached_tokens = self
+                        .cached_tokens
+                        .saturating_add(request.cached_tokens as u64);
+                    // The first output starts decoding; tokens it carries
+                    // beyond the first took no decode time.
+                    self.decode_tokens = self.decode_tokens.saturating_add(count as u64 - 1);
+                }
+                Some(last) => {
+                    self.decode_tokens = self.decode_tokens.saturating_add(count as u64);
+                    self.decode_micros =
+                        self.decode_micros.saturating_add(now.saturating_sub(last));
+                }
             }
             request.first_token.get_or_insert(now);
             request.last_token = Some(now);
@@ -664,9 +682,17 @@ impl CompatibilityMetrics {
             ("vllm:num_preemptions_total", self.preemptions_total),
             ("vllm:prompt_tokens_total", self.prompt_tokens),
             ("vllm:prompt_tokens_cached_total", self.cached_tokens),
+            ("chop_request_decode_tokens_total", self.decode_tokens),
         ] {
             counter(&mut output, name, labels, value);
         }
+        writeln!(
+            output,
+            "# TYPE chop_request_decode_seconds_total counter\n\
+             chop_request_decode_seconds_total{{{labels}}} {}",
+            self.decode_micros as f64 / 1_000_000.0
+        )
+        .unwrap();
         writeln!(output, "# TYPE vllm:prompt_tokens_by_source_total counter").unwrap();
         for (source, count) in [
             (
@@ -954,6 +980,40 @@ mod tests {
         assert_eq!(parsed["cached_tokens"], 80);
         assert_eq!(parsed["speculation"]["accepted_tokens"], 2);
         assert_eq!(parsed.as_object().unwrap().len(), 11);
+    }
+
+    #[test]
+    fn decode_counters_add_the_time_between_each_requests_outputs() {
+        let mut metrics = CompatibilityMetrics::default();
+        let (first, second) = (RequestId::new(1), RequestId::new(2));
+        for id in [first, second] {
+            metrics.submit(id, 0, 4, 16);
+            metrics.start(id, 0);
+        }
+        // A first output of two tokens: one counts, at no decode time.
+        metrics.tokens(first, 2, 100);
+        // A run of three, 50 us later.
+        metrics.tokens(first, 3, 150);
+        // Another request decodes alongside: its first token, then one more
+        // 40 us later; both requests' times add.
+        metrics.tokens(second, 1, 120);
+        metrics.tokens(second, 1, 160);
+        // No tokens is no output.
+        metrics.tokens(second, 0, 400);
+        assert_eq!((metrics.decode_tokens, metrics.decode_micros), (5, 90));
+        // A finished request's figures stay; the counters only grow.
+        metrics.finish_completion(first, FinishReason::Length, 200);
+        let text = metrics.render(r#"model_name="m",engine="0""#);
+        assert!(
+            text.contains("chop_request_decode_tokens_total{model_name=\"m\",engine=\"0\"} 5\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "chop_request_decode_seconds_total{model_name=\"m\",engine=\"0\"} 0.00009\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

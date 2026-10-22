@@ -177,6 +177,11 @@ fn engine_records_real_lifecycle_boundaries_with_an_injected_clock() {
     let running = metrics.prometheus_compatibility("fixture");
     assert!(running.contains(&format!("vllm:num_requests_running{{{labels}}} 1")));
     assert!(running.contains(&format!("vllm:num_requests_waiting{{{labels}}} 0")));
+    // The first token starts decoding; it adds no decode token or time.
+    assert!(running.contains(&format!("chop_request_decode_tokens_total{{{labels}}} 0")));
+    assert!(running.contains(&format!(
+        "chop_request_decode_seconds_total{{{labels}}} 0\n"
+    )));
     clock.set(210);
     engine.step().unwrap();
 
@@ -226,6 +231,10 @@ fn engine_records_real_lifecycle_boundaries_with_an_injected_clock() {
         format!("vllm:e2e_request_latency_seconds_count{{{labels}}} 2"),
         format!("vllm:prompt_tokens_total{{{labels}}} 1"),
         format!("vllm:generation_tokens_total{{{labels}}} 2"),
+        // The second token came 60 us after the first; the cancelled
+        // request never produced one.
+        format!("chop_request_decode_tokens_total{{{labels}}} 1"),
+        format!("chop_request_decode_seconds_total{{{labels}}} 0.00006"),
         format!("chop_speculation_k_total{{{labels},k=\"0\"}} 1"),
         format!(
             "chop_step_rows_total{{{labels},decode_rows=\"1\",verify_rows=\"0\",row_capacity=\"unknown\"}} 1"

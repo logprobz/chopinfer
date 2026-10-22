@@ -1,6 +1,6 @@
 //! Block step shapes priced by their drafting sequences, and trials that
 //! run their own steps before an earlier verdict stops them. Replays of
-//! DeepSeek DSpark's served C16 and C8 steps at 300 W (lane OSP speed run,
+//! DSpark's served C16 and C8 steps at 300 W (lane OSP speed run,
 //! three processes per policy) and of a C1 cross-model harness cohort.
 use super::*;
 

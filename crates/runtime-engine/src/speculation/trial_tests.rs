@@ -1,5 +1,5 @@
 //! Bounded drafting trials. Where drafting is off and the estimates price it
-//! near AR, its own steady steps decide. Replays of DeepSeek DSpark's served
+//! near AR, its own steady steps decide. Replays of DSpark's served
 //! C8 and C16 steps, where one server process kept AR for whole cohorts
 //! while another, whose estimate happened to clear the resume margin, drafted
 //! the same cohorts faster.

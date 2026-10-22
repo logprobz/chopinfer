@@ -451,7 +451,7 @@ fn realized_drafting_averages_its_first_steps_evenly() {
     assert_eq!(weights, [1.0 / 32.0, 1.0 / 16.0, 1.0 / 8.0, 1.0 / 8.0]);
 }
 
-// C16 as one DeepSeek DSpark process, B1, served it in a C16 priming phase:
+// C16 as one DSpark process, B1, served it in a C16 priming phase:
 // 16 items, a 28.0 ms AR step, and drafting by the four requests the
 // estimates chose, four drafts each in a 32-row step.
 const C16_AR: u64 = 28_000;

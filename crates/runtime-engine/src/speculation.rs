@@ -72,7 +72,7 @@ const FIRST_PROBE: u16 = 16;
 const FRESH_RUN_STEPS: f64 = 16.0;
 /// Steady drafting steps a concurrency must realize before its measured
 /// throughput can switch drafting off or keep it on. Probes vote in that
-/// throughput but do not count toward these steps: at DeepSeek C16 a probe
+/// throughput but do not count toward these steps: at DSpark C16 a probe
 /// weighed four steady steps, and seven losing probes with four steady steps
 /// that beat AR made a verdict against drafting.
 const REALIZED_STEPS: u32 = 8;
@@ -80,7 +80,7 @@ const REALIZED_STEPS: u32 = 8;
 /// trial when that plan is estimated at this share of AR or more, though
 /// below the resume margin. Estimates can miss by more than the margin:
 /// a request that never verified is priced at the shared prior, and a probe
-/// times its drafters fresh. At DeepSeek DSpark C8 one process priced
+/// times its drafters fresh. At DSpark C8 one process priced
 /// drafting at 0.91 to 0.94 of AR and kept AR, while another, whose
 /// estimate happened to clear the margin, realized 1.25 times AR.
 const TRIAL_BAND: f64 = 0.9;
@@ -824,7 +824,7 @@ impl BlockStepTable {
     /// A measured bucket uses its average, plus the cost of a drafting
     /// sequence for each sequence more, or minus it for each fewer, than it
     /// averaged. That cost is fitted where steady steps of a bucket ran at
-    /// two or more sequence counts (`sequence_cost`): at DeepSeek C16, 32
+    /// two or more sequence counts (`sequence_cost`): at DSpark C16, 32
     /// rows took 37 ms with four drafting sequences and 40 ms with eight;
     /// priced alike, plans kept the eight. Without any fit, sequences
     /// above the average add `prior_sequence_cost` each, and fewer cost no
@@ -1618,7 +1618,7 @@ impl SpeculationPolicy {
         // Whatever the estimates say, drafting stays off where its realized
         // throughput is below AR's; only probes measure it again. A trial
         // after an earlier run's verdict runs its own steps first: one slow
-        // first step can tip a verdict near AR below it. At DeepSeek C8
+        // first step can tip a verdict near AR below it. At DSpark C8
         // under replacement load it tipped a 139-step average just above AR
         // (485.5 against 480 tok/s), and drafting stayed off for the window
         // though the trial's next steps beat AR. Its steps then move the
@@ -1805,7 +1805,7 @@ impl SpeculationPolicy {
                     state.after_verdict = self.realized.get(&items).is_some_and(Realized::decided);
                 }
                 // An average of probes alone would outweigh the trial's
-                // steps: at DeepSeek C16 seven losing probes outvoted eight
+                // steps: at DSpark C16 seven losing probes outvoted eight
                 // steady steps that beat AR. The trial's own steps decide.
                 if starts
                     && let Some(realized) = self.realized.get_mut(&items)

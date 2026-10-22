@@ -82,12 +82,12 @@ use super::*;
 // WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
 // audited by `fold_cluster::cluster_folds_change_only_measured_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0xf2b05982463a2227)),
-    (6, (8680, 0xc24f3c56d43b3cd7)),
-    (8, (8212, 0x2c13c1e8961bf158)),
-    (12, (10136, 0x67e139874b2de33e)),
-    (16, (9012, 0x5c4b605d766caa13)),
-    (32, (8704, 0x480424e83ee26757)),
+    (4, (8520, 0x60ef41c3fb19c69f)),
+    (6, (8680, 0x9c8cd5dcc4b8692f)),
+    (8, (8212, 0x139d478f453b8ce2)),
+    (12, (10136, 0xf5073975e2eff8da)),
+    (16, (9012, 0xd9f2fb496f5cea08)),
+    (32, (8704, 0x184a80f73ebdd8ef)),
 ];
 
 #[test]

@@ -1128,6 +1128,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// spans, and its fork and join add four event lines (audited by
 /// `shared_overlap::the_window_kv_overlap_changes_only_its_projection`).
 /// These lifecycles capture one Decode-2 graph: 160 lines more per rank.
+/// The row-local rings (`fold_local_rows::SERVED`) add eight resolves and
+/// eight releases per TP4 rank; these lifecycles launch no 16- or 32-row
+/// bucket.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1314,7 +1317,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// module adds six resolves and seven releases per rank. The two-strip
 /// routed down module adds two resolves and three releases per rank.
 /// module adds six resolves and seven releases per rank. The window KV
-/// projection beside the query chain changes it as in `FLASH_JOURNALS`.
+/// projection beside the query chain and the row-local rings change it as
+/// in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

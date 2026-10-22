@@ -66,6 +66,12 @@ use super::*;
 // row status and runs on the side stream beside its query chain: its
 // launches change stream and those spans, and its fork and join add four
 // event lines per layer and rank (640 lines).
+// The row-local rings add eight resolves per rank, which precede the side
+// streams and events and shift their ids by 32. At 16 rows each WQ_b fold's admit,
+// partials and final launch become the ring's admit and ring (160 fewer
+// lines) and WO_b's pair becomes the ring's; at 32 rows WQ_b's ticket pair
+// becomes the pair loop's and WO_b's reuse pair the ring's (audited by
+// `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0xe5220b76e871118d)),
     (6, (8040, 0x0c9732c76299c4cf)),

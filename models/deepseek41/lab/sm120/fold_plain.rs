@@ -9,7 +9,7 @@ pub const FAMILY: &str = "fold_plain";
 pub const PREFIX: &str = "plain_";
 pub const DEFINE: &str = "CHOP_FOLD_PLAIN_ROWS";
 /// The bundle's lock family and spec of every served cubin this family
-/// rebuilds.
+/// rebuilds (of the row-local cubin, the pair-loop entries only).
 pub fn served() -> Vec<(&'static str, CubinSpec)> {
     let g = [FLASH];
     let mut specs = Vec::new();
@@ -22,7 +22,17 @@ pub fn served() -> Vec<(&'static str, CubinSpec)> {
             .into_iter()
             .filter(|(family, _)| *family == projection_reuse::FOLD_FAMILY),
     );
-    specs.extend(fold_local_rows::cubins(&g).unwrap());
+    // The deep rings place rows by their own swizzle flag, so the family
+    // rebuilds only the pair loops.
+    let pair_loops: Vec<_> = fold_local_rows::entries()
+        .into_iter()
+        .filter(|e| e.stages == 0)
+        .collect();
+    specs.push((
+        fold_local_rows::FAMILY,
+        kernels_sm120::gemm::mxfp8_fold_local_rows::cubin_spec(fold_local_rows::CUBIN, &pair_loops)
+            .unwrap(),
+    ));
     specs
 }
 pub fn cubins() -> Vec<CubinSpec> {

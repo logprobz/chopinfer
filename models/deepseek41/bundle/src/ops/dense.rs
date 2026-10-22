@@ -208,7 +208,8 @@ type QuantizedInput = (u32, DType);
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
-    local_query: Option<Prepared<Mxfp8FoldGemmBuffers<View>>>,
+    /// Row-local folds by projection and decode or verify bucket.
+    local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
     tensors: Vec<(&'static str, &'static str)>,
@@ -287,6 +288,7 @@ impl DenseOps {
             .collect();
         let short_prefill = short_prefill::enabled(shape);
         let mut decode = Vec::new();
+        let mut local = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
             for capacity in 1..=crate::Kernels::dense_decode_capacity() {
@@ -303,6 +305,15 @@ impl DenseOps {
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
+                if let Some(op) = crate::Kernels::prepare_local_fold(shape, dense.id, query, need)?
+                {
+                    asks.record(
+                        format!("dense.{} local {capacity}", dense.id),
+                        need,
+                        op.info(),
+                    );
+                    local.push((dense.id, capacity, op));
+                }
                 // Decode lowers the shared gate and up as one pair, so single
                 // packed folds of either would hold storage no launch reads.
                 if !pair_only(dense.id)
@@ -336,15 +347,10 @@ impl DenseOps {
                 }
             }
         }
-        let local_need = exact::need(32, exact::verify(32));
-        let local_query = crate::Kernels::prepare_local_query(shape, local_need)?;
-        if let Some(op) = &local_query {
-            asks.record("dense.query local C32", local_need, op.info());
-        }
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
-            local_query,
+            local,
             stream,
             stream_pair,
             tensors,
@@ -405,16 +411,21 @@ impl DenseOps {
         result
     }
 
-    pub(crate) fn local_query(
+    /// Projection `id` through its row-local fold, if one serves the
+    /// phase's decode or verify bucket.
+    pub(crate) fn local(
         &self,
+        id: &str,
         phase: Phase,
         views: &GemmViews,
         workspace: DeviceBufferSpanV1,
     ) -> Result<Option<Vec<Lowered>>, Refusal> {
-        if phase != Phase::Decode(32) {
-            return Ok(None);
-        }
-        let Some(op) = &self.local_query else {
+        let rows = phase.rows();
+        let Some((_, _, op)) = self
+            .local
+            .iter()
+            .find(|(of, capacity, _)| !phase.prefill() && *of == id && *capacity == rows)
+        else {
             return Ok(None);
         };
         let mut bind = Bind::default();
@@ -428,7 +439,7 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch_within(op, &buffers, workspace, Counts::rows(32))
+        bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
             .map(Some)
     }
 

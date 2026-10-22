@@ -84,8 +84,9 @@ fn run_without_last(reference: bool) -> Vec<String> {
         if first && !reference && rows == 32 {
             assert_eq!(
                 changed,
-                4 * (40 * 4 + 1),
-                "two dense admit/compute pairs and one head per rank"
+                4 * (40 * 2 + 1),
+                "the WO_a admit/compute pair and one head per rank (WO_b at 32 rows runs its \
+                 row-local ring)"
             );
         }
         records.push(format!("case rows={rows} width={width}"));

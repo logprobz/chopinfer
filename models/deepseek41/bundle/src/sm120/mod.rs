@@ -73,6 +73,7 @@ pub mod prefill_tma_scales;
 pub mod projection_reuse;
 pub mod query_prefill;
 pub mod query_window;
+mod query_window_serving;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};

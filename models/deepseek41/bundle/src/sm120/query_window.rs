@@ -37,8 +37,29 @@ pub fn entries() -> Vec<Entry> {
         .collect()
 }
 
+/// Whether `g` at `ranks` runs the twins: Flash TP4 once they serve, unless
+/// [`SWITCH`] is zero.
 pub fn serves(g: &Geometry, ranks: u32) -> bool {
+    #[cfg(test)]
+    if let Some(forced) = FORCED.with(|f| f.get()) {
+        return forced && g.id == FLASH.id && ranks == 4;
+    }
     SERVED && g.id == FLASH.id && ranks == 4 && std::env::var(SWITCH).as_deref() != Ok("0")
+}
+#[cfg(test)]
+std::thread_local! {static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };}
+/// Run `run` with the twins served (`true`) or kept apart (`false`),
+/// whatever [`SERVED`] says.
+#[cfg(test)]
+pub(crate) fn with_served<T>(served: bool, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FORCED.with(|f| f.set(self.0));
+        }
+    }
+    let _restore = Restore(FORCED.with(|f| f.replace(Some(served))));
+    run()
 }
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {

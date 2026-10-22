@@ -152,7 +152,10 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("q_norm of layer {layer}: {refusal}"))
     }
 
-    /// Layer `layer`'s queries' tail RoPE into the BF16 attention query.
+    /// Layer `layer`'s queries' tail RoPE into the BF16 attention query;
+    /// at a one-row decode step where the twin serves
+    /// ([`Self::query_window_twin`]), with the layer's window write in the
+    /// same launch.
     pub(super) fn query_rope(
         &self,
         phase: Phase,
@@ -169,9 +172,32 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             status: self.carried(phase, scratch.row_status)?,
         };
+        if self.query_window_twin(phase, layer) {
+            let window = self.ring_write_views(phase, layer, false)?.0;
+            return glue
+                .query_window(&views, &window)
+                .map(Some)
+                .map_err(|refusal| {
+                    format!("query RoPE and window write of layer {layer}: {refusal}")
+                });
+        }
         glue.query_rope(phase.rows(), &views)
             .map(Some)
             .map_err(|refusal| format!("query RoPE of layer {layer}: {refusal}"))
+    }
+
+    /// Whether layer `layer`'s query RoPE also writes its window keys in
+    /// `phase`: a one-row decode step whose dual fold wrote the KV
+    /// projection before the query chain, where the twin serves.
+    fn query_window_twin(&self, phase: Phase, layer: u32) -> bool {
+        matches!(phase, Phase::Decode(1))
+            && crate::Kernels::query_window_serves(self.shape)
+            && self
+                .ops
+                .dense
+                .as_ref()
+                .and_then(|dense| dense.dual.as_ref())
+                .is_some_and(|dual| dual.eligible(self.shape, phase, layer))
     }
 
     /// A prefill's staged window on this rank.
@@ -216,6 +242,20 @@ impl Lowering<'_> {
         let Some(glue) = &self.ops.glue else {
             return Ok(None);
         };
+        let (views, first) = self.ring_write_views(phase, layer, staged)?;
+        glue.window_write(phase, &views, first)
+            .map(Some)
+            .map_err(|refusal| format!("window write of layer {layer}: {refusal}"))
+    }
+
+    /// The views of [`Self::ring_write`], and with `staged` each item's
+    /// staged block start.
+    fn ring_write_views(
+        &self,
+        phase: Phase,
+        layer: u32,
+        staged: bool,
+    ) -> Result<(WindowWriteViews, Option<DeviceBufferSpanV1>), String> {
         let scratch = &self.buffers.scratch;
         let rows_of = |span| rows(span, phase.rows());
         let stage = self.stage_views();
@@ -250,9 +290,7 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: self.carried(phase, scratch.row_status)?,
         };
-        glue.window_write(phase, &views, first)
-            .map(Some)
-            .map_err(|refusal| format!("window write of layer {layer}: {refusal}"))
+        Ok((views, first))
     }
 
     /// Layer `layer`'s window keys: a decode or verify step's into the
@@ -281,6 +319,8 @@ impl Lowering<'_> {
                 launches.extend(write);
                 Ok(Some(launches))
             }
+            // The query RoPE's launch has written the keys.
+            Phase::Decode(_) if self.query_window_twin(phase, layer) => Ok(Some(Vec::new())),
             Phase::Decode(_) | Phase::Verify { .. } => self.ring_write(phase, layer, false),
         }
     }

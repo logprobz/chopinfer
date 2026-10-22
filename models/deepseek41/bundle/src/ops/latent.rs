@@ -314,20 +314,47 @@ impl GlueOps {
         views: &QueryRopeViews,
     ) -> Result<Vec<Lowered>, Refusal> {
         let mut bind = Bind::default();
-        let buffers = LatentQueryRopeBuffers {
-            query: bind.view(views.query),
-            native_q: bind.view(views.native_q),
-            cos_sin: bind.view(views.cos_sin),
-            live_rows: bind.view(views.live_rows),
-            status: bind.view(views.status),
-            status_row_offset: 0,
-        };
-        let op = if rows <= crate::Kernels::latent_query_small_rows() {
+        let buffers = query_rope_buffers(&mut bind, views);
+        bind.launch(self.query_rope_op(rows), &buffers, Counts::rows(rows))
+    }
+
+    fn query_rope_op(&self, rows: u32) -> &Prepared<LatentQueryRopeBuffers<View>> {
+        if rows <= crate::Kernels::latent_query_small_rows() {
             &self.query_rope_small
         } else {
             &self.query_rope
-        };
-        bind.launch(op, &buffers, Counts::rows(rows))
+        }
+    }
+
+    /// A one-row decode step's query RoPE and window write into the ring
+    /// as one launch (`crate::Kernels::query_window_launch`), from the
+    /// served launches of both over one binding.
+    pub(crate) fn query_window(
+        &self,
+        rope: &QueryRopeViews,
+        window: &WindowWriteViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        if (rope.live_rows, rope.status) != (window.live_rows, window.status) {
+            return Err(Refusal(
+                "the query window twin needs one live count and status row for both halves",
+            ));
+        }
+        let counts = Counts::rows(1);
+        let mut bind = Bind::default();
+        let rope_buffers = query_rope_buffers(&mut bind, rope);
+        let shared = (rope_buffers.live_rows, rope_buffers.status);
+        let window_buffers = window_write_buffers(&mut bind, window, None, Some(shared));
+        if self.decode_window_write.info().workspace != 0 {
+            return Err(Refusal("the one-row window write takes no workspace"));
+        }
+        let rope = self
+            .query_rope_op(1)
+            .launches(&rope_buffers, View::EMPTY, counts)?;
+        let window = self
+            .decode_window_write
+            .launches(&window_buffers, View::EMPTY, counts)?;
+        let launch = crate::Kernels::query_window_launch(rope, window)?;
+        Ok(bind.lowered_launches(vec![launch]))
     }
 
     /// The window write of `rows` rows into the ring, or with `first`,
@@ -342,23 +369,7 @@ impl GlueOps {
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
         let mut bind = Bind::default();
-        let window = ring_buffers(&mut bind, views.ring, None, None);
-        let buffers = LatentWindowWriteBuffers {
-            input: bind.view(views.input),
-            weight: bind.view(views.weight),
-            latent: bind.view(views.latent),
-            cos_sin: bind.view(views.cos_sin),
-            positions: bind.view(views.positions),
-            row_batch: bind.view(views.row_slots),
-            first_positions: first.map(|first| bind.view(first)),
-            last_positions: bind.view(views.last_positions),
-            window,
-            quantized_codes: bind.view(views.codes),
-            quantized_scales: bind.view(views.scales),
-            live_rows: bind.view(views.live_rows),
-            status: bind.view(views.status),
-            status_row_offset: 0,
-        };
+        let buffers = window_write_buffers(&mut bind, views, first, None);
         let op = match first {
             None if matches!(phase, crate::program::Phase::Decode(_)) => &self.decode_window_write,
             None => self.window_write.at(rows),
@@ -430,6 +441,46 @@ impl GlueOps {
             live_rows: bind.view(live_rows),
         };
         bind.launch(&self.window_keys, &buffers, Counts::rows(rows))
+    }
+}
+
+/// The query RoPE's buffers over `views`.
+fn query_rope_buffers(bind: &mut Bind, views: &QueryRopeViews) -> LatentQueryRopeBuffers<View> {
+    LatentQueryRopeBuffers {
+        query: bind.view(views.query),
+        native_q: bind.view(views.native_q),
+        cos_sin: bind.view(views.cos_sin),
+        live_rows: bind.view(views.live_rows),
+        status: bind.view(views.status),
+        status_row_offset: 0,
+    }
+}
+
+/// The window write's buffers over `views`, staged from `first` when given,
+/// with the live count and status views `shared` when another op of the
+/// launch has bound them.
+fn window_write_buffers(
+    bind: &mut Bind,
+    views: &WindowWriteViews,
+    first: Option<DeviceBufferSpanV1>,
+    shared: Option<(View, View)>,
+) -> LatentWindowWriteBuffers<View> {
+    let window = ring_buffers(bind, views.ring, None, None);
+    LatentWindowWriteBuffers {
+        input: bind.view(views.input),
+        weight: bind.view(views.weight),
+        latent: bind.view(views.latent),
+        cos_sin: bind.view(views.cos_sin),
+        positions: bind.view(views.positions),
+        row_batch: bind.view(views.row_slots),
+        first_positions: first.map(|first| bind.view(first)),
+        last_positions: bind.view(views.last_positions),
+        window,
+        quantized_codes: bind.view(views.codes),
+        quantized_scales: bind.view(views.scales),
+        live_rows: shared.map_or_else(|| bind.view(views.live_rows), |(live, _)| live),
+        status: shared.map_or_else(|| bind.view(views.status), |(_, status)| status),
+        status_row_offset: 0,
     }
 }
 

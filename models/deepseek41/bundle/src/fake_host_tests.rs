@@ -55,6 +55,7 @@ mod prefill_tma_matrix;
 mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
+mod query_window;
 mod router_prefill;
 mod selected_cache;
 mod shared_overlap;

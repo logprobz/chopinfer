@@ -1,5 +1,6 @@
-//! The list, detail and GPU views, rendered from a fixed fleet and fixed
-//! GPU readings and compared with golden screens in `tests/screens/`.
+//! The list, detail and monitor views, rendered from a fixed fleet and
+//! fixed host and GPU readings and compared with golden screens in
+//! `tests/screens/`.
 
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,10 @@ use chopinfer_top::discover::proc::ServeProcess;
 use chopinfer_top::gpu::poll::Report;
 use chopinfer_top::gpu::{Activity, Device, Gpus, Kind, Owner, Process, Reading, Reasons, Status};
 use chopinfer_top::health::{Health, KvPlane};
+use chopinfer_top::host::poll::Report as HostReport;
+use chopinfer_top::host::{
+    self, Chip, Cpu, Filesystem, Host, Load, Memory, Pressure, Quantity, Rapl, Rates, Sensor,
+};
 use chopinfer_top::instances::Registry;
 use chopinfer_top::poll::{Answer, Poll};
 use chopinfer_top::prometheus::Histogram;
@@ -295,11 +300,313 @@ fn fleet() -> App {
 
 const MIB: u64 = 1 << 20;
 
+/// The host the monitor shows, with generic names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Machine {
+    /// A workstation serving: four rank threads pegged, a few CPUs busy,
+    /// and sensors on the CPU, board, two drives, eight DIMMs and a NIC.
+    Workstation,
+    /// The workstation with its CPU hot, memory and swap filling and a
+    /// drive warm for the last two minutes, and /data nearly full.
+    Hot,
+    /// Only the CPU and two drives expose sensors, and no fan does.
+    Few,
+}
+
+const GIB: u64 = 1 << 30;
+
+fn temperature(
+    channel: &str,
+    label: &str,
+    celsius: f64,
+    limit: Option<f64>,
+    primary: bool,
+) -> Sensor {
+    Sensor {
+        channel: channel.to_owned(),
+        label: label.to_owned(),
+        quantity: Quantity::Celsius,
+        value: Some(celsius),
+        limit,
+        primary,
+    }
+}
+
+fn fan(channel: &str, rpm: f64) -> Sensor {
+    Sensor {
+        channel: channel.to_owned(),
+        label: channel.to_owned(),
+        quantity: Quantity::Rpm,
+        value: Some(rpm),
+        limit: None,
+        primary: false,
+    }
+}
+
+fn chip(
+    id: &str,
+    kind: host::Kind,
+    driver: &str,
+    model: Option<&str>,
+    name: &str,
+    sensors: Vec<Sensor>,
+) -> Chip {
+    Chip {
+        id: id.to_owned(),
+        kind,
+        driver: driver.to_owned(),
+        model: model.map(str::to_owned),
+        name: name.to_owned(),
+        sensors,
+    }
+}
+
+/// The sensors of `machine` at `t` seconds.
+fn chips(machine: Machine, t: f64) -> Vec<Chip> {
+    let hot = machine == Machine::Hot && t >= 180.0;
+    let wobble = ((t % 37.0) - 18.5).abs() / 18.5;
+    let heat = |cool: f64, warm: f64| if hot { warm } else { cool };
+    let drive = |id: &str, name: &str, model: &str, composite: f64, second: f64| {
+        chip(
+            id,
+            host::Kind::Nvme,
+            "nvme",
+            Some(model),
+            name,
+            vec![
+                temperature("temp1", "Composite", composite, Some(84.85), true),
+                temperature("temp2", "Sensor 1", composite, Some(65261.85), false),
+                temperature("temp3", "Sensor 2", second, Some(65261.85), false),
+            ],
+        )
+    };
+    let mut cpu = vec![temperature(
+        "temp1",
+        "Tctl",
+        heat(61.0 + 2.0 * wobble, 93.0),
+        None,
+        true,
+    )];
+    let drives = [
+        drive(
+            "hwmon0",
+            "NVMe 0",
+            "Example NVMe 2TB",
+            heat(39.0, 77.0),
+            heat(46.0, 84.0),
+        ),
+        drive("hwmon1", "NVMe 1", "Example NVMe 4TB", 33.0, 40.0),
+    ];
+    if machine == Machine::Few {
+        let mut chips = drives.to_vec();
+        chips.push(chip("hwmon2", host::Kind::Cpu, "k10temp", None, "CPU", cpu));
+        return chips;
+    }
+    for (index, (cool, warm)) in [(58.0, 91.0), (57.0, 92.0), (60.0, 90.0), (59.0, 93.0)]
+        .into_iter()
+        .enumerate()
+    {
+        cpu.push(temperature(
+            &format!("temp{}", index + 3),
+            &format!("Tccd{}", index + 1),
+            heat(cool + wobble, warm),
+            None,
+            false,
+        ));
+    }
+    let mut chips = drives.to_vec();
+    chips.push(chip("hwmon2", host::Kind::Cpu, "k10temp", None, "CPU", cpu));
+    chips.push(chip(
+        "hwmon5",
+        host::Kind::Board,
+        "nct6799",
+        None,
+        "nct6799",
+        vec![
+            temperature("temp1", "SYSTIN", heat(38.0, 44.0), None, true),
+            temperature("temp2", "CPUTIN", heat(45.0, 58.0), None, false),
+            temperature("temp3", "AUXTIN0", heat(41.0, 49.0), None, false),
+            fan("fan1", heat(1240.0, 2950.0)),
+            fan("fan2", heat(1180.0, 2810.0)),
+            // A header with nothing on it: exposed, never spinning.
+            fan("fan3", 0.0),
+            fan("fan5", heat(860.0, 1920.0)),
+        ],
+    ));
+    for (index, celsius) in [38.0, 39.0, 41.0, 40.0, 39.0, 42.0, 40.0, 38.0]
+        .into_iter()
+        .enumerate()
+    {
+        chips.push(chip(
+            &format!("hwmon{}", 10 + index),
+            host::Kind::Dimm,
+            "spd5118",
+            None,
+            &format!("DIMM {index}"),
+            vec![temperature(
+                "temp1",
+                "temp1",
+                heat(celsius, celsius + 14.0),
+                Some(85.0),
+                true,
+            )],
+        ));
+    }
+    for (index, (name, cool, warm)) in [("enp1s0f0", 52.0, 58.0), ("enp1s0f1", 50.0, 55.0)]
+        .into_iter()
+        .enumerate()
+    {
+        chips.push(chip(
+            &format!("hwmon{}", 20 + index),
+            host::Kind::Nic,
+            "bnxt_en",
+            None,
+            name,
+            vec![temperature(
+                "temp1",
+                "temp1",
+                heat(cool, warm),
+                Some(105.0),
+                true,
+            )],
+        ));
+    }
+    chips
+}
+
+/// One reading of `machine` at `t` seconds: 48 CPUs, 251 GiB of memory.
+fn host_reading(machine: Machine, t: f64) -> host::Reading {
+    let hot = machine == Machine::Hot && t >= 180.0;
+    let wobble = ((t % 37.0) - 18.5).abs() / 18.5;
+    let step = t as u64;
+    let cores = (0..48u64)
+        .map(|core| {
+            if hot {
+                0.9 + 0.08 * ((step + core * 2) % 5) as f64 / 4.0
+            } else if core < 4 {
+                0.98 + 0.02 * ((step + core) % 2) as f64
+            } else if core < 12 {
+                0.3 + 0.35 * ((step * 3 + core * 5) % 11) as f64 / 10.0
+            } else {
+                0.01 + 0.08 * ((step * 7 + core * 3) % 9) as f64 / 8.0
+            }
+        })
+        .collect::<Vec<_>>();
+    let busy = cores.iter().sum::<f64>() / cores.len() as f64;
+    let used = if hot { 241.3 } else { 118.6 + 0.6 * wobble };
+    let mib = 1_048_576.0;
+    host::Reading {
+        at: t,
+        cpu: Some(Cpu {
+            busy,
+            user: busy * if hot { 0.84 } else { 0.74 },
+            system: busy * if hot { 0.12 } else { 0.22 },
+            iowait: if hot { 0.04 } else { 0.01 },
+        }),
+        cores,
+        memory: Some(Memory {
+            total: 251 * GIB,
+            available: ((251.0 - used) * GIB as f64) as u64,
+            cached: if hot { 4 * GIB } else { 147 * GIB },
+            swap_total: 8 * GIB,
+            swap_free: if hot { 8 * GIB - 1434 * MIB } else { 8 * GIB },
+        }),
+        load: Some(if hot {
+            Load {
+                one: 61.3,
+                five: 58.0,
+                fifteen: 40.2,
+                tasks: Some(1312),
+            }
+        } else {
+            Load {
+                one: 11.2 + 0.4 * wobble,
+                five: 10.8,
+                fifteen: 9.6,
+                tasks: Some(1004),
+            }
+        }),
+        pressure: if hot {
+            Pressure {
+                cpu: Some(0.34),
+                memory: Some(0.18),
+                io: Some(0.06),
+            }
+        } else {
+            Pressure {
+                cpu: Some(0.0),
+                memory: Some(0.0),
+                io: Some(0.01),
+            }
+        },
+        disk: Some(Rates {
+            incoming: if hot { 1.9 * 1024.0 * mib } else { 0.0 },
+            outgoing: if hot { 40.0 * mib } else { 2.1 * mib },
+        }),
+        network: Some(Rates {
+            incoming: (if hot { 3.1 } else { 3.4 + 0.6 * wobble }) * mib,
+            outgoing: 1.1 * mib,
+        }),
+        network_visible: true,
+        package: None,
+        uptime: Some(12.0 * 86_400.0 + 4.0 * 3600.0 + t),
+    }
+}
+
+/// The filesystems of `machine`: /data nearly full when it is hot.
+fn filesystems(machine: Machine) -> Vec<Filesystem> {
+    let filesystem = |mount: &str, used: u64, total: u64| Filesystem {
+        mount: mount.to_owned(),
+        used,
+        available: total - used,
+        total,
+    };
+    let data = if machine == Machine::Hot {
+        3553 * GIB
+    } else {
+        3010 * GIB
+    };
+    vec![
+        filesystem("/", 420 * GIB, 1833 * GIB),
+        filesystem("/boot", 389 * MIB, 1945 * MIB),
+        filesystem("/data", data, 3666 * GIB),
+        filesystem("/dev/shm", 3277 * MIB, 128_512 * MIB),
+    ]
+}
+
+/// This host's GPUs for the fleet, as [`with_monitor`] gives them without a
+/// host.
+fn with_gpus(app: &mut App, counters: bool) {
+    with_monitor(app, counters, None);
+}
+
 /// This host's GPUs for the fleet: four RTX PRO 6000 serving MiMo (process
 /// 48211, TP4), a stray python3 beside it on GPU 3, a graphics process on
 /// GPU 0, and GPU 2 in a thermal slowdown for the last minute. GPM figures
-/// when `counters`.
-fn with_gpus(app: &mut App, counters: bool) {
+/// when `counters`. With a `machine`, the host is polled each second beside
+/// the GPUs, so their events interleave as they would.
+fn with_monitor(app: &mut App, counters: bool, machine: Option<Machine>) {
+    let mut host = Host::new(1.0);
+    if let Some(machine) = machine {
+        let chips = chips(machine, 0.0);
+        host.apply(
+            HostReport::Opened {
+                model: Some("Example Workstation CPU".to_owned()),
+                threads: 48,
+                memory_total: Some(251 * GIB),
+                sensors: chips.iter().map(|chip| chip.sensors.len()).sum(),
+                chips: chips.len(),
+                fans: chips
+                    .iter()
+                    .flat_map(|chip| &chip.sensors)
+                    .filter(|sensor| sensor.quantity == Quantity::Rpm)
+                    .count(),
+                rapl: Rapl::NeedsRoot,
+            },
+            &mut app.registry,
+            0.0,
+        );
+    }
     let mut gpus = Gpus::new(Status::Opening, counters, 1.0);
     let device = |index| Device {
         index,
@@ -392,8 +699,29 @@ fn with_gpus(app: &mut App, counters: bool) {
             &mut app.registry,
             t,
         );
+        if let Some(machine) = machine {
+            host.apply(
+                HostReport::Polled {
+                    reading: Box::new(host_reading(machine, t)),
+                    chips: chips(machine, t),
+                },
+                &mut app.registry,
+                t,
+            );
+        }
     }
     app.gpus = gpus;
+    if let Some(machine) = machine {
+        host.apply(
+            HostReport::Space {
+                at: NOW,
+                filesystems: filesystems(machine),
+            },
+            &mut app.registry,
+            NOW,
+        );
+        app.host = host;
+    }
 }
 
 /// An idle MiMo target with one short burst 55 s before `NOW`: a 76 tok/s
@@ -530,34 +858,66 @@ fn help_overlay() {
     check("help-132x38", &app, 132, 38);
 }
 
-#[test]
-fn gpu_view() {
+fn monitor(machine: Machine, counters: bool) -> App {
     let mut app = fleet();
-    with_gpus(&mut app, true);
-    app.view = View::Gpus;
-    check("gpus-132x38", &app, 132, 38);
-    // The GPU in a thermal slowdown.
-    app.gpu = 2;
-    check("gpus-100x30", &app, 100, 30);
-    app.gpu = 3;
-    check("gpus-80x24", &app, 80, 24);
-    app.gpu = 0;
-    app.help = true;
-    check("help-gpus-132x38", &app, 132, 38);
+    with_monitor(&mut app, counters, Some(machine));
+    app.view = View::Monitor;
+    app
 }
 
 #[test]
-fn the_gpu_view_without_gpm_or_without_a_driver() {
-    let mut app = fleet();
-    with_gpus(&mut app, false);
-    app.view = View::Gpus;
-    check("gpus-nogpm-132x38", &app, 132, 38);
+fn monitor_view() {
+    let mut app = monitor(Machine::Workstation, true);
+    // Sensors down the side, with disk space at its foot.
+    check("monitor-200x50", &app, 200, 50);
+    // Rows enough for Host's disk space line.
+    check("monitor-132x52", &app, 132, 52);
+    check("monitor-132x38", &app, 132, 38);
+    // The GPU in a thermal slowdown.
+    app.gpu = 2;
+    check("monitor-100x30", &app, 100, 30);
+    app.gpu = 3;
+    check("monitor-80x24", &app, 80, 24);
+    app.gpu = 0;
+    check("monitor-60x16", &app, 60, 16);
+    app.help = true;
+    check("help-monitor-132x38", &app, 132, 38);
+}
+
+#[test]
+fn a_hot_host_and_one_with_few_sensors() {
+    // A hot CPU, memory and /data nearly full: in the header and events.
+    check("monitor-hot-132x38", &monitor(Machine::Hot, true), 132, 38);
+    // No fan, DIMM or board sensors: the panel says so.
+    check(
+        "monitor-few-sensors-160x45",
+        &monitor(Machine::Few, true),
+        160,
+        45,
+    );
+}
+
+#[test]
+fn the_monitor_without_gpm_or_without_a_driver() {
+    let mut app = monitor(Machine::Workstation, false);
+    check("monitor-nogpm-132x38", &app, 132, 38);
     app.gpus = Gpus::new(
         Status::Unavailable("libnvidia-ml.so.1 could not be loaded".to_owned()),
         true,
         1.0,
     );
-    check("gpus-unavailable-100x30", &app, 100, 30);
+    check("monitor-unavailable-100x30", &app, 100, 30);
+    // Without NVML the host still shows, beside why the GPUs do not.
+    let screen = ui::draw(&app, 100, 30, NOW).text();
+    for shown in [
+        "─ Host ",
+        "─ Sensors ",
+        "No GPU telemetry",
+        "memory",
+        "─ Events ",
+    ] {
+        assert!(screen.contains(shown), "{shown}: {screen}");
+    }
 }
 
 #[test]
@@ -570,8 +930,8 @@ fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
     let detail = ui::draw(&app, 132, 38, NOW).text();
     assert!(detail.contains("on GPUs 0-3"), "{detail}");
     app.view = View::List;
-    press(&mut app, KeyCode::Char('g'));
-    assert_eq!(app.view, View::Gpus);
+    press(&mut app, KeyCode::Char('m'));
+    assert_eq!(app.view, View::Monitor);
     for _ in 0..3 {
         press(&mut app, KeyCode::Char('j'));
     }
@@ -580,15 +940,15 @@ fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
     press(&mut app, KeyCode::Enter);
     assert_eq!((app.view, app.current().unwrap().id), (View::Detail, 3));
     press(&mut app, KeyCode::Esc);
-    assert_eq!(app.view, View::Gpus);
+    assert_eq!(app.view, View::Monitor);
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.view, View::List);
-    // From an instance's details, g selects its first GPU.
+    // From an instance's details, m selects its first GPU.
     app.gpu = 3;
     app.view = View::Detail;
-    press(&mut app, KeyCode::Char('g'));
-    assert_eq!((app.view, app.gpu), (View::Gpus, 0));
-    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Char('m'));
+    assert_eq!((app.view, app.gpu), (View::Monitor, 0));
+    press(&mut app, KeyCode::Char('m'));
     assert_eq!(app.view, View::Detail);
 }
 
@@ -597,7 +957,7 @@ fn a_lost_gpu_stays_lost_on_screen_and_in_json_until_it_answers() {
     use chopinfer_top::listing;
     let mut app = fleet();
     with_gpus(&mut app, true);
-    app.view = View::Gpus;
+    app.view = View::Monitor;
     let answered = (0..4)
         .map(|index| app.gpus.latest(index).unwrap().clone())
         .collect::<Vec<_>>();
@@ -675,7 +1035,7 @@ fn a_lost_gpu_stays_lost_on_screen_and_in_json_until_it_answers() {
 fn a_failed_process_query_shows_the_list_before_it() {
     let mut app = fleet();
     with_gpus(&mut app, true);
-    app.view = View::Gpus;
+    app.view = View::Monitor;
     let mut readings = (0..4)
         .map(|index| app.gpus.latest(index).unwrap().clone())
         .collect::<Vec<_>>();
@@ -706,7 +1066,7 @@ fn text_on_the_header_and_footer_bars_is_not_their_color() {
     use chopinfer_top::ui::buffer::Color;
     let mut app = fleet();
     with_gpus(&mut app, true);
-    for view in [View::List, View::Detail, View::Gpus] {
+    for view in [View::List, View::Detail, View::Monitor] {
         app.view = view;
         let frame = ui::draw(&app, 132, 38, NOW);
         for y in [0, frame.height - 1] {
@@ -725,16 +1085,22 @@ fn text_on_the_header_and_footer_bars_is_not_their_color() {
 
 #[test]
 fn every_size_draws_without_panicking() {
-    let mut app = fleet();
-    with_gpus(&mut app, true);
-    for view in [View::List, View::Detail, View::Gpus] {
-        app.view = view;
-        for help in [false, true] {
-            app.help = help;
-            for width in (40..=200).step_by(7).chain([1024, 4000]) {
-                for height in (10..=60).step_by(3) {
-                    let frame = ui::draw(&app, width, height, NOW);
-                    assert_eq!((frame.width, frame.height), (width, height));
+    let mut waiting = fleet();
+    with_gpus(&mut waiting, true);
+    let mut unavailable = monitor(Machine::Hot, true);
+    unavailable.gpus = Gpus::new(Status::Unavailable("no driver".to_owned()), true, 1.0);
+    // The host before its first reading, a full one, and one without NVML.
+    for mut app in [waiting, monitor(Machine::Workstation, true), unavailable] {
+        for view in [View::List, View::Detail, View::Monitor] {
+            app.view = view;
+            for help in [false, true] {
+                app.help = help;
+                for width in (40..=200).step_by(7).chain([1024, 4000]) {
+                    for height in (10..=60).step_by(3) {
+                        app.settle(width, height);
+                        let frame = ui::draw(&app, width, height, NOW);
+                        assert_eq!((frame.width, frame.height), (width, height));
+                    }
                 }
             }
         }
@@ -802,7 +1168,7 @@ fn a_very_long_model_name_is_cut_at_the_edge() {
     );
     app.selected = Some(glm);
     with_gpus(&mut app, true);
-    for view in [View::List, View::Detail, View::Gpus] {
+    for view in [View::List, View::Detail, View::Monitor] {
         app.view = view;
         for (width, height) in [(132, 32), (1024, 32), (100, 32)] {
             let frame = ui::draw(&app, width, height, NOW);
@@ -820,7 +1186,7 @@ fn a_long_list_scrolls_to_the_selection() {
     }
     let last = app.rows().last().unwrap().id;
     app.selected = Some(last);
-    app.settle(24);
+    app.settle(80, 24);
     let list = ui::draw(&app, 80, 24, NOW).text();
     assert!(list.contains("rows 23-35 of 35"), "{list}");
     let selected = list

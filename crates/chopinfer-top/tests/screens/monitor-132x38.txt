@@ -1,0 +1,38 @@
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down   driver 615.71.09   GPM on            window 60s  poll 1s  rescan 15s
+
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────────────────────────────┐┌─ Sensors  28 on 14 chips ────────────┐
+│ CPU       ━━━━────────────────  20%   63C   user 15%          5m ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂ ││ CPU     63C   ccd 59 58 61 60C       │
+│ memory    ━━━━━━─────── 119/251 GiB   swap 0.0/8.0 GiB        5m ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ ││ fans    1,240 1,180 860 rpm          │
+│ cores     ████▄▄▃▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁   4 above 90%                 ││ NVMe    39C  33C                     │
+│ load      11.51  10.80  9.60 of 48   pressure cpu 0%  memory 0%  io 1%   1,004 tasks     ││ DIMMs   8 at 38-42C                  │
+│ I/O       net  rx 3.9 MiB/s  tx 1.1 MiB/s   disk  read 0 B/s  write 2.1 MiB/s            ││ +2 more   hottest 52C  NIC, board    │
+└──────────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
+┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────────────────────────────────────┐
+│ GPU  NAME                TEMP  FAN    POWER SM MHZ MEM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m              │
+│▌0    RTX PRO 6000 Max-Q   68C  54% 244/250W  2,520  14,001 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1    RTX PRO 6000 Max-Q   69C  56% 244/250W  2,520  14,001 87.3/95.6G  89%    38%  82%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 2    RTX PRO 6000 Max-Q   90C 100% 214/250W  1,650  14,001 87.3/95.6G  95%    30%  66%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
+│ 3    RTX PRO 6000 Max-Q   71C  60% 244/250W  2,520  14,001 88.7/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ GPU 0  RTX PRO 6000 Max-Q  MiMo-V2.6-Flash  Enter for details ──────┐┌─ Time  GPU 0, last 3 polls ──────────────────────────────┐
+│ ACTIVITY  now  89%  avg  86%       POWER  now  244  avg  241         ││ wall time      ████████████████████████████████████───── │
+│                              100%                              250 W ││                kernels 89%  no kernel 11%  all processes │
+│ ▅▅▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▆▅▅▅▅  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇█████▇▇ ││ instance load  24 running  2 waiting  MiMo-V2.6-Flash    │
+│ █████████████████████████████████  █████████████████████████████████ ││                                                          │
+│ █████████████████████████████████  █████████████████████████████████ ││ SM busy        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────  79% │
+│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now ││ SM occupancy   ━━━━━━━━━━━─────────────────────────  31% │
+│ VRAM         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──── 87.4/95.6 GiB ││ tensor pipes   ━━━━━━━━━━━━━━──────────────────────  38% │
+│ temperature  68C  24C under the limit   fan 54%                      ││ DRAM bandwidth ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────  82% │
+│ clocks       SM 2,520 of 3,090 MHz   memory 14,001 MHz   P1          ││ PCIe           rx 5.8 GiB/s   tx 5.6 GiB/s               │
+│ limited by   power cap  at 250 W                                     ││                                                          │
+│ PCIe         gen 5 x16   ECC off                                     ││                                                          │
+└──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ Events  host and GPUs ───────────────────────────────────────────────┐
+│ PID     TYPE      VRAM  PROCESS                         ││ 5m00s ago  host   48 CPUs, 251 GiB; 28 sensors on 14 chips            │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 5m00s ago  GPUs   4 found, driver 615.71.09                           │
+│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flas │
+│                                                         ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6- │
+│                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+└─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

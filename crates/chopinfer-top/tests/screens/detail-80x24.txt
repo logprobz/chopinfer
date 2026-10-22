@@ -21,4 +21,4 @@
 │ prefill         100ms  375ms  875ms    300 ││ version        0.1.0-alpha.2   │
 │ per output tok    8ms   23ms   46ms    294 ││ metrics        read            │
 └────────────────────────────────────────────┘└────────────────────────────────┘
- Esc back   ← → Tab instance   g gpus   w window   p pause   ? help   q quit
+ Esc back   ← → Tab instance   m monitor   w window   p pause   ? help   q quit

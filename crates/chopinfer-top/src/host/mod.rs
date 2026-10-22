@@ -119,6 +119,8 @@ pub struct Reading {
     pub network_visible: bool,
     /// The CPU packages' power from RAPL, in watts.
     pub package: Option<f64>,
+    /// Seconds since boot.
+    pub uptime: Option<f64>,
 }
 
 /// A value of a reading, for averages and plots.
@@ -433,9 +435,9 @@ impl Host {
     }
 
     /// Takes a report at `now`, noting in `registry` what changed: the
-    /// host found, a sensor reaching its warning level and leaving it,
-    /// memory nearly full, swap in use, a fan stopping and starting, and a
-    /// filesystem nearly full.
+    /// host found, a chip's main temperature reaching its warning level and
+    /// leaving it, memory nearly full, swap in use, a fan stopping and
+    /// starting, and a filesystem nearly full.
     pub fn apply(&mut self, report: Report, registry: &mut Registry, now: f64) {
         match report {
             Report::Opened {
@@ -540,7 +542,9 @@ impl Host {
                 let key = key(chip, sensor);
                 let name = chip.sensor_name(sensor);
                 match sensor.quantity {
-                    Quantity::Celsius => {
+                    // A chip's main temperature speaks for it: Tctl is the
+                    // hottest CCD's, Composite the drive's.
+                    Quantity::Celsius if sensor.primary => {
                         let (warm, _) = warm_hot(sensor.limit);
                         if !self.watch.warm.contains(&key) && value >= warm {
                             self.watch.warm.insert(key);
@@ -584,7 +588,7 @@ impl Host {
                             );
                         }
                     }
-                    Quantity::Watts | Quantity::Volts => {}
+                    Quantity::Celsius | Quantity::Watts | Quantity::Volts => {}
                 }
             }
         }
@@ -600,9 +604,9 @@ impl Host {
                     now,
                     "host",
                     format!(
-                        "{} {} full, {} free",
+                        "{} {}% full, {} free",
                         filesystem.mount,
-                        percent(Some(share)),
+                        filesystem.percent(),
                         bytes(filesystem.available as f64)
                     ),
                     Tone::Warning,
@@ -612,7 +616,11 @@ impl Host {
                 registry.note(
                     now,
                     "host",
-                    format!("{} back to {} full", filesystem.mount, percent(Some(share))),
+                    format!(
+                        "{} back to {}% full",
+                        filesystem.mount,
+                        filesystem.percent()
+                    ),
                     Tone::Normal,
                 );
             }
@@ -725,11 +733,14 @@ mod tests {
             swap_free: 8 * gib - 40 * MIB,
             ..calm
         };
+        // Tccd1 is as hot, but Tctl speaks for the chip.
         let cpu = |celsius| {
+            let mut ccd = temperature("temp3", "Tccd1", celsius, None);
+            ccd.primary = false;
             chip(
                 Kind::Cpu,
                 "CPU",
-                vec![temperature("temp1", "Tctl", celsius, None)],
+                vec![temperature("temp1", "Tctl", celsius, None), ccd],
             )
         };
         let nvme = |celsius| {

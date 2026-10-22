@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod detail;
 pub mod gpus;
 pub mod list;
+pub mod monitor;
 pub mod widgets;
 
 use buffer::{Buffer, Color, Style};
@@ -34,7 +35,7 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
     match app.view {
         View::List => list::draw(&mut buffer, app, now),
         View::Detail => detail::draw(&mut buffer, app, now),
-        View::Gpus => gpus::draw(&mut buffer, app, now),
+        View::Monitor => monitor::draw(&mut buffer, app, now),
     }
     if app.help {
         help(&mut buffer, app.view);
@@ -150,7 +151,7 @@ fn help(buffer: &mut Buffer, view: View) {
         ("  Enter", "open its details"),
         ("  Esc  h", "back to the list"),
         ("  ← →  Tab", "previous or next instance (details)"),
-        ("  g", "this host's GPUs: heat, clocks, memory and activity"),
+        ("  m", "this host: CPU, memory, disks, sensors and GPUs"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
@@ -178,15 +179,37 @@ fn help(buffer: &mut Buffer, view: View) {
         ("", ""),
         ("", "Press any key to close."),
     ];
-    const GPUS: &[(&str, &str)] = &[
+    const MONITOR: &[(&str, &str)] = &[
         ("Keys", ""),
         ("  ↑ ↓  j k", "select a GPU"),
         ("  Enter", "open the details of the instance on the GPU"),
-        ("  Esc  h  g", "back to where g was pressed"),
+        ("  Esc  h  m", "back to where m was pressed"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
         ("  q  Ctrl-C", "quit"),
+        ("", ""),
+        ("Host", ""),
+        (
+            "  CPU",
+            "share of CPU time not idle, from /proc/stat; cores: a cell each",
+        ),
+        (
+            "  memory",
+            "in use: the total less what the kernel can reclaim (MemAvailable)",
+        ),
+        (
+            "  pressure",
+            "share of the last 10s that tasks stalled on CPU, memory or I/O",
+        ),
+        (
+            "  sensors",
+            "/sys/class/hwmon; yellow 10C under a chip's limit, else from 85C",
+        ),
+        (
+            "  space",
+            "used share of each local filesystem and /dev/shm; yellow from 90%",
+        ),
         ("", ""),
         ("GPU time", ""),
         (
@@ -204,13 +227,24 @@ fn help(buffer: &mut Buffer, view: View) {
         ("", ""),
         (
             "",
-            "NVML is read once a poll, GPM counters only while this view is",
+            "/proc, /sys and NVML are read once a poll, GPM counters only while",
         ),
-        ("", "open. GPU numbers are nvidia-smi's, not CUDA ordinals."),
+        (
+            "",
+            "this view is open. GPU numbers are nvidia-smi's, not CUDA ordinals.",
+        ),
+        (
+            "",
+            "In a container, CPU, memory, disk I/O and sensors are the host's.",
+        ),
         ("", ""),
         ("", "Press any key to close."),
     ];
-    let lines = if view == View::Gpus { GPUS } else { INSTANCES };
+    let lines = if view == View::Monitor {
+        MONITOR
+    } else {
+        INSTANCES
+    };
     let width = 92.min(buffer.width - 2);
     let height = (lines.len() as u16 + 2).min(buffer.height - 2);
     let x = (buffer.width - width) / 2;
@@ -390,7 +424,7 @@ mod tests {
     fn the_footer_drops_whole_pairs_by_rank() {
         let keys = [
             ("Esc", "back", 0),
-            ("g", "gpus", 0),
+            ("m", "monitor", 0),
             ("w", "window", 2),
             ("r", "rescan", 3),
             ("p", "pause", 1),
@@ -409,12 +443,15 @@ mod tests {
         };
         assert_eq!(
             line(80),
-            " Esc back   g gpus   w window   r rescan   p pause   q quit"
+            " Esc back   m monitor   w window   r rescan   p pause   q quit"
         );
-        // Everything takes 59 columns.
-        assert_eq!(line(59), line(80));
-        assert_eq!(line(58), " Esc back   g gpus   w window   p pause   q quit");
-        assert_eq!(line(36), " Esc back   g gpus   q quit");
+        // Everything takes 62 columns.
+        assert_eq!(line(62), line(80));
+        assert_eq!(
+            line(61),
+            " Esc back   m monitor   w window   p pause   q quit"
+        );
+        assert_eq!(line(36), " Esc back   m monitor   q quit");
         // Rank 0 is never dropped, so a tiny footer is cut instead.
         assert_eq!(line(10), " Esc back");
     }

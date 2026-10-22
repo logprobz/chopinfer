@@ -35,4 +35,4 @@
 │                                                                                                                                  │
 │                                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   g gpus   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   m monitor   w window   r rescan   p pause   ? help   q quit

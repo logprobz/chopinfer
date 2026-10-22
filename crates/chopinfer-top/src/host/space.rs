@@ -53,6 +53,16 @@ impl Filesystem {
         }
     }
 
+    /// The whole percent in use, rounded up as `df` rounds it.
+    pub fn percent(&self) -> u64 {
+        let room = u128::from(self.used) + u128::from(self.available);
+        if room == 0 {
+            0
+        } else {
+            (u128::from(self.used) * 100).div_ceil(room) as u64
+        }
+    }
+
     /// The share in use, as `df` reports it: against what users can fill,
     /// so a filesystem whose reserved blocks remain is 100% at its end.
     pub fn share(&self) -> f64 {
@@ -102,6 +112,8 @@ mod tests {
             (100 * 4096, 850 * 4096, 1000 * 4096)
         );
         assert!((filesystem.share() - 100.0 / 950.0).abs() < 1e-12);
+        // 10.5% shows as 11%, as df shows it.
+        assert_eq!(filesystem.percent(), 11);
         let empty = Filesystem::new("/x", Size::default());
         assert_eq!(empty.share(), 0.0);
     }

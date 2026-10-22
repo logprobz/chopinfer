@@ -1,0 +1,38 @@
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down   driver 615.71.09   GPM on            window 60s  poll 1s  rescan 15s
+
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────────────────────────────┐┌─ Sensors  28 on 14 chips ────────────┐
+│ CPU       ━━━━────┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐59 58 61 60C       │
+│ memory    ━━━━━━──│ Keys                                                                                     │0 860 rpm          │
+│ cores     ████▄▄▃▄│   ↑ ↓  j k      select a GPU                                                             │                   │
+│ load      11.51  1│   Enter         open the details of the instance on the GPU                              │C                  │
+│ I/O       net  rx │   Esc  h  m     back to where m was pressed                                              │52C  NIC, board    │
+└───────────────────│   w             latency and ratio window: 60s, 5m, since start                           │───────────────────┘
+┌─ GPUs  rates and s│   r             rescan for processes and containers now                                  │───────────────────┐
+│ GPU  NAME         │   p             pause the screen; polls keep their latest result                         │IL 5m              │
+│▌0    RTX PRO 6000 │   q  Ctrl-C     quit                                                                     │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1    RTX PRO 6000 │                                                                                          │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 2    RTX PRO 6000 │ Host                                                                                     │▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
+│ 3    RTX PRO 6000 │   CPU           share of CPU time not idle, from /proc/stat; cores: a cell each          │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└───────────────────│   memory        in use: the total less what the kernel can reclaim (MemAvailable)        │───────────────────┘
+┌─ GPU 0  RTX PRO 60│   pressure      share of the last 10s that tasks stalled on CPU, memory or I/O           │───────────────────┐
+│ ACTIVITY  now  89%│   sensors       /sys/class/hwmon; yellow 10C under a chip's limit, else from 85C         │█████████████───── │
+│                   │   space         used share of each local filesystem and /dev/shm; yellow from 90%        │11%  all processes │
+│ ▅▅▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│                                                                                          │MiMo-V2.6-Flash    │
+│ ██████████████████│ GPU time                                                                                 │                   │
+│ ██████████████████│   kernels       share of time a kernel ran on the GPU, from any process                  │━━━━━────────  79% │
+│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔│   no kernel     the rest: waiting for the host or for work                               │─────────────  31% │
+│ VRAM         ━━━━━│   SM busy       share of SMs with work (GPM)                                             │─────────────  38% │
+│ temperature  68C  │   occupancy     active warps against the most the SMs hold (GPM)                         │━━━━━━━──────  82% │
+│ clocks       SM 2,│   tensor        share of time the tensor pipes ran (GPM)                                 │iB/s               │
+│ limited by   power│   DRAM          share of peak memory bandwidth in use (GPM)                              │                   │
+│ PCIe         gen 5│                                                                                          │                   │
+└───────────────────│ /proc, /sys and NVML are read once a poll, GPM counters only while                       │───────────────────┘
+┌─ Processes  on GPU│ this view is open. GPU numbers are nvidia-smi's, not CUDA ordinals.                      │───────────────────┐
+│ PID     TYPE      │ In a container, CPU, memory, disk I/O and sensors are the host's.                        │4 chips            │
+│ 48211   C     86.9│                                                                                          │                   │
+│ 2210    G      0.1│ Press any key to close.                                                                  │ide MiMo-V2.6-Flas │
+│                   └──────────────────────────────────────────────────────────────────────────────────────────┘ beside MiMo-V2.6- │
+│                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+└─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

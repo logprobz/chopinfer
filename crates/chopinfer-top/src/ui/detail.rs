@@ -72,7 +72,7 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
         &[
             ("Esc", "back", 0),
             ("← → Tab", "instance", 0),
-            ("g", "gpus", 0),
+            ("m", "monitor", 0),
             ("w", "window", 2),
             ("r", "rescan", 3),
             ("p", "pause", 1),

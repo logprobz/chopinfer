@@ -218,6 +218,7 @@ impl Sampler {
             disk: rates(counters.disk, previous.as_ref().and_then(|p| p.disk)),
             network: rates(counters.network, previous.as_ref().and_then(|p| p.network)),
             network_visible: counters.network.is_some(),
+            uptime: self.read("uptime").as_deref().and_then(proc::uptime),
             package: previous.as_ref().and_then(|previous| {
                 self.packages.watts(
                     previous.energy.as_ref()?,

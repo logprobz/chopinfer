@@ -20,6 +20,7 @@ use crate::app::{Action, App, View};
 use crate::discover::{self, Command, Discovery, Report, Schedule};
 use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
+use crate::host::poll::{self as host_poll, HostPoller};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
@@ -42,7 +43,7 @@ pub struct Setup {
     pub bearer: Option<String>,
     pub sources: Vec<&'static str>,
     /// Whether to read this host's GPUs, and whether GPM counters may be
-    /// sampled while the GPU view is open.
+    /// sampled while the monitor is open.
     pub gpus: bool,
     pub gpu_counters: bool,
 }
@@ -196,6 +197,19 @@ fn hold_gpu(held: &mut Vec<gpu_poll::Report>, report: gpu_poll::Report) {
     held.push(report);
 }
 
+/// Holds a host report while paused: the latest reading and the latest
+/// disk sizes replace the ones held before them.
+fn hold_host(held: &mut Vec<host_poll::Report>, report: host_poll::Report) {
+    use host_poll::Report::{Polled, Space};
+    held.retain(|earlier| {
+        !matches!(
+            (earlier, &report),
+            (Polled { .. }, Polled { .. }) | (Space { .. }, Space { .. })
+        )
+    });
+    held.push(report);
+}
+
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
         Report::Scan { found, events } => {
@@ -253,13 +267,15 @@ pub fn run(setup: Setup) -> io::Result<()> {
     };
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
-    // GPM counters are sampled only while the GPU view is open.
+    // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
     let _gpu_poller = setup.gpus.then(|| {
         app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
         GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)
     });
+    let (host_results, host_reports) = mpsc::channel();
+    let _host_poller = HostPoller::spawn(setup.interval, origin, host_results);
 
     let stop = Arc::new(AtomicBool::new(false));
     for signal in [
@@ -279,7 +295,12 @@ pub fn run(setup: Setup) -> io::Result<()> {
     let result = run_loop(
         &mut app,
         &mut workers,
-        (&reports, &poll_results, &gpu_reports),
+        Inbox {
+            reports: &reports,
+            polls: &poll_results,
+            gpus: &gpu_reports,
+            host: &host_reports,
+        },
         (&stop, &counters),
         color,
         now,
@@ -305,14 +326,23 @@ fn read_input() -> Receiver<Event> {
     receiver
 }
 
+/// What discovery and the instance, GPU and host pollers send the loop.
+struct Inbox<'a> {
+    reports: &'a Receiver<Report>,
+    polls: &'a Receiver<(u64, Poll)>,
+    gpus: &'a Receiver<gpu_poll::Report>,
+    host: &'a Receiver<host_poll::Report>,
+}
+
 fn run_loop(
     app: &mut App,
     workers: &mut Workers,
-    (reports, poll_results, gpu_reports): (
-        &Receiver<Report>,
-        &Receiver<(u64, Poll)>,
-        &Receiver<gpu_poll::Report>,
-    ),
+    Inbox {
+        reports,
+        polls: poll_results,
+        gpus: gpu_reports,
+        host: host_reports,
+    }: Inbox<'_>,
     (stop, counters): (&AtomicBool, &AtomicBool),
     color: bool,
     now: impl Fn() -> f64,
@@ -325,6 +355,7 @@ fn run_loop(
     let mut held_polls: HashMap<u64, Poll> = HashMap::new();
     let mut held_reports: Vec<Report> = Vec::new();
     let mut held_gpus: Vec<gpu_poll::Report> = Vec::new();
+    let mut held_host: Vec<host_poll::Report> = Vec::new();
     let input = read_input();
     'running: while !stop.load(Ordering::Relaxed) {
         let mut dirty = false;
@@ -362,10 +393,20 @@ fn run_loop(
         for report in gpu_reports.try_iter() {
             hold_gpu(&mut held_gpus, report);
         }
+        for report in host_reports.try_iter() {
+            hold_host(&mut held_host, report);
+        }
         counters.store(
-            app.view == View::Gpus && app.gpus.counters,
+            app.view == View::Monitor && app.gpus.counters,
             Ordering::Relaxed,
         );
+        if !app.paused && !held_host.is_empty() {
+            let at = now();
+            for report in held_host.drain(..) {
+                app.host.apply(report, &mut app.registry, at);
+            }
+            dirty = true;
+        }
         if !app.paused && !held_gpus.is_empty() {
             let at = now();
             for report in held_gpus.drain(..) {
@@ -390,7 +431,7 @@ fn run_loop(
         let at = now();
         if dirty || at - drawn_at >= 1.0 {
             let (width, height) = crossterm::terminal::size()?;
-            app.settle(height);
+            app.settle(width, height);
             let frame = ui::draw(app, width, height, at);
             flush(previous.as_ref(), &frame, &mut stdout, color)?;
             stdout.flush()?;
@@ -452,6 +493,30 @@ mod tests {
         hold_gpu(&mut held, polled(1.0));
         hold_gpu(&mut held, polled(2.0));
         assert_eq!(held, [opened, polled(2.0)]);
+    }
+
+    #[test]
+    fn a_paused_host_reading_replaces_the_one_held_before_it() {
+        use crate::host::Reading;
+        let mut held = Vec::new();
+        let polled = |at| host_poll::Report::Polled {
+            reading: Box::new(Reading {
+                at,
+                ..Reading::default()
+            }),
+            chips: Vec::new(),
+        };
+        let space = |at| host_poll::Report::Space {
+            at,
+            filesystems: Vec::new(),
+        };
+        let opened = host_poll::Report::Unavailable("x".to_owned());
+        hold_host(&mut held, opened.clone());
+        hold_host(&mut held, polled(1.0));
+        hold_host(&mut held, space(1.0));
+        hold_host(&mut held, polled(2.0));
+        hold_host(&mut held, space(6.0));
+        assert_eq!(held, [opened, polled(2.0), space(6.0)]);
     }
 
     #[test]

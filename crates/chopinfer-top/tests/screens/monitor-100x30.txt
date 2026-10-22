@@ -1,5 +1,10 @@
- chopinfer-top  >  GPUs   4 on this host  1 slowing down   GPM on   window 60s  poll 1s  rescan 15s
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down        window 60s  poll 1s  rescan 15s
 
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────┐┌─ Sensors  28 on 14 chips ────┐
+│ CPU       ━━━━──────────────────  20%   63C   user 15%           ││ CPU     63C                  │
+│ memory    ━━━━━━━──────── 119/251 GiB   swap 0.0/8.0 GiB         ││ fans    1,240 1,180 860 rpm  │
+│ cores     ██▄▃▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁   4 above 90%   2 CPUs a cell ││ +4 more   hottest 52C        │
+└──────────────────────────────────────────────────────────────────┘└──────────────────────────────┘
 ┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────┐
 │ GPU  TEMP  FAN    POWER SM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m          │
 │ 0     68C  54% 244/250W  2,520 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
@@ -10,21 +15,16 @@
 ┌─ GPU 2  RTX PRO 6000 Max-Q  MiMo-V2.6-Flash ────────┐┌─ Time  GPU 2, last 3 polls ───────────────┐
 │ ACTIVITY  now  95%        POWER  now  214           ││ wall time      █████████████████████████─ │
 │                     100%                     250 W  ││                kernels 95%  no kernel 5%  │
-│ ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅  ││ instance load  24 running  2 waiting      │
+│ ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆  ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂  ││ instance load  24 running  2 waiting      │
 │ ████████████████████████  ████████████████████████  ││                                           │
 │ ████████████████████████  ████████████████████████  ││ SM busy        ━━━━━━━━━━━━━━━━━────  79% │
-│ -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  ││ SM occupancy   ━━━━━━━──────────────  31% │
-│ VRAM         ━━━━━━━━━━━━━━━━━━━━━━── 87.3/95.6 GiB ││ tensor pipes   ━━━━━━───────────────  30% │
-│ temperature  90C  2C under the limit   fan 100%     ││ DRAM bandwidth ━━━━━━━━━━━━━━───────  66% │
-│ clocks       SM 1,650 of 3,090 MHz                  ││ PCIe           rx 5.8 GiB/s               │
+│ ████████████████████████  ████████████████████████  ││ SM occupancy   ━━━━━━━──────────────  31% │
+│ ████████████████████████  ████████████████████████  ││ tensor pipes   ━━━━━━───────────────  30% │
+│ -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  ││ DRAM bandwidth ━━━━━━━━━━━━━━───────  66% │
+│ VRAM         ━━━━━━━━━━━━━━━━━━━━━━── 87.3/95.6 GiB ││ PCIe           rx 5.8 GiB/s               │
+│ temperature  90C  2C under the limit   fan 100%     ││                                           │
+│ clocks       SM 1,650 of 3,090 MHz                  ││                                           │
 │ limited by   hardware thermal slowdown              ││                                           │
 │ PCIe         gen 5 x16   ECC off                    ││                                           │
 └─────────────────────────────────────────────────────┘└───────────────────────────────────────────┘
-┌─ Processes  on GPU 2 ─────────────────────┐┌─ GPU events ────────────────────────────────────────┐
-│ PID     TYPE      VRAM  PROCESS           ││ 5m00s ago  GPUs   4 found, driver 615.71.09         │
-│ 48211   C     86.9 GiB  MiMo-V2.6-Flash   ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB bes │
-│                                           ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB │
-│                                           ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clo │
-│                                           ││ 1m00s ago  GPU 2  2C under the temperature limit at │
-└───────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
  Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

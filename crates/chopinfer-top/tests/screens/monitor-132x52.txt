@@ -1,5 +1,14 @@
- chopinfer-top  >  GPUs   4 on this host  1 slowing down   driver 615.71.09   GPM on                window 60s  poll 1s  rescan 15s
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down   driver 615.71.09   GPM on            window 60s  poll 1s  rescan 15s
 
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────────────────────────────┐┌─ Sensors  28 on 14 chips ────────────┐
+│ CPU       ━━━━────────────────  20%   user 15%  system 4%     5m ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂ ││ CPU     63C   ccd 59 58 61 60C       │
+│ memory    ━━━━━━─────── 119/251 GiB   swap 0.0/8.0 GiB        5m ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ ││ fans    1,240 1,180 860 rpm          │
+│ cores     ████▄▄▃▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁   4 above 90%                 ││ NVMe    39C  33C                     │
+│ load      11.51  10.80  9.60 of 48   pressure cpu 0%  memory 0%  io 1%   1,004 tasks     ││ DIMMs   8 at 38-42C                  │
+│ I/O       net  rx 3.9 MiB/s  tx 1.1 MiB/s   disk  read 0 B/s  write 2.1 MiB/s            ││ NIC     52C  50C                     │
+│ space     / 23% of 1.8 TiB   /boot 20% of 1.9 GiB   /data 83% of 3.6 TiB   +1 more       ││ board   38C  45C  41C                │
+│ heat      CPU 63C Tctl   NVMe 46C   DIMM 42C   NIC 52C   fans 1,240 1,180 860 rpm        ││                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
 ┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────────────────────────────────────┐
 │ GPU  NAME                TEMP  FAN    POWER SM MHZ MEM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m              │
 │▌0    RTX PRO 6000 Max-Q   68C  54% 244/250W  2,520  14,001 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
@@ -23,12 +32,17 @@
 │ limited by   power cap  at 250 W                                     ││                                                          │
 │ PCIe         gen 5 x16   ECC off                                     ││                                                          │
 └──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
-┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ GPU events ──────────────────────────────────────────────────────────┐
-│ PID     TYPE      VRAM  PROCESS                         ││ 5m00s ago  GPUs   4 found, driver 615.71.09                           │
-│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flas │
-│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6- │
+┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ Events  host and GPUs ───────────────────────────────────────────────┐
+│ PID     TYPE      VRAM  PROCESS                         ││ 5m00s ago  host   48 CPUs, 251 GiB; 28 sensors on 14 chips            │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 5m00s ago  GPUs   4 found, driver 615.71.09                           │
+│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flas │
+│                                                         ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6- │
 │                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
 │                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
 │                                                         ││                                                                       │
 │                                                         ││                                                                       │
 │                                                         ││                                                                       │

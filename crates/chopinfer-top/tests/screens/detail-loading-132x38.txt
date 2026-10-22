@@ -35,4 +35,4 @@
 
 
 
- Esc back   ← → Tab instance   g gpus   w window   r rescan   p pause   ? help   q quit
+ Esc back   ← → Tab instance   m monitor   w window   r rescan   p pause   ? help   q quit

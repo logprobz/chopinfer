@@ -1,0 +1,16 @@
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down
+
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────┐
+│ CPU ━━━──────────────  20%   memory ━━━━──── 119/251 GiB │
+└──────────────────────────────────────────────────────────┘
+┌─ GPUs  rates and shares over the last 3 polls ───────────┐
+│ GPU  TEMP    POWER       VRAM UTIL INSTANCE              │
+│▌0     68C 244/250W 87.4/95.6G  89% MiMo-V2.6-Flash +1    │
+│ 1     69C 244/250W 87.3/95.6G  89% MiMo-V2.6-Flash       │
+│ 2     90C 214/250W 87.3/95.6G  95% MiMo-V2.6-Flash       │
+│ 3     71C 244/250W 88.7/95.6G  89% MiMo-V2.6-Flash +1    │
+└──────────────────────────────────────────────────────────┘
+
+
+
+ Esc back   ↑↓ jk select   Enter instance   ? help   q quit

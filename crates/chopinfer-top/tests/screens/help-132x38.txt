@@ -12,7 +12,7 @@
 │ DECODE   now  1,79│   Enter         open its details                                                         │tok/s              │
 │                   │   Esc  h        back to the list                                                         │      50,000 tok/s │
 │ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃│   ← →  Tab      previous or next instance (details)                                      │                   │
-│ ██████████████████│   g             this host's GPUs: heat, clocks, memory and activity                      │   ▂          ▂    │
+│ ██████████████████│   m             this host: CPU, memory, disks, sensors and GPUs                          │   ▂          ▂    │
 │ ██████████████████│   w             latency and ratio window: 60s, 5m, since start                           │   █          █    │
 │ ██████████████████│   r             rescan for processes and containers now                                  │   █          █    │
 │ ██████████████████│   p             pause the screen; polls keep their latest result                         │   █          █    │
@@ -35,4 +35,4 @@
 │                                                                                                                                  │
 │                                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   g gpus   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   m monitor   w window   r rescan   p pause   ? help   q quit

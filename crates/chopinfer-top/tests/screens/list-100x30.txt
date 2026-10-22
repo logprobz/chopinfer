@@ -27,4 +27,4 @@
 │  5m00s ago  docker glm-tp4           answering at 127.0.0.1:8600                                 │
 │    30s ago  target 127.0.0.1:8431    restarted: new startup nonce; counters re-baselined         │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   g gpus   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   m monitor   w window   r rescan   p pause   ? help   q quit

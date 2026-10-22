@@ -1,13 +1,13 @@
-//! The GPU view: this host's GPUs, then the selected one's history, where
-//! its time goes, its processes and the GPU events.
+//! The monitor's GPU panels: this host's GPUs, then the selected one's
+//! history, where its time goes, its processes and the host and GPU events.
 
 use super::buffer::{Buffer, Color, Style};
-use super::list::{Column, TABLE_TOP, first_row, layout};
+use super::list::{Column, first_row, layout};
 use super::widgets::{
     age, boxed, buckets, bytes, gauge, groups, integer, nice_ceiling, pad, percent, right,
     sanitize, sparkline,
 };
-use super::{Figures, footer, header, header_right, shown_name, tone_color};
+use super::{Figures, shown_name, tone_color};
 use crate::app::App;
 use crate::gpu::{Field, Reading, Reasons, Status};
 use crate::instances::Instance;
@@ -120,44 +120,31 @@ fn share(value: Option<f64>) -> String {
     percent(value)
 }
 
-pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
-    let crumbs = crumbs(app, buffer.width);
-    header(buffer, app, &crumbs);
-    footer(
-        buffer,
-        &[
-            ("Esc", "back", 0),
-            ("↑↓ jk", "select", 0),
-            ("Enter", "instance", 0),
-            ("w", "window", 2),
-            ("r", "rescan", 3),
-            ("p", "pause", 1),
-            ("?", "help", 0),
-            ("q", "quit", 0),
-        ],
-    );
-    let (width, height) = (buffer.width, buffer.height);
-    let area = (0, TABLE_TOP, width, height.saturating_sub(1 + TABLE_TOP));
-    panels(buffer, app, area, now);
-}
-
 /// The GPU table's height in an area `height` rows tall: a line a GPU with
-/// its borders and titles, leaving room for the panels below.
+/// its borders and titles, leaving room for the panels below, or taking
+/// the rows they cannot use when none fits.
 pub fn table_height(rows: usize, height: u16) -> u16 {
-    u16::try_from(rows.saturating_add(3))
-        .unwrap_or(u16::MAX)
-        .clamp(4, height.saturating_sub(5).max(4))
+    let wanted = u16::try_from(rows.saturating_add(3)).unwrap_or(u16::MAX);
+    let table = wanted.clamp(4, height.saturating_sub(5).max(4));
+    if height.saturating_sub(table) < 6 {
+        wanted.clamp(4, height.max(4))
+    } else {
+        table
+    }
 }
 
 /// The GPU table in `area`, then the selected GPU's history and where its
 /// time goes, then its processes and the events, as room allows.
 pub fn panels(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     let gpus = &app.gpus;
+    let (x, y, width, height) = area;
     if gpus.status != Status::Open || gpus.devices.is_empty() {
         message(buffer, &gpus.status, area);
+        if height >= 12 {
+            events(buffer, app, (x, y + 8, width, height - 8), now);
+        }
         return;
     }
-    let (x, y, width, height) = area;
     let top = y + table(buffer, app, area);
     let left = (y + height).saturating_sub(top);
     if left < 6 {
@@ -203,72 +190,6 @@ pub fn panels(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
             processes(buffer, app, index, area, now);
         }
     }
-}
-
-/// The header after the program name: the count, slowdowns and lost GPUs,
-/// then the driver and GPM state when they leave room for the window.
-fn crumbs(app: &App, width: u16) -> Vec<(String, Style)> {
-    let gpus = &app.gpus;
-    let mut crumbs = vec![
-        piece("  >  ", dim()),
-        piece("GPUs", Style::fg(Color::White).bold()),
-    ];
-    if gpus.status != Status::Open {
-        return crumbs;
-    }
-    let latest = (0..gpus.devices.len())
-        .filter_map(|index| gpus.latest(index))
-        .collect::<Vec<_>>();
-    crumbs.push(piece(
-        format!("   {} on this host", gpus.devices.len()),
-        Style::PLAIN,
-    ));
-    let slow = latest
-        .iter()
-        .filter(|reading| reading.reasons.is_some_and(Reasons::slowdown))
-        .count();
-    if slow > 0 {
-        crumbs.push(piece(
-            format!("  {slow} slowing down"),
-            Style::fg(Color::Yellow).bold(),
-        ));
-    }
-    let lost = (0..gpus.devices.len())
-        .filter(|index| gpus.lost(*index))
-        .count();
-    if lost > 0 {
-        crumbs.push(piece(
-            format!("  {lost} lost"),
-            Style::fg(Color::Red).bold(),
-        ));
-    }
-    let gpm = if !gpus.counters {
-        "off"
-    } else if gpus.gpm() {
-        "on"
-    } else {
-        "unsupported"
-    };
-    let used = 14
-        + crumbs
-            .iter()
-            .map(|(text, _)| text.chars().count())
-            .sum::<usize>();
-    let room = usize::from(width).saturating_sub(header_right(app).chars().count() + 2);
-    let driver = gpus
-        .driver
-        .as_deref()
-        .map_or_else(|| "-".to_owned(), sanitize);
-    for extra in [
-        format!("   driver {driver}   GPM {gpm}"),
-        format!("   GPM {gpm}"),
-    ] {
-        if used + extra.chars().count() <= room {
-            crumbs.push(piece(extra, dim()));
-            break;
-        }
-    }
-    crumbs
 }
 
 /// Why there are no GPUs to show, in a box at the top of `area`.
@@ -343,7 +264,7 @@ fn clock_style(reading: &Reading) -> Style {
 }
 
 /// `87.3/95.6 GiB` without the unit's suffix past `G`, whole GiB from 100.
-fn memory(used: u64, total: u64) -> String {
+pub(super) fn memory(used: u64, total: u64) -> String {
     let (used, total) = (used as f64 / GIB, total as f64 / GIB);
     if total >= 100.0 {
         format!("{used:.0}/{total:.0}")
@@ -1212,18 +1133,23 @@ fn processes(buffer: &mut Buffer, app: &App, index: usize, area: Area, now: f64)
     }
 }
 
-/// The events about GPUs, the latest last.
+/// The events about this host and its GPUs, the latest last.
 fn events(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     let (x, y, width, height) = area;
     if height < 3 {
         return;
     }
-    boxed(buffer, area, &[("GPU events", title())], false);
+    boxed(
+        buffer,
+        area,
+        &[("Events", title()), ("  host and GPUs", dim())],
+        false,
+    );
     let events = app
         .registry
         .events
         .iter()
-        .filter(|event| event.who.starts_with("GPU"))
+        .filter(|event| event.who.starts_with("GPU") || event.who == "host")
         .collect::<Vec<_>>();
     if events.is_empty() {
         buffer.put(x + 2, y + 1, "none", dim());

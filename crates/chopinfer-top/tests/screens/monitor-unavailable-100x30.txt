@@ -1,0 +1,30 @@
+ chopinfer-top  >  Monitor   48 CPUs   no GPU telemetry             window 60s  poll 1s  rescan 15s
+
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────┐┌─ Sensors  28 on 14 chips ────┐
+│ CPU       ━━━━──────────────────  20%   user 15%  system 4%      ││ CPU     63C                  │
+│ memory    ━━━━━━━──────── 119/251 GiB   swap 0.0/8.0 GiB         ││ fans    1,240 1,180 860 rpm  │
+│ cores     ██▄▃▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁   4 above 90%   2 CPUs a cell ││ NVMe    39C  33C             │
+│ load      11.51  10.80  9.60 of 48   pressure cpu 0%  memory 0%  ││ DIMMs   8 at 38-42C          │
+│ I/O       net  rx 3.9 MiB/s  tx 1.1 MiB/s   disk  read 0 B/s     ││ NIC     52C  50C             │
+│ space     / 23% of 1.8 TiB   /data 83% of 3.6 TiB   +2 more      ││ board   38C  45C  41C        │
+│ heat      CPU 63C Tctl   NVMe 46C   DIMM 42C   NIC 52C           ││                              │
+└──────────────────────────────────────────────────────────────────┘└──────────────────────────────┘
+┌─ GPUs ───────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                  │
+│ No GPU telemetry: libnvidia-ml.so.1 could not be loaded.                                         │
+│ chopinfer-top shows the GPUs of the host it runs on, through the NVIDIA driver.                  │
+│ In a container, the utility driver capability provides it; the image sets it.                    │
+│ Instances on other hosts are still watched; their GPUs are not shown.                            │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Events  host and GPUs ──────────────────────────────────────────────────────────────────────────┐
+│ 5m00s ago  host   48 CPUs, 251 GiB; 28 sensors on 14 chips                                       │
+│ 5m00s ago  GPUs   4 found, driver 615.71.09                                                      │
+│ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB beside MiMo-V2.6-Flash                           │
+│ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6-Flash                       │
+│ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090 MHz, 2C under the limit     │
+│ 1m00s ago  GPU 2  2C under the temperature limit at 90C                                          │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

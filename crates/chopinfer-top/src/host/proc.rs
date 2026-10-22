@@ -172,6 +172,11 @@ pub fn diskstats(text: &str) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
+/// Seconds since boot, the first number of `/proc/uptime`.
+pub fn uptime(text: &str) -> Option<f64> {
+    text.split_whitespace().next()?.parse().ok()
+}
+
 /// The first `model name` of `/proc/cpuinfo`, without a trailing core
 /// count or "Processor": `AMD EPYC 9555 64-Core Processor` is
 /// `AMD EPYC 9555`.
@@ -393,6 +398,7 @@ mod tests {
             })
         );
         assert_eq!(loadavg(""), None);
+        assert_eq!(uptime("1051234.56 47000000.00\n"), Some(1_051_234.56));
         let psi = "some avg10=12.50 avg60=0.31 avg300=2.85 total=814697727\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n";
         assert_eq!(pressure(psi), Some(0.125));
         assert_eq!(pressure("full avg10=1.00\n"), None);
@@ -439,8 +445,8 @@ mod tests {
 
     #[test]
     fn mount_points_are_unescaped() {
-        let mounts = mountinfo(&line(30, 1, "8:1", "/mnt/model\\040store", "ext4"));
-        assert_eq!(mounts[0].point, "/mnt/model store");
+        let mounts = mountinfo(&line(30, 1, "8:1", "/models\\040store", "ext4"));
+        assert_eq!(mounts[0].point, "/models store");
         assert_eq!(mounts[0].device, "8:1");
         assert_eq!(unescape("a\\134b\\0"), "a\\b\\0");
     }
@@ -454,10 +460,10 @@ mod tests {
             line(23, 20, "0:25", "/run", "tmpfs"),
             line(24, 20, "259:2", "/boot", "ext4"),
             // A bind mount of /boot's filesystem: one entry, the shorter.
-            line(25, 20, "259:2", "/srv/boot-copy", "ext4"),
-            line(26, 20, "0:40", "/mnt/share", "nfs4"),
-            line(27, 20, "0:41", "/mnt/smb", "cifs"),
-            line(28, 20, "0:42", "/mnt/fuse", "fuse.sshfs"),
+            line(25, 20, "259:2", "/boot-copy", "ext4"),
+            line(26, 20, "0:40", "/share", "nfs4"),
+            line(27, 20, "0:41", "/smb", "cifs"),
+            line(28, 20, "0:42", "/fuse", "fuse.sshfs"),
             line(
                 29,
                 20,
@@ -466,12 +472,12 @@ mod tests {
                 "overlay",
             ),
             line(31, 20, "7:0", "/snap/core/1", "squashfs"),
-            // An ext4 /data hidden by NFS mounted on it, and a disk mounted
-            // under the hidden /data: statvfs("/data") would ask the NFS
+            // An ext4 /store hidden by NFS mounted on it, and a disk mounted
+            // under the hidden /store: statvfs("/store") would ask the NFS
             // server, so neither is kept.
-            line(32, 20, "259:3", "/data", "ext4"),
-            line(33, 32, "259:4", "/data/models", "ext4"),
-            line(34, 32, "0:44", "/data", "nfs"),
+            line(32, 20, "259:3", "/store", "ext4"),
+            line(33, 32, "259:4", "/store/models", "ext4"),
+            line(34, 32, "0:44", "/store", "nfs"),
             // A disk mounted over a tmpfs is the one reached.
             line(35, 20, "0:45", "/scratch", "tmpfs"),
             line(36, 35, "259:5", "/scratch", "xfs"),
@@ -492,8 +498,8 @@ mod tests {
         assert_eq!(
             hidden,
             [
-                ("/data", "ext4"),
-                ("/data/models", "ext4"),
+                ("/store", "ext4"),
+                ("/store/models", "ext4"),
                 ("/scratch", "tmpfs")
             ]
         );

@@ -1,0 +1,38 @@
+ chopinfer-top  >  Monitor   48 CPUs  4 GPUs  1 slowing down  CPU 93C  memory 96%  /data 97% full   window 60s  poll 1s  rescan 15s
+
+┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────────────────────────────┐┌─ Sensors  28 on 14 chips ────────────┐
+│ CPU       ━━━━━━━━━━━━━━━━━━━─  94%   93C   user 79%          5m ▂▂▂▂▂▂▂▂▂▂▂▂▂▃█████████ ││ CPU     93C   ccd 91 92 90 93C       │
+│ memory    ━━━━━━━━━━━━─ 241/251 GiB   swap 1.4/8.0 GiB        5m ▄▄▄▄▄▄▄▄▄▄▄▄▄▅█████████ ││ fans    2,950 2,810 1,920 rpm        │
+│ cores     █▇█▇██▇█▇██▇█▇██▇█▇██▇█▇██▇█▇██▇█▇██▇█▇██▇█▇██▇█   48 above 90%                ││ NVMe    77C  33C                     │
+│ load      61.30  58.00  40.20 of 48   pressure cpu 34%  memory 18%  io 6%   1,312 tasks  ││ DIMMs   8 at 52-56C                  │
+│ I/O       net  rx 3.1 MiB/s  tx 1.1 MiB/s   disk  read 1.9 GiB/s  write 40 MiB/s         ││ +2 more   hottest 58C  NIC, board    │
+└──────────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
+┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────────────────────────────────────┐
+│ GPU  NAME                TEMP  FAN    POWER SM MHZ MEM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m              │
+│▌0    RTX PRO 6000 Max-Q   68C  54% 244/250W  2,520  14,001 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1    RTX PRO 6000 Max-Q   69C  56% 244/250W  2,520  14,001 87.3/95.6G  89%    38%  82%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 2    RTX PRO 6000 Max-Q   90C 100% 214/250W  1,650  14,001 87.3/95.6G  95%    30%  66%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
+│ 3    RTX PRO 6000 Max-Q   71C  60% 244/250W  2,520  14,001 88.7/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ GPU 0  RTX PRO 6000 Max-Q  MiMo-V2.6-Flash  Enter for details ──────┐┌─ Time  GPU 0, last 3 polls ──────────────────────────────┐
+│ ACTIVITY  now  89%  avg  86%       POWER  now  244  avg  241         ││ wall time      ████████████████████████████████████───── │
+│                              100%                              250 W ││                kernels 89%  no kernel 11%  all processes │
+│ ▅▅▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▆▅▅▅▅  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇█████▇▇ ││ instance load  24 running  2 waiting  MiMo-V2.6-Flash    │
+│ █████████████████████████████████  █████████████████████████████████ ││                                                          │
+│ █████████████████████████████████  █████████████████████████████████ ││ SM busy        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────  79% │
+│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now ││ SM occupancy   ━━━━━━━━━━━─────────────────────────  31% │
+│ VRAM         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──── 87.4/95.6 GiB ││ tensor pipes   ━━━━━━━━━━━━━━──────────────────────  38% │
+│ temperature  68C  24C under the limit   fan 54%                      ││ DRAM bandwidth ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────  82% │
+│ clocks       SM 2,520 of 3,090 MHz   memory 14,001 MHz   P1          ││ PCIe           rx 5.8 GiB/s   tx 5.6 GiB/s               │
+│ limited by   power cap  at 250 W                                     ││                                                          │
+│ PCIe         gen 5 x16   ECC off                                     ││                                                          │
+└──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+┌─ Processes  on GPU 0 ───────────────────────────────────┐┌─ Events  host and GPUs ───────────────────────────────────────────────┐
+│ PID     TYPE      VRAM  PROCESS                         ││ 2m00s ago  host   swap in use: 1.4 GiB                                │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash  proc 48211     ││ 2m00s ago  host   NVMe 0 Composite 77C, 8C under its limit            │
+│ 2210    G      0.1 GiB  Xorg  not an instance           ││ 2m00s ago  host   CPU Tctl 93C, over 85C (no limit exposed)           │
+│                                                         ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clock 1,650 of 3,090  │
+│                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
+│                                                         ││    0s ago  host   /data 97% full, 113 GiB free                        │
+└─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

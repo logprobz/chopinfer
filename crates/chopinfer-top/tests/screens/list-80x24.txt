@@ -21,4 +21,4 @@
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   g gpus   w window   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   m monitor   w window   p pause   ? help   q quit

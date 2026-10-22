@@ -2,8 +2,6 @@
 use super::*;
 use kernel_build::digest;
 use runtime_cuda::{DeviceBuffer, Function, Module, Stream};
-#[path = "empty.rs"]
-pub mod empty;
 #[path = "heads_next.rs"]
 pub mod next;
 

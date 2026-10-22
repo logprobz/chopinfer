@@ -6,8 +6,8 @@ const TOPOLOGY_REFERENCE: &str = "prefill_head_topology_reference_sm120";
 const TOPOLOGY_CACHE: &str = "prefill_head_topology_cache_sm120";
 #[path = "heads_run.rs"]
 mod execution;
+pub use execution::next;
 pub use execution::run;
-pub use execution::{empty, next};
 
 fn topology_entries(tp: u32) -> LabResult<Vec<sources::Entry>> {
     let entries = bundle_deepseek41::sm120::latent::entries(&FLASH, tp)?

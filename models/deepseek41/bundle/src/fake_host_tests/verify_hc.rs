@@ -73,6 +73,10 @@ use super::*;
 // becomes the pair loop's and WO_b's reuse pair the ring's (audited by
 // `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
 // Loading the column-block HC pair modules shifts their resource ids only.
+// At 16 and 32 rows each of the 308 producer and tail launches (77 per rank)
+// becomes the column-block producer (grid 40 x rows/4, 256 threads) and the
+// split finish (grid_x 1 to 2) with identical operands; no other line
+// changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0x962ae75b0481d2fd)),
     (6, (8680, 0x8db6c6ddb9823513)),
@@ -157,7 +161,14 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 "{} ",
                 crate::sm120::hc_finish_twin::served().symbol(twin_warps)
             );
-            let tails = count("hc_finish_norm_w32_v1") + count("_hc_finish_twin_");
+            // Sixteen and 32 rows run the column-block producer and split
+            // finish.
+            let wide = crate::sm120::hc_cols::BUCKETS
+                .iter()
+                .find(|b| b.rows == rows);
+            let tails = count("hc_finish_norm_w32_v1")
+                + count("_hc_finish_twin_")
+                + count("_hc_finish_split_");
             let boundaries = tails + count("hc_completion_split_w8_v1 ");
             if boundaries != pairs {
                 missing.push((rows, kv.storage, boundaries, pairs));
@@ -176,12 +187,39 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 );
                 assert_eq!(
                     count("hc_finish_norm_w32_v1"),
-                    if rows == 8 || twin.is_some() {
+                    if rows == 8 || twin.is_some() || wide.is_some() {
                         0
                     } else {
                         pairs
                     }
                 );
+                let producer = crate::sm120::hc_cols::producer();
+                let finish = crate::sm120::hc_cols::finish();
+                assert_eq!(wide.is_some(), matches!(rows, 16 | 32));
+                if let Some(b) = wide {
+                    let first = format!("{} ", producer.symbol(b.tile, b.transposed));
+                    let second = format!("{} ", finish.symbol(b.warps));
+                    assert_eq!(count(&first), pairs);
+                    assert_eq!(count(&second), pairs);
+                    for line in launches.iter().filter(|l| l.contains(&first)) {
+                        assert!(line.contains(&format!(
+                            "grid_x: 40, grid_y: {}, grid_z: 1",
+                            rows.div_ceil(b.tile)
+                        )));
+                    }
+                    for line in launches.iter().filter(|l| l.contains(&second)) {
+                        assert!(line.contains(&format!("grid_x: 2, grid_y: {rows}, grid_z: 1")));
+                        assert!(line.contains(&format!(
+                            "block_x: {}, block_y: 1, block_z: 1",
+                            b.warps * 32
+                        )));
+                    }
+                }
+                assert_eq!(
+                    count("_hc_round_cols_"),
+                    if wide.is_some() { pairs } else { 0 }
+                );
+                assert_eq!(count("_hc_finish_split_"), count("_hc_round_cols_"));
                 assert_eq!(twin.is_some(), rows == 6);
                 assert_eq!(count(&twin_symbol), if rows == 6 { pairs } else { 0 });
                 assert_eq!(count("_hc_finish_twin_"), count(&twin_symbol));
@@ -201,16 +239,9 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 }
                 assert_eq!(
                     count("hc_round_chain_w4_v1"),
-                    if matches!(rows, 6 | 12 | 16) {
-                        pairs
-                    } else {
-                        0
-                    }
+                    if matches!(rows, 6 | 12) { pairs } else { 0 }
                 );
-                assert_eq!(
-                    count("hc_round_rows_r2_v1"),
-                    if rows == 32 { pairs } else { 0 }
-                );
+                assert_eq!(count("hc_round_rows_r2_v1"), 0);
                 assert_eq!(
                     count("hc_round_chain_w8_v1"),
                     if rows == 4 { pairs } else { 0 }

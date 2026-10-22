@@ -707,11 +707,32 @@ mod tests {
                     assert_eq!(chain[1].arguments.0.len(), 18);
                     continue;
                 }
-                if matches!(rows, 4 | 6 | 12 | 16 | 32) {
+                // Measured wide buckets run the column-block producer and
+                // split finish over both launches' own arguments.
+                if let Some(b) = crate::sm120::hc_cols::BUCKETS
+                    .iter()
+                    .find(|b| b.rows == rows)
+                {
+                    let (producer, finish) = (
+                        crate::sm120::hc_cols::producer(),
+                        crate::sm120::hc_cols::finish(),
+                    );
+                    assert_eq!(chain.len(), 2);
+                    assert_eq!(chain[0].symbol, producer.symbol(b.tile, b.transposed));
+                    assert_eq!(
+                        chain[0].plan,
+                        producer.plan(rows, rows, b.tile, b.transposed).unwrap()
+                    );
+                    assert_eq!(chain[0].arguments.0.len(), 9);
+                    assert_eq!(chain[1].symbol, finish.symbol(b.warps));
+                    assert_eq!(chain[1].plan, finish.plan(rows, rows, b.warps).unwrap());
+                    assert_eq!(chain[1].arguments.0.len(), 18);
+                    continue;
+                }
+                if matches!(rows, 4 | 6 | 12) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
                     assert!(chain[0].symbol.ends_with(match rows {
-                        32 => "hc_round_rows_r2_v1",
                         4 => "hc_round_chain_w8_v1",
                         _ => "hc_round_chain_w4_v1",
                     }));

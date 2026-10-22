@@ -29,7 +29,8 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 
 /// The qualified pair, joined into one launch at the measured Flash
 /// buckets (`COMPLETION_BUCKETS`), with its tail on two CTAs per row at
-/// `TWIN_BUCKETS`.
+/// `TWIN_BUCKETS`, and both launches replaced by the column-block producer
+/// and split finish at `hc_cols::BUCKETS`.
 pub fn register(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
@@ -42,6 +43,11 @@ pub fn register(
                 COMPLETION_BUCKETS.to_vec(),
             )
             .with_sinkhorn_finish_norm_twin(super::hc_finish_twin::served(), TWIN_BUCKETS.to_vec())
+            .with_sinkhorn_finish_norm_cols(
+                super::hc_cols::producer(),
+                super::hc_cols::finish(),
+                super::hc_cols::BUCKETS.to_vec(),
+            )
     } else {
         backend
     }

@@ -1,4 +1,7 @@
 //! Initialize the candidate family before the feature-gated bundle build.
+#[path = "../../../bundle/src/sm120/hc_cols.rs"]
+#[allow(dead_code)]
+mod hc_cols;
 #[path = "../../../bundle/src/sm120/hc_completion.rs"]
 #[allow(dead_code)]
 mod hc_completion;

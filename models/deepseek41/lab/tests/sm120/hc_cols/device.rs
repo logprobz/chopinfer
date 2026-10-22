@@ -139,13 +139,15 @@ pub fn controls() -> Vec<Candidate> {
         .collect()
 }
 
-/// The serving registration of the HC finish/norm op.
+/// The served two-launch pair of the HC finish/norm op at every measured
+/// bucket (`hc_finish_norm::register_pair`): what main served at 16 and 32
+/// rows before the column pair, and the pair the candidates replace.
 fn backend() -> LabResult<Sm120> {
     let backend = b::norm_quantize::register(Sm120::new(), &FLASH)?;
     let backend = b::norm_quantize_cached::register(backend, &FLASH);
     let backend = b::hc_round_expand_mix::register(backend, &FLASH);
     let backend = b::hc_round_chain::register(backend, &FLASH);
-    Ok(b::hc_finish_norm::register(backend, &FLASH))
+    Ok(b::hc_finish_norm::register_pair(backend, &FLASH))
 }
 
 /// What the bundle asks of the op (`ops::exact::every_phase` at the decode

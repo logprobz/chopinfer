@@ -8,9 +8,26 @@ use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::{finish_split, round_cols};
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "sinkhorn_hc_cols";
-/// Measured decode buckets of the pair (rows, rows per producer CTA,
-/// butterfly, finish warps); none is served yet.
-pub const BUCKETS: &[finish_split::Bucket] = &[];
+/// Measured decode buckets of the pair: four rows per producer CTA with the
+/// transposed butterfly and a 32-warp finish at 16 and 32 rows. On 385
+/// boundaries of real captured rows (TP4 GPUs at 300 W, 2026-10-22) every
+/// output, chain sum and control matched the served pair bit for bit; per
+/// boundary, cold, it took 18.0 us against 32.0 at 16 rows and 19.2 to 20.1
+/// us against 36.5 to 38.2 at 32 rows, the fastest of the 18 forms at both.
+pub const BUCKETS: &[finish_split::Bucket] = &[
+    finish_split::Bucket {
+        rows: 16,
+        tile: 4,
+        transposed: true,
+        warps: 32,
+    },
+    finish_split::Bucket {
+        rows: 32,
+        tile: 4,
+        transposed: true,
+        warps: 32,
+    },
+];
 pub const PRODUCER_CUBIN: &str = "sinkhorn_hc_deepseek41_round_cols_sm120";
 pub const FINISH_CUBIN: &str = "sinkhorn_hc_deepseek41_finish_split_sm120";
 

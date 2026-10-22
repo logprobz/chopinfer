@@ -37,16 +37,23 @@ fn decode_fuses_77_hc_boundaries() {
                 assert_eq!(count("hc_round_chain_w8_v1"), 0);
                 assert_eq!(count("hc_round_chain_w4_v1"), 0);
                 assert_eq!(count("_hc_completion_"), usize::from(rows != 32) * 77 * nr);
+                // Measured wide buckets replace both launches with the
+                // column-block producer and split finish (`wide_hc`).
+                let wide = crate::sm120::hc_cols::BUCKETS
+                    .iter()
+                    .any(|b| b.rows == rows);
                 assert_eq!(
                     count("hc_round_rows_r2_v1"),
-                    usize::from(rows == 32) * 77 * nr
+                    usize::from(rows == 32 && !wide) * 77 * nr
                 );
+                assert_eq!(count("_hc_round_cols_"), usize::from(wide) * 77 * nr);
+                assert_eq!(count("_hc_finish_split_"), usize::from(wide) * 77 * nr);
                 assert_eq!(count("hc_round_rows_r4_v1"), 0);
                 assert_eq!(count("hc_round_rows_r8_v1"), 0);
                 assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
                 assert_eq!(
                     count("hc_finish_norm_w32_v1"),
-                    usize::from(rows == 32) * 77 * nr
+                    usize::from(rows == 32 && !wide) * 77 * nr
                 );
                 assert_eq!(count("hc_finish_norm_w16_v1"), 0);
                 assert_eq!(
@@ -229,6 +236,14 @@ fn measured_producer_modules_retain_their_qualified_bytes() {
         (
             "chop_deepseek41_hc_round_expand_mix_finish_v1",
             "2f35e8c35d3b0acf5c11488f84afd4e0f8ebf73d452e183c5c64b24729a536a9",
+        ),
+        (
+            "chop_deepseek41_hc_round_cols_r4_tx_v1",
+            "222223b305eb5bffffb9ae7927c7876d762bb4db8b4ae7fcb7c735ee957709fc",
+        ),
+        (
+            "chop_deepseek41_hc_finish_split_w32_v1",
+            "6b58c206e4a2a6102c3b2a028177fb80ed449119467e97f626a17457275ffaf6",
         ),
     ] {
         let (_, bytes) =

@@ -281,9 +281,10 @@ pub(super) fn audit_regions(lines: &[String]) -> Regions {
                 (1, 2, 3)
             } else if lines[at - 1].contains("chop_deepseek41_hc_finish_norm_w32_v1")
                 || lines[at - 1].contains("chop_deepseek41_hc_finish_twin_w")
+                || lines[at - 1].contains("chop_deepseek41_hc_finish_split_w")
             {
                 // MLP norms always widen; the fused ABI has ten HC arguments.
-                // The two-CTA tail keeps that ABI.
+                // The two-CTA and split tails keep that ABI.
                 (13, 14, 9)
             } else if lines[at - 1].contains("_hc_completion_split_w") {
                 // The one-launch boundary binds the pair's fourteen HC roles,

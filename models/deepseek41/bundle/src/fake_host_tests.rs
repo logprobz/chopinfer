@@ -17,6 +17,7 @@ use runtime_bundle_abi::*;
 
 use crate::config::{KV_LAYOUTS, KvLayout};
 
+mod ar_engram;
 mod batch_limits;
 mod bf16_decode;
 mod bf16_partials;

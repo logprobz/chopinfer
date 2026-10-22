@@ -105,6 +105,10 @@ name = "ceil_cached"
 path = "tests/sm120/ceil_cached/main.rs"
 
 [[test]]
+name = "ceil_split"
+path = "tests/sm120/ceil_split/main.rs"
+
+[[test]]
 name = "norm_query_cached"
 path = "tests/sm120/norm_query_cached/main.rs"
 

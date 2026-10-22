@@ -138,6 +138,7 @@ impl Instance {
                             &stages[rank][range.clone()],
                             program,
                             &immutable,
+                            self.shared_overlap.serves_kv(bucket),
                         )
                         .map_err(|error| {
                             self.log(&error);

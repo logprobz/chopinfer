@@ -1122,26 +1122,32 @@ fn journal_steps(host: &Rc<Host>) {
 /// per TP4 rank. With its resolves removed, every other line is identical
 /// after typed handle mapping; these two-row decodes launch no two-strip
 /// queue.
+/// Each decode capture's window KV projection binds the shared expert's
+/// workspace and row status and runs on the side stream beside its query
+/// chain: per layer and rank, its launches change stream and those two
+/// spans, and its fork and join add four event lines (audited by
+/// `shared_overlap::the_window_kv_overlap_changes_only_its_projection`).
+/// These lifecycles capture one Decode-2 graph: 160 lines more per rank.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17349, 0x641a45a164f765c9),
+        (17509, 0x24d0af3dc5dce897),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17203, 0x5be350b322b99f63),
+        (17363, 0x6afb24e8333508af),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34885, 0xd65473cc2b39347e),
+        (35205, 0x2bae8d712bf1f5a8),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34593, 0x167198e5a56aa242),
+        (34913, 0x49e5f9c3ea56426e),
     ),
     (
         "deepseek41-flash-tp4",
@@ -1307,6 +1313,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// 64-expert router renames its resolve there too. The two-CTA HC finish
 /// module adds six resolves and seven releases per rank. The two-strip
 /// routed down module adds two resolves and three releases per rank.
+/// module adds six resolves and seven releases per rank. The window KV
+/// projection beside the query chain changes it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

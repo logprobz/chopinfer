@@ -1080,6 +1080,7 @@ impl Instance {
                     scratch.normed_codes,
                     scratch.normed_scales,
                 ],
+                self.shared_overlap.serves_kv(bucket),
             )
             .map_err(|error| {
                 self.log(&format!("shared expert overlap: {error}"));

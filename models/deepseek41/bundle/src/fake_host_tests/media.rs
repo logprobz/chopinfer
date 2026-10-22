@@ -409,6 +409,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// on each TP4 rank, nothing else, and so does its narrow form.
 /// The two-strip routed down module adds two resolves and three releases
 /// per TP4 rank and shifts ids only.
+/// The window KV projection beside the query chain changes the TP2 history
+/// as in `FLASH_JOURNALS`; at TP4 the C1 dual fold computes KV, unchanged.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22963, 0x2225791f230d7bba)),
     (Ranks::TP4, (57451, 0xf7d8986afe8bf2aa)),

@@ -180,11 +180,13 @@ impl Lowering<'_> {
             }
             _ => self.stage_inner(phase, stage)?,
         };
-        if matches!(
-            stage,
-            Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_)
-        ) && let Some(launches) = &mut lowered
-        {
+        let side = match stage {
+            Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_) => true,
+            // The window KV projection runs beside the query chain.
+            Stage::Project(_, "attention.kv") => crate::shared_overlap::kv_relocated(phase),
+            _ => false,
+        };
+        if side && let Some(launches) = &mut lowered {
             // Relocate at the stage boundary so split, paired and future
             // shared kernels all receive the same independent workspace.
             for lowered in launches {

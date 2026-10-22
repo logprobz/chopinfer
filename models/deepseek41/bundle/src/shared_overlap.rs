@@ -9,6 +9,13 @@
 //! order.
 //! The shared expert owns separate backend workspace and row status.
 //! Capture pieces contain whole fork/join regions. Eager runs remain serial.
+//!
+//! The attention sublayer's window KV projection reads only the layer's
+//! quantized input, so it runs on the side stream beside the query chain
+//! (the query-down projection through the query RoPE) and joins before the
+//! window KV stage that reads it. Like the shared expert, it binds the
+//! independent workspace and row status in decode and verify phases of at
+//! most `KV_ROWS` rows ([`kv_relocated`]).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -28,26 +35,74 @@ use bundle_runtime::pipeline::launch_all;
 #[cfg_attr(test, allow(dead_code))]
 pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_SHARED_OVERLAP";
 
+/// Set to zero to keep the window KV projection on the compute stream in
+/// every overlapped bucket.
+#[cfg_attr(test, allow(dead_code))]
+pub const KV_SWITCH: &str = "CHOPINFER_DEEPSEEK41_KV_OVERLAP";
+
+/// The largest decode or verify phase whose window KV projection binds the
+/// shared expert's workspace and row status: the dense decode buckets.
+pub const KV_ROWS: u32 = crate::sm120::mxfp8_fold::SMALL_CAPACITY;
+
+/// Whether `phase`'s window KV projection binds the independent workspace
+/// and row status, which lets it run beside the query chain.
+pub(crate) fn kv_relocated(phase: crate::program::Phase) -> bool {
+    #[cfg(test)]
+    if KV_REFERENCE.get() {
+        return false;
+    }
+    !phase.prefill() && phase.rows() <= KV_ROWS
+}
+
+#[cfg(test)]
+thread_local! {
+    static KV_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `run` with every window KV projection bound to the compute stream's
+/// workspace and row status, as before the overlap.
+#[cfg(test)]
+pub(crate) fn with_kv_reference<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            KV_REFERENCE.set(self.0);
+        }
+    }
+    let _restore = Restore(KV_REFERENCE.replace(true));
+    run()
+}
+
 /// Which graph buckets overlap, read at create (which creates each rank's
 /// side stream and events when any does).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Settings {
     /// The largest bucket's rows that overlap; 0 for none.
     pub max_rows: u32,
+    /// Whether the window KV projection runs beside the query chain in the
+    /// overlapped buckets of at most [`KV_ROWS`] rows.
+    pub kv: bool,
 }
 
 impl Settings {
     /// Every bucket on one stream.
-    pub const OFF: Self = Self { max_rows: 0 };
+    pub const OFF: Self = Self {
+        max_rows: 0,
+        kv: false,
+    };
     /// Every bucket overlapped, the default.
-    pub const ALL: Self = Self { max_rows: u32::MAX };
+    pub const ALL: Self = Self {
+        max_rows: u32::MAX,
+        kv: true,
+    };
 
-    /// The settings [`SWITCH`]'s `value` names.
-    pub fn read(value: Option<&str>) -> Self {
+    /// The settings [`SWITCH`]'s `value` and [`KV_SWITCH`]'s `kv` name.
+    pub fn read(value: Option<&str>, kv: Option<&str>) -> Self {
+        let kv = kv != Some("0");
         match value.map(str::parse::<u32>) {
             Some(Ok(0)) => Self::OFF,
-            Some(Ok(max_rows)) => Self { max_rows },
-            None | Some(Err(_)) => Self::ALL,
+            Some(Ok(max_rows)) => Self { max_rows, kv },
+            None | Some(Err(_)) => Self { kv, ..Self::ALL },
         }
     }
 
@@ -56,9 +111,12 @@ impl Settings {
     /// [`with_settings_in_tests`].
     pub fn from_env() -> Self {
         #[cfg(test)]
-        return IN_TESTS.get().unwrap_or_else(|| Self::read(None));
+        return IN_TESTS.get().unwrap_or_else(|| Self::read(None, None));
         #[cfg(not(test))]
-        Self::read(std::env::var(SWITCH).ok().as_deref())
+        Self::read(
+            std::env::var(SWITCH).ok().as_deref(),
+            std::env::var(KV_SWITCH).ok().as_deref(),
+        )
     }
 
     /// Whether any bucket overlaps.
@@ -69,6 +127,12 @@ impl Settings {
     /// Whether a graph bucket of `rows` rows overlaps.
     pub fn serves(self, rows: u32) -> bool {
         self.on() && rows <= self.max_rows
+    }
+
+    /// Whether a graph bucket of `rows` rows runs its window KV projections
+    /// beside the query chains.
+    pub fn serves_kv(self, rows: u32) -> bool {
+        self.kv && self.serves(rows) && rows <= KV_ROWS
     }
 }
 
@@ -309,27 +373,37 @@ pub(crate) fn joins_before_gate(symbol: &str) -> bool {
 /// ends before the shared expert, and a gate started beside the shared
 /// expert loses more than the finish saves; only the router is then
 /// concurrent with the shared expert and audited against it.
+///
+/// With `kv`, each attention sublayer's window KV projection runs beside its
+/// query chain ([`units`]) and is audited against it alike.
 pub fn checked_units(
     stages: &[Stage],
     program: &[PreparedLaunch],
     immutable: &[DeviceBufferSpanV1],
+    kv: bool,
 ) -> Result<Vec<Vec<Op>>, String> {
     if stages.len() != program.len() {
         return Err("overlap stage and launch counts differ".into());
     }
-    let mut units = units(stages)?;
+    let mut units = units(stages, kv)?;
     for unit in &mut units {
         let [Op::Fork, Op::Side(side), Op::Compute(main), Op::Join] = &unit[..] else {
             continue;
         };
         let (side, mut main) = (side.clone(), main.clone());
+        let kv_side = stages[side.clone()]
+            .iter()
+            .all(|s| matches!(s, Stage::Project(_, "attention.kv")));
         let gate = main
             .clone()
-            .find(|&i| matches!(stages[i], Stage::ExpertsGateUp(_)))
-            .ok_or("overlapped sublayer has no gate")?;
-        if program[main.start..gate]
-            .iter()
-            .any(|l| joins_before_gate(&l.symbol))
+            .find(|&i| matches!(stages[i], Stage::ExpertsGateUp(_)));
+        if gate.is_none() && !kv_side {
+            return Err("overlapped sublayer has no gate".into());
+        }
+        if let Some(gate) = gate
+            && program[main.start..gate]
+                .iter()
+                .any(|l| joins_before_gate(&l.symbol))
         {
             *unit = vec![
                 Op::Fork,
@@ -370,14 +444,48 @@ pub fn checked_units(
     Ok(units)
 }
 
+/// The stages of `layer`'s query chain, which run beside its window KV
+/// projection: the query-down projection through the query RoPE.
+fn query_chain(stage: Stage, layer: u32) -> bool {
+    matches!(stage,
+        Stage::Project(l, "attention.q-a" | "attention.q-b")
+        | Stage::QueryNorm(l)
+        | Stage::QueryRope(l) if l == layer)
+}
+
 /// A program's submissions in units the capture's graph pieces never split:
-/// each launch outside an overlapped MoE sublayer alone, and each such
-/// sublayer's routed work and shared expert between their fork and join as
-/// one. `stages` names each launch's stage.
-pub fn units(stages: &[Stage]) -> Result<Vec<Vec<Op>>, String> {
+/// each launch outside an overlapped sublayer alone, and each such
+/// sublayer's concurrent work between its fork and join as one: an MoE
+/// sublayer's routed work beside its shared expert and, with `kv`, an
+/// attention sublayer's query chain beside its window KV projection, which
+/// lowering places right after the chain. `stages` names each launch's
+/// stage.
+pub fn units(stages: &[Stage], kv: bool) -> Result<Vec<Vec<Op>>, String> {
     let mut units = Vec::new();
     let mut at = 0;
     while at < stages.len() {
+        if kv && let Stage::Project(layer, "attention.q-a") = stages[at] {
+            let chain = at
+                + stages[at..]
+                    .iter()
+                    .take_while(|&&s| query_chain(s, layer))
+                    .count();
+            let side = chain
+                + stages[chain..]
+                    .iter()
+                    .take_while(|&&s| s == Stage::Project(layer, "attention.kv"))
+                    .count();
+            if side > chain {
+                units.push(vec![
+                    Op::Fork,
+                    Op::Side(chain..side),
+                    Op::Compute(at..chain),
+                    Op::Join,
+                ]);
+                at = side;
+                continue;
+            }
+        }
         let Stage::Project(layer, "moe.router") = stages[at] else {
             units.push(vec![Op::Compute(at..at + 1)]);
             at += 1;
@@ -639,17 +747,17 @@ mod tests {
         bind(&mut program[0], span(7, 128, 61_440));
         bind(&mut program[shared], span(7, 256, 184_320));
         assert!(
-            checked_units(&stages, &program, &[])
+            checked_units(&stages, &program, &[], false)
                 .unwrap_err()
                 .contains("unordered scratch alias")
         );
         bind(&mut program[shared], span(8, 256, 184_320));
-        assert!(checked_units(&stages, &program, &[]).is_ok());
+        assert!(checked_units(&stages, &program, &[], false).is_ok());
         // Disjoint suballocations in one arena are safe, including adjacency.
         bind(&mut program[shared], span(7, 61_568, 4));
-        assert!(checked_units(&stages, &program, &[]).is_ok());
+        assert!(checked_units(&stages, &program, &[], false).is_ok());
         bind(&mut program[shared], span(7, 61_567, 4));
-        assert!(checked_units(&stages, &program, &[]).is_err());
+        assert!(checked_units(&stages, &program, &[], false).is_err());
         let input = span(9, 512, 1024);
         let bind_at = |launch: &mut PreparedLaunch, index, view| {
             launch.symbol = "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3".into();
@@ -660,16 +768,16 @@ mod tests {
         // Argument zero is const input; argument six is a mutable output.
         bind_at(&mut program[0], 0, input);
         bind_at(&mut program[shared], 0, span(9, 640, 128));
-        assert!(checked_units(&stages, &program, &[input]).is_ok());
+        assert!(checked_units(&stages, &program, &[input], false).is_ok());
         bind_at(&mut program[shared], 6, span(9, 640, 128));
-        assert!(checked_units(&stages, &program, &[input]).is_err());
+        assert!(checked_units(&stages, &program, &[input], false).is_err());
         bind_at(&mut program[shared], 0, span(9, 640, 128));
         bind_at(&mut program[0], 6, input);
-        assert!(checked_units(&stages, &program, &[input]).is_err());
+        assert!(checked_units(&stages, &program, &[input], false).is_err());
         bind_at(&mut program[0], 0, input);
-        assert!(checked_units(&stages, &program, &[span(9, 640, 128)]).is_err());
+        assert!(checked_units(&stages, &program, &[span(9, 640, 128)], false).is_err());
         bind(&mut program[shared], span(9, u64::MAX, 4));
-        assert!(checked_units(&stages, &program, &[input]).is_err());
+        assert!(checked_units(&stages, &program, &[input], false).is_err());
     }
 
     #[test]
@@ -716,7 +824,7 @@ mod tests {
         let served = "chop_deepseek41_moe_router_finish_e384_k6_finish_v1";
         let r2 = "chop_deepseek41_moe_router_finish_e384_k6_finish_r2v7_v1";
         assert!(!joins_before_gate(served));
-        let units_of = |p: &[PreparedLaunch]| checked_units(&stages, p, &[]);
+        let units_of = |p: &[PreparedLaunch]| checked_units(&stages, p, &[], true);
         assert_eq!(
             units_of(&program(served)).unwrap()[0],
             vec![
@@ -771,40 +879,140 @@ mod tests {
                 .into_iter()
                 .flat_map(|s| [s, s])
                 .collect::<Vec<_>>();
-            let units = units(&stages).unwrap();
-            let mut seen = vec![0; stages.len()];
-            let mut regions = 0;
-            for unit in units {
-                if unit.len() == 4 {
-                    regions += 1;
-                    let [Op::Fork, Op::Side(side), Op::Compute(compute), Op::Join] = &unit[..]
-                    else {
-                        panic!("whole fork/join region")
-                    };
-                    let Stage::Project(layer, "moe.router") = stages[compute.start] else {
-                        panic!("router starts compute")
-                    };
-                    assert_eq!(
-                        stages[compute.start - 1],
-                        Stage::QuantizeInput(layer, Sublayer::Mlp)
-                    );
-                    assert_eq!(stages[side.end], Stage::RoutedSum(layer));
-                    assert!(stages[side.clone()].iter().all(|&s| matches!(
-                        s,
-                        Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_)
-                    )));
-                }
-                for op in unit {
-                    if let Op::Compute(range) | Op::Side(range) = op {
-                        for i in range {
-                            seen[i] += 1;
+            for kv in [false, true] {
+                let mut seen = vec![0; stages.len()];
+                let (mut moe, mut attention) = (0, 0);
+                for unit in units(&stages, kv).unwrap() {
+                    if unit.len() == 4 {
+                        let [Op::Fork, Op::Side(side), Op::Compute(compute), Op::Join] = &unit[..]
+                        else {
+                            panic!("whole fork/join region")
+                        };
+                        match stages[compute.start] {
+                            Stage::Project(layer, "moe.router") => {
+                                moe += 1;
+                                assert_eq!(
+                                    stages[compute.start - 1],
+                                    Stage::QuantizeInput(layer, Sublayer::Mlp)
+                                );
+                                assert_eq!(stages[side.end], Stage::RoutedSum(layer));
+                                assert!(stages[side.clone()].iter().all(|&s| matches!(
+                                    s,
+                                    Stage::SharedGateUp(_)
+                                        | Stage::SharedActivation(_)
+                                        | Stage::SharedDown(_)
+                                )));
+                            }
+                            Stage::Project(layer, "attention.q-a") => {
+                                attention += 1;
+                                // The fork follows the quantized input both
+                                // branches read; the join precedes the
+                                // window KV stage that reads the projection.
+                                assert_eq!(
+                                    stages[compute.start - 1],
+                                    Stage::QuantizeInput(layer, Sublayer::Attention)
+                                );
+                                assert_eq!(compute.end, side.start);
+                                assert_eq!(stages[compute.end - 1], Stage::QueryRope(layer));
+                                assert_eq!(stages[side.end], Stage::WindowKv(layer));
+                                assert!(
+                                    stages[side.clone()]
+                                        .iter()
+                                        .all(|&s| s == Stage::Project(layer, "attention.kv"))
+                                );
+                            }
+                            other => panic!("unexpected region start {other:?}"),
+                        }
+                    }
+                    for op in unit {
+                        if let Op::Compute(range) | Op::Side(range) = op {
+                            for i in range {
+                                seen[i] += 1;
+                            }
                         }
                     }
                 }
+                assert!(moe > 0);
+                assert_eq!(attention, if kv { FLASH.layers() as usize } else { 0 });
+                assert!(seen.iter().all(|&count| count == 1));
             }
-            assert!(regions > 0);
-            assert!(seen.iter().all(|&count| count == 1));
         }
+    }
+
+    #[test]
+    fn the_window_kv_projection_runs_beside_the_query_chain_only() {
+        let span = |handle, offset, length| {
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(handle, 1),
+                offset,
+                length,
+            )
+        };
+        let stages = crate::program::attention(&FLASH, 3, Phase::Decode(32));
+        let at = |stage| stages.iter().position(|&s| s == stage).unwrap();
+        let (kv, window) = (
+            at(Stage::Project(3, "attention.kv")),
+            at(Stage::WindowKv(3)),
+        );
+        let fresh = || {
+            stages
+                .iter()
+                .enumerate()
+                .map(|(i, stage)| PreparedLaunch {
+                    symbol: format!("{stage:?}"),
+                    rows: 32,
+                    plan: LaunchPlan {
+                        grid: [1; 3],
+                        block: [32, 1, 1],
+                        cluster: [1; 3],
+                        dynamic_shared_bytes: 0,
+                        workspace_bytes: 0,
+                        pdl: true,
+                    },
+                    arguments: ArgumentList(vec![Argument::U32(i as u32)]),
+                    bindings: BufferBindings::default(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut program = fresh();
+        let planned = checked_units(&stages, &program, &[], true).unwrap();
+        assert_eq!(
+            planned[0],
+            vec![Op::Fork, Op::Side(kv..window), Op::Compute(0..kv), Op::Join]
+        );
+        assert_eq!(planned[1], vec![Op::Compute(window..window + 1)]);
+        assert_eq!(
+            checked_units(&stages, &program, &[], false).unwrap()[0],
+            vec![Op::Compute(0..1)]
+        );
+        let bind = |launch: &mut PreparedLaunch, view| {
+            let id = launch.bindings.bind(view);
+            launch.arguments = ArgumentList(vec![Argument::DevicePointerArray(vec![id])]);
+        };
+        // The query chain and the projection share no scratch; the window
+        // KV stage after the join may read the projection's output.
+        bind(&mut program[kv], span(7, 0, 256));
+        bind(&mut program[window], span(7, 0, 256));
+        assert!(checked_units(&stages, &program, &[], true).is_ok());
+        for chain in 0..kv {
+            let mut p = fresh();
+            bind(&mut p[kv], span(7, 0, 256));
+            bind(&mut p[chain], span(7, 128, 256));
+            assert!(checked_units(&stages, &p, &[], true).is_err());
+            assert!(checked_units(&stages, &p, &[], false).is_ok());
+        }
+        // A chain without its projection, as at the dual C1 fold, stays serial.
+        let without: Vec<_> = stages
+            .iter()
+            .copied()
+            .filter(|&s| s != stages[kv])
+            .collect();
+        assert!(
+            units(&without, true)
+                .unwrap()
+                .iter()
+                .all(|unit| unit.len() == 1)
+        );
     }
 
     #[test]
@@ -813,10 +1021,23 @@ mod tests {
         for omitted in 1..stages.len() {
             let mut broken = stages.clone();
             broken.remove(omitted);
-            assert!(units(&broken).is_err(), "missing {:?}", stages[omitted]);
+            assert!(
+                units(&broken, true).is_err(),
+                "missing {:?}",
+                stages[omitted]
+            );
         }
-        assert!(Settings::read(None).serves(192));
-        assert!(!Settings::read(Some("0")).serves(1));
-        assert!(!Settings::read(Some("8")).serves(32));
+        assert!(Settings::read(None, None).serves(192));
+        assert!(!Settings::read(Some("0"), None).serves(1));
+        assert!(!Settings::read(Some("8"), None).serves(32));
+        assert!(Settings::read(None, None).serves_kv(64));
+        assert!(!Settings::read(None, None).serves_kv(65));
+        assert!(!Settings::read(None, Some("0")).serves_kv(32));
+        assert!(Settings::read(None, Some("0")).serves(32));
+        assert!(!Settings::read(Some("0"), None).serves_kv(1));
+        assert!(Settings::read(Some("16"), None).serves_kv(16));
+        assert!(!Settings::read(Some("16"), None).serves_kv(32));
+        assert_eq!(Settings::read(None, None), Settings::ALL);
+        assert_eq!(Settings::read(Some("0"), Some("1")), Settings::OFF);
     }
 }

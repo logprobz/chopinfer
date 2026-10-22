@@ -211,7 +211,7 @@ mod tests {
             );
             assert!(program.last().unwrap().symbol.ends_with("_down_finish_v1"));
             let readonly = [b.scratch.normed_codes, b.scratch.normed_scales, live];
-            crate::shared_overlap::checked_units(&stages, &program, &readonly).unwrap();
+            crate::shared_overlap::checked_units(&stages, &program, &readonly, false).unwrap();
             for op in &program {
                 for arg in &op.arguments.0 {
                     if let Argument::DeviceBuffer(h) = arg {
@@ -249,14 +249,14 @@ mod tests {
             }
             assert_eq!(changed, 1);
             assert!(
-                crate::shared_overlap::checked_units(&stages, &bad, &readonly)
+                crate::shared_overlap::checked_units(&stages, &bad, &readonly, false)
                     .unwrap_err()
                     .contains("unordered scratch alias")
             );
             b.shared_workspace = b.workspace;
             let (stages, bad) = lower(&b);
             assert!(
-                crate::shared_overlap::checked_units(&stages, &bad, &readonly)
+                crate::shared_overlap::checked_units(&stages, &bad, &readonly, false)
                     .unwrap_err()
                     .contains("unordered scratch alias")
             );

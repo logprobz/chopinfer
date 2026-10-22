@@ -62,6 +62,10 @@ use super::*;
 // grid_x 1 to 2 with identical operands; no other line changes.
 // Loading the two-strip routed down module shifts their resource ids only;
 // verify keeps its down queues at every row count.
+// Each layer's window KV projection binds the shared expert's workspace and
+// row status and runs on the side stream beside its query chain: its
+// launches change stream and those spans, and its fork and join add four
+// event lines per layer and rank (640 lines).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0xe5220b76e871118d)),
     (6, (8040, 0x0c9732c76299c4cf)),

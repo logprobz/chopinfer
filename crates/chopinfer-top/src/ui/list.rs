@@ -103,8 +103,8 @@ const COLUMNS: [Column; 11] = [
         drop: 5,
     },
 ];
-/// The narrowest decode sparkline worth showing.
-const SPARK_MINIMUM: usize = 8;
+/// The narrowest sparkline worth showing.
+pub(super) const SPARK_MINIMUM: usize = 8;
 
 /// The instances table's height on a terminal `height` rows tall: one line
 /// per row, with the borders and titles, and room left for the events.

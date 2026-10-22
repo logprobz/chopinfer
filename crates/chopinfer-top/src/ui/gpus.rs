@@ -2,7 +2,7 @@
 //! history, where its time goes, its processes and the host and GPU events.
 
 use super::buffer::{Buffer, Color, Style};
-use super::list::{Column, first_row, layout};
+use super::list::{Column, SPARK_MINIMUM, first_row, layout};
 use super::widgets::{
     age, boxed, buckets, bytes, gauge, groups, integer, nice_ceiling, pad, percent, right,
     sanitize, sparkline,
@@ -100,6 +100,8 @@ const COLUMNS: [Column; 12] = [
         drop: 1,
     },
 ];
+/// The INSTANCE column, which widens into the sparkline's spare cells.
+const INSTANCE: usize = 11;
 
 type Area = (u16, u16, u16, u16);
 type Pieces = Vec<(String, Style)>;
@@ -245,6 +247,57 @@ fn instance_name(instance: &Instance) -> String {
     shown_name(instance).unwrap_or_else(|| sanitize(&instance.label()))
 }
 
+/// The INSTANCE cell of GPU `index`: its text, how many other processes
+/// share the GPU (` +1`, else empty), and its style.
+fn instance_cell(app: &App, index: usize) -> (String, String, Style) {
+    let gpus = &app.gpus;
+    let device = &gpus.devices[index];
+    let processes = gpus.processes(index, &app.registry.instances);
+    // A lost GPU's processes are those it had before.
+    match instance_on(app, index) {
+        _ if gpus.lost(index) => (
+            "lost: no answer".to_owned(),
+            String::new(),
+            Style::fg(Color::Red),
+        ),
+        Some(instance) => {
+            let others = processes.len().saturating_sub(1);
+            (
+                instance_name(instance),
+                if others > 0 {
+                    format!(" +{others}")
+                } else {
+                    String::new()
+                },
+                Style::fg(Color::White).bold(),
+            )
+        }
+        // Why NVML gave no handle: no permission, not found.
+        None if device.unreadable.is_some() => (
+            device.unreadable.clone().unwrap_or_default(),
+            String::new(),
+            Style::fg(Color::Yellow),
+        ),
+        None if !processes.is_empty() => (
+            format!(
+                "{} process{}",
+                processes.len(),
+                if processes.len() == 1 { "" } else { "es" }
+            ),
+            String::new(),
+            dim(),
+        ),
+        None => ("-".to_owned(), String::new(), dim()),
+    }
+}
+
+/// `text` then `suffix` in `width` cells, `text` cut so `suffix` stays.
+fn fit(text: &str, suffix: &str, width: usize) -> String {
+    let room = width.saturating_sub(suffix.chars().count());
+    let text = text.chars().take(room).collect::<String>();
+    pad(&format!("{text}{suffix}"), width)
+}
+
 fn temperature_style(reading: &Reading) -> Style {
     let thermal = reading.reasons.is_some_and(Reasons::thermal);
     match reading.headroom {
@@ -280,7 +333,23 @@ fn table(buffer: &mut Buffer, app: &App, area: Area) -> u16 {
     let count = gpus.devices.len();
     let visible = usize::from(table_height(count, height) - 3);
     let first = first_row(app.gpu_scroll, app.gpu, visible);
-    let (shown, spark) = layout(&COLUMNS, usize::from(width) - 4);
+    let (shown, mut spark) = layout(&COLUMNS, usize::from(width) - 4);
+    // INSTANCE takes what the sparkline can spare to show its longest cell.
+    let mut instance_width = COLUMNS[INSTANCE].width;
+    if spark > 0 && shown.contains(&INSTANCE) {
+        let widest = (0..count)
+            .map(|index| {
+                let (name, others, _) = instance_cell(app, index);
+                name.chars().count() + others.chars().count()
+            })
+            .max()
+            .unwrap_or(0);
+        let grow = widest
+            .saturating_sub(instance_width)
+            .min(spark.saturating_sub(SPARK_MINIMUM));
+        instance_width += grow;
+        spark -= grow;
+    }
     let position = if count > visible {
         format!(
             "  rows {}-{} of {count}",
@@ -304,10 +373,15 @@ fn table(buffer: &mut Buffer, app: &App, area: Area) -> u16 {
     let mut column = x + 2;
     for index in &shown {
         let spec = &COLUMNS[*index];
-        let text = if spec.right {
-            right(spec.title, spec.width)
+        let column_width = if *index == INSTANCE {
+            instance_width
         } else {
-            pad(spec.title, spec.width)
+            spec.width
+        };
+        let text = if spec.right {
+            right(spec.title, column_width)
+        } else {
+            pad(spec.title, column_width)
         };
         column = buffer.put(column, y + 1, &text, dim().bold()) + spec.gap as u16;
     }
@@ -320,7 +394,7 @@ fn table(buffer: &mut Buffer, app: &App, area: Area) -> u16 {
             app,
             index,
             (x, y + 2 + line as u16, width),
-            (&shown, spark),
+            (&shown, spark, instance_width),
         );
     }
     table_height
@@ -332,7 +406,7 @@ fn row(
     app: &App,
     index: usize,
     (x, y, width): (u16, u16, u16),
-    (shown, spark): (&[usize], usize),
+    (shown, spark, instance_width): (&[usize], usize, usize),
 ) {
     let gpus = &app.gpus;
     let device = &gpus.devices[index];
@@ -350,35 +424,8 @@ fn row(
         value.map_or_else(|| piece("-", dim()), |text| (text, style))
     };
     let shares = |field: Field| number(recent(field).map(|value| share(Some(value))), plain);
-    let processes = gpus.processes(index, &app.registry.instances);
-    // A lost GPU's processes are those it had before.
-    let instance = match instance_on(app, index) {
-        _ if lost => piece("lost: no answer", Style::fg(Color::Red)),
-        Some(instance) => {
-            let others = processes.len().saturating_sub(1);
-            let name = instance_name(instance);
-            let text = if others > 0 {
-                format!("{name} +{others}")
-            } else {
-                name
-            };
-            (text, Style::fg(Color::White).bold())
-        }
-        // Why NVML gave no handle: no permission, not found.
-        None if device.unreadable.is_some() => piece(
-            device.unreadable.as_deref().unwrap_or_default(),
-            Style::fg(Color::Yellow),
-        ),
-        None if !processes.is_empty() => piece(
-            format!(
-                "{} process{}",
-                processes.len(),
-                if processes.len() == 1 { "" } else { "es" }
-            ),
-            dim(),
-        ),
-        None => piece("-", dim()),
-    };
+    let (name, others, style) = instance_cell(app, index);
+    let instance = (fit(&name, &others, instance_width), style);
     let cells = [
         (device.index.to_string(), plain),
         (sanitize(&device.short_name()), plain),
@@ -438,10 +485,15 @@ fn row(
     for index in shown {
         let spec = &COLUMNS[*index];
         let (text, style) = &cells[*index];
-        let text = if spec.right {
-            right(text, spec.width)
+        let column_width = if *index == INSTANCE {
+            instance_width
         } else {
-            pad(text, spec.width)
+            spec.width
+        };
+        let text = if spec.right {
+            right(text, column_width)
+        } else {
+            pad(text, column_width)
         };
         column = buffer.put(column, y, &text, *style) + spec.gap as u16;
     }
@@ -1198,6 +1250,7 @@ mod tests {
         };
         let (all, spark) = titles(128);
         assert_eq!((all.len(), spark), (COLUMNS.len(), 20));
+        assert_eq!(COLUMNS[INSTANCE].title, "INSTANCE");
         let (shown, _) = titles(96);
         assert!(!shown.contains(&"MEM MHZ") && !shown.contains(&"NAME"));
         let (shown, _) = titles(76);

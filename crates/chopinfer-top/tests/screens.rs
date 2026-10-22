@@ -1062,6 +1062,46 @@ fn a_failed_process_query_shows_the_list_before_it() {
 }
 
 #[test]
+fn a_long_instance_name_widens_its_column_and_keeps_its_process_count() {
+    let mut app = fleet();
+    let (mimo, nonce) = (3, "7d2e04b1c9aa7d2e04b1c9aa7d2e04b1");
+    app.registry.apply(
+        mimo,
+        answer(
+            "127.0.0.1:8311",
+            nonce,
+            health(
+                "MiMo-V2.6-Flash-Preview",
+                "mimo26",
+                "tp4-dflash",
+                4,
+                ("adaptive", 7, Some("dflash")),
+                nonce,
+            ),
+            busy(11_000.0 + NOW + 1.0, 1800.0, 24.0),
+        ),
+        NOW + 1.0,
+    );
+    with_gpus(&mut app, true);
+    app.view = View::Monitor;
+    let row = |width: u16| {
+        let screen = ui::draw(&app, width, 38, NOW + 1.0).text();
+        screen
+            .lines()
+            .find(|line| line.contains("│▌0 "))
+            .map(str::to_owned)
+            .unwrap_or_else(|| panic!("{screen}"))
+    };
+    // The sparkline spares the cells for the whole name and the Xorg
+    // process beside it.
+    let wide = row(132);
+    assert!(wide.contains("MiMo-V2.6-Flash-Preview +1"), "{wide}");
+    // With no sparkline to take from, the name is cut and the count kept.
+    let narrow = row(112);
+    assert!(narrow.contains("MiMo-V2.6-Flash +1"), "{narrow}");
+}
+
+#[test]
 fn text_on_the_header_and_footer_bars_is_not_their_color() {
     use chopinfer_top::ui::buffer::Color;
     let mut app = fleet();

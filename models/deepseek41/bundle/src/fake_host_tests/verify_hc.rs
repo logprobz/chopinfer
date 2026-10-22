@@ -73,12 +73,12 @@ use super::*;
 // becomes the pair loop's and WO_b's reuse pair the ring's (audited by
 // `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xe5220b76e871118d)),
-    (6, (8040, 0x0c9732c76299c4cf)),
-    (8, (7572, 0xe23c24a32359a5c0)),
-    (12, (9496, 0x183f8f6aef3ba964)),
-    (16, (8532, 0x796cac7d669848ff)),
-    (32, (8064, 0xbf78904a90e602d9)),
+    (4, (8520, 0x962ae75b0481d2fd)),
+    (6, (8680, 0x8db6c6ddb9823513)),
+    (8, (8212, 0x9b2fd10f299736d2)),
+    (12, (10136, 0xad7b5e4dc7ef12f0)),
+    (16, (9012, 0x79f711f55e090b8d)),
+    (32, (8704, 0xb0258c262e21ca0f)),
 ];
 
 #[test]

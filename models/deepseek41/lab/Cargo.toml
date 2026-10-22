@@ -224,6 +224,10 @@ path = "tests/sm120/hc_completion/main.rs"
 name = "hc_tail16"
 path = "tests/sm120/hc_tail16/main.rs"
 
+[[test]]
+name = "hc_cols"
+path = "tests/sm120/hc_cols/main.rs"
+
 [[example]]
 name = "build_router_norm"
 path = "examples/sm120/build_router_norm.rs"

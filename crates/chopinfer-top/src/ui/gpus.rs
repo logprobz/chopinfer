@@ -2,7 +2,7 @@
 //! its time goes, its processes and the GPU events.
 
 use super::buffer::{Buffer, Color, Style};
-use super::list::{Column, TABLE_TOP, first_row, layout, table_rows};
+use super::list::{Column, TABLE_TOP, first_row, layout};
 use super::widgets::{
     age, boxed, buckets, bytes, gauge, groups, integer, nice_ceiling, pad, percent, right,
     sanitize, sparkline,
@@ -136,14 +136,30 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
             ("q", "quit", 0),
         ],
     );
+    let (width, height) = (buffer.width, buffer.height);
+    let area = (0, TABLE_TOP, width, height.saturating_sub(1 + TABLE_TOP));
+    panels(buffer, app, area, now);
+}
+
+/// The GPU table's height in an area `height` rows tall: a line a GPU with
+/// its borders and titles, leaving room for the panels below.
+pub fn table_height(rows: usize, height: u16) -> u16 {
+    u16::try_from(rows.saturating_add(3))
+        .unwrap_or(u16::MAX)
+        .clamp(4, height.saturating_sub(5).max(4))
+}
+
+/// The GPU table in `area`, then the selected GPU's history and where its
+/// time goes, then its processes and the events, as room allows.
+pub fn panels(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     let gpus = &app.gpus;
     if gpus.status != Status::Open || gpus.devices.is_empty() {
-        message(buffer, &gpus.status);
+        message(buffer, &gpus.status, area);
         return;
     }
-    let (width, height) = (buffer.width, buffer.height);
-    let top = TABLE_TOP + table(buffer, app);
-    let left = height.saturating_sub(1 + top);
+    let (x, y, width, height) = area;
+    let top = y + table(buffer, app, area);
+    let left = (y + height).saturating_sub(top);
     if left < 6 {
         return;
     }
@@ -160,18 +176,29 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
     let index = app.gpu.min(gpus.devices.len() - 1);
     if width >= 100 {
         let split = (u32::from(width) * 55 / 100) as u16;
-        summary(buffer, app, index, (0, top, split, upper));
-        time(buffer, app, index, (split, top, width - split, upper), now);
+        summary(buffer, app, index, (x, top, split, upper));
+        time(
+            buffer,
+            app,
+            index,
+            (x + split, top, width - split, upper),
+            now,
+        );
     } else {
-        time(buffer, app, index, (0, top, width, upper), now);
+        time(buffer, app, index, (x, top, width, upper), now);
     }
     let lower = left - upper;
     if lower >= 6 {
-        let area = (0, top + upper, width, lower);
+        let area = (x, top + upper, width, lower);
         if width >= 100 {
             let split = (u32::from(width) * 45 / 100) as u16;
-            processes(buffer, app, index, (0, top + upper, split, lower), now);
-            events(buffer, app, (split, top + upper, width - split, lower), now);
+            processes(buffer, app, index, (x, top + upper, split, lower), now);
+            events(
+                buffer,
+                app,
+                (x + split, top + upper, width - split, lower),
+                now,
+            );
         } else {
             processes(buffer, app, index, area, now);
         }
@@ -244,9 +271,10 @@ fn crumbs(app: &App, width: u16) -> Vec<(String, Style)> {
     crumbs
 }
 
-fn message(buffer: &mut Buffer, status: &Status) {
-    let width = buffer.width;
-    boxed(buffer, (0, TABLE_TOP, width, 8), &[("GPUs", title())], true);
+/// Why there are no GPUs to show, in a box at the top of `area`.
+fn message(buffer: &mut Buffer, status: &Status, area: Area) {
+    let (x, y, width, _) = area;
+    boxed(buffer, (x, y, width, 8), &[("GPUs", title())], true);
     let lines = match status {
         Status::Off => vec![piece(
             "GPUs are not read: chopinfer-top was started with --no-gpus.",
@@ -275,8 +303,8 @@ fn message(buffer: &mut Buffer, status: &Status) {
     };
     for (line, (text, style)) in lines.iter().enumerate() {
         buffer.put(
-            2,
-            TABLE_TOP + 2 + line as u16,
+            x + 2,
+            y + 2 + line as u16,
             &pad(text, usize::from(width) - 4),
             *style,
         );
@@ -324,12 +352,12 @@ fn memory(used: u64, total: u64) -> String {
     }
 }
 
-/// Draws the GPU table and returns its height.
-fn table(buffer: &mut Buffer, app: &App) -> u16 {
+/// Draws the GPU table at the top of `area` and returns its height.
+fn table(buffer: &mut Buffer, app: &App, area: Area) -> u16 {
     let gpus = &app.gpus;
-    let (width, height) = (buffer.width, buffer.height);
+    let (x, y, width, height) = area;
     let count = gpus.devices.len();
-    let visible = table_rows(count, height);
+    let visible = usize::from(table_height(count, height) - 3);
     let first = first_row(app.gpu_scroll, app.gpu, visible);
     let (shown, spark) = layout(&COLUMNS, usize::from(width) - 4);
     let position = if count > visible {
@@ -344,7 +372,7 @@ fn table(buffer: &mut Buffer, app: &App) -> u16 {
     let table_height = visible as u16 + 3;
     boxed(
         buffer,
-        (0, TABLE_TOP, width, table_height),
+        (x, y, width, table_height),
         &[
             ("GPUs", title()),
             (&position, Style::fg(Color::Yellow)),
@@ -352,7 +380,7 @@ fn table(buffer: &mut Buffer, app: &App) -> u16 {
         ],
         true,
     );
-    let mut column = 2;
+    let mut column = x + 2;
     for index in &shown {
         let spec = &COLUMNS[*index];
         let text = if spec.right {
@@ -360,30 +388,37 @@ fn table(buffer: &mut Buffer, app: &App) -> u16 {
         } else {
             pad(spec.title, spec.width)
         };
-        column = buffer.put(column, TABLE_TOP + 1, &text, dim().bold()) + spec.gap as u16;
+        column = buffer.put(column, y + 1, &text, dim().bold()) + spec.gap as u16;
     }
     if spark > 0 {
-        buffer.put(column, TABLE_TOP + 1, &pad("UTIL 5m", spark), dim().bold());
+        buffer.put(column, y + 1, &pad("UTIL 5m", spark), dim().bold());
     }
     for (line, index) in (first..count).take(visible).enumerate() {
         row(
             buffer,
             app,
             index,
-            TABLE_TOP + 2 + line as u16,
+            (x, y + 2 + line as u16, width),
             (&shown, spark),
         );
     }
     table_height
 }
 
-fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[usize], usize)) {
+/// GPU `index` on line `y` of a table `x` to `x + width`.
+fn row(
+    buffer: &mut Buffer,
+    app: &App,
+    index: usize,
+    (x, y, width): (u16, u16, u16),
+    (shown, spark): (&[usize], usize),
+) {
     let gpus = &app.gpus;
     let device = &gpus.devices[index];
     let history = &gpus.histories[index];
     if index == app.gpu {
-        buffer.background(1, y, buffer.width - 2, Color::Selection);
-        buffer.put(1, y, "▌", Style::fg(Color::Cyan));
+        buffer.background(x + 1, y, width - 2, Color::Selection);
+        buffer.put(x + 1, y, "▌", Style::fg(Color::Cyan));
     }
     let plain = Style::PLAIN;
     let latest = history.latest();
@@ -478,7 +513,7 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
         shares(|reading| reading.activity.and_then(|activity| activity.dram)),
         instance,
     ];
-    let mut column = 2;
+    let mut column = x + 2;
     for index in shown {
         let spec = &COLUMNS[*index];
         let (text, style) = &cells[*index];

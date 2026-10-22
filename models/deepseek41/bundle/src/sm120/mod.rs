@@ -7,6 +7,7 @@
 pub mod ceil_cached;
 pub mod ceil_parallel;
 pub mod ceil_prefill;
+pub mod ceil_split;
 pub mod confidence_parallel;
 pub mod dense_dual;
 mod dense_dual_serving;
@@ -536,6 +537,7 @@ impl crate::Kernels {
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))
             && cubin != kernels_sm120::probes::CUBIN
+            && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
@@ -670,6 +672,7 @@ impl crate::Kernels {
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());
         let sm120 = ceil_cached::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = ceil_split::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_bf16::register(sm120);

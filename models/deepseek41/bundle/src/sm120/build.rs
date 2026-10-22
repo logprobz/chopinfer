@@ -19,6 +19,8 @@ mod ceil_cached;
 mod ceil_parallel;
 #[allow(dead_code)]
 mod ceil_prefill;
+#[allow(dead_code, reason = "the bundle registers the measured part counts")]
+mod ceil_split;
 mod confidence_parallel;
 mod dspark_argmax;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
@@ -419,6 +421,12 @@ pub fn selection(
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
         owners.push((ceil_prefill::cubin_name(geometry), geometry.id));
+        owners.extend(
+            ceil_split::cubins(std::slice::from_ref(geometry))
+                .expect("split ceil cubins")
+                .into_iter()
+                .map(|(_, spec)| (spec.name, geometry.id)),
+        );
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
         owners.push((reduce::rounding_cubin(geometry), geometry.id));
@@ -602,6 +610,7 @@ pub fn selection(
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
     specs.extend(ceil_cached::cubins(geometries).expect("cached ceil cubins"));
     specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));
+    specs.extend(ceil_split::cubins(geometries).expect("split ceil cubins"));
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));
     specs.extend(hc::cubins(geometries));

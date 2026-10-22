@@ -128,6 +128,10 @@ path = "examples/sm120/build_fold_stream.rs"
 name = "build_ceil_prefill"
 path = "examples/sm120/build_ceil_prefill.rs"
 
+[[example]]
+name = "build_ceil_split"
+path = "examples/sm120/build_ceil_split.rs"
+
 [[test]]
 name = "kernel_prefill_ceil"
 path = "tests/sm120/ceil_prefill.rs"

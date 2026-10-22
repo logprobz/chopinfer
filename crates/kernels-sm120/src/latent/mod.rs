@@ -1119,5 +1119,7 @@ pub mod staged_window_keys;
 
 pub mod window_fused;
 
+pub mod query_window_twin;
+
 pub mod sources_cached;
 pub mod sources_decode;

@@ -18,10 +18,13 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
 mod arena;
 mod data;
+#[path = "../../../sm120/fold_deep.rs"]
+mod deep_family;
 #[path = "../../../sm120/fold_core.rs"]
 mod family;
 #[path = "../../../sm120/fold_local_rows.rs"]
 mod local_family;
+mod profile;
 mod timing;
 use arena::Arena;
 
@@ -60,6 +63,7 @@ impl Candidate {
         match self {
             Self::Decode(e) => e.schedule.name().into(),
             Self::Prefill(e) => format!("m{}s{}", e.tile_rows, e.stages),
+            Self::LocalRows(e) if e.stages > 0 => format!("deep32n{}s{}", e.tile_n, e.stages),
             Self::LocalRows(e) => format!("local32n{}", e.tile_n),
         }
     }
@@ -72,6 +76,7 @@ fn candidates() -> Vec<Candidate> {
             .chain(
                 local_family::entries()
                     .into_iter()
+                    .chain(deep_family::entries())
                     .map(Candidate::LocalRows),
             )
             .collect()
@@ -90,9 +95,16 @@ fn candidates() -> Vec<Candidate> {
     result
 }
 fn local_rows() -> bool {
-    std::env::var("CHOPINFER_FOLD_CORE_VARIANT").is_ok_and(|v| v.starts_with("local32n"))
+    std::env::var("CHOPINFER_FOLD_CORE_VARIANT")
+        .is_ok_and(|v| v.starts_with("local32n") || v.starts_with("deep32n"))
+}
+fn deep_rows() -> bool {
+    std::env::var("CHOPINFER_FOLD_CORE_VARIANT").is_ok_and(|v| v.starts_with("deep32n"))
 }
 fn row_counts(mem: bool) -> Vec<u32> {
+    if deep_rows() && !mem {
+        return vec![8, 16, 32];
+    }
     if local_rows() {
         return vec![8, 32];
     }
@@ -269,6 +281,8 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
         }
         let external = if call.symbol.starts_with("chop_fold_local_") {
             Some(local_family::CUBIN)
+        } else if call.symbol.starts_with("chop_fold_deep_") {
+            Some(deep_family::CUBIN)
         } else if call.symbol.starts_with("chop_fold_core_") {
             Some(family::DECODE)
         } else if call.symbol.contains("_matrix_") {
@@ -551,12 +565,36 @@ fn gpu_pair() {
     );
 }
 #[test]
+#[ignore = "requires CHOPINFER_FOLD_CORE_ROOT, CHOPINFER_FOLD_CORE_PROFILE and assigned idle GPUs"]
+fn gpu_served_profile() {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    static TABLE: OnceLock<Vec<(&'static str, &'static [u8])>> = OnceLock::new();
+    let bytes =
+        BYTES.get_or_init(|| std::fs::read(root().join("cubins/probe_sm120.cubin")).unwrap());
+    let cubins = kernel_harness::Cubins::new(
+        TABLE.get_or_init(|| vec![("probe_sm120", bytes)]),
+        &[(
+            "probe_sm120",
+            &["chop_probe_read_v1", "chop_probe_flush_v1"],
+        )],
+    );
+    assert!(
+        kernel_harness::gpu_test_with(cubins, 6 << 30, profile::gpu)
+            .unwrap()
+            .is_some()
+    );
+}
+#[test]
 fn cpu_catalog() {
     assert_eq!(family::bases().len(), 9);
     let mut symbols = std::collections::BTreeSet::new();
     let mut references: BTreeMap<String, Value> = BTreeMap::new();
     let mut plans = Vec::new();
-    for spec in family::cubins().into_iter().chain(local_family::cubins()) {
+    for spec in family::cubins()
+        .into_iter()
+        .chain(local_family::cubins())
+        .chain(deep_family::cubins())
+    {
         for e in spec.entries {
             assert!(symbols.insert(e.symbol));
         }
@@ -594,7 +632,7 @@ fn cpu_catalog() {
     }
     println!(
         "FOLD_CORE_CATALOG {}",
-        json!({"family":if local_rows(){local_family::FAMILY}else{family::FAMILY},"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans,"captured_memcheck":local_rows(),"candidate_cubins":if local_rows(){vec![local_family::CUBIN]}else{vec![family::DECODE,family::PREFILL]}})
+        json!({"family":if deep_rows(){deep_family::FAMILY}else if local_rows(){local_family::FAMILY}else{family::FAMILY},"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans,"captured_memcheck":local_rows(),"candidate_cubins":if deep_rows(){vec![deep_family::CUBIN]}else if local_rows(){vec![local_family::CUBIN]}else{vec![family::DECODE,family::PREFILL]}})
     );
 }
 

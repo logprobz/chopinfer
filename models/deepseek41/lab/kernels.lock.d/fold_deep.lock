@@ -1,0 +1,1021 @@
+[
+  {
+    "name": "fold_deep_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_admit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_omit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_admit_v1_delayed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_admit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 64,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_omit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 64,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_admit_v1_delayed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_admit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_omit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_admit_v1_delayed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_admit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 64,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_omit_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales2",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "folds_per_cta"
+          }
+        ],
+        "max_threads": 64,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_admit_v1_delayed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activations",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "1be30642db4cb581a5489e2e7d969fb4b7a8811d2e35adf9aa055bda99125ab4",
+    "resources": [
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_admit_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1",
+        "registers": 58,
+        "shared_static_bytes": 43392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_omit_v1",
+        "registers": 58,
+        "shared_static_bytes": 43392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n32_s5_v1_admit_v1_delayed_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_admit_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1",
+        "registers": 58,
+        "shared_static_bytes": 39168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_omit_v1",
+        "registers": 58,
+        "shared_static_bytes": 39168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n8192_k1280_g1_f32_local32_n16_s6_v1_admit_v1_delayed_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_admit_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1",
+        "registers": 53,
+        "shared_static_bytes": 43392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_omit_v1",
+        "registers": 53,
+        "shared_static_bytes": 43392,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n32_s5_v1_admit_v1_delayed_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_admit_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1",
+        "registers": 58,
+        "shared_static_bytes": 39168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_omit_v1",
+        "registers": 58,
+        "shared_static_bytes": 39168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fold_deep_n5120_k2048_g1_f32_local32_n16_s6_v1_admit_v1_delayed_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -235,3 +235,7 @@ path = "tests/sm120/router_norm/main.rs"
 [[example]]
 name = "build_fold_local_rows"
 path = "examples/sm120/build_fold_local_rows.rs"
+
+[[example]]
+name = "build_fold_deep"
+path = "examples/sm120/build_fold_deep.rs"

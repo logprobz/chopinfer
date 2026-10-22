@@ -10,6 +10,10 @@
 //! through the same layered target graphs DSpark uses
 //! (`dspark::cycle::graphs`). The staged bytes, the kernels and their order
 //! on every stream are unchanged; only when the copies run moves.
+//!
+//! The switch also serves a DSpark instance's decode steps without drafts:
+//! their host-hashed ids go through the gathers DSpark's drafted steps use
+//! (`instance::dspark::cycle`).
 
 use super::Instance;
 use crate::dspark::cycle::LayerGather;
@@ -19,6 +23,7 @@ use bundle_runtime::graphs::{GraphCache, GraphKey, GraphReservation};
 use bundle_runtime::resources::{allocate_span, upload_bytes};
 use runtime_bundle_abi::{
     BundleAbiError, BundleStatusV1, DeviceBufferSpanV1 as Span, MappedGatherPlaneV1,
+    MappedGatherStatsV1,
 };
 
 const SWITCH: &str = "CHOPINFER_DEEPSEEK41_AR_ENGRAM";
@@ -46,7 +51,7 @@ pub(super) fn enabled() -> Result<bool, BundleStatusV1> {
     }
 }
 
-fn traced() -> bool {
+pub(super) fn traced() -> bool {
     cfg!(test) || std::env::var_os(TRACE).is_some_and(|value| value == "1")
 }
 
@@ -107,9 +112,30 @@ impl State {
     }
 }
 
+/// One layer's upload times in a step's trace.
+pub(super) fn layer_trace(layer: u32, stats: &MappedGatherStatsV1) -> String {
+    format!(
+        "{{\"layer\":{layer},\"host_ns\":{},\"exposed_ns\":{}}}",
+        stats.host_nanoseconds, stats.exposed_nanoseconds
+    )
+}
+
+/// A step's trace: its sequence, rows and each layer's upload times.
+pub(super) fn step_trace(sequence: u64, rows: u32, layers: &[String]) -> String {
+    format!(
+        concat!(
+            "{{\"schema\":\"chopinfer.deepseek41.ar-engram.v1\",\"sequence\":{},",
+            "\"rows\":{},\"layers\":[{}]}}"
+        ),
+        sequence,
+        rows,
+        layers.join(",")
+    )
+}
+
 /// `hashed`'s ids, `[row][layer][column]`, as each layer's U32 words in
 /// turn, `capacity` rows per layer; rows past the live ones stay zero.
-fn layer_major(
+pub(super) fn layer_major(
     hashed: &Hashed,
     layers: usize,
     columns: usize,
@@ -346,23 +372,12 @@ impl Instance {
             let stats = self.services.complete_mapped_gather(layer.gather)?.ok_or(
                 BundleAbiError::InvalidRange("AR Engram upload incomplete at the result boundary"),
             )?;
-            layers.push(format!(
-                "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
-                layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds
-            ));
+            layers.push(layer_trace(layer.layer, &stats));
         }
         state.enqueued = 0;
         state.joined.set(0);
         if state.trace {
-            let message = format!(
-                concat!(
-                    "{{\"schema\":\"chopinfer.deepseek41.ar-engram.v1\",\"sequence\":{},",
-                    "\"rows\":{},\"layers\":[{}]}}"
-                ),
-                state.sequence,
-                state.rows,
-                layers.join(",")
-            );
+            let message = step_trace(state.sequence, state.rows, &layers);
             let _ = self.services.log(message.as_bytes());
         }
         Ok(())

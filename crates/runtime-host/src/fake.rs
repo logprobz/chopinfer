@@ -157,6 +157,9 @@ pub struct FakeHostDeviceV1 {
     allocation_alignment: u64,
     /// Device memory of each context's device, before its allocations.
     device_memory_bytes: u64,
+    /// Memory another process holds on every device: free memory shrinks by
+    /// it, and this backend's own account does not.
+    foreign_device_bytes: u64,
     /// Host transfers that were accepted but not performed, per stream.
     ///
     /// A driver that returns while its DMA is still running behaves this way,
@@ -265,6 +268,7 @@ impl FakeHostDeviceV1 {
             refusals: BTreeSet::new(),
             allocation_alignment: DEFAULT_FAKE_ALLOCATION_ALIGNMENT_V1,
             device_memory_bytes: DEFAULT_FAKE_DEVICE_MEMORY_BYTES_V1,
+            foreign_device_bytes: 0,
             deferred: Vec::new(),
             defer_transfers: false,
             fill_chunk_bytes: 4096,
@@ -435,6 +439,11 @@ impl FakeHostDeviceV1 {
     /// sparse probe of a full-size model can reach its serving KV pool.
     pub fn set_device_memory_bytes(&mut self, bytes: u64) {
         self.device_memory_bytes = bytes;
+    }
+
+    /// Sets the memory another process holds on every device.
+    pub fn set_foreign_device_bytes(&mut self, bytes: u64) {
+        self.foreign_device_bytes = bytes;
     }
 
     /// Makes host transfers finish only at the next stream synchronization.
@@ -991,7 +1000,22 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
             .ledger
             .allocated_on_context_device(context.get())
             .ok_or(BundleStatusV1::InvalidState)?;
-        Ok(self.device_memory_bytes.saturating_sub(allocated))
+        Ok(self
+            .device_memory_bytes
+            .saturating_sub(allocated)
+            .saturating_sub(self.foreign_device_bytes))
+    }
+    fn total_device_memory(&self, context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        self.require(context, FakeObjectKindV1::Context)?;
+        Ok(self.device_memory_bytes)
+    }
+    // The sampler workspace is charged to the ledger here, so the ledger is
+    // the whole account.
+    fn own_device_memory(&self, context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        self.require(context, FakeObjectKindV1::Context)?;
+        self.ledger
+            .allocated_on_context_device(context.get())
+            .ok_or(BundleStatusV1::InvalidState)
     }
     fn uses_sparse_probe_allocations(&self) -> bool {
         self.sparse_probe_allocations

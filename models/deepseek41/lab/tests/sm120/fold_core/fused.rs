@@ -646,11 +646,13 @@ fn wo_case(
     if mode == Mode::Racecheck || mode == Mode::Memcheck || rows < 3 {
         return Ok(record);
     }
-    // Admitting every live row must change WO_a's output (the preset row)
-    // and WO_b's (every rejected row).
+    // Admitting every live row must change WO_a's output (the NaN and preset
+    // rows) and WO_b's (the overflow row). The sliced arm runs the controls:
+    // the cached quantizer zeros its rejected rows' codes, so admitting them
+    // there leaves the outputs zero.
     for (which, buffer) in [(0, "WO_a output"), (1, "WO_b output")] {
         wo_reset(&a, &wo, input, [weights[0], weights[1]], rows, true)?;
-        let arm = &wo.arms[1];
+        let arm = &wo.arms[2];
         issue(s, &a, &f, &eager(&wo.arms[0].calls), &s.stream)?;
         issue(
             s,
@@ -873,6 +875,9 @@ fn status_build(
     })
 }
 
+/// With `bad`, rows 0 and `live - 1` rejected: a status, and with `zeroed`
+/// zero codes and scale 1 as a producer quantizer leaves them (otherwise
+/// their codes stay, so admitting them changes their outputs).
 fn status_reset(
     a: &Arena<'_>,
     c: &StatusCase,
@@ -880,10 +885,10 @@ fn status_reset(
     rows: u32,
     live: u32,
     bad: bool,
+    zeroed: bool,
 ) -> LabResult<()> {
     let q = base_of(input.n, input.k, input.groups).query;
     let stride = q.activation_row_stride as usize;
-    // Rows a producer quantizer rejected: zero codes, scale 1, a status.
     let rejected: Vec<(u32, u32)> = if bad && live > 1 {
         vec![(0, 1), (live - 1, 0x80)]
     } else {
@@ -891,7 +896,7 @@ fn status_reset(
     };
     let mut codes = input.codes.clone();
     let mut scales = input.scales.clone();
-    for &(r, _) in &rejected {
+    for &(r, _) in rejected.iter().filter(|_| zeroed) {
         let r = r as usize;
         codes[r * stride..(r + 1) * stride].fill(0);
         scales[r * stride / 32..(r + 1) * stride / 32].fill(127);
@@ -969,7 +974,7 @@ fn status_case(
             if graph && graphs.is_none() {
                 continue;
             }
-            status_reset(&a, &c, input, rows, live, bad)?;
+            status_reset(&a, &c, input, rows, live, bad, true)?;
             for (i, calls) in arms.iter().enumerate() {
                 match (&graphs, graph) {
                     (Some(g), true) => g[i].launch(&s.stream).map_err(|e| e.to_string())?,
@@ -1005,7 +1010,22 @@ fn status_case(
     if mode == Mode::Racecheck || mode == Mode::Memcheck || rows < 2 {
         return Ok(record);
     }
-    status_reset(&a, &c, input, rows, rows, true)?;
+    // Rejected rows that keep their codes: every arm still clears them by
+    // status, bit for bit, and admitting every row must not.
+    status_reset(&a, &c, input, rows, rows, true, false)?;
+    for calls in &arms {
+        issue(s, &a, &f, &eager(calls), &s.stream)?;
+    }
+    for (i, (label, _)) in c.candidates.iter().enumerate() {
+        if a.read(c.b[i + 1].output)? != a.read(c.b[0].output)?
+            || a.read(c.b[i + 1].status)? != a.read(c.b[0].status)?
+        {
+            return Err(format!(
+                "{id} tile {tile} rows {rows}: {label} differs on rejected rows with codes"
+            ));
+        }
+    }
+    status_reset(&a, &c, input, rows, rows, true, false)?;
     issue(s, &a, &f, &eager(&c.served), &s.stream)?;
     issue(s, &a, &f, &eager(&c.control), &s.stream)?;
     if a.read(c.b[0].output)? == a.read(c.b[1].output)? {
@@ -1017,7 +1037,7 @@ fn status_case(
     if mode == Mode::Time
         && let Some(graphs) = &graphs
     {
-        status_reset(&a, &c, input, rows, rows, false)?;
+        status_reset(&a, &c, input, rows, rows, false, true)?;
         for (name, cold) in [("warm", false), ("cold", true)] {
             record[name] = timing::arms(s, cold, graphs.len(), |arm, stream| {
                 graphs[arm].launch(stream).map_err(|e| e.to_string())

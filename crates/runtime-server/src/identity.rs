@@ -49,11 +49,35 @@ pub struct ServingProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_parallel_size: Option<usize>,
     pub speculation: ServingSpeculation,
-    /// The resolved KV cache element, `bf16`, `fp8` or `mixed`.
+    /// The resolved KV cache element, `bf16`, `fp8` or `mixed`. A `mixed`
+    /// element's planes are in `kv_cache_planes`.
     pub kv_cache_dtype: String,
+    /// The planes of a mixed-plane element, each in its own code; absent for
+    /// a single-code element.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kv_cache_planes: Vec<ServingKvPlane>,
     /// Whether prefixes are cached: enabled, and declared by the bundle.
     pub prefix_cache: bool,
     pub max_sequences: usize,
+}
+
+/// One plane of a mixed-plane KV element, as the package declares it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ServingKvPlane {
+    pub name: String,
+    /// The stored code: `bf16`, `fp8_e4m3` or `fp4_e2m1`.
+    pub code: String,
+    /// The block scales of a scaled code.
+    pub scale: Option<ServingKvScale>,
+    /// Bytes one token stores in this plane, codes and scales together.
+    pub bytes_per_token: u64,
+}
+
+/// One scale of `format` (`e4m3` or `ue8m0`) for each `block` values.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ServingKvScale {
+    pub format: String,
+    pub block: u32,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -96,6 +120,46 @@ mod tests {
         assert!(
             text.contains(r#""tensor_parallel_size":4,"context_parallel_size":4,"#),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn kv_planes_are_reported_only_for_a_mixed_plane_element() {
+        let single = serde_json::to_value(ServingProfile {
+            kv_cache_dtype: "bf16".into(),
+            ..ServingProfile::default()
+        })
+        .unwrap();
+        assert!(single.get("kv_cache_planes").is_none(), "{single}");
+        let mixed = serde_json::to_value(ServingProfile {
+            kv_cache_dtype: "mixed".into(),
+            kv_cache_planes: vec![
+                ServingKvPlane {
+                    name: "compressed".into(),
+                    code: "fp4_e2m1".into(),
+                    scale: Some(ServingKvScale {
+                        format: "e4m3".into(),
+                        block: 16,
+                    }),
+                    bytes_per_token: 18,
+                },
+                ServingKvPlane {
+                    name: "rope".into(),
+                    code: "bf16".into(),
+                    scale: None,
+                    bytes_per_token: 8,
+                },
+            ],
+            ..ServingProfile::default()
+        })
+        .unwrap();
+        assert_eq!(
+            mixed["kv_cache_planes"],
+            serde_json::json!([
+                {"name": "compressed", "code": "fp4_e2m1",
+                 "scale": {"format": "e4m3", "block": 16}, "bytes_per_token": 18},
+                {"name": "rope", "code": "bf16", "scale": null, "bytes_per_token": 8}
+            ])
         );
     }
 }

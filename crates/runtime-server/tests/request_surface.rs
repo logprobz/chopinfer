@@ -3611,6 +3611,7 @@ fn fixture_identity() -> runtime_server::ServingIdentity {
                 drafter: Some("mtp".into()),
             },
             kv_cache_dtype: "bf16".into(),
+            kv_cache_planes: Vec::new(),
             prefix_cache: true,
             max_sequences: 32,
         },

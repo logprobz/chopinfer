@@ -2111,6 +2111,19 @@ fn serving_identity_v1(
                     .map(str::to_owned),
             },
             kv_cache_dtype: kv_cache.label().to_owned(),
+            kv_cache_planes: kv_cache
+                .planes(manifest)
+                .iter()
+                .map(|plane| runtime_server::ServingKvPlane {
+                    name: plane.name().as_str().to_owned(),
+                    code: plane.code().as_str().to_owned(),
+                    scale: plane.scale().map(|scale| runtime_server::ServingKvScale {
+                        format: scale.format().as_str().to_owned(),
+                        block: scale.block(),
+                    }),
+                    bytes_per_token: plane.bytes_per_token(),
+                })
+                .collect(),
             prefix_cache: serving.prefix_cache && prefix_capability,
             max_sequences: serving.maximum_sequences,
         },
@@ -7521,6 +7534,7 @@ mod tests {
                     drafter: Some("first".into()),
                 },
                 kv_cache_dtype: "bf16".into(),
+                kv_cache_planes: Vec::new(),
                 prefix_cache: true,
                 max_sequences: 8,
             }
@@ -8759,6 +8773,54 @@ mod tests {
                 .capabilities_of_every_topology()
                 .all(|capability| { host.capabilities().any(|offered| offered == capability) })
         );
+    }
+
+    /// `/health` names a mixed-plane element's planes, so a client can show
+    /// the codes it stores rather than `mixed`; another element has none.
+    #[test]
+    fn the_serving_identity_lists_the_planes_of_a_mixed_plane_element() {
+        let native = mixed_planes(manifest_with_rows(16, DECLARED_ROWS_V1));
+        let identity = |requested| {
+            super::serving_identity_v1(
+                &native,
+                (None, None),
+                (1, None),
+                resolve_kv_cache_dtype_v1(&native, requested).unwrap(),
+                None,
+                &ServingOptionsV1::default(),
+            )
+            .unwrap()
+            .profile
+        };
+        let mixed = identity(KvCacheDtypeV1::Auto);
+        assert_eq!(mixed.kv_cache_dtype, "mixed");
+        let scale = |format: &str, block| {
+            Some(runtime_server::ServingKvScale {
+                format: format.into(),
+                block,
+            })
+        };
+        // 32 FP8 codes and one scale; 32 FP4 codes in 16 bytes and two.
+        assert_eq!(
+            mixed.kv_cache_planes,
+            [
+                runtime_server::ServingKvPlane {
+                    name: "window".into(),
+                    code: "fp8_e4m3".into(),
+                    scale: scale("ue8m0", 32),
+                    bytes_per_token: 33,
+                },
+                runtime_server::ServingKvPlane {
+                    name: "compressed".into(),
+                    code: "fp4_e2m1".into(),
+                    scale: scale("e4m3", 16),
+                    bytes_per_token: 18,
+                },
+            ]
+        );
+        let bf16 = identity(KvCacheDtypeV1::Bf16);
+        assert_eq!(bf16.kv_cache_dtype, "bf16");
+        assert!(bf16.kv_cache_planes.is_empty());
     }
 
     fn topology(name: &str, ranks: u32) -> BundleTopologyV1 {

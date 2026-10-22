@@ -283,7 +283,10 @@ Docker marks an unhealthy container but does not restart it for that alone.
 bundle, package, checkpoint and metadata identities, startup nonce and the
 effective profile. Checkpoint identity covers safetensors names, headers
 and lengths; byte verification is separate. `kv_page_tokens` and the declared
-context-parallel size determine prefix reuse stripes. Startup logs repeat
+context-parallel size determine prefix reuse stripes. When the profile's
+`kv_cache_dtype` is `mixed`, `kv_cache_planes` lists each plane's name, code
+(`bf16`, `fp8_e4m3` or `fp4_e2m1`), block scale and bytes per token; other
+elements omit it. Startup logs repeat
 the identity. Responses carry the startup nonce and, for direct checkpoints,
 checkpoint identity in headers. Health/ping do not require an API key.
 

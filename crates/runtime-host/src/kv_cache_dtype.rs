@@ -52,6 +52,13 @@ impl KvCacheChoiceV1 {
         label(self.dtype)
     }
 
+    /// The planes of the chosen element when it is a mixed-plane one, else
+    /// none.
+    #[must_use]
+    pub fn planes(self, manifest: &BundleManifestV1) -> &[runtime_bundle::BundleKvPlaneV1] {
+        mixed_planes_v1(manifest, self.dtype).unwrap_or_default()
+    }
+
     /// The startup line that records the choice.
     #[must_use]
     pub fn describe(self, manifest: &BundleManifestV1) -> String {

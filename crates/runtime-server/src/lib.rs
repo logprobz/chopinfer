@@ -28,7 +28,9 @@ mod http_options;
 mod identity;
 mod intake;
 pub use http_options::{ApiKey, CHECKPOINT_IDENTITY_HEADER, HttpOptions, STARTUP_NONCE_HEADER};
-pub use identity::{ServingIdentity, ServingProfile, ServingSpeculation};
+pub use identity::{
+    ServingIdentity, ServingKvPlane, ServingKvScale, ServingProfile, ServingSpeculation,
+};
 mod json_limits;
 mod lifecycle;
 mod metrics;

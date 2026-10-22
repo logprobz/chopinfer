@@ -41,8 +41,8 @@ the expectations being tested, not results.
 Worker 0 takes captured layer 14, worker 1 captured layer 39: the 8192-row
 chunk of the published MoE capture (prompt input-0, rank 0), whose MoE
 input codes times their group scales are widened exactly to BF16, with
-that layer's router weights from the checkpoint (`--prepare` of
-router_wide_job.py). The router's own input rows were not captured; these
+that layer's router weights from the checkpoint (prepared by the pair
+job's `--prepare` step). The router's own input rows were not captured; these
 rows are the same tokens' MoE input, which differs from the router's rows
 only by the input quantizer. Each worker also takes two synthetic cases
 from router_norm.md's patterns with its synthetic router weights (experts

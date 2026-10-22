@@ -581,3 +581,48 @@ fn probe_losses_followed_by_profitable_steady_steps_keep_drafting() {
     assert_eq!(drafting, reasons.len(), "{reasons:?}");
     assert!(policy.realized[&16].holding(), "{:?}", policy.realized[&16]);
 }
+
+/// Steady drafting that realizes 460 tok/s against AR's 571 stops at its
+/// first realized verdict, at most eight steady steps. Probes that measure
+/// the same steps keep it off. Probes lucky enough to clear the resume
+/// margin every time reopen the verdict, but each reopening that loses
+/// again doubles the probe interval: drafting cannot lock on, and it takes
+/// a small share of plans.
+#[test]
+fn a_slower_steady_phase_still_stops_drafting() {
+    let losing = (4, 43_500);
+    for (name, probe) in [("lucky", (14, 41_000)), ("honest", losing)] {
+        let mut policy = c16_policy();
+        let (reasons, drafting) = serve_c16(&mut policy, 2_000, probe, std::iter::repeat(losing));
+        // The drafting run that the first verdict ended.
+        let first_off = reasons.iter().position(|r| r == "realized_slower");
+        let steady = reasons[..first_off.unwrap_or(reasons.len())]
+            .iter()
+            .rev()
+            .take_while(|r| *r == "drafting")
+            .count();
+        let mut runs: Vec<(&str, usize)> = Vec::new();
+        for reason in &reasons[..300] {
+            match runs.last_mut() {
+                Some((last, count)) if *last == reason.as_str() => *count += 1,
+                _ => runs.push((reason, 1)),
+            }
+        }
+        println!(
+            "C16_LOSING {name} drafting={drafting} first_off={first_off:?} steady={steady} \
+             probes={} {runs:?}",
+            reasons.iter().filter(|r| *r == "probe").count()
+        );
+        // Earlier steady steps may already have voted.
+        assert!(
+            first_off.is_some() && (1..=REALIZED_STEPS as usize).contains(&steady),
+            "{name}: {reasons:?}"
+        );
+        assert!(
+            drafting * 100 <= 4 * reasons.len(),
+            "{name}: {drafting} drafting steps of {}",
+            reasons.len()
+        );
+        assert!(!policy.realized[&16].holding(), "{name}");
+    }
+}

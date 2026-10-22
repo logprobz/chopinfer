@@ -140,6 +140,11 @@ struct ZeroDraftState {
     trial_wait: u16,
     /// The wait that the next lost trial sets.
     trial_interval: u16,
+    /// The probe interval when a probe that cleared the resume margin
+    /// voted a verdict that drafting loses back to holding. If the drafting
+    /// it revived loses again, the interval doubles from this one, so lucky
+    /// probes cannot keep reviving drafting that loses.
+    reopened: Option<u16>,
 }
 
 impl Default for ZeroDraftState {
@@ -158,6 +163,7 @@ impl Default for ZeroDraftState {
             trial: 0,
             trial_wait: 0,
             trial_interval: TRIAL_INTERVAL,
+            reopened: None,
         }
     }
 }
@@ -168,6 +174,7 @@ impl ZeroDraftState {
         self.trial = 0;
         self.trial_wait = 0;
         self.trial_interval = TRIAL_INTERVAL;
+        self.reopened = None;
     }
 
     /// Ends a trial without a verdict that drafting holds: the next trial
@@ -179,6 +186,9 @@ impl ZeroDraftState {
             .trial_interval
             .saturating_mul(2)
             .min(MAX_PROBE_INTERVAL);
+        if let Some(interval) = self.reopened.take() {
+            self.probe_interval = interval.saturating_mul(2).min(MAX_PROBE_INTERVAL);
+        }
     }
 }
 
@@ -1053,12 +1063,16 @@ impl SpeculationPolicy {
         } else {
             // A probe carries more weight: the drafting average it corrects
             // is stale.
+            let losing = realized.losing();
             realized.record_probe(rate, 0.5);
             // Only a probe that clears the resume margin resets spacing.
             // Marginal gains keep backing off while drafting stays disabled.
             if realized.ar.is_some_and(|ar| rate > ar * RESUME_GAIN)
                 && let Some(state) = self.zero_draft.get_mut(items)
             {
+                if losing && realized.holding() {
+                    state.reopened = Some(state.probe_interval);
+                }
                 state.probe_interval = spaced;
             }
         }
@@ -1403,6 +1417,7 @@ impl SpeculationPolicy {
             && state.disabled
         {
             state.remaining = 0;
+            state.reopened = None;
             if let Some(realized) = self.realized.get_mut(&items) {
                 *realized = Realized {
                     ar: realized.ar,

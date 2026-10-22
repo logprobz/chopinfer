@@ -264,12 +264,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "718a282e7da016158f8ce77ad92cd59c1bb20a35e358ec8e9e05d6da60328b91",
+    "cubin_sha256": "44df2e69090da83ee47e02788a0538776a92fedfe7afbae0acc2d3e6495c0713",
     "resources": [
       {
         "symbol": "chop_deepseek41_query_window_twin_native_v1",
         "registers": 38,
-        "shared_static_bytes": 1096,
+        "shared_static_bytes": 1092,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 1024,
@@ -278,7 +278,7 @@
       {
         "symbol": "chop_deepseek41_query_window_twin_bf16_v1",
         "registers": 36,
-        "shared_static_bytes": 1096,
+        "shared_static_bytes": 1092,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 1024,

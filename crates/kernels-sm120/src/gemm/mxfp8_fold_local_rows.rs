@@ -11,6 +11,9 @@ use kernel_core::{
 pub struct Entry {
     pub base: mxfp8_fold::Entry,
     pub tile_n: u32,
+    /// Folds in flight: 0 keeps the three-slot pair loop (`run`); 3 or more
+    /// selects the refilling ring (`run_deep`) with the same arithmetic.
+    pub stages: u32,
 }
 impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -25,6 +28,15 @@ impl Entry {
         {
             return Err(Refusal(
                 "local row folds require aligned FP8 groups, F32 output and at most 32 rows",
+            ));
+        }
+        if self.stages != 0
+            && (self.stages < 3
+                || self.stages > q.k / 128
+                || self.stages * (32 + self.tile_n) * 132 + 128 > 48 * 1024)
+        {
+            return Err(Refusal(
+                "a deep local fold ring holds 3 to K/128 folds in static shared memory",
             ));
         }
         Ok(())
@@ -51,7 +63,14 @@ impl Entry {
         }))
     }
     pub fn symbol(&self) -> String {
-        format!("{}_local32_n{}_v1", self.base.symbol, self.tile_n)
+        if self.stages == 0 {
+            format!("{}_local32_n{}_v1", self.base.symbol, self.tile_n)
+        } else {
+            format!(
+                "{}_local32_n{}_s{}_v1",
+                self.base.symbol, self.tile_n, self.stages
+            )
+        }
     }
     pub fn workspace(&self) -> u64 {
         256
@@ -179,10 +198,23 @@ impl Entry {
             q.k, q.groups, q.activation_row_stride, q.activation_group_stride
         );
         specs[1].max_threads = self.tile_n * 4;
-        specs[1].body = format!(
-            "{ns}::run<{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
-            q.n, q.k, q.groups, q.activation_row_stride, q.activation_group_stride, self.tile_n
-        );
+        specs[1].body = if self.stages == 0 {
+            format!(
+                "{ns}::run<{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
+                q.n, q.k, q.groups, q.activation_row_stride, q.activation_group_stride, self.tile_n
+            )
+        } else {
+            format!(
+                "{ns}::run_deep<{},{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
+                q.n,
+                q.k,
+                q.groups,
+                q.activation_row_stride,
+                q.activation_group_stride,
+                self.tile_n,
+                self.stages
+            )
+        };
         let mut omit = specs[1].clone();
         omit.symbol.push_str("_omit_v1");
         omit.body = omit.body.replace(",false>(", ",true>(");
@@ -208,7 +240,11 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec!["#include \"gemm/mxfp8_fold_local_rows.cuh\"".into()],
+        headers: if entries.iter().any(|e| e.stages > 0) {
+            vec!["#include \"gemm/mxfp8_fold_local_deep.cuh\"".into()]
+        } else {
+            vec!["#include \"gemm/mxfp8_fold_local_rows.cuh\"".into()]
+        },
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),
     })
@@ -257,6 +293,7 @@ mod tests {
             let e = Entry {
                 base: mxfp8_fold::Entry::new(q, "local_fold").unwrap(),
                 tile_n,
+                stages: 0,
             };
             for rows in [0, 8, 32] {
                 let v = |handle, bytes| View { handle, bytes };
@@ -302,8 +339,29 @@ mod tests {
         let mut e = Entry {
             base: mxfp8_fold::Entry::new(q, "local_fold").unwrap(),
             tile_n: 64,
+            stages: 0,
         };
         assert!(e.validate().is_err());
+        e.tile_n = 32;
+        for (stages, valid) in [(2, false), (3, true), (5, true), (6, false), (11, false)] {
+            e.stages = stages;
+            assert_eq!(e.validate().is_ok(), valid, "{stages}");
+        }
+        e.tile_n = 16;
+        e.stages = 6;
+        assert!(e.validate().is_ok());
+        assert!(e.symbol().ends_with("_local32_n16_s6_v1"));
+        assert!(
+            e.specs()[1]
+                .body
+                .contains("run_deep<8192,1280,1,1280,1280,16,6,false>")
+        );
+        let spec = cubin_spec("deep", std::slice::from_ref(&e)).unwrap();
+        assert_eq!(
+            spec.headers,
+            ["#include \"gemm/mxfp8_fold_local_deep.cuh\""]
+        );
+        e.stages = 0;
         e.tile_n = 32;
         e.base.query.k = 1216;
         assert!(e.validate().is_err());

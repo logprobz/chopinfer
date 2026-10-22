@@ -18,6 +18,7 @@ pub fn entries() -> Vec<Entry> {
             Entry {
                 base: mxfp8_fold::Entry::new(q, "chop_fold_local_n8192_k1280_g1_f32").unwrap(),
                 tile_n,
+                stages: 0,
             }
         })
         .collect()

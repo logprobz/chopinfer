@@ -1,11 +1,12 @@
 //! chopinfer-top: a terminal dashboard of running `chopinfer serve`
-//! instances and the GPUs of this host.
+//! instances and of this host: its CPUs, memory, disks, sensors and GPUs.
 //!
 //! It reads only `/health` and `/metrics` from servers. Instances come from
 //! explicit targets, from this user's serve processes found in `/proc`, and
-//! from Docker containers whose process list shows `chopinfer serve`. GPUs
-//! come from NVML, loaded at run time by `gpu::nvml`, the one module allowed
-//! unsafe code under the workspace's `unsafe_code = "deny"`.
+//! from Docker containers whose process list shows `chopinfer serve`. The
+//! host comes from `/proc` and `/sys`, and GPUs from NVML, loaded at run time
+//! by `gpu::nvml`, the one module allowed unsafe code under the workspace's
+//! `unsafe_code = "deny"`.
 
 pub mod app;
 pub mod cli;

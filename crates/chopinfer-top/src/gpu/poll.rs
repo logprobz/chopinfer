@@ -3,7 +3,7 @@
 //! Each poll is about twenty NVML queries per GPU, which read driver state
 //! in about 0.2 ms. The fan and ECC errors, at a millisecond each, are read
 //! every [`SLOW_POLLS`] polls and carried between. GPM counters are sampled
-//! only while asked for, which the interface does while the GPU view is
+//! only while asked for, which the interface does while the monitor is
 //! open; between two samples NVML works out how busy the SMs, tensor pipes
 //! and DRAM were.
 

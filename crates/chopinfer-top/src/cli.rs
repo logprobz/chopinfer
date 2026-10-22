@@ -8,8 +8,9 @@ usage: chopinfer-top [--target HOST:PORT]... [--targets-file FILE]
                      [--rescan SECONDS] [--api-key KEY] [--no-gpus]
                      [--no-gpu-counters] [--list [--json]]
 
-A live view of running chopinfer serve instances and this host's GPUs. It
-reads only /health and /metrics from servers, and the GPUs through NVML.
+A live view of running chopinfer serve instances and this host: its CPUs,
+memory, disks, sensors and GPUs. It reads only /health and /metrics from
+servers, the host from /proc and /sys, and the GPUs through NVML.
 
   --target HOST:PORT   Watch this server; repeatable. Also http://HOST:PORT,
                        or :PORT for 127.0.0.1. CHOPINFER_TOP_TARGETS adds a
@@ -24,14 +25,14 @@ reads only /health and /metrics from servers, and the GPUs through NVML.
                        authenticating proxy (default CHOPINFER_API_KEY).
   --no-gpus            Do not read this host's GPUs.
   --no-gpu-counters    Do not sample GPM counters (SM, tensor, DRAM) in the
-                       GPU view.
+                       monitor.
   --list               Print the instances once and exit; with --json, as a
                        chopinfer.top.list.v1 document.
   -h, --help           Print this help.
   --version            Print the version.
 
-Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, g shows
-the GPUs, w changes the window, r rescans, p pauses, ? shows help, q quits.
+Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, m shows
+the monitor, w changes the window, r rescans, p pauses, ? shows help, q quits.
 ";
 
 #[derive(Clone, Debug, PartialEq)]

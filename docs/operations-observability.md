@@ -310,6 +310,14 @@ It reads health and metrics; unavailable queries must not be interpreted as
 zero usage. Its GPU discovery is local and does not establish that a device
 is idle. Use the served identity to match an instance to its configuration.
 
+The monitor (`m`) shows the local host beside its GPUs: CPU, memory, pressure,
+disk and network I/O from `/proc`, sensors from `/sys/class/hwmon`, and the
+used share of each local filesystem. In a container, CPU, memory, disk I/O
+and sensors are the host's, while filesystems are the container's mounts and
+network I/O is the container's namespace, shown as not visible when it has no
+physical interface. CPU package power needs read access to RAPL, which is
+usually root only.
+
 ## Example alerts
 
 Tune thresholds to the model and traffic; keep `model_name` when grouping a

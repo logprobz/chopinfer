@@ -41,6 +41,8 @@ mod engram_hash_rows;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
+#[allow(dead_code, reason = "the bundle selects the measured column pairs")]
+mod hc_cols;
 #[allow(dead_code, reason = "the bundle selects the one-launch boundary")]
 mod hc_completion;
 #[allow(dead_code)]
@@ -402,6 +404,8 @@ pub fn selection(
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
             owners.push((hc_completion::CUBIN.into(), geometry.id));
             owners.push((hc_finish_twin::CUBIN.into(), geometry.id));
+            owners.push((hc_cols::PRODUCER_CUBIN.into(), geometry.id));
+            owners.push((hc_cols::FINISH_CUBIN.into(), geometry.id));
             owners.push((hc_round_rows::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
@@ -565,6 +569,11 @@ pub fn selection(
             hc_finish_twin::FAMILY,
             hc_finish_twin::cubin().expect("two-CTA HC finish cubin"),
         ));
+        specs.extend(
+            hc_cols::cubins()
+                .expect("column-block HC pair cubins")
+                .map(|spec| (hc_cols::FAMILY, spec)),
+        );
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))
                 .expect("qualified rounded chain cubin"),

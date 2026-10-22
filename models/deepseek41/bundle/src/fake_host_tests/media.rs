@@ -412,6 +412,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The window KV projection beside the query chain changes the TP2 history
 /// as in `FLASH_JOURNALS`; at TP4 the C1 dual fold computes KV, unchanged.
 /// The row-local rings add eight resolves and eight releases per TP4 rank.
+/// The column-block HC pair's modules add fourteen resolves and sixteen
+/// releases per rank and shift ids only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (23283, 0xe99ea4b26ceb3f3c)),
     (Ranks::TP4, (57515, 0x366126b9cefd1c8a)),

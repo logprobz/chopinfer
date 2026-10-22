@@ -1132,6 +1132,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// The row-local rings (`fold_local_rows::SERVED`) add eight resolves and
 /// eight releases per TP4 rank; these lifecycles launch no 16- or 32-row
 /// bucket.
+/// The column-block HC pair's two modules add fourteen resolves and sixteen
+/// releases per rank; every other line is retained after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1320,6 +1322,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// module adds six resolves and seven releases per rank. The window KV
 /// projection beside the query chain and the row-local rings change it as
 /// in `FLASH_JOURNALS`.
+/// module adds six resolves and seven releases per rank, the column-block
+/// HC pair's modules fourteen resolves and sixteen releases.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

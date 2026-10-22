@@ -72,6 +72,7 @@ use super::*;
 // lines) and WO_b's pair becomes the ring's; at 32 rows WQ_b's ticket pair
 // becomes the pair loop's and WO_b's reuse pair the ring's (audited by
 // `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
+// Loading the column-block HC pair modules shifts their resource ids only.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0x962ae75b0481d2fd)),
     (6, (8680, 0x8db6c6ddb9823513)),

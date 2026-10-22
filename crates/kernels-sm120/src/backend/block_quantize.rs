@@ -288,6 +288,15 @@ mod tests {
                 }),
             ),
             (
+                "split_parts",
+                Class::Launch,
+                Box::new(|e| {
+                    e.parallel_groups = true;
+                    e.cached_groups = true;
+                    e.split_parts = 2;
+                }),
+            ),
+            (
                 "early_release",
                 Class::Launch,
                 Box::new(|e| {
@@ -317,7 +326,8 @@ mod tests {
                 parallel_groups,
                 cached_groups,
                 prefill_warps,
-                early_release
+                early_release,
+                split_parts
             }),
             fields,
             key,

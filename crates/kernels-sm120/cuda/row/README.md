@@ -33,6 +33,17 @@ stores them, so its outputs equal the parallel entry's. It serves widths
 up to 8192 (eight groups per warp); wider rows keep the parallel entry.
 `block_quantize::Entry::cached` selects it for a separately named entry.
 
+`ceil_split.cuh` splits each decode row of the cached form over a cluster
+of 2, 4 or 8 CTAs (`block_quantize::Entry::split`). Each CTA quantizes its
+share of the row's groups with the same `quantize_group`, publishes its
+flags in shared memory, and after a cluster barrier ORs every part's flags
+through distributed shared memory, so every part takes the row-status
+decision from the same flags. Part 0 alone ORs them into the status; a
+flagged row stores the default codes and the unit scale in every part. A
+one-CTA row runs up to eight groups per warp back to back; split, each warp
+runs one or two, so the row's critical path shortens while its outputs stay
+the cached entry's.
+
 `rmsnorm_quantize_cached_f32.cuh` is the same idea for the F32 query norm
 (`rmsnorm_quantize::run` with F32 rows, unchanged). The served entry
 stores the normalized row, then reloads each group from global memory

@@ -55,8 +55,8 @@ use bundle_runtime::pipeline::PreparedLaunch;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
 use kernel_core::properties::Invariance;
-use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::state::KvStorage;
+use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_width};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use crate::Kernels;
@@ -402,24 +402,51 @@ impl Ops {
     }
 
     /// Refuses a rank index that stores a weight view an exact F32
-    /// projection or the head reads in another layout than its op reads:
-    /// such a view binds and runs, but on scrambled weights.
+    /// projection, the head or a routed expert projection reads in another
+    /// layout than its op reads: such a view binds and runs, but on
+    /// scrambled weights. Every routed consumer reads its bank as rows,
+    /// except the backbone's gate/up bank, which they read as the served
+    /// plan stores it at the shape's rank count ([`RoutedLayout::served`]).
     pub(crate) fn check_weight_layouts(
         &self,
-        g: &Geometry,
+        shape: &Shape,
         index: &bundle_runtime::index::RankIndex,
     ) -> Result<(), String> {
         let mut expected = match &self.exact_f32 {
-            Some(ops) => ops.weight_layouts(g)?,
+            Some(ops) => ops.weight_layouts(shape.geometry)?,
             None => Vec::new(),
         };
         if let Some(head) = &self.head {
             expected.push(("head.weight".to_owned(), head.weight_layout()?));
         }
+        let rows = RoutedLayout::Rows.view_layouts()?;
+        let served = RoutedLayout::served(shape.ranks()).view_layouts()?;
+        for name in index.views.keys() {
+            let Some((stem, bank)) = name.split_once(".ffn.experts.") else {
+                continue;
+            };
+            let layouts = if stem.starts_with("layers.") && bank.starts_with("gate_up.") {
+                served
+            } else {
+                rows
+            };
+            let part = usize::from(name.ends_with(".scale"));
+            expected.push((name.clone(), layouts[part].to_owned()));
+        }
+        // An encoded scale bank (`buffers::encoded_scales`) is expanded
+        // before its consumers, which read the raw bank in the layout the
+        // expansion writes: rows.
+        let expanded = rows[1];
         for (name, layout) in expected {
-            if let Some(view) = index.views.get(&name)
-                && view.layout_id != layout
-            {
+            let Some(view) = index.views.get(&name) else {
+                continue;
+            };
+            let read = if encoded_scale_width(&view.layout_id).is_some() {
+                expanded
+            } else {
+                view.layout_id.as_str()
+            };
+            if read != layout {
                 return Err(format!(
                     "{name} is stored as {}, but its op reads {layout}",
                     view.layout_id

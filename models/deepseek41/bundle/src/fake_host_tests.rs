@@ -13,6 +13,7 @@ use bundle_runtime::fake_host::{Backend, FakeDevice, FakeIndex, FakePackage, Han
 use bundle_runtime::geometry::Ranks;
 use model_deepseek41_contract::geometry::FLASH;
 use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE, index_role};
+use model_deepseek41_contract::weight_plan::RoutedLayout;
 use runtime_bundle_abi::*;
 
 use crate::config::{KV_LAYOUTS, KvLayout};
@@ -524,7 +525,7 @@ fn views(shape: &Shape) -> Vec<(String, u64, &'static str)> {
 
 /// The layout the weight plan stores view `name` of `dtype` in: a dense
 /// projection's E4M3 codes (target, DSpark and main_proj) as packed fold
-/// codes, every other view row-major.
+/// codes, an expert bank's MXFP4 rows, every other view row-major.
 pub(super) fn plan_layout(shape: &Shape, name: &str, dtype: &str) -> (u64, &'static str) {
     let dense = || {
         name == "mtp.0.main_proj.weight"
@@ -539,6 +540,10 @@ pub(super) fn plan_layout(shape: &Shape, name: &str, dtype: &str) -> (u64, &'sta
     match dtype {
         "F32" => (4, "f32_row_major_v1"),
         "U8" if dense() => (1, kernel_core::weight_transform::mxfp8_fold::LAYOUT_ID),
+        "U8" if name.contains(".ffn.experts.") => {
+            let rows = RoutedLayout::Rows.view_layouts().unwrap();
+            (1, rows[usize::from(name.ends_with(".scale"))])
+        }
         "U8" => (1, "row-major"),
         _ => (2, "bf16_row_major_v1"),
     }
@@ -1511,6 +1516,43 @@ fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
         let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
         assert!(created.is_err(), "{view}");
         let expected = format!("{view} is stored as {stored}, but its {read}");
+        assert!(
+            host.logs
+                .borrow()
+                .iter()
+                .any(|line| line.contains(&expected)),
+            "{view}: {:?}",
+            host.logs.borrow()
+        );
+        assert_eq!(host.acquired.get(), host.released.get(), "{view}");
+    }
+}
+
+/// Create refuses a rank index that stores a backbone expert bank in
+/// another layout than its routed ops read: row tiles while every routed
+/// consumer reads rows (the drafter's bank: `dspark`).
+#[test]
+fn create_refuses_an_expert_bank_its_routed_ops_read_in_another_layout() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    assert_eq!(RoutedLayout::served(shape.ranks()), RoutedLayout::Rows);
+    let rows = RoutedLayout::Rows.view_layouts().unwrap();
+    let tiles = RoutedLayout::Tiles.view_layouts().unwrap();
+    for (view, part) in [
+        ("layers.0.ffn.experts.gate_up.weight", 0),
+        ("layers.7.ffn.experts.gate_up.scale", 1),
+        ("layers.0.ffn.experts.down.weight", 0),
+    ] {
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        host.layouts
+            .borrow_mut()
+            .insert(view.into(), tiles[part].into());
+        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
+        let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
+        assert!(created.is_err(), "{view}");
+        let expected = format!(
+            "{view} is stored as {}, but its op reads {}",
+            tiles[part], rows[part]
+        );
         assert!(
             host.logs
                 .borrow()

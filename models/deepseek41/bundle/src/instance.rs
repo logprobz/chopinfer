@@ -241,7 +241,7 @@ impl Instance {
                     let _ = services.log(format!("{NAME} rank index: {error}").as_bytes());
                     BundleAbiError::InvalidRange("deepseek41 rank index")
                 })?;
-            ops.check_weight_layouts(shape.geometry, &index)
+            ops.check_weight_layouts(&shape, &index)
                 .and_then(|()| drafter.map_or(Ok(()), |d| d.check_weight_layouts(&index)))
                 .and_then(|()| crate::buffers::encoded_scales(&shape, &index).map(|_| ()))
                 .map_err(|error| {

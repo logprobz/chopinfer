@@ -459,6 +459,36 @@ fn create_with_limits(
     (host, instance)
 }
 
+/// Create refuses a drafter expert bank stored in row tiles: the
+/// drafter's routed ops read rows at every rank count.
+#[test]
+fn create_refuses_a_drafter_expert_bank_in_row_tiles() {
+    use super::RoutedLayout;
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, 32)));
+    let view = "mtp.0.ffn.experts.gate_up.weight";
+    let [tiles, _] = RoutedLayout::Tiles.view_layouts().unwrap();
+    let [rows, _] = RoutedLayout::Rows.view_layouts().unwrap();
+    host.layouts.borrow_mut().insert(view.into(), tiles.into());
+    let record = crate::config::tests::record(&shape, host.kv, 4, false);
+    let created = api().create(
+        HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+        &record,
+    );
+    assert!(created.is_err());
+    let expected = format!("{view} is stored as {tiles}, but its op reads {rows}");
+    assert!(
+        host.logs
+            .borrow()
+            .iter()
+            .any(|line| line.contains(&expected)),
+        "{:?}",
+        host.logs.borrow()
+    );
+}
+
 #[test]
 fn full_budget_prefill_then_maximum_dspark_verify() {
     use model_deepseek41_contract::serving::{

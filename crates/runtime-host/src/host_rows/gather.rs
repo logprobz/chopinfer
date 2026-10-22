@@ -166,7 +166,8 @@ pub(crate) fn gather_span_v1(
     }
 }
 
-/// Enable adaptive mapped-row read-ahead only when explicitly requested.
+/// Adaptive read-ahead of synchronous mapped-row gathers is on by default;
+/// `0` turns it off, and `1` also enables it for asynchronous gathers.
 pub const MAPPED_READ_AHEAD_ENV_V1: &str = "CHOPINFER_MAPPED_READ_AHEAD";
 
 pub(crate) fn mapped_read_ahead_v1() -> bool {

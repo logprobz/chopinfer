@@ -72,6 +72,7 @@ pub mod prefill_tma_matrix;
 pub mod prefill_tma_scales;
 pub mod projection_reuse;
 pub mod query_prefill;
+pub mod query_window;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -538,6 +539,7 @@ impl crate::Kernels {
                     && shape.ranks() == 4))
             && cubin != kernels_sm120::probes::CUBIN
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
+            && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))

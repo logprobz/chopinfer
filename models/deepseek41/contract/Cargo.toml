@@ -132,6 +132,10 @@ path = "examples/sm120/build_ceil_prefill.rs"
 name = "build_ceil_split"
 path = "examples/sm120/build_ceil_split.rs"
 
+[[example]]
+name = "build_query_window"
+path = "examples/sm120/build_query_window.rs"
+
 [[test]]
 name = "kernel_prefill_ceil"
 path = "tests/sm120/ceil_prefill.rs"

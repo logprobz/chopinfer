@@ -1,0 +1,289 @@
+[
+  {
+    "name": "query_window_twin_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_query_window_twin_native_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "query",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "native_q",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "query_cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U32",
+            "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "latent",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "quantized_codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "quantized_scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "last_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "slots"
+          },
+          {
+            "kind": "U32",
+            "name": "circular"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          }
+        ],
+        "max_threads": 1024,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_query_window_twin_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "query",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "native_q",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "query_cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U32",
+            "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "latent",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "quantized_codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "quantized_scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "last_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "slots"
+          },
+          {
+            "kind": "U32",
+            "name": "circular"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          }
+        ],
+        "max_threads": 1024,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "206e80d36865db48949387cd9224ce6ca98cd3948c7d14dd3360617935d8f059",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_query_window_twin_native_v1",
+        "registers": 38,
+        "shared_static_bytes": 1100,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 1024,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_query_window_twin_bf16_v1",
+        "registers": 36,
+        "shared_static_bytes": 1104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 1024,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

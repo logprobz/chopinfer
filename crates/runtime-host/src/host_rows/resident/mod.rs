@@ -55,6 +55,65 @@ impl Config {
         }
         Ok(Some(config))
     }
+
+    /// The budgets fitted to `lockable`, the bytes this process may still
+    /// lock: the total becomes `lockable` and the set size shrinks by the same
+    /// factor, so the requested number of sets still fits. `None` when the
+    /// budgets already fit, the limit is unknown or unlimited, or not even one
+    /// set could be locked.
+    fn clamped(self, lockable: Option<u64>) -> Option<Self> {
+        let lockable = usize::try_from(lockable?).unwrap_or(usize::MAX);
+        if self.total_bytes <= lockable {
+            return None;
+        }
+        let scaled = self.set_bytes as u128 * lockable as u128 / self.total_bytes as u128;
+        let set_bytes = (scaled as usize).max(HEADER_BYTES + SHARDS * super::page_bytes_v1());
+        (set_bytes <= lockable).then_some(Self {
+            set_bytes,
+            total_bytes: lockable,
+        })
+    }
+}
+
+/// The bytes this process may still lock: the soft RLIMIT_MEMLOCK less its
+/// locked memory, or `None` when the limit is unlimited or unreadable.
+fn lockable_bytes() -> Option<u64> {
+    let field = |text: &str, name: &str| -> Option<u64> {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name))?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    };
+    let limit = field(
+        &std::fs::read_to_string("/proc/self/limits").ok()?,
+        "Max locked memory",
+    )?;
+    let locked = field(
+        &std::fs::read_to_string("/proc/self/status").ok()?,
+        "VmLck:",
+    )?;
+    Some(limit.saturating_sub(locked.saturating_mul(1024)))
+}
+
+/// Fits the budgets to RLIMIT_MEMLOCK, logging once when they shrink: a set
+/// the process cannot lock would otherwise leave every row set uncached.
+fn fitted(config: Config) -> Config {
+    let lockable = lockable_bytes();
+    let Some(clamped) = config.clamped(lockable) else {
+        return config;
+    };
+    runtime_engine::logging::line(
+        serde_json::json!({
+            "schema":"chopinfer.mapped-row-cache.v1", "phase":"clamped",
+            "reason":"RLIMIT_MEMLOCK", "lockable_bytes":lockable,
+            "requested_set_bytes":config.set_bytes, "requested_total_bytes":config.total_bytes,
+            "set_bytes":clamped.set_bytes, "total_bytes":clamped.total_bytes,
+        })
+        .to_string(),
+    );
+    clamped
 }
 
 struct Budget {
@@ -133,7 +192,7 @@ fn registry() -> Result<Option<&'static Registry>, String> {
                 Ok(None)
             })
             .map(|config| {
-                config.map(|config| Registry {
+                config.map(fitted).map(|config| Registry {
                     config,
                     budget: Arc::new(Budget {
                         limit: config.total_bytes,

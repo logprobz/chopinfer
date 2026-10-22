@@ -415,6 +415,77 @@ fn cache_is_on_by_default_and_disabled_budgets_are_not_parsed() {
 }
 
 #[test]
+fn budgets_clamp_to_the_lockable_bytes_and_keep_their_set_count() {
+    const GIB: usize = 1 << 30;
+    let requested = Config {
+        set_bytes: 32 * GIB,
+        total_bytes: 64 * GIB,
+    };
+    let lockable = 33_693_097_984_u64;
+    let clamped = requested.clamped(Some(lockable)).unwrap();
+    assert_eq!(clamped.total_bytes, lockable as usize);
+    assert_eq!(clamped.set_bytes, lockable as usize / 2);
+    // Budgets that fit, an unlimited or unknown limit, and a limit below one
+    // set are left as requested.
+    assert!(requested.clamped(Some(64 << 30)).is_none());
+    assert!(requested.clamped(None).is_none());
+    let minimum = HEADER_BYTES + SHARDS * super::super::page_bytes_v1();
+    assert!(requested.clamped(Some(minimum as u64 - 1)).is_none());
+    let small = requested.clamped(Some(minimum as u64)).unwrap();
+    assert_eq!((small.set_bytes, small.total_bytes), (minimum, minimum));
+}
+
+#[test]
+fn an_oversized_budget_clamps_instead_of_disabling_the_cache() {
+    let minimum = HEADER_BYTES + SHARDS * super::super::page_bytes_v1();
+    let lockable = 3 * minimum;
+    let requested = Config {
+        set_bytes: 4 * minimum,
+        total_bytes: 8 * minimum,
+    };
+    // Two row sets under a lock limit of `lockable` bytes, as mlock enforces.
+    let run = |config: Config| {
+        let registry = Registry {
+            config,
+            budget: Arc::new(Budget {
+                limit: config.total_bytes,
+                used: AtomicU64::new(0),
+                skipped: AtomicU64::new(0),
+            }),
+            caches: Mutex::new(BTreeMap::new()),
+            fallback_logged: AtomicBool::new(false),
+            allocation_unavailable: AtomicBool::new(false),
+        };
+        let locked = std::cell::Cell::new(0);
+        let mappings = [11_u8, 12].map(|identity| {
+            let mapping = mapping(&format!("clamp-{identity}"), &source(10, 8), identity);
+            attach_with(&registry, vec![(Arc::clone(&mapping), 8)], |key, charge| {
+                Cache::allocate(key, charge, |bytes| {
+                    if locked.get() + bytes > lockable {
+                        return Err(std::io::Error::from_raw_os_error(libc::ENOMEM));
+                    }
+                    locked.set(locked.get() + bytes);
+                    LockedBytes::new(bytes)
+                })
+            })
+            .unwrap();
+            mapping
+        });
+        let cached = mappings
+            .iter()
+            .filter(|m| m.resident.get().is_some())
+            .count();
+        (
+            cached,
+            registry.allocation_unavailable.load(Ordering::Relaxed),
+        )
+    };
+    assert_eq!(run(requested), (0, true));
+    let clamped = requested.clamped(Some(lockable as u64)).unwrap();
+    assert_eq!(run(clamped), (2, false));
+}
+
+#[test]
 fn allocation_failure_returns_the_entire_reservation() {
     let registry = registry(1);
     let mapping = mapping("allocation", &source(10, 8), 10);

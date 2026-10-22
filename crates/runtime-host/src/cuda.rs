@@ -1021,6 +1021,32 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
             .map(|(free, _)| free)
             .map_err(driver_status)
     }
+    fn total_device_memory(&self, context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        self.context(context)?
+            .memory_info()
+            .map(|(_, total)| total)
+            .map_err(driver_status)
+    }
+    fn own_device_memory(&self, context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        let ordinal = self.context(context)?.device_ordinal();
+        let ledger = self
+            .ledger
+            .allocated_on_context_device(context.get())
+            .ok_or(BundleStatusV1::InvalidState)?;
+        // The samplers allocate from their context's pool directly, outside
+        // the ledger, so their buffers are added here.
+        self.samplers
+            .iter()
+            .filter(|(key, _)| {
+                self.rank_contexts
+                    .get(key)
+                    .is_some_and(|context| context.device_ordinal() == ordinal)
+            })
+            .try_fold(ledger, |sum, (_, sampler)| {
+                sum.checked_add(sampler.device_bytes())
+            })
+            .ok_or(BundleStatusV1::ResourceExhausted)
+    }
     fn upload_pinned_file_range(
         &mut self,
         stream: DeviceObjectV1,

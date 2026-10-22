@@ -368,6 +368,21 @@ pub trait HostDeviceBackendV1 {
         Err(runtime_bundle_abi::BundleStatusV1::Unsupported)
     }
 
+    /// Total bytes of the device this rank's context is on.
+    fn total_device_memory(&self, _context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        Err(runtime_bundle_abi::BundleStatusV1::Unsupported)
+    }
+
+    /// Device bytes this backend itself holds on the device of `context`:
+    /// its ledger's allocations there and buffers it keeps outside the
+    /// ledger, such as the sampler workspace. It is this process's own
+    /// account, so another process allocating or releasing memory on the
+    /// same device does not move it. The driver's own memory (the CUDA
+    /// context, loaded modules and graph executables) is not counted.
+    fn own_device_memory(&self, _context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
+        Err(runtime_bundle_abi::BundleStatusV1::Unsupported)
+    }
+
     /// Whether one allocation this backend returned satisfies an alignment.
     ///
     /// An allocator carries its own alignment guarantee, which is not the one a

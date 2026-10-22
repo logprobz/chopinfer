@@ -546,6 +546,21 @@ struct DeviceSubmission {
 }
 
 impl DeviceSamplingSession {
+    /// Device bytes the session's buffers hold now.
+    pub(crate) fn device_bytes(&self) -> u64 {
+        [
+            self.input_capacity,
+            self.output_capacity,
+            self.adjusted_capacity,
+            self.order_capacity,
+            self.simple_partials_capacity,
+            self.filter_capacity,
+        ]
+        .iter()
+        .map(|&bytes| bytes as u64)
+        .sum()
+    }
+
     pub(crate) fn reserve(
         &mut self,
         vocabulary: usize,

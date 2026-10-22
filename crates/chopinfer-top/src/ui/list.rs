@@ -759,12 +759,12 @@ fn events(buffer: &mut Buffer, app: &App, area: (u16, u16, u16, u16), now: f64) 
         let line = y + 1 + index as u16;
         let when = format!("{} ago", age(now - event.at));
         let column = buffer.put(x + 2, line, &right(&when, 10), Style::fg(Color::Dim));
-        let column = buffer.put(
-            column + 2,
-            line,
-            &pad(&sanitize(&event.who), who_width),
-            Style::PLAIN,
-        );
+        // Cut a cell short, so a long who never runs into the text.
+        let who = sanitize(&event.who)
+            .chars()
+            .take(who_width.saturating_sub(1))
+            .collect::<String>();
+        let column = buffer.put(column + 2, line, &pad(&who, who_width), Style::PLAIN);
         let room = usize::from(width).saturating_sub(usize::from(column) + 2);
         buffer.put(
             column,

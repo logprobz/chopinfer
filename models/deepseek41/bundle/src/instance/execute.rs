@@ -33,6 +33,7 @@ use crate::indexer_workloads::Route as IndexerRoute;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
+pub(crate) mod ar_status;
 pub(crate) mod dma;
 #[cfg(test)]
 #[path = "graph_key_tests.rs"]
@@ -1403,8 +1404,7 @@ impl Instance {
                 self.clear_flags()?;
             }
             if ready_epoch.is_none() {
-                self.check_index_status(run)?;
-                self.check_row_status(run)?;
+                self.check_status(run)?;
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
@@ -1443,8 +1443,7 @@ impl Instance {
                 // The AR sampler runs during validation. Failed status still
                 // refuses execute, so none of its queued samples is published.
                 for run in runs.iter() {
-                    self.check_index_status(run)?;
-                    self.check_row_status(run)?;
+                    self.check_status(run)?;
                     if run.ar_engram {
                         self.finish_ar_engram()?;
                     }

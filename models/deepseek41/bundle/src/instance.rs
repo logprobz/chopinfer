@@ -126,6 +126,8 @@ pub struct Instance {
     prefill_engram: Option<prefill_engram::Gathers>,
     /// AR decode's per-layer Engram uploads, when switched on.
     ar_engram: Option<ar_engram::State>,
+    /// AR steps' one status readback, when switched on.
+    ar_status: Option<execute::ar_status::Packet>,
     /// Kept upper-skip plans of short prompts.
     plans: execute::plan_cache::Cache,
     /// Run the lowered stages alone (`PARTIAL`).
@@ -906,6 +908,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         prefill_reduce_runs: 0,
         prefill_engram: None,
         ar_engram: None,
+        ar_status: None,
         plans,
         partial,
         taps,
@@ -937,6 +940,12 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     }
     if let Err(error) = instance.prepare_ar_engram() {
         instance.log(&format!("create failed preparing AR Engram: {error}"));
+        return Err(Failed::releasing(instance, status(error)));
+    }
+    if let Err(error) = instance.prepare_ar_status() {
+        instance.log(&format!(
+            "create failed preparing the AR status packet: {error}"
+        ));
         return Err(Failed::releasing(instance, status(error)));
     }
     if let Err(error) = instance.configure_dspark_graphs() {

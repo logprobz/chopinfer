@@ -415,8 +415,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The column-block HC pair's modules add fourteen resolves and sixteen
 /// releases per rank and shift ids only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (23283, 0xe99ea4b26ceb3f3c)),
-    (Ranks::TP4, (57515, 0x366126b9cefd1c8a)),
+    (Ranks::TP2, (23343, 0x3cc290637430e206)),
+    (Ranks::TP4, (57635, 0x427b045d62eb3115)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

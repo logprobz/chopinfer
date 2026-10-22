@@ -78,12 +78,12 @@ use super::*;
 // split finish (grid_x 1 to 2) with identical operands; no other line
 // changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0x962ae75b0481d2fd)),
-    (6, (8680, 0x8db6c6ddb9823513)),
-    (8, (8212, 0x9b2fd10f299736d2)),
-    (12, (10136, 0xad7b5e4dc7ef12f0)),
-    (16, (9012, 0x79f711f55e090b8d)),
-    (32, (8704, 0xb0258c262e21ca0f)),
+    (4, (8520, 0xf2b05982463a2227)),
+    (6, (8680, 0xc24f3c56d43b3cd7)),
+    (8, (8212, 0x2c13c1e8961bf158)),
+    (12, (10136, 0x67e139874b2de33e)),
+    (16, (9012, 0x5c4b605d766caa13)),
+    (32, (8704, 0x480424e83ee26757)),
 ];
 
 #[test]

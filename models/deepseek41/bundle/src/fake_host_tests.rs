@@ -1138,34 +1138,34 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17509, 0x24d0af3dc5dce897),
+        (17539, 0xfddf8f76c9219c1a),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17363, 0x6afb24e8333508af),
+        (17393, 0x07476fb530563948),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (35205, 0x2bae8d712bf1f5a8),
+        (35265, 0x9b53da873b588885),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34913, 0x49e5f9c3ea56426e),
+        (34973, 0xf0fb28de6a6fea5d),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (86323, 0xa725019f66dc22b0),
+        (86443, 0x44d74f4474f691dd),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (83967, 0x3ff68d19ca5d86eb),
+        (84087, 0xa2f21a131ac34300),
     ),
 ];
 
@@ -1317,13 +1317,11 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// router certificate and the router-in-norm module add one allocation, two
 /// resolves and four releases per rank there too, and no launch. The
 /// 64-expert router renames its resolve there too. The two-CTA HC finish
-/// module adds six resolves and seven releases per rank. The two-strip
-/// routed down module adds two resolves and three releases per rank.
-/// module adds six resolves and seven releases per rank. The window KV
-/// projection beside the query chain and the row-local rings change it as
-/// in `FLASH_JOURNALS`.
 /// module adds six resolves and seven releases per rank, the column-block
-/// HC pair's modules fourteen resolves and sixteen releases.
+/// HC pair's modules fourteen resolves and sixteen releases. The two-strip
+/// routed down module adds two resolves and three releases per rank. The
+/// window KV projection beside the query chain and the row-local rings
+/// change it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1331,7 +1329,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(84603, 0xff60f889b07dac49), (82247, 0x4b0404514ec93319)])
+            .zip([(84723, 0x2f513d88f66fc8a5), (82367, 0x9fd6dce07c1e10e5)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

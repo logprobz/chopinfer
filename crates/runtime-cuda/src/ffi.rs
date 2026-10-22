@@ -381,6 +381,7 @@ unsafe extern "C" {
     fn runtime_cuda_fake_call_count(operation: c_int) -> usize;
     fn runtime_cuda_fake_ordering_violations() -> usize;
     fn runtime_cuda_fake_set_api_call_copies(enabled: c_int);
+    fn runtime_cuda_fake_set_visible_devices(count: c_int);
     #[cfg(test)]
     fn runtime_cuda_fake_encoded_tensor_map(
         address: *mut u64,
@@ -470,6 +471,15 @@ pub fn fake_driver_ordering_violations() -> usize {
 pub fn fake_driver_set_api_call_copies(enabled: bool) {
     // SAFETY-REVIEWED: the no-device test stub stores one integer flag.
     unsafe { runtime_cuda_fake_set_api_call_copies(c_int::from(enabled)) }
+}
+
+/// Makes the no-device stub show this thread `count` synthetic devices
+/// whatever CUDA_VISIBLE_DEVICES says, until the next reset. A negative count
+/// reads the variable again.
+#[cfg(feature = "fake-driver-tests")]
+pub fn fake_driver_set_visible_devices(count: c_int) {
+    // SAFETY-REVIEWED: the no-device test stub stores one thread-local integer.
+    unsafe { runtime_cuda_fake_set_visible_devices(count) }
 }
 
 /// The slots one by-value device-address argument carries.

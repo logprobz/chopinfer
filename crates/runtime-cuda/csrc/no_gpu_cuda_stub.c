@@ -47,6 +47,10 @@ static _Thread_local size_t ordering_violations;
    copy that reads its source during the call may. Such a write is unordered
    against every stream, its own included. */
 static _Thread_local int api_call_copies;
+/* When not negative, this thread sees synthetic GPUs 0..count-1 whatever
+   CUDA_VISIBLE_DEVICES says, so a test does not depend on its caller's
+   environment. Negative reads the variable, as the real driver does. */
+static _Thread_local int visible_override = -1;
 static _Thread_local void* owned_events[1024];
 static _Thread_local size_t device_used_bytes;
 static _Thread_local size_t retained_contexts;
@@ -175,6 +179,7 @@ void runtime_cuda_fake_reset(void) {
   loaded_modules = 0;
   ordering_violations = 0;
   api_call_copies = 0;
+  visible_override = -1;
   host_copy_polls = 0;
   host_copy_sequence = 0;
   hold_later_host_copies = 0;
@@ -206,6 +211,10 @@ size_t runtime_cuda_fake_ordering_violations(void) {
 
 void runtime_cuda_fake_set_api_call_copies(int enabled) {
   api_call_copies = enabled != 0;
+}
+
+void runtime_cuda_fake_set_visible_devices(int count) {
+  visible_override = count < 0 ? -1 : count > 8 ? 8 : count;
 }
 
 int cuCtxSetCurrent(void* context) {
@@ -433,6 +442,10 @@ int cuGraphLaunch(void* executable, void* stream) {
 /* Emulate numeric CUDA visibility over eight synthetic GPUs. No driver or
    device file is opened. UUID and MIG filtering remain real-driver checks. */
 static int visible_devices(int* physical) {
+  if (visible_override >= 0) {
+    for (int i = 0; i < visible_override; ++i) physical[i] = i;
+    return visible_override;
+  }
   const char* value = getenv("CUDA_VISIBLE_DEVICES");
   if (value == NULL) {
     for (int i = 0; i < 8; ++i) physical[i] = i;

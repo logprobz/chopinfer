@@ -2421,6 +2421,9 @@ mod lendable_tests {
     #[test]
     fn a_lent_buffer_maps_the_same_bytes_into_another_context() {
         runtime_cuda::fake_driver::reset();
+        // Both ranks' bus IDs exist whatever CUDA_VISIBLE_DEVICES the caller set;
+        // an empty value would leave the stub no devices to identify.
+        runtime_cuda::fake_driver::set_visible_devices(2);
         let mut device = CudaHostDeviceV1::new().unwrap();
         let contexts: Vec<_> = (0..2)
             .map(|rank| device.create_context(rank, rank as i32).unwrap())

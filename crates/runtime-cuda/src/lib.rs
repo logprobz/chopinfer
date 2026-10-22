@@ -3547,4 +3547,9 @@ pub mod fake_driver {
     pub fn set_api_call_copies(enabled: bool) {
         super::ffi::fake_driver_set_api_call_copies(enabled);
     }
+    /// This thread sees synthetic devices 0..count whatever
+    /// CUDA_VISIBLE_DEVICES says, until reset.
+    pub fn set_visible_devices(count: i32) {
+        super::ffi::fake_driver_set_visible_devices(count);
+    }
 }

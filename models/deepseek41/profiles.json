@@ -28,7 +28,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -63,7 +63,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -98,7 +98,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -133,7 +133,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -168,7 +168,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -203,7 +203,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"

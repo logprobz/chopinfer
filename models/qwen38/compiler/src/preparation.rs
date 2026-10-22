@@ -775,7 +775,7 @@ mod tests {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub decode_tbt_target_ms: Option<u32>,
         pub queue_depth: Option<usize>,
-        pub kv_memory_fraction: f64,
+        pub gpu_memory_utilization: f64,
         pub status: ProfileStatus,
         pub evidence: Vec<String>,
     }

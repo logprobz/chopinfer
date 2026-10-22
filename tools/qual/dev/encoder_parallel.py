@@ -272,8 +272,7 @@ def main():
         serve += ["--model-cache-dir", str(args.model_cache_dir.resolve())]
     serve += ["--listen", f"127.0.0.1:{args.port}", "--devices", ",".join(map(str, range(ranks))),
               "--speculative-tokens", "0",
-              "--max-sequences", "32", "--max-batch-tokens", "8192", "--prefill-chunk-tokens", "2048",
-              "--kv-memory-fraction", "0.85"]
+              "--max-sequences", "32", "--max-batch-tokens", "8192", "--prefill-chunk-tokens", "2048"]
     # The package the server will select; the helper prepares it on CPU.
     package = prepare_direct(serve, args.host_bin.resolve().parent / f"chopinfer-model-{config['model']}")
     manifest = Path(package["bundle"]) / "manifest.json"

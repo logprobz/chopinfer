@@ -31,7 +31,7 @@ max_sequences=
 max_batch_tokens=
 prefill_chunk_tokens=
 queue_depth=
-kv_memory_fraction=
+gpu_memory_utilization=
 kv_cache_dtype=
 prefix_cache=
 extra_serve_args=()
@@ -71,7 +71,7 @@ feature, which writes the encoder taps there (encoder_parity's build).
   --activation-policy auto|checkpoint|bf16  --load-threads N
   --port N --listen-host HOST
   --max-sequences N --max-batch-tokens N --prefill-chunk-tokens N
-  --queue-depth N --kv-memory-fraction F
+  --queue-depth N --gpu-memory-utilization F
   --kv-cache-dtype auto|bf16|fp8  --prefix-cache on|off
                      Each overrides the profile's value.
   --serve-arg ARG    Append one serve argument; repeat for a flag and its value.

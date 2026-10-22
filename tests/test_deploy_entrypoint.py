@@ -138,7 +138,7 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 serve = self.commands()[-1]
                 for flag in ('--max-sequences', '--max-batch-tokens', '--prefill-chunk-tokens',
-                             '--kv-cache-dtype', '--kv-memory-fraction', '--prefix-cache',
+                             '--kv-cache-dtype', '--gpu-memory-utilization', '--prefix-cache',
                              '--speculative-tokens', '--speculation', '--draft-cost',
                              '--drain-timeout-ms', '--modalities'):
                     self.assertNotIn(flag, serve)
@@ -523,7 +523,7 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
             "MAX_BATCH_TOKENS": ("--max-batch-tokens", "4096"),
             "PREFILL_CHUNK_TOKENS": ("--prefill-chunk-tokens", "1024"),
             "QUEUE_DEPTH": ("--queue-depth", "512"),
-            "KV_MEMORY_FRACTION": ("--kv-memory-fraction", "0.4"),
+            "GPU_MEMORY_UTILIZATION": ("--gpu-memory-utilization", "0.4"),
             "DRAIN_TIMEOUT_MS": ("--drain-timeout-ms", "10000"),
         }
         self.env.update({f"CHOPINFER_{key}": value for key, (_, value) in overrides.items()})
@@ -554,7 +554,8 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
         for name, value in [("MAX_SEQUENCE", "1"), ("LISTEN", "0.0.0.0:0"), ("LISTEN", "localhost:8000"), ("MAX_SEQUENCES", ""),
                             ("SPECULATIVE_TOKENS", "banana"), ("SPECULATION", "bogus"),
                             ("MIMO_F32_LOGITS", "yes"), ("SAMPLING_TIMING", "0"),
-                            ("SERVE_ARGS", "--prefix-cache off"), ("KV_MEMORY_FRACTION", "nan"),
+                            ("SERVE_ARGS", "--prefix-cache off"), ("GPU_MEMORY_UTILIZATION", "nan"),
+                            ("GPU_MEMORY_UTILIZATION", "1.5"), ("KV_MEMORY_FRACTION", "0.9"),
                             ("TENSOR_PARALLEL_SIZE", "3"), ("TENSOR_PARALLEL_SIZE", "04"),
                             ("VERIFY_MODEL", "yes"), ("MODEL", ""), ("MODEL_CACHE", "")]:
             with self.subTest(name=name, value=value):
@@ -635,7 +636,7 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
         self.serve_arguments()
         serve = self.commands()[-1]
         self.assertEqual(serve[serve.index("--model") + 1], str(self.model))
-        for flag in ('--prefix-cache', '--kv-memory-fraction', '--max-sequences',
+        for flag in ('--prefix-cache', '--gpu-memory-utilization', '--max-sequences',
                      '--max-batch-tokens', '--prefill-chunk-tokens',
                      '--speculative-tokens', '--speculation', '--draft-cost'):
             self.assertNotIn(flag, serve)
@@ -661,12 +662,12 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
     def test_qwen_overrides(self):
         self.checkpoint(QWEN)
         self.serve_arguments("--prefix-cache", "off", "--modalities", "text",
-                             CHOPINFER_MAX_SEQUENCES="16", CHOPINFER_KV_MEMORY_FRACTION="0.4")
+                             CHOPINFER_MAX_SEQUENCES="16", CHOPINFER_GPU_MEMORY_UTILIZATION="0.4")
         serve = self.commands()[-1]
         self.assertEqual(serve.count("--prefix-cache"), 1)
         self.assertEqual(serve.count("--modalities"), 1)
         self.assertEqual(serve[serve.index("--max-sequences") + 1], "16")
-        self.assertEqual(serve[serve.index("--kv-memory-fraction") + 1], "0.4")
+        self.assertEqual(serve[serve.index("--gpu-memory-utilization") + 1], "0.4")
 
     def test_expected_bundle_identity(self):
         self.env['CHOPINFER_EXPECTED_BUNDLE_ID'] = BUNDLE

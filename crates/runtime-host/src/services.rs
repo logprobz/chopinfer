@@ -679,7 +679,9 @@ pub struct HostInstanceConfigV1 {
     context_parallel_size: usize,
 }
 
-/// The host's serving-only share of free rank memory after a fixed 1 GiB reserve.
+/// How the host sizes the serving KV pool: from the memory each rank has
+/// left once the bundle's own allocations are resident, less a fixed 1 GiB
+/// reserve for the CUDA graphs captured after the pool exists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServingKvPolicyV1 {
     /// Authenticated frontend vocabulary; reserve sampler buffers before KV.
@@ -690,7 +692,11 @@ pub struct ServingKvPolicyV1 {
     /// checkpoints the bundle has not allocated yet when it acquires the pool.
     /// State allocated before then is already outside free memory.
     pub state_reserved_bytes: u64,
-    pub fraction_millionths: u32,
+    /// The share of each device's total memory, in millionths, that this
+    /// process's own allocations (the pool and reserve included) may take
+    /// (`--gpu-memory-utilization`). The CUDA context and loaded modules are
+    /// the driver's and come on top.
+    pub utilization_millionths: u32,
     pub maximum_pages: Option<u64>,
 }
 
@@ -700,10 +706,85 @@ impl Default for ServingKvPolicyV1 {
             sampling_vocabulary: None,
             maximum_context_tokens: None,
             state_reserved_bytes: 0,
-            fraction_millionths: 900_000,
+            utilization_millionths: 1_000_000,
             maximum_pages: None,
         }
     }
+}
+
+/// Device memory per rank the serving KV pool leaves for what is allocated
+/// after it: the CUDA graphs captured once the pool exists (they embed its
+/// addresses) and the driver's own bookkeeping. Measured graph peaks reach
+/// about 0.7 GiB (DeepSeek DSpark); most stay under 150 MiB.
+pub const SERVING_KV_RESERVE_BYTES_V1: u64 = 1 << 30;
+
+/// One rank's memory as the serving KV pool is sized.
+struct ServingKvRoomV1 {
+    free: u64,
+    total: Option<u64>,
+    own: Option<u64>,
+    /// What the pool, the reserve and request state may take together.
+    room: u64,
+}
+
+impl ServingKvRoomV1 {
+    fn describe(&self) -> String {
+        match (self.total, self.own) {
+            (Some(total), Some(own)) => format!(
+                "has {} device bytes free of {total}, {own} of them held by this process",
+                self.free
+            ),
+            _ => format!("has {} device bytes free", self.free),
+        }
+    }
+
+    /// The smallest utilization, rounded up to a hundredth, whose share of
+    /// the device covers this process's allocations and `bytes` more; none
+    /// when the free memory cannot hold `bytes` at any utilization.
+    fn minimum_utilization(&self, bytes: u64) -> Option<f64> {
+        let (total, own) = (self.total?, self.own?);
+        if total == 0 || self.free < bytes {
+            return None;
+        }
+        let needed = u128::from(own) + u128::from(bytes);
+        let hundredths = (needed * 100).div_ceil(u128::from(total));
+        (hundredths <= 100).then(|| hundredths as f64 / 100.0)
+    }
+}
+
+/// Measures one rank for the serving KV pool. At full utilization the room
+/// is the free memory, as it always was. Below it the room is also capped by
+/// the utilization's share of the device's total, less what this process's
+/// own allocations already hold: the backend's account, which memory another
+/// process allocates or releases does not move.
+fn serving_kv_room_v1<D: HostDeviceBackendV1>(
+    device: &D,
+    context: DeviceObjectV1,
+    policy: ServingKvPolicyV1,
+) -> HostServiceResultV1<ServingKvRoomV1> {
+    let free = device.free_device_memory(context)?;
+    let total = device.total_device_memory(context).ok();
+    let own = device.own_device_memory(context).ok();
+    let room = if policy.utilization_millionths >= 1_000_000 {
+        free
+    } else {
+        let (Some(total), Some(own)) = (total, own) else {
+            eprintln!(
+                "host acquire_serving_kv: this device backend does not account for its own \
+                 memory, which --gpu-memory-utilization below 1 needs"
+            );
+            return Err(BundleStatusV1::Unsupported);
+        };
+        let share =
+            (u128::from(total) * u128::from(policy.utilization_millionths) / 1_000_000) as u64;
+        share.saturating_sub(own).min(free)
+    };
+    Ok(ServingKvRoomV1 {
+        free,
+        total,
+        own,
+        room,
+    })
 }
 
 impl HostInstanceConfigV1 {
@@ -3164,10 +3245,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     }
 
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
-        const RESERVE_BYTES: u64 = 1024 * 1024 * 1024;
         let mut state = self.state.borrow_mut();
         let policy = state.config.serving_kv.ok_or(BundleStatusV1::Unsupported)?;
-        if policy.fraction_millionths == 0 || policy.fraction_millionths > 1_000_000 {
+        if policy.utilization_millionths == 0 || policy.utilization_millionths > 1_000_000 {
             return Err(BundleStatusV1::InvalidArgument);
         }
         let contract = state
@@ -3183,7 +3263,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         let layout = contract.layout;
         let mut ranks = Vec::new();
-        let mut free = u64::MAX;
+        let mut available = u64::MAX;
         for rank in 0..layout.rank_count() as u32 {
             let context_key = *state
                 .context_by_rank
@@ -3200,25 +3280,30 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     .device
                     .reserve_sampling_workspace(context, vocabulary)?;
             }
-            let physical_free = state.device.free_device_memory(context)?;
-            let Some(available) = physical_free
-                .checked_sub(RESERVE_BYTES)
-                .and_then(|bytes| bytes.checked_sub(policy.state_reserved_bytes))
-            else {
+            let memory = serving_kv_room_v1(&state.device, context, policy)?;
+            let held = SERVING_KV_RESERVE_BYTES_V1.saturating_add(policy.state_reserved_bytes);
+            let Some(rank_available) = memory.room.checked_sub(held) else {
                 eprintln!(
-                    "host acquire_serving_kv: rank {rank} has {physical_free} device bytes free, \
-                     less than the {RESERVE_BYTES}-byte reserve and {} bytes of request state; \
+                    "host acquire_serving_kv: rank {rank} {}; it leaves less than the \
+                     {SERVING_KV_RESERVE_BYTES_V1}-byte reserve and {} bytes of request state; \
                      no serving KV pool",
+                    memory.describe(),
                     policy.state_reserved_bytes
                 );
+                if let Some(minimum) =
+                    memory.minimum_utilization(held.saturating_add(layout.page_bytes()))
+                {
+                    eprintln!(
+                        "host acquire_serving_kv: rank {rank} needs --gpu-memory-utilization \
+                         of at least {minimum:.2} for one KV page"
+                    );
+                }
                 return Err(BundleStatusV1::ResourceExhausted);
             };
-            free = free.min(available);
+            available = available.min(rank_available);
             ranks.push((context_key, pool_key, context, pool));
         }
-        let available = free;
-        let budget =
-            (u128::from(available) * u128::from(policy.fraction_millionths) / 1_000_000) as u64;
+        let budget = available;
         let mut capacity = budget / layout.page_bytes();
         capacity = capacity.min(runtime_kv::MAX_BLOCK_CAPACITY as u64);
         if let Some(maximum) = policy.maximum_pages {
@@ -3226,8 +3311,8 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         let plan = PagedKvPlanV1::validate(layout, capacity, 1).map_err(|_| {
             eprintln!(
-                "host acquire_serving_kv: {available} device bytes available per rank, \
-                 {budget} of them for KV, hold {capacity} pages of {} bytes; no serving KV pool",
+                "host acquire_serving_kv: {budget} device bytes per rank for KV hold {capacity} \
+                 pages of {} bytes; no serving KV pool",
                 layout.page_bytes()
             );
             BundleStatusV1::ResourceExhausted
@@ -5789,6 +5874,37 @@ enum CaptureSubmissionV1 {
     Wait(SlotKeyV1),
     /// Any other work: graph launches and copies.
     Other,
+}
+
+#[cfg(test)]
+mod serving_kv_room_tests {
+    use super::ServingKvRoomV1;
+
+    const GIB: u64 = 1 << 30;
+
+    fn room(free: u64, total: Option<u64>, own: Option<u64>) -> ServingKvRoomV1 {
+        ServingKvRoomV1 {
+            free,
+            total,
+            own,
+            room: free,
+        }
+    }
+
+    #[test]
+    fn minimum_utilization_covers_own_bytes_and_what_the_pool_needs() {
+        // 90 of 96 GiB held: one more GiB needs 91/96, rounded up to 0.95.
+        let room = room(5 * GIB, Some(96 * GIB), Some(90 * GIB));
+        assert_eq!(room.minimum_utilization(GIB), Some(0.95));
+        // What the free memory cannot hold no utilization gives.
+        assert_eq!(room.minimum_utilization(6 * GIB), None);
+        // Nor can a backend that does not account for its own memory say.
+        assert_eq!(
+            super::ServingKvRoomV1 { own: None, ..room }.minimum_utilization(GIB),
+            None
+        );
+        assert!(room.describe().contains("of them held by this process"));
+    }
 }
 
 #[cfg(all(test, feature = "fake-host-services"))]

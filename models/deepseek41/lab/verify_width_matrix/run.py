@@ -281,7 +281,7 @@ class Runner:
                 str(self.source / "models/deepseek41/profiles.json") + "#tp4-dspark",
                 "--devices", "0,1,2,3", "--kv-cache-dtype", "auto", "--prefix-cache", "off",
                 "--max-sequences", "16", "--max-batch-tokens", "8192", "--prefill-chunk-tokens", "8192",
-                "--kv-memory-fraction", "0.65", "--verify-warmup", "off", "--speculative-tokens", str(cap),
+                "--verify-warmup", "off", "--speculative-tokens", str(cap),
                 "--served-model-name", MODEL, "--listen", f"127.0.0.1:{port}"]
         if cap:
             argv += ["--speculation", mode, "--draft-cost", "per-block", "--speculative-rows", "32"]

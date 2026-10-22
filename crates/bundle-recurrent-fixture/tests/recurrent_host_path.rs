@@ -1830,7 +1830,7 @@ mod request_state {
             sampling_vocabulary: None,
             maximum_context_tokens: None,
             state_reserved_bytes: 1024,
-            fraction_millionths: 900_000,
+            utilization_millionths: 1_000_000,
             maximum_pages: Some(64),
         });
         let configuration = config.encode_v1(RECURRENT_TOPOLOGY_ID_V1.as_bytes());

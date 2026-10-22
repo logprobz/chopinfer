@@ -28,7 +28,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -61,7 +61,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "experimental",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -94,7 +94,7 @@
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -128,7 +128,7 @@
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
       "context_parallel_size": 2,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -162,7 +162,7 @@
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
       "context_parallel_size": 4,
-      "kv_memory_fraction": 0.9,
+      "gpu_memory_utilization": 1.0,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",

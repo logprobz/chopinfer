@@ -141,7 +141,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
   [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
-  [--kv-memory-fraction F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
+  [--gpu-memory-utilization F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
   [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
@@ -164,7 +164,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--fake-host-services]
 conformance-run --bundle DIR [--checkpoint DIR] --fixture-request LABEL
   [--topology ID] [--fixture-tokens COUNT] [--scenario commit|cancel|drop]
-  [--kv-memory-fraction F]
+  [--gpu-memory-utilization F]
   [--fake-host-services]
 every command except verify accepts --architecture ID and --capability ID (repeatable)";
 
@@ -378,7 +378,7 @@ pub struct ServingOptionsV1 {
     /// count by default. Images stream through the media arena, so this may
     /// exceed the declaration.
     pub maximum_images_per_request: Option<usize>,
-    pub kv_memory_fraction_millionths: u32,
+    pub gpu_memory_utilization_millionths: u32,
     pub kv_pages: Option<u64>,
     /// Ranks of one context-parallel group, which split every sequence's KV
     /// pages; 1, the default, keeps every page on every rank.
@@ -413,7 +413,7 @@ impl Default for ServingOptionsV1 {
             responses_store_bytes: 0,
             maximum_tokenizer_input_bytes: None,
             maximum_images_per_request: None,
-            kv_memory_fraction_millionths: 900_000,
+            gpu_memory_utilization_millionths: 1_000_000,
             kv_pages: None,
             context_parallel_size: 1,
             kv_cache_dtype: KvCacheDtypeV1::Auto,
@@ -833,7 +833,7 @@ pub enum HostCommandV1 {
         topology: Option<String>,
         device: DeviceServicesV1,
         request: FixtureRequestV1,
-        kv_memory_fraction_millionths: u32,
+        gpu_memory_utilization_millionths: u32,
         /// `--checkpoint`: the checkpoint the bundle's weight plans load.
         direct_checkpoint: Option<PathBuf>,
     },
@@ -1226,7 +1226,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--topology",
             "--devices",
             "--max-context-tokens",
-            "--kv-memory-fraction",
+            "--gpu-memory-utilization",
             "--kv-pages",
             "--context-parallel-size",
             "--kv-cache-dtype",
@@ -1480,7 +1480,9 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
                 }
                 count => count,
             },
-            kv_memory_fraction_millionths: parsed.kv_memory_fraction_millionths.unwrap_or(900_000),
+            gpu_memory_utilization_millionths: parsed
+                .gpu_memory_utilization_millionths
+                .unwrap_or(1_000_000),
             kv_pages: parsed.kv_pages.map(|pages| pages as u64),
             context_parallel_size: match parsed.context_parallel_size {
                 Some(0) => return Err(usage_error("--context-parallel-size must be at least 1")),
@@ -1534,7 +1536,7 @@ fn parse_conformance_run_command_v1(
             "--fixture-request",
             "--fixture-tokens",
             "--scenario",
-            "--kv-memory-fraction",
+            "--gpu-memory-utilization",
             "--checkpoint",
             "--fake-host-services",
         ],
@@ -1563,7 +1565,9 @@ fn parse_conformance_run_command_v1(
             // A run that names no scenario commits, which is the positive run.
             scenario: parsed.scenario.unwrap_or_default(),
         },
-        kv_memory_fraction_millionths: parsed.kv_memory_fraction_millionths.unwrap_or(900_000),
+        gpu_memory_utilization_millionths: parsed
+            .gpu_memory_utilization_millionths
+            .unwrap_or(1_000_000),
         selection: parsed.selection("conformance-run")?,
         direct_checkpoint: parsed.direct_checkpoint.clone(),
     })
@@ -1961,7 +1965,7 @@ fn run_host_command_from_v1(
             topology,
             device,
             request,
-            kv_memory_fraction_millionths,
+            gpu_memory_utilization_millionths,
             direct_checkpoint,
         } => {
             if let Some(root) = direct_checkpoint {
@@ -1973,7 +1977,7 @@ fn run_host_command_from_v1(
                 topology.as_deref(),
                 *device,
                 request,
-                *kv_memory_fraction_millionths,
+                *gpu_memory_utilization_millionths,
             )
             .map(|receipt| receipt.to_string())
         }
@@ -2539,7 +2543,7 @@ fn serve_v1(
             sampling_vocabulary: Some(policy.vocabulary().get()),
             maximum_context_tokens: Some(served_context_tokens),
             state_reserved_bytes: 0,
-            fraction_millionths: serving.kv_memory_fraction_millionths,
+            utilization_millionths: serving.gpu_memory_utilization_millionths,
             maximum_pages: serving.kv_pages,
         },
         kv_dtype: kv_cache.dtype,
@@ -3955,12 +3959,12 @@ fn conformance_run_v1(
     topology: Option<&str>,
     device: DeviceServicesV1,
     request: &FixtureRequestV1,
-    kv_memory_fraction_millionths: u32,
+    gpu_memory_utilization_millionths: u32,
 ) -> Result<FixtureRunReceiptV1, HostCommandErrorV1> {
     let package = select_topology_v1(verify_selected_bundle_v1(selection, host)?, topology, None)?;
     let loaded = load_verified_process_bundle_v1(selection, host, package, None)?;
     let mut plan = FixturePlanV1::new(loaded.manifest(), host, topology, request)?;
-    plan.kv_memory_fraction_millionths = kv_memory_fraction_millionths;
+    plan.gpu_memory_utilization_millionths = gpu_memory_utilization_millionths;
     match device {
         DeviceServicesV1::HostMemory => run_host_memory_device_v1(loaded, &plan),
         DeviceServicesV1::Compiled => run_compiled_device_v1(loaded, &plan),
@@ -4120,7 +4124,7 @@ fn run_over_device_v1<D: HostDeviceBackendV1 + 'static>(
                 sampling_vocabulary: None,
                 maximum_context_tokens: None,
                 state_reserved_bytes: 0,
-                fraction_millionths: plan.kv_memory_fraction_millionths,
+                utilization_millionths: plan.gpu_memory_utilization_millionths,
                 maximum_pages: None,
             }),
         )
@@ -4374,7 +4378,7 @@ struct FixturePlanV1 {
     prefill_tokens: usize,
     request: Vec<u8>,
     kv_plan: PreparedAppendBatch,
-    kv_memory_fraction_millionths: u32,
+    gpu_memory_utilization_millionths: u32,
 }
 
 impl FixturePlanV1 {
@@ -4442,7 +4446,7 @@ impl FixturePlanV1 {
             prefill_tokens,
             request: request_bytes,
             kv_plan,
-            kv_memory_fraction_millionths: 900_000,
+            gpu_memory_utilization_millionths: 1_000_000,
         })
     }
 
@@ -4543,7 +4547,7 @@ struct ArgumentsV1 {
     topology: Option<String>,
     listen: Option<String>,
     maximum_context_tokens: Option<usize>,
-    kv_memory_fraction_millionths: Option<u32>,
+    gpu_memory_utilization_millionths: Option<u32>,
     kv_pages: Option<usize>,
     context_parallel_size: Option<usize>,
     kv_cache_dtype: Option<KvCacheDtypeV1>,
@@ -4629,6 +4633,10 @@ const REMOVED_FLAGS_V1: &[(&str, &str)] = &[
     (
         "--video-input",
         "--video-input is gone: --modalities selects video, which auto leaves out; --modalities all or a list naming video serves it",
+    ),
+    (
+        "--kv-memory-fraction",
+        "--kv-memory-fraction is gone: --gpu-memory-utilization F lets this server's own allocations take F of each GPU's total memory; the default 1.0 takes all of it but a 1 GiB reserve",
     ),
     (
         "--refresh-model",
@@ -4784,9 +4792,9 @@ impl ArgumentsV1 {
                     count_v1(flag, value)?,
                     flag,
                 )?,
-                "--kv-memory-fraction" => set_once_v1(
-                    &mut parsed.kv_memory_fraction_millionths,
-                    parse_kv_fraction_v1(value)?,
+                "--gpu-memory-utilization" => set_once_v1(
+                    &mut parsed.gpu_memory_utilization_millionths,
+                    parse_gpu_memory_utilization_v1(value)?,
                     flag,
                 )?,
                 "--kv-pages" => set_once_v1(&mut parsed.kv_pages, count_v1(flag, value)?, flag)?,
@@ -5111,8 +5119,8 @@ impl ArgumentsV1 {
             ),
             ("--max-sequences", self.maximum_sequences.is_some()),
             (
-                "--kv-memory-fraction",
-                self.kv_memory_fraction_millionths.is_some(),
+                "--gpu-memory-utilization",
+                self.gpu_memory_utilization_millionths.is_some(),
             ),
             ("--kv-pages", self.kv_pages.is_some()),
             (
@@ -5511,16 +5519,16 @@ fn count_v1(flag: &str, value: &str) -> Result<usize, HostCommandErrorV1> {
         .map_err(|_| usage_error(format!("{flag} takes a count, got '{value}'")))
 }
 
-fn parse_kv_fraction_v1(value: &str) -> Result<u32, HostCommandErrorV1> {
+fn parse_gpu_memory_utilization_v1(value: &str) -> Result<u32, HostCommandErrorV1> {
     let fraction = value
         .parse::<f64>()
-        .map_err(|_| usage_error("--kv-memory-fraction must be a number in (0, 1]"))?;
+        .map_err(|_| usage_error("--gpu-memory-utilization must be a number in (0, 1]"))?;
     if !fraction.is_finite() || fraction <= 0.0 || fraction > 1.0 {
-        return Err(usage_error("--kv-memory-fraction must be in (0, 1]"));
+        return Err(usage_error("--gpu-memory-utilization must be in (0, 1]"));
     }
     let millionths = (fraction * 1_000_000.0).round() as u32;
     if millionths == 0 {
-        return Err(usage_error("--kv-memory-fraction is too small"));
+        return Err(usage_error("--gpu-memory-utilization is too small"));
     }
     Ok(millionths)
 }
@@ -6075,6 +6083,10 @@ mod tests {
                 "is gone",
             ),
             (&["bundle", "install"], "bundle install is gone"),
+            (
+                &["serve", "--bundle", "a", "--kv-memory-fraction", "0.9"],
+                "--kv-memory-fraction is gone: --gpu-memory-utilization",
+            ),
         ] {
             assert!(refusal(words).contains(reason), "{words:?}");
         }
@@ -6329,7 +6341,7 @@ mod tests {
                 responses_store_bytes: 0,
                 maximum_tokenizer_input_bytes: Some(8_388_608),
                 maximum_images_per_request: Some(32),
-                kv_memory_fraction_millionths: 900_000,
+                gpu_memory_utilization_millionths: 1_000_000,
                 kv_pages: None,
                 context_parallel_size: 1,
                 kv_cache_dtype: KvCacheDtypeV1::Auto,
@@ -7747,7 +7759,7 @@ mod tests {
             "serve",
             "--bundle",
             "a",
-            "--kv-memory-fraction",
+            "--gpu-memory-utilization",
             "0.75",
             "--kv-pages",
             "128",
@@ -7756,7 +7768,7 @@ mod tests {
         let HostCommandV1::Serve { serving, .. } = parsed else {
             panic!("the command serves");
         };
-        assert_eq!(serving.kv_memory_fraction_millionths, 750_000);
+        assert_eq!(serving.gpu_memory_utilization_millionths, 750_000);
         assert_eq!(serving.kv_pages, Some(128));
         for fraction in ["0", "1.1", "NaN", "invalid"] {
             assert!(
@@ -7764,7 +7776,7 @@ mod tests {
                     "serve",
                     "--bundle",
                     "a",
-                    "--kv-memory-fraction",
+                    "--gpu-memory-utilization",
                     fraction,
                 ]))
                 .is_err()
@@ -7804,25 +7816,25 @@ mod tests {
     }
 
     #[test]
-    fn conformance_kv_fraction_bounds_the_host_pool() {
+    fn conformance_gpu_memory_utilization_bounds_the_host_pool() {
         let parsed = parse_host_command_v1(&arguments(&[
             "conformance-run",
             "--bundle",
             "a",
             "--fixture-request",
             "g7",
-            "--kv-memory-fraction",
+            "--gpu-memory-utilization",
             "0.5",
         ]))
         .unwrap();
         let HostCommandV1::ConformanceRun {
-            kv_memory_fraction_millionths,
+            gpu_memory_utilization_millionths,
             ..
         } = parsed
         else {
             panic!("the command runs conformance");
         };
-        assert_eq!(kv_memory_fraction_millionths, 500_000);
+        assert_eq!(gpu_memory_utilization_millionths, 500_000);
     }
 
     #[test]

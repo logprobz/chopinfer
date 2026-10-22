@@ -309,8 +309,8 @@ fn run() -> Result<()> {
                 speculative_tokens: number("speculative-tokens", 0)? as u32,
                 verify_tokens: number("verify-tokens", 0)? as u32,
                 maximum_sequences: number("max-sequences", 32)? as u32,
-                kv_fraction_millionths: options
-                    .get("kv-fraction-millionths")
+                gpu_memory_utilization_millionths: options
+                    .get("gpu-memory-utilization-millionths")
                     .map(|v| v.parse())
                     .transpose()?,
             },
@@ -691,15 +691,15 @@ fn run() -> Result<()> {
 /// no speculation.
 /// The serving options `create` runs the bundle's create with. By default
 /// a probe: speculation off, 32 sequences and at most 4096 KV pages; with
-/// `--kv-fraction-millionths` the KV pool takes that share of the free
-/// memory left after create's allocations, as `serve` sizes it.
+/// `--gpu-memory-utilization-millionths` the KV pool takes what that share
+/// of the device leaves after create's allocations, as `serve` sizes it.
 struct CreateOptions {
     allocation_alignment: u64,
     device_memory_bytes: u64,
     speculative_tokens: u32,
     verify_tokens: u32,
     maximum_sequences: u32,
-    kv_fraction_millionths: Option<u32>,
+    gpu_memory_utilization_millionths: Option<u32>,
 }
 
 fn create(
@@ -753,9 +753,9 @@ fn create(
         device,
         topology,
         (0..ranks as i32).collect(),
-        Some(match options.kv_fraction_millionths {
-            Some(fraction_millionths) => runtime_host::ServingKvPolicyV1 {
-                fraction_millionths,
+        Some(match options.gpu_memory_utilization_millionths {
+            Some(utilization_millionths) => runtime_host::ServingKvPolicyV1 {
+                utilization_millionths,
                 maximum_pages: None,
                 ..Default::default()
             },

@@ -72,13 +72,13 @@ class LegTests(unittest.TestCase):
 
     def test_a_leg_keeps_every_numerical_option_of_its_profile(self):
         full = dict(profile(4, 'drafter-a', 3), kv_cache_dtype='bf16', prefix_cache=False, max_batch_tokens=1024,
-                    prefill_chunk_tokens=256, queue_depth=8, kv_memory_fraction=0.85, prefill_budget='tbt',
+                    prefill_chunk_tokens=256, queue_depth=8, gpu_memory_utilization=0.85, prefill_budget='tbt',
                     decode_tbt_target_ms=150, model_options={'checkpoint.quantization_layout': 'fp4', 'topk': 64})
         full['speculation']['draft_cost'] = 'per-block'
         value = smoke.leg('full', full)
         self.assertEqual(value['serve_args'], [
             '--tensor-parallel-size', '4', '--max-sequences', '32', '--max-batch-tokens', '1024',
-            '--prefill-chunk-tokens', '256', '--kv-memory-fraction', '0.85', '--kv-cache-dtype', 'bf16',
+            '--prefill-chunk-tokens', '256', '--gpu-memory-utilization', '0.85', '--kv-cache-dtype', 'bf16',
             '--prefix-cache', 'off', '--queue-depth', '8', '--prefill-budget', 'tbt', '--decode-tbt-target-ms', '150',
             '--draft-cost', 'per-block', '--model-option', 'checkpoint.quantization_layout=fp4',
             '--model-option', 'topk=64'])

@@ -116,16 +116,27 @@ fn serving_table(
     HostServicesTableV1,
     Rc<HostServicesV1Backend<FakeHostDeviceV1>>,
 ) {
+    serving_table_on(FakeHostDeviceV1::new(), 1_000_000, maximum_pages)
+}
+
+fn serving_table_on(
+    device: FakeHostDeviceV1,
+    utilization_millionths: u32,
+    maximum_pages: Option<u64>,
+) -> (
+    HostServicesTableV1,
+    Rc<HostServicesV1Backend<FakeHostDeviceV1>>,
+) {
     let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1]).unwrap())
         .with_kv_contract(DeclaredKvContractV1::new(LAYOUT_ID.to_vec(), page_layout()))
         .with_serving_kv(ServingKvPolicyV1 {
             sampling_vocabulary: None,
             maximum_context_tokens: None,
             state_reserved_bytes: 0,
-            fraction_millionths: 900_000,
+            utilization_millionths,
             maximum_pages,
         });
-    let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
+    let backend = Rc::new(HostServicesV1Backend::new(device, config));
     (HostServicesTableV1::new(Rc::clone(&backend)), backend)
 }
 
@@ -556,8 +567,10 @@ fn serving_pool_sizes_from_the_tightest_rank_after_bundle_allocations() {
     let pool_one = host.select_memory_pool(rank_one).unwrap();
     host.allocate_device_buffer(pool_one, streams[1], 4 * 1024 * 1024, 64)
         .unwrap();
+    // Full utilization takes all the tightest rank's free memory past the
+    // 1 GiB reserve, as the fraction 1.0 it replaces did.
     let available = 12_u64 * 1024 * 1024;
-    let expected = available * 900_000 / 1_000_000 / PAGE_BYTES;
+    let expected = available / PAGE_BYTES;
     assert_eq!(host.acquire_serving_kv(LAYOUT_ID).unwrap(), expected);
     assert_eq!(backend.serving_kv_pages(), Some(expected));
     assert_eq!(
@@ -567,6 +580,47 @@ fn serving_pool_sizes_from_the_tightest_rank_after_bundle_allocations() {
     assert_eq!(
         host.resolve_serving_kv_pool(1).unwrap().length,
         expected * PAGE_BYTES
+    );
+}
+
+/// Pages the pool holds on a 1,088 MiB fake device of which rank 1's own
+/// allocations take 4 MiB, another process `foreign` bytes on every device.
+fn utilization_pages(utilization_millionths: u32, foreign: u64) -> u64 {
+    let mut device = FakeHostDeviceV1::new();
+    device.set_device_memory_bytes(1088 * MIB);
+    device.set_foreign_device_bytes(foreign);
+    let (table, _backend) = serving_table_on(device, utilization_millionths, None);
+    let host = table.caller();
+    let streams = serving_ranks(host);
+    let rank_one = host.select_context(1, 1).unwrap();
+    let pool_one = host.select_memory_pool(rank_one).unwrap();
+    host.allocate_device_buffer(pool_one, streams[1], 4 * MIB, 64)
+        .unwrap();
+    host.acquire_serving_kv(LAYOUT_ID).unwrap()
+}
+
+const MIB: u64 = 1024 * 1024;
+
+#[test]
+fn serving_pool_below_full_utilization_caps_own_allocations_at_its_share() {
+    // At 1.0 rank 1 leaves 1,084 MiB free, 60 MiB past the reserve.
+    assert_eq!(utilization_pages(1_000_000, 0), 60 * MIB / PAGE_BYTES);
+    // At 0.97 its own 4 MiB, the reserve and the pool fit 0.97 of 1,088 MiB.
+    let share = 1088 * MIB * 97 / 100;
+    let capped = (share - 4 * MIB - 1024 * MIB) / PAGE_BYTES;
+    assert_eq!(utilization_pages(970_000, 0), capped);
+    // Memory another process holds does not count as this process's: with
+    // 30 MiB of it the share still fits in free memory and is unchanged.
+    assert_eq!(utilization_pages(970_000, 30 * MIB), capped);
+    // Only once it leaves less free memory than the share does it shrink
+    // the pool, and at 1.0 it always does.
+    assert_eq!(
+        utilization_pages(970_000, 40 * MIB),
+        (1044 * MIB - 1024 * MIB) / PAGE_BYTES
+    );
+    assert_eq!(
+        utilization_pages(1_000_000, 30 * MIB),
+        (1054 * MIB - 1024 * MIB) / PAGE_BYTES
     );
 }
 
@@ -2251,7 +2305,7 @@ fn recurrent_reservations_reduce_kv_capacity_and_refuse_overcommit() {
                 sampling_vocabulary: None,
                 maximum_context_tokens: None,
                 state_reserved_bytes: reservation,
-                fraction_millionths: 1_000_000,
+                utilization_millionths: 1_000_000,
                 maximum_pages: None,
             });
         let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
@@ -2370,7 +2424,7 @@ fn serving_pages_beside_state(
             sampling_vocabulary: None,
             maximum_context_tokens: None,
             state_reserved_bytes: slots.reserved_bytes_per_rank(),
-            fraction_millionths: 1_000_000,
+            utilization_millionths: 1_000_000,
             maximum_pages,
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
@@ -2441,7 +2495,7 @@ fn sampler_workspace_is_reserved_before_kv_and_reused() {
             sampling_vocabulary: Some(33),
             maximum_context_tokens: None,
             state_reserved_bytes: 0,
-            fraction_millionths: 1_000_000,
+            utilization_millionths: 1_000_000,
             maximum_pages: None,
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
@@ -2464,7 +2518,7 @@ fn sampler_capacity_failure_refuses_startup_before_any_kv_pool() {
             sampling_vocabulary: Some(1 << 20),
             maximum_context_tokens: None,
             state_reserved_bytes: 0,
-            fraction_millionths: 1_000_000,
+            utilization_millionths: 1_000_000,
             maximum_pages: Some(1),
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
@@ -2515,7 +2569,7 @@ fn host_placed_views_leave_their_bytes_to_the_serving_kv_pool() {
                 sampling_vocabulary: None,
                 maximum_context_tokens: None,
                 state_reserved_bytes: 0,
-                fraction_millionths: 1_000_000,
+                utilization_millionths: 1_000_000,
                 maximum_pages: None,
             });
         let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));

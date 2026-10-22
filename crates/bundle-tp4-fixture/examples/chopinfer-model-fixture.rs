@@ -21,17 +21,17 @@ const PROFILES: &str = r#"{"schema":"chopinfer-serve-profiles-v2","model":"fixtu
 "tp4-ar":{"bundle_id":"fixture.tp4.tp4.v1","topology":"fixture-tp4","tensor_parallel":4,"devices_required":4,
  "devices":[0,1,2,3],"speculation":{"mode":"fixed","tokens":0,"draft_cost":"per-token","drafter":"none"},
  "max_sequences":1,"qualified_max_sequences":null,"qualification":"CPU fixture only","kv_cache_dtype":"auto",
- "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"kv_memory_fraction":0.9,
+ "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"gpu_memory_utilization":1.0,
  "status":"experimental","evidence":["tests/test_model_preparation.py"]},
 "tp4-mtp":{"bundle_id":"fixture.tp4.tp4.v1","topology":"fixture-tp4","tensor_parallel":4,"devices_required":4,
  "devices":[0,1,2,3],"speculation":{"mode":"adaptive","tokens":3,"draft_cost":"per-token","drafter":"mtp"},
  "max_sequences":1,"qualified_max_sequences":null,"qualification":"CPU fixture only","kv_cache_dtype":"auto",
- "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"kv_memory_fraction":0.9,
+ "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"gpu_memory_utilization":1.0,
  "status":"experimental","evidence":["tests/test_model_preparation.py"]},
 "tp4-dflash":{"bundle_id":"fixture.tp4.tp4.v1","topology":"fixture-tp4","tensor_parallel":4,"devices_required":4,
  "devices":[0,1,2,3],"speculation":{"mode":"adaptive","tokens":3,"draft_cost":"per-block","drafter":"dflash"},
  "max_sequences":1,"qualified_max_sequences":null,"qualification":"CPU fixture only","kv_cache_dtype":"auto",
- "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"kv_memory_fraction":0.9,
+ "prefix_cache":false,"max_batch_tokens":128,"prefill_chunk_tokens":128,"queue_depth":8,"gpu_memory_utilization":1.0,
  "prefill_budget":"tbt","decode_tbt_target_ms":150,"status":"experimental","evidence":["tests/test_model_preparation.py"]}
 }}"#;
 /// A test may name the frontend's model owner through this environment

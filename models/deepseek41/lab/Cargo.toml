@@ -257,5 +257,9 @@ name = "build_fold_cluster"
 path = "examples/sm120/build_fold_cluster.rs"
 
 [[example]]
+name = "build_fold_fused"
+path = "examples/sm120/build_fold_fused.rs"
+
+[[example]]
 name = "build_fold_plain"
 path = "examples/sm120/build_fold_plain.rs"

@@ -7,6 +7,15 @@ pub fn pair(
     cold: bool,
     work: impl Fn(usize, &Stream) -> LabResult<()>,
 ) -> LabResult<serde_json::Value> {
+    arms(session, cold, 2, work)
+}
+/// `pair` over `count` arms, rotated in the same order.
+pub fn arms(
+    session: &Session,
+    cold: bool,
+    count: usize,
+    work: impl Fn(usize, &Stream) -> LabResult<()>,
+) -> LabResult<serde_json::Value> {
     let eviction = if cold {
         Some(kernel_harness::eviction::Eviction::new(
             session,
@@ -18,18 +27,18 @@ pub fn pair(
     let start = session.context.timed_event().map_err(|e| e.to_string())?;
     let end = session.context.timed_event().map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        for arm in 0..2 {
+        for arm in 0..count {
             work(arm, &session.stream)?;
         }
     }
     session.stream.synchronize().map_err(|e| e.to_string())?;
     let mut samples = Vec::new();
-    let mut medians = [Vec::new(), Vec::new()];
+    let mut medians = vec![Vec::new(); count];
     for round in 0..5 {
-        let mut values = [Vec::new(), Vec::new()];
+        let mut values = vec![Vec::new(); count];
         for sample in 0..3 {
-            for step in 0..2 {
-                let arm = (round + sample + step) % 2;
+            for step in 0..count {
+                let arm = (round + sample + step) % count;
                 if let Some(e) = &eviction {
                     e.run(&session.stream)?;
                 }
@@ -42,13 +51,13 @@ pub fn pair(
                 values[arm].push(start.elapsed_ms(&end).map_err(|e| e.to_string())?);
             }
         }
-        for arm in 0..2 {
+        for arm in 0..count {
             medians[arm].push(median(&values[arm]));
         }
         samples.push(values);
     }
     Ok(
-        serde_json::json!({"ms":medians.map(|v| median(&v)), "round_samples_ms":samples, "replays_per_sample":1}),
+        serde_json::json!({"ms":medians.iter().map(|v| median(v)).collect::<Vec<_>>(), "round_samples_ms":samples, "replays_per_sample":1}),
     )
 }
 fn median(values: &[f32]) -> f32 {

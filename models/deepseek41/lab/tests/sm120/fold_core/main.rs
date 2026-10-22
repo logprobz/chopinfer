@@ -25,6 +25,9 @@ mod data;
 mod deep_family;
 #[path = "../../../sm120/fold_core.rs"]
 mod family;
+mod fused;
+#[path = "../../../sm120/fold_fused.rs"]
+mod fused_family;
 #[path = "../../../sm120/fold_local_rows.rs"]
 mod local_family;
 mod plain;
@@ -603,6 +606,7 @@ fn cpu_catalog() {
         .chain(local_family::cubins())
         .chain(deep_family::cubins())
         .chain(cluster_family::cubins())
+        .chain(fused_family::cubins())
     {
         for e in spec.entries {
             assert!(symbols.insert(e.symbol));

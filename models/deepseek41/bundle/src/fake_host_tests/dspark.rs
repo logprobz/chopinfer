@@ -15,6 +15,7 @@ mod native_package;
 mod prefetch;
 mod results;
 mod round_trips;
+mod undrafted;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 

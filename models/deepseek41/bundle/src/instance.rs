@@ -1159,6 +1159,18 @@ pub(crate) fn dspark_context(
     })
 }
 
+/// The DSpark device hash's ids and their rows per layer.
+#[cfg(test)]
+pub(crate) fn dspark_hash_ids(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Option<(runtime_bundle_abi::DeviceBufferSpanV1, u32)> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let cycle = &table.get_mut(handle)?.dspark.as_ref()?.cycle;
+        Some((cycle.memory?.ids, cycle.hash.shape.stride))
+    })
+}
+
 #[cfg(test)]
 pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 #[cfg(test)]

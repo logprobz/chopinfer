@@ -2,7 +2,19 @@
 //! Size validation does not allocate or impose a materializer's working-set limit.
 use super::{PrecisionError, WeightLayout};
 use crate::contract::{DType, SwigluColumns, WeightFormat};
+use crate::transform::RowTileLayout;
 use crate::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
+
+/// Independent MXFP4 matrices one after another, as `row-major-groups`
+/// places them, each stored in tiles of 64 rows by 128 K
+/// ([`PackingPlan::row_tiles`]): 4096 code bytes and 256 UE8M0 scale bytes
+/// per tile, tiles in K order within each 64-row strip. Sections keep their
+/// row-major sizes.
+pub const ROW_TILES_64X128: &str = "row-tiles-64x128-groups";
+/// The rank index layout of a [`ROW_TILES_64X128`] codes section.
+pub const ROW_TILE_CODES_VIEW: &str = "mxfp4_e2m1_row_tiles_64x128_v1";
+/// The rank index layout of a [`ROW_TILES_64X128`] local-scale section.
+pub const ROW_TILE_SCALES_VIEW: &str = "mxfp4_ue8m0_scale_row_tiles_64x128_v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -62,6 +74,18 @@ impl PackingPlan {
             "fp8-fragment" => Some(FragmentWeightFormat::Fp8E4M3),
             _ => None,
         }
+    }
+    /// The tiles of a [`ROW_TILES_64X128`] plan's codes and local-scale
+    /// sections, which the row-major materializers fill first.
+    pub fn row_tiles(&self) -> Option<[RowTileLayout; 2]> {
+        let rows = self.total_rows() as usize;
+        let tiles = |row_bytes: u32, tile_bytes| RowTileLayout {
+            rows,
+            row_bytes: row_bytes as usize,
+            tile_rows: 64,
+            tile_bytes,
+        };
+        (self.layout.id == ROW_TILES_64X128).then(|| [tiles(self.k / 2, 64), tiles(self.k / 32, 4)])
     }
     pub fn code_bytes(&self) -> u64 {
         match self.format {
@@ -130,6 +154,7 @@ impl PackingPlan {
             // its own scale grid: the `[groups, rows, k]` operand of a
             // grouped dense projection.
             "row-major-groups" => true,
+            ROW_TILES_64X128 => self.format == WeightFormat::Mxfp4,
             "bf16-fragment" => self.format == WeightFormat::Bf16,
             "fp8-fragment" => matches!(
                 self.format,
@@ -170,6 +195,8 @@ impl PackingPlan {
         if matches!(self.format, WeightFormat::Nvfp4 | WeightFormat::Mxfp4)
             && !self.k.is_multiple_of(2)
             || self.grouped() && (!self.rows.is_multiple_of(16) || !self.k.is_multiple_of(rk))
+            || self.row_tiles().is_some()
+                && (!self.rows.is_multiple_of(64) || !self.k.is_multiple_of(128))
             || self.projections == 2
                 && rn != u32::MAX
                 && rn != 1

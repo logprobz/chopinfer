@@ -1,7 +1,8 @@
 //! One section of a prepared precision operand, packed from its checkpoint
 //! codes and scales by the shared prepared-weight rules: lossless row and K
 //! slicing ([`crate::precision::packed::MatrixView::repack`]), bank placement,
-//! then fragment order and scale tiles as the [`PackingPlan`] selects.
+//! then fragment order, scale tiles or row tiles as the [`PackingPlan`]
+//! selects.
 //!
 //! The record's sources are the checkpoint tensors; each
 //! [`PackedMatrixSource`] names the ones one bank matrix reads and the slice
@@ -358,10 +359,9 @@ impl PackedOperand {
             return refuse("packed operand source count differs from its record");
         }
         if self.reuses_row_major_sections() {
-            let mut sections =
+            let sections =
                 self.execute_row_major_reusing(record, sources, buffers, expected, wanted)?;
-            self.encode_local(&mut sections)?;
-            return Ok(sections);
+            return self.stored(sections);
         }
         let plan = &self.plan;
         let (scale_rows, scale_columns) = plan.scale_shape();
@@ -580,9 +580,30 @@ impl PackedOperand {
         } else {
             scales
         };
-        let mut sections = [codes, scales, globals];
+        let sections = [codes, scales, globals];
         if sections[self.section.index()].len() as u64 != expected {
             return refuse("packed section differs from the prepared contract");
+        }
+        self.stored(sections)
+    }
+
+    /// The produced row-major sections as the plan stores them: in its row
+    /// tiles, when it has them ([`PackingPlan::row_tiles`]), and then the
+    /// local scales encoded ([`Self::encode_local`]). An encoded section is
+    /// encoded from its row-major bytes and left untiled: the expansion of
+    /// its encoding writes the tiles. A section left out stays empty.
+    fn stored(&self, mut sections: [Vec<u8>; 3]) -> Result<[Vec<u8>; 3], WeightTransformError> {
+        if let Some(tiles) = self.plan.row_tiles() {
+            let mut scratch = Vec::new();
+            for (index, (section, tiles)) in sections.iter_mut().zip(tiles).enumerate() {
+                let encoded =
+                    index == PackedSection::LocalScales.index() && self.local_encoding.is_some();
+                if !section.is_empty() && !encoded {
+                    tiles
+                        .pack_in_place(section, &mut scratch)
+                        .map_err(super::refusal)?;
+                }
+            }
         }
         self.encode_local(&mut sections)?;
         Ok(sections)

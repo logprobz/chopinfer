@@ -23,6 +23,7 @@ pub enum Layout {
     Mxfp4MoeFragments(Mxfp4MoeFragmentLayout),
     Mxfp4MoeFragmentScales(Mxfp4MoeFragmentLayout),
     FragmentMajor(fragment::FragmentWeightLayout),
+    RowTiles(RowTileLayout),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -314,6 +315,108 @@ impl Mxfp4MoeFragmentLayout {
     }
 }
 
+/// Row-major bytes cut into strips of `tile_rows` rows, each strip stored as
+/// its tiles of `tile_bytes` columns in column order and every tile
+/// row-major. A strip covers the same bytes in both orders, so the
+/// permutation never leaves it. With 64 rows by 128 MXFP4 elements (64 code
+/// bytes, 4 UE8M0 scale bytes) a row block of 64 rows is one contiguous
+/// tile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RowTileLayout {
+    pub rows: usize,
+    pub row_bytes: usize,
+    pub tile_rows: usize,
+    pub tile_bytes: usize,
+}
+
+impl RowTileLayout {
+    /// The layout's bytes, when it holds whole tiles.
+    fn bytes(self) -> Result<usize, Refusal> {
+        if self.rows == 0
+            || self.row_bytes == 0
+            || self.tile_rows == 0
+            || self.tile_bytes == 0
+            || !self.rows.is_multiple_of(self.tile_rows)
+            || !self.row_bytes.is_multiple_of(self.tile_bytes)
+        {
+            return Err(Refusal("row tiles need whole tiles of rows and bytes"));
+        }
+        self.rows
+            .checked_mul(self.row_bytes)
+            .ok_or(Refusal("row tile size overflow"))
+    }
+
+    /// Where byte `column` of row `row` is stored.
+    #[must_use]
+    pub const fn offset(self, row: usize, column: usize) -> usize {
+        (row / self.tile_rows) * self.tile_rows * self.row_bytes
+            + (column / self.tile_bytes) * self.tile_rows * self.tile_bytes
+            + (row % self.tile_rows) * self.tile_bytes
+            + column % self.tile_bytes
+    }
+
+    /// Tiles row-major `bytes` in place, one strip at a time through
+    /// `scratch`, which holds one strip afterwards.
+    pub fn pack_in_place(self, bytes: &mut [u8], scratch: &mut Vec<u8>) -> Result<(), Refusal> {
+        if bytes.len() != self.bytes()? {
+            return Err(Refusal("row tile source size mismatch"));
+        }
+        let strip = self.tile_rows * self.row_bytes;
+        for out in bytes.chunks_exact_mut(strip) {
+            scratch.clear();
+            scratch.extend_from_slice(out);
+            match self.tile_bytes {
+                4 => tile_strip::<4>(self.tile_rows, self.row_bytes, scratch, out),
+                64 => tile_strip::<64>(self.tile_rows, self.row_bytes, scratch, out),
+                width => {
+                    for (row, source) in scratch.chunks_exact(self.row_bytes).enumerate() {
+                        for (tile, chunk) in source.chunks_exact(width).enumerate() {
+                            let at = (tile * self.tile_rows + row) * width;
+                            out[at..at + width].copy_from_slice(chunk);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One strip's row-major `rows` in `source` stored as `N`-byte-wide tiles
+/// in `out`; a constant width keeps each copy a few register moves.
+fn tile_strip<const N: usize>(rows: usize, row_bytes: usize, source: &[u8], out: &mut [u8]) {
+    for (row, source) in source.chunks_exact(row_bytes).enumerate() {
+        for (tile, chunk) in source.chunks_exact(N).enumerate() {
+            let at = (tile * rows + row) * N;
+            out[at..at + N].copy_from_slice(chunk);
+        }
+    }
+}
+
+impl Transform for RowTileLayout {
+    fn pack(&self, source: &[u8]) -> Result<Packed, Refusal> {
+        let mut bytes = source.to_vec();
+        self.pack_in_place(&mut bytes, &mut Vec::new())?;
+        Ok(Packed {
+            bytes,
+            layout: Layout::RowTiles(*self),
+        })
+    }
+
+    fn unpack(&self, packed: &Packed) -> Result<Vec<u8>, Refusal> {
+        if packed.layout != Layout::RowTiles(*self) || packed.bytes.len() != self.bytes()? {
+            return Err(Refusal("row tile packed layout mismatch"));
+        }
+        let mut source = vec![0; packed.bytes.len()];
+        for row in 0..self.rows {
+            for column in 0..self.row_bytes {
+                source[row * self.row_bytes + column] = packed.bytes[self.offset(row, column)];
+            }
+        }
+        Ok(source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +502,101 @@ mod tests {
         let scales = layout.pack_scales(&[127; 64]).unwrap();
         assert_eq!(scales.bytes.len(), 64);
     }
+    /// Each 64-row strip of a 1152-row expert (gate then up) at K 5120 is
+    /// stored as forty 4096-byte code tiles and forty 256-byte scale tiles,
+    /// the order the tiled routed kernels address: byte `b` of tile
+    /// `strip * 40 + block` is row `b / width` of the strip, byte
+    /// `block * width + b % width` of that row.
+    #[test]
+    fn row_tiles_store_each_strip_as_its_k_blocks() {
+        for (row_bytes, width) in [(2560, 64), (160, 4)] {
+            let layout = RowTileLayout {
+                rows: 1152,
+                row_bytes,
+                tile_rows: 64,
+                tile_bytes: width,
+            };
+            let source = (0..1152 * row_bytes)
+                .map(|i| (i * 131 + i / 7919) as u8)
+                .collect::<Vec<_>>();
+            let packed = layout.pack(&source).unwrap();
+            let tile = 64 * width;
+            for (at, byte) in packed.bytes.iter().enumerate() {
+                let (strip, block) = (at / tile / 40, at / tile % 40);
+                let row = strip * 64 + at % tile / width;
+                assert_eq!(*byte, source[row * row_bytes + block * width + at % width]);
+            }
+            assert_eq!(layout.unpack(&packed).unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn row_tiles_round_trip_every_width_in_reused_scratch() {
+        let mut scratch = vec![0xa5; 3];
+        for (rows, tile_rows) in [(4, 4), (12, 4), (128, 64)] {
+            for (row_bytes, tile_bytes) in [(8, 4), (12, 3), (128, 64), (64, 64), (6, 1)] {
+                let layout = RowTileLayout {
+                    rows,
+                    row_bytes,
+                    tile_rows,
+                    tile_bytes,
+                };
+                let source = (0..rows * row_bytes)
+                    .map(|i| (i * 37 + 11) as u8)
+                    .collect::<Vec<_>>();
+                let mut bytes = source.clone();
+                layout.pack_in_place(&mut bytes, &mut scratch).unwrap();
+                for row in 0..rows {
+                    for column in 0..row_bytes {
+                        assert_eq!(
+                            bytes[layout.offset(row, column)],
+                            source[row * row_bytes + column]
+                        );
+                    }
+                }
+                let packed = layout.pack(&source).unwrap();
+                assert_eq!(packed.bytes, bytes);
+                assert_eq!(layout.unpack(&packed).unwrap(), source);
+            }
+        }
+    }
+
+    #[test]
+    fn row_tiles_refuse_partial_tiles_and_other_sizes() {
+        let layout = RowTileLayout {
+            rows: 128,
+            row_bytes: 128,
+            tile_rows: 64,
+            tile_bytes: 64,
+        };
+        let mut scratch = Vec::new();
+        for bad in [
+            RowTileLayout { rows: 96, ..layout },
+            RowTileLayout {
+                row_bytes: 96,
+                ..layout
+            },
+            RowTileLayout {
+                tile_bytes: 0,
+                ..layout
+            },
+        ] {
+            let mut bytes = vec![0; bad.rows * bad.row_bytes];
+            assert!(bad.pack_in_place(&mut bytes, &mut scratch).is_err());
+        }
+        assert!(
+            layout
+                .pack_in_place(&mut [0; 128 * 128 - 1], &mut scratch)
+                .is_err()
+        );
+        let packed = layout.pack(&[0; 128 * 128]).unwrap();
+        let other = RowTileLayout {
+            tile_rows: 32,
+            ..layout
+        };
+        assert!(other.unpack(&packed).is_err());
+    }
+
     #[test]
     fn scale_tiles_round_trip() {
         let src: Vec<u8> = (0..128).collect();

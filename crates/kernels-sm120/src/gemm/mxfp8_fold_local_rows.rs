@@ -14,6 +14,8 @@ pub struct Entry {
     /// Folds in flight: 0 keeps the three-slot pair loop (`run`); 3 or more
     /// selects the refilling ring (`run_deep`) with the same arithmetic.
     pub stages: u32,
+    /// XOR-swizzle the deep ring's shared rows (`run_deep` only).
+    pub swizzle: bool,
 }
 impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -29,6 +31,9 @@ impl Entry {
             return Err(Refusal(
                 "local row folds require aligned FP8 groups, F32 output and at most 32 rows",
             ));
+        }
+        if self.swizzle && self.stages == 0 {
+            return Err(Refusal("only the deep local fold ring swizzles"));
         }
         if self.stages != 0
             && (self.stages < 3
@@ -67,8 +72,11 @@ impl Entry {
             format!("{}_local32_n{}_v1", self.base.symbol, self.tile_n)
         } else {
             format!(
-                "{}_local32_n{}_s{}_v1",
-                self.base.symbol, self.tile_n, self.stages
+                "{}_local32_n{}_s{}{}_v1",
+                self.base.symbol,
+                self.tile_n,
+                self.stages,
+                if self.swizzle { "x" } else { "" }
             )
         }
     }
@@ -205,14 +213,15 @@ impl Entry {
             )
         } else {
             format!(
-                "{ns}::run_deep<{},{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
+                "{ns}::run_deep<{},{},{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
                 q.n,
                 q.k,
                 q.groups,
                 q.activation_row_stride,
                 q.activation_group_stride,
                 self.tile_n,
-                self.stages
+                self.stages,
+                self.swizzle
             )
         };
         let mut omit = specs[1].clone();
@@ -294,6 +303,7 @@ mod tests {
                 base: mxfp8_fold::Entry::new(q, "local_fold").unwrap(),
                 tile_n,
                 stages: 0,
+                swizzle: false,
             };
             for rows in [0, 8, 32] {
                 let v = |handle, bytes| View { handle, bytes };
@@ -340,6 +350,7 @@ mod tests {
             base: mxfp8_fold::Entry::new(q, "local_fold").unwrap(),
             tile_n: 64,
             stages: 0,
+            swizzle: false,
         };
         assert!(e.validate().is_err());
         e.tile_n = 32;
@@ -354,14 +365,19 @@ mod tests {
         assert!(
             e.specs()[1]
                 .body
-                .contains("run_deep<8192,1280,1,1280,1280,16,6,false>")
+                .contains("run_deep<8192,1280,1,1280,1280,16,6,false,false>")
         );
+        e.swizzle = true;
+        assert!(e.symbol().ends_with("_local32_n16_s6x_v1"));
+        assert!(e.specs()[2].body.contains(",16,6,true,true>("));
         let spec = cubin_spec("deep", std::slice::from_ref(&e)).unwrap();
         assert_eq!(
             spec.headers,
             ["#include \"gemm/mxfp8_fold_local_deep.cuh\""]
         );
         e.stages = 0;
+        assert!(e.validate().is_err());
+        e.swizzle = false;
         e.tile_n = 32;
         e.base.query.k = 1216;
         assert!(e.validate().is_err());

@@ -575,6 +575,54 @@ fn synchronous_chunked_prefill_fills_the_same_cache_as_verify() {
 }
 
 #[test]
+fn cached_groups_read_no_clock_and_a_cold_row_among_them_reads_ahead() {
+    use super::super::gather::{GatherProbe, ReadAhead, gather_span_v1};
+    // Every clock read is 50 us after the last, so every timed group is slow.
+    #[derive(Default)]
+    struct Probe {
+        reads: AtomicU64,
+        asked: Mutex<Vec<Vec<u32>>>,
+    }
+    impl GatherProbe for Probe {
+        fn now(&self) -> std::time::Duration {
+            std::time::Duration::from_micros(50 * self.reads.fetch_add(1, Ordering::Relaxed))
+        }
+        fn read_ahead(&self, rows: &[u32]) {
+            self.asked.lock().unwrap().push(rows.to_vec());
+        }
+    }
+    let registry = registry(1);
+    let mapping = mapping("read-ahead", &source(100, 97), 14);
+    attach(&registry, vec![(Arc::clone(&mapping), 97)]).unwrap();
+    let cache = &mapping.resident.get().unwrap().cache;
+    let gather = |rows: &[u32]| {
+        let probe = Probe::default();
+        let ahead = ReadAhead::new(&probe).with_resident(mapping.resident_plane(97));
+        let mut out = vec![0xa5; rows.len() * 97];
+        gather_span_v1(mapping.bytes(), 97, rows, 0, &mut out, &ahead);
+        let expected = rows
+            .iter()
+            .flat_map(|&r| mapping.bytes()[r as usize * 97..][..97].to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(out, expected);
+        (probe.reads.into_inner(), probe.asked.into_inner().unwrap())
+    };
+    let rows: Vec<u32> = (0..40).collect();
+    // Cold: the first group is timed from its first row and reads ahead.
+    let (reads, asked) = gather(&rows);
+    assert_eq!((reads, asked), (2, vec![rows[16..].to_vec()]));
+    // Warm: the cache serves every row, so no clock is read.
+    let misses = cache.misses.load(Ordering::Relaxed);
+    assert_eq!(gather(&rows), (0, Vec::new()));
+    assert_eq!(cache.misses.load(Ordering::Relaxed), misses);
+    // One uncached row in the second group times that group from it.
+    let mut mixed = rows.clone();
+    mixed.insert(20, 60);
+    assert_eq!(gather(&mixed), (2, vec![mixed[32..].to_vec()]));
+    assert_eq!(cache.misses.load(Ordering::Relaxed), misses + 1);
+}
+
+#[test]
 fn host_reserve_falls_back_before_allocating() {
     let registry = registry(1);
     let mapping = mapping("reserve", &source(10, 8), 13);

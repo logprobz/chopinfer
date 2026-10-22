@@ -317,11 +317,19 @@ impl Plane {
     /// Copy only the exact requested bytes. A contended shard falls back to
     /// the original mapping. No lock is held while a source page may fault.
     pub(crate) fn copy(&self, table: &[u8], row: u32, within: usize, out: &mut [u8]) {
+        if !self.copy_hit(row, within, out) {
+            self.copy_miss(table, row, within, out);
+        }
+    }
+
+    /// The cached half of [`Self::copy`]: copies a cached row and returns
+    /// true, or copies nothing and returns false.
+    pub(crate) fn copy_hit(&self, row: u32, within: usize, out: &mut [u8]) -> bool {
         let cache = &self.cache;
         let (shard, bucket) = cache.bucket(row);
         let tag = u64::from(row) + 1;
         let bit = 1_u64 << self.index;
-        let (offset, width) = cache.planes[self.index];
+        let offset = cache.planes[self.index].0;
         let mut hit = false;
         if let Ok(mut shard) = cache.shards[shard].try_lock() {
             shard.clock = shard.clock.saturating_add(1);
@@ -342,15 +350,28 @@ impl Plane {
         }
         if hit {
             cache.hits.fetch_add(1, Ordering::Relaxed);
-        } else {
-            cache.misses.fetch_add(1, Ordering::Relaxed);
-            super::fetch::legacy::record(1);
-            let source = row as usize * width + within;
-            out.copy_from_slice(&table[source..source + out.len()]);
-            if within == 0 && out.len() == width {
-                self.store_full_row(row, out);
-            }
+            self.counted();
         }
+        hit
+    }
+
+    /// The uncached half of [`Self::copy`], after [`Self::copy_hit`]
+    /// returned false: copies from the mapping and keeps a whole row.
+    pub(crate) fn copy_miss(&self, table: &[u8], row: u32, within: usize, out: &mut [u8]) {
+        let cache = &self.cache;
+        let width = cache.planes[self.index].1;
+        cache.misses.fetch_add(1, Ordering::Relaxed);
+        super::fetch::legacy::record(1);
+        let source = row as usize * width + within;
+        out.copy_from_slice(&table[source..source + out.len()]);
+        if within == 0 && out.len() == width {
+            self.store_full_row(row, out);
+        }
+        self.counted();
+    }
+
+    fn counted(&self) {
+        let cache = &self.cache;
         if cache.copies.fetch_add(1, Ordering::Relaxed) % 65536 == 65535 {
             cache.report("sample");
         }

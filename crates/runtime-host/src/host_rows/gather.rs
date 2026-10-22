@@ -109,7 +109,9 @@ impl<'a> ReadAhead<'a> {
 /// of the gather. The first rows found slower on average than
 /// `COLD_GROUP / COLD_CHECK_ROWS` each ask for every later row of the gather
 /// to be read ahead, once per gather. Rows count across the gather, not the
-/// span, so chunks of any size are checked.
+/// span, so chunks of any size are checked. With a resident cache, a group
+/// is timed from its first row the cache misses, so a group the cache serves
+/// whole reads no clock: cached rows cannot fault.
 pub(crate) fn gather_span_v1(
     table: &[u8],
     row_bytes: usize,
@@ -118,26 +120,28 @@ pub(crate) fn gather_span_v1(
     out: &mut [u8],
     ahead: &ReadAhead<'_>,
 ) {
+    use std::sync::atomic::Ordering::Relaxed;
     // `rows` names the full gather even when `out` is one upload-slot or
     // worker fragment. Bypassing changes neither ordering nor copied bytes.
     let resident = ahead.resident.filter(|_| use_resident(rows.len()));
     let mut written = 0;
-    let mut group = ahead.probe.now();
+    // Without a resident cache every row is timed, from the span's start.
+    let mut group = (resident.is_none() && !ahead.started.load(Relaxed)).then(|| ahead.probe.now());
     let mut finished: u32 = 0;
     while written < out.len() {
         let position = at + written;
         let (index, within) = (position / row_bytes, position % row_bytes);
         let take = (row_bytes - within).min(out.len() - written);
         let source = rows[index] as usize * row_bytes + within;
-        if let Some(resident) = resident {
-            resident.copy(
-                table,
-                rows[index],
-                within,
-                &mut out[written..written + take],
-            );
-        } else {
-            out[written..written + take].copy_from_slice(&table[source..source + take]);
+        let target = &mut out[written..written + take];
+        if !resident.is_some_and(|resident| resident.copy_hit(rows[index], within, target)) {
+            if group.is_none() && !ahead.started.load(Relaxed) {
+                group = Some(ahead.probe.now());
+            }
+            match resident {
+                Some(resident) => resident.copy_miss(table, rows[index], within, target),
+                None => target.copy_from_slice(&table[source..source + take]),
+            }
         }
         written += take;
         if within + take < row_bytes {
@@ -146,20 +150,19 @@ pub(crate) fn gather_span_v1(
         finished += 1;
         if (index + 1) % COLD_CHECK_ROWS != 0
             || index + 1 == rows.len()
-            || ahead.started.load(std::sync::atomic::Ordering::Relaxed)
+            || ahead.started.load(Relaxed)
         {
             continue;
         }
-        let now = ahead.probe.now();
-        let slow = now.saturating_sub(group) * COLD_CHECK_ROWS as u32 > COLD_GROUP * finished;
-        if slow
-            && !ahead
-                .started
-                .swap(true, std::sync::atomic::Ordering::Relaxed)
-        {
-            ahead.probe.read_ahead(&rows[index + 1..]);
+        if let Some(start) = group {
+            let now = ahead.probe.now();
+            let slow = now.saturating_sub(start) * COLD_CHECK_ROWS as u32 > COLD_GROUP * finished;
+            if slow && !ahead.started.swap(true, Relaxed) {
+                ahead.probe.read_ahead(&rows[index + 1..]);
+            }
+            group = resident.is_none().then_some(now);
         }
-        (group, finished) = (now, 0);
+        finished = 0;
     }
 }
 

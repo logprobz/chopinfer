@@ -6,6 +6,7 @@ use kernel_core::precision::ExecutionPhase;
 use kernels_sm120::moe::chained::{
     absorb, bandwidth,
     floor::{Entry, Stage},
+    strip2,
 };
 use model_deepseek41_contract::moe::Experts;
 
@@ -83,6 +84,22 @@ fn absorbs(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
         )
 }
 
+/// TP4, 250 W, 2026-10-22, captured full MoE graphs (strip2-r1): the
+/// absorbing down small queue with each item covering two adjacent
+/// 64-column strips of one expert and 128-K block, staging its rows and
+/// activations once for both, passed all 80 cases per GPU bitwise (AR C32
+/// and C16, GSM8K and speed workloads), memcheck clean, with no wide down
+/// launch. Against serving it saves 0.47 (GSM8K) and 0.82 ms (speed) per
+/// Decode-32 step and 0.43 and 0.39 ms per Decode-16 step, which also drops
+/// the direct down small and wide queues; 79 of 80 timed layers faster, no
+/// slow sample, A/A within 0.02 ms. Each strip keeps its codes, scales,
+/// chain, K order and partial address, so the finisher is unchanged. The
+/// module is the qualified lab module's bytes. Verify-32 and the drafter
+/// bank are unmeasured.
+fn strips2(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
+    entry.experts() == 384 && phase == ExecutionPhase::Decode && matches!(rows, 16 | 32)
+}
+
 fn prepare(
     entry: &Entry,
     rows: u32,
@@ -126,8 +143,9 @@ fn prepare(
         Stage::DownWide,
         Stage::DownFinish,
     ] {
-        if (rows <= 8 || absorbs(entry, phase, rows))
-            && matches!(s, Stage::GateWide | Stage::DownWide)
+        if ((rows <= 8 || absorbs(entry, phase, rows))
+            && matches!(s, Stage::GateWide | Stage::DownWide))
+            || (strips2(entry, phase, rows) && s == Stage::DownWide)
         {
             continue;
         }
@@ -227,6 +245,11 @@ fn prepare(
             // The small queue's positional ABI and view names.
             spec = absorb::entry(entry, s);
             plan = absorb::plan(entry, s, rows)?;
+        }
+        if stage == Some(Stage::DownSmall) && strips2(entry, phase, rows) {
+            // The absorbing down queue's positional ABI and view names.
+            spec = strip2::entry(entry);
+            plan = strip2::plan(entry, rows)?;
         }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
@@ -439,11 +462,21 @@ mod tests {
                                 (phase, rows),
                                 (ExecutionPhase::Decode, 32) | (ExecutionPhase::Verify, 32)
                             );
+                        let strips = set.count == 384
+                            && phase == ExecutionPhase::Decode
+                            && matches!(rows, 16 | 32)
+                            && point == Point::Down;
                         assert!(!(absorbed && call.launch.symbol.contains("_wide_")));
+                        assert!(!(strips && call.launch.symbol.contains("_wide_")));
                         if call.launch.symbol.contains("_small_") {
                             assert_eq!(
                                 call.launch.symbol.contains("_moe_absorb_"),
-                                absorbed,
+                                absorbed && !strips,
+                                "{phase:?} rows={rows}"
+                            );
+                            assert_eq!(
+                                call.launch.symbol.contains("_moe_strip2_"),
+                                strips,
                                 "{phase:?} rows={rows}"
                             );
                             let resident = if set.count == 384
@@ -465,7 +498,11 @@ mod tests {
                                     && point == Point::Gate
                             );
                             let items = set.count.min(rows * set.top_k)
-                                * if point == Point::Gate { 9 * 40 } else { 80 * 5 };
+                                * match point {
+                                    Point::Gate => 9 * 40,
+                                    _ if strips => 40 * 5,
+                                    _ => 80 * 5,
+                                };
                             assert_eq!(
                                 call.launch.plan.grid,
                                 [items.min(188 * resident), 1, 1],
@@ -474,6 +511,95 @@ mod tests {
                             );
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// At Decode-16 and Decode-32 the backbone's down queues are one
+    /// two-strip launch: the symbol and grid differ from the same-row verify
+    /// bucket's down small launch (absorbing at 32, direct at 16), and its
+    /// operands, block and flags do not. Every other launch is the verify
+    /// bucket's.
+    #[test]
+    fn two_strip_down_queue_replaces_only_the_decode_down_queues() {
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let set = model_deepseek41_contract::moe::expert_sets(&FLASH)
+            .into_iter()
+            .find(|s| s.count == 384)
+            .unwrap();
+        let entry = super::super::moe_direct_kernels::entries(&FLASH)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.experts() == 384)
+            .unwrap();
+        assert_eq!(
+            strip2::entry(&entry).params,
+            bandwidth::entry(&entry, Stage::DownSmall, bandwidth::Loads::Direct).params
+        );
+        let ops = prepare_set(&shape, set).unwrap();
+        let launches = |phase, rows, point| {
+            let (_, _, op) = ops
+                .iter()
+                .find(|(p, n, _)| *p == phase && *n == rows)
+                .unwrap();
+            let workspace = DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1 { raw: 1 },
+                0,
+                op.info.workspace,
+            );
+            op.launch(point, workspace, |_| {
+                Ok(DeviceBufferSpanV1::new(
+                    BundleDeviceBufferHandleV1 { raw: 2 },
+                    0,
+                    1 << 32,
+                ))
+            })
+            .unwrap()
+        };
+        let spans = |launch: &bundle_runtime::pipeline::PreparedLaunch| {
+            launch
+                .arguments
+                .0
+                .iter()
+                .filter_map(|arg| match arg {
+                    Argument::DeviceBuffer(id) => Some(launch.bindings.get(*id).unwrap()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for rows in [16, 32] {
+            let decode = launches(ExecutionPhase::Decode, rows, Point::Down);
+            let verify = launches(ExecutionPhase::Verify, rows, Point::Down);
+            assert_eq!(decode.len(), 1, "rows={rows}");
+            assert_eq!(verify.len(), if rows == 32 { 1 } else { 2 }, "rows={rows}");
+            let (a, b) = (&decode[0].launch, &verify[0].launch);
+            assert_eq!(a.symbol, strip2::symbol(&entry));
+            assert_eq!(
+                b.symbol,
+                if rows == 32 {
+                    absorb::symbol(&entry, Stage::DownSmall)
+                } else {
+                    bandwidth::symbol(&entry, Stage::DownSmall, bandwidth::Loads::Direct)
+                }
+            );
+            assert_eq!(a.plan.grid, strip2::plan(&entry, rows).unwrap().grid);
+            assert_eq!(a.plan.grid, [1504, 1, 1]);
+            assert_eq!(
+                (a.plan.block, a.plan.dynamic_shared_bytes, a.plan.pdl),
+                (b.plan.block, b.plan.dynamic_shared_bytes, b.plan.pdl)
+            );
+            assert_eq!(a.arguments, b.arguments);
+            assert_eq!(spans(a), spans(b));
+            for point in [Point::RouterPrepare, Point::Route, Point::Gate, Point::Sum] {
+                let decode = launches(ExecutionPhase::Decode, rows, point);
+                let verify = launches(ExecutionPhase::Verify, rows, point);
+                assert_eq!(decode.len(), verify.len(), "{point:?} rows={rows}");
+                for (a, b) in decode.iter().zip(&verify) {
+                    assert_eq!(a.launch.symbol, b.launch.symbol, "{point:?} rows={rows}");
+                    assert_eq!(a.launch.plan.grid, b.launch.plan.grid);
+                    assert_eq!(a.launch.arguments, b.launch.arguments);
+                    assert_eq!(spans(&a.launch), spans(&b.launch));
                 }
             }
         }

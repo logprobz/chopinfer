@@ -211,24 +211,8 @@ impl Instance {
     /// Names the one-row decode twins the instance serves, so a served run
     /// shows what it measured.
     fn log_one_row_twins(&self) {
-        use crate::sm120::{ceil_split, query_window};
-        let shape = &self.config.shape;
-        if crate::Kernels::query_window_serves(shape) {
-            self.log(&format!(
-                "{}: one-row decode runs each layer's query RoPE and window write as one launch",
-                query_window::SWITCH
-            ));
-        }
-        if ceil_split::serves(shape.geometry, shape.ranks()) {
-            let widths = ceil_split::SERVED
-                .iter()
-                .map(|(width, input, parts)| format!("w{width} {input:?} over {parts} CTAs"))
-                .collect::<Vec<_>>();
-            self.log(&format!(
-                "{}: one-row dense quantizers split: {}",
-                ceil_split::SWITCH,
-                widths.join(", ")
-            ));
+        for line in crate::Kernels::one_row_twin_lines(&self.config.shape) {
+            self.log(&line);
         }
     }
 

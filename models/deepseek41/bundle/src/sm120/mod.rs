@@ -495,6 +495,30 @@ impl crate::Kernels {
         ceil_split::serves_width(shape.geometry, shape.ranks(), width, input)
     }
 
+    /// The startup lines naming the one-row decode twins `shape` serves,
+    /// so a served run shows what it measured.
+    pub(crate) fn one_row_twin_lines(shape: &crate::shape::Shape) -> Vec<String> {
+        let mut lines = Vec::new();
+        if query_window::serves(shape.geometry, shape.ranks()) {
+            lines.push(format!(
+                "{}: one-row decode runs each layer's query RoPE and window write as one launch",
+                query_window::SWITCH
+            ));
+        }
+        if ceil_split::serves(shape.geometry, shape.ranks()) {
+            let widths = ceil_split::SERVED
+                .iter()
+                .map(|(width, input, parts)| format!("w{width} {input:?} over {parts} CTAs"))
+                .collect::<Vec<_>>();
+            lines.push(format!(
+                "{}: one-row dense quantizers split: {}",
+                ceil_split::SWITCH,
+                widths.join(", ")
+            ));
+        }
+        lines
+    }
+
     /// Select the qualified dense fold query for an exact decode row count.
     pub(crate) fn dense_decode_query(
         query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
@@ -1203,5 +1227,37 @@ mod window_bf16_tests {
                     .unwrap();
             assert!(b.latent_window_stage(&stage, Need::rows(32)).is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+mod one_row_twin_lines {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+
+    use crate::shape::Shape;
+
+    fn lines(ranks: Ranks, served: bool) -> Vec<String> {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        super::query_window::with_served(served, || {
+            super::ceil_split::with_served(served, || crate::Kernels::one_row_twin_lines(&shape))
+        })
+    }
+
+    /// A served run names each twin it serves with these lines, which the
+    /// served pair's job looks for.
+    #[test]
+    fn served_twins_name_themselves_at_startup() {
+        assert_eq!(
+            lines(Ranks::TP4, true),
+            [
+                "CHOPINFER_DEEPSEEK41_QUERY_WINDOW_TWIN: one-row decode runs each layer's query RoPE \
+                 and window write as one launch",
+                "CHOPINFER_DEEPSEEK41_CEIL_SPLIT: one-row dense quantizers split: w8192 Bf16 over 8 \
+                 CTAs, w2048 F32 over 8 CTAs",
+            ]
+        );
+        assert!(lines(Ranks::TP4, false).is_empty());
+        assert!(lines(Ranks::TP2, true).is_empty());
     }
 }

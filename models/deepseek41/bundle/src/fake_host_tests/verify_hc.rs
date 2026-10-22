@@ -61,12 +61,12 @@ use super::*;
 // At 6 rows its 308 tails (77 per rank) change symbol to the 32-warp twin and
 // grid_x 1 to 2 with identical operands; no other line changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xcb6961ea7e70084d)),
-    (6, (8040, 0x5a1a7f44672a098d)),
-    (8, (7572, 0xef78c365d15079c6)),
-    (12, (9496, 0x0bc9889dc6d1706e)),
-    (16, (8532, 0x6930a72ad3b42ecb)),
-    (32, (8064, 0x5d2a932b105f7e9f)),
+    (4, (7880, 0x74213e2192c807be)),
+    (6, (8040, 0xab479619617d88d2)),
+    (8, (7572, 0xeb105d9fa1790b93)),
+    (12, (9496, 0xf4fbfc520a20219f)),
+    (16, (8532, 0x2b622bcd786b272c)),
+    (32, (8064, 0xeac8275f65d0eacd)),
 ];
 
 #[test]

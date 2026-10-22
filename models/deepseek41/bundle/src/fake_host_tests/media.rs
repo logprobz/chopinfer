@@ -408,8 +408,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The 64-expert router renames the router-in-norm module's router resolve
 /// on each TP4 rank, nothing else, and so does its narrow form.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22937, 0x8f6ae38f3ecad3a1)),
-    (Ranks::TP4, (57379, 0xa3799dc9b4709944)),
+    (Ranks::TP2, (22963, 0x2225791f230d7bba)),
+    (Ranks::TP4, (57431, 0xc7cada86d9bb30e6)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

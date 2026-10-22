@@ -19,7 +19,11 @@ use model_deepseek41_contract::{
 };
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument as A, Module, Stream};
 use serde_json::json;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const ROWS: u32 = registration::ROWS;
 /// Flash TP4's query heads on a rank.
@@ -55,6 +59,10 @@ const PROBE_SYMBOLS: &[&str] = &[
 ];
 /// Steps per chained timing graph.
 const CHAIN: usize = 16;
+/// How long one case's work may take before the test stops the process,
+/// and under a sanitizer: a hung case then costs seconds, not the stage.
+const CASE_SECONDS: u64 = 10;
+const SANITIZED_CASE_SECONDS: u64 = 60;
 const ROLES: [&str; 8] = [
     "query",
     "native_q",
@@ -550,13 +558,62 @@ fn probes() -> Cubins {
         &[("probe_sm120", PROBE_SYMBOLS)],
     )
 }
+/// Waits for the stream's work through `done`, or stops the process when
+/// it takes longer than `seconds`: a hung kernel cannot be stopped from the
+/// host, and the process exit tears its context down.
+fn finish(s: &Session, done: &runtime_cuda::Event, seconds: u64, what: &str) -> LabResult<()> {
+    done.record(&s.stream).map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while !done.query().map_err(|e| e.to_string())? {
+        if Instant::now() > deadline {
+            eprintln!("QUERY_WINDOW_WATCHDOG {what} did not finish within {seconds} s");
+            std::process::exit(86);
+        }
+        std::thread::sleep(Duration::from_micros(100));
+    }
+    Ok(())
+}
 /// Every pair at every pattern, eager and two graph replays, at full, zero
-/// and excess live counts; `memcheck` runs a finite case and one with a
-/// non-finite query and KV per pair, eagerly, without timing.
+/// and excess live counts, after one finite eager step of every pair;
+/// `memcheck` runs a finite case and one with a non-finite query and KV per
+/// pair, eagerly, without timing.
 fn matrix(s: &Session, memcheck: bool) -> LabResult<serde_json::Value> {
     let k = load(s)?;
     let (mut bitwise, mut negative) = (0, 0);
     let mut timings = Vec::new();
+    let done = s.context.event().map_err(|e| e.to_string())?;
+    let seconds = if memcheck {
+        SANITIZED_CASE_SECONDS
+    } else {
+        CASE_SECONDS
+    };
+    for (pair, functions) in pairs().iter().zip(&k.functions) {
+        let inputs = Inputs {
+            kv: s.allocate(ROWS as usize * 512 * 4)?,
+            weight: s.allocate(512 * 2)?,
+            table: s.allocate(ROWS as usize * 64 * 4)?,
+            live: s.allocate(4)?,
+            positions: s.allocate(ROWS as usize * 4)?,
+            batches: s.allocate(ROWS as usize * 4)?,
+            last: s.allocate(ROWS as usize * 4)?,
+        };
+        let outputs = [Output::new(s, pair)?, Output::new(s, pair)?];
+        set_inputs(s, "finite", &inputs)?;
+        upload(&inputs.live, &ROWS.to_ne_bytes(), &s.stream)?;
+        for (arm, output) in outputs.iter().enumerate() {
+            output.reset(s, &query_values("finite"), false)?;
+            step(pair, functions, arm, &inputs, output, &s.stream)?;
+        }
+        finish(
+            s,
+            &done,
+            seconds,
+            &format!("{} smoke step", pair.twin.symbol),
+        )?;
+        compare(&outputs[0].read(s)?, &outputs[1].read(s)?)
+            .map_err(|e| format!("{} smoke step: {e}", pair.twin.symbol))?;
+        eprintln!("QUERY_WINDOW_SMOKE {} PASS", pair.twin.symbol);
+    }
     for (pair, functions) in pairs().iter().zip(&k.functions) {
         let inputs = Inputs {
             kv: s.allocate(ROWS as usize * 512 * 4)?,
@@ -603,7 +660,15 @@ fn matrix(s: &Session, memcheck: bool) -> LabResult<serde_json::Value> {
                             step(pair, functions, arm, &inputs, &outputs[arm], &s.stream)?;
                         }
                     }
-                    s.stream.synchronize().map_err(|e| e.to_string())?;
+                    finish(
+                        s,
+                        &done,
+                        seconds,
+                        &format!(
+                            "{} {pattern} live={live_rows} graph={graph}",
+                            pair.twin.symbol
+                        ),
+                    )?;
                     let old = outputs[0].read(s)?;
                     let new = outputs[1].read(s)?;
                     compare(&old, &new).map_err(|e| {
@@ -662,7 +727,12 @@ fn matrix(s: &Session, memcheck: bool) -> LabResult<serde_json::Value> {
         for graph in &graphs {
             graph.launch(&s.stream).map_err(|e| e.to_string())?;
         }
-        s.stream.synchronize().map_err(|e| e.to_string())?;
+        finish(
+            s,
+            &done,
+            seconds,
+            &format!("{} negatives", pair.twin.symbol),
+        )?;
         let expected = outputs[0].read(s)?;
         compare(&expected, &outputs[1].read(s)?)?;
         for role in 0..ROLES.len() {
@@ -692,7 +762,7 @@ fn matrix(s: &Session, memcheck: bool) -> LabResult<serde_json::Value> {
                 chains[arm].launch(stream).map_err(|e| e.to_string())
             })
         })?;
-        s.stream.synchronize().map_err(|e| e.to_string())?;
+        finish(s, &done, seconds, &format!("{} timing", pair.twin.symbol))?;
         compare(&outputs[0].read(s)?, &outputs[1].read(s)?)
             .map_err(|e| format!("{} after timing: {e}", pair.twin.symbol))?;
         let per = |ms: f32| ms * 1000. / CHAIN as f32;

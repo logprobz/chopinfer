@@ -60,13 +60,15 @@ use super::*;
 // Loading the two-CTA HC finish module shifts their resource ids only.
 // At 6 rows its 308 tails (77 per rank) change symbol to the 32-warp twin and
 // grid_x 1 to 2 with identical operands; no other line changes.
+// Loading the two-strip routed down module shifts their resource ids only;
+// verify keeps its down queues at every row count.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x74213e2192c807be)),
-    (6, (8040, 0xab479619617d88d2)),
-    (8, (7572, 0xeb105d9fa1790b93)),
-    (12, (9496, 0xf4fbfc520a20219f)),
-    (16, (8532, 0x2b622bcd786b272c)),
-    (32, (8064, 0xeac8275f65d0eacd)),
+    (4, (7880, 0xe5220b76e871118d)),
+    (6, (8040, 0x0c9732c76299c4cf)),
+    (8, (7572, 0xe23c24a32359a5c0)),
+    (12, (9496, 0x183f8f6aef3ba964)),
+    (16, (8532, 0x796cac7d669848ff)),
+    (32, (8064, 0xbf78904a90e602d9)),
 ];
 
 #[test]

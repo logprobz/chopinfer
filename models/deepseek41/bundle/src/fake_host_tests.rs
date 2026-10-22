@@ -1117,6 +1117,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// renames the same four resolves again, nothing else.
 /// The two-CTA HC finish module adds six resolves and seven releases per
 /// rank; these fixtures launch no Verify-6 tail.
+/// The two-strip routed down module adds two resolves and three releases
+/// per TP4 rank. With its resolves removed, every other line is identical
+/// after typed handle mapping; these two-row decodes launch no two-strip
+/// queue.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1143,12 +1147,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (85599, 0xe9020bf9f1c2e9fc),
+        (85619, 0x9101cab61a74a001),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (83243, 0xedc3c8c4aa42912b),
+        (83263, 0xfed6b527d5028ad3),
     ),
 ];
 
@@ -1300,7 +1304,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// router certificate and the router-in-norm module add one allocation, two
 /// resolves and four releases per rank there too, and no launch. The
 /// 64-expert router renames its resolve there too. The two-CTA HC finish
-/// module adds six resolves and seven releases per rank.
+/// module adds six resolves and seven releases per rank. The two-strip
+/// routed down module adds two resolves and three releases per rank.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1308,7 +1313,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(83879, 0x3b458e6cdfcae787), (81523, 0x2486c7f30474d981)])
+            .zip([(83899, 0x0ca8ee29e4d07b3d), (81543, 0x52559f500ac2a227)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

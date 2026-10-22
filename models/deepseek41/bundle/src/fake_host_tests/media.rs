@@ -407,9 +407,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// TP4 rank; the full media history retains every launch and allocation.
 /// The 64-expert router renames the router-in-norm module's router resolve
 /// on each TP4 rank, nothing else, and so does its narrow form.
+/// The two-strip routed down module adds two resolves and three releases
+/// per TP4 rank and shifts ids only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (22963, 0x2225791f230d7bba)),
-    (Ranks::TP4, (57431, 0xc7cada86d9bb30e6)),
+    (Ranks::TP4, (57451, 0xf7d8986afe8bf2aa)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

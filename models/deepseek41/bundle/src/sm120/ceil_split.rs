@@ -17,7 +17,7 @@ use model_deepseek41_contract::{
 
 pub const FAMILY: &str = "ceil_split";
 
-/// The rows a split twin holds: the one-row decode bucket.
+/// The rows a split twin holds: one decode row.
 pub const ROWS: u32 = 1;
 
 /// The widths and input types the twins quantize.
@@ -129,8 +129,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(specs)
 }
 
-/// The [`SERVED`] twins of `g` at `ranks`, which the one-row decode
-/// bucket's quantizers select (they hold the fewest rows).
+/// The [`SERVED`] twins of `g` at `ranks`. They hold one row, so only a
+/// quantizer prepared for one row selects them; the dense quantizers'
+/// smallest bucket today holds the 32-row decode batch.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     if !serves(g, ranks) {
         return Ok(backend);

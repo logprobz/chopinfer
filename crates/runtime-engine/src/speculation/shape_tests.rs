@@ -1,6 +1,7 @@
-//! Block step shapes priced by their drafting sequences. Replays of
-//! DeepSeek DSpark's served C16 steps at 300 W (lane OSP speed run, three
-//! processes per policy).
+//! Block step shapes priced by their drafting sequences, and trials that
+//! run their own steps before an earlier verdict stops them. Replays of
+//! DeepSeek DSpark's served C16 and C8 steps at 300 W (lane OSP speed run,
+//! three processes per policy) and of a C1 cross-model harness cohort.
 use super::*;
 
 /// A DSpark-like policy at `items` items: K5 blocks, a 32-row verify cap,
@@ -90,4 +91,119 @@ fn fewer_deeper_drafters_win_where_drafting_sequences_cost_more() {
             assert_eq!(plan, drafts(16, 8, 2));
         }
     }
+}
+
+/// C8 under replacement load: a 139-step drafting average had settled just
+/// above AR (485.5 against 480 tok/s) when drafting resumed. Its first step,
+/// with low acceptance, tipped the average below AR, and drafting stayed off
+/// at eight items for the rest of the window although the trial's next steps
+/// beat AR.
+#[test]
+fn a_trial_runs_its_own_steps_before_an_earlier_verdict_stops_it() {
+    let acceptance = verified(0.55);
+    let mut policy = dspark(8, 16_600);
+    let shape = drafts(8, 6, 4);
+    for _ in 0..3 {
+        policy.observe_step(&shape, 0, 34_500);
+    }
+    // Every bucket ran before, so the first step counts.
+    for rows in 9..=32 {
+        policy.warm_shapes.insert((8, rows, DraftShape::default()));
+    }
+    policy.realized.insert(
+        8,
+        Realized {
+            ar: Some(480.0e-6),
+            drafting: Some(485.5e-6),
+            drafting_weight: 1.0,
+            drafting_steps: 139,
+        },
+    );
+    policy.zero_draft[8].disabled = true;
+    // The trial's first step accepted 5 of 24 drafts in 39.3 ms, the next
+    // ones 11 in 34.5 ms.
+    let mut reasons = Vec::new();
+    for step in 0..16 {
+        let plan = policy.plan(&candidates(&acceptance, 8), DraftBudget::new(24, 24));
+        reasons.push(
+            policy.decision().unwrap().record()["reason"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+        let drafted = plan.iter().any(|&count| count > 0);
+        let (accepted, micros) = match (drafted, step) {
+            (false, _) => (0, 16_600),
+            (true, 0) => (5, 39_300),
+            (true, _) => (11, 34_500),
+        };
+        policy.step_accepted = accepted;
+        policy.observe_step(&plan, 0, micros);
+    }
+    println!("C8_STALE {reasons:?} {:?}", policy.realized[&8]);
+    // Every plan drafts: the first under the earlier verdict, the next
+    // seven as the rest of the trial, though the first step tipped that
+    // verdict below AR.
+    assert!(
+        reasons.iter().all(|r| r == "drafting" || r == "trial"),
+        "{reasons:?}"
+    );
+    // The trial's steps lift the same average back above AR.
+    let realized = policy.realized[&8];
+    assert!(
+        realized.holding() && realized.drafting_steps == 139 + 16,
+        "{realized:?}"
+    );
+}
+
+/// A block C1 cohort where drafting wins by about a third (cross-model
+/// harness, diverse target): three probes had lifted a 278-step verdict back
+/// above AR when drafting resumed. The first step paid its catch-up, and
+/// the request's estimate then priced drafting below the trial band. The
+/// verdict, still holding, carries the trial; a trial that dropped it ended
+/// there, and C1 stayed at AR for the rest of the cohort.
+#[test]
+fn a_trial_under_a_verdict_that_holds_drafts_through_a_dip_in_its_estimates() {
+    // AR steps of about 8.7 ms, 115 tok/s.
+    let mut policy = dspark(1, 8_560);
+    for _ in 0..3 {
+        policy.observe_step(&[5], 0, 26_000);
+    }
+    for rows in 2..=6 {
+        policy.warm_shapes.insert((1, rows, DraftShape::default()));
+    }
+    policy.realized.insert(
+        1,
+        Realized {
+            ar: Some(115.0e-6),
+            drafting: Some(147.0e-6),
+            drafting_weight: 1.0,
+            drafting_steps: 278,
+        },
+    );
+    policy.zero_draft[1].disabled = true;
+    // Rejected drafts price drafting below the band, so only the verdict
+    // keeps the plan.
+    let dip = verified(0.01);
+    let mut reasons = Vec::new();
+    for step in 0..8 {
+        let plan = policy.plan(&candidates(&dip, 1), DraftBudget::new(5, 31));
+        reasons.push(
+            policy.decision().unwrap().record()["reason"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+        let drafted = plan[0] > 0;
+        let (accepted, micros) = match (drafted, step) {
+            (false, _) => (0, 8_560),
+            (true, 0) => (1, 30_000),
+            (true, _) => (3, 26_000),
+        };
+        policy.step_accepted = accepted;
+        policy.observe_step(&plan, 0, micros);
+    }
+    println!("C1_HOLDING {reasons:?} {:?}", policy.realized[&1]);
+    assert!(reasons.iter().all(|r| r == "drafting"), "{reasons:?}");
+    assert!(policy.realized[&1].holding(), "{:?}", policy.realized[&1]);
 }

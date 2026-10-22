@@ -142,6 +142,9 @@ struct ZeroDraftState {
     /// drafting was off keeps drafting for `REALIZED_STEPS` steady steps of
     /// its own, then its realized verdict decides whether drafting holds.
     trial: u32,
+    /// The trial started where an earlier drafting run had decided the
+    /// realized verdict, which then cannot stop it before its own steps.
+    after_verdict: bool,
     /// Plans without drafting before a trial may start.
     trial_wait: u16,
     /// The wait that the next lost trial sets.
@@ -167,6 +170,7 @@ impl Default for ZeroDraftState {
             rechecks: 0,
             recheck_micros: 0,
             trial: 0,
+            after_verdict: false,
             trial_wait: 0,
             trial_interval: TRIAL_INTERVAL,
             reopened: None,
@@ -178,6 +182,7 @@ impl ZeroDraftState {
     /// Ends a trial whose realized drafting held.
     fn trial_held(&mut self) {
         self.trial = 0;
+        self.after_verdict = false;
         self.trial_wait = 0;
         self.trial_interval = TRIAL_INTERVAL;
         self.reopened = None;
@@ -187,6 +192,7 @@ impl ZeroDraftState {
     /// waits, by twice as long as after the previous loss.
     fn trial_lost(&mut self) {
         self.trial = 0;
+        self.after_verdict = false;
         self.trial_wait = self.trial_interval;
         self.trial_interval = self
             .trial_interval
@@ -1597,6 +1603,10 @@ impl SpeculationPolicy {
             .zero_draft
             .get(items)
             .is_some_and(|state| state.trial > 0);
+        let after_verdict = self
+            .zero_draft
+            .get(items)
+            .is_some_and(|state| state.trial > 0 && state.after_verdict);
         // Drafting off, no trial pending and none waiting: a plan priced
         // within the trial band of AR may start one.
         let band_trial = may_probe
@@ -1606,8 +1616,16 @@ impl SpeculationPolicy {
                 .get(items)
                 .is_some_and(|state| state.disabled && state.trial == 0 && state.trial_wait == 0);
         // Whatever the estimates say, drafting stays off where its realized
-        // throughput is below AR's; only probes measure it again.
-        if !probe && self.realized.get(&items).is_some_and(Realized::losing) {
+        // throughput is below AR's; only probes measure it again. A trial
+        // after an earlier run's verdict runs its own steps first: one slow
+        // first step can tip a verdict near AR below it. At DeepSeek C8
+        // under replacement load it tipped a 139-step average just above AR
+        // (485.5 against 480 tok/s), and drafting stayed off for the window
+        // though the trial's next steps beat AR. Its steps then move the
+        // same average, so a verdict that still holds keeps carrying it
+        // through dips in the estimates; dropping that verdict at the start
+        // would end a C1 trial at its first dip.
+        if !probe && !after_verdict && self.realized.get(&items).is_some_and(Realized::losing) {
             if let Some(state) = self.zero_draft.get_mut(items) {
                 state.disabled = true;
                 state.remaining = ZERO_DRAFT_RECHECK;
@@ -1784,6 +1802,7 @@ impl SpeculationPolicy {
                 }
                 if starts {
                     state.trial = REALIZED_STEPS;
+                    state.after_verdict = self.realized.get(&items).is_some_and(Realized::decided);
                 }
                 // An average of probes alone would outweigh the trial's
                 // steps: at DeepSeek C16 seven losing probes outvoted eight

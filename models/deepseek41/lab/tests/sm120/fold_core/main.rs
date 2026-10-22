@@ -17,6 +17,9 @@ use runtime_cuda::{DeviceBuffer, Function, Module, Stream};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
 mod arena;
+mod cluster;
+#[path = "../../../sm120/fold_cluster.rs"]
+mod cluster_family;
 mod data;
 #[path = "../../../sm120/fold_deep.rs"]
 mod deep_family;
@@ -286,6 +289,8 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
             Some(local_family::CUBIN)
         } else if call.symbol.starts_with("chop_fold_deep_") {
             Some(deep_family::CUBIN)
+        } else if call.symbol.starts_with("chop_fold_cluster_") {
+            Some(cluster_family::CUBIN)
         } else if call.symbol.starts_with("chop_fold_core_") {
             Some(family::DECODE)
         } else if call.symbol.contains("_matrix_") {
@@ -597,6 +602,7 @@ fn cpu_catalog() {
         .into_iter()
         .chain(local_family::cubins())
         .chain(deep_family::cubins())
+        .chain(cluster_family::cubins())
     {
         for e in spec.entries {
             assert!(symbols.insert(e.symbol));

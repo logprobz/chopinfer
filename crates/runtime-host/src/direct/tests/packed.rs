@@ -1,6 +1,6 @@
 use super::*;
 use kernel_core::contract::{DType, SwigluColumns, WeightFormat};
-use kernel_core::precision::layout::PackingPlan;
+use kernel_core::precision::layout::{PackingPlan, ROW_TILES_64X128};
 use kernel_core::precision::{DecodeOrder, NibbleOrder, WeightLayout};
 use kernel_core::weight_transform::{PackedMatrixSource, PackedOperand, PackedSection};
 
@@ -644,6 +644,135 @@ fn encoded(
     (plans, arenas)
 }
 
+/// Two 256 x 256 MXFP4 matrices, codes and finite scales, as
+/// `(name, bytes)` in checkpoint order.
+pub(super) fn bank_checkpoint() -> (Temp, Vec<(String, Vec<u8>)>) {
+    let (rows, k) = (256_u64, 256_u64);
+    let mut tensors = Vec::new();
+    for matrix in 0..2_u8 {
+        tensors.push((
+            format!("m{matrix}.codes"),
+            bytes((rows * k / 2) as usize, 7 + matrix),
+        ));
+        tensors.push((
+            format!("m{matrix}.scales"),
+            (0..rows * k / 32)
+                .map(|i| 120 + ((i * 5 + u64::from(matrix)) % 7) as u8)
+                .collect(),
+        ));
+    }
+    let shapes = [vec![rows, k / 2], vec![rows, k / 32]];
+    let described = tensors
+        .iter()
+        .enumerate()
+        .map(|(i, (name, data))| (name.as_str(), "U8", shapes[i % 2].clone(), data.clone()))
+        .collect::<Vec<_>>();
+    (checkpoint(&described), tensors)
+}
+
+/// Each rank's plan of [`bank_checkpoint`]: its 64-row share of both
+/// matrices, scales then codes, one record per matrix and section in
+/// `layout` (an expert bank's packed pieces), and each rank's arena: the
+/// row-major share, in 64-row by 128-K tiles when `layout` stores them.
+pub(super) fn bank_plans(
+    role: &str,
+    layout: &str,
+    tensors: &[(String, Vec<u8>)],
+) -> (Vec<WeightPlanV1>, Vec<Vec<u8>>) {
+    use kernel_core::transform::{RowTileLayout, Transform};
+    let (rows, k, share) = (256_u64, 256_u64, 64_u64);
+    let mut plans = Vec::new();
+    let mut arenas = Vec::new();
+    for rank in 0..4_u64 {
+        let mut records = Vec::new();
+        let mut arena = Vec::new();
+        for section in [PackedSection::LocalScales, PackedSection::Codes] {
+            for matrix in 0..2_usize {
+                let operand = PackedOperand {
+                    plan: PackingPlan {
+                        layout: WeightLayout {
+                            id: layout.into(),
+                            version: 1,
+                        },
+                        format: WeightFormat::Mxfp4,
+                        experts: 1,
+                        projections: 1,
+                        rows: share as u32,
+                        k: k as u32,
+                        columns: SwigluColumns::ConcatenatedHalves,
+                        local_scale_dtype: Some(DType::Ue8M0),
+                    },
+                    section,
+                    decode_order: DecodeOrder::ExactScaledOperand,
+                    matrices: vec![PackedMatrixSource {
+                        expert: 0,
+                        projection: 0,
+                        format: WeightFormat::Mxfp4,
+                        rows,
+                        k,
+                        row_origin: 0,
+                        k_origin: 0,
+                        nibble_order: NibbleOrder::EvenLow,
+                        codes: 0,
+                        local: Some(1),
+                        local_dtype: Some(DType::Ue8M0),
+                        global: None,
+                        source_expert: 0,
+                        source_experts: 1,
+                        rows_kept: vec![rank * share..(rank + 1) * share],
+                        k_kept: 0..k,
+                    }],
+                    local_encoding: None,
+                };
+                let (source, row_bytes, tile_bytes) = match section {
+                    PackedSection::Codes => (&tensors[matrix * 2].1, k / 2, 64),
+                    _ => (&tensors[matrix * 2 + 1].1, k / 32, 4),
+                };
+                let start = (rank * share * row_bytes) as usize;
+                let mut produced = source[start..start + (share * row_bytes) as usize].to_vec();
+                if layout == ROW_TILES_64X128 {
+                    let tiles = RowTileLayout {
+                        rows: share as usize,
+                        row_bytes: row_bytes as usize,
+                        tile_rows: 64,
+                        tile_bytes,
+                    };
+                    produced = tiles.pack(&produced).unwrap().bytes;
+                }
+                let transform = WeightTransform::PackedOperand(Box::new(operand));
+                records.push(WeightRecordV1 {
+                    arena_offset: arena.len() as u64,
+                    byte_length: produced.len() as u64,
+                    transform: transform.id(),
+                    params: transform.encode_params().unwrap(),
+                    sources: ["codes", "scales"]
+                        .map(|suffix| RecordSourceV1 {
+                            file: 0,
+                            tensor: format!("m{matrix}.{suffix}"),
+                        })
+                        .to_vec(),
+                    axis: None,
+                    ranges: vec![],
+                    stored_shape: vec![],
+                });
+                arena.extend(produced);
+            }
+        }
+        plans.push(WeightPlanV1 {
+            ranks: 4,
+            rank: rank as u32,
+            image_role: role.into(),
+            alignment: 64,
+            arena_bytes: arena.len() as u64,
+            views: vec![],
+            components: vec![],
+            records,
+        });
+        arenas.push(arena);
+    }
+    (plans, arenas)
+}
+
 /// Encoded scale records load their encoding through the shared packing,
 /// whichever section record produces it first, and decode to the raw arena.
 #[test]
@@ -764,4 +893,28 @@ fn census_items_of_one_scale_tensor_share_one_read() {
     let borrowed: Vec<&CensusItemV1> = items.iter().collect();
     let measured = measure_census_v1(&checkpoint, &borrowed).unwrap();
     assert_eq!(measured.iter().map(|(_, read)| read).sum::<u64>(), 2 * 2048);
+}
+
+/// A bank planned in row tiles loads each rank's row-major share in its
+/// tiles, through the reused, independent-scale and shared paths alike, and
+/// plans a new identity for every rank.
+#[test]
+fn row_tiled_banks_load_their_row_major_shares_in_tiles() {
+    let (root, tensors) = bank_checkpoint();
+    let (rows, row_major) = bank_plans("r", "row-major-groups", &tensors);
+    let (tiles, tiled) = bank_plans("r", ROW_TILES_64X128, &tensors);
+    assert_ne!(row_major, tiled);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for (plans, expected) in [(&rows, &row_major), (&tiles, &tiled)] {
+        for (threads, budget) in [(1, 0), (2, 128 << 10)] {
+            let image = sharing_image(&checkpoint, plans, threads, budget);
+            assert_eq!(waves(&image, 4096), *expected);
+            assert_eq!(waves(&image, 1000), *expected);
+        }
+    }
+    let rows = sharing_image(&checkpoint, &rows, 1, 0);
+    let tiles = sharing_image(&checkpoint, &tiles, 1, 0);
+    for rank in 0..4 {
+        assert_ne!(rows.identity(rank), tiles.identity(rank), "rank {rank}");
+    }
 }

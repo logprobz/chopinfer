@@ -286,3 +286,48 @@ fn a_missing_keeper_fails_only_a_start_that_requires_it() {
     let arenas = upload(&preferred).unwrap();
     assert_eq!(preferred.rank_arena_v1(arenas[1]).0, expected[1]);
 }
+
+/// A keeper that holds a bank as row-major groups lends nothing to a server
+/// that plans the same checkpoint's bank in row tiles: the record
+/// parameters, and so every rank's identity, differ. The server refuses to
+/// start when it requires the keeper's images, and otherwise loads its own
+/// tiled bytes.
+#[test]
+fn a_keeper_of_row_major_banks_lends_nothing_to_a_row_tiled_plan() {
+    use super::packed::{bank_checkpoint, bank_plans};
+    let (root, tensors) = bank_checkpoint();
+    let (rows, row_major) = bank_plans(ROLE, "row-major-groups", &tensors);
+    let (tiles, tiled) = bank_plans(
+        ROLE,
+        kernel_core::precision::layout::ROW_TILES_64X128,
+        &tensors,
+    );
+    let directory = KeeperDirectory::new("row-tiles");
+    let keeper = keep(&root.0, &rows, &directory.0, |_| {});
+    let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = Arc::new(sharing_image(&opened, &tiles, 2, 128 << 10));
+    let required = host(
+        Arc::clone(&image),
+        ArenaSourceV1::Borrow {
+            directory: directory.0.clone(),
+            policy: KeeperPolicyV1::Require,
+        },
+    );
+    assert_eq!(upload(&required), Err(BundleStatusV1::HostError));
+    drop(required);
+    let preferred = host(
+        image,
+        ArenaSourceV1::Borrow {
+            directory: directory.0.clone(),
+            policy: KeeperPolicyV1::Prefer,
+        },
+    );
+    let arenas = upload(&preferred).unwrap();
+    for (rank, arena) in arenas.iter().enumerate() {
+        let (bytes, lent, _) = preferred.rank_arena_v1(*arena);
+        assert!(!lent, "rank {rank}");
+        assert_eq!(bytes, tiled[rank], "rank {rank}");
+        assert_ne!(bytes, row_major[rank], "rank {rank}");
+    }
+    assert_eq!(keeper.join(), Ok(KeeperExitV1::Released));
+}

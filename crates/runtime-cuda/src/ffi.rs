@@ -298,6 +298,29 @@ unsafe extern "C" {
         bytes: usize,
     ) -> raw::CUresult;
     fn runtime_cuda_context_synchronize() -> raw::CUresult;
+    fn runtime_cuda_vmm_granularity(ordinal: c_int, granularity: *mut usize) -> raw::CUresult;
+    fn runtime_cuda_vmm_create(
+        ordinal: c_int,
+        bytes: usize,
+        handle: *mut u64,
+        address: *mut DevicePointer,
+    ) -> raw::CUresult;
+    fn runtime_cuda_vmm_export(handle: u64, fd: *mut c_int) -> raw::CUresult;
+    fn runtime_cuda_vmm_import(
+        fd: c_int,
+        bytes: usize,
+        handle: *mut u64,
+        address: *mut DevicePointer,
+    ) -> raw::CUresult;
+    fn runtime_cuda_vmm_set_access(
+        address: DevicePointer,
+        bytes: usize,
+        ordinals: *const c_int,
+        count: usize,
+        read_only: c_int,
+    ) -> raw::CUresult;
+    fn runtime_cuda_vmm_release(handle: u64, address: DevicePointer, bytes: usize)
+    -> raw::CUresult;
     fn runtime_cuda_launch_kernel_pdl(
         function: FunctionHandle,
         grid_x: c_uint,
@@ -886,6 +909,127 @@ impl MappedHostAllocation {
 impl Drop for MappedHostAllocation {
     fn drop(&mut self) {
         let _ = self.free();
+    }
+}
+
+/// The minimum size step of a lendable allocation on `ordinal`.
+pub fn lendable_granularity(ordinal: c_int) -> (c_int, usize) {
+    let mut granularity = 0;
+    // SAFETY-REVIEWED: the shim writes the output only on success.
+    let code = result_code(unsafe { runtime_cuda_vmm_granularity(ordinal, &mut granularity) });
+    (code, granularity)
+}
+
+/// Device memory mapped into this process that another process can share:
+/// created exportable here, or imported from another process's export. It is
+/// unmapped and its handle released once; the memory itself lives until
+/// every process holding a handle or mapping to it has released them.
+pub struct LentAllocation {
+    handle: u64,
+    address: DevicePointer,
+    bytes: usize,
+    released: std::cell::Cell<bool>,
+}
+
+impl LentAllocation {
+    /// An exportable allocation of `bytes` (a multiple of the granularity) on
+    /// `ordinal`, mapped read-write for that device.
+    pub fn create(ordinal: c_int, bytes: usize) -> (c_int, Option<Self>) {
+        let (mut handle, mut address) = (0, 0);
+        // SAFETY-REVIEWED: the shim validates the length, writes both outputs
+        // only on success, and undoes every step of a failed creation.
+        let code = result_code(unsafe {
+            runtime_cuda_vmm_create(ordinal, bytes, &mut handle, &mut address)
+        });
+        (
+            code,
+            (code == CUDA_SUCCESS).then(|| Self::new(handle, address, bytes)),
+        )
+    }
+
+    /// Maps the allocation of `bytes` another process exported as `fd`. The
+    /// caller keeps `fd`. No device may access the mapping until
+    /// [`Self::set_access`].
+    pub fn import(fd: c_int, bytes: usize) -> (c_int, Option<Self>) {
+        let (mut handle, mut address) = (0, 0);
+        // SAFETY-REVIEWED: the shim validates the descriptor and length, writes
+        // both outputs only on success, and undoes a failed import.
+        let code =
+            result_code(unsafe { runtime_cuda_vmm_import(fd, bytes, &mut handle, &mut address) });
+        (
+            code,
+            (code == CUDA_SUCCESS).then(|| Self::new(handle, address, bytes)),
+        )
+    }
+
+    const fn new(handle: u64, address: DevicePointer, bytes: usize) -> Self {
+        Self {
+            handle,
+            address,
+            bytes,
+            released: std::cell::Cell::new(false),
+        }
+    }
+
+    /// A new POSIX file descriptor naming this allocation, which the caller
+    /// owns.
+    pub fn export(&self) -> (c_int, Option<std::os::fd::OwnedFd>) {
+        use std::os::fd::FromRawFd;
+        let mut fd = -1;
+        // SAFETY-REVIEWED: the handle is live until release, and the shim
+        // writes the descriptor only on success.
+        let code = result_code(unsafe { runtime_cuda_vmm_export(self.handle, &mut fd) });
+        if code != CUDA_SUCCESS || fd < 0 {
+            return (code, None);
+        }
+        // SAFETY-REVIEWED: the driver returned a new descriptor that nothing
+        // else owns.
+        (code, Some(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) }))
+    }
+
+    /// Grants the devices in `ordinals` read, or read-write, access.
+    pub fn set_access(&self, ordinals: &[c_int], read_only: bool) -> c_int {
+        // SAFETY-REVIEWED: the mapping is live until release, and the shim
+        // bounds the device count.
+        result_code(unsafe {
+            runtime_cuda_vmm_set_access(
+                self.address,
+                self.bytes,
+                ordinals.as_ptr(),
+                ordinals.len(),
+                c_int::from(read_only),
+            )
+        })
+    }
+
+    #[must_use]
+    pub const fn address(&self) -> DevicePointer {
+        self.address
+    }
+
+    #[must_use]
+    pub const fn byte_len(&self) -> usize {
+        self.bytes
+    }
+
+    /// Unmaps the allocation and releases this process's handle once; the
+    /// caller has synchronized every reader in this process.
+    pub fn release(&self) -> c_int {
+        if self.released.get() {
+            return CUDA_SUCCESS;
+        }
+        // SAFETY-REVIEWED: the handle and mapping came from create or import
+        // and are released once.
+        let code =
+            result_code(unsafe { runtime_cuda_vmm_release(self.handle, self.address, self.bytes) });
+        self.released.set(true);
+        code
+    }
+}
+
+impl Drop for LentAllocation {
+    fn drop(&mut self) {
+        let _ = self.release();
     }
 }
 

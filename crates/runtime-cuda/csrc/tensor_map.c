@@ -472,6 +472,128 @@ CUresult runtime_cuda_event_elapsed(float* milliseconds, CUevent start, CUevent 
     return cuEventElapsedTime(milliseconds, start, end);
 }
 
+static CUmemAllocationProp runtime_cuda_vmm_prop(int ordinal) {
+  CUmemAllocationProp prop;
+  memset(&prop, 0, sizeof prop);
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = ordinal;
+  return prop;
+}
+
+CUresult runtime_cuda_vmm_granularity(int ordinal, size_t* granularity) {
+  if (granularity == NULL) return CUDA_ERROR_INVALID_VALUE;
+  CUmemAllocationProp prop = runtime_cuda_vmm_prop(ordinal);
+  return cuMemGetAllocationGranularity(granularity, &prop,
+                                       CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+}
+
+/* Reserves an address range for `bytes` and maps `handle` there; on failure
+   frees the range and leaves the handle to the caller. */
+static CUresult runtime_cuda_vmm_map(CUmemGenericAllocationHandle handle,
+                                     size_t bytes, CUdeviceptr* address) {
+  CUdeviceptr reserved = 0;
+  CUresult result = cuMemAddressReserve(&reserved, bytes, 0, 0, 0);
+  if (result != CUDA_SUCCESS) return result;
+  result = cuMemMap(reserved, bytes, 0, handle, 0);
+  if (result != CUDA_SUCCESS) {
+    (void)cuMemAddressFree(reserved, bytes);
+    return result;
+  }
+  *address = reserved;
+  return CUDA_SUCCESS;
+}
+
+CUresult runtime_cuda_vmm_create(int ordinal, size_t bytes, uint64_t* handle,
+                                 CUdeviceptr* address) {
+  if (handle == NULL || address == NULL || bytes == 0) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  CUmemAllocationProp prop = runtime_cuda_vmm_prop(ordinal);
+  CUmemGenericAllocationHandle created = 0;
+  CUresult result = cuMemCreate(&created, bytes, &prop, 0);
+  if (result != CUDA_SUCCESS) return result;
+  CUdeviceptr mapped = 0;
+  result = runtime_cuda_vmm_map(created, bytes, &mapped);
+  if (result == CUDA_SUCCESS) {
+    result = runtime_cuda_vmm_set_access(mapped, bytes, &ordinal, 1, 0);
+    if (result != CUDA_SUCCESS) {
+      (void)cuMemUnmap(mapped, bytes);
+      (void)cuMemAddressFree(mapped, bytes);
+    }
+  }
+  if (result != CUDA_SUCCESS) {
+    (void)cuMemRelease(created);
+    return result;
+  }
+  *handle = created;
+  *address = mapped;
+  return CUDA_SUCCESS;
+}
+
+CUresult runtime_cuda_vmm_export(uint64_t handle, int* fd) {
+  if (fd == NULL) return CUDA_ERROR_INVALID_VALUE;
+  int exported = -1;
+  CUresult result = cuMemExportToShareableHandle(
+      &exported, (CUmemGenericAllocationHandle)handle,
+      CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0);
+  if (result == CUDA_SUCCESS) *fd = exported;
+  return result;
+}
+
+CUresult runtime_cuda_vmm_import(int fd, size_t bytes, uint64_t* handle,
+                                 CUdeviceptr* address) {
+  if (handle == NULL || address == NULL || bytes == 0 || fd < 0) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  CUmemGenericAllocationHandle imported = 0;
+  CUresult result = cuMemImportFromShareableHandle(
+      &imported, (void*)(uintptr_t)fd, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR);
+  if (result != CUDA_SUCCESS) return result;
+  CUdeviceptr mapped = 0;
+  result = runtime_cuda_vmm_map(imported, bytes, &mapped);
+  if (result != CUDA_SUCCESS) {
+    (void)cuMemRelease(imported);
+    return result;
+  }
+  *handle = imported;
+  *address = mapped;
+  return CUDA_SUCCESS;
+}
+
+CUresult runtime_cuda_vmm_set_access(CUdeviceptr address, size_t bytes,
+                                     const int* ordinals, size_t count,
+                                     int read_only) {
+  enum { MAX_ACCESS = 16 };
+  if (ordinals == NULL || count == 0 || count > MAX_ACCESS) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  CUmemAccessDesc access[MAX_ACCESS];
+  memset(access, 0, sizeof access);
+  for (size_t i = 0; i < count; ++i) {
+    access[i].location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    access[i].location.id = ordinals[i];
+    access[i].flags = read_only ? CU_MEM_ACCESS_FLAGS_PROT_READ
+                                : CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  }
+  return cuMemSetAccess(address, bytes, access, count);
+}
+
+CUresult runtime_cuda_vmm_release(uint64_t handle, CUdeviceptr address,
+                                  size_t bytes) {
+  CUresult first = CUDA_SUCCESS;
+  if (address != 0) {
+    CUresult result = cuMemUnmap(address, bytes);
+    if (result != CUDA_SUCCESS) first = result;
+    result = cuMemAddressFree(address, bytes);
+    if (result != CUDA_SUCCESS && first == CUDA_SUCCESS) first = result;
+  }
+  CUresult result = cuMemRelease((CUmemGenericAllocationHandle)handle);
+  if (result != CUDA_SUCCESS && first == CUDA_SUCCESS) first = result;
+  return first;
+}
+
 /* Observe free and total device memory in the current context. An observation
    describes one instant and is not an allocation guarantee. */
 CUresult runtime_cuda_memory_info(size_t* free_bytes, size_t* total_bytes) {

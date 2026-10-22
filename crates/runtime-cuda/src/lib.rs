@@ -763,6 +763,7 @@ impl MemoryPool {
             allocation: Rc::new(()),
             allocation_state: Rc::new(Cell::new(0)),
             mapped_host: None,
+            lent: None,
         })
     }
 }
@@ -779,6 +780,9 @@ pub struct DeviceBuffer {
     allocation_state: Rc<Cell<u8>>,
     /// Page-locked host bytes behind `pointer`, for a mapped host allocation.
     mapped_host: Option<Rc<ffi::MappedHostAllocation>>,
+    /// Device memory another process can share, behind `pointer`, for a
+    /// lendable or imported allocation.
+    lent: Option<Rc<ffi::LentAllocation>>,
 }
 
 fn checked_host_range(bytes: usize, offset: usize, requested: usize) -> Result<(), CudaError> {
@@ -1162,6 +1166,7 @@ impl DeviceBuffer {
             allocation: Rc::new(()),
             allocation_state: Rc::new(Cell::new(0)),
             mapped_host: Some(Rc::new(allocation)),
+            lent: None,
         })
     }
 
@@ -1169,6 +1174,103 @@ impl DeviceBuffer {
     #[must_use]
     pub const fn is_mapped_host(&self) -> bool {
         self.mapped_host.is_some()
+    }
+
+    /// The size step of a lendable allocation in `context`'s device.
+    pub fn lendable_granularity(context: &Context) -> Result<usize, CudaError> {
+        let (code, granularity) = ffi::lendable_granularity(context.device_ordinal());
+        checked("cuMemGetAllocationGranularity", code)?;
+        if granularity == 0 {
+            return Err(CudaError::InvalidLaunch);
+        }
+        Ok(granularity)
+    }
+
+    /// Device memory of `stream`'s context that another process can map:
+    /// `bytes` usable, the mapping rounded up to the granularity, and
+    /// read-write for this device only. Unlike a pool allocation it exists
+    /// once this returns.
+    pub fn allocate_lendable(stream: &Stream, bytes: usize) -> Result<Self, CudaError> {
+        if bytes == 0 {
+            return Err(CudaError::BufferSize {
+                buffer_bytes: 0,
+                requested_bytes: 0,
+            });
+        }
+        let context = Context {
+            inner: Rc::clone(&stream.inner.context),
+        };
+        let granularity = Self::lendable_granularity(&context)?;
+        let mapped = bytes
+            .checked_next_multiple_of(granularity)
+            .ok_or(CudaError::DevicePointerOverflow)?;
+        set_current_inner(&stream.inner.context)?;
+        let (code, allocation) = ffi::LentAllocation::create(context.device_ordinal(), mapped);
+        checked("cuMemCreate (exportable)", code)?;
+        Self::from_lent(stream, bytes, allocation.ok_or(CudaError::InvalidLaunch)?)
+    }
+
+    /// Maps device memory another process lent as `fd` (an allocation of
+    /// `mapped_bytes`, of which the first `bytes` are used) into `stream`'s
+    /// context, and grants this device and `readers` read access, or
+    /// read-write access unless `read_only`. The caller keeps `fd`.
+    pub fn import_lent(
+        stream: &Stream,
+        fd: std::os::fd::BorrowedFd<'_>,
+        mapped_bytes: usize,
+        bytes: usize,
+        readers: &[i32],
+        read_only: bool,
+    ) -> Result<Self, CudaError> {
+        use std::os::fd::AsRawFd;
+        if bytes == 0 || bytes > mapped_bytes {
+            return Err(CudaError::BufferSize {
+                buffer_bytes: mapped_bytes,
+                requested_bytes: bytes,
+            });
+        }
+        set_current_inner(&stream.inner.context)?;
+        let (code, allocation) = ffi::LentAllocation::import(fd.as_raw_fd(), mapped_bytes);
+        checked("cuMemImportFromShareableHandle", code)?;
+        let allocation = allocation.ok_or(CudaError::InvalidLaunch)?;
+        let ordinal = stream.inner.context.device.ordinal;
+        let mut devices = vec![ordinal];
+        devices.extend(readers.iter().copied().filter(|&reader| reader != ordinal));
+        checked("cuMemSetAccess", allocation.set_access(&devices, read_only))?;
+        Self::from_lent(stream, bytes, allocation)
+    }
+
+    fn from_lent(
+        stream: &Stream,
+        bytes: usize,
+        allocation: ffi::LentAllocation,
+    ) -> Result<Self, CudaError> {
+        Ok(Self {
+            pointer: allocation.address(),
+            bytes,
+            stream: Rc::clone(&stream.inner),
+            allocation: Rc::new(()),
+            allocation_state: Rc::new(Cell::new(0)),
+            mapped_host: None,
+            lent: Some(Rc::new(allocation)),
+        })
+    }
+
+    /// The size of the mapping behind a lendable or imported allocation.
+    #[must_use]
+    pub fn lent_byte_len(&self) -> Option<usize> {
+        self.lent.as_deref().map(ffi::LentAllocation::byte_len)
+    }
+
+    /// A new POSIX file descriptor that lets another process map this
+    /// lendable allocation; the caller owns it.
+    pub fn export_lent(&self) -> Result<std::os::fd::OwnedFd, CudaError> {
+        self.require_live()?;
+        let lent = self.lent.as_ref().ok_or(CudaError::InvalidLaunch)?;
+        set_current_inner(&self.stream.context)?;
+        let (code, fd) = lent.export();
+        checked("cuMemExportToShareableHandle", code)?;
+        fd.ok_or(CudaError::InvalidLaunch)
     }
 
     /// Lends the host bytes of a mapped host allocation no clone shares yet,
@@ -1579,6 +1681,13 @@ impl DeviceBuffer {
             self.allocation_state.set(2);
             return Ok(());
         }
+        if let Some(lent) = &self.lent {
+            // Kernels on any stream may still read the mapping.
+            checked("cuCtxSynchronize", ffi::context_synchronize())?;
+            self.allocation_state.set(2);
+            checked("cuMemUnmap and cuMemRelease", lent.release())?;
+            return Ok(());
+        }
         if self.allocation_state.get() == 0 {
             checked(
                 "cuMemFreeAsync",
@@ -1671,6 +1780,26 @@ impl Drop for DeviceBuffer {
                     std::mem::forget(mapped);
                 }
             }
+            return;
+        }
+        if let Some(lent) = self.lent.take() {
+            if Rc::strong_count(&self.allocation) == 1 && self.allocation_state.get() == 0 {
+                // Kernels in any stream of this context may still read the
+                // mapping, so it is unmapped only behind a fence that held.
+                let fenced = ffi::context_set_current(self.stream.context.handle)
+                    == ffi::CUDA_SUCCESS
+                    && ffi::context_synchronize() == ffi::CUDA_SUCCESS;
+                if !fenced {
+                    eprintln!(
+                        "runtime-cuda: could not fence a lent allocation of {} bytes; \
+                         leaking its mapping rather than unmapping memory the device may still read",
+                        self.bytes
+                    );
+                    std::mem::forget(lent);
+                }
+            }
+            // Otherwise a clone still holds the mapping, and the last owner
+            // releases it.
             return;
         }
         if Rc::strong_count(&self.allocation) == 1 && self.allocation_state.get() == 0 {
@@ -2315,6 +2444,76 @@ mod tests {
 
     #[cfg(feature = "fake-driver-tests")]
     #[test]
+    fn lent_memory_is_shared_through_its_descriptor_and_released_by_its_last_owner() {
+        use std::os::fd::AsFd;
+        ffi::fake_driver_reset();
+        let driver = Driver::initialize().unwrap();
+        let context = driver.retain_primary_context(0).unwrap();
+        let stream = context.stream().unwrap();
+        assert_eq!(
+            DeviceBuffer::lendable_granularity(&context).unwrap(),
+            2 << 20
+        );
+        assert!(DeviceBuffer::allocate_lendable(&stream, 0).is_err());
+        let lent = DeviceBuffer::allocate_lendable(&stream, 3 << 20).unwrap();
+        assert_eq!(lent.byte_len(), 3 << 20);
+        assert_eq!(lent.lent_byte_len(), Some(4 << 20));
+        let bytes = (0..3 << 20)
+            .map(|i: usize| (i * 7 % 251) as u8)
+            .collect::<Vec<_>>();
+        lent.copy_from_bytes(&bytes, &stream).unwrap();
+
+        let fd = lent.export_lent().unwrap();
+        assert!(matches!(
+            DeviceBuffer::import_lent(&stream, fd.as_fd(), 4 << 20, 5 << 20, &[1], true),
+            Err(CudaError::BufferSize { .. })
+        ));
+        assert!(
+            DeviceBuffer::import_lent(&stream, fd.as_fd(), 2 << 20, 2 << 20, &[1], true).is_err()
+        );
+        let imported =
+            DeviceBuffer::import_lent(&stream, fd.as_fd(), 4 << 20, 3 << 20, &[0, 1], true)
+                .unwrap();
+        drop(fd);
+        assert_ne!(
+            imported.device_address_at(0, 1).unwrap(),
+            lent.device_address_at(0, 1).unwrap()
+        );
+        assert_eq!(imported.lent_byte_len(), Some(4 << 20));
+        let mut read = vec![0; 3 << 20];
+        imported.copy_to_bytes(&mut read, &stream).unwrap();
+        assert_eq!(read, bytes);
+        lent.copy_from_bytes_at(5, &[0xa5; 3], &stream).unwrap();
+        imported.copy_to_bytes(&mut read, &stream).unwrap();
+        assert_eq!(read[4..9], [bytes[4], 0xa5, 0xa5, 0xa5, bytes[8]]);
+
+        let pool = context
+            .default_memory_pool()
+            .unwrap()
+            .allocate(&stream, 64)
+            .unwrap();
+        assert!(pool.export_lent().is_err());
+        assert_eq!(pool.lent_byte_len(), None);
+        pool.release().unwrap();
+
+        let clone = imported.clone();
+        assert!(matches!(
+            imported.release(),
+            Err(CudaError::ResourceShared(_))
+        ));
+        drop(clone);
+        imported.release().unwrap();
+        assert!(imported.release().is_err());
+        assert!(imported.copy_to_bytes(&mut read, &stream).is_err());
+        // The owner's mapping outlives the importer's.
+        lent.copy_to_bytes(&mut read, &stream).unwrap();
+        assert_eq!(read[5], 0xa5);
+        lent.release().unwrap();
+        assert!(lent.export_lent().is_err());
+    }
+
+    #[cfg(feature = "fake-driver-tests")]
+    #[test]
     fn module_release_checks_function_owners_and_retains_failed_unloads() {
         ffi::fake_driver_reset();
         let context = live_fake_context(0, 0x100);
@@ -2815,6 +3014,7 @@ mod tests {
             allocation: Rc::new(()),
             allocation_state: Rc::new(Cell::new(0)),
             mapped_host: None,
+            lent: None,
         };
 
         ffi::fake_driver_reset();
@@ -2869,6 +3069,7 @@ mod tests {
             allocation: Rc::new(()),
             allocation_state: Rc::new(Cell::new(0)),
             mapped_host: None,
+            lent: None,
         };
         (Context { inner: context }, buffer)
     }

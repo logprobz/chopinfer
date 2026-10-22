@@ -54,3 +54,21 @@ binding, allowlist, wrapper, and their hashes remain unchanged. Full bindgen
 regeneration was unavailable for this addition because the pinned bindgen and
 libclang packages were absent. The normal provenance check and C compilation
 both passed; this is not a claim that regeneration ran.
+
+The lendable device memory addition uses the same C-helper boundary in
+`csrc/tensor_map.c`. `runtime_cuda_vmm_granularity`, `runtime_cuda_vmm_create`,
+`runtime_cuda_vmm_export`, `runtime_cuda_vmm_import`,
+`runtime_cuda_vmm_set_access` and `runtime_cuda_vmm_release` call
+`cuMemGetAllocationGranularity`, `cuMemCreate`, `cuMemAddressReserve`,
+`cuMemMap`, `cuMemSetAccess`, `cuMemExportToShareableHandle`,
+`cuMemImportFromShareableHandle`, `cuMemUnmap`, `cuMemAddressFree` and
+`cuMemRelease` with POSIX file descriptor handles. The helper declarations and
+definitions compile against the same pinned header.
+`cuda_host_abi_fake_driver_test.c` checks the call order, allocation
+properties, access flags, and the cleanup of every partial step on each
+failure with fake driver functions. The no-device stub backs the helpers with
+host memory so the Rust fake-driver tests can share bytes across mappings. The
+generated raw binding, allowlist, wrapper, and their hashes remain unchanged.
+Full bindgen regeneration was unavailable for this addition for the same
+reason as the event timing addition. The normal provenance check and C
+compilation both passed; this is not a claim that regeneration ran.

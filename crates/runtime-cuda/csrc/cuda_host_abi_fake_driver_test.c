@@ -1066,6 +1066,258 @@ static void test_ranked_tensor_map_contract(void) {
   bad = tiled_descriptor(2); bad.oob_fill = 1; refuse_tensor_map(bad, 0x9000, 65536);
 }
 
+/* A fake of the virtual memory management calls the lending helpers make,
+   recording each call in order. `vmm_fail` names the call to refuse. */
+static char vmm_calls[64][32];
+static size_t vmm_call_count;
+static const char* vmm_fail;
+static CUmemAllocationProp vmm_created_prop;
+static size_t vmm_created_bytes;
+static size_t vmm_reserved_bytes;
+static CUmemGenericAllocationHandle vmm_mapped_handle;
+static size_t vmm_mapped_offset;
+static CUmemAccessDesc vmm_access[16];
+static size_t vmm_access_count;
+static CUmemAllocationHandleType vmm_handle_type;
+static void* vmm_imported_from;
+static CUmemGenericAllocationHandle vmm_released[8];
+static size_t vmm_released_count;
+
+static CUresult vmm_call(const char* name) {
+  if (vmm_call_count < 64) {
+    strncpy(vmm_calls[vmm_call_count], name, sizeof vmm_calls[0] - 1);
+    ++vmm_call_count;
+  }
+  return vmm_fail != NULL && strcmp(vmm_fail, name) == 0 ? CUDA_ERROR_OUT_OF_MEMORY : CUDA_SUCCESS;
+}
+
+static void vmm_reset(const char* fail) {
+  memset(vmm_calls, 0, sizeof vmm_calls);
+  vmm_call_count = 0;
+  vmm_fail = fail;
+  vmm_access_count = 0;
+  vmm_released_count = 0;
+}
+
+static void vmm_expect(const char* const* names, size_t count) {
+  if (vmm_call_count != count) abort();
+  for (size_t i = 0; i < count; ++i) {
+    if (strcmp(vmm_calls[i], names[i]) != 0) abort();
+  }
+}
+
+CUresult CUDAAPI cuMemGetAllocationGranularity(size_t* granularity, const CUmemAllocationProp* prop,
+                                               CUmemAllocationGranularity_flags option) {
+  CUresult result = vmm_call("granularity");
+  vmm_created_prop = *prop;
+  if (option != CU_MEM_ALLOC_GRANULARITY_MINIMUM) abort();
+  if (result == CUDA_SUCCESS) *granularity = 2u << 20;
+  return result;
+}
+
+CUresult CUDAAPI cuMemCreate(CUmemGenericAllocationHandle* handle, size_t size,
+                             const CUmemAllocationProp* prop, unsigned long long flags) {
+  CUresult result = vmm_call("create");
+  if (flags != 0) abort();
+  vmm_created_prop = *prop;
+  vmm_created_bytes = size;
+  if (result == CUDA_SUCCESS) *handle = 0x51;
+  return result;
+}
+
+CUresult CUDAAPI cuMemAddressReserve(CUdeviceptr* ptr, size_t size, size_t alignment, CUdeviceptr addr,
+                                     unsigned long long flags) {
+  CUresult result = vmm_call("reserve");
+  if (alignment != 0 || addr != 0 || flags != 0) abort();
+  vmm_reserved_bytes = size;
+  if (result == CUDA_SUCCESS) *ptr = 0x7f0000000000ull;
+  return result;
+}
+
+CUresult CUDAAPI cuMemMap(CUdeviceptr ptr, size_t size, size_t offset, CUmemGenericAllocationHandle handle,
+                          unsigned long long flags) {
+  CUresult result = vmm_call("map");
+  if (ptr != 0x7f0000000000ull || size != vmm_reserved_bytes || flags != 0) abort();
+  vmm_mapped_handle = handle;
+  vmm_mapped_offset = offset;
+  return result;
+}
+
+CUresult CUDAAPI cuMemSetAccess(CUdeviceptr ptr, size_t size, const CUmemAccessDesc* desc, size_t count) {
+  CUresult result = vmm_call("access");
+  if (ptr != 0x7f0000000000ull || size != vmm_reserved_bytes || count > 16) abort();
+  memcpy(vmm_access, desc, count * sizeof *desc);
+  vmm_access_count = count;
+  return result;
+}
+
+CUresult CUDAAPI cuMemExportToShareableHandle(void* shareable, CUmemGenericAllocationHandle handle,
+                                              CUmemAllocationHandleType type, unsigned long long flags) {
+  CUresult result = vmm_call("export");
+  if (handle != 0x51 || flags != 0) abort();
+  vmm_handle_type = type;
+  if (result == CUDA_SUCCESS) *(int*)shareable = 41;
+  return result;
+}
+
+CUresult CUDAAPI cuMemImportFromShareableHandle(CUmemGenericAllocationHandle* handle, void* os_handle,
+                                                CUmemAllocationHandleType type) {
+  CUresult result = vmm_call("import");
+  vmm_handle_type = type;
+  vmm_imported_from = os_handle;
+  if (result == CUDA_SUCCESS) *handle = 0x52;
+  return result;
+}
+
+CUresult CUDAAPI cuMemUnmap(CUdeviceptr ptr, size_t size) {
+  CUresult result = vmm_call("unmap");
+  if (ptr != 0x7f0000000000ull || size != vmm_reserved_bytes) abort();
+  return result;
+}
+
+CUresult CUDAAPI cuMemAddressFree(CUdeviceptr ptr, size_t size) {
+  CUresult result = vmm_call("free");
+  if (ptr != 0x7f0000000000ull || size != vmm_reserved_bytes) abort();
+  return result;
+}
+
+CUresult CUDAAPI cuMemRelease(CUmemGenericAllocationHandle handle) {
+  CUresult result = vmm_call("release");
+  if (vmm_released_count < 8) vmm_released[vmm_released_count++] = handle;
+  return result;
+}
+
+static void test_vmm_lending_helpers(void) {
+  const size_t bytes = 6u << 20;
+  size_t granularity = 0;
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_granularity(3, &granularity) != CUDA_SUCCESS || granularity != (2u << 20)) abort();
+  if (vmm_created_prop.type != CU_MEM_ALLOCATION_TYPE_PINNED ||
+      vmm_created_prop.requestedHandleTypes != CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR ||
+      vmm_created_prop.location.type != CU_MEM_LOCATION_TYPE_DEVICE || vmm_created_prop.location.id != 3) {
+    abort();
+  }
+  if (runtime_cuda_vmm_granularity(3, NULL) != CUDA_ERROR_INVALID_VALUE) abort();
+
+  /* Create: an exportable allocation on the ordinal, mapped and writable by it. */
+  uint64_t handle = 0;
+  CUdeviceptr address = 0;
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_create(2, bytes, &handle, &address) != CUDA_SUCCESS) abort();
+  {
+    const char* expected[] = {"create", "reserve", "map", "access"};
+    vmm_expect(expected, 4);
+  }
+  if (handle != 0x51 || address != 0x7f0000000000ull || vmm_created_bytes != bytes ||
+      vmm_reserved_bytes != bytes || vmm_mapped_handle != 0x51 || vmm_mapped_offset != 0) {
+    abort();
+  }
+  if (vmm_created_prop.location.id != 2 ||
+      vmm_created_prop.requestedHandleTypes != CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    abort();
+  }
+  if (vmm_access_count != 1 || vmm_access[0].location.type != CU_MEM_LOCATION_TYPE_DEVICE ||
+      vmm_access[0].location.id != 2 || vmm_access[0].flags != CU_MEM_ACCESS_FLAGS_PROT_READWRITE) {
+    abort();
+  }
+  /* Every failure leaves nothing behind and the outputs untouched. */
+  {
+    const char* fail[] = {"create", "reserve", "map", "access"};
+    const char* after_create[] = {"create"};
+    const char* after_reserve[] = {"create", "reserve", "release"};
+    const char* after_map[] = {"create", "reserve", "map", "free", "release"};
+    const char* after_access[] = {"create", "reserve", "map", "access", "unmap", "free", "release"};
+    const char* const* sequences[] = {after_create, after_reserve, after_map, after_access};
+    const size_t lengths[] = {1, 3, 5, 7};
+    for (size_t i = 0; i < 4; ++i) {
+      handle = 7;
+      address = 9;
+      vmm_reset(fail[i]);
+      if (runtime_cuda_vmm_create(2, bytes, &handle, &address) != CUDA_ERROR_OUT_OF_MEMORY) abort();
+      vmm_expect(sequences[i], lengths[i]);
+      if (handle != 7 || address != 9) abort();
+      if (i > 0 && (vmm_released_count != 1 || vmm_released[0] != 0x51)) abort();
+    }
+  }
+  if (runtime_cuda_vmm_create(2, 0, &handle, &address) != CUDA_ERROR_INVALID_VALUE) abort();
+
+  /* Export hands out a POSIX file descriptor. */
+  int fd = -1;
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_export(0x51, &fd) != CUDA_SUCCESS || fd != 41 ||
+      vmm_handle_type != CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    abort();
+  }
+  if (runtime_cuda_vmm_export(0x51, NULL) != CUDA_ERROR_INVALID_VALUE) abort();
+
+  /* Import maps the descriptor's allocation and grants no access yet. */
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_import(41, bytes, &handle, &address) != CUDA_SUCCESS) abort();
+  {
+    const char* expected[] = {"import", "reserve", "map"};
+    vmm_expect(expected, 3);
+  }
+  if (handle != 0x52 || address != 0x7f0000000000ull || vmm_imported_from != (void*)(uintptr_t)41 ||
+      vmm_handle_type != CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR || vmm_mapped_handle != 0x52) {
+    abort();
+  }
+  {
+    const char* fail[] = {"import", "reserve", "map"};
+    const char* after_import[] = {"import"};
+    const char* after_reserve[] = {"import", "reserve", "release"};
+    const char* after_map[] = {"import", "reserve", "map", "free", "release"};
+    const char* const* sequences[] = {after_import, after_reserve, after_map};
+    const size_t lengths[] = {1, 3, 5};
+    for (size_t i = 0; i < 3; ++i) {
+      handle = 7;
+      address = 9;
+      vmm_reset(fail[i]);
+      if (runtime_cuda_vmm_import(41, bytes, &handle, &address) != CUDA_ERROR_OUT_OF_MEMORY) abort();
+      vmm_expect(sequences[i], lengths[i]);
+      if (handle != 7 || address != 9) abort();
+      if (i > 0 && (vmm_released_count != 1 || vmm_released[0] != 0x52)) abort();
+    }
+  }
+  if (runtime_cuda_vmm_import(-1, bytes, &handle, &address) != CUDA_ERROR_INVALID_VALUE) abort();
+
+  /* Access: read-only or read-write for every listed device. */
+  const int ordinals[] = {1, 0, 3};
+  vmm_reset(NULL);
+  vmm_reserved_bytes = bytes;
+  if (runtime_cuda_vmm_set_access(0x7f0000000000ull, bytes, ordinals, 3, 1) != CUDA_SUCCESS) abort();
+  if (vmm_access_count != 3) abort();
+  for (size_t i = 0; i < 3; ++i) {
+    if (vmm_access[i].location.type != CU_MEM_LOCATION_TYPE_DEVICE || vmm_access[i].location.id != ordinals[i] ||
+        vmm_access[i].flags != CU_MEM_ACCESS_FLAGS_PROT_READ) {
+      abort();
+    }
+  }
+  if (runtime_cuda_vmm_set_access(0x7f0000000000ull, bytes, ordinals, 0, 1) != CUDA_ERROR_INVALID_VALUE) abort();
+  if (runtime_cuda_vmm_set_access(0x7f0000000000ull, bytes, ordinals, 17, 1) != CUDA_ERROR_INVALID_VALUE) abort();
+  if (runtime_cuda_vmm_set_access(0x7f0000000000ull, bytes, NULL, 1, 1) != CUDA_ERROR_INVALID_VALUE) abort();
+
+  /* Release unmaps, frees the range and releases the handle, reporting the
+     first failure but still attempting the rest. */
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_release(0x52, 0x7f0000000000ull, bytes) != CUDA_SUCCESS) abort();
+  {
+    const char* expected[] = {"unmap", "free", "release"};
+    vmm_expect(expected, 3);
+  }
+  vmm_reset("unmap");
+  if (runtime_cuda_vmm_release(0x52, 0x7f0000000000ull, bytes) != CUDA_ERROR_OUT_OF_MEMORY) abort();
+  {
+    const char* expected[] = {"unmap", "free", "release"};
+    vmm_expect(expected, 3);
+  }
+  vmm_reset(NULL);
+  if (runtime_cuda_vmm_release(0x52, 0, bytes) != CUDA_SUCCESS) abort();
+  {
+    const char* expected[] = {"release"};
+    vmm_expect(expected, 1);
+  }
+}
+
 int main(void) {
   void* pinned = NULL;
   if (runtime_cuda_host_alloc(&pinned, 128) != CUDA_SUCCESS || pinned == NULL) abort();
@@ -1098,6 +1350,7 @@ int main(void) {
   test_ranked_tensor_map_contract();
   test_mixed_width_parameters_reach_the_driver_intact();
   test_cluster_launch_attributes_reach_the_driver();
+  test_vmm_lending_helpers();
   return 0;
 }
 

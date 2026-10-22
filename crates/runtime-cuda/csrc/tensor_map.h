@@ -144,6 +144,34 @@ CUresult runtime_cuda_launch_kernel_cooperative(
 
 CUresult runtime_cuda_event_elapsed(float* milliseconds, CUevent start, CUevent end);
 
+/* Exportable device memory (virtual memory management), for one process to
+   lend a loaded image to another. A handle is the driver's
+   CUmemGenericAllocationHandle; an allocation lives until every handle to it
+   is released and every mapping of it is unmapped, in any process.
+
+   The minimum granularity of an exportable allocation on `ordinal`. */
+CUresult runtime_cuda_vmm_granularity(int ordinal, size_t* granularity);
+/* Creates an exportable (POSIX file descriptor) allocation of `bytes`, a
+   multiple of the granularity, on `ordinal`, maps it at a new address and
+   grants `ordinal` read-write access. On failure nothing is left behind. */
+CUresult runtime_cuda_vmm_create(int ordinal, size_t bytes, uint64_t* handle,
+                                 CUdeviceptr* address);
+/* A new POSIX file descriptor for `handle`, owned by the caller. */
+CUresult runtime_cuda_vmm_export(uint64_t handle, int* fd);
+/* Imports the allocation of `bytes` behind `fd` (which the caller keeps and
+   closes) and maps it at a new address, with no access granted yet. On
+   failure nothing is left behind. */
+CUresult runtime_cuda_vmm_import(int fd, size_t bytes, uint64_t* handle,
+                                 CUdeviceptr* address);
+/* Grants each of `count` devices in `ordinals` read access to the mapping,
+   or read-write access unless `read_only`. */
+CUresult runtime_cuda_vmm_set_access(CUdeviceptr address, size_t bytes,
+                                     const int* ordinals, size_t count,
+                                     int read_only);
+/* Unmaps and frees `address` (when nonzero) and releases `handle`. */
+CUresult runtime_cuda_vmm_release(uint64_t handle, CUdeviceptr address,
+                                  size_t bytes);
+
 CUresult runtime_cuda_memory_info(size_t* free_bytes, size_t* total_bytes);
 
 CUresult runtime_cuda_device_uuid(unsigned char* bytes, int ordinal);

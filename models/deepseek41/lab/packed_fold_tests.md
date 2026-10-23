@@ -69,3 +69,24 @@ run instead of skipping remaining symbols. Its nominal upload estimate is
 about 36 GB before paired-bank and negative-control overhead; allocation,
 host packing and readback can dominate. No runtime estimate is measured
 without an assigned GPU.
+
+## Port
+
+The affected conformance cases use `kernel_harness::kit::cases::mxfp8_fold::packed_case`.
+The existing `case` still binds the same row-major bytes, and both constructors
+capture the same row-major oracle patterns and retain the same poison, PDL,
+live-count and invariance checks.
+
+Bundle comparisons use `Sm120::with_packed_fold_weights`. Stream and direct
+comparisons bind their planned packed banks under distinct role handles over
+one allocation and explicitly zero state. Their permutation control still
+runs the old prepare kernel. Compact/core comparisons pack only bundle arms.
+Historical main/plain arms retain their original symbols and weight bindings;
+a CPU guard checks those bindings and unchanged compute plans. Generic
+prefill baselines register matrix and staged-scale entries as the bundle does.
+Shared-expert MoE side chains pack all three fold banks.
+
+The CPU tests check the catalog declarations, the dry runs of every ported
+comparison, the conformance cases' oracle patterns and the historical arms'
+row-major bindings. GPU parity, the moved-strip controls and the ported
+comparisons run only on an assigned GPU.

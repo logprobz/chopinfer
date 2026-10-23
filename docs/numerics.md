@@ -213,6 +213,17 @@ bits, even within the bound, follows these steps in order
 
 Only then do the timings count.
 
+### Lossless weight encodings
+
+A weight stored in a smaller encoding must decode to the exact bytes of its
+raw section, so its consumers' arithmetic does not change. The host packs
+the raw section, validates it as before, then encodes it. An encoding admits
+every byte value (UE8M0 253 and 254 stay admitted). Its CPU oracle decodes
+the bytes back, and a device decoder must match that oracle bit for bit.
+Evidence for an encoded bank is therefore bitwise: the decoder's kernel-lab
+tests against the CPU oracle, and a serving A/B between the encoded and raw
+plans (`CHOPINFER_WEIGHT_CENSUS=0`) under its bitwise gate.
+
 ## Row status
 
 Kernels that can meet invalid data report it per row instead of trapping:

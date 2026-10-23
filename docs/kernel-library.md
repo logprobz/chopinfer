@@ -258,6 +258,21 @@ sum and rounded all-reduce. Sharing those policies would change bits.
 Keep phase/bucket policy and shared-expert placement model-owned; see
 [numerics](numerics.md#batch-shape) before changing their order.
 
+### Encoded expert scale banks
+
+A weight plan may store a routed expert bank's one-byte local scales as
+`scale-row-offset-v1`: per row, a base byte and 1-, 2- or 4-bit offsets,
+then the exceptions as `(index << 8) | value` records. Each bank is an
+offset table followed by one encoded block per matrix, and its view's
+layout is `scale-row-offset-v1.w{width}`. `kernel_core::precision::scale_offset`
+holds the encoder and the CPU oracle. `kernels_sm120::moe::scale_expand`
+decodes the matrices of the experts with routes into a raw bank in scratch,
+and the consumers bind that raw bank unchanged. The launch uses PDL and
+waits for its predecessor before it reads or writes. A consumer that loads
+weight scales before its own `griddepcontrol.wait` must keep binding raw
+banks: in DeepSeek, that is the one-row floor kernel, which serves only the
+drafter's banks.
+
 ## Ownership and source changes
 
 `kernel-build-report.json` beside the cubins records the transitive

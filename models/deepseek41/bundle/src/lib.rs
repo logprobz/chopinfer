@@ -44,8 +44,11 @@ pub(crate) fn serves(cubin: &str, shape: &shape::Shape) -> bool {
 // Direct checkpoint loading: each rank's text image and the replicated
 // encoder image planned from the checkpoint's headers
 // (`model_deepseek41_contract::weight_plan`, `encoder_plan`), the encoder's
-// column permutation as the bundle's own transform.
+// column permutation as the bundle's own transform. The census names the
+// routed expert scale banks the host measures before planning; a plan with
+// its counts stores them encoded, and the experts read their expansion.
 runtime_bundle_abi::export_weight_plan_v1!(model_deepseek41_contract::weight_plan::plan);
+runtime_bundle_abi::export_weight_census_v1!(model_deepseek41_contract::weight_plan::census);
 runtime_bundle_abi::export_weight_transform_v1!(model_deepseek41_contract::encoder_plan::transform);
 
 // The chat frontend: DeepSeek V4.1 Flash's chat format, over this package's

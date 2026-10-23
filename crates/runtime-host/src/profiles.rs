@@ -108,6 +108,10 @@ pub(crate) struct Speculation {
     /// form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depths: Option<String>,
+    /// The verify widths `balanced` mode lands on, in
+    /// `--speculation-widths` form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widths: Option<String>,
 }
 
 fn error(message: impl Into<String>) -> HostCommandErrorV1 {
@@ -226,6 +230,14 @@ impl Profile {
                 "profile speculation depths must be valid, and only balanced mode takes them",
             ));
         }
+        if self.speculation.widths.as_deref().is_some_and(|widths| {
+            self.speculation.mode != "balanced"
+                || runtime_engine::VerifyWidths::parse(widths).is_err()
+        }) {
+            return Err(error(
+                "profile speculation widths must be valid, and only balanced mode takes them",
+            ));
+        }
         if self
             .context_parallel_size
             .is_some_and(|size| size == 0 || self.tensor_parallel % size != 0)
@@ -317,6 +329,9 @@ impl Profile {
             if let Some(depths) = &self.speculation.depths {
                 args.extend(["--speculation-depths".into(), depths.clone()]);
             }
+            if let Some(widths) = &self.speculation.widths {
+                args.extend(["--speculation-widths".into(), widths.clone()]);
+            }
         }
         args
     }
@@ -358,8 +373,8 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// flag replaces the default, `--speculative-tokens 0` also drops the
 /// default speculation mode, an explicit mode other than `table` or zero
 /// speculative tokens the default speculation costs, an explicit mode other
-/// than `balanced` or zero speculative tokens the default depth schedule, a
-/// non-TBT `--prefill-budget` the default TBT target. Duplicate explicit
+/// than `balanced` or zero speculative tokens the default depth schedule and
+/// verify widths, a non-TBT `--prefill-budget` the default TBT target. Duplicate explicit
 /// flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
@@ -373,7 +388,7 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
         || explicit.iter().any(|(flag, values)| {
             flag == "--speculation" && values.first().is_some_and(|v| v != "table")
         });
-    let replace_depths = disable_speculation
+    let replace_balanced = disable_speculation
         || explicit.iter().any(|(flag, values)| {
             flag == "--speculation" && values.first().is_some_and(|v| v != "balanced")
         });
@@ -399,7 +414,8 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             || option_replaced
             || (disable_speculation && flag == "--speculation")
             || (replace_costs && flag == "--speculation-costs")
-            || (replace_depths && flag == "--speculation-depths")
+            || (replace_balanced
+                && (flag == "--speculation-depths" || flag == "--speculation-widths"))
             || (disable_tbt && flag == "--decode-tbt-target-ms")
         {
             continue;
@@ -1024,6 +1040,57 @@ mod tests {
             };
             let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{mode} {depths} accepted");
+            };
+            let refusal = refusal.to_string();
+            assert!(
+                refusal.contains("only balanced mode takes them"),
+                "{refusal}"
+            );
+        }
+    }
+
+    /// A balanced profile passes its verify widths; explicit widths replace
+    /// them, an explicit other mode drops them, and widths outside balanced
+    /// mode or out of order are refused.
+    #[test]
+    fn balanced_profiles_pass_their_widths_unless_the_mode_changes() {
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "balanced".into();
+        entry["speculation"]["widths"] = "6,8,16,32".into();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry.clone(),
+        };
+        let resolve = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
+            let resolved =
+                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                crate::HostCommandV1::Serve {
+                    speculation_mode,
+                    verify_widths,
+                    ..
+                } => (speculation_mode, verify_widths.widths().to_vec()),
+                _ => panic!("serve"),
+            }
+        };
+        assert_eq!(resolve(&[]).1, [6, 8, 16, 32]);
+        assert_eq!(resolve(&["--speculation", "balanced"]).1, [6, 8, 16, 32]);
+        assert_eq!(resolve(&["--speculation-widths", "8,32"]).1, [8, 32]);
+        assert_eq!(
+            resolve(&["--speculation", "adaptive"]),
+            (runtime_engine::SpeculationMode::Adaptive, Vec::new())
+        );
+        for (mode, widths) in [("adaptive", "6,8"), ("balanced", "16,8")] {
+            let mut bad = entry.clone();
+            bad["speculation"]["mode"] = mode.into();
+            bad["speculation"]["widths"] = widths.into();
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: bad,
+            };
+            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+                panic!("{mode} {widths} accepted");
             };
             let refusal = refusal.to_string();
             assert!(

@@ -38,7 +38,7 @@ use runtime_bundle_abi::{
 use runtime_engine::{
     DraftCostModel, DraftDepths, DraftSource, Engine, EngineConfig, EngineMetrics, ExecutorError,
     ModelBatchItem, ModelExecutor, ModelTransaction, PromptLookupConfig, RequestId,
-    SpeculationConfig, SpeculationMode, StepCosts,
+    SpeculationConfig, SpeculationMode, StepCosts, VerifyWidths,
 };
 use runtime_kv::{KvCachePrecision, KvGeometry, KvMetrics, KvPool, PreparedAppendBatch};
 use runtime_model_api::ModelVocabulary;
@@ -149,6 +149,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
+  [--speculation-widths ROWS,...]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -838,6 +839,8 @@ pub enum HostCommandV1 {
         speculative_rows: Option<u16>,
         speculation_mode: SpeculationMode,
         draft_cost_model: DraftCostModel,
+        /// `--speculation-widths`: the verify widths balanced plans land on.
+        verify_widths: VerifyWidths,
         allowed_local_media_path: Option<PathBuf>,
         remote_media: Box<runtime_media::remote::RemoteMediaPolicy>,
         /// Qualification-only teacher forcing; see `reference_forcing`.
@@ -1326,6 +1329,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation",
             "--speculation-costs",
             "--speculation-depths",
+            "--speculation-widths",
             "--draft-cost",
             "--prefix-cache",
             "--verify-warmup",
@@ -1537,6 +1541,13 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation-depths requires --speculation balanced, which only it uses",
         ));
     }
+    if parsed.speculation_widths.is_some()
+        && !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)))
+    {
+        return Err(usage_error(
+            "--speculation-widths requires --speculation balanced, which only it uses",
+        ));
+    }
     let mut http_options = parsed.http_options.clone();
     http_options.api_key = resolve_api_key_v1(
         http_options.api_key,
@@ -1639,6 +1650,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             (mode, _, _) => mode.unwrap_or(SpeculationMode::Adaptive),
         },
         draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
+        verify_widths: parsed.speculation_widths.unwrap_or_default(),
         allowed_local_media_path: parsed.allowed_local_media_path.clone(),
         remote_media: Box::new(parsed.remote_media.clone()),
         debug_reference_tokens: parsed.debug_reference_tokens.clone(),
@@ -1783,6 +1795,7 @@ fn log_resolved_serve_v1(command: &HostCommandV1) {
         speculative_tokens,
         speculation_mode,
         draft_cost_model,
+        verify_widths,
         http_options,
         qualified_max_sequences,
         profile_drafter,
@@ -1799,7 +1812,7 @@ fn log_resolved_serve_v1(command: &HostCommandV1) {
             http_options.served_model_names
         );
         eprintln!(
-            "resolved serve: bundle={selection:?} topology={topology:?} devices={devices:?} listen={listen} settings={serving:?} speculative_tokens={speculative_tokens} speculation={mode} draft_cost={draft_cost_model:?} profile_drafter={profile_drafter:?}"
+            "resolved serve: bundle={selection:?} topology={topology:?} devices={devices:?} listen={listen} settings={serving:?} speculative_tokens={speculative_tokens} speculation={mode} draft_cost={draft_cost_model:?} verify_widths={verify_widths:?} profile_drafter={profile_drafter:?}"
         );
         if let Some(limit) = qualified_max_sequences
             && serving.maximum_sequences > *limit
@@ -1946,6 +1959,7 @@ fn run_host_command_from_v1(
             speculative_rows,
             speculation_mode,
             draft_cost_model,
+            verify_widths,
             allowed_local_media_path,
             remote_media,
             debug_reference_tokens,
@@ -2098,7 +2112,7 @@ fn run_host_command_from_v1(
                 **serving,
                 (*speculative_tokens, speculative_rows.map(usize::from)),
                 *speculation_mode,
-                *draft_cost_model,
+                (*draft_cost_model, *verify_widths),
                 surface,
                 None,
                 allowed_local_media_path.as_deref(),
@@ -2462,7 +2476,7 @@ fn serve_v1(
     serving: ServingOptionsV1,
     speculative: (usize, Option<usize>),
     speculation_mode: SpeculationMode,
-    draft_cost_model: DraftCostModel,
+    (draft_cost_model, verify_widths): (DraftCostModel, VerifyWidths),
     surface: RequestSurfaceV1,
     envelope: Option<DeveloperServingEnvelopeV1>,
     allowed_local_media_path: Option<&Path>,
@@ -2523,7 +2537,8 @@ fn serve_v1(
         serving.maximum_sequences,
         speculation_mode,
         draft_cost_model,
-    )?;
+    )?
+    .map(|config| config.with_verify_widths(verify_widths));
     let bundle_id = package.manifest().id().as_str().to_owned();
     // The served frontend is the package's own export, so the module opens
     // here, before the deployment; the generation worker builds its engine
@@ -4842,6 +4857,8 @@ struct ArgumentsV1 {
     speculation_costs: Option<StepCosts>,
     /// `--speculation-depths`; balanced mode takes this schedule.
     speculation_depths: Option<DraftDepths>,
+    /// `--speculation-widths`; balanced mode lands on these widths.
+    speculation_widths: Option<VerifyWidths>,
     draft_cost_model: Option<DraftCostModel>,
     prefix_cache: Option<bool>,
     kv_offload_gib: Option<u64>,
@@ -5236,6 +5253,12 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.speculation_depths, depths, flag)?;
                 }
+                "--speculation-widths" => {
+                    let widths = VerifyWidths::parse(value).map_err(|error| {
+                        usage_error(format!("invalid --speculation-widths: {error:?}"))
+                    })?;
+                    set_once_v1(&mut parsed.speculation_widths, widths, flag)?;
+                }
                 "--kv-cache-dtype" => {
                     let dtype = KvCacheDtypeV1::parse(value).ok_or_else(|| {
                         usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
@@ -5444,6 +5467,7 @@ impl ArgumentsV1 {
             ("--speculation", self.speculation_mode.is_some()),
             ("--speculation-costs", self.speculation_costs.is_some()),
             ("--speculation-depths", self.speculation_depths.is_some()),
+            ("--speculation-widths", self.speculation_widths.is_some()),
             ("--draft-cost", self.draft_cost_model.is_some()),
             ("--kv-offload-gib", self.kv_offload_gib.is_some()),
             (
@@ -7476,6 +7500,51 @@ mod tests {
             panic!("balanced mode expected");
         };
         assert_eq!(depths, DraftDepths::parse(schedule).unwrap());
+        // Only balanced mode takes verify widths, and they must increase.
+        for words in [
+            &["--speculation", "adaptive", "--speculation-widths", "8,16"][..],
+            &["--speculation-widths", "8,16"][..],
+        ] {
+            let mut words = words.to_vec();
+            words.splice(
+                0..0,
+                ["serve", "--bundle", "a", "--speculative-tokens", "5"],
+            );
+            assert!(
+                refusal(&words).contains("--speculation-widths requires --speculation balanced"),
+                "{words:?}"
+            );
+        }
+        assert!(
+            refusal(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--speculative-tokens",
+                "5",
+                "--speculation",
+                "balanced",
+                "--speculation-widths",
+                "16,8",
+            ])
+            .contains("invalid --speculation-widths")
+        );
+        let landed = parse_host_command_v1(&arguments(&[
+            "serve",
+            "--bundle",
+            "a",
+            "--speculative-tokens",
+            "5",
+            "--speculation",
+            "balanced",
+            "--speculation-widths",
+            "6,8,16,32",
+        ]))
+        .unwrap();
+        let HostCommandV1::Serve { verify_widths, .. } = landed else {
+            panic!("serve expected");
+        };
+        assert_eq!(verify_widths.widths(), [6, 8, 16, 32]);
         let fixed = parse_host_command_v1(&arguments(&[
             "serve",
             "--bundle",

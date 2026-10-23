@@ -1,0 +1,63 @@
+# timeout @QUEUE_TIMEOUT@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# Background launchers can inherit ignored INT, which Bash cannot trap.
+# Reset dispositions once before this shell installs its cleanup traps.
+if [[ ${CHOPINFER_PERF_SIGNAL_BOOTSTRAP:-} != "$BASHPID" ]]; then
+    export CHOPINFER_PERF_SIGNAL_BOOTSTRAP="$BASHPID"
+    exec /usr/bin/python3 -c 'import os,signal,sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP)]; os.execv("/usr/bin/bash", ["/usr/bin/bash", *sys.argv[1:]])' "${BASH_SOURCE[0]}" "$@"
+fi
+unset CHOPINFER_PERF_SIGNAL_BOOTSTRAP
+# Depth tuner @NAME@ (whole machine, no profiler, no weight keeper): an
+# untimed warm-up process at the deepest depth, then fresh servers per draft
+# depth in alternating order, greedy and fixed-seed sampled windows of the
+# workload at every concurrency the depth can change. Every output must equal
+# the warm-up's bit for bit (greedy at once, sampled at the end). Test KV
+# mode, zero preemptions and evictions; power limits recorded and constant
+# (and equal to the config's expected watts); SM clocks recorded, never
+# asserted; each rank's memory after warmup recorded. tune.md and tune.json
+# hold the measurements and the selected `depths` schedule.
+# The queue copies this file to running/, so every asset is addressed by
+# absolute path.
+readonly stage=@STAGE@
+readonly payload_digest=@PAYLOAD_SHA@
+source "${CHOPINFER_LOCAL_ENV:-$HOME/.config/chopinfer/local.env}"
+: "${CHOPINFER_DATA:?set CHOPINFER_DATA}"
+: "${@CHECKPOINT_ENV@:?set @CHECKPOINT_ENV@}"
+export PYTHONDONTWRITEBYTECODE=1
+umask 022
+export TMPDIR="$CHOPINFER_DATA/tmp/depth-tune"
+/usr/bin/mkdir -p "$TMPDIR"
+export CUDA_VISIBLE_DEVICES=@DEVICES@
+# Every other CHOPINFER_ variable is cleared for each server (runner.py).
+unset OPENAI_API_KEY TUNE_STUB_PERTURB TUNE_STUB_PREEMPT TUNE_STUB_IGNORE_DEPTHS TUNE_DRY_POWER_W \
+    TUNE_DRY_POWER_CHANGE_LABEL
+export PATH="/usr/local/cuda/bin:$PATH"
+# The runner's working directory may not exist.
+cd "$stage"
+run="$stage/runs/tune-$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)-$$"
+worker=
+cleanup() {
+    status=$?
+    trap '' TERM INT HUP
+    if [[ -n $worker ]]; then
+        kill -TERM "$worker" 2>/dev/null || true
+        wait "$worker" 2>/dev/null || true
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
+# Work budget @WORK_SECONDS@ seconds; the rest of the queue timeout is
+# reserved for cleanup.
+/usr/bin/setsid /usr/bin/timeout --foreground --signal=TERM --kill-after=30s @WORK_TIMEOUT@s \
+    /usr/bin/python3 -B "$stage/harness/tune.py" --output "$run" --payload-sha "$payload_digest" "$@" &
+worker=$!
+set +e
+wait "$worker"
+status=$?
+set -e
+worker=
+exit "$status"

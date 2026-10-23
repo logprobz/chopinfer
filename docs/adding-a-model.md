@@ -121,6 +121,10 @@ and [numerics](numerics.md) own the acceptance contracts. Add a model-owned
 reference adapter and authenticate its outputs through
 [the reference runner](../tools/refrun/README.md).
 
+A model with a drafter sets its per-concurrency draft depths from the
+[depth tuner](depth-tuning.md): add `models/<model>/depth-tune.json` and put
+the schedule it selects in the drafting profile's `depths`.
+
 Do not enable a release or mark a profile qualified based on CPU fixtures,
 successful packaging or a skipped GPU run. Record real-device oracle,
 resource, lifecycle, frontend and serving evidence for the actual artifacts,

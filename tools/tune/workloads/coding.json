@@ -1,0 +1,26 @@
+{
+  "schema": "chopinfer-depth-tune-workload.v1",
+  "name": "coding-v1",
+  "description": "Coding-weighted decode workload. Code completion continues a source file prefix that ends at a function signature; a code edit asks, through the chat template, for a change to a source excerpt; the chat share continues the speed workload's diverse prompts through the chat template. Window C serves the first C prompts, which keep the mix's proportions.",
+  "prompts": 32,
+  "mix": [
+    {"kind": "completion", "weight": 5},
+    {"kind": "edit", "weight": 3},
+    {"kind": "chat", "weight": 2}
+  ],
+  "sources": {
+    "globs": ["crates/*/src/*.rs", "crates/*/src/*/*.rs", "tools/qual/*.py", "tools/dev/*.py"],
+    "min_bytes": 4000,
+    "max_bytes": 80000,
+    "excerpt_bytes": [1200, 3200]
+  },
+  "system": "You are an expert software engineer. Answer with code first and keep explanations short.",
+  "edit_instructions": [
+    "Add handling for the error and edge cases this code does not handle yet, then show the full revised code.",
+    "Refactor this code for readability without changing its behavior, then show the full revised code.",
+    "Write unit tests that cover this code.",
+    "Add documentation comments to every function here, then show the full revised code.",
+    "Remove the repeated logic in this code, then show the full revised code.",
+    "Explain what this code does, then write one improvement."
+  ]
+}

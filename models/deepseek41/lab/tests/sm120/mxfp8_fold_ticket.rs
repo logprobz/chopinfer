@@ -9,7 +9,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 fn required() -> (Sm120, Vec<Required<'static>>) {
-    let mut backend = Sm120::new();
+    let mut backend = Sm120::new().with_packed_fold_weights();
     let mut required = Vec::new();
     for entry in registration::ticket_catalog(&FLASH)
         .unwrap()
@@ -23,7 +23,7 @@ fn required() -> (Sm120, Vec<Required<'static>>) {
                 format!("ticket {q:?}"),
                 cases::need(64),
                 move |backend, need| backend.mxfp8_fold_gemm(&q, need),
-                move |op| cases::case(q, 64, op),
+                move |op| cases::packed_case(q, 64, op),
             )
             .required(),
         );
@@ -66,6 +66,7 @@ fn ticket_fold_dry_run() {
             })
             .unwrap();
         let backend = Sm120::new()
+            .with_packed_fold_weights()
             .with_mxfp8_fold_ticket(entry.clone())
             .with_mxfp8_fold_decode(baseline.clone());
         for rows in 1..=64 {
@@ -90,7 +91,11 @@ fn ticket_fold_dry_run() {
                         .iter()
                         .map(|(s, _)| s.clone())
                         .collect::<Vec<_>>(),
-                    baseline.symbols()
+                    {
+                        let mut symbols = baseline.symbols();
+                        symbols[1] = kernels_sm120::gemm::mxfp8_fold_packed::symbol(&symbols[1]);
+                        symbols
+                    }
                 );
                 baseline.plans(rows).unwrap();
             } else {

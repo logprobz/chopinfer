@@ -73,13 +73,16 @@ fn stream_fold_dry_run() {
     );
     let mut covered = std::collections::BTreeSet::new();
     for &ranks in SUPPORTED_RANKS {
-        let baseline = registration::register(Sm120::new(), &FLASH, ranks).unwrap();
+        let baseline =
+            registration::register(Sm120::new().with_packed_fold_weights(), &FLASH, ranks).unwrap();
         for old in registration::ticket_entries(&FLASH, ranks).unwrap() {
             let candidate = entries
                 .iter()
                 .find(|e| e.ticket.query == old.query && e.ticket.paired == old.paired)
                 .unwrap();
-            let backend = Sm120::new().with_mxfp8_fold_stream(candidate.clone());
+            let backend = Sm120::new()
+                .with_packed_fold_weights()
+                .with_mxfp8_fold_stream(candidate.clone());
             for rows in ROWS {
                 let q = registration::routed_query(old.query, rows);
                 let info = if old.paired {

@@ -79,7 +79,7 @@ fn decode_fold_topologies_are_covered() {
 }
 
 fn required() -> (Sm120, Vec<Required<'static>>) {
-    let mut backend = Sm120::new();
+    let mut backend = Sm120::new().with_packed_fold_weights();
     let mut required = Vec::new();
     for entry in entries().into_iter().filter(|e| !e.paired) {
         let q = entry.query;
@@ -90,7 +90,7 @@ fn required() -> (Sm120, Vec<Required<'static>>) {
                 format!("decode ranks={ranks:?} {q:?}"),
                 cases::need(32),
                 move |backend, need| backend.mxfp8_fold_gemm(&q, need),
-                move |op| cases::case(q, 32, op),
+                move |op| cases::packed_case(q, 32, op),
             )
             .required(),
         );
@@ -157,7 +157,9 @@ fn decode_fold_dry_run() {
     for entry in entries() {
         assert!(!topologies(&entry).is_empty());
         for rows in registration::DECODE_BUCKETS {
-            let backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
+            let backend = Sm120::new()
+                .with_packed_fold_weights()
+                .with_mxfp8_fold_decode(entry.clone());
             let info = if entry.paired {
                 backend
                     .mxfp8_fold_gemm_pair(&entry.query, Need::rows(rows))
@@ -234,6 +236,20 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
 pub(super) struct Weights {
     pub(super) buffers: Vec<runtime_cuda::DeviceBuffer>,
 }
+/// Pack a complete weight bank; scales and activation codes stay row-major.
+pub(super) fn pack(
+    q: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+    codes: &[u8],
+) -> LabResult<Vec<u8>> {
+    kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+        groups: q.groups as usize,
+        n: q.n as usize,
+        k: q.k as usize,
+    }
+    .pack(codes)
+    .map_err(|e| e.to_string())
+}
+
 pub(super) fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
     (0..bytes as usize)
         .map(|i| {
@@ -251,9 +267,13 @@ impl Weights {
     pub(super) fn new(session: &Session, entry: &Entry) -> LabResult<Self> {
         let sizes = entry.legacy().map_err(|e| e.to_string())?.bytes(1);
         let images = [
-            pattern(sizes.weights, 2),
+            pack(entry.query, &pattern(sizes.weights, 2))?,
             scales(sizes.weight_scales, 2),
-            pattern(if entry.paired { sizes.weights } else { 4 }, 3),
+            if entry.paired {
+                pack(entry.query, &pattern(sizes.weights, 3))?
+            } else {
+                vec![0; 4]
+            },
             scales(if entry.paired { sizes.weight_scales } else { 4 }, 3),
         ];
         let buffers = images
@@ -347,20 +367,26 @@ fn compare_impl(
             }
     })
     .ok_or("missing prefill-shaped baseline")?;
-    let old_backend = Sm120::new().with_mxfp8_fold(old.clone());
+    let old_backend = Sm120::new()
+        .with_packed_fold_weights()
+        .with_mxfp8_fold(old.clone());
     let old_op = old_backend
         .mxfp8_fold_gemm(&old.query, Need::rows(rows))
         .map_err(|e| e.to_string())?;
     let mut backend = Sm120::new()
+        .with_packed_fold_weights()
         .with_mxfp8_fold(old)
         .with_mxfp8_fold_decode(entry.clone());
     if let Some(ticket) = ticket {
         backend = backend.with_mxfp8_fold_ticket(ticket.clone());
     }
     let prefetch = ticket.is_some_and(|entry| entry.prefetch_weights);
-    let mut baseline_backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
+    let mut baseline_backend = Sm120::new()
+        .with_packed_fold_weights()
+        .with_mxfp8_fold_decode(entry.clone());
     let baseline_query = if stream_entry.is_some() {
-        baseline_backend = registration::register(Sm120::new(), &FLASH, ranks[0])?;
+        baseline_backend =
+            registration::register(Sm120::new().with_packed_fold_weights(), &FLASH, ranks[0])?;
         registration::routed_query(q, rows)
     } else if prefetch {
         let previous = registration::ticket_catalog(&FLASH)?
@@ -410,6 +436,7 @@ fn compare_impl(
     let stream_op = stream_entry
         .map(|candidate| {
             Sm120::new()
+                .with_packed_fold_weights()
                 .with_mxfp8_fold_stream(candidate.clone())
                 .mxfp8_fold_gemm_stream(&candidate.ticket.query, entry.paired, Need::rows(rows))
                 .map_err(|e| e.to_string())
@@ -457,7 +484,7 @@ fn compare_impl(
         if weights.is_some() {
             vec![0; 4]
         } else {
-            pattern(sizes.weights, 2)
+            pack(q, &pattern(sizes.weights, 2))?
         },
         if weights.is_some() {
             vec![0; 4]
@@ -470,8 +497,10 @@ fn compare_impl(
         vec![0xcd; workspace.max(4) as usize],
         if weights.is_some() {
             vec![0; 4]
+        } else if entry.paired {
+            pack(q, &pattern(sizes.weights, 3))?
         } else {
-            pattern(if entry.paired { sizes.weights } else { 4 }, 3)
+            vec![0; 4]
         },
         if weights.is_some() {
             vec![0; 4]
@@ -485,17 +514,12 @@ fn compare_impl(
         vec![0xcd; baseline_workspace.max(4) as usize],
     ];
     if let Some(candidate) = stream_entry {
+        // Keep the fixture's handle numbering. Planned banks are bound
+        // directly; only each launch's mutable state needs initialization.
         images.extend([
-            vec![0xcd; candidate.packed_bytes() as usize],
-            vec![
-                0xcd;
-                if entry.paired {
-                    candidate.packed_bytes() as usize
-                } else {
-                    4
-                }
-            ],
-            vec![0xcd; candidate.state_bytes(rows).map_err(|e| e.to_string())? as usize],
+            vec![0; 4],
+            vec![0; 4],
+            vec![0; candidate.state_bytes(rows).map_err(|e| e.to_string())? as usize],
         ]);
     }
     let buffers = images
@@ -504,14 +528,18 @@ fn compare_impl(
         .collect::<LabResult<Vec<_>>>()?;
     let view = |i: usize| View {
         handle: i as u64 + 1,
-        bytes: weights
-            .and_then(|w| {
-                [2, 3, 8, 9]
-                    .iter()
-                    .position(|&index| index == i)
-                    .map(|index| w.buffers[index].byte_len() as u64)
-            })
-            .unwrap_or(images[i].len() as u64),
+        bytes: if i == 15 || (i == 16 && entry.paired) {
+            sizes.weights
+        } else {
+            weights
+                .and_then(|w| {
+                    [2, 3, 8, 9]
+                        .iter()
+                        .position(|&index| index == i)
+                        .map(|index| w.buffers[index].byte_len() as u64)
+                })
+                .unwrap_or(images[i].len() as u64)
+        },
     };
     let first = Mxfp8FoldGemmBuffers {
         activations: view(0),
@@ -565,12 +593,7 @@ fn compare_impl(
         packed_weights: [view(15), if entry.paired { view(16) } else { View::EMPTY }],
         state: view(17),
     });
-    let initialization = stream_op
-        .as_ref()
-        .map(|op| op.initialize(&stateful.unwrap()))
-        .transpose()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_default();
+    let initialization: Vec<Launch> = Vec::new();
     let new_calls = if let Some(op) = stream_op.as_ref() {
         op.launches(&stateful.unwrap(), view(7), Counts::rows(rows))
     } else if let Some(op) = single {
@@ -593,6 +616,13 @@ fn compare_impl(
     if let Some(weights) = weights {
         for (i, b) in [2, 3, 8, 9].into_iter().zip(&weights.buffers) {
             bindings.buffers.insert(i + 1, b);
+        }
+    }
+    if stream_entry.is_some() {
+        // Separate role handles bind the same immutable planned allocation.
+        bindings.buffers.insert(16, bindings.buffers[&3]);
+        if entry.paired {
+            bindings.buffers.insert(17, bindings.buffers[&9]);
         }
     }
     let upload = |images: &[Vec<u8>]| -> LabResult<()> {

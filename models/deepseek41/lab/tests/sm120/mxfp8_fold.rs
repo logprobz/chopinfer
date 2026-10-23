@@ -40,13 +40,13 @@ impl Modules for ModelModules {
 }
 
 fn required<'a>() -> (Sm120, Vec<Required<'a>>, Vec<u32>) {
-    let mut backend = Sm120::new();
+    let mut backend = Sm120::new().with_packed_fold_weights();
     let mut required = Vec::new();
     let mut capacities = Vec::new();
     for g in geometry::GEOMETRIES {
         for entry in registration::catalog(g).unwrap() {
             assert!(
-                fold_cubin_for_symbol(&entry.symbol).is_some(),
+                fold_cubin_for_symbol(&entry.packed_spec().unwrap().symbol).is_some(),
                 "{} is not built",
                 entry.symbol
             );
@@ -60,7 +60,7 @@ fn required<'a>() -> (Sm120, Vec<Required<'a>>, Vec<u32>) {
                     format!("{} {q:?}", g.id),
                     cases::need(capacity),
                     move |backend, need| backend.mxfp8_fold_gemm(&q, need),
-                    move |op| cases::case(q, capacity, op),
+                    move |op| cases::packed_case(q, capacity, op),
                 )
                 .required(),
             );

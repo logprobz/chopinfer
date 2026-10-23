@@ -54,7 +54,7 @@ fn stream_sublayer_gpu() {
                 let calls = op.launches(&input,View::EMPTY,Counts::rows(rows)).map_err(|e|e.to_string())?;
                 let functions = previous::functions(session,&calls)?;
                 let prefetch = [kernels_sm120::gemm::mxfp8_fold_stream::prefetch_launch([
-                    View{handle:9,bytes:down.buffers[8].byte_len() as u64},
+                    View{handle:3,bytes:down.buffers[2].byte_len() as u64},
                     View{handle:4,bytes:down.buffers[3].byte_len() as u64},View::EMPTY,View::EMPTY]).map_err(|e|e.to_string())?];
                 let prefetch_functions = previous::functions(session,&prefetch)?;
                 let run = |stream:&runtime_cuda::Stream| {

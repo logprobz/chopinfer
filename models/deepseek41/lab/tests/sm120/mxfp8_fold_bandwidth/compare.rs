@@ -41,7 +41,7 @@ pub(super) fn case(
     let ranks = previous::topologies(entry);
     let baseline_query = registration::routed_query(q, rows);
     let baseline = catalog::register(
-        registration::register(Sm120::new(), &FLASH, ranks[0])?,
+        registration::register(Sm120::new().with_packed_fold_weights(), &FLASH, ranks[0])?,
         &FLASH,
         ranks[0],
     )?;
@@ -113,17 +113,10 @@ pub(super) fn case(
         vec![0xa5; sizes.output as usize],
         initial_status,
         vec![0xcd; baseline_workspace.max(4) as usize],
-        vec![0xcd; candidate.packed.packed_bytes() as usize],
-        vec![
-            0xcd;
-            if entry.paired {
-                candidate.packed.packed_bytes() as usize
-            } else {
-                4
-            }
-        ],
-        vec![0xcd; candidate.state_bytes(rows).map_err(|e| e.to_string())? as usize],
-        vec![0xcd; baseline_state as usize],
+        vec![0; 4],
+        vec![0; 4],
+        vec![0; candidate.state_bytes(rows).map_err(|e| e.to_string())? as usize],
+        vec![0; baseline_state as usize],
         vec![0; candidate.stamp_bytes(rows).map_err(|e| e.to_string())? as usize],
     ];
     images.push(images[0].clone());
@@ -134,11 +127,15 @@ pub(super) fn case(
     let lengths: Vec<_> = images.iter().map(|b| b.len() as u64).collect();
     let view = |i: usize| View {
         handle: i as u64 + 1,
-        bytes: [2, 3, 8, 9]
-            .iter()
-            .position(|&j| j == i)
-            .map(|j| weights.buffers[j].byte_len() as u64)
-            .unwrap_or(lengths[i]),
+        bytes: if i == 15 || (i == 16 && entry.paired) {
+            sizes.weights
+        } else {
+            [2, 3, 8, 9]
+                .iter()
+                .position(|&j| j == i)
+                .map(|j| weights.buffers[j].byte_len() as u64)
+                .unwrap_or(lengths[i])
+        },
     };
     let first = Mxfp8FoldGemmBuffers {
         activations: view(0),
@@ -188,13 +185,8 @@ pub(super) fn case(
             .launches(&[first, second], view(14), Counts::rows(rows))
     }
     .map_err(|e| e.to_string())?;
-    let initialize = [candidate.initialize(&stateful).map_err(|e| e.to_string())?];
-    let baseline_init = old_stream
-        .as_ref()
-        .map(|op| op.initialize(&old_stateful))
-        .transpose()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_default();
+    let initialize: Vec<Launch> = Vec::new();
+    let baseline_init: Vec<Launch> = Vec::new();
     let new_calls = [candidate
         .launch(&stateful, rows, None)
         .map_err(|e| e.to_string())?];
@@ -215,6 +207,11 @@ pub(super) fn case(
     };
     for (i, b) in [2, 3, 8, 9].into_iter().zip(&weights.buffers) {
         bindings.buffers.insert(i + 1, b);
+    }
+    // Preserve distinct role handles while sharing the planned packed banks.
+    bindings.buffers.insert(16, bindings.buffers[&3]);
+    if entry.paired {
+        bindings.buffers.insert(17, bindings.buffers[&9]);
     }
     let copy = |i: usize, bytes: &[u8]| {
         buffers[i]

@@ -39,25 +39,37 @@ fn expected() -> LabResult<BTreeMap<String, Expected>> {
         Ok(())
     };
     for entry in mxfp8_fold::decode_catalog(&FLASH)? {
-        for symbol in entry.symbols() {
-            add(symbol)?;
+        for (index, symbol) in entry.symbols().into_iter().enumerate() {
+            add(if index == 1 {
+                kernels_sm120::gemm::mxfp8_fold_packed::symbol(&symbol)
+            } else {
+                symbol
+            })?;
         }
     }
     for entry in mxfp8_fold::ticket_catalog(&FLASH)? {
-        for symbol in entry.symbols() {
-            add(symbol)?;
+        for (index, symbol) in entry.symbols().into_iter().enumerate() {
+            add(if index == 1 {
+                kernels_sm120::gemm::mxfp8_fold_packed::symbol(&symbol)
+            } else {
+                symbol
+            })?;
         }
     }
     for entry in mxfp8_fold::prefetch_catalog(&FLASH)? {
-        for symbol in entry.symbols() {
-            add(symbol)?;
+        for (index, symbol) in entry.symbols().into_iter().enumerate() {
+            add(if index == 1 {
+                kernels_sm120::gemm::mxfp8_fold_packed::symbol(&symbol)
+            } else {
+                symbol
+            })?;
         }
     }
     for entry in mxfp8_fold::catalog(&FLASH)?
         .into_iter()
         .filter(|e| e.query.m_capacity == PREFILL_TOKENS)
     {
-        add(entry.symbol)?;
+        add(entry.packed_spec().map_err(|e| e.to_string())?.symbol)?;
     }
     let (bytes, symbols) = dependency_probes();
     for required in [kernels_sm120::probes::LIVE, kernels_sm120::probes::COPY] {

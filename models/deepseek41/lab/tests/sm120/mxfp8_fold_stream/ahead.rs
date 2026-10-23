@@ -18,6 +18,7 @@ impl Case {
         seed: usize,
     ) -> LabResult<Self> {
         let op = Sm120::new()
+            .with_packed_fold_weights()
             .with_mxfp8_fold_stream(entry.clone())
             .mxfp8_fold_gemm_stream(&entry.ticket.query, entry.ticket.paired, Need::rows(rows))
             .map_err(|e| e.to_string())?;
@@ -29,21 +30,21 @@ impl Case {
         let mut images = vec![
             previous::pattern(b.activations, seed),
             previous::scales(b.activation_scales, seed),
-            previous::pattern(b.weights, seed + 1),
+            previous::pack(entry.ticket.query, &previous::pattern(b.weights, seed + 1))?,
             previous::scales(b.weight_scales, seed + 1),
             vec![0xa5; b.output as usize],
             rows.to_ne_bytes().to_vec(),
             vec![0; rows as usize * 4],
             vec![0xcd; op.info().workspace as usize],
-            vec![0xcd; entry.packed_bytes() as usize],
-            vec![0xcd; entry.state_bytes(rows).map_err(|e| e.to_string())? as usize],
+            vec![0; 4],
+            vec![0; entry.state_bytes(rows).map_err(|e| e.to_string())? as usize],
         ];
         if entry.ticket.paired {
             images.extend([
-                previous::pattern(b.weights, seed + 2),
+                previous::pack(entry.ticket.query, &previous::pattern(b.weights, seed + 2))?,
                 previous::scales(b.weight_scales, seed + 2),
                 vec![0xa5; b.output as usize],
-                vec![0xcd; entry.packed_bytes() as usize],
+                vec![0; 4],
             ]);
         }
         let buffers = images
@@ -58,7 +59,11 @@ impl Case {
             .collect::<LabResult<Vec<_>>>()?;
         let v = |i: usize| View {
             handle: i as u64 + 1,
-            bytes: buffers[i].byte_len() as u64,
+            bytes: if i == 8 || i == 13 {
+                b.weights
+            } else {
+                buffers[i].byte_len() as u64
+            },
         };
         let first = Mxfp8FoldGemmBuffers {
             activations: v(0),
@@ -88,16 +93,6 @@ impl Case {
             ],
             state: v(9),
         };
-        let init = op.initialize(&inputs).map_err(|e| e.to_string())?;
-        let init_functions = previous::functions(session, &init)?;
-        let bindings = Bindings {
-            buffers: buffers
-                .iter()
-                .enumerate()
-                .map(|(i, b)| (i as u64 + 1, b))
-                .collect(),
-        };
-        previous::run(session, &session.stream, &init, &init_functions, &bindings)?;
         let calls = op
             .launches(&inputs, v(7), Counts::rows(rows))
             .map_err(|e| e.to_string())?;
@@ -109,14 +104,19 @@ impl Case {
         })
     }
     pub(super) fn bindings(&self) -> Bindings<'_> {
-        Bindings {
+        let mut bindings = Bindings {
             buffers: self
                 .buffers
                 .iter()
                 .enumerate()
                 .map(|(i, b)| (i as u64 + 1, b))
                 .collect(),
+        };
+        bindings.buffers.insert(9, &self.buffers[2]);
+        if self.buffers.len() > 10 {
+            bindings.buffers.insert(14, &self.buffers[10]);
         }
+        bindings
     }
     pub(super) fn run(&self, session: &Session, stream: &runtime_cuda::Stream) -> LabResult<()> {
         previous::run(
@@ -152,7 +152,7 @@ fn stream_ahead_gpu() {
             let lead=Case::new(session,lead_entry,1,11)?;
             let target=Case::new(session,target_entry,1,17)?;
             let prefetch=kernels_sm120::gemm::mxfp8_fold_stream::prefetch_launch([
-                View{handle:9,bytes:target.buffers[8].byte_len() as u64},View{handle:4,bytes:target.buffers[3].byte_len() as u64},View::EMPTY,View::EMPTY]).map_err(|e|e.to_string())?;
+                View{handle:3,bytes:target.buffers[2].byte_len() as u64},View{handle:4,bytes:target.buffers[3].byte_len() as u64},View::EMPTY,View::EMPTY]).map_err(|e|e.to_string())?;
             let prefetch_calls=[prefetch];
             let prefetch_functions=previous::functions(session,&prefetch_calls)?;
             let baseline=session.capture(|stream|{lead.run(session,stream)?;target.run(session,stream)})?;

@@ -55,7 +55,7 @@ fn direct_fold_cpu_matrix() {
     let mut matrix = std::collections::BTreeMap::new();
     for &ranks in SUPPORTED_RANKS {
         let baseline = catalog::register(
-            registration::register(Sm120::new(), &FLASH, ranks).unwrap(),
+            registration::register(Sm120::new().with_packed_fold_weights(), &FLASH, ranks).unwrap(),
             &FLASH,
             ranks,
         )

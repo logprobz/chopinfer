@@ -111,8 +111,12 @@ use super::*;
 // operands, the stream fold's packed weights and state replaced by the
 // layer's weights (1760 launches to 960, same audit). No other line
 // changes.
+// The 4-row bucket launches them with 4 rows: each layer's ten launches
+// (the WKV and WQ_a prefetch initialize/fold pairs, WQ_b's stream fold,
+// WO_a's input quantizer and prefetch pair, WO_b's input quantizer and
+// stream fold) become six the same way (1600 launches to 960, same audit).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0x6c6f6dd803c83066)),
+    (4, (7880, 0x1f65557b17e50b3f)),
     (6, (8680, 0x0d301da4436fb2be)),
     (8, (7720, 0xd86f7d3c00ff0fb8)),
     (12, (10136, 0xaa37703e0fb8e128)),

@@ -61,6 +61,35 @@ const OUTPUTS: &[Listed] = &[
         4,
     ),
     ("chop_deepseek41_mxfp8_decode_*_f32_v1", 1),
+    // The status folds (`sm120::fold_fused`): the cluster form's owning split
+    // and the 48-column row-local form's thread store each output element
+    // once, zero for a failed row. WO_a's also stores every block of each
+    // live row's WO_b input codes, scale codes and flags.
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_status_v1",
+        4,
+    ),
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_statusp_v1",
+        4,
+    ),
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_statusq_v1",
+        4,
+    ),
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_statusq_v1",
+        5,
+    ),
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_statusq_v1",
+        6,
+    ),
+    (
+        "chop_deepseek41_mxfp8_fused_*_cluster#_n#_c#s#_statusq_v1",
+        7,
+    ),
+    ("chop_deepseek41_mxfp8_fused_*_local#_n#_s#x_status_v1", 6),
     // The one-row query and KV folds in one launch: each projection's
     // stream task merges into its own output, as above.
     ("chop_mxfp8_dual_*_f32_v1", 4),

@@ -1,11 +1,14 @@
-//! Folds that admit rows by status for Flash TP4's 8-, 16- and 32-row
-//! decode and verify buckets: WQ_a, WKV, WO_a and WO_b on their cluster
-//! schedules (`fold_cluster::SERVED`) without the admission launch, WO_a
-//! quantizing WO_b's input in its merge after the row-sliced 8192-column
-//! quantizer (`row/ceil_sliced.cuh`), WO_b failing rows by status and
-//! WO_a's block flags, and WQ_b's row-local fold on 48-column tiles without
-//! its admission (`mxfp8_fold_local_wide.cuh`). The 8-row bucket launches
-//! the 16-row tile's folds and quantizer with 8 rows (`tile`).
+//! Folds that admit rows by status for Flash TP4's 1-, 2-, 4-, 8-, 16- and
+//! 32-row decode and verify buckets: WQ_a, WKV, WO_a and WO_b on their
+//! cluster schedules (`fold_cluster::SERVED`) without the admission launch,
+//! WO_a quantizing WO_b's input in its merge after the row-sliced
+//! 8192-column quantizer (`row/ceil_sliced.cuh`), WO_b failing rows by
+//! status and WO_a's block flags, and WQ_b's row-local fold on 48-column
+//! tiles without its admission (`mxfp8_fold_local_wide.cuh`). The buckets
+//! below 16 rows launch the 16-row tile's folds and quantizer with their
+//! rows (`tile`). The one-row decode step keeps the dual fold for WQ_a and
+//! WKV (`ops::dense_dual`), which the lowering takes before any status fold,
+//! so there only WQ_b and the WO chain change.
 //!
 //! A fold that fails exactly the rows with a nonzero status after its
 //! producer wait gives the admission kernel's result, and leaves the status
@@ -45,6 +48,25 @@
 //! out of L2, 43.0/42.5 -> 26.4/26.1, 17.6/17.2 -> 11.9/11.8, 14.4/14.3 ->
 //! 8.8/8.7 and 10.4/10.2 -> 5.2/5.1 us, and 16.7/15.6 -> 12.6/11.7 mJ per
 //! layer of board energy for all four.
+//!
+//! SM120, 300 W, 1.74-1.79 GHz read, 2026-10-23 (lab fold_fused, the 1- to
+//! 7-row tiles): the 16-row tile's functions at 1, 2 and 4 rows against the
+//! launches of each row count (the stream, prefetch and direct folds with
+//! their one-time launches, the one-CTA cached and F32 input quantizers),
+//! bit for bit equal at every row count up to 8 with rejected rows and
+//! captured layers 0 and 39 and their 1-, 2- and 4-row prefixes.
+//! Main-stream change per 40-layer step on two devices, the smallest of
+//! warm, cold and streamed: -0.78/-0.77 ms at 1 row (WQ_b and the WO
+//! chain), -0.86/-0.82 ms at 2 rows and -1.06/-1.08 ms at 4 rows (also
+//! WQ_a); board energy -0.32/-0.28, -0.25/-0.23 and -0.13/-0.12 J per token
+//! over four ranks. One-row decode serves its two WO input quantizers as
+//! the split ceil twins (`ceil_split`), 5.6 us per layer faster than the
+//! one-CTA quantizers in their lab chain (d2-0463g1), so the one-row change
+//! against the served step is about -0.56/-0.55 ms, and its energy figure
+//! is against the one-CTA quantizers. At one row WQ_a's status fold beat
+//! the dual fold by 0.25 to 0.33 ms only with WKV beside it on the side
+//! stream, which would also give up the query window twin the dual fold
+//! enables (2 us per layer), so the dual fold stays.
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{
     mxfp8_fold,
@@ -55,7 +77,7 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_fused";
 pub const CUBIN: &str = "mxfp8_fold_fused_deepseek41_sm120";
 /// The row buckets every fused fold serves.
-pub const ROWS: [u32; 3] = [8, 16, 32];
+pub const ROWS: [u32; 6] = [1, 2, 4, 8, 16, 32];
 /// The row tiles the cubin holds, each with its folds and quantizer.
 pub const TILES: [u32; 2] = [16, 32];
 /// The projections whose served cluster fold a fused twin replaces.
@@ -73,10 +95,11 @@ pub const WIDE: (u32, u32) = (48, 4);
 /// WO_a's input: the rank's heads, BF16.
 const ATTENTION: u32 = 8192;
 
-/// The row tile bucket `rows` launches: 8 rows run the 16-row tile.
+/// The row tile bucket `rows` launches: 1, 2, 4 and 8 rows run the 16-row
+/// tile.
 pub fn tile(rows: u32) -> Option<u32> {
     match rows {
-        8 | 16 => Some(16),
+        1 | 2 | 4 | 8 | 16 => Some(16),
         32 => Some(32),
         _ => None,
     }
@@ -216,16 +239,18 @@ mod tests {
             assert_eq!(sliced(rows).unwrap().capacity, 32);
             sliced(rows).unwrap().validate().unwrap();
         }
-        // The 8-row bucket launches the 16-row tile's functions.
-        for id in CLUSTER {
-            assert_eq!(
-                fused(id, 8).unwrap().symbol(),
-                fused(id, 16).unwrap().symbol()
-            );
+        // The buckets below 16 rows launch the 16-row tile's functions.
+        for rows in [1, 2, 4, 8] {
+            for id in CLUSTER {
+                assert_eq!(
+                    fused(id, rows).unwrap().symbol(),
+                    fused(id, 16).unwrap().symbol()
+                );
+            }
+            assert_eq!(sliced(rows).unwrap().symbol, sliced(16).unwrap().symbol);
+            assert_eq!(wide(rows).unwrap().symbol(), wide(16).unwrap().symbol());
         }
-        assert_eq!(sliced(8).unwrap().symbol, sliced(16).unwrap().symbol);
-        assert_eq!(wide(8).unwrap().symbol(), wide(16).unwrap().symbol());
-        for rows in [1, 2, 4, 6, 12, 24] {
+        for rows in [3, 5, 6, 7, 12, 24] {
             assert!(fused("attention.o-a", rows).is_none() && sliced(rows).is_none());
             assert!(wide(rows).is_none());
         }

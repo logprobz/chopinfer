@@ -1,12 +1,14 @@
-//! Audit the status folds (`sm120::fold_fused`): in the 8-, 16- and 32-row
-//! decode and verify buckets of every backbone layer each replaces its
-//! projection's admission and fold (WO_a also WO_b's input quantizer) on
-//! the same operands, the sliced quantizer replaces WO_a's input quantizer
-//! on its spans, and every other launch is retained. At 8 rows the served
-//! admission and fold are the prefetch fold's initialize and fold, and
-//! WQ_b's is one packed stream fold whose packed weights and state the
-//! status fold replaces by the layer's weights. Then the producers whose
-//! rejected-row zeroing the status folds rely on.
+//! Audit the status folds (`sm120::fold_fused`): in the 1-, 2-, 4-, 8-, 16-
+//! and 32-row decode and verify buckets of every backbone layer each
+//! replaces its projection's admission and fold (WO_a also WO_b's input
+//! quantizer) on the same operands, the sliced quantizer replaces WO_a's
+//! input quantizer on its spans, and every other launch is retained. Below
+//! 16 rows the served admission and fold are a prefetch fold's initialize
+//! and fold, or the served fold is one packed stream or direct fold, whose
+//! packed weights and state the status fold replaces by the layer's weights
+//! (and for WO_a and WO_b the block flags and slabs of the 16-row fold).
+//! The one-row decode step keeps the dual fold for WQ_a and WKV. Then the
+//! producers whose rejected-row zeroing the status folds rely on.
 use super::*;
 use crate::sm120::fold_fused;
 use std::collections::BTreeSet;
@@ -40,7 +42,7 @@ fn run(kv: KvLayout) -> Run {
             ends[0] = 32;
         }
     }
-    for count in [8, 16, 32] {
+    for count in [1, 2, 4, 8, 16, 32] {
         let from = host.device.journal.borrow().len();
         let items = (0..count)
             .map(|i| (i + 1, i, ends[i as usize], 7))
@@ -54,10 +56,17 @@ fn run(kv: KvLayout) -> Run {
     }
     if kv.storage == KvStorage::Native {
         // Four rows per item: verify 32 on slots 0..8, verify 16 on slots
-        // 8..12, then verify 8 on slots 12..14.
-        for (first, count) in [(0_u64, 8_u64), (8, 4), (12, 2)] {
+        // 8..12, verify 8 on slots 12..14 and verify 4 on slot 14; then
+        // verify 2, two rows on slot 15.
+        for (first, count, per) in [
+            (0_u64, 8_u64, 4_u32),
+            (8, 4, 4),
+            (12, 2, 4),
+            (14, 1, 4),
+            (15, 1, 2),
+        ] {
             let from = host.device.journal.borrow().len();
-            let tokens = vec![7; 4];
+            let tokens = vec![7; per as usize];
             let items = (first..first + count)
                 .map(|i| (i + 1, i, ends[i as usize], tokens.as_slice()))
                 .collect::<Vec<_>>();
@@ -67,14 +76,14 @@ fn run(kv: KvLayout) -> Run {
             instance
                 .commit_accepted(
                     &(first + 1..=first + count)
-                        .map(|i| kept(i, 4))
+                        .map(|i| kept(i, per))
                         .collect::<Vec<_>>(),
                 )
                 .unwrap();
-            records.push(format!("case verify {}", count * 4));
+            records.push(format!("case verify {}", count * u64::from(per)));
             records.extend_from_slice(&host.device.journal.borrow()[from..]);
             for end in &mut ends[first as usize..(first + count) as usize] {
-                *end += 4;
+                *end += u64::from(per);
             }
         }
     }
@@ -227,43 +236,74 @@ fn shape(id: &str) -> (u32, u32, u32) {
     (q.n, q.k, q.groups)
 }
 
-/// Whether the served folds of a `rows` bucket are the ones the 8-row
-/// bucket selects: prefetch folds with their initialize launch and WQ_b's
-/// packed stream fold, rather than a cluster or row-local fold.
+/// Whether the served folds of a `rows` bucket are the row-count selection
+/// of the buckets below 16 rows (prefetch folds with their initialize
+/// launch, packed stream and direct folds) rather than a cluster or
+/// row-local fold.
 fn prefetched(rows: u32) -> bool {
     fold_fused::tile(rows) != Some(rows)
 }
 
-/// The projection whose served admission (`true`) or fold `line` launches
-/// at `rows` rows.
-fn served(line: &str, rows: u32) -> Option<(&'static str, bool)> {
+/// What a served launch of a projection is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Kind {
+    /// An admission (a cluster fold's or a prefetch fold's initialize).
+    Admit,
+    /// The fold after its admission.
+    Fold,
+    /// A packed fold (stream or direct), which admits rows itself and reads
+    /// the packed weights with its own state: `states` spans of it.
+    Packed { states: usize },
+}
+
+/// The served launches of the buckets below 16 rows by symbol: each
+/// projection's packed stream and direct folds, and its prefetch fold's
+/// initialize and fold.
+fn selection() -> &'static BTreeMap<String, (&'static str, Kind)> {
+    static TABLE: std::sync::OnceLock<BTreeMap<String, (&'static str, Kind)>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let streams = crate::sm120::mxfp8_fold_stream::catalog(&FLASH).unwrap();
+        let directs = crate::sm120::mxfp8_fold_direct_entries::catalog().unwrap();
+        let prefetch = crate::sm120::mxfp8_fold::prefetch_entries(&FLASH, 4).unwrap();
+        let mut table = BTreeMap::new();
+        for id in PROJECTIONS {
+            let same = |n: u32, k: u32, groups: u32| (n, k, groups) == shape(id);
+            for e in streams.iter().filter(|e| !e.ticket.paired) {
+                let q = e.ticket.query;
+                if same(q.n, q.k, q.groups) {
+                    table.insert(e.ticket.symbol.clone(), (id, Kind::Packed { states: 2 }));
+                }
+            }
+            for e in directs.iter().filter(|e| !e.packed.ticket.paired) {
+                let q = e.packed.ticket.query;
+                if same(q.n, q.k, q.groups) {
+                    table.insert(e.symbol.clone(), (id, Kind::Packed { states: 1 }));
+                }
+            }
+            if let Some(e) = prefetch
+                .iter()
+                .find(|e| !e.paired && same(e.query.n, e.query.k, e.query.groups))
+            {
+                let [initialize, fold] = e.symbols();
+                table.insert(initialize, (id, Kind::Admit));
+                table.insert(fold, (id, Kind::Fold));
+            }
+        }
+        table
+    })
+}
+
+/// The projection whose served launch `line` is at `rows` rows, and what
+/// it is.
+fn served(line: &str, rows: u32) -> Option<(&'static str, Kind)> {
     let s = symbol(line);
     if prefetched(rows) {
-        return PROJECTIONS.into_iter().find_map(|id| {
-            let (n, k, groups) = shape(id);
-            if id == "attention.q-b" {
-                let stream = crate::sm120::mxfp8_fold_stream::catalog(&FLASH)
-                    .unwrap()
-                    .into_iter()
-                    .find(|e| {
-                        let q = e.ticket.query;
-                        !e.ticket.paired && (q.n, q.k, q.groups) == (n, k, groups)
-                    })?;
-                return (stream.ticket.symbol == s).then_some((id, false));
-            }
-            let [initialize, fold] = crate::sm120::mxfp8_fold::prefetch_entries(&FLASH, 4)
-                .unwrap()
-                .into_iter()
-                .find(|e| !e.paired && (e.query.n, e.query.k, e.query.groups) == (n, k, groups))?
-                .symbols();
-            [(initialize, true), (fold, false)]
-                .into_iter()
-                .find_map(|(symbol, admit)| (symbol == s).then_some((id, admit)))
-        });
+        return selection().get(s).copied();
     }
-    let (fold, admit) = match s.strip_suffix("_admit_v1") {
-        Some(fold) => (fold, true),
-        None => (s, false),
+    let (fold, kind) = match s.strip_suffix("_admit_v1") {
+        Some(fold) => (fold, Kind::Admit),
+        None => (s, Kind::Fold),
     };
     PROJECTIONS.into_iter().find_map(|id| {
         let served = if id == "attention.q-b" {
@@ -271,7 +311,7 @@ fn served(line: &str, rows: u32) -> Option<(&'static str, bool)> {
         } else {
             crate::sm120::fold_cluster::served(id, rows).map(|e| e.symbol())
         };
-        (served.as_deref() == Some(fold)).then_some((id, admit))
+        (served.as_deref() == Some(fold)).then_some((id, kind))
     })
 }
 
@@ -337,23 +377,28 @@ fn split(journal: &[String]) -> Split {
 fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, String> {
     let (old_journal, new_journal) = (split(before), split(after));
     let (before, after) = (&old_journal.records, &new_journal.records);
-    // The layer weights of WQ_b's wide folds at 16 rows, in launch order:
-    // each case launches the same projections of the same layers and ranks
-    // in the same order, and the 16-row folds are audited against the
-    // reference's row-local folds, which bind them.
-    let wide = status_fold("attention.q-b", 16);
-    let mut in_decode_16 = false;
-    let wide_weights: Vec<Span> = after
-        .iter()
-        .filter(|l| {
-            if let Some(name) = l.strip_prefix("case ") {
-                in_decode_16 = name == "decode 16";
-            }
-            in_decode_16 && l.starts_with("launch ") && symbol(l) == wide
-        })
-        .map(|l| spans(l)[2].clone())
+    // Each projection's status folds at 16 rows, in launch order: each case
+    // launches the same projections of the same layers and ranks in the
+    // same order, and the 16-row folds are audited against the reference's
+    // cluster and row-local folds, which bind their layer weights and slabs.
+    let folds16: Vec<_> = PROJECTIONS
+        .into_iter()
+        .map(|id| (id, status_fold(id, 16)))
         .collect();
-    let mut packed_folds = 0;
+    let mut in_decode_16 = false;
+    let mut templates = BTreeMap::<&str, Vec<Vec<Span>>>::new();
+    for l in after {
+        if let Some(name) = l.strip_prefix("case ") {
+            in_decode_16 = name == "decode 16";
+        }
+        if !in_decode_16 || !l.starts_with("launch ") {
+            continue;
+        }
+        if let Some((id, _)) = folds16.iter().find(|(_, s)| symbol(l) == s) {
+            templates.entry(id).or_default().push(spans(l));
+        }
+    }
+    let mut packed_folds = BTreeMap::<&str, usize>::new();
     let (mut i, mut j) = (0, 0);
     let mut case = String::new();
     let mut changed = Vec::new();
@@ -364,7 +409,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         if a == b {
             if let Some(name) = a.strip_prefix("case ") {
                 case = name.to_owned();
-                packed_folds = 0;
+                packed_folds.clear();
             }
             i += 1;
             j += 1;
@@ -392,44 +437,87 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
             j += 1;
             continue;
         }
-        if served(a, rows) == Some(("attention.q-b", false)) && prefetched(rows) {
-            // WQ_b's packed stream fold, which admits rows itself, becomes
-            // the wide fold over the layer's weights: every other operand is
-            // kept, and only the packed weights and the stream fold's two
-            // state spans go.
-            let id = "attention.q-b";
-            let (old, new) = (spans(a), spans(b));
+        if let Some((id, Kind::Packed { states })) = served(a, rows) {
+            // A packed fold, which admits rows itself, becomes the status
+            // fold over the layer's weights, WO_a's also in place of WO_b's
+            // input quantizer, whose codes and scales it writes: the packed
+            // weights and the fold's state go; the layer's weights and, for
+            // WO_a and WO_b, the block flags and the 16-row fold's slabs come
+            // in; every other operand is kept.
+            let old = spans(a);
+            if old.len() != 7 + states {
+                return Err(format!("{id} at {case}: an unknown packed fold: {a}"));
+            }
+            let mut kept: Vec<Span> = old
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| *k != 2 && !(5..5 + states).contains(k))
+                .map(|(_, span)| span.clone())
+                .collect();
+            let mut consumed = 1;
+            if id == "attention.o-a" {
+                let quantizer = before.get(i + 1).filter(|q| symbol(q) == WO_B_INPUT);
+                let q = spans(quantizer.ok_or("WO_a without WO_b's input quantizer")?);
+                if q[0] != old[4] {
+                    return Err(format!("{id} at {case}: WO_b's input is not WO_a's output"));
+                }
+                kept.extend([q[1].clone(), q[2].clone()]);
+                consumed = 2;
+            }
             if symbol(b) != status_fold(id, rows)
-                || old_journal.captured[i] != new_journal.captured[j]
+                || old_journal.captured[i..i + consumed]
+                    .iter()
+                    .any(|&c| c != new_journal.captured[j])
             {
                 return Err(format!("{id} at {case} is not its status fold: {b}"));
             }
-            let weights = wide_weights
-                .get(packed_folds)
-                .ok_or("more packed WQ_b folds than 16-row wide folds")?;
+            let k = packed_folds.entry(id).or_default();
+            let template = templates
+                .get(id)
+                .and_then(|t| t.get(*k))
+                .ok_or("more packed folds than 16-row status folds")?;
+            *k += 1;
+            let wo = matches!(id, "attention.o-a" | "attention.o-b");
+            let weights = &template[2];
+            let slab = template
+                .iter()
+                .position(|s| s.0.starts_with("flags"))
+                .map(|f| &template[f + 1]);
+            let new = spans(b);
             if new.get(2) != Some(weights) {
                 return Err(format!(
                     "{id} at {case} does not bind the layer's weights: {b}"
                 ));
             }
-            if let Some(span) = new.iter().find(|s| *s != weights && !old.contains(s)) {
-                return Err(format!("{id} at {case} binds another operand: {span:?}"));
+            for span in &new {
+                let added =
+                    span == weights || wo && (span.0.starts_with("flags") || Some(span) == slab);
+                if !(kept.contains(span) || added) {
+                    return Err(format!("{id} at {case} binds another operand: {span:?}"));
+                }
             }
-            let dropped: Vec<_> = old.iter().filter(|s| !new.contains(s)).collect();
-            if old.len() < 7 || dropped != [&old[2], &old[5], &old[6]] {
-                return Err(format!("{id} at {case} drops an operand: {dropped:?}"));
+            if let Some(span) = kept.iter().find(|s| !new.contains(s)) {
+                return Err(format!("{id} at {case} drops an operand: {span:?}"));
             }
-            packed_folds += 1;
+            let flags = new.iter().filter(|s| s.0.starts_with("flags")).count();
+            if flags != usize::from(wo) || wo != slab.is_some_and(|s| new.contains(s)) {
+                return Err(format!(
+                    "{id} at {case} binds {flags} block flags or no slabs"
+                ));
+            }
             changed.push((case.clone(), id.to_owned()));
-            i += 1;
+            if new_journal.captured[j] {
+                *removed.entry(case.clone()).or_default() += consumed as i64 - 1;
+            }
+            i += consumed;
             j += 1;
             continue;
         }
-        let Some((id, true)) = served(a, rows) else {
+        let Some((id, Kind::Admit)) = served(a, rows) else {
             return Err(format!("{case} changed an unrelated operation: {a}\n{b}"));
         };
         let fold = before.get(i + 1).ok_or("an admission without its fold")?;
-        if served(fold, rows) != Some((id, false)) || symbol(b) != status_fold(id, rows) {
+        if served(fold, rows) != Some((id, Kind::Fold)) || symbol(b) != status_fold(id, rows) {
             return Err(format!(
                 "{id} at {case} is not admission and fold to its status fold: {b}"
             ));
@@ -459,7 +547,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         let flags = new.iter().filter(|s| s.0.starts_with("flags")).count();
         let wo = matches!(id, "attention.o-a" | "attention.o-b");
         // A cluster status fold's slabs follow its admission's 256 flag
-        // bytes; at 8 rows it takes its own slabs at the prefetch fold's
+        // bytes; below 16 rows it takes its own slabs at the prefetch fold's
         // workspace offset.
         let slab_bytes = if prefetched(rows) {
             fold_fused::fused(id, rows).map(|e| e.workspace())
@@ -560,14 +648,26 @@ fn status_folds_change_only_bf16_decode_projections() {
 fn check_projection_changes(kv: KvLayout) {
     let [before, after] = journals(kv);
     let changed = audit(&before, &after).unwrap();
-    let mut cases = vec!["decode 8", "decode 16", "decode 32"];
+    let mut cases = vec![
+        "decode 1",
+        "decode 2",
+        "decode 4",
+        "decode 8",
+        "decode 16",
+        "decode 32",
+    ];
     if kv.storage == KvStorage::Native {
-        cases.extend(["verify 32", "verify 16", "verify 8"]);
+        cases.extend(["verify 32", "verify 16", "verify 8", "verify 4", "verify 2"]);
     }
-    // Every backbone layer on each of the four ranks, not the drafter's.
+    // Every backbone layer on each of the four ranks, not the drafter's;
+    // the one-row decode step keeps the dual fold for WQ_a and WKV.
     let mut expected = Vec::new();
     for case in cases {
-        for piece in PROJECTIONS.into_iter().chain(["attention.o-a input"]) {
+        for piece in PROJECTIONS
+            .into_iter()
+            .chain(["attention.o-a input"])
+            .filter(|p| case != "decode 1" || !matches!(*p, "attention.q-a" | "attention.kv"))
+        {
             expected.push((
                 (case.to_owned(), piece.to_owned()),
                 4 * FLASH.layers() as usize,
@@ -602,6 +702,25 @@ fn check_projection_changes(kv: KvLayout) {
     assert!(audit(&before, &bad).is_err());
     let mut bad = after.clone();
     bad[at] = bad[at].replacen("raw: flags", "raw: buffer", 1);
+    assert!(audit(&before, &bad).is_err());
+    // At one row, a WO_b status fold in place of the direct fold over
+    // other weights, or without WO_a's block flags.
+    let one = after.iter().position(|l| l == "case decode 1").unwrap();
+    let wo_b = one
+        + after[one..]
+            .iter()
+            .position(|l| symbol(l) == status_fold("attention.o-b", 1))
+            .unwrap();
+    let weights = spans(&after[wo_b])[2].clone();
+    let mut bad = after.clone();
+    bad[wo_b] = bad[wo_b].replacen(
+        &format!("offset: {}, length: {}", weights.1, weights.2),
+        &format!("offset: {}, length: {}", weights.1 + 64, weights.2),
+        1,
+    );
+    assert!(audit(&before, &bad).is_err());
+    let mut bad = after.clone();
+    bad[wo_b] = bad[wo_b].replacen("raw: flags", "raw: buffer", 1);
     assert!(audit(&before, &bad).is_err());
     // And a capture that lost a node more than its folds.
     let captured = after
@@ -810,6 +929,13 @@ fn check_zeroing_producers(kv: KvLayout) {
         }
     }
     let bodies = bodies();
+    let folds: BTreeMap<u32, Vec<(&str, String)>> = fold_fused::ROWS
+        .iter()
+        .map(|&rows| {
+            let folds = PROJECTIONS.map(|id| (id, status_fold(id, rows)));
+            (rows, folds.to_vec())
+        })
+        .collect();
     let mut producers = BTreeSet::new();
     let [_, after] = journals(kv);
     let mut case = String::new();
@@ -828,9 +954,9 @@ fn check_zeroing_producers(kv: KvLayout) {
         else {
             continue;
         };
-        let Some(id) = PROJECTIONS
-            .into_iter()
-            .find(|id| line.starts_with("launch ") && symbol(line) == status_fold(id, rows))
+        let Some(&(id, _)) = folds[&rows]
+            .iter()
+            .find(|(_, fold)| line.starts_with("launch ") && symbol(line) == fold)
         else {
             continue;
         };
@@ -843,9 +969,9 @@ fn check_zeroing_producers(kv: KvLayout) {
             .rev()
             .filter(|l| l.starts_with("launch ") && spans(l).iter().any(overlaps))
             .find(|l| {
-                !["attention.q-a", "attention.kv"]
-                    .into_iter()
-                    .any(|twin| symbol(l) == status_fold(twin, rows))
+                !folds[&rows].iter().any(|(twin, fold)| {
+                    matches!(*twin, "attention.q-a" | "attention.kv") && symbol(l) == fold
+                })
             })
             .unwrap_or_else(|| panic!("{id} at {case} reads codes no launch of the step wrote"));
         let p = symbol(producer);

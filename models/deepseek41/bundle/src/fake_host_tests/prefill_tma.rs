@@ -103,7 +103,8 @@ fn staged_tiles() {
                     && !l.contains("_prepare_v1")
             })
             .collect();
-        // Decode selects the qualified direct, packed, ticket and split-fold buckets.
+        // Decode selects the qualified direct, packed, ticket, split-fold and
+        // status-fold buckets.
         // Each paired shared gate/up replaces two individual projections.
         // Each C1 query/KV grid replaces two computes and one KV admission.
         let completed = dense
@@ -113,6 +114,7 @@ fn staged_tiles() {
                 symbol.contains("mxfp8_stream_")
                     || symbol.contains("mxfp8_dual_")
                     || symbol.contains("mxfp8_direct_")
+                    || symbol.contains("mxfp8_fused_")
                     || ((symbol.contains("mxfp8_ticket_") || symbol.contains("mxfp8_prefetch_"))
                         && !symbol.contains("_initialize_"))
                     || (symbol.contains("mxfp8_decode_")

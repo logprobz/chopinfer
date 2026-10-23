@@ -1164,6 +1164,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// only handles that merge are each rank's members of one region.
 /// No instance loads the retired one-launch HC boundary module: ten
 /// resolves and eleven releases per rank fewer, ids shifted only.
+/// The status folds serve the 1-, 2- and 4-row buckets on their 16-row
+/// tile. In the two-row decode of these lifecycles each layer's ten
+/// launches (the WQ_a and WKV prefetch initialize/fold pairs, WQ_b's stream
+/// fold, WO_a's input quantizer, prefetch pair and WO_b's F32 input
+/// quantizer, and WO_b's direct fold) become six with the same operands,
+/// the packed fold's weights and state replaced by the layer's weights: 640
+/// launches and captured nodes fewer per TP4 lifecycle, audited line by
+/// line against the 16-row status folds. No other line changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1190,12 +1198,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (82643, 0xf37909bc5249441c),
+        (82003, 0x201a8008b9395af2),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (80287, 0xff0ea35eef266853),
+        (79647, 0x915e6dfce531d4f0),
     ),
 ];
 
@@ -1356,7 +1364,7 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// cluster folds and the status folds change it as in `FLASH_JOURNALS`, and
 /// so do the shared fold storage and the scratch regions.
 /// cluster folds, the status folds and the retired one-launch module change
-/// it as in `FLASH_JOURNALS`.
+/// it as in `FLASH_JOURNALS`, and so do the 1-, 2- and 4-row status folds.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1364,7 +1372,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(80923, 0x83a90f8b214cb1f7), (78567, 0x88c2cef601e2ac7c)])
+            .zip([(80283, 0xa880188c762c1252), (77927, 0x5f2bb68eb0b78c37)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);
@@ -2218,9 +2226,10 @@ fn a_non_finite_index_score_refuses_its_step_alone() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// Every captured small ceil launch uses a decode entry (parallel, or cached
-/// at the measured widths), including ops originally prepared once at
-/// prefill capacity. Larger rows keep the serial entry.
+/// Every captured small ceil launch uses a decode entry (parallel, cached
+/// at the measured widths, or the status folds' sliced WO_a input
+/// quantizer), including ops originally prepared once at prefill capacity.
+/// Larger rows keep the serial entry.
 fn assert_small_row_ceil_bindings(lines: &[String]) {
     let cached: Vec<String> = model_deepseek41_contract::geometry::GEOMETRIES
         .iter()
@@ -2232,6 +2241,12 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
         .flatten()
         .filter_map(|e| crate::sm120::ceil_cached::cached(&e))
         .map(|e| e.symbol)
+        .chain(
+            crate::sm120::fold_fused::ROWS
+                .iter()
+                .filter_map(|&rows| crate::sm120::fold_fused::sliced(rows))
+                .map(|q| q.symbol),
+        )
         .collect();
     let mut checked = 0;
     let mut capturing = false;

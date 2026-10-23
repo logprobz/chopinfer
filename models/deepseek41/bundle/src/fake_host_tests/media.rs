@@ -430,9 +430,15 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// without the ticket; graph pieces keep their count and gain those nodes,
 /// and no other line changes. No instance then loads the one-launch module:
 /// ten resolves and eleven releases per rank fewer, ids shifted only.
+/// The status folds serve the TP4 history's one-row decode beside the dual
+/// fold: each layer's WQ_b stream fold, WO_a input quantizer, WO_a stream
+/// fold with WO_b's F32 input quantizer and WO_b direct fold become WQ_b's
+/// status fold, the sliced quantizer and WO_a's and WO_b's status folds
+/// with the same operands (160 launches and captured nodes fewer), as in
+/// `FLASH_JOURNALS`. No other line changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (21479, 0x80c97fd5edcadc0e)),
-    (Ranks::TP4, (54143, 0x9655dfc4c3a6c7fe)),
+    (Ranks::TP4, (53983, 0x0455852f242b68b0)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

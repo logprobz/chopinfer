@@ -352,6 +352,197 @@ fn scale_expand_exact_bytes_and_guarded_graph_replay_on_gpu() {
     .unwrap();
 }
 
+/// The paired entry's banks: a gate/up-like and a down-like shape of one
+/// expert count at differing widths, with odd shapes whose rows straddle
+/// output words, and each bank alone.
+fn pair_cases() -> Vec<[Option<(ScaleExpandQuery, Pattern)>; 2]> {
+    let query = |width, rows, groups, projections, experts| ScaleExpandQuery {
+        width,
+        rows,
+        groups,
+        projections,
+        experts,
+    };
+    let mut cases = Vec::new();
+    for (first, second) in [(1, 4), (2, 1), (4, 2)] {
+        cases.push([
+            Some((query(first, 576, 160, 2, 5), Pattern::Random)),
+            Some((query(second, 5120, 18, 1, 5), Pattern::Random)),
+        ]);
+        cases.push([
+            Some((query(first, 65, 17, 2, 3), Pattern::TileEdges)),
+            Some((query(second, 129, 33, 1, 3), Pattern::Wrapping)),
+        ]);
+    }
+    cases.push([Some((query(2, 63, 18, 2, 4), Pattern::EveryByte)), None]);
+    cases.push([None, Some((query(1, 600, 18, 1, 4), Pattern::Random))]);
+    cases
+}
+
+fn run_pair_case(
+    session: &Session,
+    module: &Module,
+    fixtures: [Option<&Fixture>; 2],
+) -> LabResult<()> {
+    let experts = fixtures.iter().flatten().next().unwrap().query.experts;
+    let bank = |f: &Fixture| expand::PairBank {
+        width: f.query.width,
+        rows: f.query.rows,
+        groups: f.query.groups,
+        projections: f.query.projections,
+    };
+    let mut banks = Vec::new();
+    let mut outputs = Vec::new();
+    for f in fixtures.iter().flatten() {
+        let mut image = vec![0x6d; BANK_GUARD];
+        image.extend_from_slice(&f.bank);
+        image.resize(image.len() + TAIL_GUARD, 0x6d);
+        banks.push(upload(session, &image)?);
+        outputs.push(session.allocate(OUTPUT_GUARD + f.raw.len() + TAIL_GUARD)?);
+    }
+    let active = upload(session, &active_bytes(experts, &[]))?;
+    let function = module
+        .function(expand::PAIR_SYMBOL)
+        .map_err(|e| e.to_string())?;
+    let present: Vec<usize> = (0..2).filter(|&b| fixtures[b].is_some()).collect();
+    let views = |b: usize| {
+        fixtures[b].map(|f| {
+            let at = present.iter().position(|&p| p == b).unwrap() as u64;
+            (
+                bank(f),
+                View {
+                    handle: 10 + at,
+                    bytes: f.bank.len() as u64,
+                },
+                View {
+                    handle: 20 + at,
+                    bytes: f.raw.len() as u64,
+                },
+            )
+        })
+    };
+    for ids in active_lists(experts) {
+        let slots = ids.as_ref().map_or(experts, |ids| ids.len().max(1) as u32);
+        let config = launch::config(
+            expand::pair_plan([0, 1].map(|b| views(b).map(|v| v.0)), experts, slots).unwrap(),
+        )?;
+        let args = expand::pair_arguments(
+            [views(0), views(1)],
+            ids.is_some().then_some(View {
+                handle: 2,
+                bytes: active.byte_len() as u64,
+            }),
+            experts,
+        )
+        .map_err(|e| e.to_string())?;
+        poison::write(
+            session,
+            &active,
+            0,
+            &active_bytes(experts, ids.as_deref().unwrap_or(&[])),
+        )?;
+        let mut expected = Vec::new();
+        for (at, f) in fixtures.iter().flatten().enumerate() {
+            let (initial, image) = images(f, ids.as_deref(), 0xa5);
+            poison::write(session, &outputs[at], 0, &initial)?;
+            expected.push(image);
+        }
+        let args = args
+            .0
+            .iter()
+            .map(|a| match a {
+                Argument::DeviceBuffer(2) => KernelArgument::Buffer(&active),
+                Argument::DeviceBuffer(h) if (10..20).contains(h) => {
+                    let at = (*h - 10) as usize;
+                    KernelArgument::Range {
+                        buffer: &banks[at],
+                        offset: BANK_GUARD,
+                        byte_len: fixtures.iter().flatten().nth(at).unwrap().bank.len(),
+                    }
+                }
+                Argument::DeviceBuffer(h) => {
+                    let at = (*h - 20) as usize;
+                    KernelArgument::Range {
+                        buffer: &outputs[at],
+                        offset: OUTPUT_GUARD,
+                        byte_len: fixtures.iter().flatten().nth(at).unwrap().raw.len(),
+                    }
+                }
+                Argument::U32(v) => KernelArgument::U32(*v),
+                Argument::NullDevicePointer => KernelArgument::NullBuffer,
+                _ => unreachable!("paired scale expansion ABI"),
+            })
+            .collect::<Vec<_>>();
+        launch::launch_with(&function, &session.stream, config, &args)?;
+        for (at, image) in expected.iter().enumerate() {
+            assert_eq!(
+                &download(session, &outputs[at])?,
+                image,
+                "pair bank {at}, ids={ids:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cpu_pair_fixtures_cover_both_tilings_and_unaligned_rows() {
+    let cases = pair_cases();
+    for case in &cases {
+        let experts: Vec<u32> = case.iter().flatten().map(|(q, _)| q.experts).collect();
+        assert!(!experts.is_empty() && experts.iter().all(|&e| e == experts[0]));
+        for (q, pattern) in case.iter().flatten() {
+            let f = fixture(*q, *pattern);
+            let matrix_bytes = (q.rows * q.groups) as usize;
+            for matrix in 0..(q.experts * q.projections) as usize {
+                let decoded =
+                    decode_bank_matrix(&f.bank, matrix, q.rows.into(), q.groups.into(), q.width)
+                        .unwrap();
+                assert_eq!(
+                    decoded,
+                    f.raw[matrix * matrix_bytes..(matrix + 1) * matrix_bytes]
+                );
+            }
+        }
+    }
+    let banks: Vec<_> = cases
+        .iter()
+        .flatten()
+        .flatten()
+        .map(|(q, _)| expand::PairBank {
+            width: q.width,
+            rows: q.rows,
+            groups: q.groups,
+            projections: q.projections,
+        })
+        .collect();
+    // Multi-strip tiles, tiles past the last row, and words that straddle rows.
+    assert!(
+        banks
+            .iter()
+            .any(|b| b.tile_rows() > 64 && b.rows % b.tile_rows() != 0)
+    );
+    assert!(banks.iter().any(|b| b.groups % 4 != 0));
+    assert!(cases.iter().any(|c| c[0].is_none()) && cases.iter().any(|c| c[1].is_none()));
+}
+
+#[test]
+fn scale_expand_pair_exact_bytes_on_gpu() {
+    kernel_harness::gpu_test(256 << 20, |session| {
+        let module = load(session)?;
+        for case in pair_cases() {
+            let fixtures = case.map(|c| c.map(|(q, p)| fixture(q, p)));
+            run_pair_case(
+                session,
+                &module,
+                [fixtures[0].as_ref(), fixtures[1].as_ref()],
+            )?;
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn scale_expand_high_matrix_offsets_on_gpu() {
     // Expert 128 begins at 2 GiB, expert 256 at 4 GiB. Only their two

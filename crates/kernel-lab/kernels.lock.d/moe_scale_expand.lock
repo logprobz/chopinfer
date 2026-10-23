@@ -129,9 +129,86 @@
         "max_threads": 256,
         "min_blocks": 1,
         "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_scale_expand_pair_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "first",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "second",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first_output",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "second_output",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "first_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "first_groups"
+          },
+          {
+            "kind": "U32",
+            "name": "first_projections"
+          },
+          {
+            "kind": "U32",
+            "name": "first_width"
+          },
+          {
+            "kind": "U32",
+            "name": "first_tile_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "second_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "second_groups"
+          },
+          {
+            "kind": "U32",
+            "name": "second_projections"
+          },
+          {
+            "kind": "U32",
+            "name": "second_width"
+          },
+          {
+            "kind": "U32",
+            "name": "second_tile_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "experts"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "e5408be8f4b74631b7b46b55cbc9712f7b8569b3c382fe9b8fdf8517d7812254",
+    "cubin_sha256": "0df7a03cf3658a12cc5f52f6da2f3b8a60c5c0a8d98c3366209e0ad1d5c4b0ca",
     "resources": [
       {
         "symbol": "chop_moe_scale_expand_w1_v1",
@@ -154,6 +231,15 @@
       {
         "symbol": "chop_moe_scale_expand_w4_v1",
         "registers": 26,
+        "shared_static_bytes": 1032,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_scale_expand_pair_v1",
+        "registers": 46,
         "shared_static_bytes": 1032,
         "local_bytes": 0,
         "stack_bytes": 0,

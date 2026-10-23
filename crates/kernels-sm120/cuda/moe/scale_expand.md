@@ -52,10 +52,37 @@ Matrix `m = expert * projections + projection` starts at byte
 `m * rows * groups`. Unlisted matrices remain untouched. Bytes 253 through
 255 and wrapping base-plus-offset addition are preserved exactly.
 
+## Paired entry
+
+`chop_moe_scale_expand_pair_v1` expands two banks of one expert count in one
+launch, each at its own runtime offset width:
+
+```cpp
+extern "C" __global__ void chop_moe_scale_expand_pair_v1(
+    const uint8_t* first, const uint8_t* second, const int32_t* active,
+    uint8_t* first_output, uint8_t* second_output,
+    uint32_t first_rows, uint32_t first_groups, uint32_t first_projections,
+    uint32_t first_width, uint32_t first_tile_rows,
+    uint32_t second_rows, uint32_t second_groups, uint32_t second_projections,
+    uint32_t second_width, uint32_t second_tile_rows,
+    uint32_t experts);
+```
+
+Grid x covers the first bank's tiles, then the second's; grid z holds the
+slots, block `(256, 1, 1)`, PDL as above. A null encoded bank takes no
+tiles, so either bank may be absent (`pair_arguments` packs null pointers
+and a zero shape). `PairBank::tile_rows` sizes each bank's tiles: whole
+64-row strips holding at least 8 KiB of scales, so DeepSeek's TP4 gate/up
+bank (160 groups) takes 64-row tiles and its down bank (18 groups) 512-row
+tiles. Each thread writes four output bytes at a time where the output is
+word aligned, with byte loops for an unaligned head and the tail, then
+applies the tile's exceptions after a block barrier. The output contract
+is the single-bank entries', per bank.
+
 ## Registration and bundle use
 
 `kernels_sm120::moe::scale_expand::cubin_spec(name)` returns a standalone
-`kernel_build::CubinSpec` with all three entries. Add it once to the bundle's
+`kernel_build::CubinSpec` with all four entries. Add it once to the bundle's
 selection, in a new lock family, and include its header in the exported
 source set if that set is explicit. The cubin is independent of model
 geometry and topology. Do not add entries or includes to existing MoE
@@ -68,15 +95,17 @@ Views carry opaque handles and byte extents; the bundle's host services
 resolve them as for other kernel-core argument lists. This is a low-level
 launcher, with no new generic `Backend` method.
 
-The DeepSeek integration must allocate compressed bank storage and raw
-scratch, launch expansion after Route and before the first corresponding
-scale consumer, and bind that raw scratch as the existing scale role.
+The DeepSeek bundle allocates both raw banks in one scratch region, the
+down bank after the gate/up bank at a 256-byte boundary, and launches the
+paired entry once per layer at the end of the routes stage, before the
+first scale consumer, binding that raw scratch as the existing scale roles.
 Gate/up uses `rows=576, groups=160, projections=2` at TP4; down uses
-`rows=5120, groups=18, projections=1`; both use 384 experts. Launch them
-in stream order between the routes and the consumers, including inside
-captured graphs. Every consumer the bundle selects reads its weight scales
-only after its own `griddepcontrol.wait`; the one-row floor kernel loads
-them before its wait, so it must keep binding raw banks.
+`rows=5120, groups=18, projections=1`; both use 384 experts. The
+expansion stays in stream order between the routes and the consumers,
+including inside captured graphs, on the routed branch beside the shared
+expert. Every consumer the bundle selects reads its weight scales only
+after its own `griddepcontrol.wait`; the one-row floor kernel loads them
+before its wait, so it must keep binding raw banks.
 
 The direct path already binds `active` to `scratch.active_experts` in
 `models/deepseek41/bundle/src/lower/moe_direct.rs`. `route_floor.cuh` and
@@ -110,6 +139,10 @@ export CHOPINFER_SCALE_EXPAND_CUBINS="$CHOPINFER_DATA/scale-expand-cubins"
   cargo test --locked --offline -p kernel-lab-families --test moe_scale_expand --no-run
 ```
 
+`scale_expand_pair_exact_bytes_on_gpu` runs the paired entry over gate/up
+and down shapes at differing widths, odd shapes whose words straddle rows,
+and each bank alone, with the same active lists and guarded outputs.
+
 `cpu_scale_expand_fixtures_cover_codec_and_write_maps` checks 24 fixtures
 against the codec and verifies that the poison differs at every expected
 write. The GPU tests cover all widths, random and adversarial scales,
@@ -128,6 +161,6 @@ exact-size encoded allocation. Device correctness and sanitizer results
 must be obtained on idle GPUs; CPU compilation alone establishes neither.
 
 Possible performance work, after byte equality is established on a GPU:
-vectorize offset decoding and stores, tune row tiles separately for short
-and wide rows, and share exception-range searches across tiles. No
-performance claim accompanies this initial implementation.
+vectorize offset decoding, and share exception-range searches across
+tiles. No performance claim accompanies the paired entry until its served
+measurement.

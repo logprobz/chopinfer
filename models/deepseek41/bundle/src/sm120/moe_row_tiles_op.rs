@@ -1,15 +1,16 @@
 //! Routed expert ops over the TP4 backbone gate/up bank in the layout the
-//! served plan stores (`moe_row_tiles`). With the bank in row tiles a
-//! gate/up op launches each entry's row-tiled build under its symbol and
-//! refuses any other launch that reads the bank, so no step can read tiles
-//! as rows. Native-off prefill refuses at prepare: its exact kernels read
-//! the bank as rows.
+//! served plan stores (`moe_row_tiles`). With the bank in row tiles, in
+//! either code order, a gate/up op launches each entry's build for that
+//! layout under its symbol and refuses any other launch that reads the
+//! bank, so no step can read tiles as rows or one code order as the other.
+//! Native-off prefill refuses at prepare: its exact kernels read the bank
+//! as rows.
 use super::moe_row_tiles;
 use kernel_core::backend::{Counts, DeferredBf16Round, Launch, OpInfo, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, Refusal};
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::moe_experts::{GatedMlpBuffers, PreparedExperts};
-use kernel_core::precision::layout::ROW_TILES_64X128;
+use kernel_core::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use kernel_core::precision::{ExecutionPhase, OperationUse, WeightLayout};
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::moe::Experts;
@@ -63,7 +64,7 @@ fn prepare_for(
     native: bool,
     op: Box<dyn PreparedExperts>,
 ) -> Result<Box<dyn PreparedExperts>, Refused> {
-    if layout != RoutedLayout::Tiles || kind != GatedMlpProjection::GateUp {
+    if !layout.tiled() || kind != GatedMlpProjection::GateUp {
         return Ok(op);
     }
     if usage.phase == ExecutionPhase::Prefill && !native {
@@ -81,7 +82,12 @@ fn prepare_for(
         }
     }
     let tiles = WeightLayout {
-        id: ROW_TILES_64X128.into(),
+        id: if layout == RoutedLayout::Lanes {
+            ROW_TILES_64X128_LANES
+        } else {
+            ROW_TILES_64X128
+        }
+        .into(),
         version: 1,
     };
     info.weight_layouts.retain(|(role, _)| role != "weights");
@@ -92,13 +98,13 @@ fn prepare_for(
 struct RowTiled {
     op: Box<dyn PreparedExperts>,
     info: OpInfo,
-    /// Each row-major symbol with its row-tiled build's.
+    /// Each row-major symbol with its build's for the bank's layout.
     symbols: BTreeMap<String, String>,
 }
 
 impl RowTiled {
-    /// `launches` with each row-major symbol renamed to its row-tiled
-    /// build's; a launch of another entry over the bank is refused.
+    /// `launches` with each row-major symbol renamed to its build's for the
+    /// bank's layout; a launch of another entry over the bank is refused.
     fn tiled(
         &self,
         b: &GatedMlpBuffers<View>,
@@ -293,6 +299,84 @@ mod tests {
                 op.launches(&buffers(), View::EMPTY, Counts::rows(1))
                     .is_err()
             );
+        }
+    }
+
+    /// Over a quad-lane bank a gate/up op declares the quad-lane layout and
+    /// launches the quad-lane builds, as over row tiles it declares the
+    /// row tiles and launches the row-tiled builds; the down op is left as
+    /// it is.
+    #[test]
+    fn tiled_ops_declare_and_launch_their_layouts_builds() {
+        struct Declared(OpInfo);
+        impl PreparedExperts for Declared {
+            fn route_tile(&self) -> u32 {
+                64
+            }
+            fn padded_rows(&self) -> u32 {
+                0
+            }
+        }
+        impl PreparedOp<GatedMlpBuffers<View>> for Declared {
+            fn info(&self) -> &OpInfo {
+                &self.0
+            }
+            fn launches(
+                &self,
+                _: &GatedMlpBuffers<View>,
+                _: View,
+                _: Counts,
+            ) -> Result<Vec<Launch>, Refusal> {
+                Ok(Vec::new())
+            }
+        }
+        let usage = OperationUse {
+            phase: ExecutionPhase::Decode,
+            capacity: 8,
+            graph: false,
+        };
+        for (layout, id) in [
+            (RoutedLayout::Tiles, ROW_TILES_64X128),
+            (RoutedLayout::Lanes, ROW_TILES_64X128_LANES),
+        ] {
+            let builds = moe_row_tiles::builds_for(&FLASH, layout).unwrap();
+            let (row, build) = builds.iter().next().unwrap();
+            let declared = || {
+                Box::new(Declared(OpInfo::new(
+                    "fake",
+                    kernel_core::properties::Invariance::any_rows(1),
+                    vec![(row.clone(), 0), ("pack_v1".into(), 0)],
+                )))
+            };
+            let op = prepare_for(
+                &FLASH,
+                layout,
+                GatedMlpProjection::GateUp,
+                usage,
+                true,
+                declared(),
+            )
+            .unwrap();
+            assert_eq!(op.info().layout_of("weights").unwrap().id, id);
+            assert_eq!(
+                op.info()
+                    .symbols
+                    .iter()
+                    .map(|(s, _)| s.as_str())
+                    .collect::<Vec<_>>(),
+                [build.symbol.as_str(), "pack_v1"]
+            );
+            let down = prepare_for(
+                &FLASH,
+                layout,
+                GatedMlpProjection::Down,
+                usage,
+                true,
+                declared(),
+            )
+            .unwrap();
+            assert!(down.info().layout_of("weights").is_none());
+            assert_eq!(down.info().symbols[0].0, *row);
         }
     }
 

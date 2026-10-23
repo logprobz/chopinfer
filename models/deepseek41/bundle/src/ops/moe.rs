@@ -21,7 +21,7 @@ use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::moe::{RouteBuffers, RouteMetadata, RoutedSumBuffers};
 use kernel_core::moe_experts::{GatedMlpBuffers, GatedMlpScratch, PreparedExperts};
 use kernel_core::precision::buffers::{ProjectionRouting, QuantizedWeights};
-use kernel_core::precision::layout::ROW_TILES_64X128;
+use kernel_core::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use kernel_core::precision::quantizer::BlockQuantizeBuffers;
 use kernel_core::precision::{ExecutionPhase, OperationUse};
 use kernel_core::router::RowBiasRouteBuffers;
@@ -175,10 +175,12 @@ pub(crate) struct SumViews {
 }
 
 /// The layout an expert projection declares it reads its bank in
-/// (`OpInfo::weight_layouts`, role `weights`): row tiles, or rows.
+/// (`OpInfo::weight_layouts`, role `weights`): row tiles, quad-lane row
+/// tiles, or rows.
 fn reads(info: &OpInfo) -> RoutedLayout {
     match info.layout_of("weights") {
         Some(layout) if layout.id == ROW_TILES_64X128 => RoutedLayout::Tiles,
+        Some(layout) if layout.id == ROW_TILES_64X128_LANES => RoutedLayout::Lanes,
         _ => RoutedLayout::Rows,
     }
 }
@@ -630,7 +632,7 @@ mod tests {
                 let asks = Asks::default();
                 let prepare = || MoeOps::prepare(kernels.backend.as_ref(), &shape, &asks, set);
                 let layout = crate::Kernels::moe_gate_up_layout(&shape, set);
-                let tiled = layout == RoutedLayout::Tiles;
+                let tiled = layout.tiled();
                 let ops = if tiled {
                     let native_off = crate::sm120::moe_row_tiles_op::NATIVE_OFF;
                     assert_eq!(prepare().err(), Some(Refused::Rule(native_off.into())));

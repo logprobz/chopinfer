@@ -365,19 +365,19 @@ impl crate::Kernels {
 
     /// Whether a rank loads `cubin`: the scale expansion only where its
     /// image stores a routed scale bank encoded, and the tiled expansion
-    /// only where it also writes the gate/up bank in row tiles, for
-    /// consumers that read the bank in `gate_up`
+    /// only where it also writes the gate/up bank in row tiles (whose
+    /// scales are the same in either code order), for consumers that read
+    /// the bank in `gate_up`
     /// ([`Self::expanded_scale_layout`]).
     pub(crate) fn loads_scale_expand(
         cubin: &str,
         encoded: bool,
         gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
     ) -> bool {
-        use model_deepseek41_contract::weight_plan::RoutedLayout;
         match cubin {
             scale_expand::CUBIN => encoded,
             scale_expand_tiles::CUBIN => {
-                encoded && Self::expanded_scale_layout(true, gate_up) == RoutedLayout::Tiles
+                encoded && Self::expanded_scale_layout(true, gate_up).tiled()
             }
             _ => true,
         }
@@ -386,7 +386,8 @@ impl crate::Kernels {
     /// The layout the expansion writes a raw scale bank in, for consumers
     /// that read the backbone's gate/up bank in `gate_up`: that bank
     /// (`backbone_gate_up`) in their layout, through the tiled entry where
-    /// they read row tiles, and every other bank in rows.
+    /// they read row tiles in either code order, and every other bank in
+    /// rows.
     pub(crate) fn expanded_scale_layout(
         backbone_gate_up: bool,
         gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
@@ -423,7 +424,6 @@ impl crate::Kernels {
     ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
         use kernel_core::contract::Refusal;
         use kernels_sm120::moe::scale_expand as expand;
-        use model_deepseek41_contract::weight_plan::RoutedLayout;
         let mut experts = banks.iter().flatten().map(|(bank, _, _)| bank.experts);
         let first = experts
             .next()
@@ -448,8 +448,7 @@ impl crate::Kernels {
             })
         });
         let shapes = banks.map(|b| b.map(|(bank, _, _)| bank));
-        let tiled =
-            banks[0].is_some() && Self::expanded_scale_layout(true, gate_up) == RoutedLayout::Tiles;
+        let tiled = banks[0].is_some() && Self::expanded_scale_layout(true, gate_up).tiled();
         let (symbol, plan, arguments) = if tiled {
             (
                 expand::PAIR_TILES_SYMBOL,

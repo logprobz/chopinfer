@@ -1,8 +1,10 @@
 //! The TP4 backbone gate/up bank stored in 64-row by 128-K row tiles
-//! (`RoutedLayout::Tiles`, `row-tiles-64x128-groups`). Each entry a served
-//! path launches on that bank compiles as its row-tiled build, under the
-//! tiled symbol, in place of the row-major entry in its served module, and
-//! the routed ops launch it there (`moe_row_tiles_op`, `moe_direct`):
+//! (`RoutedLayout::Tiles`, `row-tiles-64x128-groups`), or in those tiles
+//! with the codes in quad-lane order (`RoutedLayout::Lanes`,
+//! `row-tiles-64x128-lanes`). Each entry a served path launches on that
+//! bank compiles as its build for the layout, under the build's symbol, in
+//! place of the row-major entry in its served module, and the routed ops
+//! launch it there (`moe_row_tiles_op`, `moe_direct`):
 //! - the absorbing gate queue (Decode-32, Verify-32), the direct gate small
 //!   and wide queues and the resident8 gate (the other direct buckets);
 //! - the streamed module's gate small and wide queues (the other decode and
@@ -19,7 +21,7 @@ use kernel_core::gated_mlp::GatedMlpProjection;
 use kernels_sm120::moe::chained::{
     absorb, bandwidth,
     floor::{Entry, Stage},
-    streamed, streamed_resident,
+    lanes, streamed, streamed_resident,
 };
 use kernels_sm120::moe::native_grouped::{self as native, Variant};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
@@ -33,16 +35,19 @@ pub const RANKS: u32 = 4;
 pub const EXPERTS: u32 = 384;
 
 /// Each entry a served path launches on the TP4 backbone gate/up bank, by
-/// its row-major symbol, with its row-tiled build, when `layout` stores the
-/// bank in tiles; none for rows.
+/// its row-major symbol, with its build for `layout`: the row-tiled build,
+/// or for quad-lane tiles the quad-lane build (`chained::lanes`,
+/// `native_grouped::lanes_entry`, `Projection::lanes_entry`); none for
+/// rows.
 pub fn builds_for(
     g: &Geometry,
     layout: RoutedLayout,
 ) -> Result<BTreeMap<String, EntrySpec>, String> {
     let mut out = BTreeMap::new();
-    if layout != RoutedLayout::Tiles || !super::moe::streamed_qualified(g, RANKS) {
+    if !layout.tiled() || !super::moe::streamed_qualified(g, RANKS) {
         return Ok(out);
     }
+    let quad = layout == RoutedLayout::Lanes;
     let mut add = |rows: String, tiled: Result<EntrySpec, kernel_core::contract::Refusal>| {
         let tiled = tiled.map_err(|e| format!("{rows}: {e}"))?;
         match out.insert(rows.clone(), tiled) {
@@ -57,17 +62,29 @@ pub fn builds_for(
     for e in &direct {
         add(
             absorb::entry(e, Stage::GateSmall).symbol,
-            absorb::tiled_entry(e),
+            if quad {
+                lanes::absorb_entry(e)
+            } else {
+                absorb::tiled_entry(e)
+            },
         )?;
         for s in [Stage::GateSmall, Stage::GateWide] {
             add(
                 bandwidth::entry(e, s, bandwidth::Loads::Direct).symbol,
-                bandwidth::tiled_entry(e, s),
+                if quad {
+                    lanes::direct_entry(e, s)
+                } else {
+                    bandwidth::tiled_entry(e, s)
+                },
             )?;
         }
         add(
             streamed_resident::symbol(&e.gate),
-            streamed_resident::tiled_entry(&e.gate),
+            if quad {
+                lanes::resident_entry(&e.gate)
+            } else {
+                streamed_resident::tiled_entry(&e.gate)
+            },
         )?;
     }
     let backbone = |p: &kernels_sm120::moe::chained::quantized::Projection| {
@@ -78,14 +95,24 @@ pub fn builds_for(
         .filter(|p| backbone(p))
     {
         for stage in streamed::tiled_stages(p) {
-            add(streamed::symbol(p, stage), streamed::tiled_entry(p, stage))?;
+            let build = if quad {
+                lanes::streamed_entry(p, stage)
+            } else {
+                streamed::tiled_entry(p, stage)
+            };
+            add(streamed::symbol(p, stage), build)?;
         }
     }
     for p in super::moe::projections(g, RANKS)?
         .iter()
         .filter(|p| backbone(p) && p.tokens_capacity == PREFILL_TOKENS)
     {
-        add(p.symbol.clone(), p.tiled_entry())?;
+        let build = if quad {
+            p.lanes_entry()
+        } else {
+            p.tiled_entry()
+        };
+        add(p.symbol.clone(), build)?;
     }
     if g.id == FLASH.id {
         let shape = super::moe_native_entries::shape(GatedMlpProjection::GateUp);
@@ -103,7 +130,12 @@ pub fn builds_for(
             return Err("the served native cubins lack a launched gate/up entry".into());
         }
         for e in entries {
-            add(e.symbol.clone(), native::row_tiles_entry(&shape, &e))?;
+            let build = if quad {
+                native::lanes_entry(&shape, &e)
+            } else {
+                native::row_tiles_entry(&shape, &e)
+            };
+            add(e.symbol.clone(), build)?;
         }
     }
     Ok(out)
@@ -122,26 +154,47 @@ pub fn symbols(g: &Geometry) -> Result<BTreeMap<String, String>, String> {
         .collect())
 }
 
-/// `specs` with each entry `builds` names replaced in place by its build.
-/// Every build replaces exactly one entry, so a renamed or missing served
-/// entry fails rather than leaving the row-major build to read tiles.
+/// The include line of the quad-lane gate queues' header, which a served
+/// module takes when one of its entries is replaced by such a queue.
+fn lanes_include() -> String {
+    format!("#include \"moe/{}\"", lanes::HEADER)
+}
+
+/// Whether `build` is a quad-lane gate queue (`chained::lanes`), whose
+/// module needs [`lanes::HEADER`]. The native and column quad-lane builds
+/// are their own headers' templates.
+fn needs_lanes_header(build: &EntrySpec) -> bool {
+    build.body.contains("chop::moe::lanes::")
+}
+
+/// `specs` with each entry `builds` names replaced in place by its build,
+/// and the quad-lane header added to each module a quad-lane gate queue
+/// joins. Every build replaces exactly one entry, so a renamed or missing
+/// served entry fails rather than leaving the row-major build to read
+/// tiles.
 pub fn serve<F>(
     specs: &mut [(F, CubinSpec)],
     builds: &BTreeMap<String, EntrySpec>,
 ) -> Result<(), String> {
     let mut replaced = BTreeMap::new();
     for (_, spec) in specs.iter_mut() {
+        let mut header = false;
         for entry in &mut spec.entries {
             if let Some(tiled) = builds.get(&entry.symbol) {
                 *replaced.entry(entry.symbol.clone()).or_insert(0) += 1;
                 *entry = tiled.clone();
+                header |= needs_lanes_header(tiled);
             }
+        }
+        let include = lanes_include();
+        if header && !spec.headers.contains(&include) {
+            spec.headers.push(include);
         }
     }
     for symbol in builds.keys() {
         if replaced.get(symbol) != Some(&1) {
             return Err(format!(
-                "{symbol} is served {} times; its row-tiled build replaces exactly one entry",
+                "{symbol} is served {} times; its build replaces exactly one entry",
                 replaced.get(symbol).copied().unwrap_or(0)
             ));
         }
@@ -236,6 +289,55 @@ mod tests {
         let mut extra = builds.clone();
         extra.insert("absent_v1".into(), builds.values().next().unwrap().clone());
         assert!(serve(&mut before.clone(), &extra).is_err());
+    }
+
+    /// With quad-lane tiles the map names a build for the same entries,
+    /// each with the row-tiled build's ABI and bounds under its quad-lane
+    /// symbol. Serving them adds the quad-lane header to exactly the
+    /// modules a quad-lane gate queue joins.
+    #[test]
+    fn quad_lane_builds_replace_the_entries_the_row_tiled_builds_do() {
+        let tiles = builds_for(&FLASH, RoutedLayout::Tiles).unwrap();
+        let quad = builds_for(&FLASH, RoutedLayout::Lanes).unwrap();
+        assert_eq!(
+            tiles.keys().collect::<Vec<_>>(),
+            quad.keys().collect::<Vec<_>>()
+        );
+        for (symbol, build) in &quad {
+            let tiled = &tiles[symbol];
+            assert!(build.symbol.contains("_lanes"), "{}", build.symbol);
+            assert_ne!(build.symbol, tiled.symbol);
+            assert_eq!(
+                (&build.params, build.max_threads, build.min_blocks),
+                (&tiled.params, tiled.max_threads, tiled.min_blocks),
+                "{symbol}"
+            );
+            assert_ne!(build.body, tiled.body, "{symbol}");
+        }
+        // The gate queues: absorbing, direct small and wide, resident8,
+        // streamed t8 small and t64 small and wide.
+        assert_eq!(quad.values().filter(|b| needs_lanes_header(b)).count(), 7);
+        assert!(!tiles.values().any(needs_lanes_header));
+        let mut specs = served_specs();
+        let before = specs.clone();
+        serve(&mut specs, &quad).unwrap();
+        let include = lanes_include();
+        let mut joined = 0;
+        for ((_, spec), (_, old)) in specs.iter().zip(&before) {
+            let gate = old
+                .entries
+                .iter()
+                .any(|e| quad.get(&e.symbol).is_some_and(needs_lanes_header));
+            let added: Vec<&String> = spec
+                .headers
+                .iter()
+                .filter(|h| !old.headers.contains(h))
+                .collect();
+            let expected: Vec<&String> = if gate { vec![&include] } else { Vec::new() };
+            assert_eq!(added, expected, "{}", spec.name);
+            joined += usize::from(gate);
+        }
+        assert!(joined > 0);
     }
 
     /// The native symbols are the gate/up tiles the native wrapper launches.

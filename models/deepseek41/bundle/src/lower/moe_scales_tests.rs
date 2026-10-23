@@ -436,15 +436,19 @@ fn the_expansion_writes_the_gate_up_bank_as_its_consumers_read_it() {
         )
         .unwrap()
     };
-    let tiled = launch(true, RoutedLayout::Tiles);
     let rows = launch(true, RoutedLayout::Rows);
-    assert_eq!(tiled.symbol, scale_expand_pair_symbol(true));
     assert_eq!(rows.symbol, scale_expand_pair_symbol(false));
-    assert_eq!(
-        (&tiled.plan, &tiled.arguments),
-        (&rows.plan, &rows.arguments)
-    );
-    for layout in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+    // Quad-lane tiles store their scales as row tiles do.
+    for layout in [RoutedLayout::Tiles, RoutedLayout::Lanes] {
+        let tiled = launch(true, layout);
+        assert_eq!(tiled.symbol, scale_expand_pair_symbol(true), "{layout:?}");
+        assert_eq!(
+            (&tiled.plan, &tiled.arguments),
+            (&rows.plan, &rows.arguments),
+            "{layout:?}"
+        );
+    }
+    for layout in [RoutedLayout::Rows, RoutedLayout::Tiles, RoutedLayout::Lanes] {
         assert_eq!(
             launch(false, layout).symbol,
             scale_expand_pair_symbol(false),
@@ -465,11 +469,11 @@ fn the_expansion_writes_the_gate_up_bank_as_its_consumers_read_it() {
         let built = crate::CUBINS.iter().find(|c| c.name == cubin).unwrap();
         assert!(built.symbols.contains(&symbol), "{cubin}");
         let tiles = cubin.contains("_tiles_");
-        for layout in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+        for layout in [RoutedLayout::Rows, RoutedLayout::Tiles, RoutedLayout::Lanes] {
             assert!(!crate::Kernels::loads_scale_expand(cubin, false, layout));
             assert_eq!(
                 crate::Kernels::loads_scale_expand(cubin, true, layout),
-                !tiles || layout == RoutedLayout::Tiles,
+                !tiles || layout.tiled(),
                 "{cubin} {layout:?}"
             );
         }

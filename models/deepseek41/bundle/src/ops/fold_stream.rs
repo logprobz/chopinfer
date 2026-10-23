@@ -1,4 +1,4 @@
-//! Private packed weights, tickets and workspace for a qualified fold operation.
+//! Per-weight packed codes and ordered shared scratch for qualified folds.
 use super::{Bind, Lowered, exact};
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::Refusal;
@@ -102,7 +102,7 @@ pub(crate) fn launch(
     storage: Option<Storage>,
     rows: u32,
 ) -> Result<Vec<Lowered>, Refusal> {
-    let storage = storage.ok_or(Refusal("qualified fold has no initialized private storage"))?;
+    let storage = storage.ok_or(Refusal("qualified fold has no initialized storage"))?;
     let buffers = storage.bind(&mut bind, first, second);
     bind.launch_within(op, &buffers, storage.workspace, Counts::rows(rows))
 }

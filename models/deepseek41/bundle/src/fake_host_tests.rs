@@ -1148,6 +1148,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// TP4 rank, and move WQ_a's 32-row configure from its cluster fold to the
 /// status twin; these lifecycles launch no 16- or 32-row bucket, and every
 /// other line is identical after handle mapping.
+/// Sharing fold state and workspace across layers removes 406 allocations
+/// and their releases per TP1/TP4 rank, and 484 per TP2 rank. Packed weights,
+/// initialization count, every launch and every span length stay unchanged.
+/// All six journals match their predecessors after exactly those removals
+/// and the state/workspace aliases and resulting handle renumbering.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

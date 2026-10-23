@@ -21,6 +21,14 @@ pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 
 #[test]
+fn fold_scratch_keeps_target_and_drafter_allocations_disjoint() {
+    let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
+    super::fold_stream::audit_allocations(&host, &instance, true);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn target_graphs_capture_each_exact_verify_width() {
     let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
     execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));

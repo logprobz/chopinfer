@@ -7,6 +7,49 @@ use runtime_bundle_abi::{
 };
 use std::collections::BTreeMap;
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ScratchKey {
+    drafter: bool,
+    side_lane: bool,
+    projection: String,
+    paired: bool,
+    implementation: String,
+}
+
+/// Only the audited stream/direct families reset all persistent state and
+/// wait before mutable accesses. Unknown operations keep private storage.
+fn scratch_key(weight: &str, paired: bool, implementation: &str) -> Option<ScratchKey> {
+    if !["sm120.mxfp8-fold.stream.v1:", "sm120.mxfp8-fold.direct.v1:"]
+        .iter()
+        .any(|prefix| implementation.starts_with(prefix))
+    {
+        return None;
+    }
+    let mut parts = weight.splitn(3, '.');
+    let drafter = match parts.next()? {
+        "layers" => false,
+        "mtp" => true,
+        _ => return None,
+    };
+    parts.next()?.parse::<u32>().ok()?;
+    let projection = parts.next()?;
+    Some(ScratchKey {
+        drafter,
+        side_lane: projection.starts_with("ffn.shared_experts."),
+        projection: projection.into(),
+        paired,
+        implementation: implementation.into(),
+    })
+}
+
+fn empty() -> Span {
+    Span::new(
+        runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+        0,
+        0,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn initialize(
     target: &crate::ops::Ops,
@@ -18,6 +61,10 @@ pub(super) fn initialize(
     views: &mut BTreeMap<String, Span>,
     held: &mut Vec<Held>,
 ) -> Result<(), BundleAbiError> {
+    // This cache belongs to one rank. Layers and row buckets submit in
+    // order; fork/join events also order successive uses on the side lane.
+    // Target and drafter never share mutable storage (module documentation).
+    let mut scratch = BTreeMap::<ScratchKey, [Span; 2]>::new();
     let weights: Vec<_> = views
         .iter()
         .filter(|(name, _)| name.ends_with(".weight"))
@@ -47,38 +94,47 @@ pub(super) fn initialize(
                     .get(&format!("{prefix}w3.weight"))
                     .ok_or(BundleAbiError::InvalidRange("paired fold up weight"))?
             } else {
-                Span::new(
-                    runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
-                    0,
-                    0,
-                )
+                empty()
             };
-            // Each operation owns all writable storage, including workspace.
-            // Row buckets share it only through ordered graph submissions.
-            let storage = Storage {
-                packed: [
-                    allocate_span(services, pool, stream, a, held)?,
-                    if paired {
-                        allocate_span(services, pool, stream, b, held)?
-                    } else {
-                        Span::new(
-                            runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
-                            0,
-                            0,
-                        )
-                    },
-                ],
-                state: allocate_span(services, pool, stream, state, held)?,
-                workspace: if workspace > 0 {
-                    allocate_span(services, pool, stream, workspace, held)?
+            let packed = [
+                allocate_span(services, pool, stream, a, held)?,
+                if paired {
+                    allocate_span(services, pool, stream, b, held)?
                 } else {
-                    Span::new(
-                        runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
-                        0,
-                        0,
-                    )
+                    empty()
                 },
+            ];
+            let key = scratch_key(&name, paired, &op.info().implementation);
+            let shared = key.as_ref().and_then(|key| scratch.get(key)).copied();
+            let [state_span, workspace_span] = if let Some(spans) = shared {
+                // stream_weight_ops already takes independent maxima over
+                // every row bucket of this operation, for every layer.
+                if spans[0].length != state || spans[1].length != workspace {
+                    return Err(BundleAbiError::InvalidRange("shared fold scratch bounds"));
+                }
+                spans
+            } else {
+                let spans = [
+                    allocate_span(services, pool, stream, state, held)?,
+                    if workspace > 0 {
+                        allocate_span(services, pool, stream, workspace, held)?
+                    } else {
+                        empty()
+                    },
+                ];
+                if let Some(key) = key {
+                    scratch.insert(key, spans);
+                }
+                spans
             };
+            let storage = Storage {
+                packed,
+                state: state_span,
+                workspace: workspace_span,
+            };
+            // Prepare is non-PDL and ordered on the rank stream. Each call
+            // packs this weight and clears the full shared state span; create
+            // synchronizes before any graph consumer can run.
             let launches = fold_stream::initialize(op, [weight, second], storage, paired).map_err(
                 |error| {
                     let _ = services.log(error.to_string().as_bytes());
@@ -115,4 +171,39 @@ pub(super) fn initialize(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_scratch_keys_keep_images_lanes_pairs_and_ops_separate() {
+        let op = "sm120.mxfp8-fold.stream.v1:entry";
+        let a = scratch_key("layers.0.attn.wq_a.weight", false, op).unwrap();
+        assert_eq!(
+            Some(a.clone()),
+            scratch_key("layers.39.attn.wq_a.weight", false, op)
+        );
+        for (weight, paired, implementation) in [
+            ("mtp.0.attn.wq_a.weight", false, op),
+            ("layers.0.ffn.shared_experts.w2.weight", false, op),
+            ("layers.0.attn.wq_a.weight", true, op),
+            (
+                "layers.0.attn.wq_a.weight",
+                false,
+                "sm120.mxfp8-fold.direct.v1:entry",
+            ),
+        ] {
+            assert_ne!(Some(a.clone()), scratch_key(weight, paired, implementation));
+        }
+        let side = scratch_key("layers.0.ffn.shared_experts.w2.weight", false, op).unwrap();
+        assert!(side.side_lane);
+        assert_eq!(
+            Some(side),
+            scratch_key("layers.39.ffn.shared_experts.w2.weight", false, op)
+        );
+        assert!(scratch_key("layers.0.attn.wq_a.weight", false, "unreviewed").is_none());
+        assert!(scratch_key("other.0.attn.wq_a.weight", false, op).is_none());
+    }
 }

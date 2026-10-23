@@ -1233,6 +1233,29 @@ pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
 
+#[cfg(test)]
+pub(crate) fn fold_views_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<BTreeMap<String, runtime_bundle_abi::DeviceBufferSpanV1>> {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .buffers
+            .iter()
+            .map(|buffers| {
+                buffers
+                    .views
+                    .iter()
+                    .filter(|(name, _)| name.contains(".fold_"))
+                    .map(|(name, &span)| (name.clone(), span))
+                    .collect()
+            })
+            .collect()
+    })
+}
+
 /// Marks an instance's router flags as possibly holding image rows, as a
 /// prefill does between uploading and clearing them.
 #[cfg(test)]

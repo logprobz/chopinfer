@@ -6,9 +6,7 @@ fn prefill_dense_launches_use_staged_tiles() {
     // and staged scales that serve these rows by default (their own tests
     // cover them).
     crate::sm120::prefill_matrix::with_reference(|| {
-        crate::sm120::prefill_tma_matrix::with_reference(|| {
-            crate::sm120::prefill_tma_scales::with_reference(staged_tiles)
-        })
+        crate::sm120::prefill_tma_scales::with_reference(staged_tiles)
     });
 }
 
@@ -56,7 +54,10 @@ fn staged_tiles() {
                 let (expected, plan) =
                     crate::sm120::mxfp8_fold::compact::launch_shape(entry, rows as u32, stages);
                 let tile = crate::sm120::mxfp8_fold::compact::tile(rows as u32);
-                assert_eq!(symbol, expected);
+                assert_eq!(
+                    symbol,
+                    kernels_sm120::gemm::mxfp8_fold_packed::symbol(&expected)
+                );
                 assert!(
                     line.contains(&format!("grid_y: {},", rows / u64::from(tile))),
                     "{line}"

@@ -70,8 +70,8 @@ use super::*;
 // streams and events and shift their ids by 32. At 16 rows each WQ_b fold's admit,
 // partials and final launch become the ring's admit and ring (160 fewer
 // lines) and WO_b's pair becomes the ring's; at 32 rows WQ_b's ticket pair
-// becomes the pair loop's and WO_b's reuse pair the ring's (audited by
-// `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
+// becomes the pair loop's and WO_b's reuse pair the ring's (audited when the
+// rings landed; they serve no instance since the folds read packed codes).
 // Loading the column-block HC pair modules shifts their resource ids only.
 // At 16 and 32 rows each of the 308 producer and tail launches (77 per rank)
 // becomes the column-block producer (grid 40 x rows/4, 256 threads) and the
@@ -87,7 +87,8 @@ use super::*;
 // The cluster folds' sixteen resolves shift ids only. At 16 and 32 rows the
 // WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
 // WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
-// audited by `fold_cluster::cluster_folds_change_only_measured_decode_and_verify_projections`).
+// audited when the cluster folds landed; they serve no instance since the
+// folds read packed codes).
 // Verify-32 and Verify-16 serve the two-strip down queue: at 32 rows each
 // absorbing down small launch becomes the two-strip launch with the same
 // operands (160 launches); at 16 rows each direct down small and wide pair
@@ -118,13 +119,18 @@ use super::*;
 // The drafter no longer holds stream fold storage for its five-row blocks,
 // which no stream bucket serves: create drops 15 packed copies and their
 // prepare launches per rank, and the step journals only renumber handles.
+// The folds read the plan's packed codes: each weight-reading fold launch
+// takes its packed entry, and each stream, direct and dual fold binds the
+// weight's view as its packed bank. The cluster, row-local and TMA matrix
+// modules no longer load. Audited against the previous full histories, as
+// in `FLASH_JOURNALS`: every other line is equal once ids are mapped.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x4db8b7a58e93c470)),
-    (6, (8680, 0xbeeba458db0230d5)),
-    (8, (7720, 0xf2019e0f883abc13)),
-    (12, (10136, 0x21a0f577b1fd0575)),
-    (16, (7892, 0x831286b40e02777d)),
-    (32, (7744, 0x9dda015153147e96)),
+    (4, (7880, 0xae24172ca882acba)),
+    (6, (8680, 0xb322deb6deb118a2)),
+    (8, (7720, 0x1a3ca91280c65b17)),
+    (12, (10136, 0x845efd5f8b49636d)),
+    (16, (7892, 0x1ae761cb6d90f8d9)),
+    (32, (7744, 0x001a7245e54e50a6)),
 ];
 
 #[test]

@@ -145,9 +145,11 @@ fn reuse_preserves_non_projection_launches_and_graph_bindings() {
 #[test]
 fn modules_retain_the_gpu_qualified_bytes() {
     for (name, expected) in [
+        // The qualified folds' packed twins (kernel-lab
+        // mxfp8_fold_reuse_packed: bitwise equal to the row-major folds).
         (
             "mxfp8_fold_reuse_deepseek41_sm120",
-            "640d2fa0b820958c2ecd2ec674481785b01eea2a03d73271c783f66300641b85",
+            "9da32c34c8febb52b367b9e11e0b303b26d08e141358ea962c9e785ef0c44bbb",
         ),
         (
             "f32_decode_reuse_deepseek41_sm120",

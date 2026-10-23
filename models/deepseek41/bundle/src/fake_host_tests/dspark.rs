@@ -422,11 +422,7 @@ pub(super) fn index(
     }
     let mut index = FakeIndex::new(INDEX_SCHEMA, rank);
     for (name, bytes, dtype) in all {
-        let (element, layout) = match dtype {
-            "F32" => (4, "f32_row_major_v1"),
-            "U8" => (1, "row-major"),
-            _ => (2, "bf16_row_major_v1"),
-        };
+        let (element, layout) = super::plan_layout(shape, &name, dtype);
         let layout = layouts.get(&name).map_or(layout, String::as_str);
         index.push(
             name.clone(),

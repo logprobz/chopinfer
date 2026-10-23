@@ -1,5 +1,8 @@
-//! Row-local folds selected for measured Flash TP4 decode and verify
-//! buckets: the captured C32 query pair loop and swizzled deep rings.
+//! Row-local folds measured for Flash TP4 decode and verify buckets: the
+//! captured C32 query pair loop and swizzled deep rings. They read
+//! row-major weight codes and serve no instance: the status folds
+//! (`fold_fused`) replaced them at every bucket and read the packed codes.
+//! The lab measures against them.
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_local_rows::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
@@ -76,24 +79,4 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
-}
-pub fn selected(g: &Geometry, ranks: u32) -> bool {
-    #[cfg(test)]
-    if REFERENCE.with(|f| f.get()) {
-        return false;
-    }
-    enabled(g, ranks)
-}
-#[cfg(test)]
-std::thread_local! { static REFERENCE:std::cell::Cell<bool>=const{std::cell::Cell::new(false)}; }
-#[cfg(test)]
-pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            REFERENCE.with(|f| f.set(self.0));
-        }
-    }
-    let _restore = Restore(REFERENCE.with(|f| f.replace(true)));
-    run()
 }

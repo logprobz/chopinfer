@@ -762,7 +762,8 @@ mod tests {
         assert!(checked_units(&stages, &program, &[], false).is_err());
         let input = span(9, 512, 1024);
         let bind_at = |launch: &mut PreparedLaunch, index, view| {
-            launch.symbol = "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3".into();
+            launch.symbol =
+                "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3_packed_v1".into();
             let id = launch.bindings.bind(view);
             launch.arguments = ArgumentList(vec![Argument::U32(0); 12]);
             launch.arguments.0[index] = Argument::DeviceBuffer(id);

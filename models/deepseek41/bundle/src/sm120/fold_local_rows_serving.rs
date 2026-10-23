@@ -1,5 +1,11 @@
-//! Prepare the measured row-local, cluster and status entries through the
-//! shared typed interface.
+//! Prepare the measured status entries through the shared typed interface.
+//!
+//! Every fold reads packed weight codes (`mxfp8-fold-packed-8x128-v1`), so
+//! each op launches its entry's packed twin
+//! (`kernels_sm120::backend::packed_op`). The row-local and cluster folds
+//! have no packed entries; the status folds replace them at every bucket
+//! they served, and without the status folds (other topologies, or their
+//! reference in tests) the backend's decode folds serve.
 use crate::ops::dense::{FusedFold, SlicedQuantize};
 use crate::ops::moe::QuantizeViews;
 use crate::ops::{Bind, GemmViews, Lowered};
@@ -96,9 +102,8 @@ impl crate::Kernels {
         if !matches(entry.cluster.base.query, query, need) {
             return Err(Refusal("a status fold differs from its projection").into());
         }
-        entry
-            .prepare(need)
-            .map(|op| Some(Box::new(StatusFold(op)) as Box<dyn FusedFold>))
+        let op = kernels_sm120::backend::packed_op(entry.prepare(need)?, [entry.symbol()])?;
+        Ok(Some(Box::new(StatusFold(op)) as Box<dyn FusedFold>))
     }
 
     /// Whether the status folds serve `shape` (and its scratch holds WO_a's
@@ -128,9 +133,9 @@ impl crate::Kernels {
             .collect()
     }
 
-    /// The row-local or cluster fold measured for projection `id` at
-    /// `need.capacity` rows, if any; `query` is the projection's fold at that
-    /// bucket.
+    /// The status fold without fused buffers measured for projection `id`
+    /// at `need.capacity` rows, if any; `query` is the projection's fold at
+    /// that bucket.
     pub(crate) fn prepare_local_fold(
         shape: &crate::shape::Shape,
         id: &str,
@@ -146,7 +151,10 @@ impl crate::Kernels {
                 if !matches(entry.base.query, query, need) {
                     return Err(Refusal("a status fold differs from its projection").into());
                 }
-                return entry.prepare(need).map(Some);
+                return Ok(Some(kernels_sm120::backend::packed_op(
+                    entry.prepare(need)?,
+                    [entry.symbol()],
+                )?));
             }
             if matches!(id, "attention.q-a" | "attention.kv")
                 && let Some(entry) = super::fold_fused::fused(id, need.capacity)
@@ -154,7 +162,10 @@ impl crate::Kernels {
                 if !matches(entry.cluster.base.query, query, need) {
                     return Err(Refusal("a status fold differs from its projection").into());
                 }
-                return entry.prepare_plain(need).map(Some);
+                return Ok(Some(kernels_sm120::backend::packed_op(
+                    entry.prepare_plain(need)?,
+                    [entry.symbol()],
+                )?));
             }
             if matches!(id, "attention.o-a" | "attention.o-b")
                 && super::fold_fused::fused(id, need.capacity).is_some()
@@ -163,33 +174,6 @@ impl crate::Kernels {
                 return Ok(None);
             }
         }
-        if super::fold_cluster::selected(shape.geometry, shape.ranks())
-            && let Some(entry) = super::fold_cluster::served(id, need.capacity)
-        {
-            if query.m_capacity != need.capacity
-                || (Mxfp8FoldGemmQuery {
-                    m_capacity: query.m_capacity,
-                    ..entry.base.query
-                }) != query
-            {
-                return Err(Refusal("a cluster fold differs from its projection").into());
-            }
-            return entry.prepare(need).map(Some);
-        }
-        if !super::fold_local_rows::selected(shape.geometry, shape.ranks()) {
-            return Ok(None);
-        }
-        let Some(entry) = super::fold_local_rows::served(id, need.capacity) else {
-            return Ok(None);
-        };
-        if query.m_capacity != need.capacity
-            || (Mxfp8FoldGemmQuery {
-                m_capacity: query.m_capacity,
-                ..entry.base.query
-            }) != query
-        {
-            return Err(Refusal("a row-local fold differs from its projection").into());
-        }
-        entry.prepare(need).map(Some)
+        Ok(None)
     }
 }

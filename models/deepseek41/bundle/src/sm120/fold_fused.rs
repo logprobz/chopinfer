@@ -9,6 +9,8 @@
 //! rows (`tile`). The one-row decode step keeps the dual fold for WQ_a and
 //! WKV (`ops::dense_dual`), which the lowering takes before any status fold,
 //! so there only WQ_b and the WO chain change.
+//! The cubin holds each fold's packed entry, which reads the plan's
+//! `mxfp8-fold-packed-8x128-v1` codes.
 //!
 //! A fold that fails exactly the rows with a nonzero status after its
 //! producer wait gives the admission kernel's result, and leaves the status
@@ -186,6 +188,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     spec.headers
         .push("#include \"gemm/mxfp8_fold_local_wide.cuh\"".into());
     spec.entries.push(wide.spec());
+    let spec = super::mxfp8_fold::packed(
+        Ok(spec),
+        entries()
+            .iter()
+            .map(|e| e.packed_spec())
+            .chain([wide.packed_spec()]),
+    )?;
     Ok(vec![(FAMILY, spec)])
 }
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
@@ -200,8 +209,8 @@ pub fn selected(g: &Geometry, ranks: u32) -> bool {
 }
 #[cfg(test)]
 std::thread_local! { static REFERENCE:std::cell::Cell<bool>=const{std::cell::Cell::new(false)}; }
-/// Run `run` with the served cluster and row-local folds and quantizers in
-/// place of the fused ones.
+/// Run `run` with the backend's decode folds and quantizers in place of the
+/// fused ones.
 #[cfg(test)]
 pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
     struct Restore(bool);

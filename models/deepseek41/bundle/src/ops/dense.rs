@@ -11,7 +11,7 @@
 //! attention output, the vendor's BF16 einsum over the same decoded
 //! values. `wo_b` writes the F32 rank partial the all-reduce sums.
 
-use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
+use kernel_core::backend::{Backend, Counts, OpInfo, Prepared, Refused, View};
 use kernel_core::contract::{DType, Refusal};
 use kernel_core::mxfp8_gemm::{Mxfp8FoldGemmBuffers, Mxfp8FoldGemmQuery};
 use kernel_core::precision::execution::BlockScaledExecution;
@@ -264,6 +264,36 @@ pub(crate) struct GemmViews {
     pub status: DeviceBufferSpanV1,
 }
 
+/// The one layout every op in `infos` declares for the weight codes it
+/// binds (role `weights`, or a bank's `first.weights` or `0.weights`).
+pub(crate) fn agreed_weight_layout<'a>(
+    what: &str,
+    infos: impl IntoIterator<Item = &'a OpInfo>,
+) -> Result<String, String> {
+    let mut agreed: Option<&str> = None;
+    for info in infos {
+        let mut declared = info
+            .weight_layouts
+            .iter()
+            .filter(|(role, _)| role == "weights" || role.ends_with(".weights"))
+            .map(|(_, layout)| layout.id.as_str())
+            .peekable();
+        if declared.peek().is_none() {
+            return Err(format!("{} declares no weight layout", info.implementation));
+        }
+        for layout in declared {
+            match agreed {
+                None => agreed = Some(layout),
+                Some(old) if old == layout => {}
+                Some(old) => return Err(format!("{what}'s ops read both {old} and {layout}")),
+            }
+        }
+    }
+    agreed
+        .map(str::to_owned)
+        .ok_or_else(|| format!("no op reads {what}"))
+}
+
 /// Projections decode lowers only through `project_pair`.
 fn pair_only(id: &str) -> bool {
     matches!(id, "moe.shared-gate" | "moe.shared-up")
@@ -407,24 +437,91 @@ impl DenseOps {
         })
     }
 
+    /// The layout every op of projection `id` reads its weight codes in.
+    /// The dual fold reads the packed codes its stream storage binds.
+    fn weight_layout(&self, id: &str) -> Result<String, String> {
+        let pair = matches!(id, "moe.shared-gate" | "moe.shared-up");
+        let infos = self
+            .gemms
+            .iter()
+            .chain(&self.prefill_gemms)
+            .filter(|(of, _)| *of == id)
+            .map(|(_, op)| op.info())
+            .chain(
+                self.decode
+                    .iter()
+                    .chain(&self.local)
+                    .filter(|(of, _, _)| *of == id)
+                    .map(|(_, _, op)| op.info()),
+            )
+            .chain(
+                self.fused
+                    .iter()
+                    .filter(|(of, _, _)| *of == id)
+                    .map(|(_, _, op)| op.info()),
+            )
+            .chain(
+                self.stream
+                    .iter()
+                    .filter(|(of, _, _)| *of == id)
+                    .map(|(_, _, op)| op.info()),
+            )
+            .chain(self.paired.iter().filter(|_| pair).map(|(_, op)| op.info()))
+            .chain(
+                self.stream_pair
+                    .iter()
+                    .filter(|_| pair)
+                    .map(|(_, op)| op.info()),
+            );
+        agreed_weight_layout(id, infos)
+    }
+
+    /// Refuses a dense weight view under `prefix` (`layers.` or `mtp.`)
+    /// stored in another layout than its projection's ops read.
+    pub(crate) fn check_weight_layouts(
+        &self,
+        index: &bundle_runtime::index::RankIndex,
+        prefix: &str,
+    ) -> Result<(), String> {
+        for (id, tensor) in &self.tensors {
+            let layout = self.weight_layout(id)?;
+            let suffix = format!(".{tensor}.weight");
+            for (name, view) in &index.views {
+                let layer = name
+                    .strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_suffix(&suffix));
+                if layer.is_some_and(|layer| layer.parse::<u32>().is_ok())
+                    && view.layout_id != layout
+                {
+                    return Err(format!(
+                        "{name} is stored as {}, but its ops read {layout}",
+                        view.layout_id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Every row bucket's ops for `weight` ([`Self::stream_weight_ops_within`]).
     #[cfg(test)]
     pub(crate) fn stream_weight_ops(
         &self,
         weight: &str,
-    ) -> Vec<(bool, &fold_stream::Op, [u64; 4])> {
+    ) -> Vec<(bool, &fold_stream::Op, [u64; 2])> {
         self.stream_weight_ops_within(weight, |_| true)
     }
 
-    /// Row buckets share packed weights and zero-reset state in stream order.
-    /// Size each region independently; a smaller bucket can need more state.
+    /// Row buckets share the planned packed weights and zero-reset state in
+    /// stream order, with the state and workspace bytes each needs. Size
+    /// each region independently; a smaller bucket can need more state.
     /// Only buckets `launched` accepts count: a caller that never lowers a
     /// bucket holds no storage for it.
     pub(crate) fn stream_weight_ops_within(
         &self,
         weight: &str,
         launched: impl Fn(u32) -> bool,
-    ) -> Vec<(bool, &fold_stream::Op, [u64; 4])> {
+    ) -> Vec<(bool, &fold_stream::Op, [u64; 2])> {
         let Some((id, _)) = self
             .tensors
             .iter()
@@ -434,7 +531,7 @@ impl DenseOps {
         };
         let mut result = Vec::new();
         if let Some(op) = self.dual.as_ref().and_then(|dual| dual.initializer(weight)) {
-            result.push((false, op, fold_stream::allocation_bytes(op, false)));
+            result.push((false, op, fold_stream::allocation_bytes(op)));
         }
         for paired in [false, true] {
             let ops: Vec<_> = if paired {
@@ -454,11 +551,10 @@ impl DenseOps {
                     .collect()
             };
             if let Some((_, op)) = ops.iter().max_by_key(|(rows, _)| *rows) {
-                let mut bytes = [0; 4];
+                let mut bytes = [0; 2];
                 for (_, bucket) in &ops {
-                    for (bound, required) in bytes
-                        .iter_mut()
-                        .zip(fold_stream::allocation_bytes(bucket, paired))
+                    for (bound, required) in
+                        bytes.iter_mut().zip(fold_stream::allocation_bytes(bucket))
                     {
                         *bound = (*bound).max(required);
                     }
@@ -762,9 +858,8 @@ mod tests {
                             .collect()
                     };
                     for op in buckets {
-                        for (bound, required) in bounds
-                            .into_iter()
-                            .zip(fold_stream::allocation_bytes(op, paired))
+                        for (bound, required) in
+                            bounds.into_iter().zip(fold_stream::allocation_bytes(op))
                         {
                             assert!(
                                 bound >= required,
@@ -774,11 +869,11 @@ mod tests {
                     }
                     if *id == "engram.kv" {
                         assert!(init.info().implementation.contains("direct"));
-                        assert_eq!(bounds[2], 13824);
-                        assert!(bounds[3] > 0, "earlier stream buckets still need partials");
+                        assert_eq!(bounds[0], 13824);
+                        assert!(bounds[1] > 0, "earlier stream buckets still need partials");
                     }
                     if shape.ranks() == 4 && *id == "attention.o-b" {
-                        assert!(bounds[2] > init.info().bytes_of("state").unwrap());
+                        assert!(bounds[0] > init.info().bytes_of("state").unwrap());
                     }
                 }
             }
@@ -936,41 +1031,31 @@ mod tests {
                         }
                     );
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
+                    // Every compute launch reads packed codes.
+                    let packed = |call: &Lowered| {
+                        call.launch
+                            .symbol
+                            .strip_suffix(kernels_sm120::gemm::mxfp8_fold_packed::SUFFIX)
+                            .unwrap_or_else(|| panic!("{} is row-major", call.launch.symbol))
+                            .to_owned()
+                    };
+                    let compute = packed(&calls[1]);
                     if crate::sm120::prefill_tma_scales::choice(
                         &FLASH,
                         shape.ranks(),
                         q,
                         phase.rows(),
                     ) {
-                        assert!(calls[1].launch.symbol.ends_with("_tma_scales_s2_v1"));
+                        assert!(compute.ends_with("_tma_scales_s2_v1"));
                         assert_eq!(calls[1].launch.plan.block, [384, 1, 1]);
                         assert_eq!(calls[1].launch.plan.dynamic_shared_bytes, 68_608);
-                    } else if crate::sm120::prefill_tma_matrix::choice(
-                        &FLASH,
-                        shape.ranks(),
-                        q,
-                        phase.rows(),
-                    ) {
-                        assert!(calls[1].launch.symbol.ends_with("_tma_matrix_s2_v1"));
-                        assert_eq!(calls[1].launch.plan.block, [384, 1, 1]);
-                        assert_eq!(calls[1].launch.plan.dynamic_shared_bytes, 66_560);
                     } else if let Some((tile, stages)) = matrix {
-                        assert!(
-                            calls[1]
-                                .launch
-                                .symbol
-                                .ends_with(&format!("_matrix_m{tile}_n128_s{stages}_v1"))
-                        );
+                        assert!(compute.ends_with(&format!("_matrix_m{tile}_n128_s{stages}_v1")));
                     } else if let Some(stages) = compact {
                         let tile = crate::sm120::mxfp8_fold::compact::tile(phase.rows());
-                        assert!(
-                            calls[1]
-                                .launch
-                                .symbol
-                                .ends_with(&format!("_compact_m{tile}_n128_s{stages}_v1"))
-                        );
+                        assert!(compute.ends_with(&format!("_compact_m{tile}_n128_s{stages}_v1")));
                     } else {
-                        assert!(calls[1].launch.symbol.ends_with(if split {
+                        assert!(compute.ends_with(if split {
                             "_split_full_v1"
                         } else {
                             "_prefill_tma_v1"
@@ -978,7 +1063,7 @@ mod tests {
                     }
                     assert_eq!(calls[1].launch.plan.grid[0], q.n.div_ceil(128));
                     if split && compact.is_none() && matrix.is_none() {
-                        assert!(calls[2].launch.symbol.ends_with("_split_tail_v1"));
+                        assert!(packed(&calls[2]).ends_with("_split_tail_v1"));
                         assert_eq!(calls[2].launch.plan.grid[0], q.n.div_ceil(32));
                     }
                 } else {

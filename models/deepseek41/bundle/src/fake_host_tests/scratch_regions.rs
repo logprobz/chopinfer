@@ -205,8 +205,12 @@ enum Access {
 }
 
 /// Whether argument `argument` of `symbol` is the index of an entry of
-/// `table` whose pattern the symbol matches.
+/// `table` whose pattern the symbol matches. A packed fold entry has its
+/// row-major twin's arguments (`gemm::mxfp8_fold_packed`).
 fn listed<'a>(mut table: impl Iterator<Item = &'a Listed>, symbol: &str, argument: usize) -> bool {
+    let symbol = symbol
+        .strip_suffix(kernels_sm120::gemm::mxfp8_fold_packed::SUFFIX)
+        .unwrap_or(symbol);
     table.any(|&(pattern, index)| index == argument && matches(pattern, symbol))
 }
 

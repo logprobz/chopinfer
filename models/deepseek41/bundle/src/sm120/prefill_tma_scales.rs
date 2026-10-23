@@ -29,7 +29,10 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     }
     Ok(vec![(
         FAMILY,
-        mxfp8_prefill_tma_scales::cubin_spec(CUBIN, &entries()).map_err(|e| e.to_string())?,
+        super::mxfp8_fold::packed(
+            mxfp8_prefill_tma_scales::cubin_spec(CUBIN, &entries()),
+            entries().iter().map(|e| e.packed_spec()),
+        )?,
     )])
 }
 // SM120, 250 W: all selected rows win on both devices with cold and warm

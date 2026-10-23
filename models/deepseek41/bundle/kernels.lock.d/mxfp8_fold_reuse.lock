@@ -55,7 +55,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n32_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -162,7 +162,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n64_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n64_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -269,7 +269,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -376,7 +376,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n64_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n64_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -483,7 +483,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -590,7 +590,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n64_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n64_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -697,7 +697,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -804,7 +804,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n64_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n64_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -870,7 +870,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "640d2fa0b820958c2ecd2ec674481785b01eea2a03d73271c783f66300641b85",
+    "cubin_sha256": "9da32c34c8febb52b367b9e11e0b303b26d08e141358ea962c9e785ef0c44bbb",
     "resources": [
       {
         "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n32_v1_admit_v1",
@@ -882,8 +882,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n32_v1",
-        "registers": 138,
+        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n32_v1_packed_v1",
+        "registers": 137,
         "shared_static_bytes": 26512,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -900,7 +900,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n64_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1024_k4096_g2_f32_v1_reuse32_n64_v1_packed_v1",
         "registers": 138,
         "shared_static_bytes": 39184,
         "local_bytes": 0,
@@ -918,7 +918,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "registers": 128,
         "shared_static_bytes": 26512,
         "local_bytes": 0,
@@ -936,8 +936,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n64_v1",
-        "registers": 128,
+        "symbol": "chop_deepseek41_mxfp8_stream_n1280_k5120_g1_f32_v1_reuse32_n64_v1_packed_v1",
+        "registers": 126,
         "shared_static_bytes": 39184,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -954,7 +954,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "registers": 128,
         "shared_static_bytes": 26512,
         "local_bytes": 0,
@@ -972,8 +972,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n64_v1",
-        "registers": 128,
+        "symbol": "chop_deepseek41_mxfp8_stream_n5120_k2048_g1_f32_v1_reuse32_n64_v1_packed_v1",
+        "registers": 126,
         "shared_static_bytes": 39184,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -990,7 +990,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n32_v1",
+        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n32_v1_packed_v1",
         "registers": 132,
         "shared_static_bytes": 26512,
         "local_bytes": 0,
@@ -1008,8 +1008,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n64_v1",
-        "registers": 132,
+        "symbol": "chop_deepseek41_mxfp8_stream_n8192_k1280_g1_f32_v1_reuse32_n64_v1_packed_v1",
+        "registers": 130,
         "shared_static_bytes": 39184,
         "local_bytes": 0,
         "stack_bytes": 0,

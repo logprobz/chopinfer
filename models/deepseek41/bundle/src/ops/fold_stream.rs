@@ -1,4 +1,9 @@
-//! Per-weight packed codes and ordered shared scratch for qualified folds.
+//! Ordered shared scratch for qualified folds over the planned packed codes.
+//!
+//! The plan stores every fold projection's codes as
+//! `mxfp8-fold-packed-8x128-v1`, so a stream or direct fold binds the
+//! weight's own view (and the paired up projection's) as its packed bank;
+//! create holds no copy.
 use super::{Bind, Lowered, exact};
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::Refusal;
@@ -10,9 +15,25 @@ use std::collections::BTreeMap;
 pub(crate) type Op = Prepared<Mxfp8FoldStreamBuffers<View>>;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Storage {
+    /// The weight's planned packed codes, and the paired up projection's.
     pub packed: [Span; 2],
     pub state: Span,
     pub workspace: Span,
+}
+
+fn empty() -> Span {
+    Span::new(
+        runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+        0,
+        0,
+    )
+}
+
+/// The up projection paired with gate projection `weight` (`...w1.weight`).
+pub(crate) fn paired_weight(weight: &str) -> Option<String> {
+    weight
+        .strip_suffix("w1.weight")
+        .map(|prefix| format!("{prefix}w3.weight"))
 }
 
 pub(crate) fn prepare(
@@ -46,28 +67,18 @@ pub(crate) fn storage(
 ) -> Option<Storage> {
     Some(Storage {
         packed: [
-            *views.get(&name(weight, paired, "packed0"))?,
+            *views.get(weight)?,
             if paired {
-                *views.get(&name(weight, paired, "packed1"))?
+                *views.get(&paired_weight(weight)?)?
             } else {
-                Span::new(
-                    runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
-                    0,
-                    0,
-                )
+                empty()
             },
         ],
         state: *views.get(&name(weight, paired, "state"))?,
         workspace: views
             .get(&name(weight, paired, "workspace"))
             .copied()
-            .unwrap_or_else(|| {
-                Span::new(
-                    runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
-                    0,
-                    0,
-                )
-            }),
+            .unwrap_or_else(empty),
     })
 }
 
@@ -107,40 +118,7 @@ pub(crate) fn launch(
     bind.launch_within(op, &buffers, storage.workspace, Counts::rows(rows))
 }
 
-pub(crate) fn initialize(
-    op: &Op,
-    weights: [Span; 2],
-    storage: Storage,
-    paired: bool,
-) -> Result<Vec<Lowered>, Refusal> {
-    let mut bind = Bind::default();
-    let first = Mxfp8FoldGemmBuffers {
-        activations: View::EMPTY,
-        activation_scales: View::EMPTY,
-        weights: bind.view(weights[0]),
-        weight_scales: View::EMPTY,
-        output: View::EMPTY,
-        live_rows: View::EMPTY,
-        status: View::EMPTY,
-        status_row_offset: 0,
-    };
-    let second = paired.then(|| Mxfp8FoldGemmBuffers {
-        weights: bind.view(weights[1]),
-        ..first
-    });
-    let buffers = storage.bind(&mut bind, first, second);
-    bind.initialize(op, &buffers)
-}
-
-pub(crate) fn allocation_bytes(op: &Op, paired: bool) -> [u64; 4] {
-    [
-        op.info().bytes_of("packed_weights.0").unwrap(),
-        if paired {
-            op.info().bytes_of("packed_weights.1").unwrap()
-        } else {
-            0
-        },
-        op.info().bytes_of("state").unwrap(),
-        op.info().workspace,
-    ]
+/// The state and workspace bytes `op` needs.
+pub(crate) fn allocation_bytes(op: &Op) -> [u64; 2] {
+    [op.info().bytes_of("state").unwrap(), op.info().workspace]
 }

@@ -415,6 +415,16 @@ impl Prepared {
         .flat_map(|info| &info.symbols)
     }
 
+    /// The layout main_proj's ops read its weight codes in.
+    pub(crate) fn main_weight_layout(&self) -> Result<String, String> {
+        crate::ops::dense::agreed_weight_layout(
+            "main_proj",
+            std::iter::once(self.main_project.info())
+                .chain(self.main_project_small.iter().map(|op| op.info()))
+                .chain(self.main_stream.iter().map(|(_, op)| op.info())),
+        )
+    }
+
     pub fn workspace(&self) -> u64 {
         [
             self.ring_write.info().workspace,

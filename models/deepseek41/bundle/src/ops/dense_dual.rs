@@ -125,9 +125,10 @@ mod tests {
         assert!(op.initializer("layers.0.attn.wkv.weight").is_some());
         assert!(op.initializer("mtp.0.attn.wkv.weight").is_none());
         assert!(op.initializer("layers.0.attn.wq_a.weight").is_none());
+        // The dual fold reads the planned packed WKV codes.
         assert_eq!(
-            fold_stream::allocation_bytes(&op.kv_initializer, false)[0],
-            512 * 5120
+            op.kv_initializer.info().bytes_of("packed_weights.0"),
+            Some(512 * 5120)
         );
         for ranks in [Ranks::TP1, Ranks::TP2] {
             assert!(

@@ -620,20 +620,25 @@ impl crate::Kernels {
     /// column-block pair replaced (packaged and locked for the labs), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
+    /// The row-major TMA matrix, row-local and cluster folds have no packed
+    /// entries and serve no instance; only the kernel lab launches them.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
-        (![
-            projection_reuse::FOLD_CUBIN,
-            projection_reuse::HEAD_CUBIN,
-            head_last::CUBIN,
-            prefill_matrix::CUBIN,
+        ![
             prefill_tma_matrix::CUBIN,
-            prefill_tma_scales::CUBIN,
             fold_local_rows::CUBIN,
             fold_cluster::CUBIN,
-            fold_fused::CUBIN,
         ]
         .contains(&cubin)
-            || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            && (![
+                projection_reuse::FOLD_CUBIN,
+                projection_reuse::HEAD_CUBIN,
+                head_last::CUBIN,
+                prefill_matrix::CUBIN,
+                prefill_tma_scales::CUBIN,
+                fold_fused::CUBIN,
+            ]
+            .contains(&cubin)
+                || projection_reuse::enabled(shape.geometry, shape.ranks()))
             && (cubin != dense_dual::CUBIN || dense_dual::enabled(shape.geometry, shape.ranks()))
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
@@ -770,7 +775,8 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = prefill_matrix::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = prefill_tma_matrix::register(sm120, shape.geometry, shape.ranks())?;
+        // The TMA matrix prefill has no packed entry; the staged-scale TMA
+        // prefill serves its one bucket (Flash TP4, 8192 rows).
         let sm120 = prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
@@ -783,6 +789,9 @@ impl crate::Kernels {
         let sm120 = register_f32_projections(sm120, shape.geometry, shape.ranks())?;
         // The vision encoder's shared entries (`crate::encoders`).
         let sm120 = encoder::register(sm120)?;
+        // The plan stores every MXFP8 fold projection's codes as
+        // `mxfp8-fold-packed-8x128-v1`, which every fold op reads.
+        let sm120 = sm120.with_packed_fold_weights();
         Ok(Self {
             backend: Box::new(sm120),
             own: Box::new(own_ops::Sm120Own::new(shape.geometry)),

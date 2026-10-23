@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster16_n32_c8s5_status_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster16_n32_c8s5_status_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -90,7 +90,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster16_n16_c8s5_status_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster16_n16_c8s5_status_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -166,7 +166,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster16_n32_c8s4_statusq_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster16_n32_c8s4_statusq_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -242,7 +242,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster16_n32_c2s4_statusp_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster16_n32_c2s4_statusp_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -318,7 +318,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster32_n64_c8s5_status_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster32_n64_c8s5_status_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -394,7 +394,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster32_n16_c8s5_status_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster32_n16_c8s5_status_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -470,7 +470,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster32_n64_c8s3_statusq_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster32_n64_c8s3_statusq_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -546,7 +546,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster32_n32_c2s4_statusp_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster32_n32_c2s4_statusp_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -696,7 +696,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -762,11 +762,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "7c75ea7e9b832bd10f0a323567ad3c106bac593af0846b76ead5d06d2c288ad7",
+    "cubin_sha256": "eb668644995f31e7bd4763f4e745795ced6782a1ae895688c0002f6ade5e3bc1",
     "resources": [
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster16_n32_c8s5_status_v1",
-        "registers": 104,
+        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster16_n32_c8s5_status_v1_packed_v1",
+        "registers": 101,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -774,35 +774,35 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster16_n16_c8s5_status_v1",
-        "registers": 111,
-        "shared_static_bytes": 1024,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 64,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster16_n32_c8s4_statusq_v1",
-        "registers": 90,
-        "shared_static_bytes": 1024,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster16_n32_c2s4_statusp_v1",
+        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster16_n16_c8s5_status_v1_packed_v1",
         "registers": 105,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
+        "max_threads": 64,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster16_n32_c8s4_statusq_v1_packed_v1",
+        "registers": 89,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
         "max_threads": 128,
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster32_n64_c8s5_status_v1",
-        "registers": 94,
+        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster16_n32_c2s4_statusp_v1_packed_v1",
+        "registers": 109,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fused_n1280_k5120_g1_f32_cluster32_n64_c8s5_status_v1_packed_v1",
+        "registers": 93,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -810,8 +810,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster32_n16_c8s5_status_v1",
-        "registers": 100,
+        "symbol": "chop_deepseek41_mxfp8_fused_n512_k5120_g1_f32_cluster32_n16_c8s5_status_v1_packed_v1",
+        "registers": 94,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -819,8 +819,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster32_n64_c8s3_statusq_v1",
-        "registers": 88,
+        "symbol": "chop_deepseek41_mxfp8_fused_n1024_k4096_g2_f32_cluster32_n64_c8s3_statusq_v1_packed_v1",
+        "registers": 85,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -828,8 +828,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster32_n32_c2s4_statusp_v1",
-        "registers": 117,
+        "symbol": "chop_deepseek41_mxfp8_fused_n5120_k2048_g1_f32_cluster32_n32_c2s4_statusp_v1_packed_v1",
+        "registers": 114,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -855,8 +855,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1",
-        "registers": 69,
+        "symbol": "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1_packed_v1",
+        "registers": 74,
         "shared_static_bytes": 43392,
         "local_bytes": 0,
         "stack_bytes": 0,

@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g2_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g2_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -65,7 +65,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g4_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g4_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -116,7 +116,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g8_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g8_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -167,7 +167,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1152_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1152_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -218,7 +218,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1280_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1280_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -269,7 +269,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n16384_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n16384_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -320,7 +320,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n2304_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n2304_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -371,7 +371,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n25600_k6144_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n25600_k6144_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -422,7 +422,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n32768_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n32768_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -473,7 +473,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n4096_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n4096_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -524,7 +524,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k1152_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k1152_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -575,7 +575,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k15360_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k15360_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -626,7 +626,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2048_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2048_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -677,7 +677,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2304_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2304_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -728,7 +728,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k4096_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k4096_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -779,7 +779,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k576_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k576_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -830,7 +830,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k8192_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k8192_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -881,7 +881,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n512_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n512_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -932,7 +932,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n576_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n576_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -983,7 +983,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n8192_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n8192_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1034,7 +1034,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g2_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g2_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1085,7 +1085,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g4_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g4_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1136,7 +1136,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g8_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g8_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1187,7 +1187,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1152_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1152_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1238,7 +1238,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1280_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1280_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1289,7 +1289,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n16384_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n16384_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1340,7 +1340,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n2304_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n2304_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1391,7 +1391,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n25600_k6144_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n25600_k6144_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1442,7 +1442,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n32768_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n32768_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1493,7 +1493,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n4096_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n4096_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1544,7 +1544,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k1152_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k1152_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1595,7 +1595,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k15360_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k15360_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1646,7 +1646,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2048_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2048_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1697,7 +1697,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2304_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2304_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1748,7 +1748,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k4096_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k4096_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1799,7 +1799,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k576_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k576_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1850,7 +1850,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k8192_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k8192_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1901,7 +1901,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n512_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n512_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1952,7 +1952,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n576_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n576_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2003,7 +2003,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n8192_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n8192_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2054,7 +2054,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2105,7 +2105,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g4_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g4_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2156,7 +2156,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g8_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g8_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2207,7 +2207,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1152_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1152_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2258,7 +2258,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2309,7 +2309,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n16384_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n16384_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2360,7 +2360,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n2304_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n2304_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2411,7 +2411,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2462,7 +2462,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n32768_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n32768_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2513,7 +2513,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2564,7 +2564,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k1152_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k1152_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2615,7 +2615,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2666,7 +2666,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2717,7 +2717,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2304_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2304_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2768,7 +2768,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k4096_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k4096_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2819,7 +2819,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2870,7 +2870,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k8192_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k8192_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2921,7 +2921,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2972,7 +2972,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -3023,7 +3023,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -3074,11 +3074,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "a340ea178ac63249690f71dc9495c486b27fd853a5f841fef17ac515c2ffca8a",
+    "cubin_sha256": "182c49c6be53f059dd9a88288565d09f9bf6d37422d1d998d1d6093933adc044",
     "resources": [
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g2_f32_v2",
-        "registers": 59,
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g2_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3086,7 +3086,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g4_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g4_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3095,16 +3095,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g8_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1152_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1024_k4096_g8_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3113,7 +3104,79 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1280_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1152_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n1280_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n16384_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n2304_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n25600_k6144_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n32768_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n4096_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k1152_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k15360_g1_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3122,8 +3185,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n16384_k1280_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2048_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3131,7 +3194,79 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n2304_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2304_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k4096_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k576_g1_f32_v2_packed_v1",
+        "registers": 55,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k8192_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n512_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n576_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m1_n8192_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g2_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g4_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3140,7 +3275,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n25600_k6144_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g8_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3149,8 +3284,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n32768_k1280_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1152_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3158,8 +3293,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n4096_k1280_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1280_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3167,8 +3302,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k1152_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n16384_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3176,8 +3311,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k15360_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n2304_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3185,8 +3320,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2048_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n25600_k6144_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3194,8 +3329,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k2304_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n32768_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3203,8 +3338,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k4096_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n4096_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3212,8 +3347,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k576_g1_f32_v2",
-        "registers": 61,
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k1152_g1_f32_v2_packed_v1",
+        "registers": 58,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3221,7 +3356,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n5120_k8192_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k15360_g1_f32_v2_packed_v1",
         "registers": 60,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -3230,215 +3365,215 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n512_k5120_g1_f32_v2",
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2048_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2304_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k4096_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k576_g1_f32_v2_packed_v1",
+        "registers": 55,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k8192_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n512_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n576_k5120_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m6_n8192_k1280_g1_f32_v2_packed_v1",
+        "registers": 58,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g4_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g8_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1152_k5120_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n16384_k1280_g1_f32_v2_packed_v1",
+        "registers": 48,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n2304_k5120_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n32768_k1280_g1_f32_v2_packed_v1",
+        "registers": 48,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+        "registers": 48,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k1152_g1_f32_v2_packed_v1",
+        "registers": 48,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+        "registers": 48,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2304_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k4096_g1_f32_v2_packed_v1",
+        "registers": 53,
+        "shared_static_bytes": 1088,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
         "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n576_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m1_n8192_k1280_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g2_f32_v2",
-        "registers": 59,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g4_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1024_k4096_g8_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1152_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n1280_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n16384_k1280_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n2304_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n25600_k6144_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n32768_k1280_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n4096_k1280_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k1152_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k15360_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2048_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k2304_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k4096_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k576_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n5120_k8192_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n512_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n576_k5120_g1_f32_v2",
-        "registers": 60,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m6_n8192_k1280_g1_f32_v2",
-        "registers": 61,
-        "shared_static_bytes": 1056,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2",
-        "registers": 77,
         "shared_static_bytes": 1088,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3446,8 +3581,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g4_f32_v2",
-        "registers": 72,
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k8192_g1_f32_v2_packed_v1",
+        "registers": 53,
         "shared_static_bytes": 1088,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3455,8 +3590,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g8_f32_v2",
-        "registers": 72,
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+        "registers": 53,
         "shared_static_bytes": 1088,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3464,8 +3599,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1152_k5120_g1_f32_v2",
-        "registers": 72,
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+        "registers": 53,
         "shared_static_bytes": 1088,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3473,143 +3608,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n16384_k1280_g1_f32_v2",
-        "registers": 70,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n2304_k5120_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n32768_k1280_g1_f32_v2",
-        "registers": 70,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2",
-        "registers": 70,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k1152_g1_f32_v2",
-        "registers": 70,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2",
-        "registers": 70,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2304_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k4096_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2",
-        "registers": 56,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k8192_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2",
-        "registers": 72,
-        "shared_static_bytes": 1088,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2",
-        "registers": 70,
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+        "registers": 48,
         "shared_static_bytes": 1088,
         "local_bytes": 0,
         "stack_bytes": 0,

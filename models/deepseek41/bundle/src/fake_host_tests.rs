@@ -28,9 +28,7 @@ mod decode_attention;
 mod decode_join;
 mod device_results;
 mod dspark;
-mod fold_cluster;
 mod fold_fused;
-mod fold_local_rows;
 mod fold_stream;
 mod head_last;
 mod index_mma;
@@ -54,7 +52,6 @@ mod prefill_reduce;
 mod prefill_selected;
 mod prefill_skip;
 mod prefill_tma;
-mod prefill_tma_matrix;
 mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
@@ -525,16 +522,34 @@ fn views(shape: &Shape) -> Vec<(String, u64, &'static str)> {
     views
 }
 
-/// Rank `rank`'s index and image bytes: each view row-major, as the weight
-/// plan stores a BF16 or F32 view, unless `layouts` names its layout.
+/// The layout the weight plan stores view `name` of `dtype` in: a dense
+/// projection's E4M3 codes (target, DSpark and main_proj) as packed fold
+/// codes, every other view row-major.
+pub(super) fn plan_layout(shape: &Shape, name: &str, dtype: &str) -> (u64, &'static str) {
+    let dense = || {
+        name == "mtp.0.main_proj.weight"
+            || crate::ops::dense::projections(shape).iter().any(|d| {
+                ["layers.", "mtp."].iter().any(|prefix| {
+                    name.strip_prefix(prefix)
+                        .and_then(|rest| rest.strip_suffix(&format!(".{}.weight", d.tensor)))
+                        .is_some_and(|layer| layer.parse::<u32>().is_ok())
+                })
+            })
+    };
+    match dtype {
+        "F32" => (4, "f32_row_major_v1"),
+        "U8" if dense() => (1, kernel_core::weight_transform::mxfp8_fold::LAYOUT_ID),
+        "U8" => (1, "row-major"),
+        _ => (2, "bf16_row_major_v1"),
+    }
+}
+
+/// Rank `rank`'s index and image bytes: each view in the layout the weight
+/// plan stores it in (`plan_layout`), unless `layouts` names its layout.
 fn index(shape: &Shape, rank: u32, layouts: &BTreeMap<String, String>) -> (Vec<u8>, u64) {
     let mut index = FakeIndex::new(INDEX_SCHEMA, rank);
     for (name, bytes, dtype) in views(shape) {
-        let (element, layout) = match dtype {
-            "F32" => (4, "f32_row_major_v1"),
-            "U8" => (1, "row-major"),
-            _ => (2, "bf16_row_major_v1"),
-        };
+        let (element, layout) = plan_layout(shape, &name, dtype);
         let layout = layouts.get(&name).map_or(layout, String::as_str);
         index.push(
             name,
@@ -1172,38 +1187,51 @@ fn journal_steps(host: &Rc<Host>) {
 /// the packed fold's weights and state replaced by the layer's weights: 640
 /// launches and captured nodes fewer per TP4 lifecycle, audited line by
 /// line against the 16-row status folds. No other line changes.
+/// Every MXFP8 fold reads the plan's packed codes
+/// (`mxfp8-fold-packed-8x128-v1`): each weight-reading fold resolve and
+/// launch takes its packed entry (`_packed_v1`), and a stream, direct or
+/// dual fold binds the weight's own view as its packed bank. Create no
+/// longer allocates packed copies or launches their prepares (250 prepares
+/// per rank; 290 fewer allocations and releases per TP1 and TP2 rank, 250
+/// per TP4 rank) and zeroes each fold state span once instead (eight zero
+/// lines per rank). The cluster, row-local and TMA matrix modules no longer
+/// load: 62 fewer resolves and one fewer configure per TP4 rank. Audited
+/// against the previous journals, with each fold launch's packed bank
+/// mapped from its private copy to a view of the same length: every other
+/// line is identical once handle, symbol, stream, event and graph ids are
+/// mapped.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (16686, 0x1e87e23c497829b8),
+        (15864, 0x11a0b8a44ef7d956),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (16540, 0x6267cbe8e11d387a),
+        (15718, 0xdc77d4bb510824f2),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (33247, 0x2bb607060f58e966),
+        (31603, 0x3e53739abaad7e93),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (32955, 0x5bf46618515973d2),
+        (31311, 0x5392a20a1fc5d452),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (82003, 0x201a8008b9395af2),
+        (78523, 0x93376fb89c9db539),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (79647, 0x915e6dfce531d4f0),
+        (76167, 0x0c4eb76889f74f22),
     ),
 ];
 
@@ -1362,9 +1390,9 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// routed down module adds two resolves and three releases per rank. The
 /// window KV projection beside the query chain, the row-local rings, the
 /// cluster folds and the status folds change it as in `FLASH_JOURNALS`, and
-/// so do the shared fold storage and the scratch regions.
-/// cluster folds, the status folds and the retired one-launch module change
-/// it as in `FLASH_JOURNALS`, and so do the 1-, 2- and 4-row status folds.
+/// so do the shared fold storage, the scratch regions, the retired
+/// one-launch module, the 1-, 2- and 4-row status folds and the packed
+/// fold codes.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1372,7 +1400,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(80283, 0xa880188c762c1252), (77927, 0x5f2bb68eb0b78c37)])
+            .zip([(76803, 0xd87702695fb78346), (74447, 0x08d093d353103c6d)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);
@@ -1448,23 +1476,41 @@ fn assert_launches_fit_configured_shared(lines: &[String], topology: &str) {
 }
 
 /// Create refuses a rank index that stores a weight view an exact F32
-/// projection or the head reads in another layout than its op reads: a
-/// router or head packed in MMA fragments binds and runs, on scrambled
-/// weights.
+/// projection, a dense projection or the head reads in another layout than
+/// its ops read: a router or head packed in MMA fragments, or row-major
+/// codes under a packed fold, binds and runs, on scrambled weights.
 #[test]
 fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
     let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
-    for view in ["layers.0.ffn.gate.weight", "head.weight"] {
+    let packed = kernel_core::weight_transform::mxfp8_fold::LAYOUT_ID;
+    for (view, stored, read) in [
+        (
+            "layers.0.ffn.gate.weight",
+            "bf16_mma_fragments_16x16_v1",
+            "op reads bf16_row_major_v1",
+        ),
+        (
+            "head.weight",
+            "bf16_mma_fragments_16x16_v1",
+            "op reads bf16_row_major_v1",
+        ),
+        (
+            "layers.3.attn.wq_a.weight",
+            "mxfp8_e4m3_rows_v1",
+            &*format!("ops read {packed}"),
+        ),
+        (
+            "layers.0.ffn.shared_experts.w3.weight",
+            "mxfp8_e4m3_rows_v1",
+            &*format!("ops read {packed}"),
+        ),
+    ] {
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        host.layouts
-            .borrow_mut()
-            .insert(view.into(), "bf16_mma_fragments_16x16_v1".into());
+        host.layouts.borrow_mut().insert(view.into(), stored.into());
         let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
         let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
         assert!(created.is_err(), "{view}");
-        let expected = format!(
-            "{view} is stored as bf16_mma_fragments_16x16_v1, but its op reads bf16_row_major_v1"
-        );
+        let expected = format!("{view} is stored as {stored}, but its {read}");
         assert!(
             host.logs
                 .borrow()

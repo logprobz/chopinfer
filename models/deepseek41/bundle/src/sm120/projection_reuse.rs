@@ -64,7 +64,10 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(vec![
         (
             FOLD_FAMILY,
-            mxfp8_fold_reuse::cubin_spec(FOLD_CUBIN, &entries()?).map_err(|e| e.to_string())?,
+            super::mxfp8_fold::packed(
+                mxfp8_fold_reuse::cubin_spec(FOLD_CUBIN, &entries()?),
+                entries()?.iter().map(|e| e.packed_spec()),
+            )?,
         ),
         (
             HEAD_FAMILY,

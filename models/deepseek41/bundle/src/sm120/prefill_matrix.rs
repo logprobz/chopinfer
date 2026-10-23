@@ -60,7 +60,10 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     }
     Ok(vec![(
         FAMILY,
-        mxfp8_prefill_matrix::cubin_spec(CUBIN, &catalog()?).map_err(|e| e.to_string())?,
+        super::mxfp8_fold::packed(
+            mxfp8_prefill_matrix::cubin_spec(CUBIN, &catalog()?),
+            catalog()?.iter().map(|e| e.packed_spec()),
+        )?,
     )])
 }
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {

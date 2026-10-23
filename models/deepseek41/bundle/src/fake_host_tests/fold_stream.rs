@@ -11,52 +11,48 @@ fn packed_folds_share_scratch_across_layers_and_keep_lanes_disjoint() {
         let mut instance = with_settings_in_tests(Settings::ALL, || create(&host, 4));
         audit_allocations(&host, &instance, false);
         let initial = host.device.journal.borrow().clone();
-        let mut initialized = BTreeMap::new();
-        let mut persistent = std::collections::BTreeSet::new();
-        for line in initial.iter().filter(|l| {
-            l.starts_with("launch ")
-                && (l.contains("mxfp8_stream_") || l.contains("mxfp8_direct_"))
-                && l.contains("_prepare_v1")
-        }) {
-            let symbol = line
-                .split_whitespace()
-                .nth(2)
-                .unwrap()
-                .strip_suffix("_prepare_v1")
-                .unwrap()
-                .to_owned();
-            let spans = journal_spans(line);
-            let (packed, state) = match spans.as_slice() {
-                [_, packed, state] => (vec![*packed], *state),
-                [_, _, a, b, state] => (vec![*a, *b], *state),
-                _ => panic!("unexpected packed initializer: {line}"),
-            };
-            assert!(line.contains("flags: 0,"), "prepare must be stream ordered");
-            assert!(
-                line.ends_with(&format!("ScalarU32({})]", state.2 / 4)),
-                "prepare must zero the full shared state: {line}"
-            );
-            assert!(
-                initialized
-                    .insert(packed[0], (symbol, packed.clone(), state))
-                    .is_none()
-            );
-            persistent.insert(state.0);
-            for span in packed {
-                assert!(persistent.insert(span.0));
+        // The folds read the planned packed codes: create packs nothing.
+        assert!(
+            !initial
+                .iter()
+                .any(|l| l.starts_with("launch ") && l.contains("_prepare_v1")),
+            "create launched a fold prepare"
+        );
+        // Each state span is zeroed on its rank stream before create's last
+        // synchronize; layers sharing a span zero it once.
+        let last_sync = initial
+            .iter()
+            .rposition(|line| line.starts_with("synchronize "))
+            .unwrap();
+        let mut zeroed = BTreeMap::new();
+        for line in &initial {
+            if line.starts_with("zero ") {
+                let spans = journal_spans(line);
+                let [span] = spans[..] else {
+                    panic!("unexpected zero: {line}")
+                };
+                *zeroed.entry(span).or_insert(0) += 1;
             }
         }
-        assert!(!initialized.is_empty());
-        assert!(
-            initial
+        let mut states = BTreeMap::new();
+        let mut persistent = std::collections::BTreeSet::new();
+        for views in crate::instance::fold_views_for_test(instance.handle()) {
+            for (name, span) in views {
+                persistent.insert(span.buffer.raw);
+                if name.ends_with(".state") {
+                    states.insert((span.buffer.raw, span.offset, span.length), name);
+                }
+            }
+        }
+        assert!(!states.is_empty());
+        for (span, name) in &states {
+            assert_eq!(zeroed.get(span), Some(&1), "{name} is not zeroed once");
+            let at = initial
                 .iter()
-                .rposition(|line| line.starts_with("synchronize "))
-                .unwrap()
-                > initial
-                    .iter()
-                    .rposition(|line| line.contains("_prepare_v1 "))
-                    .unwrap()
-        );
+                .position(|l| l.starts_with("zero ") && journal_spans(l) == [*span])
+                .unwrap();
+            assert!(at < last_sync, "{name} is zeroed after create synchronizes");
+        }
         let from = host.device.journal.borrow().len();
         step(
             &mut instance,
@@ -94,30 +90,15 @@ fn packed_folds_share_scratch_across_layers_and_keep_lanes_disjoint() {
             let spans = journal_spans(line);
             let state = spans[spans.len() - 3];
             let workspace = (!symbol.contains("mxfp8_direct_")).then(|| spans[spans.len() - 4]);
-            let (owner, packed, initialized_state) = initialized
-                .get(&spans[2])
-                .expect("uninitialized packed weights");
-            assert_eq!(state.0, initialized_state.0);
-            assert_eq!(state.1, initialized_state.1);
-            assert!(state.2 <= initialized_state.2);
-            let shape = |symbol: &str| {
-                symbol
-                    .split('_')
-                    .filter(|part| {
-                        part.len() > 1
-                            && matches!(part.as_bytes()[0], b'n' | b'k' | b'g')
-                            && part[1..].bytes().all(|b| b.is_ascii_digit())
-                    })
-                    .collect::<Vec<_>>()
-                    .join("_")
-            };
-            assert_eq!(shape(owner), shape(symbol));
-            assert_eq!(spans[2], packed[0]);
-            if packed.len() == 2 {
-                assert_eq!(spans[4], packed[1]);
-            }
+            let initialized = states
+                .keys()
+                .find(|s| s.0 == state.0 && s.1 == state.1)
+                .expect("state no create zeroed");
+            assert!(state.2 <= initialized.2);
+            // The packed bank is the weight's planned view, never fold storage.
+            assert!(!persistent.contains(&spans[2].0), "{line}");
             if let Some(workspace) = workspace {
-                assert!(!persistent.contains(&workspace.0));
+                assert!(states.keys().all(|s| s.0 != workspace.0));
                 if let Some(old) = workspaces.insert(workspace.0, state.0) {
                     assert_eq!(old, state.0, "workspace shared by distinct fold operations");
                 }
@@ -136,7 +117,7 @@ fn packed_folds_share_scratch_across_layers_and_keep_lanes_disjoint() {
         assert_eq!(host.acquired.get(), host.released.get());
         println!(
             "{}",
-            serde_json::json!({"topology":shape.topology(),"initialized_operations":initialized.len(),"observed_launches":observed,"shared_workspaces":workspaces.len(),"reinitialized_in_steps":0,"unordered_aliases":0})
+            serde_json::json!({"topology":shape.topology(),"zeroed_states":states.len(),"observed_launches":observed,"shared_workspaces":workspaces.len(),"reinitialized_in_steps":0,"unordered_aliases":0})
         );
     }
 }
@@ -147,9 +128,8 @@ pub(super) fn audit_allocations(host: &Rc<Host>, instance: &BundleInstanceV1, dr
     for views in crate::instance::fold_views_for_test(instance.handle()) {
         let mut groups = BTreeMap::new();
         let mut unique = BTreeSet::new();
-        let mut packed = BTreeSet::new();
-        let mut before = [0_u64; 3];
-        let mut after = [0_u64; 3];
+        let mut before = [0_u64; 2];
+        let mut after = [0_u64; 2];
         let mut reused = 0;
         let mut lanes = [BTreeSet::new(), BTreeSet::new()];
         let mut images = [BTreeSet::new(), BTreeSet::new()];
@@ -159,23 +139,15 @@ pub(super) fn audit_allocations(host: &Rc<Host>, instance: &BundleInstanceV1, dr
             parts.next().unwrap().parse::<u32>().unwrap();
             let projection = parts.next().unwrap();
             let role = name.rsplit('.').next().unwrap();
+            // The folds hold no packed copies: they bind the planned views.
             let index = match role {
-                "packed0" | "packed1" => 0,
-                "state" => 1,
-                "workspace" => 2,
+                "state" => 0,
+                "workspace" => 1,
                 _ => panic!("unexpected fold role {role}"),
             };
             let allocated = host.device.allocation_ranks.borrow()[&span.buffer.slot()].1;
             assert_eq!(allocated, span.length, "{name}");
             before[index] += allocated;
-            if index == 0 {
-                assert!(
-                    packed.insert(span.buffer.slot()),
-                    "packed weights alias: {name}"
-                );
-                after[0] += allocated;
-                continue;
-            }
             if let Some(old) = groups.insert((image, projection), *span) {
                 assert_eq!(old, *span, "layers must share {image}.{projection}");
                 reused += 1;
@@ -195,20 +167,15 @@ pub(super) fn audit_allocations(host: &Rc<Host>, instance: &BundleInstanceV1, dr
         assert!(lanes[0].is_disjoint(&lanes[1]));
         assert!(images[0].is_disjoint(&images[1]));
         assert_eq!(!images[1].is_empty(), drafter);
-        assert!(packed.is_disjoint(&unique));
-        assert_eq!(before[0], after[0]);
-        assert!(before[1] > after[1] && before[2] > after[2]);
+        assert!(before[0] > after[0] && before[1] > after[1]);
         if host.shape.ranks() == 4 {
+            // State and workspace; the packed copies these baselines held
+            // (2_015_887_360 bytes per rank, 2_094_530_560 with the drafter)
+            // are gone.
             let (expected_before, expected_after) = if drafter {
-                (
-                    [2_094_530_560, 298_752, 347_011_840],
-                    [2_094_530_560, 21_760, 88_312_832],
-                )
+                ([298_752, 347_011_840], [21_760, 88_312_832])
             } else {
-                (
-                    [2_015_887_360, 297_984, 342_095_872],
-                    [2_015_887_360, 20_992, 83_396_864],
-                )
+                ([297_984, 342_095_872], [20_992, 83_396_864])
             };
             assert_eq!(before, expected_before, "per-layer allocation baseline");
             assert_eq!(after, expected_after, "actual shared allocations per rank");

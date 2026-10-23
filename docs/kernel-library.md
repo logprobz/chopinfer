@@ -278,26 +278,40 @@ drafter's banks.
 
 The MXFP8 fold kernels read E4M3 codes in `mxfp8-fold-packed-8x128-v1`:
 eight-row tiles of 128-K folds, 32 lanes each, with every lane owning one
-row and every fourth 4-byte word of it. Today each bundle builds that copy
-at create with the `*_prepare_v1` kernels, beside the row-major codes that
-the prefill and remaining decode readers use. The closed-set weight
-transform `MXFP8_FOLD_PACKED` (`kernel_core::weight_transform::mxfp8_fold`)
-writes the same permutation at load from the checkpoint's codes, for N
-divisible by 8 and K divisible by 64, and its CPU oracle and a lab parity
-test pin it to the prepare kernels. No weight plan uses it yet: a
-projection can store only the packed layout once every reader of its codes
-reads that layout.
+row and every fourth 4-byte word of it. The closed-set weight transform
+`MXFP8_FOLD_PACKED` (`kernel_core::weight_transform::mxfp8_fold`) writes
+that permutation at load from the checkpoint's codes, for N divisible by 8
+and K divisible by 64, and its CPU oracle and a lab parity test pin it to
+the stream folds' `*_prepare_v1` kernels, which built the same copy at
+create before any plan stored it.
 
-Row-major readers move to it one family at a time.
-`kernels-sm120/cuda/gemm/mxfp8_fold_packed.cuh` holds the device addressing
-(`Mxfp8FoldLayout::word_offset` is its host twin), and a packed entry is
-its row-major entry with only the code address changed: the same
+Every row-major fold reader has a packed entry: the v2, ticket, prefetch,
+split decode and reuse folds, the TMA, split, compact, matrix-load and
+staged-scale prefills, and the fused cluster and wide row-local status
+folds. `kernels-sm120/cuda/gemm/mxfp8_fold_packed.cuh` holds the device
+addressing (`Mxfp8FoldLayout::word_offset` is its host twin), and a packed
+entry is its row-major entry with only the code address changed: the same
 parameters, plan, shared memory and arithmetic, named by the row-major
-symbol plus `_packed_v1` (`kernels_sm120::gemm::mxfp8_fold_packed`). The
-v2 fold is the first. Packed entries live in their own cubins and lock
-families, and `kernel_harness::packed_fold` requires every byte they write
-to equal the row-major entry's on codes whose words are all distinct; see
+symbol plus `_packed_v1` (`kernels_sm120::gemm::mxfp8_fold_packed`). A TMA
+prefill launch also takes a 4D weight map over the packed strips. Each
+family's kernel-lab `<family>_packed` cubin holds row-major twins beside
+the packed entries, and `kernel_harness::packed_fold` requires every byte a
+packed entry writes to equal the row-major entry's on codes whose words are
+all distinct; see
 [the porting notes](../crates/kernels-sm120/cuda/gemm/mxfp8_fold_packed.md).
+The TMA matrix prefill and the row-local and cluster folds have no packed
+entries.
+
+`Sm120::with_packed_fold_weights` serves every fold op over packed codes:
+it renames each weight-reading launch to its packed entry (moving a TMA
+prefill to the packed weight map), declares the packed layout for every
+weight role, refuses an entry with no packed form, and refuses the stream
+folds' create-time prepare, since those folds bind the planned view as
+their packed bank. `packed_op` does the same for a fold op a model
+prepares itself. DeepSeek V4.1 stores every MXFP8 dense projection's codes
+in this layout, compiles only packed fold readers into its fold cubins and
+refuses at create a rank index that stores a dense codes view in another
+layout than its ops read.
 
 ## Ownership and source changes
 

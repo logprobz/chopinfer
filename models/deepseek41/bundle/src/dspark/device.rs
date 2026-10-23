@@ -126,6 +126,25 @@ pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String>
 }
 
 impl Device {
+    /// Refuses a drafter weight view stored in another layout than its ops
+    /// read: the `mtp.*` dense projections and main_proj.
+    pub(crate) fn check_weight_layouts(
+        &self,
+        index: &bundle_runtime::index::RankIndex,
+    ) -> Result<(), String> {
+        if let Some(dense) = &self.ops.dense {
+            dense.check_weight_layouts(index, "mtp.")?;
+        }
+        let layout = self.prepared.main_weight_layout()?;
+        match index.views.get("mtp.0.main_proj.weight") {
+            Some(view) if view.layout_id != layout => Err(format!(
+                "mtp.0.main_proj.weight is stored as {}, but its ops read {layout}",
+                view.layout_id
+            )),
+            _ => Ok(()),
+        }
+    }
+
     pub fn new(
         kernels: &crate::Kernels,
         shape: Shape,

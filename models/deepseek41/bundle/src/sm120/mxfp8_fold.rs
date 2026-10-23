@@ -298,6 +298,34 @@ pub fn prefetch_catalog(
     Ok(all.into_values().collect())
 }
 
+/// `spec` with its weight readers replaced by their packed `twins`: the
+/// bundle stores every MXFP8 fold projection's codes as
+/// `mxfp8-fold-packed-8x128-v1`, so its fold cubins hold only packed readers.
+pub fn packed(
+    spec: Result<CubinSpec, kernel_core::contract::Refusal>,
+    twins: impl IntoIterator<Item = Result<kernel_build::EntrySpec, kernel_core::contract::Refusal>>,
+) -> Result<CubinSpec, String> {
+    packed_all(spec, twins.into_iter().map(|twin| twin.map(|t| vec![t])))
+}
+
+/// [`packed`] for families with several packed twins per entry.
+pub fn packed_all(
+    spec: Result<CubinSpec, kernel_core::contract::Refusal>,
+    twins: impl IntoIterator<
+        Item = Result<Vec<kernel_build::EntrySpec>, kernel_core::contract::Refusal>,
+    >,
+) -> Result<CubinSpec, String> {
+    let twins = twins
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    kernels_sm120::gemm::mxfp8_fold_packed::replace(
+        spec.map_err(|e| e.to_string())?,
+        twins.into_iter().flatten(),
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn prefetch_cubin_name(g: &Geometry) -> String {
     format!("mxfp8_fold_prefetch_{}_sm120_v3", g.kernel_tag)
 }
@@ -308,11 +336,13 @@ pub fn prefetch_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cub
         .map(|g| {
             Ok((
                 PREFETCH_FAMILY,
-                kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
-                    &prefetch_cubin_name(g),
-                    &prefetch_catalog(g)?,
-                )
-                .map_err(|e| e.to_string())?,
+                packed(
+                    kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                        &prefetch_cubin_name(g),
+                        &prefetch_catalog(g)?,
+                    ),
+                    prefetch_catalog(g)?.iter().map(|e| e.packed_spec()),
+                )?,
             ))
         })
         .collect()
@@ -337,11 +367,13 @@ pub fn ticket_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cubin
         .map(|g| {
             Ok((
                 TICKET_FAMILY,
-                kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
-                    &ticket_cubin_name(g),
-                    &ticket_catalog(g)?,
-                )
-                .map_err(|e| e.to_string())?,
+                packed(
+                    kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                        &ticket_cubin_name(g),
+                        &ticket_catalog(g)?,
+                    ),
+                    ticket_catalog(g)?.iter().map(|e| e.packed_spec()),
+                )?,
             ))
         })
         .collect()
@@ -448,11 +480,13 @@ pub fn decode_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cubin
     geometries
         .iter()
         .map(|g| {
-            let spec = kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
-                &decode_cubin_name(g),
-                &decode_catalog(g)?,
-            )
-            .map_err(|e| e.to_string())?;
+            let spec = packed(
+                kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
+                    &decode_cubin_name(g),
+                    &decode_catalog(g)?,
+                ),
+                decode_catalog(g)?.iter().map(|e| e.packed_spec()),
+            )?;
             Ok((DECODE_FAMILY, spec))
         })
         .collect()
@@ -473,8 +507,10 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     geometries
         .iter()
         .map(|g| {
-            let spec = kernels_sm120::gemm::mxfp8_fold::cubin_spec(&cubin_name(g), &catalog(g)?)
-                .map_err(|e| e.to_string())?;
+            let spec = packed(
+                kernels_sm120::gemm::mxfp8_fold::cubin_spec(&cubin_name(g), &catalog(g)?),
+                catalog(g)?.iter().map(Entry::packed_spec),
+            )?;
             Ok((FAMILY, spec))
         })
         .collect()
@@ -511,11 +547,15 @@ pub fn prefill_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cubi
         .map(|g| {
             Ok((
                 PREFILL_FAMILY,
-                kernels_sm120::gemm::mxfp8_prefill::cubin_spec(
-                    &prefill_cubin_name(g),
-                    &prefill_catalog(g)?,
-                )
-                .map_err(|e| e.to_string())?,
+                packed(
+                    kernels_sm120::gemm::mxfp8_prefill::cubin_spec(
+                        &prefill_cubin_name(g),
+                        &prefill_catalog(g)?,
+                    ),
+                    prefill_catalog(g)?
+                        .iter()
+                        .map(kernels_sm120::gemm::mxfp8_prefill::packed_spec),
+                )?,
             ))
         })
         .collect()
@@ -535,11 +575,15 @@ pub fn prefill_split_cubins(
         .map(|g| {
             Ok((
                 PREFILL_SPLIT_FAMILY,
-                kernels_sm120::gemm::mxfp8_prefill_split::cubin_spec(
-                    &prefill_split_cubin_name(g),
-                    &prefill_catalog(g)?,
-                )
-                .map_err(|e| e.to_string())?,
+                packed_all(
+                    kernels_sm120::gemm::mxfp8_prefill_split::cubin_spec(
+                        &prefill_split_cubin_name(g),
+                        &prefill_catalog(g)?,
+                    ),
+                    prefill_catalog(g)?
+                        .iter()
+                        .map(kernels_sm120::gemm::mxfp8_prefill_split::packed_specs),
+                )?,
             ))
         })
         .collect()

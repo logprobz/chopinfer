@@ -157,7 +157,9 @@ fn retain_the_qualified_module_only_for_flash_tp4() {
     let cubin = crate::CUBINS.iter().find(|c| c.name == name).unwrap();
     assert_eq!(
         kernel_build::digest(cubin.bytes),
-        "3b91575bc78d3d40065e2f18291e596745cfcfdf8690bd097051a3cc099868fa"
+        // The qualified entries' packed twins (kernel-lab
+        // mxfp8_prefill_tma_scales_packed: bitwise equal to row-major).
+        "b28810847b91e268ed3b5c25663fe3a667234fba8fd660d32ddb14e4ee2383cc"
     );
     for shape in crate::shape::topologies() {
         assert_eq!(
@@ -186,7 +188,7 @@ fn engram_changes_only_both_full_row_projection_sites() {
             let selected = |line: &&String| {
                 line.starts_with("launch ")
                     && line.contains("_n25600_k6144_g1_")
-                    && line.contains("_tma_scales_s2_v1 ")
+                    && line.contains("_tma_scales_s2_v1_packed_v1 ")
             };
             assert_eq!(before.iter().filter(selected).count(), 0);
             assert_eq!(

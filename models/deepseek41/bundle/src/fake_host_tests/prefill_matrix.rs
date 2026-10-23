@@ -40,8 +40,12 @@ fn run(rows: u32, kv: KvLayout, drafter: bool, reference: bool) -> Vec<String> {
 fn args(line: &str) -> &str {
     line.split_once(" } [").unwrap().1
 }
+/// A launch's symbol without the packed suffix: both arms read packed codes.
 fn symbol(line: &str) -> &str {
-    line.split_whitespace().nth(2).unwrap()
+    let symbol = line.split_whitespace().nth(2).unwrap();
+    symbol
+        .strip_suffix(kernels_sm120::gemm::mxfp8_fold_packed::SUFFIX)
+        .unwrap_or(symbol)
 }
 fn compute_spans(line: &str) -> Vec<(u64, u64, u64)> {
     let mut spans = journal_spans(line);
@@ -128,45 +132,42 @@ fn audit(before: &[String], after: &[String]) -> Result<usize, String> {
 #[test]
 fn preserve_operands_and_dependencies_in_ar_and_dspark_prefill() {
     crate::sm120::prefill_tma_scales::with_reference(|| {
-        crate::sm120::prefill_tma_matrix::with_reference(|| {
-            for (kv, drafter) in [
-                (KV_LAYOUTS[0], false),
-                (KV_LAYOUTS[1], false),
-                (KV_LAYOUTS[0], true),
-            ] {
-                for rows in [192, 2496, 8192] {
-                    let before = crate::sm120::prefill_matrix::with_reference(|| {
-                        run(rows, kv, drafter, true)
-                    });
-                    let after = run(rows, kv, drafter, false);
-                    let changed = audit(&before, &after).unwrap();
-                    assert!(
-                        changed >= 4 * 4,
-                        "four projections on each TP4 rank must change"
-                    );
-                    let mut bad = after.clone();
-                    let at = bad
-                        .iter()
-                        .position(|l| {
-                            l.starts_with("launch ")
-                                && l.contains("_matrix_")
-                                && !l.contains("_admit_v1")
-                        })
-                        .unwrap();
-                    bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
-                    assert!(
-                        audit(&before, &bad).is_err(),
-                        "changed operand escaped the audit"
-                    );
-                    let mut missing = after.clone();
-                    missing.remove(at - 1);
-                    assert!(
-                        audit(&before, &missing).is_err(),
-                        "missing admission escaped the audit"
-                    );
-                }
+        for (kv, drafter) in [
+            (KV_LAYOUTS[0], false),
+            (KV_LAYOUTS[1], false),
+            (KV_LAYOUTS[0], true),
+        ] {
+            for rows in [192, 2496, 8192] {
+                let before =
+                    crate::sm120::prefill_matrix::with_reference(|| run(rows, kv, drafter, true));
+                let after = run(rows, kv, drafter, false);
+                let changed = audit(&before, &after).unwrap();
+                assert!(
+                    changed >= 4 * 4,
+                    "four projections on each TP4 rank must change"
+                );
+                let mut bad = after.clone();
+                let at = bad
+                    .iter()
+                    .position(|l| {
+                        l.starts_with("launch ")
+                            && l.contains("_matrix_")
+                            && !l.contains("_admit_v1")
+                    })
+                    .unwrap();
+                bad[at] = bad[at].replacen("offset: ", "offset: 1", 1);
+                assert!(
+                    audit(&before, &bad).is_err(),
+                    "changed operand escaped the audit"
+                );
+                let mut missing = after.clone();
+                missing.remove(at - 1);
+                assert!(
+                    audit(&before, &missing).is_err(),
+                    "missing admission escaped the audit"
+                );
             }
-        });
+        }
     });
 }
 
@@ -176,7 +177,9 @@ fn retain_the_qualified_cubin_and_load_only_flash_tp4() {
     let cubin = crate::CUBINS.iter().find(|c| c.name == CUBIN).unwrap();
     assert_eq!(
         kernel_build::digest(cubin.bytes),
-        "cb874d3b2b68f8045d2fd0c8b245e6e03cdcf67b827c8ad26eff34c0d6201d36"
+        // The qualified tiles' packed twins (kernel-lab
+        // mxfp8_prefill_matrix_packed: bitwise equal to the row-major tiles).
+        "e7801ea5d377b926ec8e1deade0c1c392855045eff7f69153888de66ac1c4934"
     );
     for shape in crate::shape::topologies() {
         assert_eq!(

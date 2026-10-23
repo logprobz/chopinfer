@@ -231,9 +231,10 @@ impl Instance {
         // Every rank's index, parsed under the model's schema and bound to
         // the image the host serves for that rank, before any rank context
         // opens or the image is opened or uploaded.
-        // Each weight view an exact F32 projection or the head reads is
-        // stored in the layout its op reads.
+        // Each weight view an exact F32 projection, a dense projection or the
+        // head reads is stored in the layout its ops read.
         let ops = &self.ops;
+        let drafter = self.dspark.as_ref();
         let admit = |rank: u32, bytes: &[u8]| {
             let index =
                 bundle_runtime::index::parse(bytes, rank, INDEX_SCHEMA).map_err(|error| {
@@ -241,6 +242,7 @@ impl Instance {
                     BundleAbiError::InvalidRange("deepseek41 rank index")
                 })?;
             ops.check_weight_layouts(shape.geometry, &index)
+                .and_then(|()| drafter.map_or(Ok(()), |d| d.check_weight_layouts(&index)))
                 .and_then(|()| crate::buffers::encoded_scales(&shape, &index).map(|_| ()))
                 .map_err(|error| {
                     let _ = services.log(format!("{NAME} rank {rank} index: {error}").as_bytes());
@@ -710,11 +712,9 @@ impl Instance {
                 services,
                 pool,
                 stream,
-                &resolved,
                 &mut views[rank],
                 held,
             )?;
-            memory.add(rank, "fold_packed", folds.packed);
             memory.add(rank, "fold_state", folds.state);
             memory.add(rank, "fold_workspace", folds.workspace);
             self.symbols.push(resolved);

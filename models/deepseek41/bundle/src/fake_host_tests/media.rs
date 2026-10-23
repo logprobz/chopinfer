@@ -436,9 +436,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// status fold, the sliced quantizer and WO_a's and WO_b's status folds
 /// with the same operands (160 launches and captured nodes fewer), as in
 /// `FLASH_JOURNALS`. No other line changes.
+/// The packed fold codes change both histories as in `FLASH_JOURNALS`; the
+/// C1 dual fold binds its two projections' views as their packed banks.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (21479, 0x80c97fd5edcadc0e)),
-    (Ranks::TP4, (53983, 0x0455852f242b68b0)),
+    (Ranks::TP2, (19835, 0xc44bace05be17693)),
+    (Ranks::TP4, (50503, 0x5e65ec6981e00545)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

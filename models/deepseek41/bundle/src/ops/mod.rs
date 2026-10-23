@@ -426,7 +426,10 @@ impl Ops {
                 ));
             }
         }
-        Ok(())
+        match &self.dense {
+            Some(dense) => dense.check_weight_layouts(index, "layers."),
+            None => Ok(()),
+        }
     }
 
     /// The dynamic shared memory each entry an op launches takes: the most

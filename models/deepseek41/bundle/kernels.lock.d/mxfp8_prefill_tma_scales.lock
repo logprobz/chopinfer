@@ -50,7 +50,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_tma_scales_s2_v1_packed_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -204,7 +204,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -358,7 +358,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -512,7 +512,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -666,7 +666,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "params": [
           {
             "kind": "TensorMap",
@@ -784,7 +784,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "3b91575bc78d3d40065e2f18291e596745cfcfdf8690bd097051a3cc099868fa",
+    "cubin_sha256": "b28810847b91e268ed3b5c25663fe3a667234fba8fd660d32ddb14e4ee2383cc",
     "resources": [
       {
         "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_tma_scales_s2_v1_admit_v1",
@@ -796,7 +796,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_tma_scales_s2_v1_packed_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -823,7 +823,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -850,7 +850,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -877,7 +877,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
@@ -904,7 +904,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_tma_scales_s2_v1",
+        "symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_tma_scales_s2_v1_packed_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,

@@ -311,12 +311,13 @@ mod tests {
                         ),
                     );
                 }
-                // Optional packed folds bind these private views in the
-                // integrated selector; unselected folds leave them unused.
+                // Optional packed folds bind these private views (and the
+                // weights as their packed codes) in the integrated selector;
+                // unselected folds leave them unused.
                 let mut storage_id = 11000;
                 for tensor in ["w1", "w2", "w3"] {
                     for kind in ["single", "pair"] {
-                        for role in ["packed0", "packed1", "state", "workspace"] {
+                        for role in ["state", "workspace"] {
                             storage_id += 1;
                             b.views.insert(
                                 format!(

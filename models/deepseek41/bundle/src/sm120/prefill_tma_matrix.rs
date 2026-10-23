@@ -1,4 +1,7 @@
-//! One captured Flash TP4 prefill bucket over the qualified TMA module.
+//! One captured Flash TP4 prefill bucket over the qualified TMA module. It
+//! reads row-major weight codes and serves no instance: the staged-scale
+//! TMA prefill (`prefill_tma_scales`) serves the bucket and reads the packed
+//! codes. The lab measures against it.
 use kernel_build::CubinSpec;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 use kernels_sm120::backend::Sm120;
@@ -42,30 +45,14 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 pub fn choice(g: &Geometry, ranks: u32, q: Mxfp8FoldGemmQuery, rows: u32) -> bool {
     g.id == FLASH.id && ranks == 4 && (q.n, q.k, q.groups, rows) == (8192, 1280, 1, 8192)
 }
+/// `backend` with the qualified bucket registered, over row-major codes.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    #[cfg(test)]
-    if REFERENCE.with(|f| f.get()) {
-        return Ok(backend);
-    }
     for e in entries() {
         if e.stages == 2 && choice(g, ranks, e.base.query, 8192) {
             backend = backend.with_mxfp8_prefill_tma_matrix(e, 8192);
         }
     }
     Ok(backend)
-}
-#[cfg(test)]
-std::thread_local! {static REFERENCE:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
-#[cfg(test)]
-pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            REFERENCE.with(|f| f.set(self.0));
-        }
-    }
-    let _restore = Restore(REFERENCE.with(|f| f.replace(true)));
-    run()
 }
 
 #[cfg(test)]

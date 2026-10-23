@@ -61,8 +61,10 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     }
     Ok(vec![(
         FAMILY,
-        kernels_sm120::gemm::mxfp8_prefill_compact::cubin_spec(CUBIN, &catalog()?)
-            .map_err(|e| e.to_string())?,
+        super::packed_all(
+            kernels_sm120::gemm::mxfp8_prefill_compact::cubin_spec(CUBIN, &catalog()?),
+            catalog()?.iter().map(|e| e.packed_specs()),
+        )?,
     )])
 }
 

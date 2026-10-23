@@ -72,7 +72,7 @@ fn rank_buffers(shape: &Shape, ops: &Ops, rank: u32) -> RankBuffers {
         .collect();
     for weight in weights {
         for (paired, _, sizes) in ops.dense.as_ref().unwrap().stream_weight_ops(&weight) {
-            for (role, bytes) in ["packed0", "packed1", "state", "workspace"]
+            for (role, bytes) in ["state", "workspace"]
                 .into_iter()
                 .zip(sizes)
                 .filter(|(_, bytes)| *bytes > 0)

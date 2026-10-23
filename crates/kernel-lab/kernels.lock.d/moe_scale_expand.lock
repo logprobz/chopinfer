@@ -208,7 +208,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "0df7a03cf3658a12cc5f52f6da2f3b8a60c5c0a8d98c3366209e0ad1d5c4b0ca",
+    "cubin_sha256": "49739125f27c7624859da28c6bf18737851ff345a6fafc5b2d3bf5fe1779a858",
     "resources": [
       {
         "symbol": "chop_moe_scale_expand_w1_v1",

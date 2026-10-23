@@ -76,7 +76,11 @@ and a zero shape). `PairBank::tile_rows` sizes each bank's tiles: whole
 bank (160 groups) takes 64-row tiles and its down bank (18 groups) 512-row
 tiles. Each thread writes four output bytes at a time where the output is
 word aligned, with byte loops for an unaligned head and the tail, then
-applies the tile's exceptions after a block barrier. The output contract
+applies the tile's exceptions after a block barrier. The first warp finds
+the tile's exception range with a 32-ary search, both bounds at once, so a
+level costs one dependent load where a one-thread binary search costs one
+per halving; the expansion is latency bound at decode, where the serial
+search set each CTA's duration. The output contract
 is the single-bank entries', per bank.
 
 ## Registration and bundle use
@@ -141,7 +145,9 @@ export CHOPINFER_SCALE_EXPAND_CUBINS="$CHOPINFER_DATA/scale-expand-cubins"
 
 `scale_expand_pair_exact_bytes_on_gpu` runs the paired entry over gate/up
 and down shapes at differing widths, odd shapes whose words straddle rows,
-and each bank alone, with the same active lists and guarded outputs.
+each bank alone, and record lists from empty to nearly every scale (random
+codes at width 1 make 92,160 exceptions in a matrix), with the same active
+lists and guarded outputs.
 
 `cpu_scale_expand_fixtures_cover_codec_and_write_maps` checks 24 fixtures
 against the codec and verifies that the poison differs at every expected
@@ -161,6 +167,5 @@ exact-size encoded allocation. Device correctness and sanitizer results
 must be obtained on idle GPUs; CPU compilation alone establishes neither.
 
 Possible performance work, after byte equality is established on a GPU:
-vectorize offset decoding, and share exception-range searches across
-tiles. No performance claim accompanies the paired entry until its served
+vectorize offset decoding. No performance claim accompanies the paired entry until its served
 measurement.

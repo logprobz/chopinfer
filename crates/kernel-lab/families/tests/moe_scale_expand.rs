@@ -376,6 +376,13 @@ fn pair_cases() -> Vec<[Option<(ScaleExpandQuery, Pattern)>; 2]> {
     }
     cases.push([Some((query(2, 63, 18, 2, 4), Pattern::EveryByte)), None]);
     cases.push([None, Some((query(1, 600, 18, 1, 4), Pattern::Random))]);
+    // Exceptions across several 512-row tiles, and banks with none, so the
+    // exception search meets empty, single-level and deep record lists.
+    cases.push([None, Some((query(4, 1100, 18, 1, 3), Pattern::EveryByte))]);
+    cases.push([
+        Some((query(1, 64, 160, 2, 2), Pattern::Constant)),
+        Some((query(2, 512, 18, 1, 2), Pattern::Constant)),
+    ]);
     cases
 }
 

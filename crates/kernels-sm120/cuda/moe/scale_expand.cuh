@@ -74,6 +74,43 @@ __device__ __forceinline__ void run(
     }
 }
 
+// The first record whose scale index is at least `first`, and the first at
+// least `limit`, in sorted records: a 32-ary search by one warp, both bounds
+// at once, so each level costs one dependent load per lane and bound where a
+// binary search by one thread costs one per halving. Each bound stays in
+// [lo, hi]; a level probes 32 evenly spaced records of [lo, hi) and keeps
+// the stride after the last one below the target.
+__device__ __forceinline__ uint2 warp_exception_range(
+    const uint32_t* records, uint32_t count, uint32_t first, uint32_t limit) {
+  const uint32_t lane = threadIdx.x & 31;
+  const uint32_t target[2] = {first, limit};
+  uint32_t lo[2] = {0, 0}, hi[2] = {count, count};
+  while (lo[0] < hi[0] || lo[1] < hi[1]) {
+    uint32_t stride[2];
+    bool below[2];
+#pragma unroll
+    for (int b = 0; b < 2; ++b) {
+      const uint32_t n = hi[b] - lo[b];
+      stride[b] = (n + 31) / 32;
+      const bool probe = n > 0 && lane * stride[b] < n;
+      below[b] = probe && (records[lo[b] + lane * stride[b]] >> 8) < target[b];
+    }
+#pragma unroll
+    for (int b = 0; b < 2; ++b) {
+      if (lo[b] == hi[b]) continue;
+      const uint32_t c = __popc(__ballot_sync(0xffffffffu, below[b]));
+      if (c == 0) {
+        hi[b] = lo[b];
+      } else {
+        const uint32_t last = lo[b] + (c - 1) * stride[b];
+        lo[b] = last + 1;
+        hi[b] = min(last + stride[b], hi[b]);
+      }
+    }
+  }
+  return make_uint2(lo[0], lo[1]);
+}
+
 // One bank of a paired expansion: its matrices are `rows` x `groups` bytes,
 // `projections` per expert, decoded in tiles of `tile_rows` rows. A null
 // bank takes no tiles.
@@ -100,9 +137,10 @@ __device__ __forceinline__ void run_pair(
     const uint32_t slot = blockIdx.z;
     uint32_t expert = slot;
     if (active) {
-        const int32_t count = active[0];
+        // Both words at once: the plan keeps slots within the list's
+        // experts + 1 words.
+        const int32_t count = active[0], id = active[slot + 1];
         if (count <= 0 || uint32_t(count) > experts || slot >= uint32_t(count)) return;
-        const int32_t id = active[slot + 1];
         if (id < 0 || uint32_t(id) >= experts) return;
         expert = uint32_t(id);
     }
@@ -133,10 +171,14 @@ __device__ __forceinline__ void run_pair(
         const uint32_t bit = column * width;
         return uint8_t(block[row] + ((offsets[row * row_bytes + bit / 8] >> (bit % 8)) & mask));
     };
+    // The first warp finds the tile's exceptions, then joins the base writes.
     __shared__ uint32_t exception_first, exception_end;
-    if (threadIdx.x == 0) {
-        exception_first = lower_bound(records, count, first);
-        exception_end = lower_bound(records, count, limit);
+    if (threadIdx.x < 32) {
+        const uint2 range = warp_exception_range(records, count, first, limit);
+        if (threadIdx.x == 0) {
+            exception_first = range.x;
+            exception_end = range.y;
+        }
     }
     // Bytes before the first word-aligned output byte, the words, then the
     // tail.

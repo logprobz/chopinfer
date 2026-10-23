@@ -491,6 +491,7 @@ fn replay_installed_trace_gpu() -> Result<()> {
             state_reserved_bytes: slots.as_ref().map_or(0, |p| p.reserved_bytes_per_rank()),
             utilization_millionths: 1_000_000,
             maximum_pages: Some(pages as u64),
+            ..Default::default()
         }),
         speculation,
         Some(max_sequences as u32),

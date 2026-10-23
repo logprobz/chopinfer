@@ -1832,6 +1832,7 @@ mod request_state {
             state_reserved_bytes: 1024,
             utilization_millionths: 1_000_000,
             maximum_pages: Some(64),
+            ..Default::default()
         });
         let configuration = config.encode_v1(RECURRENT_TOPOLOGY_ID_V1.as_bytes());
         let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));

@@ -69,7 +69,9 @@ use crate::kv_cache_dtype::{KvCacheDtypeV1, resolve_kv_cache_dtype_v1};
 use crate::reference_forcing::{
     REFERENCE_TOKENS_ENV_V1, ReferenceTokensV1, refuse_reference_tokens_variable_v1,
 };
-use crate::services::{HostServicesV1Backend, ServingKvPolicyV1};
+use crate::services::{
+    DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1, HostServicesV1Backend, ServingKvPolicyV1,
+};
 
 /// The device architecture a command assumes when the caller names none.
 ///
@@ -141,8 +143,8 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
   [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
-  [--gpu-memory-utilization F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
-  [--context-parallel-size N]
+  [--gpu-memory-utilization F] [--graph-memory-reserve-mib N] [--kv-pages N]
+  [--kv-cache-dtype auto|bf16|fp8|mixed] [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...]
@@ -379,6 +381,9 @@ pub struct ServingOptionsV1 {
     /// exceed the declaration.
     pub maximum_images_per_request: Option<usize>,
     pub gpu_memory_utilization_millionths: u32,
+    /// Per-rank memory kept out of the serving KV pool for the CUDA graphs
+    /// captured after it; 1 GiB unless the profile names its own.
+    pub graph_memory_reserve_bytes: u64,
     pub kv_pages: Option<u64>,
     /// Ranks of one context-parallel group, which split every sequence's KV
     /// pages; 1, the default, keeps every page on every rank.
@@ -414,6 +419,7 @@ impl Default for ServingOptionsV1 {
             maximum_tokenizer_input_bytes: None,
             maximum_images_per_request: None,
             gpu_memory_utilization_millionths: 1_000_000,
+            graph_memory_reserve_bytes: DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1,
             kv_pages: None,
             context_parallel_size: 1,
             kv_cache_dtype: KvCacheDtypeV1::Auto,
@@ -1227,6 +1233,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--devices",
             "--max-context-tokens",
             "--gpu-memory-utilization",
+            "--graph-memory-reserve-mib",
             "--kv-pages",
             "--context-parallel-size",
             "--kv-cache-dtype",
@@ -1483,6 +1490,9 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             gpu_memory_utilization_millionths: parsed
                 .gpu_memory_utilization_millionths
                 .unwrap_or(1_000_000),
+            graph_memory_reserve_bytes: parsed
+                .graph_memory_reserve_mib
+                .map_or(DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1, |mib| mib << 20),
             kv_pages: parsed.kv_pages.map(|pages| pages as u64),
             context_parallel_size: match parsed.context_parallel_size {
                 Some(0) => return Err(usage_error("--context-parallel-size must be at least 1")),
@@ -2545,6 +2555,7 @@ fn serve_v1(
             maximum_context_tokens: Some(served_context_tokens),
             state_reserved_bytes: 0,
             utilization_millionths: serving.gpu_memory_utilization_millionths,
+            graph_memory_reserve_bytes: serving.graph_memory_reserve_bytes,
             maximum_pages: serving.kv_pages,
         },
         kv_dtype: kv_cache.dtype,
@@ -4136,6 +4147,7 @@ fn run_over_device_v1<D: HostDeviceBackendV1 + 'static>(
                 state_reserved_bytes: 0,
                 utilization_millionths: plan.gpu_memory_utilization_millionths,
                 maximum_pages: None,
+                ..ServingKvPolicyV1::default()
             }),
         )
         .map_err(HostCommandErrorV1::Load)?;
@@ -4558,6 +4570,7 @@ struct ArgumentsV1 {
     listen: Option<String>,
     maximum_context_tokens: Option<usize>,
     gpu_memory_utilization_millionths: Option<u32>,
+    graph_memory_reserve_mib: Option<u64>,
     kv_pages: Option<usize>,
     context_parallel_size: Option<usize>,
     kv_cache_dtype: Option<KvCacheDtypeV1>,
@@ -4646,7 +4659,7 @@ const REMOVED_FLAGS_V1: &[(&str, &str)] = &[
     ),
     (
         "--kv-memory-fraction",
-        "--kv-memory-fraction is gone: --gpu-memory-utilization F lets this server's own allocations take F of each GPU's total memory; the default 1.0 takes all of it but a 1 GiB reserve",
+        "--kv-memory-fraction is gone: --gpu-memory-utilization F lets this server's own allocations take F of each GPU's total memory; the default 1.0 takes all of it but the graph memory reserve (--graph-memory-reserve-mib)",
     ),
     (
         "--refresh-model",
@@ -4805,6 +4818,11 @@ impl ArgumentsV1 {
                 "--gpu-memory-utilization" => set_once_v1(
                     &mut parsed.gpu_memory_utilization_millionths,
                     parse_gpu_memory_utilization_v1(value)?,
+                    flag,
+                )?,
+                "--graph-memory-reserve-mib" => set_once_v1(
+                    &mut parsed.graph_memory_reserve_mib,
+                    parse_graph_memory_reserve_mib_v1(value)?,
                     flag,
                 )?,
                 "--kv-pages" => set_once_v1(&mut parsed.kv_pages, count_v1(flag, value)?, flag)?,
@@ -5131,6 +5149,10 @@ impl ArgumentsV1 {
             (
                 "--gpu-memory-utilization",
                 self.gpu_memory_utilization_millionths.is_some(),
+            ),
+            (
+                "--graph-memory-reserve-mib",
+                self.graph_memory_reserve_mib.is_some(),
             ),
             ("--kv-pages", self.kv_pages.is_some()),
             (
@@ -5541,6 +5563,17 @@ fn parse_gpu_memory_utilization_v1(value: &str) -> Result<u32, HostCommandErrorV
         return Err(usage_error("--gpu-memory-utilization is too small"));
     }
     Ok(millionths)
+}
+
+/// Whole MiB from 1 to 65,536: graphs that outgrow the reserve fail their
+/// capture, and a value past 64 GiB is a unit mistake.
+fn parse_graph_memory_reserve_mib_v1(value: &str) -> Result<u64, HostCommandErrorV1> {
+    match value.parse::<u64>() {
+        Ok(mib @ 1..=65_536) => Ok(mib),
+        _ => Err(usage_error(
+            "--graph-memory-reserve-mib takes whole MiB from 1 to 65536",
+        )),
+    }
 }
 
 fn parse_admission_watermark_v1(value: &str) -> Result<u32, HostCommandErrorV1> {
@@ -6352,6 +6385,7 @@ mod tests {
                 maximum_tokenizer_input_bytes: Some(8_388_608),
                 maximum_images_per_request: Some(32),
                 gpu_memory_utilization_millionths: 1_000_000,
+                graph_memory_reserve_bytes: crate::services::DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1,
                 kv_pages: None,
                 context_parallel_size: 1,
                 kv_cache_dtype: KvCacheDtypeV1::Auto,
@@ -7771,6 +7805,8 @@ mod tests {
             "a",
             "--gpu-memory-utilization",
             "0.75",
+            "--graph-memory-reserve-mib",
+            "1280",
             "--kv-pages",
             "128",
         ]))
@@ -7779,7 +7815,26 @@ mod tests {
             panic!("the command serves");
         };
         assert_eq!(serving.gpu_memory_utilization_millionths, 750_000);
+        assert_eq!(serving.graph_memory_reserve_bytes, 1280 << 20);
         assert_eq!(serving.kv_pages, Some(128));
+        let HostCommandV1::Serve { serving, .. } =
+            parse_host_command_v1(&arguments(&["serve", "--bundle", "a"])).unwrap()
+        else {
+            panic!("the command serves");
+        };
+        assert_eq!(serving.graph_memory_reserve_bytes, 1 << 30);
+        for mib in ["0", "65537", "1.5", "-1"] {
+            assert!(
+                parse_host_command_v1(&arguments(&[
+                    "serve",
+                    "--bundle",
+                    "a",
+                    "--graph-memory-reserve-mib",
+                    mib,
+                ]))
+                .is_err()
+            );
+        }
         for fraction in ["0", "1.1", "NaN", "invalid"] {
             assert!(
                 parse_host_command_v1(&arguments(&[

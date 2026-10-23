@@ -29,6 +29,7 @@
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -64,6 +65,7 @@
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -99,6 +101,7 @@
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -134,6 +137,7 @@
       "prefill_chunk_tokens": 8192,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -169,6 +173,7 @@
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
@@ -204,6 +209,7 @@
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 1280,
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"

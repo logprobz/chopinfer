@@ -29,11 +29,11 @@ through 64. Package capacity alone is not serving qualification.
 `--gpu-memory-utilization F` (profile field `gpu_memory_utilization`, image
 variable `CHOPINFER_GPU_MEMORY_UTILIZATION`) is the share of each GPU's total
 memory this server's own allocations may take: weights, workspaces, encoders,
-drafter and request state, the sampler, the KV pool and its reserve. Every
-profile uses 1.0, which gives the pool all free memory but the reserve. Lower
-it to leave memory for other programs on the same GPUs. The server counts its
-own allocations, so memory another program allocates or releases does not
-move its share. The CUDA context and loaded kernel code are the driver's and
+drafter and request state, the sampler, the KV pool and its graph memory
+reserve. Every profile uses 1.0, which gives the pool all free memory but the
+reserve. Lower it to leave memory for other programs on the same GPUs. The
+server counts its own allocations, so memory another program allocates or
+releases does not move its share. The CUDA context and loaded kernel code are the driver's and
 come on top. When F leaves no room for one KV page, startup refuses and logs
 the smallest utilization that fits. `--kv-memory-fraction` is gone: it took a
 share of the memory left after the model, so its 0.9 default left a tenth of
@@ -44,14 +44,20 @@ Bundles allocate everything they use before the host sizes the pool, and the
 conformance suite refuses device memory a bundle acquires after it. Only CUDA
 graphs come later: they embed the pool's addresses, so they are captured once
 it exists, at startup warmup and for batch shapes warmup did not reach. The
-host keeps a fixed 1 GiB per rank out of the pool for them and the driver.
-Server logs from 2026-10-05 to 2026-10-22 measured graph memory per GPU of
-about 8 MiB (MiMo TP4 AR), 56 MiB (Qwen TP4 MTP), 68 MiB (MiMo DFlash), at
-most 140 MiB live over a GLM soak, and 0.7 GiB (DeepSeek DSpark). A capture
-that finds no memory fails the generation worker, so startup logs each rank's
-free memory after warmup and warns below 256 MiB
-([observability](operations-observability.md#chopinfer-metrics)); lower the
-utilization or `--max-sequences` when a rank warns.
+host keeps a reserve per rank out of the pool for them:
+`--graph-memory-reserve-mib N` (profile field `graph_memory_reserve_mib`),
+1 GiB when neither names one. Graph memory is model specific, so the reserve
+is per profile. Server logs from 2026-10-05 to 2026-10-22 measured about
+8 MiB per GPU for MiMo TP4 AR, 56 MiB for Qwen TP4 MTP, 68 MiB for MiMo
+DFlash, and at most 140 MiB live over a GLM soak; those profiles keep the
+default until the post-warmup line below measures them. On 2026-10-23
+DeepSeek TP4 DSpark at 32 sequences captured 384 graphs per GPU holding
+902 MiB, which left 137 MiB of a 1 GiB reserve, so the DeepSeek profiles
+reserve 1280 MiB (the graphs, the 256 MiB warning headroom and about 10 %
+for growth). A capture that finds no memory fails the generation worker, so
+startup logs each rank's free memory after warmup and warns below 256 MiB
+([observability](operations-observability.md#chopinfer-metrics)); raise the
+reserve or lower `--max-sequences` when a rank warns.
 
 ## Qualification scope
 

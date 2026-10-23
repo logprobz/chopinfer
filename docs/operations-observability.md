@@ -109,7 +109,7 @@ sizes the pool, and one `device memory after warmup rank R` line per rank
 when warmup ends: the pool, the memory warmup's graphs took since the sizing,
 and what is left. A rank left with less than 256 MiB also logs a warning,
 since a graph captured later (a batch shape warmup missed, a GLM prefill
-program) needs room there.
+program) needs room there; `--graph-memory-reserve-mib` raises the room.
 
 ## Refused batches
 

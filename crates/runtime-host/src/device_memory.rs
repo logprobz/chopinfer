@@ -93,7 +93,7 @@ impl DeviceMemoryReportV1 {
             if rank.free_bytes < WARMUP_HEADROOM_BYTES_V1 {
                 lines.push(format!(
                     "WARNING: rank {} has {} MiB free after warmup, less than the {} MiB a \
-                     graph captured later may need; lower --gpu-memory-utilization or \
+                     graph captured later may need; raise --graph-memory-reserve-mib or lower \
                      --max-sequences to leave more",
                     rank.rank,
                     rank.free_bytes / MIB,

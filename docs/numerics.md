@@ -916,12 +916,12 @@ AR/speculative equality is a hard gate or informational.
 ## KV offload and prefix state
 
 Serving KV pages are opaque bundle-owned layouts. The host allocates them
-after weights, workspaces and persistent state, keeping a 1 GiB reserve per
-rank for the CUDA graphs captured once the pool exists
-([GPU memory](serving-profiles.md#gpu-memory)), zeroes new pages, performs
-whole-page copy-on-write on every rank and commits or rolls back the logical
-batch. A bundle declaring `rewrites_last_page` also copies shared full tail
-pages. Bundle callbacks commit or restore recurrent state. Layout identity
+after weights, workspaces and persistent state, keeping a per-profile reserve
+(1 GiB by default) on each rank for the CUDA graphs captured once the pool
+exists ([GPU memory](serving-profiles.md#gpu-memory)), zeroes new pages,
+performs whole-page copy-on-write on every rank and commits or rolls back the
+logical batch. A bundle declaring `rewrites_last_page` also copies shared full
+tail pages. Bundle callbacks commit or restore recurrent state. Layout identity
 is fixed for the engine lifetime; FP8 quantizes only declared KV regions.
 
 Anchors include logical pages and exact bundle state. A request resumes from

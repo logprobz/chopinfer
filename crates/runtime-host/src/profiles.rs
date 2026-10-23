@@ -45,6 +45,9 @@ pub(crate) struct Profile {
     pub context_parallel_size: Option<usize>,
     /// `--gpu-memory-utilization`.
     pub gpu_memory_utilization: f64,
+    /// `--graph-memory-reserve-mib`; absent keeps the host's 1 GiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_memory_reserve_mib: Option<u64>,
     pub status: Status,
     pub evidence: Vec<String>,
 }
@@ -128,7 +131,7 @@ impl Profiles {
                 .any(|p| p.get("kv_memory_fraction").is_some())
         }) {
             return Err(error(
-                "kv_memory_fraction is gone: set gpu_memory_utilization, the share of each GPU's total memory the server's own allocations may take (1.0 takes all of it but a 1 GiB reserve)",
+                "kv_memory_fraction is gone: set gpu_memory_utilization, the share of each GPU's total memory the server's own allocations may take (1.0 takes all of it but the graph memory reserve)",
             ));
         }
         let file: Self =
@@ -281,6 +284,9 @@ impl Profile {
         }
         if let Some(size) = self.context_parallel_size {
             args.extend(["--context-parallel-size".into(), size.to_string()]);
+        }
+        if let Some(mib) = self.graph_memory_reserve_mib {
+            args.extend(["--graph-memory-reserve-mib".into(), mib.to_string()]);
         }
         if let Some(budget) = &self.prefill_budget {
             args.extend(["--prefill-budget".into(), budget.clone()]);
@@ -1702,6 +1708,33 @@ mod tests {
             refusal.contains("kv_memory_fraction is gone: set gpu_memory_utilization"),
             "{refusal}"
         );
+    }
+    #[test]
+    fn a_profile_names_its_graph_memory_reserve() {
+        let reserve = |mib: Option<serde_json::Value>| -> Result<u64, HostCommandErrorV1> {
+            let mut value = fixture();
+            if let Some(mib) = mib {
+                value["profiles"]["test"]["graph_memory_reserve_mib"] = mib;
+            }
+            let profiles = Profiles::parse(&serde_json::to_vec(&value).unwrap())?;
+            let mut args = vec!["serve".to_owned()];
+            args.extend(profiles.get("test").unwrap().arguments("fixture"));
+            match crate::parse_host_command_v1(&args)? {
+                crate::HostCommandV1::Serve { serving, .. } => {
+                    Ok(serving.graph_memory_reserve_bytes)
+                }
+                _ => unreachable!("profile arguments name serve"),
+            }
+        };
+        assert_eq!(reserve(None).unwrap(), 1 << 30);
+        assert_eq!(reserve(Some(1280.into())).unwrap(), 1280 << 20);
+        for refused in [
+            serde_json::json!(0),
+            serde_json::json!(1.5),
+            serde_json::json!(-1),
+        ] {
+            assert!(reserve(Some(refused)).is_err());
+        }
     }
     #[test]
     fn explicit_overrides_in_either_order_and_ar_disables_policy() {

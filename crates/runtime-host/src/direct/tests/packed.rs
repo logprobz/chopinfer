@@ -918,3 +918,56 @@ fn row_tiled_banks_load_their_row_major_shares_in_tiles() {
         assert_ne!(rows.identity(rank), tiles.identity(rank), "rank {rank}");
     }
 }
+
+/// A row-tiled bank whose scales the plan stores encoded loads its codes in
+/// tiles and its scales encoded from the row-major share, untiled: the
+/// encoding a census measures on rows, through the reused, independent-scale
+/// and shared paths alike.
+#[test]
+fn row_tiled_banks_encode_their_scales_from_rows() {
+    use kernel_core::precision::scale_offset::WIDTHS;
+    let (root, tensors) = bank_checkpoint();
+    let (rows, row_major) = bank_plans("r", "row-major-groups", &tensors);
+    let (tiles, tiled) = bank_plans("r", ROW_TILES_64X128, &tensors);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let operand =
+        |record: &WeightRecordV1| match WeightTransform::decode(record.transform, &record.params)
+            .unwrap()
+        {
+            WeightTransform::PackedOperand(operand) => operand,
+            _ => unreachable!("the fixture packs every record"),
+        };
+    for width in WIDTHS {
+        // The row-major bank encoded, then each record in tiles: its codes
+        // are the tiled plan's, its encoded scales stay as encoded.
+        let (mut plans, mut arenas) = encoded(&rows, &row_major, width);
+        for (rank, plan) in plans.iter_mut().enumerate() {
+            for record in &mut plan.records {
+                let mut tiled_operand = operand(record);
+                tiled_operand.plan.layout.id = ROW_TILES_64X128.into();
+                if tiled_operand.section == PackedSection::Codes {
+                    let original = tiles[rank]
+                        .records
+                        .iter()
+                        .find(|r| {
+                            r.sources == record.sources
+                                && operand(r).section == PackedSection::Codes
+                        })
+                        .unwrap();
+                    arenas[rank][record.arena_offset as usize..][..record.byte_length as usize]
+                        .copy_from_slice(
+                            &tiled[rank][original.arena_offset as usize..]
+                                [..original.byte_length as usize],
+                        );
+                }
+                record.params = WeightTransform::PackedOperand(tiled_operand)
+                    .encode_params()
+                    .unwrap();
+            }
+        }
+        for (threads, shared) in [(1, 0), (2, 128 << 10)] {
+            let image = sharing_image(&checkpoint, &plans, threads, shared);
+            assert_eq!(waves(&image, 4096), arenas, "width {width}");
+        }
+    }
+}

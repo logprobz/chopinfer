@@ -201,13 +201,13 @@ pub(super) fn audit_allocations(host: &Rc<Host>, instance: &BundleInstanceV1, dr
         if host.shape.ranks() == 4 {
             let (expected_before, expected_after) = if drafter {
                 (
-                    [2_106_261_504, 296_704, 357_229_056],
-                    [2_106_261_504, 27_392, 92_735_232],
+                    [2_211_119_104, 317_184, 360_526_336],
+                    [2_211_119_104, 27_904, 92_817_664],
                 )
             } else {
                 (
-                    [1_911_029_760, 277_504, 338_798_592],
-                    [1_911_029_760, 20_480, 83_314_432],
+                    [2_015_887_360, 297_984, 342_095_872],
+                    [2_015_887_360, 20_992, 83_396_864],
                 )
             };
             assert_eq!(before, expected_before, "per-layer allocation baseline");

@@ -1,4 +1,30 @@
 //! Initialize qualified folds once, after weight upload and before graph capture.
+//!
+//! A fold operation's state and workspace may alias across the ordered
+//! layers of one projection, paired mode and implementation
+//! ([`ScratchKey`]). Each rank keeps the target and DSpark (`mtp.*`) apart
+//! and the shared expert's side lane apart from the main lane. Row buckets
+//! keep their independent maximum bounds, and packed weights stay private
+//! to each weight and operation. Only the stream and direct families share:
+//!
+//! - `mxfp8_fold_stream.cuh`'s entries wait before `run_task` touches
+//!   mutable storage, and the last arrivals reset every completed and
+//!   deferred ticket and the ready, done and pending flags. The one-row
+//!   dual fold (`mxfp8_fold_dual.cuh`) binds the stream storage of its two
+//!   projections and runs the same `run_task` after its own wait.
+//! - `mxfp8_fold_direct.cuh` waits before its task, and its last arrivals
+//!   clear the leaf and root counters and the admission flags.
+//! - Create-time prepare is ordered on the rank stream without PDL, clears
+//!   the full state span (the maximum over row buckets), and create
+//!   synchronizes before any consumer runs. Workspace need not end zero:
+//!   flags and partials are written before they are read.
+//!
+//! Every other family (ticket, prefetch, split, reuse, cluster, local rows)
+//! keeps private storage or binds ordinary backend workspace. Successive
+//! layers are ordered on one stream, or by the fork and join events of
+//! `shared_overlap` on the side lanes. The fake-host fold tests check the
+//! allocations and replay each step journal for unordered aliases; neither
+//! is GPU evidence.
 use crate::ops::fold_stream::{self, Storage};
 use bundle_runtime::resources::{Held, allocate_span};
 use runtime_bundle_abi::{

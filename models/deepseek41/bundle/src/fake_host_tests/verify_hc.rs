@@ -92,12 +92,12 @@ use super::*;
 // WO_b (1920 launches to 960, audited by
 // `fold_fused::status_folds_change_only_their_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0x60ef41c3fb19c69f)),
-    (6, (8680, 0x9c8cd5dcc4b8692f)),
-    (8, (8212, 0x139d478f453b8ce2)),
-    (12, (10136, 0xf5073975e2eff8da)),
-    (16, (8852, 0xc6e9019cee4d3bf0)),
-    (32, (8704, 0xbbe52d293c548b6f)),
+    (4, (8520, 0xeaddb53d42c1914a)),
+    (6, (8680, 0xf8c3eaf8478f1253)),
+    (8, (8212, 0x3d8d10eace0015b0)),
+    (12, (10136, 0x1ff1b46d5b2621f1)),
+    (16, (7892, 0xb74a430f6cc98d80)),
+    (32, (7744, 0x20cbd6d053fc98e9)),
 ];
 
 #[test]

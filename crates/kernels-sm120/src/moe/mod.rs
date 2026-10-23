@@ -16,6 +16,7 @@ pub mod expert_parallel;
 pub mod grouped_bf16;
 pub mod native_grouped;
 pub mod parallel;
+pub mod scale_expand;
 pub mod sigmoid_route;
 pub mod template;
 

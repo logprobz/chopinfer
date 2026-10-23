@@ -4,6 +4,7 @@
 //! declarations.
 #![forbid(unsafe_code)]
 pub mod admission;
+pub mod dspark_options;
 pub mod encoder;
 pub mod encoder_plan;
 pub mod frontend;

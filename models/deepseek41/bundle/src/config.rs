@@ -41,6 +41,9 @@ pub const KV_LAYOUTS: [KvLayout; 2] = [
 #[derive(Clone, Debug)]
 pub struct Configuration {
     pub prefill: model_deepseek41_contract::prefill_profile::Profile,
+    /// Drafting items per drafter forward
+    /// (`model_deepseek41_contract::dspark_options`).
+    pub dspark_draft_chunk_items: u32,
     pub shape: Shape,
     pub create: CreateConfig,
     pub kv: KvLayout,
@@ -142,6 +145,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let dspark_draft_chunk_items =
+        model_deepseek41_contract::dspark_options::draft_chunk_items(&options).map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -215,6 +223,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
     }
     Ok(Configuration {
         prefill,
+        dspark_draft_chunk_items,
         shape,
         create,
         kv,
@@ -308,6 +317,20 @@ pub(crate) mod tests {
         let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma, "text_config.indexer_prefill_tile": shape.runtime.indexer_prefill_tile});
         append_options(&mut bytes, &options);
         bytes
+    }
+
+    /// `record` with its model options replaced by `options`.
+    pub(crate) fn with_options(
+        mut record: Vec<u8>,
+        options: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Vec<u8> {
+        let at = record
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|window| window == MODEL_OPTIONS_TAG_V1)
+            .expect("the record carries model options");
+        record.truncate(at);
+        append_options(&mut record, &serde_json::to_value(options).unwrap());
+        record
     }
 
     fn append_options(bytes: &mut Vec<u8>, options: &serde_json::Value) {

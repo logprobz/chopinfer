@@ -336,7 +336,10 @@ Against no drafting, three drafts per stream at C8 raised full-concurrency
 throughput by 44% greedy and 26% sampled; one draft at C16 lowered request
 throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 serve without
 drafts. `--speculation adaptive` with the shared `per-block` draft-cost
-model remains available. Its paired-teacher policy
+model remains available. The model option `dspark_draft_chunk_items`
+(default 6, at most 32) sets how many drafting items one drafter forward
+runs; a step with more runs one forward per chunk, and target outputs do not
+depend on it. Its paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 
 The speculative-verification copy set must have mean absolute logprob

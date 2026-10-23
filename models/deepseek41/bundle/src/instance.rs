@@ -874,6 +874,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                     .create
                     .context_tokens
                     .unwrap_or(shape.geometry.context_tokens()),
+                config.dspark_draft_chunk_items as usize,
             )
             .map_err(|error| {
                 log(&error);
@@ -1231,6 +1232,23 @@ pub(crate) fn dspark_context(
             .state()
             .context(request)
             .cloned()
+    })
+}
+
+/// The drafting items the instance's drafter runs per forward.
+#[cfg(test)]
+pub(crate) fn dspark_draft_chunk_items(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Option<usize> {
+    INSTANCES.with(|table| {
+        Some(
+            table
+                .borrow_mut()
+                .get_mut(handle)?
+                .dspark
+                .as_ref()?
+                .draft_chunk_items,
+        )
     })
 }
 

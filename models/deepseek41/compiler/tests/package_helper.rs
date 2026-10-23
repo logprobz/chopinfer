@@ -303,7 +303,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
             options,
             serde_json::json!({
                 "schema": "chop.model-options.v1",
-                "options": [{"name": "prefill_chunk_tokens", "default_is_qualified": true,
+                "options": [{"name": "dspark_draft_chunk_items", "default_is_qualified": true,
+                         "definition": {"type": "integer", "default": 6, "minimum": 1, "maximum": 32}},
+                        {"name": "prefill_chunk_tokens", "default_is_qualified": true,
                          "definition": {"type": "integer", "default": 8192, "minimum": 0, "maximum": 8192}},
                         {"name": "prefill_upper_skip", "default_is_qualified": true,
                          "definition": {"type": "boolean", "default": true}},
@@ -329,6 +331,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 .resolve_model_options(&overrides)
                 .unwrap();
             let expected = serde_json::json!({
+                "dspark_draft_chunk_items": 6,
                 "prefill_chunk_tokens": 8192,
                 "prefill_upper_skip": true,
                 "text_config.index_topk": override_top_k.unwrap_or(top_k),

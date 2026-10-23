@@ -969,3 +969,43 @@ fn ar_steps_defer_catch_up_and_drafting_items_share_one_batched_launch() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// The package's declared drafter chunk reaches the drafter: the host
+/// resolves the declaration's default into the create record, and a profile
+/// or flag override replaces it.
+#[test]
+fn the_declared_draft_chunk_reaches_the_drafter() {
+    use model_deepseek41_contract::dspark_options::{DEFAULT_DRAFT_CHUNK_ITEMS, DRAFT_CHUNK_ITEMS};
+    use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
+
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let declared = ModelOptionsV1 {
+        schema: CAPABILITY.into(),
+        options: shape
+            .geometry
+            .model_options(shape.geometry.runtime_defaults()),
+    };
+    for (overrides, expected) in [
+        (vec![], DEFAULT_DRAFT_CHUNK_ITEMS),
+        (vec![(DRAFT_CHUNK_ITEMS.to_owned(), "8".to_owned())], 8),
+    ] {
+        let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        host.drafter.set(true);
+        host.speculation.set(Some((5, 32)));
+        let record = crate::config::tests::with_options(
+            crate::config::tests::record(&shape, host.kv, 4, false),
+            &resolved,
+        );
+        let instance = api()
+            .create(
+                HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+                &record,
+            )
+            .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
+        assert_eq!(
+            crate::instance::dspark_draft_chunk_items(instance.handle()),
+            Some(expected as usize)
+        );
+    }
+}

@@ -62,6 +62,8 @@ pub(crate) struct Device {
     pub verified: Vec<u64>,
     /// `CHOPINFER_STEP_TRACE=1` at create: each execute logs its phase times.
     pub step_trace: bool,
+    /// Most drafting items per drafter forward, from the create record's
+    /// `dspark_draft_chunk_items` model option.
     pub draft_chunk_items: usize,
     #[cfg(feature = "diagnostic-taps")]
     pub draft_check: Option<std::path::PathBuf>,
@@ -124,17 +126,12 @@ impl Device {
         shape: Shape,
         items: Items,
         context_tokens: u64,
+        draft_chunk_items: usize,
     ) -> Result<Self, String> {
         let g = shape.geometry;
-        let draft_chunk_items = match std::env::var("CHOPINFER_DSPARK_DRAFT_CHUNK_ITEMS") {
-            Err(std::env::VarError::NotPresent) => 6,
-            Ok(value) => value
-                .parse::<usize>()
-                .ok()
-                .filter(|&n| (1..=DECODE_BATCH as usize).contains(&n))
-                .ok_or("DSpark draft chunk items must be between 1 and 32")?,
-            Err(_) => return Err("DSpark draft chunk items must be UTF-8".into()),
-        };
+        if !(1..=DECODE_BATCH as usize).contains(&draft_chunk_items) {
+            return Err("DSpark draft chunk items must be between 1 and 32".into());
+        }
         let config = Config {
             slots: items.capacity(),
             stages: g.dspark_stages(),

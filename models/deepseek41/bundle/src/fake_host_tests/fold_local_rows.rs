@@ -181,13 +181,16 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
 #[test]
 fn local_rows_change_only_measured_decode_and_verify_projections() {
     for kv in KV_LAYOUTS {
-        // The cluster folds, audited by `fold_cluster`, take over WO_b's
-        // rings at 16 and 32 rows; both sides run without them.
-        let (before, after) = crate::sm120::fold_cluster::with_reference(|| {
-            (
-                crate::sm120::fold_local_rows::with_reference(|| run(kv, true)),
-                run(kv, false),
-            )
+        // The cluster and status folds, audited by `fold_cluster` and
+        // `fold_fused`, take over WO_b's rings and WQ_b at 16 and 32 rows;
+        // both sides run without them.
+        let (before, after) = crate::sm120::fold_fused::with_reference(|| {
+            crate::sm120::fold_cluster::with_reference(|| {
+                (
+                    crate::sm120::fold_local_rows::with_reference(|| run(kv, true)),
+                    run(kv, false),
+                )
+            })
         });
         let changed = audit(&before, &after).unwrap();
         let mut expected = Vec::new();

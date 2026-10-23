@@ -29,6 +29,7 @@ mod decode_join;
 mod device_results;
 mod dspark;
 mod fold_cluster;
+mod fold_fused;
 mod fold_local_rows;
 mod fold_stream;
 mod head_last;
@@ -1141,6 +1142,11 @@ fn journal_steps(host: &Rc<Host>) {
 /// The cluster folds (`fold_cluster::SERVED`) add sixteen resolves, one
 /// configure (WQ_a's 32-row ring) and seventeen releases per TP4 rank and
 /// shift ids only.
+/// The status folds (`sm120::fold_fused`) add eleven resolves, one
+/// allocation (WO_a's 524288 block flag bytes) and thirteen releases per
+/// TP4 rank, and move WQ_a's 32-row configure from its cluster fold to the
+/// status twin; these lifecycles launch no 16- or 32-row bucket, and every
+/// other line is identical after handle mapping.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1167,12 +1173,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (86579, 0xf1f2afb28e468214),
+        (86679, 0xc1f63e5f38dbb78b),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (84223, 0x5700f38efaddbd72),
+        (84323, 0xc8b51b04b0cf3fc6),
     ),
 ];
 
@@ -1327,8 +1333,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// module adds six resolves and seven releases per rank, the column-block
 /// HC pair's modules fourteen resolves and sixteen releases. The two-strip
 /// routed down module adds two resolves and three releases per rank. The
-/// window KV projection beside the query chain, the row-local rings and the
-/// cluster folds change it as in `FLASH_JOURNALS`.
+/// window KV projection beside the query chain, the row-local rings, the
+/// cluster folds and the status folds change it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1336,7 +1342,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(84859, 0x87b9a5c01ed8b731), (82503, 0x34b41030529a82bb)])
+            .zip([(84959, 0xdc63de3402fbc9e3), (82603, 0x4f2791b4997fc300)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

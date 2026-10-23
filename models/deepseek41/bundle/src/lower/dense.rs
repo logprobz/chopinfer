@@ -36,6 +36,10 @@ impl Lowering<'_> {
         let rows_of = |span| rows(span, phase.rows());
         let error = |refusal| format!("{id} of layer {layer}: {refusal}");
         let mut launches = Vec::new();
+        // WO_a and WO_b as status folds (`sm120::fold_fused`): the sliced
+        // quantizer, WO_a quantizing WO_b's input in its merge, then WO_b
+        // over those codes. The two fuse at the same buckets and layers.
+        let fused = layer < self.shape.geometry.layers() && ops.fuses(id, phase);
         let quantized = |input: DeviceBufferSpanV1,
                          codes: DeviceBufferSpanV1,
                          scales: DeviceBufferSpanV1,
@@ -81,6 +85,22 @@ impl Lowering<'_> {
                 scratch.query_scales,
                 &mut launches,
             )?,
+            Input::Attention if fused => {
+                let views = QuantizeViews {
+                    input: rows_of(scratch.attention),
+                    codes: rows_of(scratch.attention_codes),
+                    scales: rows_of(scratch.attention_scales),
+                    live_rows: self.inputs.live_tokens,
+                    status: self.carried(phase, scratch.row_status)?,
+                };
+                launches.extend(ops.quantize_sliced(phase, &views).map_err(error)?);
+                (views.codes, views.scales)
+            }
+            // WO_a's status fold quantized them in its merge.
+            Input::OutputA if fused => (
+                rows_of(scratch.output_a_codes),
+                rows_of(scratch.output_a_scales),
+            ),
             Input::Attention => quantized(
                 scratch.attention,
                 scratch.attention_codes,
@@ -153,6 +173,30 @@ impl Lowering<'_> {
                 status: views.status,
             };
             return dual.launch(&[views, kv]).map(Some).map_err(error);
+        }
+        if fused {
+            let flags = rows_of(
+                scratch
+                    .output_a_flags
+                    .ok_or_else(|| format!("{id} of layer {layer}: no WO_a block flags"))?,
+            );
+            let (next, pending) = if id == "attention.o-a" {
+                (
+                    Some([
+                        rows_of(scratch.output_a_codes),
+                        rows_of(scratch.output_a_scales),
+                        flags,
+                    ]),
+                    None,
+                )
+            } else {
+                (None, Some(flags))
+            };
+            launches.extend(
+                ops.fused(id, phase, &views, next, pending, self.buffers.workspace)
+                    .map_err(error)?,
+            );
+            return Ok(Some(launches));
         }
         let local = if layer < self.shape.geometry.layers() {
             ops.local(id, phase, &views, self.buffers.workspace)

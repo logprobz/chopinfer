@@ -180,8 +180,14 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
 #[test]
 fn cluster_folds_change_only_measured_decode_and_verify_projections() {
     for kv in KV_LAYOUTS {
-        let before = crate::sm120::fold_cluster::with_reference(|| run(kv, true));
-        let after = run(kv, false);
+        // The status folds, audited by `fold_fused`, replace these pairs;
+        // both sides run without them.
+        let (before, after) = crate::sm120::fold_fused::with_reference(|| {
+            (
+                crate::sm120::fold_cluster::with_reference(|| run(kv, true)),
+                run(kv, false),
+            )
+        });
         let changed = audit(&before, &after).unwrap();
         let mut expected = Vec::new();
         let mut cases = vec!["decode 16", "decode 32"];
@@ -250,8 +256,9 @@ fn cluster_folds_fit_the_workspace_regions_their_folds_had() {
                 local("attention.kv"),
             )
         };
-        let before = crate::sm120::fold_cluster::with_reference(sizes);
-        let after = sizes();
+        let (before, after) = crate::sm120::fold_fused::with_reference(|| {
+            (crate::sm120::fold_cluster::with_reference(sizes), sizes())
+        });
         assert_eq!((after.0, after.1), (before.0, before.1), "{kv:?}");
         assert!(after.2.is_some_and(|w| w > 256 && w <= after.1), "{kv:?}");
     }

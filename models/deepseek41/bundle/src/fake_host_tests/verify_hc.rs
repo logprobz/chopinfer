@@ -85,6 +85,12 @@ use super::*;
 // operands (160 launches); at 16 rows each direct down small and wide pair
 // becomes one two-strip launch with the small launch's operands (160 fewer
 // launches and captured nodes). No other line changes.
+// The status folds' eleven resolves shift ids only. At 16 and 32 rows each
+// layer's twelve launches (the WQ_a, WKV, WQ_b and WO_b admit/fold pairs,
+// WO_a's input quantizer and pair and WO_b's input quantizer) become six:
+// the status folds of WQ_a, WKV and WQ_b, the sliced quantizer, WO_a and
+// WO_b (1920 launches to 960, audited by
+// `fold_fused::status_folds_change_only_their_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0x60ef41c3fb19c69f)),
     (6, (8680, 0x9c8cd5dcc4b8692f)),

@@ -415,9 +415,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// and the cluster folds sixteen resolves, one configure and seventeen
 /// releases. The column-block HC pair's modules add fourteen resolves and
 /// sixteen releases per rank and shift ids only.
+/// The status folds change the TP4 history as in `FLASH_JOURNALS`.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (23343, 0x3cc290637430e206)),
-    (Ranks::TP4, (57771, 0xff32688003b68ba1)),
+    (Ranks::TP4, (57871, 0x83cad1ba55e7f679)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -205,11 +205,39 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 /// A quantized input's width and type.
 type QuantizedInput = (u32, DType);
 
+/// A projection's fold over fused buffers, as the backend prepared it: WO_a
+/// quantizing WO_b's input in its merge, or WO_b failing rows by status and
+/// WO_a's block flags.
+pub(crate) trait FusedFold: Send + Sync {
+    fn info(&self) -> &kernel_core::backend::OpInfo;
+
+    /// The fold of `rows` rows over `views`, with WO_b's input (`next`:
+    /// codes, scales and block flags) or WO_a's block flags (`pending`).
+    fn lower(
+        &self,
+        views: &GemmViews,
+        next: Option<[DeviceBufferSpanV1; 3]>,
+        pending: Option<DeviceBufferSpanV1>,
+        workspace: DeviceBufferSpanV1,
+        rows: u32,
+    ) -> Result<Vec<Lowered>, Refusal>;
+}
+
+/// An input quantizer whose rejected rows only a status fold may follow.
+pub(crate) trait SlicedQuantize: Send + Sync {
+    fn lower(&self, views: &QuantizeViews, rows: u32) -> Result<Vec<Lowered>, Refusal>;
+}
+
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
     /// Row-local folds by projection and decode or verify bucket.
     local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
+    /// WO_a and WO_b status folds over their fused buffers, by projection
+    /// and bucket (`sm120::fold_fused`), and WO_a's sliced input quantizer
+    /// at those buckets.
+    fused: Vec<(&'static str, u32, Box<dyn FusedFold>)>,
+    sliced: Vec<(u32, Box<dyn SlicedQuantize>)>,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
     tensors: Vec<(&'static str, &'static str)>,
@@ -293,6 +321,8 @@ impl DenseOps {
         let short_prefill = short_prefill::enabled(shape);
         let mut decode = Vec::new();
         let mut local = Vec::new();
+        let mut fused = Vec::new();
+        let sliced = crate::Kernels::sliced_quantizers(shape);
         let mut paired = Vec::new();
         for dense in projections(shape) {
             for capacity in 1..=crate::Kernels::dense_decode_capacity() {
@@ -309,7 +339,16 @@ impl DenseOps {
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
-                if let Some(op) = crate::Kernels::prepare_local_fold(shape, dense.id, query, need)?
+                if let Some(op) = crate::Kernels::prepare_fused_fold(shape, dense.id, query, need)?
+                {
+                    asks.record(
+                        format!("dense.{} fused {capacity}", dense.id),
+                        need,
+                        op.info(),
+                    );
+                    fused.push((dense.id, capacity, op));
+                } else if let Some(op) =
+                    crate::Kernels::prepare_local_fold(shape, dense.id, query, need)?
                 {
                     asks.record(
                         format!("dense.{} local {capacity}", dense.id),
@@ -355,6 +394,8 @@ impl DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
             local,
+            fused,
+            sliced,
             stream,
             stream_pair,
             tensors,
@@ -445,6 +486,53 @@ impl DenseOps {
         };
         bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
             .map(Some)
+    }
+
+    /// Whether projection `id` runs as a status fold over fused buffers in
+    /// the phase's decode or verify bucket (WO_a and WO_b).
+    pub(crate) fn fuses(&self, id: &str, phase: Phase) -> bool {
+        !phase.prefill()
+            && self
+                .fused
+                .iter()
+                .any(|(of, capacity, _)| *of == id && *capacity == phase.rows())
+    }
+
+    /// Projection `id` through its status fold: WO_a quantizing WO_b's
+    /// input (`next`: codes, scales and block flags) in its merge, or WO_b
+    /// failing rows by status and WO_a's block flags (`pending`).
+    pub(crate) fn fused(
+        &self,
+        id: &str,
+        phase: Phase,
+        views: &GemmViews,
+        next: Option<[DeviceBufferSpanV1; 3]>,
+        pending: Option<DeviceBufferSpanV1>,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
+        let (_, _, op) = self
+            .fused
+            .iter()
+            .find(|(of, capacity, _)| !phase.prefill() && *of == id && *capacity == rows)
+            .ok_or(Refusal("no status fold serves this projection and bucket"))?;
+        op.lower(views, next, pending, workspace, rows)
+    }
+
+    /// WO_a's input quantized by the sliced quantizer of the phase's bucket,
+    /// whose rejected rows only a status fold may follow.
+    pub(crate) fn quantize_sliced(
+        &self,
+        phase: Phase,
+        views: &QuantizeViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
+        let (_, quantizer) = self
+            .sliced
+            .iter()
+            .find(|(capacity, _)| !phase.prefill() && *capacity == rows)
+            .ok_or(Refusal("no sliced quantizer serves this bucket"))?;
+        quantizer.lower(views, rows)
     }
 
     /// The quantization of `rows` rows of `width` columns of `input`.

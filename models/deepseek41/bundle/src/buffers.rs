@@ -210,6 +210,11 @@ kernel_core::scratch_record! {
         pub output_a: value,
         pub output_a_codes: value,
         pub output_a_scales: value,
+        /// One flags byte per 32-column block of the `wo_a` output, which a
+        /// status fold of WO_a stores in place of a row quantizer's status
+        /// and WO_b ORs into the row status, where they serve
+        /// (`sm120::fold_fused`).
+        pub output_a_flags: option,
         /// A ratio-2 KV source's projected F32 keys and gate logits, and a
         /// ratio-1 source's F32 keys, `[rows, head_dim]` each.
         pub compressor_key: value,
@@ -386,6 +391,7 @@ impl Scratch<Allocation> {
             output_a: row(output_a * F32),
             output_a_codes: row(output_a),
             output_a_scales: row(output_a / 32),
+            output_a_flags: crate::Kernels::status_folds(shape).then(|| row(output_a / 32)),
             compressor_key: row(head_dim * F32),
             compressor_gate: row(head_dim * F32),
             compressor_rows: row(head_dim * F32),

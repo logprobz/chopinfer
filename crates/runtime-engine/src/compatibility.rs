@@ -828,6 +828,12 @@ pub(crate) struct HostTiming {
     /// From the executor's return to the commit timing mark: validation, sampling,
     /// scheduler and model commit, and applying the tokens.
     pub(crate) commit: u64,
+    /// Scheduler commit preflight and apply, excluding model finalization.
+    pub(crate) scheduler_commit: u64,
+    /// Model transaction finalization, including kept-row conversion.
+    pub(crate) model_commit: u64,
+    /// Applying prepared tokens and publishing engine events and counters.
+    pub(crate) publication: u64,
     /// From the previous executor return to this executor call.
     pub(crate) gap: Option<u64>,
     /// From the previous executor call to this one.
@@ -859,6 +865,9 @@ impl HostTiming {
             "prefix_capture_us": self.prefix_capture,
             "bundle_log_us": self.bundle_log,
             "commit_us": self.commit,
+            "scheduler_commit_us": self.scheduler_commit,
+            "model_commit_us": self.model_commit,
+            "publication_us": self.publication,
             "gap_us": self.gap,
             "period_us": self.period,
             "boundary_us": self.boundary,
@@ -926,6 +935,9 @@ impl HostClock {
             schedule: micros(started.saturating_duration_since(entered)),
             execute: micros(returned.saturating_duration_since(started)),
             commit: micros(now.saturating_duration_since(returned)),
+            scheduler_commit: phases.totals[crate::profile::StepPhase::SchedulerCommit as usize],
+            model_commit: phases.totals[crate::profile::StepPhase::ModelCommit as usize],
+            publication: phases.totals[crate::profile::StepPhase::Publication as usize],
             gap: self
                 .previous_execute_returned
                 .map(|previous| micros(started.saturating_duration_since(previous))),
@@ -1040,6 +1052,9 @@ mod tests {
                 schedule: 12,
                 execute: 175_000,
                 commit: 30,
+                scheduler_commit: 7,
+                model_commit: 13,
+                publication: 5,
                 gap: Some(90),
                 period: None,
                 boundary: Some(150),
@@ -1068,11 +1083,14 @@ mod tests {
             ("result_convert_us", 1_000),
             ("prefix_capture_us", 25),
             ("bundle_log_us", 12),
+            ("scheduler_commit_us", 7),
+            ("model_commit_us", 13),
+            ("publication_us", 5),
         ] {
             assert_eq!(parsed["host"][field], expected);
         }
         assert!(parsed["host"]["period_us"].is_null());
-        assert_eq!(parsed["host"].as_object().unwrap().len(), 17);
+        assert_eq!(parsed["host"].as_object().unwrap().len(), 20);
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());

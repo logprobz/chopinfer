@@ -2,6 +2,8 @@
 
 mod compatibility;
 mod device_results;
+#[cfg(test)]
+mod host_timing_tests;
 pub use device_results::{AcceptedPrefix, AsyncInputDependency, OutputCycle};
 pub mod logging;
 mod media;
@@ -2574,6 +2576,7 @@ impl<E: ModelExecutor> Engine<E> {
                 return Err(error);
             }
         };
+        let scheduler_timer = profile::PhaseTimer::traced(profile::StepPhase::SchedulerCommit);
         let prepared_scheduler = match pending_batch
             .scheduler_mut()
             .preflight_commit_batch(batch.id(), &outcomes)
@@ -2595,6 +2598,7 @@ impl<E: ModelExecutor> Engine<E> {
                 return Err(EngineError::Scheduler(error));
             }
         };
+        drop(scheduler_timer);
         let (report, model_commit) = commit_scheduler_then_model_observed(
             transaction,
             (!kept.is_empty()).then_some(kept.as_slice()),
@@ -2612,6 +2616,7 @@ impl<E: ModelExecutor> Engine<E> {
             self.metrics.error();
             return Err(EngineError::Executor(error));
         }
+        let publication_timer = profile::PhaseTimer::traced(profile::StepPhase::Publication);
         // Tokens each item published: none for a failed request's placeholder.
         let is_failed = |id: RequestId| failed.iter().any(|(failed, _)| *failed == id);
         let published = |outcome: &BatchOutcome| {
@@ -2670,6 +2675,7 @@ impl<E: ModelExecutor> Engine<E> {
         }
         apply_committed_parts(requests, events, next_event_sequence, prepared_engine);
         drop(pending_batch);
+        drop(publication_timer);
         let assumed = self.scheduler.step_time_estimates();
         let trained = verify_items == 0 && placement.pinned.is_empty();
         if trained {
@@ -4558,7 +4564,11 @@ where
     S: ModelTransactionState,
     F: FnOnce() -> Result<T, ScheduleError>,
 {
-    let result = scheduler_commit()?;
+    let result = {
+        let _timer = profile::PhaseTimer::traced(profile::StepPhase::SchedulerCommit);
+        scheduler_commit()?
+    };
+    let _timer = profile::PhaseTimer::traced(profile::StepPhase::ModelCommit);
     let model = match kept {
         Some(kept) => transaction.commit_kept(kept),
         None => transaction.commit(),

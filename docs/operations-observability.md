@@ -445,6 +445,15 @@ Step and request logs are not replay inputs; they omit token contents.
   (scheduling, execute, commit, gaps between executor calls, and
   `boundary_us`, an upper bound on device idle time between steps). Phases
   nest, so do not sum them.
+- Within `host.commit_us`, `scheduler_commit_us` measures scheduler preflight
+  and apply, `model_commit_us` measures model transaction finalization
+  (including kept-row conversion), and `publication_us` measures applying
+  prepared tokens and publishing engine events and counters. Output checks,
+  sample staging, event preflight and later estimator updates remain outside
+  those three sub-phases. `sampling_us` includes sampling both inside and
+  after execute, so it is not wholly contained in `commit_us`.
+  The new scopes read clocks only while step tracing is enabled. They add
+  no device synchronization and do not change tokens or event order.
 
 ## Inspect sampled steps
 
@@ -457,6 +466,9 @@ first, or 404 when disabled. Each sample has `step`, `total_us`,
 `sampling_us` and `deferred_us`, all host wall microseconds; graph launch is
 the host API call, not graph execution. Values nest and must not be summed.
 Sampling adds no device synchronization.
+The samples also expose `scheduler_commit_us`, `model_commit_us` and
+`publication_us`; these three fields are populated only when
+`CHOPINFER_STEP_TRACE=1` is enabled alongside sampling.
 
 ## Capture a serving window with Nsight Systems
 

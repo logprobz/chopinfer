@@ -20,9 +20,12 @@ pub enum StepPhase {
     ResultConvert,
     PrefixCapture,
     BundleLog,
+    SchedulerCommit,
+    ModelCommit,
+    Publication,
 }
 
-const PHASES: usize = 11;
+const PHASES: usize = 14;
 
 thread_local! {
     static TRACING: Cell<bool> = const { Cell::new(false) };
@@ -223,6 +226,9 @@ impl StepProfiles {
                     "result_convert_us": sample.phases[8],
                     "prefix_capture_us": sample.phases[9],
                     "bundle_log_us": sample.phases[10],
+                    "scheduler_commit_us": sample.phases[11],
+                    "model_commit_us": sample.phases[12],
+                    "publication_us": sample.phases[13],
                 })
             })
             .collect();
@@ -315,7 +321,7 @@ mod tests {
             let timer = profiles.begin();
             assert_eq!(timer.is_some(), step % 2 == 0);
             if timer.is_some() {
-                TOTALS.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+                TOTALS.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
             }
             drop(timer);
         }
@@ -332,6 +338,9 @@ mod tests {
             ("result_convert_us", 9),
             ("prefix_capture_us", 10),
             ("bundle_log_us", 11),
+            ("scheduler_commit_us", 12),
+            ("model_commit_us", 13),
+            ("publication_us", 14),
         ] {
             assert_eq!(json["samples"][1][field], expected);
         }

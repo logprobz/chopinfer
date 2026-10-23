@@ -130,3 +130,83 @@ pub fn ceil_cubins() -> Vec<kernel_build::CubinSpec> {
             .expect("fused ceil serving cubin"),
     ]
 }
+
+/// `spec`, a served native cubin, with each of its gate/up compute
+/// entries' row-tiled build after its entries
+/// (`native_grouped::row_tiles_entry`): the entry list the served module
+/// takes when it binds the tiled bank.
+pub fn row_tiles(mut spec: kernel_build::CubinSpec) -> kernel_build::CubinSpec {
+    let gate_up = shape(GatedMlpProjection::GateUp);
+    let tiled = spec
+        .entries
+        .iter()
+        .filter_map(|e| native::row_tiles_entry(&gate_up, e).ok())
+        .collect::<Vec<_>>();
+    spec.entries.extend(tiled);
+    spec
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each served native cubin with its tiled gate/up entries keeps every
+    /// served entry first; a tiled entry is its row-major one with the bank
+    /// read in row tiles (`Config`'s `Tiles`), the same ABI, bounds and
+    /// launch, and no down, pack or scan entry is tiled.
+    #[test]
+    fn row_tiled_native_entries_differ_only_in_their_weight_addresses() {
+        let gate_up = shape(GatedMlpProjection::GateUp);
+        let rows_config = gate_up.config();
+        let tiled_config = format!("{},true>", &rows_config[..rows_config.len() - 1]);
+        let mut added = Vec::new();
+        for (spec, count) in [
+            (cubins().remove(0), 1),
+            (ceil_cubins().remove(0), 1),
+            (wide_cubins().remove(0), 1),
+            (lean_cubins().remove(0), 1),
+        ] {
+            let with = row_tiles(spec.clone());
+            let ids = |entries: &[kernel_build::EntrySpec]| {
+                entries
+                    .iter()
+                    .map(|e| (e.symbol.clone(), e.body.clone(), e.params.clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ids(&with.entries[..spec.entries.len()]), ids(&spec.entries));
+            assert_eq!(
+                with.entries.len(),
+                spec.entries.len() + count,
+                "{}",
+                spec.name
+            );
+            for tiled in &with.entries[spec.entries.len()..] {
+                let rows = spec
+                    .entries
+                    .iter()
+                    .find(|e| native::row_tiles_symbol(&e.symbol) == tiled.symbol)
+                    .unwrap();
+                assert!(rows.body.contains(&rows_config));
+                assert_eq!(
+                    tiled.body,
+                    rows.body.replace(&rows_config, &tiled_config),
+                    "{}",
+                    tiled.symbol
+                );
+                assert_eq!(
+                    (&tiled.params, tiled.max_threads, tiled.min_blocks),
+                    (&rows.params, rows.max_threads, rows.min_blocks)
+                );
+                added.push(tiled.symbol.clone());
+            }
+        }
+        added.sort();
+        added.dedup();
+        assert_eq!(added.len(), 4);
+        let down = shape(GatedMlpProjection::Down);
+        for e in native::entries(&down, &DOWN_TILE, false).unwrap() {
+            assert!(native::row_tiles_entry(&down, &e).is_err());
+            assert!(native::row_tiles_entry(&gate_up, &e).is_err());
+        }
+    }
+}

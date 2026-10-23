@@ -11,8 +11,12 @@
 //! row tiles of [`Tile::rows`], then a persistent grid takes (tile, column
 //! strip) items from a ticket. A row's arithmetic depends only on its own
 //! routes and data, never on the tile, the item order or the grid.
+//!
+//! A gate/up compute entry also has a build reading its bank in 64-row by
+//! 128-K tiles ([`row_tiles_entry`]); each copy moves the same bytes into
+//! the same shared slot, so its outputs are the row-major entry's.
 use crate::moe::{SM_COUNT, ptr};
-use kernel_build::{CubinSpec, EntrySpec};
+use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::backend::Launch;
 use kernel_core::contract::{
     ActivationFormat, Argument, ArgumentList, DType, LaunchPlan, OutputQuantization, Refusal,
@@ -133,7 +137,8 @@ impl Shape {
         )
     }
 
-    fn config(&self) -> String {
+    /// The kernel's `Config` type.
+    pub fn config(&self) -> String {
         let clamp = self.clamp.map_or_else(
             || "chop::moe::clamp::SwigluClamp<false,0u,0u>".into(),
             |(g, u)| format!("chop::moe::clamp::SwigluClamp<true,{g:#x}u,{u:#x}u>"),
@@ -374,6 +379,36 @@ pub fn entries(shape: &Shape, tile: &Tile, lab: bool) -> Result<Vec<EntrySpec>, 
         ));
     }
     Ok(entries)
+}
+
+/// A compute entry reading its bank in row tiles.
+pub fn row_tiles_symbol(symbol: &str) -> String {
+    format!("{}_row_tiles_v1", symbol.trim_end_matches("_v1"))
+}
+
+/// `entry`, a compute entry of `shape` (served, tuned or fused ceil), with
+/// its bank read in 64-row by 128-K tiles (`row-tiles-64x128-groups`,
+/// `Config`'s `Tiles`): the same ABI, launch and arithmetic.
+pub fn row_tiles_entry(shape: &Shape, entry: &EntrySpec) -> Result<EntrySpec, Refusal> {
+    if !shape.gate_up
+        || !shape.k.is_multiple_of(128)
+        || !(shape.halves() * shape.n).is_multiple_of(64)
+    {
+        return Err(Refusal(
+            "row tiles cover whole 64-row by 128-K tiles of a gate/up bank",
+        ));
+    }
+    let weight =
+        |p: &EntryParam| matches!(p, EntryParam::DevicePointer { name, .. } if name == "weight");
+    let config = shape.config();
+    if !entry.params.iter().any(weight) || !entry.body.contains(&config) {
+        return Err(Refusal("the entry reads no weights of this shape"));
+    }
+    let tiled = format!("{},true>", &config[..config.len() - 1]);
+    let mut e = entry.clone();
+    e.symbol = row_tiles_symbol(&entry.symbol);
+    e.body = entry.body.replace(&config, &tiled);
+    Ok(e)
 }
 
 /// One cubin of `instances`; `lab` adds the lab variants and the probe.

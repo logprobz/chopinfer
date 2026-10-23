@@ -15,12 +15,19 @@
 // One launch packs the active experts into row tiles; a persistent launch
 // takes (tile, column strip) items from an atomic ticket. Which CTA runs an
 // item never changes its arithmetic.
+//
+// With Config's Tiles the weights are stored in 64-row by 128-K tiles
+// (`row-tiles-64x128-groups`): a weight row's 128-K stage is one 64-byte
+// tile row and its four scale bytes one aligned word, so each copy moves
+// the same bytes into the same shared slot.
 namespace chop::moe::native_grouped {
 namespace lay = layout;
 
-template<int Experts, int TopK, int K, int N, int Halves, int Capacity, class Clamp>
+template<int Experts, int TopK, int K, int N, int Halves, int Capacity, class Clamp,
+         bool Tiles = false>
 struct Config {
   static constexpr int experts = Experts, top_k = TopK, k = K, n = N, halves = Halves;
+  static constexpr bool tiles = Tiles;
   static constexpr int capacity = Capacity;
   static constexpr bool gate_up = Halves == 2;
   using clamp = Clamp;
@@ -34,6 +41,8 @@ struct Config {
   static_assert(Halves == 1 || Halves == 2);
   static_assert(gate_up || !Clamp::enabled, "the clamp belongs to gate/up");
   static_assert(int64_t(Capacity) * TopK < (int64_t(1) << 31));
+  static_assert(!Tiles || (K % lay::StageK == 0 && weight_rows % 64 == 0 && scale_words == 1),
+                "row tiles need whole 64x128 tiles");
 };
 
 template<int RowWarps, int ColWarps, int Stages>
@@ -167,8 +176,13 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
     const int w = v >> 2, q = v & 3, col = column + w % TC, byte = k0 / 2 + q * 16;
     const bool valid = col < C::n && byte < C::k / 2;
     const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
-    copy16(st.weight + lay::weight_store(w, q),
-           weight + (valid ? row * (C::k / 2) + byte : 0), valid);
+    if constexpr (C::tiles) {
+      const uint64_t at = (row / 64 * C::blocks + block) * 4096 + row % 64 * 64 + q * 16;
+      copy16(st.weight + lay::weight_store(w, q), weight + (valid ? at : 0), valid);
+    } else {
+      copy16(st.weight + lay::weight_store(w, q),
+             weight + (valid ? row * (C::k / 2) + byte : 0), valid);
+    }
   }
   constexpr int SW = C::scale_words;
   constexpr uint64_t weight_scale_bytes = uint64_t(C::experts) * C::weight_rows * C::groups;
@@ -181,8 +195,13 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
     } else {
       const int w = r - T::rows, col = column + w % TC;
       const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
-      copy_scale(&st.weight_scale[w][word], weight_scales, row * C::groups + k0 / lay::GroupK,
-                 word, weight_scale_bytes, col < C::n);
+      if constexpr (C::tiles) {
+        const uint64_t at = (row / 64 * C::blocks + block) * 256 + row % 64 * 4;
+        copy_scale(&st.weight_scale[w][word], weight_scales, at, word, weight_scale_bytes, col < C::n);
+      } else {
+        copy_scale(&st.weight_scale[w][word], weight_scales, row * C::groups + k0 / lay::GroupK,
+                   word, weight_scale_bytes, col < C::n);
+      }
     }
   }
 }

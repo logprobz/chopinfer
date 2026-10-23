@@ -83,6 +83,31 @@ per halving; the expansion is latency bound at decode, where the serial
 search set each CTA's duration. The output contract
 is the single-bank entries', per bank.
 
+## Tiled paired entry
+
+`chop_moe_scale_expand_pair_tiles_v1` (`scale_expand_tiles.cuh`) has the
+paired entry's signature, grid and active-list contract. It writes its first
+bank's raw matrices as the `row-tiles-64x128-groups` scale section a
+row-tiled gate/up consumer reads: each matrix's 64-row strips stored as
+their tiles of 4 groups in group order, every tile row-major, so raw byte
+`(row, group)` of a matrix lands at
+`(row / 64) * 64 * groups + (group / 4) * 256 + (row % 64) * 4 + group % 4`
+(`kernel_core::transform::RowTileLayout` with 4-byte tiles). Its bytes are
+the paired entry's output followed by that transform. The second bank's
+tiles run `run_pair` unchanged.
+
+`pair_tiles_plan` and `pair_tiles_arguments` refuse a first bank that is
+absent or not whole tiles: rows a multiple of 64 and groups a multiple of 4.
+A CTA's rows are then whole strips, its output is the same contiguous byte
+range as in rows, and every output word holds four groups of one row, so
+consecutive threads write consecutive words. Both outputs are 4-byte
+aligned (the bundle's raw banks are 256-byte aligned). The entry is the
+only one of `tiles_cubin_spec`, its own cubin and lock family, so the
+paired entry's cubins keep their entries and source closures. The lab
+registers it as `chop_moe_scale_expand_tiles_lab` in the
+`moe_scale_expand_tiles` family; its GPU test compares it byte for byte
+with the paired entry's output after the transform, and with the codec.
+
 ## Registration and bundle use
 
 `kernels_sm120::moe::scale_expand::cubin_spec(name)` returns a standalone

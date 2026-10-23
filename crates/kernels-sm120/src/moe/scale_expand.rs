@@ -231,11 +231,52 @@ pub fn pair_arguments(
     Ok(ArgumentList(arguments))
 }
 
-/// One geometry-independent cubin with all three offset widths and the
-/// paired entry. Register this spec in its own kernel-build lock family;
-/// existing MoE cubins do not include its header or acquire new entries.
-pub fn cubin_spec(name: &str) -> CubinSpec {
-    let pair_params = ["first", "second"]
+/// The paired entry writing its first bank's raw matrices as the
+/// `row-tiles-64x128-groups` scale section a row-tiled gate/up consumer
+/// reads: the paired entry's bytes, each matrix's 64-row strips stored as
+/// their tiles of 4 groups (`kernel_core::transform::RowTileLayout` with
+/// 4-byte tiles). The second bank is the paired entry's. It takes the
+/// paired entry's ABI and grid, a first bank of whole tiles, and 4-byte
+/// aligned outputs.
+pub const PAIR_TILES_SYMBOL: &str = "chop_moe_scale_expand_pair_tiles_v1";
+
+/// Refuses a first bank the tiled entry cannot write: absent, or rows that
+/// are not whole 64-row strips or groups that are not whole 4-group tiles.
+fn whole_tiles(first: Option<PairBank>) -> Result<(), Refusal> {
+    match first {
+        Some(bank) if bank.rows.is_multiple_of(TILE_ROWS) && bank.groups.is_multiple_of(4) => {
+            Ok(())
+        }
+        _ => Err(Refusal(
+            "a tiled scale expansion needs a first bank of whole 64-row by 4-group tiles",
+        )),
+    }
+}
+
+/// [`pair_plan`] for [`PAIR_TILES_SYMBOL`].
+pub fn pair_tiles_plan(
+    banks: [Option<PairBank>; 2],
+    experts: u32,
+    slots: u32,
+) -> Result<LaunchPlan, Refusal> {
+    whole_tiles(banks[0])?;
+    pair_plan(banks, experts, slots)
+}
+
+/// [`pair_arguments`] for [`PAIR_TILES_SYMBOL`].
+pub fn pair_tiles_arguments(
+    banks: [Option<(PairBank, View, View)>; 2],
+    active: Option<View>,
+    experts: u32,
+) -> Result<ArgumentList, Refusal> {
+    whole_tiles(banks[0].map(|(bank, _, _)| bank))?;
+    pair_arguments(banks, active, experts)
+}
+
+/// The paired entry's ABI, calling `function` (`run_pair` or
+/// `run_pair_tiles` of `chop::moe::scale_expand`).
+fn pair_entry(symbol: &str, function: &str) -> EntrySpec {
+    let params = ["first", "second"]
         .into_iter()
         .map(|bank| super::ptr(bank, "const uint8_t"))
         .chain([super::ptr("active", "const int32_t")])
@@ -253,17 +294,25 @@ pub fn cubin_spec(name: &str) -> CubinSpec {
             name: "experts".into(),
         }])
         .collect();
-    let pair = EntrySpec::new(
-        PAIR_SYMBOL.into(),
-        pair_params,
-        "chop::moe::scale_expand::run_pair(\
-            chop::moe::scale_expand::Bank{first, first_output, first_rows, first_groups, first_projections, first_width, first_tile_rows}, \
-            chop::moe::scale_expand::Bank{second, second_output, second_rows, second_groups, second_projections, second_width, second_tile_rows}, \
+    EntrySpec::new(
+        symbol.into(),
+        params,
+        format!(
+            "chop::moe::scale_expand::{function}(\
+            chop::moe::scale_expand::Bank{{first, first_output, first_rows, first_groups, first_projections, first_width, first_tile_rows}}, \
+            chop::moe::scale_expand::Bank{{second, second_output, second_rows, second_groups, second_projections, second_width, second_tile_rows}}, \
             active, experts);"
-            .into(),
+        ),
         THREADS,
         1,
-    );
+    )
+}
+
+/// One geometry-independent cubin with all three offset widths and the
+/// paired entry. Register this spec in its own kernel-build lock family;
+/// existing MoE cubins do not include its header or acquire new entries.
+pub fn cubin_spec(name: &str) -> CubinSpec {
+    let pair = pair_entry(PAIR_SYMBOL, "run_pair");
     let entries = [1, 2, 4]
         .into_iter()
         .map(|width| {
@@ -292,6 +341,20 @@ pub fn cubin_spec(name: &str) -> CubinSpec {
         headers: vec!["#include \"moe/scale_expand.cuh\"".into()],
         defines: vec![],
         entries,
+    }
+}
+
+/// One geometry-independent cubin with the tiled paired entry alone, for
+/// its own lock family: [`cubin_spec`]'s cubins keep their entries and
+/// source closure.
+pub fn tiles_cubin_spec(name: &str) -> CubinSpec {
+    CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: vec![],
+        headers: vec!["#include \"moe/scale_expand_tiles.cuh\"".into()],
+        defines: vec![],
+        entries: vec![pair_entry(PAIR_TILES_SYMBOL, "run_pair_tiles")],
     }
 }
 
@@ -551,5 +614,76 @@ mod tests {
             assert!(generated.translation_unit.contains(&entry.symbol));
         }
         assert!(symbol(8).is_err());
+    }
+
+    /// The tiled entry is the paired entry's ABI and grid over a first bank
+    /// of whole 64-row by 4-group tiles, in its own cubin.
+    #[test]
+    fn tiled_pair_takes_the_paired_abi_over_whole_tiles() {
+        let gate = PairBank {
+            width: 1,
+            rows: 576,
+            groups: 160,
+            projections: 2,
+        };
+        let down = PairBank {
+            width: 4,
+            rows: 5120,
+            groups: 18,
+            projections: 1,
+        };
+        let banks = [Some(gate), Some(down)];
+        assert_eq!(
+            pair_tiles_plan(banks, 384, 6).unwrap(),
+            pair_plan(banks, 384, 6).unwrap()
+        );
+        for first in [
+            None,
+            Some(PairBank { rows: 600, ..gate }),
+            Some(PairBank { groups: 18, ..gate }),
+        ] {
+            assert!(pair_tiles_plan([first, Some(down)], 384, 6).is_err());
+        }
+        let view = |handle, query: ScaleExpandQuery, output: bool| View {
+            handle,
+            bytes: if output {
+                query.output_bytes().unwrap()
+            } else {
+                query.minimum_bank_bytes().unwrap()
+            },
+        };
+        let (gq, dq) = (gate.query(384), down.query(384));
+        let views = [
+            Some((gate, view(1, gq, false), view(2, gq, true))),
+            Some((down, view(3, dq, false), view(4, dq, true))),
+        ];
+        assert_eq!(
+            pair_tiles_arguments(views, None, 384).unwrap(),
+            pair_arguments(views, None, 384).unwrap()
+        );
+        assert!(pair_tiles_arguments([None, views[1]], None, 384).is_err());
+        let spec = tiles_cubin_spec("tiles");
+        let rows = cubin_spec("rows");
+        let pair = &rows.entries[3];
+        assert_eq!(spec.entries.len(), 1);
+        let tiles = &spec.entries[0];
+        assert_eq!(tiles.symbol, PAIR_TILES_SYMBOL);
+        assert_eq!(tiles.params, pair.params);
+        assert_eq!(
+            tiles.body,
+            pair.body.replace("::run_pair(", "::run_pair_tiles(")
+        );
+        assert!(
+            kernel_build::generate(&spec)
+                .unwrap()
+                .translation_unit
+                .contains(PAIR_TILES_SYMBOL)
+        );
+        assert!(
+            !kernel_build::generate(&rows)
+                .unwrap()
+                .translation_unit
+                .contains("scale_expand_tiles")
+        );
     }
 }

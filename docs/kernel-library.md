@@ -268,7 +268,11 @@ layout is `scale-row-offset-v1.w{width}`. `kernel_core::precision::scale_offset`
 holds the encoder and the CPU oracle. `kernels_sm120::moe::scale_expand`
 decodes the matrices of the experts with routes into a raw bank in scratch,
 one bank per entry or a layer's two banks in one launch, and the consumers
-bind that raw bank unchanged. The launch uses PDL and
+bind that raw bank unchanged. Encoding reads a matrix's scales as rows, so
+a bank stored in `row-tiles-64x128-groups` keeps its encoded scales
+untiled; the tiled paired entry (`PAIR_TILES_SYMBOL`) writes the first
+bank's raw matrices as row tiles for consumers that read them. The launch
+uses PDL and
 waits for its predecessor before it reads or writes. A consumer that loads
 weight scales before its own `griddepcontrol.wait` must keep binding raw
 banks: in DeepSeek, that is the one-row floor kernel, which serves only the

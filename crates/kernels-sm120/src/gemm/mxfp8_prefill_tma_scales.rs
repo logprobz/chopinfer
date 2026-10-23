@@ -1,5 +1,5 @@
 //! TMA code delivery and producer-staged packed scales for ordered FP8 folds.
-use super::{mxfp8_fold, mxfp8_prefill};
+use super::{mxfp8_fold, mxfp8_fold_packed, mxfp8_prefill, mxfp8_prefill_split};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, View};
 use kernel_core::contract::Refusal;
@@ -51,6 +51,37 @@ impl Entry {
             .replace(",false,2>(activation_map", ",true,2>(activation_map");
         specs.push(control);
         Ok(specs)
+    }
+    pub fn packed_symbol(&self) -> String {
+        mxfp8_fold_packed::symbol(&self.symbol())
+    }
+    /// The compute entry reading `mxfp8-fold-packed-8x128-v1` weight codes:
+    /// the parameters, plan and shared memory of [`Self::symbol`]'s entry,
+    /// launched with `mxfp8_prefill::packed_arguments`.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        mxfp8_prefill::check_packed(&self.base)?;
+        let mut spec = self.specs()?.remove(1);
+        spec.symbol = self.packed_symbol();
+        spec.body = spec
+            .body
+            .replace(",false,2>(activation_map", ",false,2,true>(activation_map");
+        Ok(spec)
+    }
+    /// `launches` of a prepared op over this entry
+    /// (`Sm120::with_mxfp8_prefill_tma_scales`) moved to packed weight
+    /// codes: the compute launch takes [`Self::packed_symbol`] and the packed
+    /// weight map, and fallback launches move as
+    /// `mxfp8_prefill_split::packed_launches` moves them. Validation launches
+    /// read no codes and are kept.
+    pub fn packed_launches(&self, launches: Vec<Launch>) -> Result<Vec<Launch>, Refusal> {
+        let mut launches = mxfp8_prefill_split::packed_launches(&self.base, launches)?;
+        let compute = self.symbol();
+        for launch in &mut launches {
+            if launch.symbol == compute {
+                mxfp8_prefill::move_to_packed(&self.base, launch, self.packed_symbol())?;
+            }
+        }
+        Ok(launches)
     }
     pub fn prepare(&self, rows: u32) -> Result<Prepared<Buffers<View>>, Refusal> {
         self.validate()?;

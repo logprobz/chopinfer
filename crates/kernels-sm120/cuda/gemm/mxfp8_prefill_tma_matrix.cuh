@@ -5,6 +5,7 @@
 // retain their existing row-major representation.
 #include "prefill_mainloop.cuh"
 #include "mxfp8_fold.cuh"
+#include "mxfp8_fold_packed.cuh"
 #include "../common/ptx_matrix.cuh"
 
 namespace chop::gemm::mxfp8_prefill_tma_matrix {
@@ -43,8 +44,9 @@ __device__ __forceinline__ uint32_t word(const uint8_t* base, int row, int col) 
 // The final partial token tile uses predicated wide global loads. A TMA
 // box must never read a token beyond the device live bound. Only this
 // boundary tile takes the smaller register loop; complete tiles use TMA.
+// PackedWeights reads mxfp8-fold-packed-8x128-v1 weight codes.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool OmitFirst>
+         bool F32Output, bool OmitFirst, bool PackedWeights = false>
 __device__ __forceinline__ void tail(
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -79,9 +81,14 @@ __device__ __forceinline__ void tail(
           const uint32_t col = nb + quad;
 #pragma unroll
           for (int i = 0; i < 2; ++i)
-            if (col < N && k < K)
-              b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
-                  (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);
+            if (col < N && k < K) {
+              if constexpr (PackedWeights)
+                b.v[i] = mxfp8_fold_packed::load_word(
+                    weights, group * N + col, k + i * 16 + lane4 * 4, K);
+              else
+                b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
+                    (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);
+            }
           const uint32_t row = ma + quad + (lane4 & 1) * 8;
           const uint32_t sa = row < live && k < K && status[status_offset + row] == 0
               ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;

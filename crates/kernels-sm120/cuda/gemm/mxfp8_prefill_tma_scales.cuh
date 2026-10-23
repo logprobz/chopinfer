@@ -3,6 +3,7 @@
 // Stage code tiles with TMA and packed scale words with cp.async. Every
 // output keeps four k32 MMAs from zero, then the ascending 128-K F32 fold.
 #include "mxfp8_prefill_tma_matrix.cuh"
+#include "mxfp8_prefill.cuh"
 
 namespace chop::gemm::mxfp8_prefill_tma_scales {
 constexpr int tile = 128, math_warps = 8;
@@ -11,8 +12,11 @@ constexpr int stage_bytes = code_bytes + 2 * tile * 4;
 using mxfp8_prefill_tma_matrix::validate;
 using mxfp8_prefill_tma_matrix::tail;
 
+// With PackedWeights, `weight_map` is the 4-D packed map of
+// mxfp8_prefill::run and `weights` the packed codes.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool OmitFirst = false, int Stages = 2>
+         bool F32Output, bool OmitFirst = false, int Stages = 2,
+         bool PackedWeights = false>
 __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight_map,
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -24,6 +28,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   static_assert(K > 0 && K % 32 == 0 && Groups > 0);
   static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
   static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
+  static_assert(!PackedWeights || N % 8 == 0);
   __shared__ uint64_t full[stages], empty[stages];
   extern __shared__ uint8_t raw[];
   uint8_t* storage = prefill::align_swizzle_storage(raw);
@@ -37,7 +42,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   if (token0 >= live) return;
   // Only complete live token tiles may enter the TMA ring.
   if (token0 + tile > live) {
-    tail<N, K, Groups, RowStride, GroupStride, F32Output, OmitFirst>(
+    tail<N, K, Groups, RowStride, GroupStride, F32Output, OmitFirst, PackedWeights>(
         activations, weights, activation_scales, weight_scales, output,
         status, status_offset, live, token0, column0, group);
     return;
@@ -61,7 +66,13 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
         const int32_t ac[2] = {int32_t(group * GroupStride + f * 128), int32_t(token0)};
         const int32_t bc[2] = {f * 128, int32_t(group * N + column0)};
         ptx::tma_load<2>(storage + slot * stage_bytes, &activation_map, ac, &full[slot]);
-        ptx::tma_load<2>(storage + slot * stage_bytes + plane_bytes, &weight_map, bc, &full[slot]);
+        if constexpr (PackedWeights) {
+          // This fold of the tile's 16 strips, in one box.
+          const int32_t pc[4] = {0, 0, bc[0] / 128, bc[1] / 8};
+          ptx::tma_load<4>(storage + slot * stage_bytes + plane_bytes, &weight_map, pc, &full[slot]);
+        } else {
+          ptx::tma_load<2>(storage + slot * stage_bytes + plane_bytes, &weight_map, bc, &full[slot]);
+        }
       }
       // One producer warp fetches each four-scale word once. Its async
       // arrivals join the TMA transaction on the same full barrier.
@@ -101,40 +112,89 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
     const uint8_t* b = a + plane_bytes;
     ptx::D4 partial[4][4]{};
     const auto* scale_words = reinterpret_cast<const uint32_t*>(a + code_bytes);
+    if constexpr (PackedWeights) {
+      // The same four ordered MMAs, with B words loaded for two steps at
+      // once (mxfp8_prefill::packed_words) in place of ldmatrix.
 #pragma unroll
-    for (int step = 0; step < 4; ++step) {
-      const int k = f * 128 + step * 32;
-      ptx::A4 af[4]; ptx::B2 bf[4];
-      uint32_t sa[4], sb[4];
+      for (int pair = 0; pair < 2; ++pair) {
+        ptx::A4 words[4];
 #pragma unroll
-      for (int m = 0; m < 4; ++m) {
-        const int local = wm * 64 + m * 16 + quad;
-        const int matrix_row = wm * 64 + m * 16 + (lane & 15);
-        const int matrix_k = step * 32 + (lane >> 4) * 16;
-        ptx::ldmatrix_b16<4,false>(af[m].v,a+smem::swizzle_128(a,matrix_row*128+matrix_k,128));
+        for (int n = 0; n < 4; ++n) {
+          const int local = wn * 32 + n * 8 + quad;
+          words[n] = column0 + local < N
+              ? mxfp8_prefill::packed_words(b, local, lane4, pair, false) : ptx::A4{};
+        }
 #pragma unroll
-        for (int i = 0; i < 4; ++i)
-          if (!((active >> (2 * m + i % 2)) & 1) || k >= K) af[m].v[i] = 0;
-        sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1)
-            ? (scale_words[local + (lane4 & 1) * 8] >> (step * 8)) & 255 : 127;
+        for (int odd = 0; odd < 2; ++odd) {
+          const int step = pair * 2 + odd;
+          const int k = f * 128 + step * 32;
+          ptx::A4 af[4]; ptx::B2 bf[4];
+          uint32_t sa[4], sb[4];
+#pragma unroll
+          for (int m = 0; m < 4; ++m) {
+            const int local = wm * 64 + m * 16 + quad;
+            const int matrix_row = wm * 64 + m * 16 + (lane & 15);
+            const int matrix_k = step * 32 + (lane >> 4) * 16;
+            ptx::ldmatrix_b16<4,false>(af[m].v,a+smem::swizzle_128(a,matrix_row*128+matrix_k,128));
+#pragma unroll
+            for (int i = 0; i < 4; ++i)
+              if (!((active >> (2 * m + i % 2)) & 1) || k >= K) af[m].v[i] = 0;
+            sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1)
+                ? (scale_words[local + (lane4 & 1) * 8] >> (step * 8)) & 255 : 127;
+          }
+#pragma unroll
+          for (int n = 0; n < 4; ++n) {
+            const int local = wn * 32 + n * 8 + quad;
+            const uint32_t col = column0 + local;
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+              bf[n].v[i] = col >= N || k >= K ? 0 : words[n].v[odd * 2 + i];
+            sb[n] = col < N ? (scale_words[tile + local] >> (step * 8)) & 255 : 127;
+          }
+#pragma unroll
+          for (int m = 0; m < 4; ++m)
+#pragma unroll
+            for (int n = 0; n < 4; ++n)
+              ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
+                  partial[m][n], af[m], bf[n], sa[m], sb[n]);
+        }
       }
+    } else {
 #pragma unroll
-      for (int n = 0; n < 4; ++n) {
-        const int local = wn * 32 + n * 8 + quad;
-        const uint32_t col = column0 + local;
-        const int matrix_row = wn * 32 + n * 8 + (lane & 7);
-        const int matrix_k = step * 32 + ((lane >> 3) & 1) * 16;
-        ptx::ldmatrix_b16<2,false>(bf[n].v,b+smem::swizzle_128(b,matrix_row*128+matrix_k,128));
+      for (int step = 0; step < 4; ++step) {
+        const int k = f * 128 + step * 32;
+        ptx::A4 af[4]; ptx::B2 bf[4];
+        uint32_t sa[4], sb[4];
 #pragma unroll
-        for (int i = 0; i < 2; ++i) if (col >= N || k >= K) bf[n].v[i] = 0;
-        sb[n] = col < N ? (scale_words[tile + local] >> (step * 8)) & 255 : 127;
+        for (int m = 0; m < 4; ++m) {
+          const int local = wm * 64 + m * 16 + quad;
+          const int matrix_row = wm * 64 + m * 16 + (lane & 15);
+          const int matrix_k = step * 32 + (lane >> 4) * 16;
+          ptx::ldmatrix_b16<4,false>(af[m].v,a+smem::swizzle_128(a,matrix_row*128+matrix_k,128));
+#pragma unroll
+          for (int i = 0; i < 4; ++i)
+            if (!((active >> (2 * m + i % 2)) & 1) || k >= K) af[m].v[i] = 0;
+          sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1)
+              ? (scale_words[local + (lane4 & 1) * 8] >> (step * 8)) & 255 : 127;
+        }
+#pragma unroll
+        for (int n = 0; n < 4; ++n) {
+          const int local = wn * 32 + n * 8 + quad;
+          const uint32_t col = column0 + local;
+          const int matrix_row = wn * 32 + n * 8 + (lane & 7);
+          const int matrix_k = step * 32 + ((lane >> 3) & 1) * 16;
+          ptx::ldmatrix_b16<2,false>(bf[n].v,b+smem::swizzle_128(b,matrix_row*128+matrix_k,128));
+#pragma unroll
+          for (int i = 0; i < 2; ++i) if (col >= N || k >= K) bf[n].v[i] = 0;
+          sb[n] = col < N ? (scale_words[tile + local] >> (step * 8)) & 255 : 127;
+        }
+#pragma unroll
+        for (int m = 0; m < 4; ++m)
+#pragma unroll
+          for (int n = 0; n < 4; ++n)
+            ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
+                partial[m][n], af[m], bf[n], sa[m], sb[n]);
       }
-#pragma unroll
-      for (int m = 0; m < 4; ++m)
-#pragma unroll
-        for (int n = 0; n < 4; ++n)
-          ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
-              partial[m][n], af[m], bf[n], sa[m], sb[n]);
     }
     // All generic-proxy shared reads finish before the ring's next TMA write.
     asm volatile("fence.proxy.async.shared::cta;" ::: "memory");

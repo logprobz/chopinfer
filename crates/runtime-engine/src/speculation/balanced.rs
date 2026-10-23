@@ -63,6 +63,7 @@ impl SpeculationPolicy {
 mod tests {
     use super::super::{
         AcceptanceEstimate, DraftDepths, DraftSource, SpeculationConfig, SpeculationMode,
+        VerifyWidths,
     };
     use super::*;
     use runtime_scheduler::DraftBudget;
@@ -81,6 +82,19 @@ mod tests {
 
     fn policy() -> SpeculationPolicy {
         scheduled(DraftDepths::default())
+    }
+
+    fn landed(depths: DraftDepths, widths: VerifyWidths) -> SpeculationPolicy {
+        SpeculationPolicy::new(
+            SpeculationConfig::new(
+                5,
+                32,
+                SpeculationMode::Balanced(depths),
+                DraftSource::Bundle,
+            )
+            .unwrap()
+            .with_verify_widths(widths),
+        )
     }
 
     fn candidate(acceptance: &AcceptanceEstimate, maximum: usize) -> PlanCandidate<'_> {
@@ -140,18 +154,65 @@ mod tests {
         }
     }
 
-    /// Two engines that verify the same drafts but time their steps
-    /// differently, one about 20 ms a step and the other anywhere from 30
-    /// to 120 ms, plan the same drafts at every step and concurrency, and
-    /// neither trains a step-cost or realized table.
+    /// With DeepSeek's schedule and prepared widths, each concurrency
+    /// verifies the widest width its limits reach, filled by acceptance:
+    /// two items 8 rows, three to five items 16, six to eight 32, and one
+    /// item keeps its 6. No item goes deeper than its schedule allows, and
+    /// C16 still drafts nothing.
+    #[test]
+    fn plans_land_on_the_widest_prepared_width_the_limits_reach() {
+        let estimate = AcceptanceEstimate::initial();
+        let depths = DraftDepths::parse("1:5,8:3,16:0").unwrap();
+        let widths = VerifyWidths::parse("6,8,16,32").unwrap();
+        for (items, rows, expected) in [
+            (1, 6, vec![5]),
+            (2, 8, vec![3, 3]),
+            (3, 16, vec![5, 4, 4]),
+            (4, 16, vec![3; 4]),
+            (5, 16, vec![3, 2, 2, 2, 2]),
+            (6, 32, vec![5, 5, 4, 4, 4, 4]),
+            (7, 32, vec![4, 4, 4, 4, 3, 3, 3]),
+            (8, 32, vec![3; 8]),
+            (16, 16, vec![0; 16]),
+        ] {
+            let candidates = vec![candidate(&estimate, 5); items];
+            let budget = DraftBudget::new(32 - items, 32 - items);
+            let drafts = landed(depths, widths).plan(&candidates, budget);
+            assert_eq!(drafts, expected, "{items}");
+            assert_eq!(items + drafts.iter().sum::<usize>(), rows, "{items}");
+        }
+        // Ten items at depth 1 reach 20 rows and land on 16: six draft.
+        let shallow = DraftDepths::parse("1:5,8:1").unwrap();
+        let candidates = vec![candidate(&estimate, 5); 10];
+        let drafts = landed(shallow, widths).plan(&candidates, DraftBudget::new(22, 22));
+        assert_eq!(drafts, [vec![1; 6], vec![0; 4]].concat());
+        // Rows already on a width, or with no width between the decode rows
+        // and the limits, keep the unlanded plan.
+        for items in [1, 6, 7, 8, 12, 20] {
+            let candidates = vec![candidate(&estimate, 5); items];
+            let budget = DraftBudget::new(32 - items, 32 - items);
+            assert_eq!(
+                landed(depths, widths).plan(&candidates, budget),
+                scheduled(depths).plan(&candidates, budget),
+                "{items}"
+            );
+        }
+    }
+
+    /// Two engines with a depth schedule and verify widths that verify the
+    /// same drafts but time their steps differently, one about 20 ms a step
+    /// and the other anywhere from 30 to 120 ms, plan the same drafts at
+    /// every step and concurrency, and neither trains a step-cost or
+    /// realized table.
     #[test]
     fn balanced_plans_never_read_step_times() {
         let depths = DraftDepths::parse("1:5,8:3,16:1").unwrap();
-        let mut engines = [scheduled(depths), scheduled(depths)];
+        let widths = VerifyWidths::parse("6,8,16,32").unwrap();
+        let mut engines = [landed(depths, widths), landed(depths, widths)];
         let mut estimates: [Vec<AcceptanceEstimate>; 2] =
             std::array::from_fn(|_| vec![AcceptanceEstimate::initial(); 32]);
         for step in 0..400_usize {
-            let items = [1, 8, 16, 7, 12, 32, 3][step / 40 % 7];
+            let items = [1, 8, 16, 7, 12, 32, 3, 5][step / 40 % 8];
             let mut plans = Vec::new();
             for (engine, estimates) in engines.iter_mut().zip(&estimates) {
                 let candidates = estimates[..items]

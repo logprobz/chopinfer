@@ -26,12 +26,14 @@ mod refresh_tests;
 mod shape_tests;
 #[cfg(test)]
 mod trial_tests;
+mod widths;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
 
 pub use depths::{DraftDepths, DraftDepthsError, MAX_DRAFT_DEPTHS};
 pub use table::{StepCost, StepCosts, StepCostsError};
+pub use widths::{MAX_VERIFY_WIDTHS, VerifyWidths, VerifyWidthsError};
 
 /// The most drafts one item may verify in a step.
 pub const MAX_DRAFT_TOKENS: usize = 16;
@@ -319,7 +321,8 @@ pub enum SpeculationMode {
     /// Give eligible items a common executable depth, then spend spare
     /// rows on the next prefixes with the highest expected acceptance.
     /// Batch and request limits and this schedule's depth for the batch's
-    /// items determine depth; elapsed time does not.
+    /// items determine depth, and the config's verify widths the rows the
+    /// plan lands on; elapsed time does not.
     Balanced(DraftDepths),
     /// Drafts are added where they are expected to raise tokens per unit of
     /// step time, from per-request acceptance and measured step costs.
@@ -347,6 +350,8 @@ pub struct SpeculationConfig {
     draft_cost_model: DraftCostModel,
     /// The most items that draft in one step, as the bundle declares.
     maximum_draft_items: Option<usize>,
+    /// The verify widths balanced plans land on.
+    verify_widths: VerifyWidths,
 }
 
 impl SpeculationConfig {
@@ -377,6 +382,7 @@ impl SpeculationConfig {
             source,
             draft_cost_model: DraftCostModel::PerToken,
             maximum_draft_items: None,
+            verify_widths: VerifyWidths::NONE,
         })
     }
 
@@ -424,6 +430,20 @@ impl SpeculationConfig {
     #[must_use]
     pub const fn maximum_draft_items(self) -> Option<usize> {
         self.maximum_draft_items
+    }
+
+    /// The verify widths a balanced plan lands on: the widest one between
+    /// its decode rows and the rows its limits reach. The default empty
+    /// list keeps those rows; other modes ignore it.
+    #[must_use]
+    pub const fn with_verify_widths(mut self, widths: VerifyWidths) -> Self {
+        self.verify_widths = widths;
+        self
+    }
+
+    #[must_use]
+    pub const fn verify_widths(self) -> VerifyWidths {
+        self.verify_widths
     }
 
     pub(crate) const fn limits(self) -> DraftLimits {
@@ -1368,7 +1388,18 @@ impl SpeculationPolicy {
             }
             SpeculationMode::Balanced(depths) => {
                 self.trace_reason("balanced");
-                drafts = self.plan_balanced(candidates, remaining, depths.at(candidates.len()));
+                let limit = depths.at(candidates.len());
+                drafts = self.plan_balanced(candidates, remaining, limit);
+                // Land on the widest prepared width the limits reach.
+                let rows = candidates.len() + drafts.iter().sum::<usize>();
+                if let Some(width) = self
+                    .config
+                    .verify_widths
+                    .widest_within(candidates.len(), rows)
+                    && width < rows
+                {
+                    drafts = self.plan_balanced(candidates, width - candidates.len(), limit);
+                }
             }
             SpeculationMode::Adaptive if budget.prefill() => {
                 self.trace_reason("prefill_fresh");

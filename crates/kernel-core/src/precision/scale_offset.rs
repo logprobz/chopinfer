@@ -61,7 +61,7 @@ fn fail<T>(reason: impl Into<String>) -> Result<T, ScaleOffsetError> {
     Err(ScaleOffsetError(reason.into()))
 }
 
-fn check_width(width: u32) -> Result<(), ScaleOffsetError> {
+pub(super) fn check_width(width: u32) -> Result<(), ScaleOffsetError> {
     if WIDTHS.contains(&width) {
         Ok(())
     } else {
@@ -69,7 +69,7 @@ fn check_width(width: u32) -> Result<(), ScaleOffsetError> {
     }
 }
 
-fn check_shape(rows: u64, groups: u64) -> Result<(), ScaleOffsetError> {
+pub(super) fn check_shape(rows: u64, groups: u64) -> Result<(), ScaleOffsetError> {
     if rows == 0 || groups == 0 {
         return fail("an empty matrix");
     }
@@ -109,7 +109,7 @@ pub fn encoded_bytes(
 }
 
 /// One row's base for each width and the exceptions each leaves.
-fn row_bases(row: &[u8]) -> ([u8; 3], [u64; 3]) {
+pub(super) fn row_bases(row: &[u8]) -> ([u8; 3], [u64; 3]) {
     let (mut low, mut high) = (u8::MAX, u8::MIN);
     for &scale in row {
         low = low.min(scale);
@@ -315,6 +315,10 @@ pub fn decode_bank_matrix(
     groups: u64,
     width: u32,
 ) -> Result<Vec<u8>, ScaleOffsetError> {
+    decode(bank_block(bank, matrix)?, rows, groups, width)
+}
+
+pub(super) fn bank_block(bank: &[u8], matrix: usize) -> Result<&[u8], ScaleOffsetError> {
     let entry = |i: usize| -> Result<usize, ScaleOffsetError> {
         let at = i * 4;
         let bytes = bank
@@ -327,7 +331,7 @@ pub fn decode_bank_matrix(
         .get(start..end)
         .filter(|_| start <= end)
         .ok_or_else(|| ScaleOffsetError("bank block outside the bank".into()))?;
-    decode(block, rows, groups, width)
+    Ok(block)
 }
 
 #[cfg(test)]

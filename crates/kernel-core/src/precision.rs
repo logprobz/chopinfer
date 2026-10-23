@@ -13,6 +13,7 @@ pub mod packed;
 pub mod quantizer;
 pub mod scale_expand;
 pub mod scale_offset;
+pub mod scale_tiles;
 
 use crate::contract::{ActivationFormat, DType, Epilogues, ScaleMode, Target, WeightFormat};
 use std::fmt;

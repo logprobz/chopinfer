@@ -8,7 +8,7 @@
 namespace chop::gemm::mxfp8_prefill_split {
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool SingleChain = false>
+         bool F32Output, bool SingleChain = false, bool PackedWeights = false>
 __device__ void full(const CUtensorMap& activation_map, const CUtensorMap& weight_map,
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -18,7 +18,7 @@ __device__ void full(const CUtensorMap& activation_map, const CUtensorMap& weigh
   ptx::griddep_wait();
   if (threadIdx.x == 0) full_rows = min(rows, *live_rows) / 128 * 128;
   __syncthreads();
-  mxfp8_prefill::run<N,K,Groups,RowStride,GroupStride,F32Output,SingleChain>(
+  mxfp8_prefill::run<N,K,Groups,RowStride,GroupStride,F32Output,SingleChain,PackedWeights>(
       activation_map,weight_map,activations,weights,activation_scales,weight_scales,
       output,&full_rows,status,status_offset,rows);
 }

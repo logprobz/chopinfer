@@ -5,6 +5,7 @@
 // row-major layout. No fragment repack or numerical contract changes.
 #include "prefill_mainloop.cuh"
 #include "mxfp8_fold.cuh"
+#include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_prefill {
 constexpr int tile = 128, stages = 2, math_warps = 8;
@@ -39,11 +40,29 @@ __device__ __forceinline__ uint32_t word(const uint8_t* base, int row, int col) 
   return value;
 }
 
+// Packed weight codes (mxfp8-fold-packed-8x128-v1, PackedWeights) land in a
+// stage's weight plane in tile row order. A full fold arrives through the
+// 4-D packed map as one 128-byte segment per row, with the map's 128-byte
+// swizzle; a final 64-K fold arrives through bulk copies as each strip's
+// contiguous 512 bytes, unswizzled. Lane `lane4` of a row owns 32 bytes of
+// its segment (16 in a half fold), so one 16-byte load returns the row's B
+// words for k32 steps 2 * pair and 2 * pair + 1: word 2 * (step % 2) + i
+// is the row-major word at K byte step * 32 + i * 16 + lane4 * 4. With the
+// swizzle, each quarter warp (two rows of four lanes) covers all 32 banks.
+__device__ __forceinline__ ptx::A4 packed_words(
+    const uint8_t* base, int row, int lane4, int pair, bool half) {
+  const uint32_t offset = half
+      ? row / 8 * 512 + mxfp8_fold_packed::segment_word(row % 8, lane4 * 4, true)
+      : smem::swizzle_128(base, row / 8 * 1024 +
+            mxfp8_fold_packed::segment_word(row % 8, pair * 64 + lane4 * 4, false), 128);
+  return prefill::load_a(ptx::shared_address(base) + offset);
+}
+
 // The final partial token tile uses predicated wide global loads. A TMA
 // box must never read a token beyond the device live bound. Only this
 // boundary tile takes the smaller register loop; complete tiles use TMA.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool SingleChain>
+         bool F32Output, bool SingleChain, bool PackedWeights = false>
 __device__ __forceinline__ void tail(
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -79,9 +98,14 @@ __device__ __forceinline__ void tail(
           const uint32_t col = nb + quad;
 #pragma unroll
           for (int i = 0; i < 2; ++i)
-            if (col < N && k < K)
-              b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
-                  (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);
+            if (col < N && k < K) {
+              if constexpr (PackedWeights)
+                b.v[i] = mxfp8_fold_packed::load_word(
+                    weights, group * N + col, k + i * 16 + lane4 * 4, K);
+              else
+                b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
+                    (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);
+            }
           const uint32_t row = ma + quad + (lane4 & 1) * 8;
           const uint32_t sa = row < live && k < K && status[status_offset + row] == 0
               ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;
@@ -108,8 +132,10 @@ __device__ __forceinline__ void tail(
     }
 }
 
+// With PackedWeights, `weight_map` is the 4-D packed map (dims {128, 8,
+// K / 128, strips}, box {128, 8, 1, 16}) and `weights` the packed codes.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool SingleChain = false>
+         bool F32Output, bool SingleChain = false, bool PackedWeights = false>
 __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight_map,
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -118,6 +144,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   static_assert(K > 0 && K % 32 == 0 && Groups > 0);
   static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
   static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
+  static_assert(!PackedWeights || (N % 8 == 0 && K % 64 == 0 && K >= 128));
   __shared__ uint64_t full[stages], empty[stages];
   extern __shared__ uint8_t raw[];
   uint8_t* storage = prefill::align_swizzle_storage(raw);
@@ -132,7 +159,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   // A partial K box may not read padding or the next activation group.
   // Dense unpadded rows use the tensor map's out-of-bounds zero fill.
   if (token0 + tile > live || (K % 128 != 0 && RowStride > K)) {
-    tail<N, K, Groups, RowStride, GroupStride, F32Output, SingleChain>(
+    tail<N, K, Groups, RowStride, GroupStride, F32Output, SingleChain, PackedWeights>(
         activations, weights, activation_scales, weight_scales, output,
         status, status_offset, live, token0, column0, group);
     return;
@@ -148,6 +175,43 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   if (warp >= math_warps) {
     ptx::setmaxnreg_dec<24>();
     if (warp != math_warps || lane != 0) return;
+    if constexpr (PackedWeights) {
+      // A full fold is one box: this fold of the tile's 16 strips. A final
+      // 64-K fold is each strip's 512 bytes, for the strips below N; the
+      // math warps zero every column at or past N.
+      const uint32_t strip0 = (group * N + column0) / 8;
+      const int half_strips = min(uint32_t(tile), N - column0) / 8;
+      const auto final_half = [&](int fold) { return K % 128 != 0 && fold == folds - 1; };
+      const auto bytes = [&](int fold) {
+        return final_half(fold) ? plane_bytes + half_strips * 512 : stage_bytes;
+      };
+      const auto weight = [&](int fold, int slot) {
+        uint8_t* plane = storage + slot * stage_bytes + plane_bytes;
+        if (final_half(fold)) {
+          for (int s = 0; s < half_strips; ++s)
+            ptx::cp_async_bulk(plane + s * 512,
+                weights + mxfp8_fold_packed::fold_offset(strip0 + s, fold, K), 512, &full[slot]);
+        } else {
+          const int32_t coord[4] = {0, 0, fold, int32_t(strip0)};
+          ptx::tma_load<4>(plane, &weight_map, coord, &full[slot]);
+        }
+      };
+      for (int f = 0; f < min(folds, stages); ++f) {
+        ptx::mbarrier_arrive_expect_tx(&full[f], bytes(f));
+        weight(f, f);
+      }
+      for (int f = 0; f < folds; ++f) {
+        const int slot = f % stages;
+        if (f >= stages) {
+          prefill::wait_empty(empty, f, stages);
+          ptx::mbarrier_arrive_expect_tx(&full[slot], bytes(f));
+          weight(f, slot);
+        }
+        const int32_t coord[2] = {int32_t(group * GroupStride + f * 128), int32_t(token0)};
+        ptx::tma_load<2>(storage + slot * stage_bytes, &activation_map, coord, &full[slot]);
+      }
+      return;
+    }
     const auto weight = [&](int fold, int slot) {
       const int32_t coord[2] = {fold * 128, int32_t(group * N + column0)};
       ptx::tma_load<2>(storage + slot * stage_bytes + plane_bytes,
@@ -197,7 +261,57 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
     // steps are unrolled. Both bodies keep the same four ordered MMAs;
     // only the loop hint differs. Keep the full-unroll body in place to
     // preserve existing locked instruction streams, including partial K.
-    if constexpr (K < 1024 && K % 128 == 0) {
+    if constexpr (PackedWeights) {
+      // The same four ordered MMAs, with B words loaded for two steps at
+      // once (packed_words) under the row-major predicates.
+      const bool half = K % 128 != 0 && f == folds - 1;
+      constexpr int pair_unroll = K < 1024 && K % 128 == 0 ? 1 : 2;
+#pragma unroll pair_unroll
+      for (int pair = 0; pair < 2; ++pair) {
+        ptx::A4 words[4];
+#pragma unroll
+        for (int n = 0; n < 4; ++n) {
+          const int local = wn * 32 + n * 8 + quad;
+          words[n] = column0 + local < N && f * 128 + pair * 64 < K
+              ? packed_words(b, local, lane4, pair, half) : ptx::A4{};
+        }
+#pragma unroll
+        for (int odd = 0; odd < 2; ++odd) {
+          const int step = pair * 2 + odd;
+          const int k = f * 128 + step * 32;
+          ptx::A4 af[4]; ptx::B2 bf[4];
+          uint32_t sa[4], sb[4];
+#pragma unroll
+          for (int m = 0; m < 4; ++m) {
+            const int local = wm * 64 + m * 16 + quad;
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+              af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
+                  ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+            }
+            const uint32_t row = token0 + local + (lane4 & 1) * 8;
+            sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
+                ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;
+          }
+#pragma unroll
+          for (int n = 0; n < 4; ++n) {
+            const int local = wn * 32 + n * 8 + quad;
+            const uint32_t col = column0 + local;
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+              bf[n].v[i] = col < N && k < K ? words[n].v[odd * 2 + i] : 0;
+            sb[n] = col < N && k < K
+                ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
+          }
+#pragma unroll
+          for (int m = 0; m < 4; ++m)
+#pragma unroll
+            for (int n = 0; n < 4; ++n)
+              ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
+                  partial[m][n], af[m], bf[n], sa[m], sb[n]);
+        }
+      }
+    } else if constexpr (K < 1024 && K % 128 == 0) {
 #pragma unroll 1
       for (int step = 0; step < 4; ++step) {
         const int k = f * 128 + step * 32;

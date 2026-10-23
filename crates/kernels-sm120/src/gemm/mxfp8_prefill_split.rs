@@ -1,6 +1,7 @@
 //! Split full prefill tiles from a short tail using the existing fold engine.
 use super::{mxfp8_fold::Entry, mxfp8_fold_packed, mxfp8_prefill as tiled};
 use kernel_build::{CubinSpec, EntrySpec};
+use kernel_core::backend::Launch;
 use kernel_core::contract::{LaunchPlan, Refusal, Validate};
 
 /// A model's measured bounds for choosing the split tail. Bounds are on
@@ -54,6 +55,38 @@ pub fn specs(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
         .replace("mxfp8_fold::run<", "mxfp8_prefill_split::tail<");
     specs.push(tail);
     Ok(specs)
+}
+
+/// The full-tile entry reading `mxfp8-fold-packed-8x128-v1` weight codes,
+/// launched with `mxfp8_prefill::packed_arguments`, and [`packed_tail_spec`].
+pub fn packed_specs(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
+    if e.decode() {
+        return Err(Refusal("split prefill requires the non-decode fold entry"));
+    }
+    let mut full = tiled::packed_spec(e)?;
+    full.symbol = mxfp8_fold_packed::symbol(&symbol(e));
+    full.body = full
+        .body
+        .replace("mxfp8_prefill::run<", "mxfp8_prefill_split::full<");
+    Ok(vec![full, packed_tail_spec(e)?])
+}
+
+/// `launches` of a prepared split prefill op
+/// (`Sm120::with_mxfp8_prefill_split`) moved to packed weight codes. Full
+/// tiles, split or not, take their packed entries and the packed weight map;
+/// the tail takes its packed entry with unchanged arguments. Validation
+/// launches read no codes and are kept.
+pub fn packed_launches(e: &Entry, launches: Vec<Launch>) -> Result<Vec<Launch>, Refusal> {
+    let mut launches = tiled::packed_launches(e, launches)?;
+    let (full, tail) = (symbol(e), tail_symbol(e));
+    for launch in &mut launches {
+        if launch.symbol == full {
+            tiled::move_to_packed(e, launch, mxfp8_fold_packed::symbol(&full))?;
+        } else if launch.symbol == tail {
+            launch.symbol = mxfp8_fold_packed::symbol(&tail);
+        }
+    }
+    Ok(launches)
 }
 
 /// The tail entry reading `mxfp8-fold-packed-8x128-v1` weight codes

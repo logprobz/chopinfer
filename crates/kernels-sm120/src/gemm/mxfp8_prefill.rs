@@ -1,6 +1,8 @@
 //! Native MXFP8 prefill tiles over the shared TMA ring, with fold128 arithmetic.
 use super::mxfp8_fold::{self, Entry};
+use super::mxfp8_fold_packed;
 use kernel_build::{CubinSpec, EntryParam as P, EntrySpec};
+use kernel_core::backend::Launch;
 use kernel_core::contract::{
     Argument, ArgumentList, DType, LaunchPlan, Refusal, TensorMap, TensorMapElement,
     TensorMapInterleave, TensorMapL2Promotion, TensorMapOobFill, TensorMapSwizzle, Validate,
@@ -116,6 +118,105 @@ pub fn control_spec(e: &Entry) -> Result<EntrySpec, Refusal> {
         .body
         .replace(",false>(activation_map", ",true>(activation_map");
     Ok(spec)
+}
+
+/// Refuses entries without a packed twin: the layout's N and K bounds
+/// (`gemm::mxfp8_fold_packed::check`), and K below one complete 128-K fold,
+/// which the packed weight map needs.
+pub fn check_packed(e: &Entry) -> Result<(), Refusal> {
+    validate(e)?;
+    let q = e.query;
+    mxfp8_fold_packed::check(q.groups, q.n, q.k)?;
+    if q.k < 128 {
+        return Err(Refusal("packed TMA prefill needs a complete 128-K fold"));
+    }
+    Ok(())
+}
+
+pub fn packed_symbol(e: &Entry) -> String {
+    mxfp8_fold_packed::symbol(&symbol(e))
+}
+
+/// The compute entry reading `mxfp8-fold-packed-8x128-v1` weight codes: the
+/// parameters, plan and shared memory of [`symbol`]'s entry, launched with
+/// [`packed_arguments`].
+pub fn packed_spec(e: &Entry) -> Result<EntrySpec, Refusal> {
+    check_packed(e)?;
+    let mut spec = specs(e)?.remove(1);
+    spec.symbol = packed_symbol(e);
+    spec.body = spec
+        .body
+        .replace(",false>(activation_map", ",false,true>(activation_map");
+    Ok(spec)
+}
+
+/// The weight map of a packed compute entry, over the packed codes in
+/// `weights`. Its box is one 128-K fold of 16 eight-row strips (the same 16
+/// KB as the row-major box): dims {128, 8, K / 128, groups * N / 8}. A final
+/// 64-K fold is outside the map; the kernel copies it per strip.
+pub fn packed_weight_map(e: &Entry, weights: u64) -> Result<TensorMap, Refusal> {
+    check_packed(e)?;
+    let q = e.query;
+    let strips = u64::from(q.groups) * u64::from(q.n) / 8;
+    let map = TensorMap {
+        base_buffer: weights,
+        dims: vec![128, 8, u64::from(q.k / 128), strips],
+        strides_bytes: vec![1, 128, 1024, 8 * u64::from(q.k)],
+        box_dims: vec![128, 8, 1, TILE / 8],
+        element_strides: vec![1, 1, 1, 1],
+        swizzle: TensorMapSwizzle::B128,
+        interleave: TensorMapInterleave::None,
+        l2_promotion: TensorMapL2Promotion::B128,
+        oob_fill: TensorMapOobFill::Zero,
+        element: TensorMapElement::U8,
+    };
+    map.validate()?;
+    Ok(map)
+}
+
+/// [`arguments`] for the packed compute entry: the packed weight map in
+/// place of the row-major one; `b.weights` names the packed codes.
+pub fn packed_arguments(
+    e: &Entry,
+    b: Mxfp8FoldGemmBuffers<u64>,
+    rows: u32,
+) -> Result<ArgumentList, Refusal> {
+    let mut result = arguments(e, b, rows)?;
+    result.0[1] = Argument::TensorMap(packed_weight_map(e, b.weights)?);
+    Ok(result)
+}
+
+/// Moves one launch made with [`arguments`] to the packed entry `symbol`:
+/// renamed, with the packed weight map over the codes its map named.
+pub(crate) fn move_to_packed(
+    e: &Entry,
+    launch: &mut Launch,
+    symbol: String,
+) -> Result<(), Refusal> {
+    let q = e.query;
+    let row_major = [u64::from(q.k), u64::from(q.groups) * u64::from(q.n)];
+    let Some(Argument::TensorMap(map)) = launch.arguments.0.get(1) else {
+        return Err(Refusal("prefill launch has no weight map"));
+    };
+    if map.dims != row_major {
+        return Err(Refusal("prefill launch has no row-major weight map"));
+    }
+    launch.arguments.0[1] = Argument::TensorMap(packed_weight_map(e, map.base_buffer)?);
+    launch.symbol = symbol;
+    Ok(())
+}
+
+/// `launches` of a prepared prefill op (`Sm120::with_mxfp8_prefill`) moved
+/// to packed weight codes: the compute launch takes [`packed_symbol`] and the
+/// packed weight map. The validation launch reads no codes and is kept.
+pub fn packed_launches(e: &Entry, mut launches: Vec<Launch>) -> Result<Vec<Launch>, Refusal> {
+    let compute = symbol(e);
+    for launch in &mut launches {
+        if launch.symbol == compute {
+            move_to_packed(e, launch, packed_symbol(e))?;
+        }
+    }
+    Ok(launches)
 }
 
 pub fn plan(e: &Entry, rows: u32) -> Result<LaunchPlan, Refusal> {

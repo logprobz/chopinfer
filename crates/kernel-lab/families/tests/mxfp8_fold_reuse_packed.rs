@@ -7,7 +7,7 @@ use kernel_harness::packed_fold;
 use kernel_lab_families::mxfp8_fold_reuse_packed as family;
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_fold_packed;
-use kernels_sm120::gemm::mxfp8_fold_reuse::Entry;
+use kernels_sm120::gemm::mxfp8_fold_reuse::{self, Entry};
 
 const CUBINS: &str = "CHOPINFER_MXFP8_FOLD_REUSE_PACKED_CUBINS";
 
@@ -196,6 +196,36 @@ fn packed_comparison_detects_a_moved_strip_on_gpu() {
     .unwrap();
 }
 
+/// The timed row counts: the shared buckets plus reuse's served 9 and 12,
+/// within capacity. Reuse serves rows 6 and 8 to 32 (supported_rows); one
+/// row takes the declared-ABI launch.
+fn timing_rows(entry: &Entry) -> Vec<u32> {
+    support::TIMING_ROWS
+        .into_iter()
+        .chain([9, 12])
+        .filter(|&rows| rows <= entry.ticket.query.m_capacity)
+        .filter(|&rows| rows == 1 || mxfp8_fold_reuse::supported_rows(rows))
+        .collect()
+}
+
+#[test]
+fn timing_rows_prepare_on_the_cpu() {
+    for entry in family::entries()
+        .iter()
+        .filter(|e| e.ticket.query.n >= 5120)
+    {
+        let rows = timing_rows(entry);
+        assert!(rows.contains(&9) && rows.contains(&12), "{rows:?}");
+        for rows in rows {
+            assert!(
+                !launches(entry, rows).is_empty(),
+                "{} rows={rows}",
+                entry.symbol()
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires an idle GPU and the packed family cubins"]
 fn packed_timing_stays_within_three_percent_on_gpu() {
@@ -207,7 +237,7 @@ fn packed_timing_stays_within_three_percent_on_gpu() {
             .iter()
             .filter(|e| e.ticket.query.n >= 5120)
         {
-            for rows in support::TIMING_ROWS.into_iter().chain([9, 12]).filter(|&rows| rows <= entry.ticket.query.m_capacity) {
+            for rows in timing_rows(entry) {
                 let calls = launches(entry, rows);
                 let packed = packed(entry, calls.clone());
                 let mut images = support::images(

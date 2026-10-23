@@ -46,6 +46,25 @@ impl Mxfp8FoldLayout {
         Ok(8 * self.k)
     }
 
+    /// Byte offset of the four codes a row-major matrix holds at
+    /// `row * k + column`, for a row counted across groups and a column
+    /// divisible by four. Kernels address packed codes with the same formula
+    /// (`kernels-sm120/cuda/gemm/mxfp8_fold_packed.cuh`, `word_offset`).
+    pub fn word_offset(self, row: usize, column: usize) -> Result<usize, WeightTransformError> {
+        let bytes = self.packed_bytes()?;
+        if !column.is_multiple_of(4) || column >= self.k || row >= bytes / self.k {
+            return refuse("packed fold word lies outside the matrix or splits a word");
+        }
+        let fold = column / 128;
+        let local = column % 128;
+        let segment = if self.k - fold * 128 == 64 { 64 } else { 128 };
+        Ok(row / 8 * (8 * self.k)
+            + fold * 1024
+            + row % 8 * segment
+            + local % 16 / 4 * (segment / 4)
+            + local / 16 * 4)
+    }
+
     /// Pack complete eight-row strips, starting at strip `first` of the
     /// grouped matrix. `rows` contains only those strips in row-major order.
     pub fn pack_strips(

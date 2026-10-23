@@ -77,6 +77,49 @@ fn pack_and_oracle_equal_cuda_prepare_index_mapping() {
 }
 
 #[test]
+fn word_offset_finds_every_row_major_word_in_the_packed_codes() {
+    for groups in [1, 3] {
+        for n in [8, 24] {
+            for k in [64, 128, 192, 576, 1280] {
+                let layout = Mxfp8FoldLayout { groups, n, k };
+                let source: Vec<_> = (0..layout.packed_bytes().unwrap() / 4)
+                    .flat_map(|word| (word as u32).to_le_bytes())
+                    .collect();
+                let packed = layout.pack(&source).unwrap();
+                let mut seen = vec![false; source.len() / 4];
+                for row in 0..groups * n {
+                    for column in (0..k).step_by(4) {
+                        let at = layout.word_offset(row, column).unwrap();
+                        assert_eq!(at % 4, 0);
+                        assert!(!std::mem::replace(&mut seen[at / 4], true));
+                        let from = row * k + column;
+                        assert_eq!(packed[at..at + 4], source[from..from + 4], "{layout:?}");
+                    }
+                }
+                assert!(seen.into_iter().all(|visited| visited));
+            }
+        }
+    }
+    let layout = Mxfp8FoldLayout {
+        groups: 2,
+        n: 8,
+        k: 192,
+    };
+    for (row, column) in [(0, 2), (0, 192), (16, 0), (usize::MAX, 0)] {
+        assert!(layout.word_offset(row, column).is_err());
+    }
+    assert!(
+        Mxfp8FoldLayout {
+            groups: 1,
+            n: 7,
+            k: 64
+        }
+        .word_offset(0, 0)
+        .is_err()
+    );
+}
+
+#[test]
 fn closed_set_identity_and_shape_refusals() {
     let transform = WeightTransform::Mxfp8FoldPacked;
     assert_eq!(transform.id(), 10);

@@ -10,10 +10,15 @@ use runtime_bundle_abi::*;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Identity(&'static str, u64, u64);
 
+/// Acquisitions that hold device memory.
+const DEVICE_MEMORY: [&str; 4] = ["buffer", "state", "arena", "physical_kv"];
+
 #[derive(Default)]
 pub struct Accounting {
     calls: Cell<usize>,
     acquired: RefCell<Vec<Identity>>,
+    /// How many acquisitions preceded the serving KV pool, once acquired.
+    serving_kv_at: Cell<Option<usize>>,
     released: RefCell<Vec<Identity>>,
     live: RefCell<BTreeMap<Identity, usize>>,
     violations: RefCell<Vec<Identity>>,
@@ -25,6 +30,26 @@ impl Accounting {
     }
     pub fn releases(&self) -> usize {
         self.released.borrow().len()
+    }
+
+    /// Device memory acquired after the host sized the serving KV pool would
+    /// come out of the host's fixed reserve, which holds the CUDA graphs
+    /// captured once the pool exists (runtime-host
+    /// `SERVING_KV_RESERVE_BYTES_V1`). Every buffer, request state, rank arena
+    /// and physical KV is acquired before the pool, at create or serving.
+    pub fn assert_device_memory_before_serving_kv(&self) {
+        let Some(at) = self.serving_kv_at.get() else {
+            return;
+        };
+        let late: Vec<_> = self.acquired.borrow()[at..]
+            .iter()
+            .filter(|identity| DEVICE_MEMORY.contains(&identity.0))
+            .copied()
+            .collect();
+        assert!(
+            late.is_empty(),
+            "device memory acquired after the serving KV pool was sized: {late:?}"
+        );
     }
 
     fn acquire(&self, identity: Identity) {
@@ -50,7 +75,9 @@ impl Accounting {
         self.released.borrow_mut().push(identity);
     }
 
+    /// Checks the acquisition order and that everything was released.
     pub fn assert_released(&self) {
+        self.assert_device_memory_before_serving_kv();
         assert!(
             self.violations.borrow().is_empty(),
             "duplicate or unknown releases: {:?}",
@@ -68,6 +95,8 @@ impl Accounting {
 /// Every method is forwarded, including optional services. Acquisitions are
 /// recorded only after success, and failed releases keep their live lease.
 /// Contexts, pools and peer edges can have multiple leases for one identity.
+/// The serving KV pool's place among the acquisitions is recorded too, so the
+/// release check also refuses device memory acquired after it.
 pub struct ObservedHost<B> {
     backend: Rc<B>,
     pub accounting: Accounting,
@@ -170,7 +199,16 @@ impl<B: HostServicesBackendV1> HostServicesBackendV1 for ObservedHost<B> {
     forward!(resolve_kv_view(request: BundleKvRequestHandleV1, rank: u32, view_id: &[u8]) -> DeviceBufferSpanV1);
     release!("kv_request", release_kv_request(request: BundleKvRequestHandleV1));
     release!("physical_kv", release_physical_kv(kv: BundlePhysicalKvHandleV1));
-    forward!(acquire_serving_kv(layout_id: &[u8]) -> u64);
+    fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
+        self.call();
+        let pages = self.backend.acquire_serving_kv(layout_id)?;
+        let accounting = &self.accounting;
+        if accounting.serving_kv_at.get().is_none() {
+            let at = accounting.acquired.borrow().len();
+            accounting.serving_kv_at.set(Some(at));
+        }
+        Ok(pages)
+    }
     forward!(resolve_serving_kv_pool(rank: u32) -> DeviceBufferSpanV1);
     forward!(query_speculation() -> BundleRawSpeculationV1);
     forward!(query_batch_limits() -> BundleRawBatchLimitsV1);
@@ -224,6 +262,39 @@ impl<B: HostServicesBackendV1> HostServicesBackendV1 for ObservedHost<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_memory_after_the_serving_kv_pool_is_refused() {
+        let sized = |late: &'static str| {
+            let accounting = Accounting::default();
+            accounting.acquire(Identity("buffer", 1, 0));
+            accounting.acquire(Identity("state", 2, 0));
+            accounting
+                .serving_kv_at
+                .set(Some(accounting.acquired.borrow().len()));
+            accounting.acquire(Identity(late, 3, 0));
+            accounting
+        };
+        // Streams, events and graphs follow the pool; their memory is the
+        // driver's and the reserve's.
+        for kind in ["stream", "event", "graph", "mapped-gather"] {
+            sized(kind).assert_device_memory_before_serving_kv();
+        }
+        for kind in DEVICE_MEMORY {
+            let accounting = sized(kind);
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                    || accounting.assert_device_memory_before_serving_kv()
+                ))
+                .is_err(),
+                "{kind}"
+            );
+        }
+        // Without a serving KV pool there is no order to check.
+        let without_pool = Accounting::default();
+        without_pool.acquire(Identity("buffer", 1, 0));
+        without_pool.assert_device_memory_before_serving_kv();
+    }
 
     #[test]
     fn duplicate_release_cannot_compensate_for_a_leak_of_another_identity() {

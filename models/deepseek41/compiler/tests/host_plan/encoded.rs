@@ -3,7 +3,10 @@
 //! plan's bank, every other view keeps its bytes, and the plan refuses
 //! counts measured for another census.
 use super::*;
+use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::precision::scale_offset;
+use model_deepseek41_contract::geometry::{FLASH, Geometry};
+use model_deepseek41_contract::moe;
 use model_deepseek41_contract::weight_plan::{census, encoded_scale_layout};
 use runtime_bundle_abi::weight_plan::WeightPlanRequestV1;
 use runtime_host::direct::census_counts_v1;
@@ -58,9 +61,12 @@ fn encodable(name: &str) -> bool {
 }
 
 /// Checks every rank's encoded scale banks decode to the raw plan's banks
-/// and, with `every_view`, that every other view keeps its bytes. Returns
-/// each rank's raw and encoded routed scale bytes.
+/// and, with `every_view`, that every other view keeps its bytes, and that
+/// each bank's matrices are the shape the bundle expands at `geometry`
+/// (`moe::scale_bank`). Returns each rank's raw and encoded routed scale
+/// bytes.
 fn check_banks(
+    geometry: &Geometry,
     raw_image: &PlannedImageV1,
     raw_plans: &[WeightPlanV1],
     image: &PlannedImageV1,
@@ -114,6 +120,25 @@ fn check_banks(
                 covered += (item.rows * item.groups) as usize;
             }
             assert_eq!(covered, raw.len(), "{at}: census matrices");
+            let kind = if name.ends_with(".gate_up.scale") {
+                GatedMlpProjection::GateUp
+            } else {
+                GatedMlpProjection::Down
+            };
+            let bank = moe::scale_bank(geometry, ranks as u32, moe::expert_sets(geometry)[0], kind)
+                .unwrap();
+            assert_eq!(
+                matrices.len() as u64,
+                u64::from(bank.experts * bank.projections),
+                "{at}: matrices"
+            );
+            assert!(
+                matrices
+                    .iter()
+                    .all(|&m| m == (u64::from(bank.rows), u64::from(bank.groups))),
+                "{at}: {matrices:?} against {bank:?}"
+            );
+            assert_eq!(raw.len() as u64, bank.bytes(), "{at}");
             raw_total += raw.len() as u64;
             encoded_total += got.len() as u64;
             let Some(width) = (1..=4).find(|w| view.layout_id == encoded_scale_layout(*w)) else {
@@ -162,7 +187,9 @@ fn encoded_scale_banks_decode_to_the_raw_banks() {
             .map(|request| plan(request).unwrap().unwrap())
             .collect();
         let image = image(checkpoint, plans.clone());
-        let totals = check_banks(&raw_image, &raw_plans, &image, &plans, &censuses, true);
+        let totals = check_banks(
+            geometry, &raw_image, &raw_plans, &image, &plans, &censuses, true,
+        );
         let (raw, encoded) = totals
             .iter()
             .fold((0, 0), |(r, e), (raw, encoded)| (r + raw, e + encoded));
@@ -206,6 +233,7 @@ fn official_routed_scale_banks_round_trip() {
     let raw_image = image(checkpoint.clone(), raw_plans.clone());
     let encoded_image = image(checkpoint, plans.clone());
     let totals = check_banks(
+        &FLASH,
         &raw_image,
         &raw_plans,
         &encoded_image,

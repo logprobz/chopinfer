@@ -674,7 +674,7 @@ fn a_fake_host_gathers_rows_of_every_planned_mapped_view() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-#[path = "host_plan/routed.rs"]
-mod routed;
 #[path = "host_plan/encoded.rs"]
 mod encoded;
+#[path = "host_plan/routed.rs"]
+mod routed;

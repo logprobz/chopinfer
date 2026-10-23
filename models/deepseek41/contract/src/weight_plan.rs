@@ -797,6 +797,16 @@ pub fn encoded_scale_layout(width: u32) -> String {
     format!("{}.w{width}", kernel_core::precision::scale_offset::FORMAT)
 }
 
+/// The offset width of an [`encoded_scale_layout`], or `None` for another
+/// layout.
+#[must_use]
+pub fn encoded_scale_width(layout_id: &str) -> Option<u32> {
+    use kernel_core::precision::scale_offset::WIDTHS;
+    WIDTHS
+        .into_iter()
+        .find(|&width| layout_id == encoded_scale_layout(width))
+}
+
 /// `views` with each [`encodable`] bank stored encoded at the width that
 /// stores it smallest, from this rank's measured `counts` (in census order),
 /// or raw when no width is smaller. An encoded bank is its offset table (an

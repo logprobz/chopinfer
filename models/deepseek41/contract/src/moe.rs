@@ -97,6 +97,51 @@ pub fn projection(
     })
 }
 
+/// One routed projection's local-scale bank as the weight plan places it
+/// raw: a row-major UE8M0 matrix of `rows` by `groups` (one scale per 32
+/// along K) per expert and operand, matrix `expert * projections +
+/// projection`. A bank the plan stores encoded expands into this layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScaleBank {
+    pub rows: u32,
+    pub groups: u32,
+    pub projections: u32,
+    pub experts: u32,
+}
+
+impl ScaleBank {
+    /// The raw bank's bytes.
+    pub fn bytes(&self) -> u64 {
+        u64::from(self.experts)
+            * u64::from(self.projections)
+            * u64::from(self.rows)
+            * u64::from(self.groups)
+    }
+}
+
+/// The raw scale bank of `set`'s `kind` projection at `ranks` ranks: the
+/// gate/up's two operands of the rank's intermediate rows over the hidden
+/// width, or the down's hidden rows over the rank's intermediate slice.
+pub fn scale_bank(
+    g: &Geometry,
+    ranks: u32,
+    set: Experts,
+    kind: GatedMlpProjection,
+) -> Result<ScaleBank, String> {
+    let gemm = projection(g, ranks, set, kind, 1)?.projection.gemm;
+    let projections = if kind == GatedMlpProjection::GateUp {
+        2
+    } else {
+        1
+    };
+    Ok(ScaleBank {
+        rows: gemm.n / projections,
+        groups: gemm.k / 32,
+        projections,
+        experts: set.count,
+    })
+}
+
 /// The shared expert's activation at `ranks` ranks: the clamped SwiGLU of
 /// its F32 gate and up columns (the rank's slice of the intermediate),
 /// rounded once to BF16 and quantized as the routed experts' inputs are.

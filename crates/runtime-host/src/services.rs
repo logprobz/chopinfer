@@ -722,8 +722,8 @@ impl Default for ServingKvPolicyV1 {
 /// Device memory per rank the serving KV pool leaves, unless the profile
 /// names its own, for what is allocated after it: the CUDA graphs captured
 /// once the pool exists (they embed its addresses) and the driver's own
-/// bookkeeping. Most models' graphs stay under 150 MiB; DeepSeek DSpark's
-/// take about 0.9 GiB, so its profiles reserve more.
+/// bookkeeping. Profiles with larger graph captures reserve their measured
+/// graph footprint plus headroom.
 pub const DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1: u64 = 1 << 30;
 
 /// One rank's memory as the serving KV pool is sized.

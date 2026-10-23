@@ -70,6 +70,13 @@ pub const BATCH_REQUEST_MAGIC_V4: &[u8; 12] = b"chopbatch-v4";
 /// The prefix of a V3 or V4 record followed by each item's explicit positions.
 pub const BATCH_REQUEST_MAGIC_V5: &[u8; 12] = b"chopbatch-v5";
 
+/// The prefix of a V3, V4 or V5 record followed by each item's draft
+/// sampling inputs (`chop.draft-sampling.v1`).
+pub const BATCH_REQUEST_MAGIC_V6: &[u8; 12] = b"chopbatch-v6";
+
+/// Bytes of one item's draft sampling record in a V6 record.
+pub const DRAFT_SAMPLING_BYTES_V1: usize = 48;
+
 /// The manifest capability that opts a bundle into V2 COW append records.
 pub const BATCH_WIRE_V2_CAPABILITY_V1: &str = "chop.batch-wire.v2";
 /// Compatibility name for the V2 prompt-row capability.
@@ -157,6 +164,17 @@ pub fn position_axes_capability_v1(manifest: &BundleManifestV1) -> bool {
         .required_capabilities()
         .iter()
         .any(|capability| capability.as_str() == POSITION_AXES_CAPABILITY_V1)
+}
+
+/// Whether the package drafts sampled requests from the host sampler's
+/// noise (`chop.draft-sampling.v1`), and so takes V6 records.
+#[must_use]
+pub fn draft_sampling_capability_v1(manifest: &BundleManifestV1) -> bool {
+    manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|capability| capability.as_str() == runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1)
 }
 
 /// What the last finalized transaction did at the ABI boundary.
@@ -1327,6 +1345,7 @@ pub struct BundleModelExecutorV1<E: BundleExecutionV1 = LoadedBundleInstanceV1> 
     state_slots: Option<crate::recurrent::StateSlotPoolV1>,
     in_place_state: bool,
     position_axes: bool,
+    draft_sampling: bool,
     offload: Option<Rc<dyn crate::offload::KvOffloadExecutorV1>>,
     offload_info: Option<runtime_engine::KvOffloadInfo>,
 }
@@ -1364,6 +1383,7 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
             state_slots: None,
             in_place_state: false,
             position_axes: false,
+            draft_sampling: false,
             offload: None,
             offload_info: None,
         }
@@ -1385,6 +1405,15 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
     #[must_use]
     pub fn with_position_axes(mut self, enabled: bool) -> Self {
         self.position_axes = enabled;
+        self
+    }
+
+    /// Sends each item's draft sampling inputs with steps that take bundle
+    /// drafts, as V6 records. Only a bundle that declares
+    /// `chop.draft-sampling.v1` may enable it.
+    #[must_use]
+    pub fn with_draft_sampling(mut self, enabled: bool) -> Self {
+        self.draft_sampling = enabled;
         self
     }
 
@@ -1715,24 +1744,38 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
         // One buffer holds the whole record: wrappers patch their lengths in
         // place, so a step's media payloads are written once and never copied.
         let mut request = Vec::new();
-        write_position_axes_v1(
+        write_draft_sampling_v1(
             &mut request,
             items,
-            self.position_axes,
-            |request, trailing| match (&self.state_slots, self.batch_wire) {
-                // Slot IDs wrap a V3 payload, so request state implies V3 records.
-                (Some(pool), _) => {
-                    write_state_slots_v1(request, items, pool, trailing, |request, trailing| {
-                        write_batch_request_v1(
+            self.draft_sampling,
+            |request, trailing| {
+                write_position_axes_v1(
+                    request,
+                    items,
+                    self.position_axes,
+                    trailing,
+                    |request, trailing| match (&self.state_slots, self.batch_wire) {
+                        // Slot IDs wrap a V3 payload, so request state implies V3 records.
+                        (Some(pool), _) => write_state_slots_v1(
                             request,
                             items,
-                            kv_plan,
-                            BatchWireCapabilityV1::V3MediaSpeculative,
+                            pool,
                             trailing,
-                        )
-                    })
-                }
-                (None, wire) => write_batch_request_v1(request, items, kv_plan, wire, trailing),
+                            |request, trailing| {
+                                write_batch_request_v1(
+                                    request,
+                                    items,
+                                    kv_plan,
+                                    BatchWireCapabilityV1::V3MediaSpeculative,
+                                    trailing,
+                                )
+                            },
+                        ),
+                        (None, wire) => {
+                            write_batch_request_v1(request, items, kv_plan, wire, trailing)
+                        }
+                    },
+                )
             },
         )?;
         let expected = items
@@ -2093,15 +2136,17 @@ pub(crate) fn write_state_slots_v1(
 /// Appends the V3 or V4 record `enclosed` writes, wrapped with each item's
 /// explicit positions: a row count, zero or the item's phase rows, then that
 /// many (T, H, W) i32 triples. A step with no explicit positions keeps its
-/// record unwrapped. `enclosed` receives the bytes appended after it.
+/// record unwrapped. `enclosed` receives the bytes appended after it, this
+/// record's and the `trailing` bytes an enclosing record appends.
 fn write_position_axes_v1(
     out: &mut Vec<u8>,
     items: &[ModelBatchItem],
     enabled: bool,
+    trailing: usize,
     enclosed: impl FnOnce(&mut Vec<u8>, usize) -> Result<(), ExecutorError>,
 ) -> Result<(), ExecutorError> {
     if items.iter().all(|item| item.position_axes().is_empty()) {
-        return enclosed(out, 0);
+        return enclosed(out, trailing);
     }
     if !enabled {
         return Err(executor_error_v1(format!(
@@ -2129,7 +2174,7 @@ fn write_position_axes_v1(
         "position batch does not fit the wire",
         |out| {
             let start = out.len();
-            enclosed(out, own)?;
+            enclosed(out, trailing + own)?;
             let record = &out[start..];
             if !record.starts_with(BATCH_REQUEST_MAGIC_V3)
                 && !record.starts_with(BATCH_REQUEST_MAGIC_V4)
@@ -2148,6 +2193,63 @@ fn write_position_axes_v1(
         for axis in axes.iter().flatten() {
             out.extend_from_slice(&axis.to_le_bytes());
         }
+    }
+    Ok(())
+}
+
+/// Appends the V3, V4 or V5 record `enclosed` writes, wrapped with each
+/// item's draft sampling inputs, when `enabled` and an item takes bundle
+/// drafts: a count equal to the items, then one
+/// [`DRAFT_SAMPLING_BYTES_V1`]-byte record per item, in item order: the
+/// request's seed, the generated index of the item's first sampled row (its
+/// Philox counter), the temperature, top-p and min-p as f64 bits, top-k,
+/// and flags (bit 0: the target also applies a logit bias, a penalty, an
+/// EOS mask or a constraint mask). An item without sampling work, a greedy
+/// one included, sends zero seed, index and temperature with unit top-p.
+/// Other steps keep their record unwrapped. `enclosed` receives the bytes
+/// appended after it.
+fn write_draft_sampling_v1(
+    out: &mut Vec<u8>,
+    items: &[ModelBatchItem],
+    enabled: bool,
+    enclosed: impl FnOnce(&mut Vec<u8>, usize) -> Result<(), ExecutorError>,
+) -> Result<(), ExecutorError> {
+    if !enabled
+        || !items.iter().any(|item| {
+            item.draft()
+                .is_some_and(|draft| draft.source() == DraftSource::Bundle)
+        })
+    {
+        return enclosed(out, 0);
+    }
+    let own = 4 + DRAFT_SAMPLING_BYTES_V1 * items.len();
+    write_framed_v1(
+        out,
+        BATCH_REQUEST_MAGIC_V6,
+        "draft sampling batch does not fit the wire",
+        |out| enclosed(out, own),
+    )?;
+    write_wire_count_v1(out, items.len(), "draft sampling item")?;
+    for item in items {
+        let Some(work) = item.sampling() else {
+            out.extend_from_slice(&[0; 24]);
+            out.extend_from_slice(&1.0_f64.to_le_bytes());
+            out.extend_from_slice(&[0; 16]);
+            continue;
+        };
+        let parameters = &work.parameters;
+        let processed = !work.history_independent()
+            || !parameters.logit_bias().is_empty()
+            || work.emitted_tokens < parameters.minimum_new_tokens();
+        let top_k = u32::try_from(parameters.top_k())
+            .map_err(|_| executor_error_v1("top-k does not fit the wire".to_owned()))?;
+        out.extend_from_slice(&work.state.seed().to_le_bytes());
+        out.extend_from_slice(&work.state.generated().to_le_bytes());
+        out.extend_from_slice(&parameters.temperature().to_le_bytes());
+        out.extend_from_slice(&parameters.top_p().to_le_bytes());
+        out.extend_from_slice(&parameters.min_p().to_le_bytes());
+        out.extend_from_slice(&top_k.to_le_bytes());
+        out.extend_from_slice(&u32::from(processed).to_le_bytes());
     }
     Ok(())
 }
@@ -4526,6 +4628,122 @@ mod tests {
                 .message()
                 .contains("anchor items require batch wire V3")
         );
+    }
+
+    /// Each item's draft sampling record follows the enclosed record in
+    /// item order, read back by the bundle codec: a sampled item's seed,
+    /// the Philox counter of its first sampled row and its filters, and
+    /// the processed flag for a logit bias; an item without sampling work
+    /// sends the greedy record. Steps without bundle drafts, and hosts
+    /// whose bundle does not declare the capability, keep the record.
+    #[test]
+    fn bundle_draft_steps_carry_each_items_draft_sampling_record_in_v6() {
+        use runtime_bundle_sdk::{DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1};
+        let geometry = KvGeometry::new(4, 8).unwrap();
+        let mut pool = KvPool::new(geometry, 4).unwrap();
+        let sequences = [0, 1, 2].map(|_| pool.create_sequence(8).unwrap());
+        let plan = pool
+            .prepare_append_batch(&[(sequences[0], 4), (sequences[1], 1), (sequences[2], 1)])
+            .unwrap();
+        let work = |temperature: f64, bias: bool| {
+            let parameters = SamplingParameters::new(temperature)
+                .unwrap()
+                .with_top_p(0.9)
+                .unwrap()
+                .with_top_k(40)
+                .unwrap();
+            let parameters = if bias {
+                parameters
+                    .with_logit_bias(vec![runtime_sampling::LogitBias::new(2, 0.5).unwrap()])
+                    .unwrap()
+            } else {
+                parameters
+            };
+            SamplingWork {
+                parameters,
+                state: SamplingState::new(0x0102_0304_0506_0708).after(41),
+                history: vec![1].into(),
+                emitted_tokens: 41,
+                stop_ids: vec![3],
+                constraint: None,
+            }
+        };
+        let verify = ModelBatchItem::new(
+            RequestId::new(1),
+            BatchPhase::Verify { draft_tokens: 3 },
+            vec![7],
+            true,
+        )
+        .with_sampling(work(0.8, false))
+        .with_draft(DraftWork::new(3, DraftSource::Bundle));
+        let biased = ModelBatchItem::new(RequestId::new(2), BatchPhase::Decode, vec![8], true)
+            .with_sampling(work(1.0, true));
+        let unsampled = ModelBatchItem::new(RequestId::new(3), BatchPhase::Decode, vec![9], true);
+        let items = vec![verify, biased, unsampled];
+        let wire = super::BatchWireCapabilityV1::V3Speculative;
+        let write = |items: &[ModelBatchItem], plan: &PreparedAppendBatch, enabled| {
+            let mut out = Vec::new();
+            super::write_draft_sampling_v1(&mut out, items, enabled, |out, trailing| {
+                super::write_batch_request_v1(out, items, plan, wire, trailing)
+            })
+            .unwrap();
+            out
+        };
+        let enclosed = super::encode_batch_request_with_capability_v1(&items, &plan, wire).unwrap();
+        let bytes = write(&items, &plan, true);
+        assert!(bytes.starts_with(super::BATCH_REQUEST_MAGIC_V6));
+        assert_eq!(bytes[16..16 + enclosed.len()], enclosed[..]);
+        assert_eq!(
+            bytes.len(),
+            16 + enclosed.len() + 4 + 3 * super::DRAFT_SAMPLING_BYTES_V1
+        );
+        let decoded = runtime_bundle_sdk::BatchCodecV1::decode(&bytes).unwrap();
+        assert_eq!(
+            decoded.draft_sampling().unwrap(),
+            [
+                DraftSamplingV1::new(0x0102_0304_0506_0708, 41, 0.8, 0.9, 0.0, 40, 0).unwrap(),
+                DraftSamplingV1::new(
+                    0x0102_0304_0506_0708,
+                    41,
+                    1.0,
+                    0.9,
+                    0.0,
+                    40,
+                    DRAFT_SAMPLING_PROCESSED_V1
+                )
+                .unwrap(),
+                DraftSamplingV1::GREEDY,
+            ]
+        );
+        assert_eq!(
+            runtime_bundle_sdk::BatchCodecV1::decode(&enclosed).unwrap(),
+            decoded.with_draft_sampling_cleared()
+        );
+        assert_eq!(write(&items, &plan, false), enclosed);
+        let mut pool = KvPool::new(geometry, 4).unwrap();
+        let decodes = [0, 1].map(|_| pool.create_sequence(8).unwrap());
+        let plan = pool
+            .prepare_append_batch(&[(decodes[0], 1), (decodes[1], 1)])
+            .unwrap();
+        assert_eq!(
+            write(&items[1..], &plan, true),
+            super::encode_batch_request_with_capability_v1(&items[1..], &plan, wire).unwrap()
+        );
+    }
+
+    trait ClearedForTest {
+        fn with_draft_sampling_cleared(self) -> Self;
+    }
+
+    impl ClearedForTest for runtime_bundle_sdk::BatchRequestV1 {
+        fn with_draft_sampling_cleared(self) -> Self {
+            runtime_bundle_sdk::BatchRequestV1::new(
+                self.version(),
+                self.items().to_vec(),
+                self.appends().to_vec(),
+            )
+            .with_media(self.media().clone())
+        }
     }
 
     /// The V4 wrapper as it was before records were written in place: it

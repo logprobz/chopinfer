@@ -3206,6 +3206,9 @@ impl ServedEngineV1 {
         .with_position_axes(crate::executor::position_axes_capability_v1(
             loaded.manifest(),
         ))
+        .with_draft_sampling(crate::executor::draft_sampling_capability_v1(
+            loaded.manifest(),
+        ))
         .with_row_buckets(if self.speculation.is_some() {
             loaded
                 .manifest()
@@ -5661,6 +5664,9 @@ impl ArgumentsV1 {
             .chain(std::iter::once(crate::executor::MEDIA_INPUTS_CAPABILITY_V1))
             .chain(std::iter::once(
                 crate::executor::POSITION_AXES_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
+                runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1,
             ))
             .chain(std::iter::once(crate::offload::KV_OFFLOAD_CAPABILITY_V1))
             .chain(std::iter::once(
@@ -8582,6 +8588,7 @@ mod tests {
                 runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1,
                 runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
                 runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
+                runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1,
                 runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
@@ -8630,6 +8637,7 @@ mod tests {
                     runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
                 )
                 .unwrap(),
+                &BundleOpaqueId::new(runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1)

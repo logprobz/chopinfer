@@ -1,5 +1,7 @@
 #[path = "support/packed_row_readers.rs"]
 mod support;
+#[path = "support/timing_probe.rs"]
+mod timing_probe;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_harness::packed_fold;
 use kernel_lab_families::mxfp8_fold_reuse_packed as family;
@@ -197,7 +199,7 @@ fn packed_comparison_detects_a_moved_strip_on_gpu() {
 #[test]
 #[ignore = "requires an idle GPU and the packed family cubins"]
 fn packed_timing_stays_within_three_percent_on_gpu() {
-    kernel_harness::gpu_test(512 << 20, |session| {
+    timing_probe::timing_test(512 << 20, |session| {
         let module = support::load(session, CUBINS, family::CUBIN)?;
         let function = |s: &str| module.function(s).map_err(|e| e.to_string());
         for entry in family::entries()

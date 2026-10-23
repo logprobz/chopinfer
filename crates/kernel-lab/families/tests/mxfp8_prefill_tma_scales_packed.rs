@@ -4,6 +4,8 @@
 //! negative controls that move one strip of the packed codes.
 
 mod prefill_packed;
+#[path = "support/timing_probe.rs"]
+mod timing_probe;
 
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_harness::LabResult;
@@ -147,7 +149,7 @@ fn packed_tma_scales_comparison_sees_a_moved_strip_on_gpu() {
 #[test]
 #[ignore = "GPU timing"]
 fn packed_tma_scales_are_no_slower_on_gpu() {
-    kernel_harness::gpu_test(1 << 30, |session| {
+    timing_probe::timing_test(1 << 30, |session| {
         let module = load(session, CUBINS, family::CUBIN)?;
         let mut ratios = Vec::new();
         for entry in family::timing_entries() {

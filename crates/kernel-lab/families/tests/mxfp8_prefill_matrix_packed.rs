@@ -6,6 +6,8 @@
 
 #[path = "packed_staged/support.rs"]
 mod support;
+#[path = "support/timing_probe.rs"]
+mod timing_probe;
 
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::contract::DType;
@@ -248,7 +250,7 @@ fn packed_matrix_comparison_sees_a_moved_strip_on_gpu() {
 #[test]
 #[ignore = "timing: run on an idle GPU"]
 fn packed_matrix_tiles_time_like_row_major_on_gpu() {
-    kernel_harness::gpu_test(1 << 30, |session| {
+    timing_probe::timing_test(1 << 30, |session| {
         let module = support::load(session, CUBINS, family::CUBIN)?;
         let entries = matrix::packed_lab_entries();
         let mut slow = Vec::new();

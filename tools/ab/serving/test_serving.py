@@ -89,7 +89,8 @@ def models(root):
                                           'bin = ["chopinfer-model-stub", "stub-tool"]\n')
     profiles = {name: dict(bundle_id='stub.v1', topology='stub-tp1', tensor_parallel=1, max_sequences=32,
                            kv_cache_dtype='fp8', prefix_cache=True, max_batch_tokens=8192, prefill_chunk_tokens=2048,
-                           gpu_memory_utilization=0.9, model_options={'checkpoint.quantization_layout': 'stub-fp8'},
+                           gpu_memory_utilization=0.9, graph_memory_reserve_mib=1280,
+                           model_options={'checkpoint.quantization_layout': 'stub-fp8'},
                            speculation=dict(drafter=drafter, tokens=tokens, mode='adaptive', draft_cost='per-token'))
                 for name, drafter, tokens in [('tp1-ar', 'none', 0), ('tp1-spec', 'mtp', 3)]}
     write(directory / 'profiles.json', dict(schema='chopinfer-serve-profiles-v2', model='stub', profiles=profiles))
@@ -234,7 +235,8 @@ class ConfigurationTests(Base):
         loaded, phases, preflight = self.load(copy.deepcopy(c))
         self.assertEqual(loaded['serve_args'], [
             '--tensor-parallel-size', '1', '--max-sequences', '32', '--max-batch-tokens', '8192',
-            '--prefill-chunk-tokens', '2048', '--gpu-memory-utilization', '0.9', '--kv-cache-dtype', 'fp8',
+            '--prefill-chunk-tokens', '2048', '--gpu-memory-utilization', '0.9',
+            '--graph-memory-reserve-mib', '1280', '--kv-cache-dtype', 'fp8',
             '--prefix-cache', 'on', '--draft-cost', 'per-token',
             '--model-option', 'checkpoint.quantization_layout=stub-fp8'])
         self.assertEqual(loaded['expect'], dict(

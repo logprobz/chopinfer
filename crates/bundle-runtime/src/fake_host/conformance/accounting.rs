@@ -33,10 +33,11 @@ impl Accounting {
     }
 
     /// Device memory acquired after the host sized the serving KV pool would
-    /// come out of the host's fixed reserve, which holds the CUDA graphs
-    /// captured once the pool exists (runtime-host
-    /// `SERVING_KV_RESERVE_BYTES_V1`). Every buffer, request state, rank arena
-    /// and physical KV is acquired before the pool, at create or serving.
+    /// come out of the host's graph memory reserve, which holds the CUDA
+    /// graphs captured once the pool exists (runtime-host
+    /// `ServingKvPolicyV1::graph_memory_reserve_bytes`). Every buffer,
+    /// request state, rank arena and physical KV is acquired before the
+    /// pool, at create or serving.
     pub fn assert_device_memory_before_serving_kv(&self) {
         let Some(at) = self.serving_kv_at.get() else {
             return;

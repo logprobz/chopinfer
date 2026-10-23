@@ -683,8 +683,8 @@ pub struct HostInstanceConfigV1 {
 }
 
 /// How the host sizes the serving KV pool: from the memory each rank has
-/// left once the bundle's own allocations are resident, less a fixed 1 GiB
-/// reserve for the CUDA graphs captured after the pool exists.
+/// left once the bundle's own allocations are resident, less a reserve for
+/// the CUDA graphs captured after the pool exists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServingKvPolicyV1 {
     /// Authenticated frontend vocabulary; reserve sampler buffers before KV.
@@ -700,6 +700,9 @@ pub struct ServingKvPolicyV1 {
     /// (`--gpu-memory-utilization`). The CUDA context and loaded modules are
     /// the driver's and come on top.
     pub utilization_millionths: u32,
+    /// Per-rank memory kept out of the pool for the CUDA graphs captured
+    /// after it (`--graph-memory-reserve-mib`).
+    pub graph_memory_reserve_bytes: u64,
     pub maximum_pages: Option<u64>,
 }
 
@@ -710,16 +713,18 @@ impl Default for ServingKvPolicyV1 {
             maximum_context_tokens: None,
             state_reserved_bytes: 0,
             utilization_millionths: 1_000_000,
+            graph_memory_reserve_bytes: DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1,
             maximum_pages: None,
         }
     }
 }
 
-/// Device memory per rank the serving KV pool leaves for what is allocated
-/// after it: the CUDA graphs captured once the pool exists (they embed its
-/// addresses) and the driver's own bookkeeping. Measured graph peaks reach
-/// about 0.7 GiB (DeepSeek DSpark); most stay under 150 MiB.
-pub const SERVING_KV_RESERVE_BYTES_V1: u64 = 1 << 30;
+/// Device memory per rank the serving KV pool leaves, unless the profile
+/// names its own, for what is allocated after it: the CUDA graphs captured
+/// once the pool exists (they embed its addresses) and the driver's own
+/// bookkeeping. Most models' graphs stay under 150 MiB; DeepSeek DSpark's
+/// take about 0.9 GiB, so its profiles reserve more.
+pub const DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1: u64 = 1 << 30;
 
 /// One rank's memory as the serving KV pool is sized.
 struct ServingKvRoomV1 {
@@ -3664,13 +3669,16 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     .reserve_sampling_workspace(context, vocabulary)?;
             }
             let memory = serving_kv_room_v1(&state.device, context, policy)?;
-            let held = SERVING_KV_RESERVE_BYTES_V1.saturating_add(policy.state_reserved_bytes);
+            let held = policy
+                .graph_memory_reserve_bytes
+                .saturating_add(policy.state_reserved_bytes);
             let Some(rank_available) = memory.room.checked_sub(held) else {
                 eprintln!(
                     "host acquire_serving_kv: rank {rank} {}; it leaves less than the \
-                     {SERVING_KV_RESERVE_BYTES_V1}-byte reserve and {} bytes of request state; \
+                     {}-byte graph memory reserve and {} bytes of request state; \
                      no serving KV pool",
                     memory.describe(),
+                    policy.graph_memory_reserve_bytes,
                     policy.state_reserved_bytes
                 );
                 if let Some(minimum) =
@@ -3754,7 +3762,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 total_bytes: room.total,
                 own_bytes: room.own,
                 kv_bytes,
-                reserve_bytes: SERVING_KV_RESERVE_BYTES_V1,
+                reserve_bytes: policy.graph_memory_reserve_bytes,
                 free_after_sizing_bytes: free,
                 free_bytes: free,
                 free_low_bytes: free,

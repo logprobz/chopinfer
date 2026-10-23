@@ -127,15 +127,26 @@ fn serving_table_on(
     HostServicesTableV1,
     Rc<HostServicesV1Backend<FakeHostDeviceV1>>,
 ) {
-    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1]).unwrap())
-        .with_kv_contract(DeclaredKvContractV1::new(LAYOUT_ID.to_vec(), page_layout()))
-        .with_serving_kv(ServingKvPolicyV1 {
-            sampling_vocabulary: None,
-            maximum_context_tokens: None,
-            state_reserved_bytes: 0,
+    serving_table_with(
+        device,
+        ServingKvPolicyV1 {
             utilization_millionths,
             maximum_pages,
-        });
+            ..Default::default()
+        },
+    )
+}
+
+fn serving_table_with(
+    device: FakeHostDeviceV1,
+    policy: ServingKvPolicyV1,
+) -> (
+    HostServicesTableV1,
+    Rc<HostServicesV1Backend<FakeHostDeviceV1>>,
+) {
+    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1]).unwrap())
+        .with_kv_contract(DeclaredKvContractV1::new(LAYOUT_ID.to_vec(), page_layout()))
+        .with_serving_kv(policy);
     let backend = Rc::new(HostServicesV1Backend::new(device, config));
     (HostServicesTableV1::new(Rc::clone(&backend)), backend)
 }
@@ -622,6 +633,34 @@ fn serving_pool_below_full_utilization_caps_own_allocations_at_its_share() {
         utilization_pages(1_000_000, 30 * MIB),
         (1054 * MIB - 1024 * MIB) / PAGE_BYTES
     );
+}
+
+#[test]
+fn serving_pool_leaves_the_policys_graph_memory_reserve() {
+    // A 1,040 MiB reserve leaves rank 1, which holds 4 MiB of the 1,088 MiB
+    // device, 44 MiB for pages, and each rank's sizing reports that reserve.
+    let mut device = FakeHostDeviceV1::new();
+    device.set_device_memory_bytes(1088 * MIB);
+    let (table, backend) = serving_table_with(
+        device,
+        ServingKvPolicyV1 {
+            graph_memory_reserve_bytes: 1040 * MIB,
+            ..Default::default()
+        },
+    );
+    let host = table.caller();
+    let streams = serving_ranks(host);
+    let rank_one = host.select_context(1, 1).unwrap();
+    let pool_one = host.select_memory_pool(rank_one).unwrap();
+    host.allocate_device_buffer(pool_one, streams[1], 4 * MIB, 64)
+        .unwrap();
+    assert_eq!(
+        host.acquire_serving_kv(LAYOUT_ID).unwrap(),
+        44 * MIB / PAGE_BYTES
+    );
+    let ranks = backend.device_memory();
+    assert_eq!(ranks.len(), 2);
+    assert!(ranks.iter().all(|rank| rank.reserve_bytes == 1040 * MIB));
 }
 
 #[test]
@@ -2344,6 +2383,7 @@ fn recurrent_reservations_reduce_kv_capacity_and_refuse_overcommit() {
                 state_reserved_bytes: reservation,
                 utilization_millionths: 1_000_000,
                 maximum_pages: None,
+                ..Default::default()
             });
         let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
         let table = HostServicesTableV1::new(backend);
@@ -2463,6 +2503,7 @@ fn serving_pages_beside_state(
             state_reserved_bytes: slots.reserved_bytes_per_rank(),
             utilization_millionths: 1_000_000,
             maximum_pages,
+            ..Default::default()
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
     let table = HostServicesTableV1::new(backend);
@@ -2534,6 +2575,7 @@ fn sampler_workspace_is_reserved_before_kv_and_reused() {
             state_reserved_bytes: 0,
             utilization_millionths: 1_000_000,
             maximum_pages: None,
+            ..Default::default()
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
     let table = HostServicesTableV1::new(backend.clone());
@@ -2557,6 +2599,7 @@ fn sampler_capacity_failure_refuses_startup_before_any_kv_pool() {
             state_reserved_bytes: 0,
             utilization_millionths: 1_000_000,
             maximum_pages: Some(1),
+            ..Default::default()
         });
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
     let table = HostServicesTableV1::new(backend.clone());
@@ -2608,6 +2651,7 @@ fn host_placed_views_leave_their_bytes_to_the_serving_kv_pool() {
                 state_reserved_bytes: 0,
                 utilization_millionths: 1_000_000,
                 maximum_pages: None,
+                ..Default::default()
             });
         let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
         let table = HostServicesTableV1::new(backend);

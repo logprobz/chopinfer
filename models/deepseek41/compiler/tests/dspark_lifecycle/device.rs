@@ -135,6 +135,7 @@ impl Fixture {
                 state_reserved_bytes: 0,
                 utilization_millionths: 1_000_000,
                 maximum_pages: Some(DEVICE_PAGES),
+                ..Default::default()
             }),
             speculation,
             Some(4),

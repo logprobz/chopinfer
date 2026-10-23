@@ -82,6 +82,7 @@ fn run_child(package: &Path, checkpoint: &Path) {
                 state_reserved_bytes: 0,
                 utilization_millionths: 1_000_000,
                 maximum_pages: None,
+                ..Default::default()
             });
             let (backend, mut instance) = loaded
                 .create_instance_with_serving_options(

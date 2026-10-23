@@ -43,7 +43,8 @@ def facts(model, models=MODELS):
 # options), so the runner passes a profile's options explicitly.
 OPTIONS = [('tensor_parallel', '--tensor-parallel-size'), ('max_sequences', '--max-sequences'),
            ('max_batch_tokens', '--max-batch-tokens'), ('prefill_chunk_tokens', '--prefill-chunk-tokens'),
-           ('gpu_memory_utilization', '--gpu-memory-utilization'), ('kv_cache_dtype', '--kv-cache-dtype'),
+           ('gpu_memory_utilization', '--gpu-memory-utilization'),
+           ('graph_memory_reserve_mib', '--graph-memory-reserve-mib'), ('kv_cache_dtype', '--kv-cache-dtype'),
            ('prefix_cache', '--prefix-cache'), ('queue_depth', '--queue-depth'),
            ('context_parallel_size', '--context-parallel-size'), ('prefill_budget', '--prefill-budget'),
            ('decode_tbt_target_ms', '--decode-tbt-target-ms')]

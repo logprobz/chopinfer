@@ -305,23 +305,64 @@ fn served(line: &str, rows: u32) -> Option<(&'static str, Kind)> {
         Some(fold) => (fold, Kind::Admit),
         None => (s, Kind::Fold),
     };
-    PROJECTIONS.into_iter().find_map(|id| {
-        let served = if id == "attention.q-b" {
-            crate::sm120::fold_local_rows::served(id, rows).map(|e| e.symbol())
-        } else {
-            crate::sm120::fold_cluster::served(id, rows).map(|e| e.symbol())
-        };
-        (served.as_deref() == Some(fold)).then_some((id, kind))
+    folds()
+        .iter()
+        .find(|f| f.rows == rows && f.served.as_deref() == Some(fold))
+        .map(|f| (f.id, kind))
+}
+
+/// A projection's status fold at a bucket, and the served cluster or
+/// row-local fold it replaces at the buckets with their own tile.
+struct Fold {
+    id: &'static str,
+    rows: u32,
+    status: String,
+    workspace: Option<u64>,
+    served: Option<String>,
+}
+
+/// Every projection's status fold at every bucket, built once: each entry
+/// builds fold catalogs, which the audits would otherwise rebuild for every
+/// changed line.
+fn folds() -> &'static [Fold] {
+    static TABLE: std::sync::OnceLock<Vec<Fold>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        PROJECTIONS
+            .into_iter()
+            .flat_map(|id| {
+                fold_fused::ROWS.into_iter().map(move |rows| Fold {
+                    id,
+                    rows,
+                    status: if id == "attention.q-b" {
+                        fold_fused::wide(rows).unwrap().symbol()
+                    } else {
+                        fold_fused::fused(id, rows).unwrap().symbol()
+                    },
+                    workspace: fold_fused::fused(id, rows).map(|e| e.workspace()),
+                    served: if prefetched(rows) {
+                        None
+                    } else if id == "attention.q-b" {
+                        crate::sm120::fold_local_rows::served(id, rows).map(|e| e.symbol())
+                    } else {
+                        crate::sm120::fold_cluster::served(id, rows).map(|e| e.symbol())
+                    },
+                })
+            })
+            .collect()
     })
+}
+
+/// The status fold of `id` at `rows` rows.
+fn status_entry(id: &str, rows: u32) -> &'static Fold {
+    folds()
+        .iter()
+        .find(|f| f.id == id && f.rows == rows)
+        .unwrap_or_else(|| panic!("no status fold of {id} at {rows} rows"))
 }
 
 /// The status fold symbol of `id` at `rows` rows.
 fn status_fold(id: &str, rows: u32) -> String {
-    if id == "attention.q-b" {
-        fold_fused::wide(rows).unwrap().symbol()
-    } else {
-        fold_fused::fused(id, rows).unwrap().symbol()
-    }
+    status_entry(id, rows).status.clone()
 }
 
 /// WO_a's served input quantizer, and WO_b's, which WO_a's merge replaces.
@@ -550,7 +591,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         // bytes; below 16 rows it takes its own slabs at the prefetch fold's
         // workspace offset.
         let slab_bytes = if prefetched(rows) {
-            fold_fused::fused(id, rows).map(|e| e.workspace())
+            status_entry(id, rows).workspace
         } else {
             workspace.2.checked_sub(256)
         };

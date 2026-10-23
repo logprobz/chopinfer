@@ -1,12 +1,25 @@
 #pragma once
 #include "mxfp8_prefill.cuh"
 #include "../common/ptx_matrix.cuh"
+#include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_prefill_matrix {
 // Matrix loads preserve the scalar fragment lane mapping. Every output
 // retains four native k32 instructions from zero, then one ordered F32 fold.
 // A task owns this arena until it drains every outstanding async copy.
 // Its virtual tile index is independent of the entry wrapper's grid.
+//
+// PackedWeights reads weight codes stored as mxfp8-fold-packed-8x128-v1
+// (mxfp8_fold_packed.cuh). A strip's fold is contiguous: each weight row's
+// segment (128 bytes, or 64 in a final 64-K fold) is staged where its
+// row-major chunks went, and the chunks past K stay zero-filled. A staged
+// 16-byte row piece then holds one lane's words, not a row of the B
+// fragment, so no ldmatrix yields the fragment: each lane takes its B words
+// for two steps from one 16-byte shared load instead (lane l's words of a
+// row are bytes [32l, 32l + 32) of its segment, [16l, 16l + 16) in a half
+// segment). With the chunk swizzle every quarter warp's loads hit distinct
+// banks, except in a final half fold, where its two rows share them. Only
+// the weight-code address changes.
 template<int Rows, int Stages> struct Layout {
   static_assert(Rows == 32 || Rows == 64 || Rows == 128);
   static_assert(Stages >= 2 && Stages <= 4);
@@ -38,7 +51,8 @@ template<int Pending> __device__ __forceinline__ void wait() {
   asm volatile("cp.async.wait_group %0;" :: "n"(Pending):"memory");
 }
 
-template<int N,int K,int Groups,int RowStride,int GroupStride,int Rows,int Stages>
+template<int N,int K,int Groups,int RowStride,int GroupStride,int Rows,int Stages,
+    bool PackedWeights=false>
 __device__ __forceinline__ void load(uint8_t* stage,int fold,uint3 tile,
     const uint8_t* input,const uint8_t* weights,const uint8_t* as,const uint8_t* ws,
     const uint32_t* admitted_rows) {
@@ -50,6 +64,8 @@ __device__ __forceinline__ void load(uint8_t* stage,int fold,uint3 tile,
     const uint32_t logical=activation ? row0+row : col0+row-Rows;
     const bool valid=k<K && (activation ? admitted_rows[row]!=0 : logical<N);
     const uint64_t at=activation ? uint64_t(logical)*RowStride+uint64_t(group)*GroupStride+k
+        : PackedWeights ? mxfp8_fold_packed::fold_offset((group*N+logical)/8,fold,K)
+            +(logical%8)*(mxfp8_fold_packed::fold_bytes(fold,K)/8)+(index%8)*16
         : (uint64_t(group)*N+logical)*K+k;
     const uint8_t* base=activation ? input : weights;
     copy16(stage+offset(row,(index%8)*16),base+(valid ? at : 0),valid);
@@ -78,7 +94,7 @@ __device__ __forceinline__ void load(uint8_t* stage,int fold,uint3 tile,
 }
 
 template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,
-    int Rows,int Stages,bool OmitFirst=false>
+    int Rows,int Stages,bool OmitFirst=false,bool PackedWeights=false>
 __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
     const uint8_t* input,const uint8_t* as,const uint8_t* weights,const uint8_t* ws,
     void* output,const uint32_t* status,uint64_t status_offset) {
@@ -86,6 +102,7 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
   static_assert(K>0 && K%32==0 && Groups>0);
   static_assert(GroupStride>=K && RowStride>=(Groups-1)*GroupStride+K);
   static_assert(RowStride%32==0 && GroupStride%32==0);
+  static_assert(!PackedWeights || (N%8==0 && K%64==0));
   auto* active=reinterpret_cast<uint32_t*>(arena+Stages*L::stage_bytes);
   const uint32_t row0=tile.y*Rows,col0=tile.x*128;
   if(threadIdx.x<Rows) {
@@ -95,7 +112,7 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
   __syncthreads();
 #pragma unroll
   for(int s=0;s<Stages;++s)
-    load<N,K,Groups,RowStride,GroupStride,Rows,Stages>(arena+s*L::stage_bytes,s,tile,input,weights,as,ws,active);
+    load<N,K,Groups,RowStride,GroupStride,Rows,Stages,PackedWeights>(arena+s*L::stage_bytes,s,tile,input,weights,as,ws,active);
   const int warp=threadIdx.x/32,lane=threadIdx.x%32;
   const int wm=warp/4,wn=warp%4,quad=lane/4,lane4=lane%4;
   ptx::D4 total[L::fragments][4]{};
@@ -109,6 +126,8 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
     const uint8_t* codes=arena+slot*L::stage_bytes;
     const auto* scales=reinterpret_cast<const uint32_t*>(codes+L::code_bytes);
     ptx::D4 partial[L::fragments][4]{};
+    [[maybe_unused]] uint4 piece[4];
+    [[maybe_unused]] const bool half=K%128!=0 && fold==K/128;
 #pragma unroll
     for(int step=0;step<4;++step) {
       ptx::A4 a[L::fragments];ptx::B2 b[4];
@@ -124,9 +143,20 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
 #pragma unroll
       for(int n=0;n<4;++n) {
         const int row=Rows+wn*32+n*8+quad;
-        const int matrix_row=Rows+wn*32+n*8+(lane&7);
-        const int matrix_k=step*32+((lane>>3)&1)*16;
-        ptx::ldmatrix_b16<2,false>(b[n].v,codes+offset(matrix_row,matrix_k));
+        if constexpr(PackedWeights) {
+          // A half fold's steps 2 and 3 read K past its end: the zeros
+          // row-major staging leaves there.
+          const uint32_t at=mxfp8_fold_packed::segment_word(0,step*32+lane4*4,half);
+          if(step%2==0)
+            piece[n]=half && step>=2 ? make_uint4(0,0,0,0)
+                : *reinterpret_cast<const uint4*>(codes+offset(row,at/16*16));
+          b[n].v[0]=step%2 ? piece[n].z : piece[n].x;
+          b[n].v[1]=step%2 ? piece[n].w : piece[n].y;
+        } else {
+          const int matrix_row=Rows+wn*32+n*8+(lane&7);
+          const int matrix_k=step*32+((lane>>3)&1)*16;
+          ptx::ldmatrix_b16<2,false>(b[n].v,codes+offset(matrix_row,matrix_k));
+        }
         sb[n]=(scales[row]>>(step*8))&255;
       }
       if(!OmitFirst || fold!=0) {
@@ -139,7 +169,7 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
     }
     __syncthreads();
     if(fold+Stages<(K+127)/128)
-      load<N,K,Groups,RowStride,GroupStride,Rows,Stages>(arena+slot*L::stage_bytes,fold+Stages,tile,input,weights,as,ws,active);
+      load<N,K,Groups,RowStride,GroupStride,Rows,Stages,PackedWeights>(arena+slot*L::stage_bytes,fold+Stages,tile,input,weights,as,ws,active);
 #pragma unroll
     for(int m=0;m<L::fragments;++m)
 #pragma unroll
@@ -165,7 +195,8 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
       }
 }
 
-template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,int Rows,int Stages,bool OmitFirst=false>
+template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,int Rows,int Stages,bool OmitFirst=false,
+    bool PackedWeights=false>
 __device__ void run(const uint8_t* input,const uint8_t* as,const uint8_t* weights,const uint8_t* ws,
     void* output,const uint32_t* live_rows,const uint32_t* status,uint64_t status_offset,uint32_t rows) {
   extern __shared__ __align__(16) uint8_t arena[];
@@ -174,6 +205,6 @@ __device__ void run(const uint8_t* input,const uint8_t* as,const uint8_t* weight
   ptx::griddep_wait();
   const uint32_t live=min(rows,*live_rows);
   if(blockIdx.y*Rows>=live) return;
-  task<N,K,Groups,RowStride,GroupStride,F32Output,Rows,Stages,OmitFirst>(blockIdx,arena,live,input,as,weights,ws,output,status,status_offset);
+  task<N,K,Groups,RowStride,GroupStride,F32Output,Rows,Stages,OmitFirst,PackedWeights>(blockIdx,arena,live,input,as,weights,ws,output,status,status_offset);
 }
 } // namespace chop::gemm::mxfp8_prefill_matrix

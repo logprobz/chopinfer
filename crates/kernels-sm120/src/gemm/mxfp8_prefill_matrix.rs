@@ -1,5 +1,5 @@
 //! Opt-in native FP8 tiles with exact-size plans and caller-owned row status.
-use super::{mxfp8_fold, mxfp8_prefill};
+use super::{mxfp8_fold, mxfp8_fold_packed, mxfp8_prefill};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::backend::{Counts, Launch, OpInfo, Prepared, PreparedOp, View};
 use kernel_core::contract::{Argument, ArgumentList, DType, LaunchPlan, Refusal};
@@ -60,31 +60,47 @@ impl Entry {
         let mut admit = mxfp8_prefill::specs(&self.base)?.remove(0);
         admit.symbol = self.admission_symbol();
         let mut result = vec![admit];
-        for tile in [self.tile_rows] {
-            for omit in [false, true] {
-                let mut spec = self.base.spec();
-                spec.symbol = self.symbol(tile);
-                if omit {
-                    spec.symbol.push_str("_omit_first_v1");
-                }
-                let q = self.base.query;
-                spec.body = format!(
-                    "chop::gemm::mxfp8_prefill_matrix::run<{},{},{},{},{},{},{tile},{},{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
-                    q.n,
-                    q.k,
-                    q.groups,
-                    q.activation_row_stride,
-                    q.activation_group_stride,
-                    q.output == DType::F32,
-                    self.stages,
-                    omit
-                );
-                spec.max_threads = if tile >= 64 { 256 } else { 128 };
-                spec.min_blocks = 1;
-                result.push(spec);
-            }
+        for omit in [false, true] {
+            result.push(self.compute_spec(omit, false));
         }
         Ok(result)
+    }
+    /// The compute entry reading `mxfp8-fold-packed-8x128-v1` weight codes
+    /// (`gemm::mxfp8_fold_packed`): the same parameters, plan, dynamic shared
+    /// memory and arithmetic. A prepared op moves to packed codes by renaming
+    /// its compute launch; the admission reads no weights.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        let q = self.base.query;
+        mxfp8_fold_packed::check(q.groups, q.n, q.k)?;
+        self.plan(1, self.tile_rows)?;
+        Ok(self.compute_spec(false, true))
+    }
+    fn compute_spec(&self, omit: bool, packed: bool) -> EntrySpec {
+        let tile = self.tile_rows;
+        let mut spec = self.base.spec();
+        spec.symbol = self.symbol(tile);
+        if omit {
+            spec.symbol.push_str("_omit_first_v1");
+        }
+        if packed {
+            spec.symbol = mxfp8_fold_packed::symbol(&spec.symbol);
+        }
+        let q = self.base.query;
+        spec.body = format!(
+            "chop::gemm::mxfp8_prefill_matrix::run<{},{},{},{},{},{},{tile},{},{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
+            q.n,
+            q.k,
+            q.groups,
+            q.activation_row_stride,
+            q.activation_group_stride,
+            q.output == DType::F32,
+            self.stages,
+            omit,
+            if packed { ",true" } else { "" }
+        );
+        spec.max_threads = if tile >= 64 { 256 } else { 128 };
+        spec.min_blocks = 1;
+        spec
     }
     /// One plan per exact host shape. A replay may shorten only its device
     /// live count; changing the host row count requires another prepared op.
@@ -232,6 +248,69 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     Ok(spec)
 }
 
+/// Capacity, N, K, groups, activation padding, output, row tile and stages
+/// of one lab entry.
+type LabShape = (u32, u32, u32, u32, u32, DType, u32, u32);
+
+/// Every row tile (32, 64 and 128) and stage count DeepSeek V4.1 selects,
+/// final 64-K folds with K = 576 and 448, K divisible by 128, groups, padded
+/// activation strides, both outputs, and the Flash TP4 prefill shapes with
+/// the tiles they serve at 448, 2496 and 8192 rows.
+#[rustfmt::skip]
+const LAB_SHAPES: &[LabShape] = &[
+    (320, 72, 576, 1, 0, DType::F32, 32, 3),
+    (320, 136, 1280, 1, 32, DType::Bf16, 64, 3),
+    (320, 40, 448, 3, 32, DType::F32, 128, 2),
+    (320, 256, 512, 2, 0, DType::Bf16, 64, 2),
+    (8192, 1280, 5120, 1, 0, DType::F32, 32, 3),
+    (8192, 1280, 5120, 1, 0, DType::F32, 64, 2),
+    (8192, 1280, 5120, 1, 0, DType::F32, 128, 2),
+    (8192, 8192, 1280, 1, 0, DType::F32, 128, 2),
+    (8192, 1024, 4096, 2, 0, DType::F32, 64, 2),
+    (8192, 1024, 4096, 2, 0, DType::F32, 128, 2),
+    (8192, 5120, 2048, 1, 0, DType::F32, 128, 2),
+];
+
+/// The lab entries whose packed twins the lab compares bit for bit
+/// ([`LAB_SHAPES`]).
+pub fn packed_lab_entries() -> Vec<Entry> {
+    LAB_SHAPES
+        .iter()
+        .map(|&(capacity, n, k, groups, pad, output, tile, stages)| {
+            let q = kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: capacity,
+                n,
+                k,
+                groups,
+                activation_group_stride: k + pad,
+                activation_row_stride: groups * (k + pad) + pad,
+                output,
+                execution:
+                    kernel_core::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
+            };
+            let base = mxfp8_fold::Entry::new(
+                q,
+                format!(
+                    "chop_mxfp8_prefill_matrix_packed_lab_n{n}_k{k}_g{groups}_{}",
+                    if output == DType::F32 { "f32" } else { "bf16" }
+                ),
+            )
+            .unwrap();
+            Entry::new(base, stages, tile).unwrap()
+        })
+        .collect()
+}
+
+/// [`packed_lab_entries`] and their packed twins in one cubin.
+pub fn packed_lab_cubin_spec(name: &str) -> Result<CubinSpec, Refusal> {
+    let entries = packed_lab_entries();
+    let mut spec = cubin_spec(name, &entries)?;
+    for entry in &entries {
+        spec.entries.push(entry.packed_spec()?);
+    }
+    Ok(spec)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +341,34 @@ mod tests {
         assert!(Entry::new(base.clone(), 3, 128).is_err());
         assert!(Entry::new(base.clone(), 4, 64).is_err());
         assert!(Entry::new(base, 2, 16).is_err());
+    }
+    #[test]
+    fn packed_twins_change_only_the_weight_address() {
+        let q = Mxfp8FoldGemmQuery {
+            m_capacity: 8192,
+            n: 160,
+            k: 576,
+            groups: 2,
+            activation_row_stride: 1216,
+            activation_group_stride: 608,
+            output: DType::Bf16,
+            execution: BlockScaledExecution::NativeBlockScaledMma,
+        };
+        let base = mxfp8_fold::Entry::new(q, "matrix_test").unwrap();
+        for (m, s) in [(32, 3), (64, 2), (128, 2)] {
+            let e = Entry::new(base.clone(), s, m).unwrap();
+            let spec = e.specs().unwrap().remove(1);
+            let packed = e.packed_spec().unwrap();
+            assert_eq!(spec.symbol, e.symbol(m));
+            assert_eq!(packed.symbol, format!("{}_packed_v1", spec.symbol));
+            assert_eq!(packed.body, spec.body.replace(">(", ",true>("));
+            assert_eq!(packed.params, spec.params);
+            assert_eq!(packed.max_threads, spec.max_threads);
+        }
+        let mut odd = Entry::new(base, 2, 64).unwrap();
+        odd.base.query.n = 164;
+        assert!(odd.packed_spec().is_err());
+        let lab = packed_lab_cubin_spec("lab").unwrap();
+        assert_eq!(lab.entries.len(), 4 * packed_lab_entries().len());
     }
 }

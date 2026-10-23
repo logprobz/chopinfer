@@ -87,11 +87,14 @@ impl DraftSamplingV1 {
 
     fn validate(&self) -> Result<(), InvalidDraftSamplingV1> {
         let (temperature, top_p, min_p) = (self.temperature(), self.top_p(), self.min_p());
-        if !(temperature.is_finite() && temperature >= 0.0)
-            || !(top_p > 0.0 && top_p <= 1.0)
-            || !(0.0..=1.0).contains(&min_p)
-            || self.flags & !DRAFT_SAMPLING_PROCESSED_V1 != 0
-        {
+        // Every comparison with NaN is false, so NaN fails each check.
+        let valid = temperature.is_finite()
+            && temperature >= 0.0
+            && top_p > 0.0
+            && top_p <= 1.0
+            && (0.0..=1.0).contains(&min_p)
+            && self.flags & !DRAFT_SAMPLING_PROCESSED_V1 == 0;
+        if !valid {
             return Err(InvalidDraftSamplingV1);
         }
         Ok(())

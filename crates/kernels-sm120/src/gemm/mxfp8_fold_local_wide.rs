@@ -4,8 +4,8 @@
 //! runs. That equals the admission kernel's result for operands of an E4M3
 //! ceil block quantizer that zeroes the rows it rejects (see
 //! `mxfp8_fold_cluster_fused.cuh`).
-use super::{mxfp8_fold, mxfp8_fold_ticket};
-use kernel_build::EntrySpec;
+use super::{mxfp8_fold, mxfp8_fold_packed, mxfp8_fold_ticket};
+use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
     contract::{Argument as A, ArgumentList, DType, LaunchPlan, Refusal},
@@ -77,6 +77,19 @@ impl Entry {
     /// The row-local fold's entry with this tile; its failed-flag table
     /// parameter (`workspace`) is bound to the row status.
     pub fn spec(&self) -> EntrySpec {
+        self.spec_impl(self.symbol(), "")
+    }
+    /// The entry reading `mxfp8-fold-packed-8x128-v1` weight codes
+    /// (`gemm::mxfp8_fold_packed`): the same parameters, plan and
+    /// arithmetic, so a prepared op moves to packed codes by renaming its
+    /// launch.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        self.validate()?;
+        let q = self.base.query;
+        mxfp8_fold_packed::check(q.groups, q.n, q.k)?;
+        Ok(self.spec_impl(mxfp8_fold_packed::symbol(&self.symbol()), ",true"))
+    }
+    fn spec_impl(&self, symbol: String, packed: &str) -> EntrySpec {
         let q = self.base.query;
         let ticket = mxfp8_fold_ticket::Entry::new(q, self.symbol(), false).unwrap();
         let mut spec = ticket.specs().swap_remove(1);
@@ -85,14 +98,14 @@ impl Entry {
             q.n, q.k, q.groups, q.activation_row_stride, q.activation_group_stride, self.tile_n
         );
         let args = "(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);";
-        spec.symbol = self.symbol();
+        spec.symbol = symbol;
         spec.max_threads = self.tile_n * 4;
         spec.min_blocks = 1;
         spec.body = if self.stages == 0 {
-            format!("chop::gemm::mxfp8_fold_local_wide::run<{shape},false>{args}")
+            format!("chop::gemm::mxfp8_fold_local_wide::run<{shape},false{packed}>{args}")
         } else {
             format!(
-                "chop::gemm::mxfp8_fold_local_wide::run_deep<{shape},{},true,false>{args}",
+                "chop::gemm::mxfp8_fold_local_wide::run_deep<{shape},{},true,false{packed}>{args}",
                 self.stages
             )
         };
@@ -199,6 +212,74 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
     }
 }
 
+/// N, K, groups, rows, column tile and folds in flight (0 for the pair
+/// loop) of one lab entry.
+type LabShape = (u32, u32, u32, u32, u32, u32);
+
+/// Both rings (the pair loop and the refilling ring), column tiles from 8 to
+/// 64 including tiles that overhang N, odd fold counts, groups, and WQ_b's
+/// DeepSeek V4.1 Flash TP4 decode fold. The fold needs K divisible by 128,
+/// so no shape has a final 64-K fold.
+#[rustfmt::skip]
+const LAB_SHAPES: &[LabShape] = &[
+    (104, 384, 1, 32, 48, 0),
+    (64, 512, 2, 16, 32, 0),
+    (40, 640, 3, 32, 8, 3),
+    (64, 768, 2, 32, 24, 4),
+    (136, 1024, 1, 32, 64, 3),
+    (8192, 1280, 1, 32, 48, 4),
+    (8192, 1280, 1, 32, 48, 0),
+];
+
+/// The lab entries whose packed twins the lab compares bit for bit
+/// ([`LAB_SHAPES`]).
+pub fn packed_lab_entries() -> Vec<Entry> {
+    LAB_SHAPES
+        .iter()
+        .map(|&(n, k, groups, rows, tile_n, stages)| {
+            let query = kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: rows,
+                n,
+                k,
+                groups,
+                activation_row_stride: groups * k,
+                activation_group_stride: k,
+                output: DType::F32,
+                execution:
+                    kernel_core::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
+            };
+            let entry = Entry {
+                base: mxfp8_fold::Entry::new(
+                    query,
+                    format!("chop_mxfp8_fold_local_wide_packed_lab_n{n}_k{k}_g{groups}_m{rows}"),
+                )
+                .unwrap(),
+                tile_n,
+                stages,
+            };
+            entry.validate().unwrap();
+            entry
+        })
+        .collect()
+}
+
+/// [`packed_lab_entries`] and their packed twins in one cubin.
+pub fn packed_lab_cubin_spec(name: &str) -> Result<CubinSpec, Refusal> {
+    let mut entries = Vec::new();
+    for entry in packed_lab_entries() {
+        entries.push(entry.spec());
+        entries.push(entry.packed_spec()?);
+    }
+    Ok(CubinSpec {
+        name: name.into(),
+        sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: vec![],
+        headers: vec!["#include \"gemm/mxfp8_fold_local_wide.cuh\"".into()],
+        defines: vec![],
+        entries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +382,20 @@ mod tests {
             swizzle: false,
         };
         assert_eq!(spec.params, served.specs()[1].params);
+    }
+    #[test]
+    fn packed_twins_change_only_the_weight_address() {
+        for stages in [0, 4] {
+            let e = entry(48, stages);
+            let (spec, packed) = (e.spec(), e.packed_spec().unwrap());
+            assert_eq!(packed.symbol, format!("{}_packed_v1", e.symbol()));
+            assert_eq!(packed.body, spec.body.replace(">(", ",true>("));
+            assert_eq!(packed.params, spec.params);
+            assert_eq!(packed.max_threads, spec.max_threads);
+        }
+        assert!(entry(44, 0).packed_spec().is_err());
+        let lab = packed_lab_cubin_spec("lab").unwrap();
+        assert_eq!(lab.entries.len(), 2 * packed_lab_entries().len());
     }
     #[test]
     fn wide_folds_refuse_odd_tiles_and_oversized_rings() {

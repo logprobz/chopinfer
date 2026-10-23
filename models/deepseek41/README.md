@@ -64,9 +64,24 @@ is also the A/B control. Served at TP4 AR on 2026-10-23 (test KV mode,
 every greedy and long-prompt token and logprob bit equaled the raw server's,
 each rank had 3,296 MiB more free memory before its KV pool (60,676 more
 pages at utilization 1.0), the census took 6 to 7 s at startup, and greedy
-decode ran at 0.973, 0.974 and 0.961 of raw tokens per second at 1, 8 and
-32 sequences (single-launch expansion with one-thread exception searches;
-the warp search replaced them afterwards).
+decode ran at 0.974, 0.975 and 0.960 of raw tokens per second at 1, 8 and
+32 sequences. Those ratios are with the paired expansion's warp exception
+search; they were 0.973, 0.974 and 0.961 with one-thread searches.
+
+Every MXFP8 dense projection stores its E4M3 codes in
+`mxfp8-fold-packed-8x128-v1` ([packed FP8 fold layout](../../docs/kernel-library.md#packed-fp8-fold-layout)),
+the layout every fold reader takes. Create therefore no longer builds a
+packed copy of them beside row-major codes.
+
+Served at TP4 on 2026-10-23 against the previous layout (test KV mode,
+65,536 pages, a base/head/head/base sequence after a warm-up process):
+
+- AR and DSpark outputs were bitwise equal.
+- Greedy throughput was within the A/A spread or faster: AR 0.9997,
+  1.0028 and 1.0103 at 1, 8 and 32 sequences, DSpark 1.0020, 1.0067 and
+  1.0039.
+- Each rank had 1,922 MiB more free memory at the first graph capture,
+  35,382 more pages at utilization 1.0; with the drafter it was 2,116 MiB.
 
 ## Checkpoint and geometry
 

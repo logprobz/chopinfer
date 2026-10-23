@@ -29,6 +29,7 @@ mod command;
 pub mod cuda;
 mod deployment;
 mod device;
+mod device_memory;
 pub mod direct;
 mod executor;
 #[cfg(feature = "fake-host-services")]
@@ -101,6 +102,7 @@ pub use device::{
     assert_host_transfer_contract_v1, bf16_bits_from_f32_v1, f32_from_bf16_bits_v1,
     launch_cluster_v1, launch_dispatch_v1, plan_generic_collective_v1,
 };
+pub use device_memory::{DeviceMemoryReportV1, RankDeviceMemoryV1, WARMUP_HEADROOM_BYTES_V1};
 pub use executor::{
     BATCH_PHASE_DECODE_V1, BATCH_PHASE_PREFILL_V1, BATCH_REQUEST_MAGIC_V1, BATCH_REQUEST_MAGIC_V2,
     BATCH_WIRE_V2_CAPABILITY_V1, BatchEmissionsV1, BatchWireCapabilityV1, BundleExecutionV1,

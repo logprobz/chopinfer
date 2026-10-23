@@ -358,6 +358,9 @@ pub struct EngineGenerationBackend {
     video_unavailable: Option<String>,
     /// The steps the engine runs during startup warmup.
     startup_steps: Arc<crate::startup::StartupStepLog>,
+    /// What each rank's device holds once the serving KV pool is sized,
+    /// when the host services publish it.
+    device_memory: Option<crate::device_memory::DeviceMemoryReportV1>,
 }
 
 impl EngineGenerationBackend {
@@ -552,6 +555,7 @@ impl EngineGenerationBackend {
             video: None,
             video_unavailable: None,
             startup_steps,
+            device_memory: None,
         })
     }
 
@@ -559,6 +563,17 @@ impl EngineGenerationBackend {
     /// warmup reads to end a wave once it has run what it is for.
     pub(crate) fn startup_step_log(&self) -> Arc<crate::startup::StartupStepLog> {
         Arc::clone(&self.startup_steps)
+    }
+
+    /// Reports `report` in the metrics and, once startup warmup finishes,
+    /// what warmup left free on each rank.
+    #[must_use]
+    pub fn with_device_memory(
+        mut self,
+        report: crate::device_memory::DeviceMemoryReportV1,
+    ) -> Self {
+        self.device_memory = Some(report);
+        self
     }
 
     /// Media memory budgets other than the process's, for tests.
@@ -927,6 +942,7 @@ impl EngineGenerationBackend {
             engine: self.metrics.clone(),
             kv: self.kv_metrics.clone(),
             state: Arc::clone(&self.state),
+            device_memory: self.device_memory.clone(),
         }
     }
 
@@ -985,7 +1001,15 @@ impl GenerationBackend for EngineGenerationBackend {
             sent.map_err(|_| "generation worker unavailable".to_owned())?;
             receiver
                 .await
-                .map_err(|_| "generation worker failed during warmup cleanup".to_owned())?
+                .map_err(|_| "generation worker failed during warmup cleanup".to_owned())??;
+            // Warmup captured the graphs it reached; what each rank has left
+            // is what later captures can take.
+            if !begin && let Some(report) = &self.device_memory {
+                for line in report.warmup_lines() {
+                    eprintln!("{line}");
+                }
+            }
+            Ok(())
         })
     }
 
@@ -1369,6 +1393,7 @@ pub struct NativeRuntimeMetricsV1 {
     engine: EngineMetrics,
     kv: KvMetrics,
     state: Arc<AtomicU8>,
+    device_memory: Option<crate::device_memory::DeviceMemoryReportV1>,
 }
 
 impl NativeRuntimeMetricsV1 {
@@ -1397,6 +1422,9 @@ impl NativeRuntimeMetricsV1 {
             ));
         }
         output.push_str(&self.engine.snapshot().prometheus());
+        if let Some(device_memory) = &self.device_memory {
+            output.push_str(&device_memory.prometheus());
+        }
         let kv = self.kv.snapshot();
         output.push_str(&kv.prometheus());
         output.push_str(&self.engine.prometheus_compatibility(&self.model_name));

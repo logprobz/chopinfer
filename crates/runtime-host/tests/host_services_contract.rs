@@ -625,6 +625,43 @@ fn serving_pool_below_full_utilization_caps_own_allocations_at_its_share() {
 }
 
 #[test]
+fn serving_pool_sizing_reports_each_ranks_device_memory() {
+    let mut device = FakeHostDeviceV1::new();
+    device.set_device_memory_bytes(1088 * MIB);
+    let (table, backend) = serving_table_on(device, 1_000_000, Some(16));
+    let host = table.caller();
+    let streams = serving_ranks(host);
+    let rank_one = host.select_context(1, 1).unwrap();
+    let pool_one = host.select_memory_pool(rank_one).unwrap();
+    host.allocate_device_buffer(pool_one, streams[1], 4 * MIB, 64)
+        .unwrap();
+    let report = runtime_host::DeviceMemoryReportV1::default();
+    backend.attach_device_memory_report(report.clone());
+    assert!(report.ranks().is_empty());
+    assert_eq!(host.acquire_serving_kv(LAYOUT_ID).unwrap(), 16);
+    let ranks = backend.device_memory();
+    assert_eq!(report.ranks(), ranks);
+    assert_eq!(ranks.len(), 2);
+    for (rank, own) in [(0, 0), (1, 4 * MIB)] {
+        let memory = ranks[rank];
+        assert_eq!(memory.rank, rank as u32);
+        assert_eq!(memory.total_bytes, Some(1088 * MIB));
+        assert_eq!(memory.own_bytes, Some(own));
+        assert_eq!(memory.kv_bytes, 16 * PAGE_BYTES);
+        assert_eq!(memory.reserve_bytes, 1024 * MIB);
+        let free = 1088 * MIB - own - 16 * PAGE_BYTES;
+        assert_eq!(
+            (
+                memory.free_after_sizing_bytes,
+                memory.free_bytes,
+                memory.free_low_bytes
+            ),
+            (free, free, free)
+        );
+    }
+}
+
+#[test]
 fn serving_pool_refuses_zero_capacity_and_insufficient_memory() {
     let (table, _backend) = serving_table(Some(0));
     let host = table.caller();

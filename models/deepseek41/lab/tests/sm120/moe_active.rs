@@ -928,6 +928,11 @@ fn active_moe_cpu_dry_run() {
             }
         }
     }
+    // The cases each bank's GPU suite compares, one MOE_RESULT each.
+    println!(
+        "moe_active_plan {}",
+        serde_json::json!({"cases": moe::expert_sets(&FLASH).into_iter().map(|set| cases::cases(set).len()).collect::<Vec<_>>()})
+    );
 }
 
 #[test]

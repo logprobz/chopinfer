@@ -335,6 +335,24 @@ fn model_moe_native_cases_launch_staged_entries() {
     }
     // The column 8192-token gate/up of the Flash TP4 backbone bank.
     assert_eq!(tiled, 1);
+    // What the GPU test's done record must count.
+    let projections: usize = GEOMETRIES
+        .iter()
+        .map(|g| {
+            SUPPORTED_RANKS
+                .iter()
+                .map(|&r| registration::projections(g, r).unwrap().len())
+                .sum::<usize>()
+        })
+        .sum();
+    let router_cases: usize = GEOMETRIES
+        .iter()
+        .map(|g| moe::expert_sets(g).len() * SUPPORTED_RANKS.len())
+        .sum();
+    println!(
+        "model_moe_conformance_plan {}",
+        serde_json::json!({"projections": projections, "row_tiled": tiled, "router_cases": router_cases})
+    );
 }
 
 #[test]
@@ -347,13 +365,19 @@ fn model_moe_native_cases_pass_on_gpu() {
             .and_then(|r| r.verify_current())
             .map_err(|e| e.to_string())?;
         let modules = ModelModules { directory };
+        let (mut projections, mut row_tiled, mut router_cases) = (0, 0, 0);
         for g in GEOMETRIES {
             for &ranks in SUPPORTED_RANKS {
                 // Native widths use one token to bound the f64 oracle.
                 // Shared family cases also cover partial and full batches.
                 for entry in registration::projections(g, ranks)? {
                     let backend = served_backend(g, ranks, entry.clone());
-                    let symbol = entry.symbol.clone();
+                    // The receipt names the entry the case launches.
+                    let symbol = row_tiled_bank::symbols()
+                        .get(&entry.symbol)
+                        .cloned()
+                        .unwrap_or_else(|| entry.symbol.clone());
+                    row_tiled += usize::from(symbol != entry.symbol);
                     let case = if entry.gate_up() {
                         kit::cases::moe_chained_quantized::gate_up(entry, 1)
                     } else {
@@ -365,6 +389,7 @@ fn model_moe_native_cases_pass_on_gpu() {
                         BTreeMap::from([("report".into(), report.json())]),
                     )?;
                     check(&report, 1, true);
+                    projections += 1;
                 }
                 let cases = routers(g);
                 let backend = registration::register(Sm120::new(), g, ranks)?;
@@ -374,8 +399,13 @@ fn model_moe_native_cases_pass_on_gpu() {
                     BTreeMap::from([("report".into(), report.json())]),
                 )?;
                 check(&report, cases.len(), true);
+                router_cases += cases.len();
             }
         }
+        println!(
+            "model_moe_conformance_done {}",
+            serde_json::json!({"projections": projections, "row_tiled": row_tiled, "router_cases": router_cases})
+        );
         Ok(())
     })
     .unwrap();

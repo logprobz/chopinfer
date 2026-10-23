@@ -1,14 +1,14 @@
 [
   {
     "name": "chop_moe_chain_e288l72k8_fp8block",
-    "source_closure_sha256": "5037704fc7aa0298fcae19a433942514e31a635e0c15a08069df8f50e2cd97f2"
+    "source_closure_sha256": "1c02f2b883cab4bdea6e0eb6338ddab1b24be72ed34eeff676472009309fddb3"
   },
   {
     "name": "chop_moe_chain_e288l72k8_fp8block_bw4",
-    "source_closure_sha256": "286bad041e272b0f0d87b48d6eb2c8d8b06c2cca596da33bc47556e2c0a95c25"
+    "source_closure_sha256": "e2c14a6cc915819aeaf8dfd6be157abcc8f82719a5db983a1a131639fd752bc2"
   },
   {
     "name": "chop_moe_chain_e288l72k8_fp8block_dt",
-    "source_closure_sha256": "d3a6879fa6de0b2b6ee0467d12b2586b01c31b87212bbcc60c996aa64a5cd69c"
+    "source_closure_sha256": "ce47a13c1064aa955b844c76e9ac90535982d731c139a1ae51026fcfe97bb1d7"
   }
 ]

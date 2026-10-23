@@ -61,8 +61,14 @@ const OUTPUTS: &[Listed] = &[
         4,
     ),
     ("chop_deepseek41_mxfp8_decode_*_f32_v1", 1),
+    // The one-row query and KV folds in one launch: each projection's
+    // stream task merges into its own output, as above.
+    ("chop_mxfp8_dual_*_f32_v1", 4),
+    ("chop_mxfp8_dual_*_f32_v1", 9),
     // The experts' down projection into each live route's row of `routed`.
     ("chop_moe_native_down_*_tiles_v1", 9),
+    // Its `Scanned` policy, behind the admission scan: the same tile stores.
+    ("chop_moe_native_down_*_tiles_scanned_v1", 9),
     ("chop_deepseek41_moe_floor_*_down_finish_v1", 4),
     (
         "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_*_r16_t32_v1",

@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::buffers::Scratch;
-use kernel_core::allocation::{Allocation, Traversal};
 
 /// Each rank's `startup memory` record that `host` logged.
 fn records(host: &FakeHost) -> Vec<serde_json::Value> {
@@ -32,7 +31,14 @@ fn startup_memory_attributes_every_allocated_byte() {
         }
         let records = records(&host);
         assert_eq!(records.len(), allocated.len());
-        let declared = Scratch::of_storage(&shape, KV_LAYOUTS[0].storage);
+        // The scratch the regions leave, without the speculation's rows.
+        let handle = BundleDeviceBufferHandleV1::from_parts(1, 1);
+        let scratch = bundle_runtime::scratch::bind_named(
+            Scratch::of_storage(&shape, KV_LAYOUTS[0].storage),
+            crate::buffers::REGIONS,
+            |_, bytes| Ok(DeviceBufferSpanV1::new(handle, 0, bytes)),
+        )
+        .unwrap();
         for (rank, record) in records.iter().enumerate() {
             assert_eq!(record["rank"], rank, "{record}");
             let bytes = record["bytes"].as_object().unwrap();
@@ -56,11 +62,21 @@ fn startup_memory_attributes_every_allocated_byte() {
                     "{category}: {record}"
                 );
             }
+            let parts = record["scratch_parts"].as_object().unwrap();
+            assert_eq!(
+                parts.values().map(|v| v.as_u64().unwrap()).sum::<u64>(),
+                bytes["scratch"].as_u64().unwrap(),
+                "{record}"
+            );
+            for &(region, region_bytes) in &scratch.regions {
+                assert_eq!(parts[region].as_u64().unwrap(), region_bytes, "{record}");
+            }
             if speculation.is_none() {
-                let mut scratch = 0;
-                declared
-                    .visit(&mut |allocation: &Allocation| scratch += allocation.allocation_bytes());
-                assert_eq!(bytes["scratch"].as_u64().unwrap(), scratch, "{record}");
+                assert_eq!(
+                    bytes["scratch"].as_u64().unwrap(),
+                    scratch.bytes,
+                    "{record}"
+                );
             } else {
                 assert!(bytes["dspark"].as_u64().unwrap() > 0, "{record}");
             }

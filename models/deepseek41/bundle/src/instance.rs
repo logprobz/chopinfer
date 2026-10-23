@@ -362,7 +362,8 @@ impl Instance {
             // Route only the peer-visible planes to the private allocation
             // owner; arithmetic and copies keep their explicit
             // compute/communication streams.
-            let bound = bundle_runtime::scratch::bind_named(declared, &[], |name, bytes| {
+            let regions = crate::buffers::regions();
+            let bound = bundle_runtime::scratch::bind_named(declared, regions, |name, bytes| {
                 let owner = if matches!(name, "partial" | "reduced" | "embedded") {
                     self.dma.get(rank).map_or(stream, |dma| dma.owner)
                 } else {
@@ -371,6 +372,10 @@ impl Instance {
                 allocate_span(services, pool, owner, bytes, held)
             })?;
             memory.add(rank, "scratch", bound.bytes);
+            let mut parts = bound.regions.clone();
+            let aliased: u64 = parts.iter().map(|&(_, bytes)| bytes).sum();
+            parts.push(("unaliased", bound.bytes - aliased));
+            memory.detail(rank, "scratch", parts);
             let bound = bound.spans;
             if crate::ops::indexer::prefill::enabled(&shape, self.config.kv.storage) {
                 let counts: Vec<u8> = (0..=model_deepseek41_contract::serving::PREFILL_TOKENS)
@@ -1336,6 +1341,29 @@ pub(crate) fn dspark_state_capture_requests_for_test(
             .state_capture_pages
             .keys()
             .copied()
+            .collect()
+    })
+}
+
+/// Each rank's bound scratch, by declaration path.
+#[cfg(test)]
+pub(crate) fn scratch_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<Vec<(String, runtime_bundle_abi::DeviceBufferSpanV1)>> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        instance
+            .buffers
+            .iter()
+            .map(|buffers| {
+                let mut named = Vec::new();
+                kernel_core::allocation::Traversal::visit_named(
+                    &buffers.scratch,
+                    &mut |name, &span| named.push((name.to_owned(), span)),
+                );
+                named
+            })
             .collect()
     })
 }

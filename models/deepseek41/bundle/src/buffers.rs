@@ -5,9 +5,12 @@
 //! Every activation holds `scratch_rows()` rows, the most any phase runs: a
 //! prefill chunk, or the widest decode or verify bucket. Each phase binds
 //! its first rows. Families add their buffers as they lower stages.
+//! Buffers whose contents are never live at once share one allocation
+//! (`REGIONS`).
 
 use std::collections::BTreeMap;
 
+use bundle_runtime::scratch::Region;
 use bundle_runtime::state::{Extent, RequestState};
 use kernel_core::allocation::Allocation;
 use model_deepseek41_contract::own_ops::rope::RopeCosSin;
@@ -47,6 +50,40 @@ pub fn staged_slots(shape: &Shape) -> u32 {
 /// or verify phase's.
 pub fn logits_rows() -> u32 {
     SCORED_ROWS.max(head_rows())
+}
+
+/// Scratch buffers that share one allocation, sized to the largest member:
+/// no phase keeps two members of a region live at once, and no two run
+/// concurrently. `fake_host_tests::scratch_regions` replays every phase
+/// program of the fake-host lifecycles over each region's shared bytes and
+/// refuses a grouping that breaks either. Members are listed by layer
+/// stage; adding one is adding its declaration path to a stage's lines.
+/// The peer-written planes (`partial`, `reduced`, `embedded`) allocate on
+/// their DMA owner by name and stay outside every region.
+pub const REGIONS: &[Region] = &[];
+
+#[cfg(test)]
+thread_local! {
+    static UNALIASED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The regions an instance binds its scratch with.
+pub(crate) fn regions() -> &'static [Region] {
+    #[cfg(test)]
+    if UNALIASED.get() {
+        return &[];
+    }
+    REGIONS
+}
+
+/// Runs `create` with every scratch buffer in its own allocation, as the
+/// region checks trace them.
+#[cfg(test)]
+pub(crate) fn unaliased<T>(create: impl FnOnce() -> T) -> T {
+    UNALIASED.set(true);
+    let created = create();
+    UNALIASED.set(false);
+    created
 }
 
 kernel_core::scratch_record! {

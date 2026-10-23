@@ -18,6 +18,8 @@ pub(super) struct Ledger {
     sized: Option<Vec<u64>>,
     marks: Vec<u64>,
     categories: Vec<BTreeMap<&'static str, u64>>,
+    /// A breakdown of one category per rank, such as scratch by region.
+    details: Vec<BTreeMap<&'static str, Vec<(&'static str, u64)>>>,
 }
 
 impl Ledger {
@@ -27,6 +29,7 @@ impl Ledger {
         let opened: Vec<_> = pools.iter().map(|&pool| allocated_bytes(pool)).collect();
         Self {
             categories: vec![BTreeMap::new(); pools.len()],
+            details: vec![BTreeMap::new(); pools.len()],
             marks: opened.clone(),
             opened,
             sized: None,
@@ -57,6 +60,16 @@ impl Ledger {
         }
     }
 
+    /// Breaks rank `rank`'s `category` down by `parts`.
+    pub(super) fn detail(
+        &mut self,
+        rank: usize,
+        category: &'static str,
+        parts: Vec<(&'static str, u64)>,
+    ) {
+        self.details[rank].insert(category, parts);
+    }
+
     /// Marks the host's sizing of the serving KV pool.
     pub(super) fn sized(&mut self) {
         self.take("other");
@@ -74,14 +87,23 @@ impl Ledger {
                     .sized
                     .as_ref()
                     .map_or(0, |sized| self.marks[rank] - sized[rank]);
-                let bytes: Vec<_> = self.categories[rank]
-                    .iter()
-                    .map(|(name, bytes)| format!("\"{name}\":{bytes}"))
-                    .collect();
-                format!(
-                    "{{\"rank\":{rank},\"total\":{total},\"after_kv\":{after},\"bytes\":{{{}}}}}",
-                    bytes.join(",")
-                )
+                let object = |parts: &mut dyn Iterator<Item = (&str, u64)>| {
+                    let parts: Vec<_> = parts
+                        .map(|(name, bytes)| format!("\"{name}\":{bytes}"))
+                        .collect();
+                    format!("{{{}}}", parts.join(","))
+                };
+                let mut line = format!(
+                    "{{\"rank\":{rank},\"total\":{total},\"after_kv\":{after},\"bytes\":{}",
+                    object(&mut self.categories[rank].iter().map(|(&k, &v)| (k, v)))
+                );
+                for (category, parts) in &self.details[rank] {
+                    line += &format!(
+                        ",\"{category}_parts\":{}",
+                        object(&mut parts.iter().copied())
+                    );
+                }
+                line + "}"
             })
             .collect()
     }
@@ -99,6 +121,7 @@ mod tests {
         ]);
         ledger.take("inputs");
         ledger.add(1, "scratch", 7);
+        ledger.detail(1, "scratch", vec![("attention", 3), ("other", 4)]);
         ledger.sized();
         ledger.add(0, "overlap", 8);
         let lines = ledger.lines();
@@ -106,7 +129,7 @@ mod tests {
             lines,
             [
                 "{\"rank\":0,\"total\":8,\"after_kv\":8,\"bytes\":{\"overlap\":8}}",
-                "{\"rank\":1,\"total\":7,\"after_kv\":0,\"bytes\":{\"scratch\":7}}",
+                "{\"rank\":1,\"total\":7,\"after_kv\":0,\"bytes\":{\"scratch\":7},\"scratch_parts\":{\"attention\":3,\"other\":4}}",
             ]
         );
         for line in lines {

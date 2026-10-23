@@ -432,6 +432,24 @@ supported width and logits type but is not a formal bound. Tiles subtract
 their own maximum and the merge shifts each winner by
 `(tile_max - row_max) / temperature`.
 
+### Coupled sampled drafts
+
+A drafter may propose for a sampled request from the target sampler's own
+noise (`kernel_core::draft_noise`, capability `chop.draft-sampling.v1`).
+Verify row `j` of an item samples at generated index `n + j`, where `n` is
+the index of the item's first sampled row. Draft position `j` proposes the
+argmax of `x / T + g` over the drafter's logits `x`, with `g` the noise of
+that index, so a drafter that ranks the leading Gumbel scores as the target
+does proposes the target's own sample. Acceptance does not change: a draft
+is kept only when it equals the target's sample at its row, and the
+emitted tokens are those of AR sampling with the same seed. The drafter
+applies only the temperature; penalties, logit bias, masks, min-p, top-k
+and top-p are not applied, and a draft they exclude is rejected. The
+device adds the sampler's F32 pruning noise, within
+`draft_noise::NOISE_ERROR` of the f64 noise, so a near tie between two
+Gumbel scores can change a proposal but never an emitted token. Greedy
+items' logits keep their bits.
+
 ### Top-one device fast path
 
 Unfiltered greedy rows with zero or one top logprob use a tiled argmax:

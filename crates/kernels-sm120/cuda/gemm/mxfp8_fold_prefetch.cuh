@@ -39,7 +39,7 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
 }
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         int TileN, bool F32Output, bool Paired>
+         int TileN, bool F32Output, bool Paired, bool PackedWeights = false>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
                    const uint8_t* weights, const uint8_t* weight_scales,
                    const uint8_t* weights2, const uint8_t* weight_scales2,
@@ -75,7 +75,12 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const uint32_t col = fold * 128 + (chunk % 8) * 16;
       const bool valid = fold < end && row < N && col < K;
       const uint64_t at = (uint64_t(g) * N + row) * K + col;
+      if constexpr (PackedWeights) {
+        mxfp8_fold_ticket::copy_packed_chunk<N, K>(codes[stage] + 16 * 128,
+            weights, g, column_base, chunk, fold, end);
+      } else {
       copy16(codes[stage] + fold_row_chunk(16 + chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
+      }
     }
     if (threadIdx.x < TileN) {
       const uint32_t row = column_base + threadIdx.x;
@@ -99,12 +104,24 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   }
   // Warm the remaining immutable row segments in L2 while admission runs,
   // using the same bulk-prefetch instruction as the weight-prefetch engine.
+  if constexpr (PackedWeights) {
+    // Each lane warms the remaining folds of one complete eight-row strip.
+    if (threadIdx.x < TileN / 8 && column_base + threadIdx.x * 8 < N && first + 3 < end) {
+      const uint32_t begin = (first + 3) * 128;
+      const uint32_t bytes = 8 * (min(end * 128, uint32_t(K)) - begin);
+      const uint64_t at = mxfp8_fold_packed::fold_offset(
+          (g * N + column_base) / 8 + threadIdx.x, first + 3, K);
+      asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;"
+          :: "l"(weights + at), "r"(bytes) : "memory");
+    }
+  } else {
   if (threadIdx.x < TileN && column_base + threadIdx.x < N && first + 3 < end) {
     const uint32_t begin = (first + 3) * 128;
     const uint32_t bytes = min(end * 128, uint32_t(K)) - begin;
     const uint64_t at = (uint64_t(g) * N + column_base + threadIdx.x) * K + begin;
     asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;"
         :: "l"(weights + at), "r"(bytes) : "memory");
+  }
   }
   ptx::griddep_wait();
   const uint32_t live = min(rows, *live_rows);
@@ -158,6 +175,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     asm volatile("cp.async.wait_group 1;" ::: "memory");
     __syncthreads();
     ptx::D4 raw[2]{};
+    uint4 packed_b[2];
 #pragma unroll
     for (int step = 0; step < 4; ++step) {
 #pragma unroll
@@ -169,10 +187,19 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
         for (int i = 0; i < 4; ++i)
           af.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
               fold_row_chunk(quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
+        if constexpr (PackedWeights) {
+          if ((step & 1) == 0)
+            packed_b[pair] = mxfp8_fold_ticket::packed_fragment<K>(codes[slot] + 16 * 128,
+                warp, quad, lane4, step, base + pair);
+          const uint4 w = packed_b[pair];
+          bf.v[0] = (step & 1) ? w.z : w.x;
+          bf.v[1] = (step & 1) ? w.w : w.y;
+        } else {
 #pragma unroll
         for (int i = 0; i < 2; ++i)
           bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
               fold_row_chunk(16 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
+        }
         const uint32_t sa = scales[slot][(quad + (lane4 & 1) * 8) * 4 + step];
         const uint32_t sb = scales[slot][(16 + warp * 8 + quad) * 4 + step];
         ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(raw[pair], af, bf, sa, sb);

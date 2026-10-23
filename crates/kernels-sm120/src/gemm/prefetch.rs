@@ -88,6 +88,9 @@ impl Prefetch {
 
     /// The arguments for `ranges` (each a bound buffer and its bytes, in
     /// the order the following kernels read them) in `chunk`-byte pieces.
+    /// Packed fold codes preserve byte ranges over whole eight-row strips:
+    /// rows `[8s, 8t)` occupy `[8Ks, 8Kt)` in either layout. Whole weight
+    /// views need no packed variant; ranges within a strip need remapping.
     pub fn arguments(&self, ranges: &[(u64, u64)], chunk: u32) -> Result<ArgumentList, Refusal> {
         if ranges.is_empty() || ranges.len() > MAX_RANGES {
             return Err(Refusal("a prefetch launch requests 1 to 8 ranges"));

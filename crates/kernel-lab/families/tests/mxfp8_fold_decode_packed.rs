@@ -153,8 +153,9 @@ fn packed_timing_stays_within_three_percent_on_gpu() {
     timing_probe::timing_test(512 << 20, |session| {
         let module = support::load(session, CUBINS, family::CUBIN)?;
         let function = |s: &str| module.function(s).map_err(|e| e.to_string());
+        let mut slow = Vec::new();
         for entry in family::entries().iter().filter(|e| e.query.n >= 5120) {
-            for rows in [1, 6, 16, entry.query.m_capacity] {
+            for rows in [1, 6, 16, 28, entry.query.m_capacity] {
                 let calls = launches(entry, rows);
                 let packed = packed(entry, calls.clone());
                 let mut images = support::images(
@@ -168,9 +169,16 @@ fn packed_timing_stays_within_three_percent_on_gpu() {
                 packed_fold::compare(session, &function, &calls, &packed, &images)?;
                 let ratio = support::time(session, &module, [&calls, &packed], &images)?;
                 println!("{} rows={rows} packed/row-major={ratio:.6}", entry.symbol);
-                assert!(ratio <= 1.03, "{} rows={rows}: {ratio}", entry.symbol);
+                if !ratio.is_finite() || ratio > 1.03 {
+                    slow.push(format!("{} rows={rows}: {ratio:.6}", entry.symbol));
+                }
             }
         }
+        assert!(
+            slow.is_empty(),
+            "packed/row-major exceeds 1.03:\n{}",
+            slow.join("\n")
+        );
         Ok(())
     })
     .unwrap();

@@ -425,8 +425,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// its two projections' shared storage); every other line is equal once ids
 /// are mapped.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (23343, 0x3cc290637430e206)),
-    (Ranks::TP4, (57871, 0x83cad1ba55e7f679)),
+    (Ranks::TP2, (21367, 0xdc729a9318532df4)),
+    (Ranks::TP4, (53919, 0xaf07dffefb7f79c9)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

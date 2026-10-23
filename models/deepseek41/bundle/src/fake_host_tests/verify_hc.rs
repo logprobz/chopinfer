@@ -97,12 +97,12 @@ use super::*;
 // Shared fold state and workspace give each fold operation's layers one
 // handle and renumber the rest; every line is otherwise equal.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0xeaddb53d42c1914a)),
-    (6, (8680, 0xf8c3eaf8478f1253)),
-    (8, (8212, 0x3d8d10eace0015b0)),
-    (12, (10136, 0x1ff1b46d5b2621f1)),
-    (16, (7892, 0xb74a430f6cc98d80)),
-    (32, (7744, 0x20cbd6d053fc98e9)),
+    (4, (8520, 0x10872a93b8f0eabf)),
+    (6, (8680, 0xd748b3377111a4da)),
+    (8, (8212, 0x254a32266cf596b0)),
+    (12, (10136, 0xdb4539f3beb229d6)),
+    (16, (7892, 0x9c3825ad4f09b4e8)),
+    (32, (7744, 0x01d822eee876a091)),
 ];
 
 #[test]

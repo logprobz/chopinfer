@@ -49134,7 +49134,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "e31225576dcf088dce878462564951ccbfedd42ad596e8b683e1009bfefd8710",
+    "cubin_sha256": "fa187e5021051fd6645ce8403558c97e629f0f5a51b6aa36e8a1d653916fe802",
     "resources": [
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1024_k4096_g2_f32_v1",
@@ -49777,7 +49777,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k576_g1_f32_v1_partials_v1_packed_v1",
-        "registers": 48,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,

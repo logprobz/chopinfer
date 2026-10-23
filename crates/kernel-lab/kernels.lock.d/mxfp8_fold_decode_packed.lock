@@ -1442,7 +1442,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "d2bcda1b6f16eb215f78bdb94b56105ecf05aebad88886cd8ba5f28e4b293261",
+    "cubin_sha256": "3c2403c59a1b06ed432ac39b542cf51919b155fb079dba8cedbe324a2ed4c5b1",
     "resources": [
       {
         "symbol": "chop_mxfp8_fold_decode_packed_lab_0_v1_admit_v1",
@@ -1635,7 +1635,7 @@
       },
       {
         "symbol": "chop_mxfp8_fold_decode_packed_lab_0_v1_partials_v1_packed_v1",
-        "registers": 50,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1653,7 +1653,7 @@
       },
       {
         "symbol": "chop_mxfp8_fold_decode_packed_lab_2_v1_partials_v1_packed_v1",
-        "registers": 50,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1689,7 +1689,7 @@
       },
       {
         "symbol": "chop_mxfp8_fold_decode_packed_lab_6_v1_partials_v1_packed_v1",
-        "registers": 48,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,

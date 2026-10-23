@@ -50,13 +50,14 @@ __device__ __forceinline__ void copy_packed_chunk(uint8_t* dst, const uint8_t* w
 
 // One aligned vector supplies two unchanged MMA steps. Keep the vector
 // shared load explicit so the packed lane runs use the swizzle together.
+// Half-fold steps 2 and 3 read the zero-filled second half of the strip slot.
 template<int K>
 __device__ __forceinline__ uint4 packed_fragment(const uint8_t* codes,
     uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
   const bool half = K % 128 != 0 && fold == K / 128;
-  if (half && step >= 2) return uint4{};
   const uint32_t at = warp * 1024 +
-      mxfp8_fold_packed::segment_word(quad, step * 32 + lane * 4, half);
+      mxfp8_fold_packed::segment_word(quad, (half ? step % 2 : step) * 32 + lane * 4, half)
+      + (half ? step / 2 * 512 : 0);
   const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
   uint4 value;
   asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
@@ -95,6 +96,27 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
 #pragma unroll
   for (int stage = 0; stage < 2; ++stage) {
     const uint32_t fold = first_fold + stage;
+    if constexpr (PackedWeights) {
+      // Fixed trips keep activation and weight copies out of operand branches.
+#pragma unroll 1
+      for (int i = 0; i < 2; ++i) {
+        const uint32_t chunk = threadIdx.x + i * 64;
+        const uint32_t r = chunk / 8;
+        const uint32_t col = fold * 128 + (chunk % 8) * 16;
+        const uint32_t row = token_base + r;
+        bool valid = col < K && row < live;
+        if (valid) valid = failed[row] == 0;
+        const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col;
+        copy16(codes[stage] + fold_row_chunk(r, chunk % 8),
+            activations + (valid ? at : 0), valid);
+      }
+#pragma unroll 1
+      for (int i = 0; i < 2; ++i) {
+        const uint32_t chunk = threadIdx.x + i * 64;
+        copy_packed_chunk<N, K>(codes[stage] + 16 * 128, weights, g, column_base,
+            chunk, fold, Folds);
+      }
+    } else {
     for (int chunk = threadIdx.x; chunk < 32 * 8; chunk += 64) {
       const uint32_t r = chunk / 8;
       const uint32_t col = fold * 128 + (chunk % 8) * 16;
@@ -105,14 +127,8 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
       const uint64_t at = a ? uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col
                             : (uint64_t(g) * N + row) * K + col;
       const uint8_t* src = a ? activations : weights;
-      if constexpr (PackedWeights) {
-        if (!a) {
-          copy_packed_chunk<N, K>(codes[stage] + 16 * 128, weights, g, column_base,
-              chunk - 16 * 8, fold, Folds);
-          continue;
-        }
-      }
       copy16(codes[stage] + fold_row_chunk(r, chunk % 8), src + (valid ? at : 0), valid);
+    }
     }
     for (int i = threadIdx.x; i < 32 * 4; i += 64) {
       const uint32_t r = i / 4;

@@ -326,12 +326,17 @@ The preview selects `tp4-dspark`, with both AR and speculative quick arms
 and exact greedy equality. DSpark computes all five proposals per block;
 scheduler budgets select the emitted prefix. Its profiles plan balanced
 drafts at native KV and TP4: every stream drafts the deepest common depth
-that fits the 32 verify rows (five at C1, three at C8, one at C16, none at
-C32), and no plan reads a step time, so identical processes run identical
-step shapes. On 2026-10-23, identical processes under the adaptive policy
-differed by up to 1.43x in C8 throughput, while drafting every stream at a
-fixed depth held them within 1.2%. `--speculation adaptive` with the shared
-`per-block` draft-cost model remains available. Its paired-teacher policy
+that fits the 32 verify rows, at most five from C1, three from C8 and none
+from C16 (`depths` `1:5,8:3,16:0`), and no plan reads a step time, so
+identical processes run identical step shapes. On 2026-10-23 at 300 W, four
+fresh processes per arm on one install served balanced within a 2.2%
+throughput spread at C8 and C16 with identical step shapes, while the
+adaptive policy differed by up to 57% in C8 full-concurrency throughput.
+Against no drafting, three drafts per stream at C8 raised full-concurrency
+throughput by 44% greedy and 26% sampled; one draft at C16 lowered request
+throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 serve without
+drafts. `--speculation adaptive` with the shared `per-block` draft-cost
+model remains available. Its paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 
 The speculative-verification copy set must have mean absolute logprob

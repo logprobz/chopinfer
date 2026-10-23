@@ -113,10 +113,8 @@ const ARM_BYTES: usize = 2 << 30;
 const MAX_REPETITIONS: usize = 128;
 pub const TIMING_ROWS: [u32; 9] = [1, 3, 4, 6, 16, 28, 32, 48, 64];
 
-/// Flash's base decode routing for these unpaired G=1 timing shapes.
-/// Sources: models/deepseek41/bundle/src/sm120/mxfp8_fold_routing.rs
-/// (decode_path, PREFETCH_WINS) and mxfp8_fold.rs (SPLIT_FOLD_TIES,
-/// small_query). Split takes precedence over prefetch; ticket is the rest.
+/// Baseline decode routing for the unpaired G=1 timing shapes below.
+/// Split takes precedence over prefetch; ticket is the rest.
 ///
 /// N     K     Split                 Prefetch
 /// 5120  2048  none                  1-10, 12, 16, 24

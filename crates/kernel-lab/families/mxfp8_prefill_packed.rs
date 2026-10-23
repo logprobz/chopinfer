@@ -48,7 +48,7 @@ pub const SHAPES: [(u32, u32, u32, u32, u32, DType); 6] = [
     (256, 64, 192, 1, 0, DType::F32),
 ];
 
-/// DeepSeek V4.1 prefill projections, for the paired timing test.
+/// Wide prefill projections for the paired timing test.
 pub const TIMING_SHAPES: [(u32, u32, u32, u32, u32, DType); 3] = [
     (8192, 5120, 2048, 1, 0, DType::Bf16),
     (8192, 8192, 1280, 1, 0, DType::Bf16),

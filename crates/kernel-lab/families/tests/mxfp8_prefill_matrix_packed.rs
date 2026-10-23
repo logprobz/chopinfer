@@ -2,7 +2,7 @@
 //! entries, bit for bit (`kernel_harness::packed_fold`), on the launches the
 //! `Sm120` backend prepares for registered exact row counts, with a negative
 //! control that moves one strip of the packed codes and paired timings at
-//! the tiles DeepSeek V4.1 Flash TP4 prefill serves.
+//! the wide prefill tiles listed below.
 
 #[path = "packed_staged/support.rs"]
 mod support;
@@ -23,8 +23,8 @@ use kernels_sm120::gemm::mxfp8_prefill_matrix::{self as matrix, Entry};
 const CUBINS: &str = "CHOPINFER_MXFP8_PREFILL_MATRIX_PACKED_CUBINS";
 const OUTPUT: u64 = 5;
 
-/// N, K, groups, rows, row tile and stages DeepSeek V4.1 Flash TP4 prefill
-/// selects (`fold_core_prefill`) at 448, 2496 and 8192 rows.
+/// N, K, groups, rows, row tile and stages for wide prefill
+/// (`fold_core_prefill`) at 448, 2496 and 8192 rows.
 #[rustfmt::skip]
 const SERVED: &[(u32, u32, u32, u32, u32, u32)] = &[
     (1280, 5120, 1, 448, 32, 3),

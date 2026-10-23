@@ -252,9 +252,9 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
 /// of one lab entry.
 type LabShape = (u32, u32, u32, u32, u32, DType, u32, u32);
 
-/// Every row tile (32, 64 and 128) and stage count DeepSeek V4.1 selects,
+/// Every row tile (32, 64 and 128) and selected stage count,
 /// final 64-K folds with K = 576 and 448, K divisible by 128, groups, padded
-/// activation strides, both outputs, and the Flash TP4 prefill shapes with
+/// activation strides, both outputs, and the wide prefill shapes with
 /// the tiles they serve at 448, 2496 and 8192 rows.
 #[rustfmt::skip]
 const LAB_SHAPES: &[LabShape] = &[

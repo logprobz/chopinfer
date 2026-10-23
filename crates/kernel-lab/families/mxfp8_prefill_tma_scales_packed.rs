@@ -19,7 +19,7 @@ pub const SHAPES: [(u32, u32, u32, u32, u32, DType); 4] = [
     (256, 64, 128, 1, 0, DType::F32),
 ];
 
-/// DeepSeek V4.1 projections this entry serves at 4096 and 8192 rows.
+/// Wide projections this entry serves at 4096 and 8192 rows.
 pub const TIMING_SHAPES: [(u32, u32, u32, u32, u32, DType); 3] = [
     (8192, 5120, 2048, 1, 0, DType::Bf16),
     (8192, 8192, 1280, 1, 0, DType::Bf16),

@@ -234,7 +234,7 @@ fn packed_compact_comparison_sees_a_moved_strip_on_gpu() {
     .unwrap();
 }
 
-/// Paired timings of served DeepSeek V4.1 prefill shapes (N 5120 by K 2048,
+/// Paired timings of wide prefill shapes (N 5120 by K 2048,
 /// N 8192 by K 1280 and N 5120 by K 576) at 512, 2048 and 8192 rows; a
 /// packed entry may be at most 3% slower.
 #[test]

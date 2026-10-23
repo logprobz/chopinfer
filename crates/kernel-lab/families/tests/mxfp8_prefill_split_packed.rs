@@ -153,7 +153,7 @@ fn packed_split_prefill_comparison_sees_a_moved_strip_on_gpu() {
     .unwrap();
 }
 
-/// Paired row-major and packed times of split launches at DeepSeek V4.1
+/// Paired row-major and packed times of split launches at wide
 /// prefill shapes. The packed entries must be no slower (each paired ratio
 /// at most 1.03).
 #[test]

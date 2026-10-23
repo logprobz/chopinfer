@@ -538,8 +538,8 @@ type LabShape = (u32, u32, u32, u32, u32, u32, u32, bool, bool);
 
 /// Every column tile (16, 32 and 64), both row tiles, groups, splits whose
 /// last CTA holds fewer folds, the status fold with a quantized output and
-/// with pending flags, and each schedule DeepSeek V4.1 Flash TP4 serves for
-/// WQ_a, WKV, WO_a and WO_b decode. The fold needs K divisible by 128, so no
+/// with pending flags, and the 512-, 1280-, 1024- and 5120-column decode
+/// schedules. The fold needs K divisible by 128, so no
 /// shape has a final 64-K fold.
 #[rustfmt::skip]
 const LAB_SHAPES: &[LabShape] = &[

@@ -269,7 +269,7 @@ type LabShape = (u32, u32, u32, u32, u32, DType, u32);
 /// Every row tile (the row counts the lab runs reach 16-, 32- and 64-row
 /// tiles), both stage counts, final 64-K folds with K = 576 and 448, K
 /// divisible by 128, groups, padded activation strides, both outputs, and
-/// three shapes DeepSeek V4.1 Flash serves at 512 to 8192 rows. Row-major
+/// three wide projections at 512 to 8192 rows. Row-major
 /// 64-row tiles spill below four folds, so every K here has at least four.
 #[rustfmt::skip]
 const LAB_SHAPES: &[LabShape] = &[

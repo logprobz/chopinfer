@@ -143,7 +143,7 @@ fn packed_tma_scales_comparison_sees_a_moved_strip_on_gpu() {
     .unwrap();
 }
 
-/// Paired row-major and packed times at the DeepSeek V4.1 shapes and row
+/// Paired row-major and packed times at the wide shapes and row
 /// counts this entry serves. The packed entry must be no slower (each
 /// paired ratio at most 1.03).
 #[test]

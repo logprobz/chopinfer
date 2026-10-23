@@ -217,8 +217,8 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
 type LabShape = (u32, u32, u32, u32, u32, u32);
 
 /// Both rings (the pair loop and the refilling ring), column tiles from 8 to
-/// 64 including tiles that overhang N, odd fold counts, groups, and WQ_b's
-/// DeepSeek V4.1 Flash TP4 decode fold. The fold needs K divisible by 128,
+/// 64 including tiles that overhang N, odd fold counts, groups, and the
+/// 8192-column, 1280-K decode fold. The fold needs K divisible by 128,
 /// so no shape has a final 64-K fold.
 #[rustfmt::skip]
 const LAB_SHAPES: &[LabShape] = &[

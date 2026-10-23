@@ -11,7 +11,9 @@ use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::state::Extent;
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::contract::Argument;
+use kernels_sm120::moe::scale_expand::{PAIR_SYMBOL, PAIR_TILES_SYMBOL};
 use model_deepseek41_contract::moe::{self, Experts};
+use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_layout};
 use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
 use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
 
@@ -179,6 +181,11 @@ fn encoded_scale_banks_expand_before_their_experts() {
         let set = moe::expert_sets(&FLASH)[0];
         let ops = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
         let moe_ops = ops.moe.as_ref().unwrap();
+        // The gate/up bank expands in the layout its consumers read.
+        let pair_symbol = match moe_ops.gate_up_layout() {
+            RoutedLayout::Rows => PAIR_SYMBOL,
+            RoutedLayout::Tiles => PAIR_TILES_SYMBOL,
+        };
         let mut direct = 0;
         for rank in [0, ranks.get() - 1] {
             let raw = rank_buffers(&shape, &ops, rank);
@@ -235,7 +242,7 @@ fn encoded_scale_banks_expand_before_their_experts() {
                         // like the rest, after the routes list the experts.
                         assert_eq!(new.len(), old.len() + 1, "{at}");
                         let expand = &new.last().unwrap().launch;
-                        assert_eq!(expand.symbol, "chop_moe_scale_expand_pair_v1", "{at}");
+                        assert_eq!(expand.symbol, pair_symbol, "{at}");
                         assert!(expand.plan.pdl, "{at}");
                         assert!(
                             new[..old.len()].iter().any(|op| bound(&op.launch)
@@ -363,7 +370,7 @@ fn a_single_encoded_bank_expands_alone() {
     let phase = Phase::Decode(4);
     let lowered = lower(&shape, &ops, &b, 0, phase, &crate::program::moe(0)).unwrap();
     let expand = &lowered[1].1.last().unwrap().launch;
-    assert_eq!(expand.symbol, "chop_moe_scale_expand_pair_v1");
+    assert_eq!(expand.symbol, PAIR_SYMBOL);
     assert_eq!(bound(expand)[0], None);
     assert_eq!(bound(expand)[3], None);
     assert_eq!(expand.arguments.0[5..10], [0; 5].map(Argument::U32));
@@ -376,6 +383,128 @@ fn a_single_encoded_bank_expands_alone() {
             .iter()
             .any(|op| bound(&op.launch).contains(&Some(raw.views[&gate_up])))
     );
+}
+
+/// The expansion writes the backbone's gate/up bank in the layout its
+/// consumers read: through the tiled paired entry where they read row
+/// tiles, which needs that bank, and the paired entry otherwise. A rank
+/// loads the tiled cubin only then, and create accepts an encoded gate/up
+/// bank beside codes in the consumers' layout, as it accepts the raw bank
+/// in that layout and refuses it in the other.
+#[test]
+fn the_expansion_writes_the_gate_up_bank_as_its_consumers_read_it() {
+    use bundle_runtime::index::{RankIndex, View as IndexView};
+    use kernel_core::backend::View;
+    use kernel_core::gated_mlp::GatedMlpProjection;
+    use kernel_core::precision::scale_expand::ScaleExpandQuery;
+    let set = moe::expert_sets(&FLASH)[0];
+    let banks = [GatedMlpProjection::GateUp, GatedMlpProjection::Down]
+        .map(|kind| moe::scale_bank(&FLASH, 4, set, kind).unwrap());
+    let launch = |gate_up: bool, layout| {
+        let bank = |at: usize, width: u32| {
+            let b = banks[at];
+            let query = ScaleExpandQuery {
+                width,
+                rows: b.rows,
+                groups: b.groups,
+                projections: b.projections,
+                experts: b.experts,
+            };
+            let handle = 1 + 2 * at as u64;
+            let views = [
+                View {
+                    handle,
+                    bytes: query.minimum_bank_bytes().unwrap(),
+                },
+                View {
+                    handle: handle + 1,
+                    bytes: query.output_bytes().unwrap(),
+                },
+            ];
+            (b, width, views)
+        };
+        let active = View {
+            handle: 9,
+            bytes: (u64::from(set.count) + 1) * 4,
+        };
+        crate::Kernels::scale_expand(
+            [gate_up.then(|| bank(0, 1)), Some(bank(1, 4))],
+            6,
+            Some(active),
+            1,
+            layout,
+        )
+        .unwrap()
+    };
+    let tiled = launch(true, RoutedLayout::Tiles);
+    let rows = launch(true, RoutedLayout::Rows);
+    assert_eq!(tiled.symbol, PAIR_TILES_SYMBOL);
+    assert_eq!(rows.symbol, PAIR_SYMBOL);
+    assert_eq!(
+        (&tiled.plan, &tiled.arguments),
+        (&rows.plan, &rows.arguments)
+    );
+    for layout in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+        assert_eq!(launch(false, layout).symbol, PAIR_SYMBOL, "{layout:?}");
+    }
+    // Each expansion cubin, with its entry, and when a rank loads it.
+    for (cubin, symbol) in [
+        ("moe_scale_expand_deepseek41_sm120", PAIR_SYMBOL),
+        ("moe_scale_expand_tiles_deepseek41_sm120", PAIR_TILES_SYMBOL),
+    ] {
+        let built = crate::CUBINS.iter().find(|c| c.name == cubin).unwrap();
+        assert!(built.symbols.contains(&symbol), "{cubin}");
+        let tiles = cubin.contains("_tiles_");
+        for layout in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+            assert!(!crate::Kernels::loads_scale_expand(cubin, false, layout));
+            assert_eq!(
+                crate::Kernels::loads_scale_expand(cubin, true, layout),
+                !tiles || layout == RoutedLayout::Tiles,
+                "{cubin} {layout:?}"
+            );
+        }
+    }
+    for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let ops = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+        let layout = ops.moe.as_ref().unwrap().gate_up_layout();
+        let other = match layout {
+            RoutedLayout::Rows => RoutedLayout::Tiles,
+            RoutedLayout::Tiles => RoutedLayout::Rows,
+        };
+        let [codes, scales] = layout.view_layouts().unwrap();
+        let view = |layout_id: &str| IndexView {
+            offset: 0,
+            bytes: 0,
+            dtype: "U8".into(),
+            shape: Vec::new(),
+            layout_id: layout_id.into(),
+        };
+        let index = |gate_up_scale: &str| RankIndex {
+            rank: 0,
+            image: String::new(),
+            image_bytes: 0,
+            sha256: None,
+            direct_identity: None,
+            views: [
+                ("gate_up.weight", view(codes)),
+                ("gate_up.scale", view(gate_up_scale)),
+                ("down.scale", view(&encoded_scale_layout(4))),
+            ]
+            .into_iter()
+            .map(|(bank, view)| (layer_view(0, &format!("ffn.experts.{bank}")), view))
+            .collect(),
+        };
+        for accepted in [encoded_scale_layout(1).as_str(), scales] {
+            ops.check_weight_layouts(&shape, &index(accepted))
+                .unwrap_or_else(|e| panic!("{ranks:?} {accepted}: {e}"));
+        }
+        let error = ops
+            .check_weight_layouts(&shape, &index(other.view_layouts().unwrap()[1]))
+            .unwrap_err();
+        assert!(error.contains("but its op reads"), "{ranks:?}: {error}");
+    }
 }
 
 /// The measured one-row floor binds the drafter's banks, which the plan

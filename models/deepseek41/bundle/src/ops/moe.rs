@@ -396,7 +396,8 @@ impl MoeOps {
     /// scale banks the rank image stores encoded, each as its offset width,
     /// encoded view and raw output (`None` for a bank stored raw): the
     /// experts the routes list in `active`, at most each row's top-k, or
-    /// every expert without a list.
+    /// every expert without a list. The gate/up bank is written in the
+    /// layout its consumers read ([`Self::gate_up_layout`]).
     pub(crate) fn expand_scales(
         &self,
         phase: Phase,
@@ -424,7 +425,13 @@ impl MoeOps {
             });
         }
         let active = active.map(|span| bind.view(span));
-        let launch = crate::Kernels::scale_expand(launch_banks, slots, active, phase.rows())?;
+        let launch = crate::Kernels::scale_expand(
+            launch_banks,
+            slots,
+            active,
+            phase.rows(),
+            self.gate_up_layout,
+        )?;
         Ok(bind.lowered(launch))
     }
 

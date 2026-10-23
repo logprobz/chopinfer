@@ -185,6 +185,8 @@ pub(crate) mod router_prefill;
 mod rows;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod scale_expand;
+#[allow(dead_code, reason = "the build script compiles the cubin spec")]
+mod scale_expand_tiles;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod shared;
 mod widen;
@@ -360,9 +362,39 @@ impl crate::Kernels {
     }
 
     /// Whether a rank loads `cubin`: the scale expansion only where its
-    /// image stores a routed scale bank encoded.
-    pub(crate) fn loads_scale_expand(cubin: &str, encoded: bool) -> bool {
-        cubin != scale_expand::CUBIN || encoded
+    /// image stores a routed scale bank encoded, and the tiled expansion
+    /// only where it also writes the gate/up bank in row tiles, for
+    /// consumers that read the bank in `gate_up`
+    /// ([`Self::expanded_scale_layout`]).
+    pub(crate) fn loads_scale_expand(
+        cubin: &str,
+        encoded: bool,
+        gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
+    ) -> bool {
+        use model_deepseek41_contract::weight_plan::RoutedLayout;
+        match cubin {
+            scale_expand::CUBIN => encoded,
+            scale_expand_tiles::CUBIN => {
+                encoded && Self::expanded_scale_layout(true, gate_up) == RoutedLayout::Tiles
+            }
+            _ => true,
+        }
+    }
+
+    /// The layout the expansion writes a raw scale bank in, for consumers
+    /// that read the backbone's gate/up bank in `gate_up`: that bank
+    /// (`backbone_gate_up`) in their layout, through the tiled entry where
+    /// they read row tiles, and every other bank in rows.
+    pub(crate) fn expanded_scale_layout(
+        backbone_gate_up: bool,
+        gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
+    ) -> model_deepseek41_contract::weight_plan::RoutedLayout {
+        use model_deepseek41_contract::weight_plan::RoutedLayout;
+        if backbone_gate_up {
+            gate_up
+        } else {
+            RoutedLayout::Rows
+        }
     }
 
     /// The launch expanding a layer's encoded gate/up and down scale banks
@@ -372,7 +404,10 @@ impl crate::Kernels {
     /// list names, over its first `slots` positions, or every expert without
     /// a list. Each CTA waits for its predecessor before it reads or writes,
     /// so the expansion follows the routes and the raw banks' previous
-    /// readers; every consumer reads after its own wait.
+    /// readers; every consumer reads after its own wait. The first bank is
+    /// the backbone's gate/up bank, written in the layout its consumers read
+    /// it in, `gate_up` ([`Self::expanded_scale_layout`]); the second is
+    /// written in rows.
     pub(crate) fn scale_expand(
         banks: [Option<(
             model_deepseek41_contract::moe::ScaleBank,
@@ -382,9 +417,11 @@ impl crate::Kernels {
         slots: u32,
         active: Option<kernel_core::backend::View>,
         rows: u32,
+        gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
     ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
         use kernel_core::contract::Refusal;
         use kernels_sm120::moe::scale_expand as expand;
+        use model_deepseek41_contract::weight_plan::RoutedLayout;
         let mut experts = banks.iter().flatten().map(|(bank, _, _)| bank.experts);
         let first = experts
             .next()
@@ -408,11 +445,27 @@ impl crate::Kernels {
                 (bank, encoded, output)
             })
         });
+        let shapes = banks.map(|b| b.map(|(bank, _, _)| bank));
+        let tiled =
+            banks[0].is_some() && Self::expanded_scale_layout(true, gate_up) == RoutedLayout::Tiles;
+        let (symbol, plan, arguments) = if tiled {
+            (
+                expand::PAIR_TILES_SYMBOL,
+                expand::pair_tiles_plan(shapes, first, slots)?,
+                expand::pair_tiles_arguments(banks, active, first)?,
+            )
+        } else {
+            (
+                expand::PAIR_SYMBOL,
+                expand::pair_plan(shapes, first, slots)?,
+                expand::pair_arguments(banks, active, first)?,
+            )
+        };
         Ok(kernel_core::backend::Launch {
-            symbol: expand::PAIR_SYMBOL.into(),
+            symbol: symbol.into(),
             rows,
-            plan: expand::pair_plan(banks.map(|b| b.map(|(bank, _, _)| bank)), first, slots)?,
-            arguments: expand::pair_arguments(banks, active, first)?,
+            plan,
+            arguments,
             collective: false,
             persistent: false,
         })

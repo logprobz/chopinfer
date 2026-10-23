@@ -421,35 +421,39 @@ impl Ops {
             expected.push(("head.weight".to_owned(), head.weight_layout()?));
         }
         let rows = RoutedLayout::Rows.view_layouts()?;
-        let gate_up = self
+        let gate_up_layout = self
             .moe
             .as_ref()
             .map_or(RoutedLayout::served(shape.ranks()), |moe| {
                 moe.gate_up_layout()
-            })
-            .view_layouts()?;
+            });
+        let gate_up = gate_up_layout.view_layouts()?;
+        // An encoded scale bank (`buffers::encoded_scales`) is expanded
+        // before its consumers, which read the raw bank in the layout the
+        // expansion writes (`Kernels::expanded_scale_layout`): the
+        // backbone's gate/up bank in its consumers' layout, every other
+        // bank in rows.
+        let expanded_gate_up =
+            Kernels::expanded_scale_layout(true, gate_up_layout).view_layouts()?[1];
+        let mut expanded = BTreeMap::new();
         for name in index.views.keys() {
             let Some((stem, bank)) = name.split_once(".ffn.experts.") else {
                 continue;
             };
-            let layouts = if stem.starts_with("layers.") && bank.starts_with("gate_up.") {
-                gate_up
-            } else {
-                rows
-            };
+            let backbone_gate_up = stem.starts_with("layers.") && bank.starts_with("gate_up.");
+            let layouts = if backbone_gate_up { gate_up } else { rows };
             let part = usize::from(name.ends_with(".scale"));
             expected.push((name.clone(), layouts[part].to_owned()));
+            if backbone_gate_up {
+                expanded.insert(name.clone(), expanded_gate_up);
+            }
         }
-        // An encoded scale bank (`buffers::encoded_scales`) is expanded
-        // before its consumers, which read the raw bank in the layout the
-        // expansion writes: rows.
-        let expanded = rows[1];
         for (name, layout) in expected {
             let Some(view) = index.views.get(&name) else {
                 continue;
             };
             let read = if encoded_scale_width(&view.layout_id).is_some() {
-                expanded
+                expanded.get(&name).copied().unwrap_or(rows[1])
             } else {
                 view.layout_id.as_str()
             };

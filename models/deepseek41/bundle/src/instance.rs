@@ -608,7 +608,14 @@ impl Instance {
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
                 .filter(|cubin| {
-                    crate::Kernels::loads_scale_expand(cubin.name, !encoded_scales[rank].is_empty())
+                    crate::Kernels::loads_scale_expand(
+                        cubin.name,
+                        !encoded_scales[rank].is_empty(),
+                        self.ops.moe.as_ref().map_or(
+                            model_deepseek41_contract::weight_plan::RoutedLayout::Rows,
+                            crate::ops::moe::MoeOps::gate_up_layout,
+                        ),
+                    )
                 })
                 .filter(|cubin| {
                     !cubin.name.starts_with("position_candidates_runtime_")

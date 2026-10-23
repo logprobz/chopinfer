@@ -335,11 +335,21 @@ adaptive policy differed by up to 57% in C8 full-concurrency throughput.
 Against no drafting, three drafts per stream at C8 raised full-concurrency
 throughput by 44% greedy and 26% sampled; one draft at C16 lowered request
 throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 serve without
-drafts. `--speculation adaptive` with the shared `per-block` draft-cost
-model remains available. The model option `dspark_draft_chunk_items`
-(default 6, at most 32) sets how many drafting items one drafter forward
-runs; a step with more runs one forward per chunk, and target outputs do not
-depend on it. Its paired-teacher policy
+drafts. Each plan then lands on the widest verify width of 6, 8, 16 and 32
+rows that its depth caps reach (`widths` `6,8,16,32`), filled by
+acceptance: the target verify's MoE has its prepared plans at those widths
+and runs a generic path between them, so a C8 step of 24 rows took 43.8 ms
+against 37.5 ms for 32 rows. On 2026-10-23 at 300 W, against the same
+profile without widths with three or four fresh processes per arm, this
+raised C8 request throughput by 10.1% greedy and 9.1% sampled and lowered
+energy per token by 6.4% and 5.8%, with C8 full-concurrency throughput and
+C1, C16 and C32 unchanged. `--speculation adaptive` with the shared
+`per-block` draft-cost model remains available. The model option
+`dspark_draft_chunk_items` (default 6, at most 32) sets how many drafting
+items one drafter forward runs; a step with more runs one forward per
+chunk, and target outputs do not depend on it. In the same run, chunks of
+8 (one 40-row forward) lowered C8 full-concurrency throughput by about 5%.
+The DSpark paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 
 The speculative-verification copy set must have mean absolute logprob

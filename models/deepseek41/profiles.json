@@ -89,6 +89,7 @@
       "speculation": {
         "mode": "balanced",
         "depths": "1:5,8:3,16:0",
+        "widths": "6,8,16,32",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -126,6 +127,7 @@
       "speculation": {
         "mode": "balanced",
         "depths": "1:5,8:3,16:0",
+        "widths": "6,8,16,32",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -199,6 +201,7 @@
       "speculation": {
         "mode": "balanced",
         "depths": "1:5,8:3,16:0",
+        "widths": "6,8,16,32",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"

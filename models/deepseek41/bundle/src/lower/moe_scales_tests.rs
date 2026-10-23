@@ -225,7 +225,7 @@ fn encoded_scale_banks_expand_before_their_experts() {
                     let expand = &new[0].launch;
                     assert_eq!(
                         expand.symbol,
-                        kernels_sm120::moe::scale_expand::symbol(width).unwrap(),
+                        format!("chop_moe_scale_expand_w{width}_v1"),
                         "{at} {stage:?}"
                     );
                     assert!(expand.plan.pdl, "{at}");

@@ -82,6 +82,12 @@ pub trait Host {
     /// Project the rows of every pass through every stage, in launches of
     /// at most the state's batch rows that may mix requests.
     fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), Self::Error>;
+    /// Before a step whose items all decode and some draft, with each
+    /// item's first target token: the host may start reading those rows'
+    /// Engram table rows while the drafter runs. It never changes results.
+    fn prefetch_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
+        Ok(())
+    }
     /// Compute all five positions, sequential Markov sampling and the
     /// confidence head, regardless of each block's emitted prefix length.
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error>;
@@ -228,6 +234,14 @@ impl Runtime {
             .prepare(inputs.iter().map(|input| input.rows).collect())
             .map_err(Error::State)?;
         self.diagnostics.clear();
+        // The device target's steps: each item's first row is known now.
+        if inputs.iter().any(|input| input.rows.kind.drafts() > 0)
+            && inputs
+                .iter()
+                .all(|input| matches!(input.rows.kind, Kind::Decode { .. }))
+        {
+            self.host_result(host.prefetch_engram(inputs))?;
+        }
         // Items that do not draft defer their rows to their next drafting
         // step; a bulk commit catches up now, as it would eagerly.
         let catching_up = inputs

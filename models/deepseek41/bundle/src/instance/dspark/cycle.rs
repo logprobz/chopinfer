@@ -1,7 +1,7 @@
 //! Device target tokens and overlapped mapped rows, behind the lifecycle adapter.
 mod graphs;
 use super::Instance;
-use crate::dspark::cycle::{Deferred, LayerGather, Pending};
+use crate::dspark::cycle::{Deferred, Early, LayerGather, Pending};
 use crate::dspark::device::{DECODE_BASE, slice};
 use crate::dspark::execution::{DraftInput, Input};
 use crate::dspark::staging::DeviceTarget;
@@ -12,6 +12,7 @@ use bundle_runtime::graphs::GraphCache;
 use bundle_runtime::inputs::{PackedStep, PhaseInputs};
 use bundle_runtime::resources::{Held, upload_bytes};
 use bundle_runtime::upload::{DeviceInputs, InputLayout};
+use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_abi::{
     BundleAbiError, BundleStatusV1, ExecuteResultSinkV1, MappedGatherPlaneV1,
 };
@@ -44,7 +45,34 @@ impl Instance {
         let shape = device.cycle.hash.shape;
         let columns = shape.columns();
         let mut layer_planes = vec![Vec::new(); tables.len()];
+        let mut early_planes = vec![Vec::new(); tables.len()];
         for (rank, buffers) in self.buffers.iter().enumerate() {
+            // Each layer's codes, then its scales, one row per decode item.
+            if let Some(early) = device
+                .ranks
+                .get(rank)
+                .and_then(|stored| stored.engram_early)
+            {
+                let mut at = 0;
+                for (layer, table) in tables.iter().enumerate() {
+                    for plane in [&table.codes, &table.scales] {
+                        let bytes = u64::from(DECODE_BATCH) * columns * plane.row_bytes;
+                        let destination = slice(early, at, bytes).map_err(|_| {
+                            BundleAbiError::InvalidRange("DSpark early Engram destination")
+                        })?;
+                        at += bytes;
+                        early_planes[layer].push(MappedGatherPlaneV1 {
+                            image,
+                            rank: rank as u32,
+                            view_id: plane.view.clone(),
+                            row_bytes: plane.row_bytes,
+                            index_offset: 0,
+                            stream: self.ranks[rank].2,
+                            destination,
+                        });
+                    }
+                }
+            }
             let destinations = device
                 .engram_destinations(&buffers.scratch)
                 .map_err(|_| BundleAbiError::InvalidRange("DSpark mapped destinations"))?;
@@ -123,11 +151,39 @@ impl Instance {
                 graphs,
             });
         }
+        if let (Some(stream), Some(ids)) = (device.cycle.early_stream, device.cycle.early_ids) {
+            if early_planes
+                .iter()
+                .any(|planes| planes.len() != 2 * self.ranks.len())
+            {
+                return Err(BundleAbiError::InvalidRange("DSpark early Engram ranks"));
+            }
+            let mut gathers = Vec::with_capacity(early_planes.len());
+            for (index, planes) in early_planes.into_iter().enumerate() {
+                let indices = slice(ids, index as u64 * bytes, bytes)
+                    .map_err(|_| BundleAbiError::InvalidRange("DSpark early hash extent"))?;
+                gathers.push(
+                    self.services
+                        .create_mapped_gather(stream, indices, &planes)?,
+                );
+            }
+            device.cycle.early = Some(Early {
+                ids,
+                gathers,
+                rows: None,
+            });
+        }
+        let early = device.cycle.early.is_some();
         if device.cycle.undrafted {
             let layers = device.cycle.layers.len();
             self.log(&format!(
                 "CHOPINFER_DEEPSEEK41_AR_ENGRAM: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
             ));
+        }
+        if early {
+            self.log(
+                "CHOPINFER_DSPARK_ENGRAM_EARLY: drafted steps gather each item's first Engram rows before the drafter",
+            );
         }
         Ok(())
     }
@@ -309,6 +365,47 @@ impl Instance {
         Ok(())
     }
 
+    /// Starts a drafted step's early gathers (`dspark::cycle::Early`) of
+    /// `hashed`, each item's first target row, at the start of its execute.
+    /// The ids go up on rank 0's side stream, so the reads start at once,
+    /// while this step's drafter or the successor drafter queued by the
+    /// previous step runs. Only the copies into scratch follow each rank's
+    /// queued work.
+    pub(crate) fn prefetch_dspark_engram(&mut self, hashed: &Hashed) -> Result<(), String> {
+        let services = &self.services;
+        let Some(cycle) = self.dspark.as_mut().map(|device| &mut device.cycle) else {
+            return Ok(());
+        };
+        let Some(stream) = cycle.early_stream else {
+            return Ok(());
+        };
+        let (stride, columns) = (
+            cycle.hash.shape.stride as usize,
+            cycle.hash.shape.columns() as usize,
+        );
+        let busy = cycle.gathering || cycle.pending.is_some();
+        let Some(early) = &mut cycle.early else {
+            return Ok(());
+        };
+        if busy || early.rows.is_some() {
+            return Err("DSpark early Engram rows are already pending".into());
+        }
+        if hashed.rows() == 0 || hashed.rows() > DECODE_BATCH as usize {
+            return Ok(());
+        }
+        let ids = ar_engram::layer_major(hashed, early.gathers.len(), columns, stride)
+            .map_err(|error| error.to_string())?;
+        upload_bytes(services, stream, early.ids, &ids).map_err(|e| e.to_string())?;
+        let rows = (hashed.rows() * columns) as u64;
+        for &gather in &early.gathers {
+            services
+                .enqueue_mapped_gather(gather, rows)
+                .map_err(|e| e.to_string())?;
+        }
+        early.rows = Some(hashed.rows() as u32);
+        Ok(())
+    }
+
     /// Takes an undrafted decode step's host-hashed ids for its target
     /// launch, which uploads them where the device hash writes a drafted
     /// step's and gathers each layer's rows through the same prepared
@@ -405,7 +502,20 @@ impl Instance {
                 .get(layer)
                 .ok_or(BundleAbiError::InvalidRange("DSpark mapped layer"))?
                 .gather;
+            // The early copy finished while the drafter ran; joining it
+            // here keeps the boundary's completion check for both.
+            let early = device
+                .cycle
+                .early
+                .as_ref()
+                .filter(|early| early.rows.is_some())
+                .map(|early| early.gathers.get(layer).copied())
+                .map(|gather| gather.ok_or(BundleAbiError::InvalidRange("DSpark early layer")))
+                .transpose()?;
             for &(_, _, stream) in &self.ranks {
+                if let Some(early) = early {
+                    self.services.wait_mapped_gather(early, stream)?;
+                }
                 self.services.wait_mapped_gather(gather, stream)?;
             }
         }
@@ -439,6 +549,22 @@ impl Instance {
                 "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
                 layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
             ));
+        }
+        let mut early_layers = Vec::new();
+        if let Some(early) = &device.cycle.early
+            && let Some(rows) = early.rows
+        {
+            for (layer, &gather) in device.cycle.layers.iter().zip(&early.gathers) {
+                let stats = self
+                    .services
+                    .complete_mapped_gather(gather)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("DSpark early Engram upload is incomplete at target boundary")?;
+                early_layers.push(format!(
+                    "{{\"layer\":{},\"rows\":{rows},\"host_ns\":{},\"exposed_ns\":{}}}",
+                    layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
+                ));
+            }
         }
         let packet = device
             .cycle
@@ -509,7 +635,7 @@ impl Instance {
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
-                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"layers\":[{}],\"explicit_bundle_syncs\":0}}"
+                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"layers\":[{}],{}\"explicit_bundle_syncs\":0}}"
             ),
             pending.inputs.len(),
             pending.text.len(),
@@ -518,12 +644,20 @@ impl Instance {
             device.results.metadata.is_some(),
             boundary_reads + device.cycle.layers.len(),
             layers.join(","),
+            if early_layers.is_empty() {
+                String::new()
+            } else {
+                format!("\"early\":[{}],", early_layers.join(","))
+            },
         );
         let _ = self.services.log(message.as_bytes());
         let device = self.dspark.as_mut().expect("drafter retained");
         device.prefetch.feedback = feedback;
         let cycle = &mut device.cycle;
         cycle.gathering = false;
+        if let Some(early) = &mut cycle.early {
+            early.rows = None;
+        }
         cycle.pending.as_mut().expect("pending cycle").result = Some(DeviceTarget {
             ids,
             confidence_bits,

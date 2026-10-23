@@ -6,6 +6,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 
 mod boundary;
 mod catch_up;
+mod early;
 mod graph_budget;
 pub(super) mod host;
 mod item_keys;

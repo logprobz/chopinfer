@@ -35,6 +35,15 @@ pub(crate) struct Cycle {
     pub boundary_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub boundary_enabled: bool,
     pub pending: Option<Pending>,
+    /// Whether drafted steps gather each item's first rows early
+    /// (`early_enabled`), decided at create.
+    pub early_enabled: bool,
+    /// Rank 0's side stream producing the early ids, so their reads wait
+    /// for no queued device work, and the ids' storage on it. Both are
+    /// acquired at create when enabled.
+    pub early_stream: Option<runtime_bundle_abi::BundleStreamHandleV1>,
+    pub early_ids: Option<DeviceBufferSpanV1>,
+    pub early: Option<Early>,
 }
 
 /// A decode step's host-hashed ids, laid out as the device hash writes
@@ -42,6 +51,49 @@ pub(crate) struct Cycle {
 pub(crate) struct Deferred {
     pub ids: Vec<u8>,
     pub rows: u32,
+}
+
+/// A drafted step's early gathers. Each item's first target row (its bonus
+/// or decode token) is known before the drafter runs, so the host hashes
+/// those rows and these gathers read them while the drafter runs. The late
+/// gathers (`LayerGather`) then find those rows in the resident row cache.
+/// The late gathers still copy every row the target reads; the early copies
+/// land in scratch that no kernel reads.
+pub(crate) struct Early {
+    /// The host-hashed ids, laid out as the device hash writes them.
+    pub ids: DeviceBufferSpanV1,
+    /// One gather per Engram layer, in layer order.
+    pub gathers: Vec<BundleMappedGatherHandleV1>,
+    /// The rows of the step whose early gathers are in flight.
+    pub rows: Option<u32>,
+}
+
+/// `CHOPINFER_DSPARK_ENGRAM_EARLY=1` gathers each drafted item's first
+/// Engram rows before the drafter. Off until a served pair measures it.
+pub(crate) fn early_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(value) = EARLY_IN_TESTS.with(std::cell::Cell::get) {
+        return value;
+    }
+    std::env::var_os("CHOPINFER_DSPARK_ENGRAM_EARLY").is_some_and(|value| value == "1")
+}
+
+#[cfg(test)]
+thread_local! {
+    static EARLY_IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `run` as if the early switch held `value`.
+#[cfg(test)]
+pub(crate) fn with_early<T>(value: bool, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EARLY_IN_TESTS.with(|cell| cell.set(self.0));
+        }
+    }
+    let _restore = Restore(EARLY_IN_TESTS.with(|cell| cell.replace(Some(value))));
+    run()
 }
 
 /// A layer owns its pinned gather slot and the target piece consuming it.
@@ -68,6 +120,10 @@ impl Cycle {
             boundary_enabled: std::env::var_os("CHOPINFER_DSPARK_BOUNDARY_PACKET")
                 .is_none_or(|value| value == "1"),
             pending: None,
+            early_enabled: early_enabled(),
+            early_stream: None,
+            early_ids: None,
+            early: None,
         }
     }
 }

@@ -12,14 +12,15 @@ use bundle_runtime::resources::{Held, allocate_span};
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::allocation::Allocation;
 use kernel_core::backend::{Need, Prepared as Op, View};
+use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::moe::Experts;
 use model_deepseek41_contract::own_ops::ring_gather::{RingGather, RingGatherBuffers};
 use model_deepseek41_contract::own_ops::rope::MAX_POSITIONS;
 use model_deepseek41_contract::serving::{DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS};
 use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::{
-    BundleAbiError, BundleMemoryPoolHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1 as Span,
-    HostServicesV1,
+    BundleAbiError, BundleContextHandleV1, BundleMemoryPoolHandleV1, BundleStreamHandleV1,
+    DeviceBufferSpanV1 as Span, HostServicesV1,
 };
 
 use super::calibration::Context;
@@ -99,6 +100,8 @@ pub(crate) struct Rank {
     pub live_width: Span,
     pub reduce_state: Vec<Span>,
     pub gather_state: Vec<Span>,
+    /// The early Engram gathers' destination (`early_engram_bytes`).
+    pub engram_early: Option<Span>,
 }
 
 pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
@@ -304,13 +307,28 @@ impl Device {
     pub fn allocate(
         &mut self,
         services: &HostServicesV1,
-        pool: BundleMemoryPoolHandleV1,
-        stream: BundleStreamHandleV1,
+        (context, pool, stream): (
+            BundleContextHandleV1,
+            BundleMemoryPoolHandleV1,
+            BundleStreamHandleV1,
+        ),
         held: &mut Vec<Held>,
     ) -> Result<(), BundleAbiError> {
         let g = self.shape.geometry;
         if self.ranks.is_empty() {
             self.cycle.memory = Some(self.cycle.hash.allocate(services, pool, stream, held)?);
+            if self.cycle.early_enabled {
+                let side = services.create_stream(context, 0)?;
+                held.push(Held::Stream(side));
+                self.cycle.early_stream = Some(side);
+                self.cycle.early_ids = Some(allocate_span(
+                    services,
+                    pool,
+                    side,
+                    self.cycle.hash.shape.output_bytes(),
+                    held,
+                )?);
+            }
             self.cycle.diagnostics = Some(allocate_span(
                 services,
                 pool,
@@ -456,7 +474,19 @@ impl Device {
             live_width,
             reduce_state,
             gather_state,
+            engram_early: if self.cycle.early_enabled {
+                Some(alloc(early_engram_bytes(g))?)
+            } else {
+                None
+            },
         });
         Ok(())
     }
+}
+
+/// One rank's early Engram scratch: each layer's codes, then its scales, for
+/// one row per decode item. No kernel reads it.
+pub(crate) fn early_engram_bytes(g: &Geometry) -> u64 {
+    let codes = u64::from(DECODE_BATCH) * u64::from(crate::ops::dense::engram_k(g));
+    u64::from(g.engram_layers()) * (codes + codes / 32)
 }

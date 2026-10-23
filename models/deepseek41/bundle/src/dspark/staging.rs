@@ -52,6 +52,18 @@ pub trait Program {
     fn defer_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
         Ok(false)
     }
+
+    /// Whether drafted steps read each item's first Engram rows while the
+    /// drafter runs (`prefetch_engram`).
+    fn prefetches_engram(&self) -> bool {
+        false
+    }
+
+    /// Takes the ids of each item's first target row before the drafter
+    /// launches. The rows the target reads still come from its own gather.
+    fn prefetch_engram(&mut self, _hashed: &Hashed) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct Rank {
@@ -445,6 +457,28 @@ impl<P: Program> Host for Adapter<'_, P> {
             |t| &mut t.catch_up_us,
             || program.project_rows(passes),
         )
+    }
+    fn prefetch_engram(&mut self, inputs: &[Input]) -> Result<(), String> {
+        if !self.program.prefetches_engram() {
+            return Ok(());
+        }
+        // A decode input holds its first target token only, which the
+        // device hash reads with the same committed history.
+        let rows = inputs
+            .iter()
+            .map(|input| TargetRows {
+                rows: input.rows,
+                tokens: input.tokens.clone(),
+            })
+            .collect::<Vec<_>>();
+        let pending = Staging::pending_rows(&rows, self.text)?;
+        let steps = pending.iter().map(Pending::step).collect::<Vec<_>>();
+        let hashed = self
+            .staging
+            .rows
+            .hash(&steps)
+            .map_err(|e| format!("Engram hash: {e:?}"))?;
+        self.program.prefetch_engram(&hashed)
     }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         let program = &mut *self.program;

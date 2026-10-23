@@ -18,6 +18,8 @@ struct FakeHost {
     bad_tail_id: bool,
     device_target: bool,
     confidence_override: Option<[f32; WIDTH]>,
+    /// Journal `prefetch_engram` calls.
+    prefetch: bool,
 }
 
 impl FakeHost {
@@ -52,6 +54,18 @@ impl Host for FakeHost {
             .collect::<Vec<_>>()
             .join(", ");
         self.event("project_rows", detail)
+    }
+
+    fn prefetch_engram(&mut self, inputs: &[Input]) -> Result<(), Self::Error> {
+        if !self.prefetch {
+            return Ok(());
+        }
+        let tokens = inputs
+            .iter()
+            .map(|input| format!("{}:{:?}", input.rows.request, input.tokens))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.event("prefetch", tokens)
     }
 
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error> {
@@ -565,6 +579,44 @@ fn cancellation_preserves_history_and_reports_only_emitted_positions_as_cancelle
     );
     runtime.commit(&mut host, &[(41, 3)]).unwrap();
     assert_eq!(host.committed[&41].len(), 6);
+}
+
+/// A step whose items all decode and some draft offers each item's first
+/// target token before any catch-up or drafting; other steps offer nothing,
+/// and the offer changes no result.
+#[test]
+fn drafted_decode_steps_offer_first_rows_before_catch_up_and_drafting() {
+    let (mut runtime, mut host) = setup();
+    host.prefetch = true;
+    let (mut plain_runtime, mut plain) = setup();
+    let drafts = runtime.execute(&mut host, &[input(5)]).unwrap();
+    assert_eq!(
+        drafts,
+        plain_runtime.execute(&mut plain, &[input(5)]).unwrap()
+    );
+    assert_eq!(host.journal[0], "prefetch 41:[4]");
+    assert_eq!(&host.journal[1..], plain.journal);
+    runtime.commit(&mut host, &[(41, 6)]).unwrap();
+    plain_runtime.commit(&mut plain, &[(41, 6)]).unwrap();
+    assert_eq!(host.committed, plain.committed);
+    assert_eq!(host.records, plain.records);
+    // A decode step without drafts: no offer.
+    let mut item = input(0);
+    item.rows.start = 9;
+    let before = host.journal.len();
+    runtime.execute(&mut host, &[item]).unwrap();
+    assert!(
+        !host.journal[before..]
+            .iter()
+            .any(|entry| entry.starts_with("prefetch"))
+    );
+    // A failed offer poisons like any host failure, before drafting.
+    let (mut runtime, mut host) = setup();
+    host.prefetch = true;
+    host.fail = Some("prefetch");
+    assert!(runtime.execute(&mut host, &[input(5)]).is_err());
+    assert_eq!(host.journal, ["prefetch 41:[4]"]);
+    assert!(runtime.state().is_poisoned());
 }
 
 #[test]

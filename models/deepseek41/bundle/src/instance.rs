@@ -320,7 +320,7 @@ impl Instance {
             .cycle()
             .take(crate::buffers::scratch_rows() as usize * shape.dims().hc.streams as usize * 4)
             .collect();
-        for (rank, &(_, pool, stream)) in ranks.iter().enumerate() {
+        for (rank, &(context, pool, stream)) in ranks.iter().enumerate() {
             for (phase, bytes) in layouts.into_iter().enumerate() {
                 let arena = allocate_span(services, pool, stream, bytes, held)?;
                 let block_tables = allocate_span(services, pool, stream, tables, held)?;
@@ -427,7 +427,7 @@ impl Instance {
                 .next_multiple_of(256);
             let shared_workspace = allocate_span(services, pool, stream, shared_workspace, held)?;
             if let Some(drafter) = &mut self.dspark {
-                drafter.allocate(services, pool, stream, held)?;
+                drafter.allocate(services, (context, pool, stream), held)?;
             }
             if let Some(bound) = scratch.last() {
                 services.zero_device_buffer(stream, bound.bias_select)?;
@@ -993,6 +993,13 @@ impl Bundle for Instance {
             gathers.release(&self.services)?;
         }
         if let Some(device) = &mut self.dspark {
+            // The early gathers follow the layers' at create.
+            if let Some(early) = &mut device.cycle.early {
+                while let Some(&gather) = early.gathers.last() {
+                    self.services.release_mapped_gather(gather)?;
+                    early.gathers.pop();
+                }
+            }
             while let Some(layer) = device.cycle.layers.last() {
                 self.services.release_mapped_gather(layer.gather)?;
                 device.cycle.layers.pop();
@@ -1174,6 +1181,18 @@ pub(crate) fn dspark_context(
             .state()
             .context(request)
             .cloned()
+    })
+}
+
+/// The DSpark early gathers' host-hashed ids and their rows per layer.
+#[cfg(test)]
+pub(crate) fn dspark_early_ids(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Option<(runtime_bundle_abi::DeviceBufferSpanV1, u32)> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let cycle = &table.get_mut(handle)?.dspark.as_ref()?.cycle;
+        Some((cycle.early.as_ref()?.ids, cycle.hash.shape.stride))
     })
 }
 

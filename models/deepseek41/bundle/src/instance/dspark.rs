@@ -120,6 +120,17 @@ impl Program for Work<'_> {
     fn defer_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<bool, String> {
         self.instance.defer_dspark_engram(hashed)
     }
+
+    fn prefetches_engram(&self) -> bool {
+        self.instance
+            .dspark
+            .as_ref()
+            .is_some_and(|device| device.cycle.early.is_some())
+    }
+
+    fn prefetch_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
+        self.instance.prefetch_dspark_engram(hashed)
+    }
 }
 
 fn inputs(phase: &PhaseInputs, drafts: &[u32]) -> Result<Vec<Input>, String> {

@@ -1151,7 +1151,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// status twin; these lifecycles launch no 16- or 32-row bucket, and every
 /// other line is identical after handle mapping.
 /// Sharing fold state and workspace across layers removes 406 allocations
-/// and their releases per TP1/TP4 rank, and 484 per TP2 rank. Packed weights,
+/// and their releases per TP1 rank and 484 per TP2 and TP4 rank (at TP4 the
+/// dual fold's window-key operation shares as well). Packed weights,
 /// initialization count, every launch and every span length stay unchanged.
 /// All six journals match their predecessors after exactly those removals
 /// and the state/workspace aliases and resulting handle renumbering.
@@ -1165,22 +1166,22 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17539, 0xfddf8f76c9219c1a),
+        (16707, 0xaea5318cc51ac9d0),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17393, 0x07476fb530563948),
+        (16561, 0x8206ed028dae8dc7),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (35265, 0x9b53da873b588885),
+        (33289, 0x9bc89232aa772f4d),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34973, 0xf0fb28de6a6fea5d),
+        (32997, 0xd5ebdea6cc6e03a9),
     ),
     (
         "deepseek41-flash-tp4",

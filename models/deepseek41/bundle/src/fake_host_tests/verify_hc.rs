@@ -94,6 +94,8 @@ use super::*;
 // Scratch regions (`buffers::REGIONS`) give each rank's region members one
 // handle and renumber the other buffers and the streams; audited against
 // the same verifies bound without regions, every line is otherwise equal.
+// Shared fold state and workspace give each fold operation's layers one
+// handle and renumber the rest; every line is otherwise equal.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0xeaddb53d42c1914a)),
     (6, (8680, 0xf8c3eaf8478f1253)),

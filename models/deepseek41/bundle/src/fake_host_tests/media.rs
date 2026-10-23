@@ -420,6 +420,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases per rank, as in the text lifecycle; audited against the image
 /// lifecycle bound without regions, every other line is equal once ids are
 /// mapped, and only each rank's region members share a handle.
+/// Shared fold state and workspace remove 484 allocations and their
+/// releases per rank, as in `FLASH_JOURNALS` (at TP4 the C1 dual fold binds
+/// its two projections' shared storage); every other line is equal once ids
+/// are mapped.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (23343, 0x3cc290637430e206)),
     (Ranks::TP4, (57871, 0x83cad1ba55e7f679)),

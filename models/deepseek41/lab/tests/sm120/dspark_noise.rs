@@ -280,7 +280,7 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                                     for ((&y, &x), &want) in out.iter().zip(input).zip(&reference) {
                                         let bound = draft_noise::bound(x, &noise, want);
                                         let error = (f64::from(y) - want).abs();
-                                        if !(error <= bound) {
+                                        if error.is_nan() || bound.is_nan() || error > bound {
                                             return Err(format!(
                                                 "{label} row {r}: {y} against {want} \
                                                  exceeds {bound}"

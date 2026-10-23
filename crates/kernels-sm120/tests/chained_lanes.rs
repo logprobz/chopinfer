@@ -52,6 +52,8 @@ fn word_checks_and_lane_bytes_match_the_row_tiled_queues() {
 /// The Flash TP4 backbone gate/up projection: 384 experts, top 6, 576
 /// columns per half, K 5120.
 const CONFIG: &str = "chop::moe::chained::quantized::Config<chop::moe::chained::Projection::gate_up,384,6,576,5120,64,64,chop::moe::clamp::SwigluClamp<true,1088421888u,1088421888u>>";
+/// The same projection at the streamed module's 8-token capacity.
+const CONFIG_T8: &str = "chop::moe::chained::quantized::Config<chop::moe::chained::Projection::gate_up,384,6,576,5120,64,8,chop::moe::clamp::SwigluClamp<true,1088421888u,1088421888u>>";
 
 fn entry(symbol: &str, call: &str, min_blocks: u32) -> EntrySpec {
     let pointer = |name: &str, cxx_type: &str| EntryParam::DevicePointer {
@@ -121,6 +123,12 @@ fn lane_queues_build_beside_their_row_tiled_twins() {
             format!("chop::moe::absorb::compute<{CONFIG},true>"),
             format!("chop::moe::lanes::absorbing<{CONFIG}>"),
             8,
+        ),
+        (
+            "stream_t8_small",
+            format!("chop::moe::streamed::compute<{CONFIG_T8},8,true>"),
+            format!("chop::moe::lanes::compute<{CONFIG_T8},8>"),
+            1,
         ),
     ];
     let spec = CubinSpec {

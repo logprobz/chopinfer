@@ -1,18 +1,18 @@
-//! The direct gate small and wide queues, the resident8 gate and the
-//! absorbing gate small queue reading their bank in quad-lane row tiles
-//! ([`ROW_TILES_64X128_LANES`], `chained_lanes.cuh`). Each lane loads the
-//! bytes it converts and one word of its row's four group scales, so no
-//! shuffle or byte shift forms the MMA operands. The A operands, MMAs,
-//! chains and partials are the row-tiled queues', so the partials are
-//! theirs bit for bit; each build keeps its row-tiled twin's parameters,
-//! launch and residency.
+//! The direct gate small and wide queues, the resident8 gate, the absorbing
+//! gate small queue and the streamed module's gate small and wide queues
+//! reading their bank in quad-lane row tiles ([`ROW_TILES_64X128_LANES`],
+//! `chained_lanes.cuh`). Each lane loads the bytes it converts and one word
+//! of its row's four group scales, so no shuffle or byte shift forms the
+//! MMA operands. The A operands, MMAs, chains and partials are the
+//! row-tiled queues', so the partials are theirs bit for bit; each build
+//! keeps its row-tiled twin's parameters, launch and residency.
 //!
 //! [`ROW_TILES_64X128_LANES`]: kernel_core::precision::layout::ROW_TILES_64X128_LANES
 use super::{
     absorb, bandwidth,
     floor::{Entry, Stage},
     quantized::Projection,
-    streamed_resident,
+    streamed, streamed_resident,
 };
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::Refusal;
@@ -98,6 +98,52 @@ pub fn absorb_entry(e: &Entry) -> Result<EntrySpec, Refusal> {
         )
         .replace(",true>(input,", ">(input,");
     Ok(spec)
+}
+
+/// The streamed module's small or wide gate/up queue reading its bank in
+/// quad-lane row tiles.
+pub fn streamed_symbol(p: &Projection, s: streamed::Stage) -> String {
+    format!(
+        "{}_lanes_v1",
+        streamed::symbol(p, s).trim_end_matches("_v1")
+    )
+}
+
+/// The row-tiled streamed queue's ABI and launch over the quad-lane bank.
+pub fn streamed_entry(p: &Projection, s: streamed::Stage) -> Result<EntrySpec, Refusal> {
+    let rows = match s {
+        streamed::Stage::Small => 8,
+        streamed::Stage::Wide => 64,
+        _ => return Err(Refusal("only the small and wide queues read weights")),
+    };
+    let mut spec = streamed::tiled_entry(p, s)?;
+    let call = format!(",{rows},true>(input,");
+    assert_eq!(
+        spec.body.matches("chop::moe::streamed::compute<").count(),
+        1
+    );
+    assert_eq!(spec.body.matches(&call).count(), 1);
+    spec.symbol = streamed_symbol(p, s);
+    spec.body = spec
+        .body
+        .replace(
+            "chop::moe::streamed::compute<",
+            "chop::moe::lanes::compute<",
+        )
+        .replace(&call, &format!(",{rows}>(input,"));
+    Ok(spec)
+}
+
+/// The quad-lane small and wide queues of each streamed gate/up projection
+/// in `projections`.
+pub fn streamed_cubin_spec(name: &str, projections: &[Projection]) -> Result<CubinSpec, Refusal> {
+    let mut specs = Vec::new();
+    for p in projections {
+        for s in streamed::tiled_stages(p) {
+            specs.push(streamed_entry(p, s)?);
+        }
+    }
+    Ok(super::spec(name.into(), HEADER, specs))
 }
 
 /// Every quad-lane gate queue of each bank in `entries`: direct small and

@@ -116,12 +116,12 @@ use super::*;
 // WO_a's input quantizer and prefetch pair, WO_b's input quantizer and
 // stream fold) become six the same way (1600 launches to 960, same audit).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x1f65557b17e50b3f)),
-    (6, (8680, 0x0d301da4436fb2be)),
-    (8, (7720, 0xd86f7d3c00ff0fb8)),
-    (12, (10136, 0xaa37703e0fb8e128)),
-    (16, (7892, 0x3efa8989474cfb2e)),
-    (32, (7744, 0xc8a55c2efbd10747)),
+    (4, (7880, 0xfa3dc886c0b5f00b)),
+    (6, (8680, 0x056a3c504842360a)),
+    (8, (7720, 0x4b6262fee29e7bf4)),
+    (12, (10136, 0x2a759d909bde0914)),
+    (16, (7892, 0x34ed3ee79199fa90)),
+    (32, (7744, 0xb5449053e469e0d7)),
 ];
 
 #[test]

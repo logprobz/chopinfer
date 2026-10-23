@@ -3,7 +3,9 @@ use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
-pub(super) const WORKERS: usize = 16;
+/// Reader threads. One read keeps at most `super::readers()` of its rows
+/// in flight, so the window can change between measurement cohorts.
+pub(super) const WORKERS: usize = 128;
 const QUEUE: usize = 128;
 type Reply = (usize, Result<Vec<u8>, String>);
 
@@ -69,23 +71,24 @@ impl Pool {
         Ok(Self { send })
     }
 
-    fn read(&self, source: &Arc<File>, requests: &[(u64, usize)]) -> Result<Vec<Vec<u8>>, Failure> {
+    fn read(
+        &self,
+        source: &Arc<File>,
+        requests: &[(u64, usize)],
+        window: usize,
+    ) -> Result<Vec<Vec<u8>>, Failure> {
         let (reply, receive) = mpsc::channel();
-        for (index, &(offset, length)) in requests.iter().enumerate() {
-            self.send
-                .send(Work {
-                    source: Arc::clone(source),
-                    offset,
-                    length,
-                    index,
-                    reply: reply.clone(),
-                })
-                .map_err(|_| Failure::Queue("mapped row read queue stopped".into()))?;
+        let mut reply = Some(reply);
+        let mut pending = requests.iter().copied().enumerate();
+        // Each reply admits the next row. The admission that finds no row
+        // left drops this sender, so a lost reply ends the receive loop.
+        for _ in 0..window.max(1) {
+            self.admit(source, &mut pending, &mut reply)?;
         }
-        drop(reply);
         let mut rows = vec![None; requests.len()];
         let mut failure = None;
-        for (index, result) in receive {
+        while let Ok((index, result)) = receive.recv() {
+            self.admit(source, &mut pending, &mut reply)?;
             match result {
                 Ok(bytes) => rows[index] = Some(bytes),
                 Err(error) => {
@@ -103,6 +106,30 @@ impl Pool {
                 row.ok_or_else(|| Failure::Queue("mapped row read response is absent".into()))
             })
             .collect()
+    }
+
+    fn admit(
+        &self,
+        source: &Arc<File>,
+        pending: &mut impl Iterator<Item = (usize, (u64, usize))>,
+        reply: &mut Option<mpsc::Sender<Reply>>,
+    ) -> Result<(), Failure> {
+        let Some(sender) = reply.as_ref() else {
+            return Ok(());
+        };
+        let Some((index, (offset, length))) = pending.next() else {
+            *reply = None;
+            return Ok(());
+        };
+        self.send
+            .send(Work {
+                source: Arc::clone(source),
+                offset,
+                length,
+                index,
+                reply: sender.clone(),
+            })
+            .map_err(|_| Failure::Queue("mapped row read queue stopped".into()))
     }
 }
 
@@ -131,7 +158,7 @@ fn read_using(
     requests: &[(u64, usize)],
 ) -> Result<(Vec<Vec<u8>>, bool), String> {
     match pool {
-        Ok(pool) => match pool.read(source, requests) {
+        Ok(pool) => match pool.read(source, requests, super::readers()) {
             Ok(rows) => return Ok((rows, false)),
             Err(Failure::Source(error)) => return Err(error),
             Err(Failure::Queue(error)) => fallback(&error),
@@ -163,6 +190,70 @@ mod tests {
             expected
         );
         assert!(read_using(Err("reader admission unavailable"), &file, &[(5, 2)]).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn every_window_returns_the_rows_in_request_order() {
+        let path = std::env::temp_dir().join(format!("mapped-pool-window-{}", std::process::id()));
+        let bytes = (0..4096_u32)
+            .map(|i| (i * 7 + i / 255) as u8)
+            .collect::<Vec<_>>();
+        std::fs::write(&path, &bytes).unwrap();
+        let file = Arc::new(File::open(&path).unwrap());
+        let requests = (0..300_u64)
+            .map(|i| ((i * 977) % 4000, 1 + (i % 9) as usize))
+            .collect::<Vec<_>>();
+        let expected = requests
+            .iter()
+            .map(|&(offset, length)| bytes[offset as usize..][..length].to_vec())
+            .collect::<Vec<_>>();
+        let pool = Pool::new().unwrap();
+        for window in [1, 2, 7, 64, WORKERS, 1000] {
+            assert!(
+                pool.read(&file, &requests, window).ok() == Some(expected.clone()),
+                "window {window}"
+            );
+            assert!(pool.read(&file, &requests[..1], window).ok() == Some(expected[..1].to_vec()));
+        }
+        assert!(matches!(
+            pool.read(&file, &[(4095, 2)], 4),
+            Err(Failure::Source(_))
+        ));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_read_keeps_at_most_its_window_in_flight() {
+        let path = std::env::temp_dir().join(format!("mapped-pool-flight-{}", std::process::id()));
+        std::fs::write(&path, (0..64_u8).collect::<Vec<_>>()).unwrap();
+        let file = Arc::new(File::open(&path).unwrap());
+        let (send, receive) = mpsc::sync_channel(QUEUE);
+        let requests = (0..10_u64).map(|i| (i * 5, 3)).collect::<Vec<_>>();
+        let reader = {
+            let (file, requests) = (Arc::clone(&file), requests.clone());
+            std::thread::spawn(move || Pool { send }.read(&file, &requests, 3).ok())
+        };
+        // This thread is the only worker: three rows arrive, and each reply
+        // admits exactly one more.
+        let wait = std::time::Duration::from_millis(200);
+        let mut queued = (0..3)
+            .map(|_| receive.recv_timeout(wait).unwrap())
+            .collect::<std::collections::VecDeque<_>>();
+        while let Some(work) = queued.pop_front() {
+            assert!(receive.recv_timeout(wait / 4).is_err());
+            let result = read_one(&work.source, work.offset, work.length);
+            work.reply.send((work.index, result)).unwrap();
+            drop(work);
+            if let Ok(next) = receive.recv_timeout(wait) {
+                queued.push_back(next);
+            }
+        }
+        let expected = requests
+            .iter()
+            .map(|&(offset, length)| (offset as u8..offset as u8 + length as u8).collect())
+            .collect::<Vec<Vec<u8>>>();
+        assert_eq!(reader.join().unwrap(), Some(expected));
         std::fs::remove_file(path).unwrap();
     }
 }

@@ -52,6 +52,23 @@ fn default_is_on_and_zero_keeps_the_legacy_choice() {
 }
 
 #[test]
+fn reader_window_defaults_and_accepts_only_the_reader_thread_range() {
+    assert!(valid_readers(DEFAULT_READERS));
+    assert_eq!(configured_readers(None), DEFAULT_READERS);
+    assert_eq!(configured_readers(Some("1".into())), 1);
+    let most = pool::WORKERS.to_string();
+    assert_eq!(configured_readers(Some(most.into())), pool::WORKERS);
+    let over = (pool::WORKERS + 1).to_string();
+    for value in ["0", over.as_str(), "-1", "sixteen", ""] {
+        assert_eq!(
+            configured_readers(Some(value.into())),
+            DEFAULT_READERS,
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn queued_rows_keep_order_duplicates_offsets_and_cross_page_bytes() {
     let f = Fixture::new("ordered", 6000, 97);
     let rows = (0..5000_u32).map(|i| (i * 137) % 6000).collect::<Vec<_>>();

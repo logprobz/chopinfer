@@ -5,9 +5,17 @@ mod pool;
 use super::MappedRowsV1;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 const ENV: &str = "CHOPINFER_MAPPED_MISS_FETCH";
+const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
+/// Reads one batch keeps in flight. A drafted DSpark step gathers its first
+/// Engram layer after the drafter, and at 32 rows on rows no request read
+/// before about 450 of each plane's 768 rows miss; with 16 in flight the
+/// device waited 1.1-2.1 ms for them per C8 step. 450 random 256-byte reads
+/// of an Engram codes plane took 2.0 ms at 16 in flight, 0.84 ms at 64 and
+/// 0.76 ms at 128 on the serving host's NVMe drive.
+const DEFAULT_READERS: usize = 64;
 const TILE_BYTES: usize = 4 << 20;
 static BATCHES: AtomicU64 = AtomicU64::new(0);
 static ROWS: AtomicU64 = AtomicU64::new(0);
@@ -35,10 +43,42 @@ pub(super) fn set_for_measurement(enabled: bool) {
     selection().store(enabled, Ordering::Relaxed);
 }
 
+/// `CHOPINFER_MAPPED_MISS_READERS`: 1 to the reader thread count; anything
+/// else keeps the default.
+fn configured_readers(value: Option<std::ffi::OsString>) -> usize {
+    value
+        .and_then(|value| value.to_str()?.parse::<usize>().ok())
+        .filter(|&readers| valid_readers(readers))
+        .unwrap_or(DEFAULT_READERS)
+}
+
+fn reader_selection() -> &'static AtomicUsize {
+    static READERS: OnceLock<AtomicUsize> = OnceLock::new();
+    READERS.get_or_init(|| AtomicUsize::new(configured_readers(std::env::var_os(READERS_ENV))))
+}
+
+pub(crate) fn readers() -> usize {
+    reader_selection().load(Ordering::Relaxed)
+}
+
+pub(super) fn valid_readers(readers: usize) -> bool {
+    (1..=pool::WORKERS).contains(&readers)
+}
+
+/// The explicit measurement controller changes this between idle cohorts.
+pub(super) fn set_readers_for_measurement(readers: usize) -> Result<(), String> {
+    if !valid_readers(readers) {
+        return Err("mapped miss readers must be 1 to the reader thread count".into());
+    }
+    reader_selection().store(readers, Ordering::Relaxed);
+    Ok(())
+}
+
 pub(crate) fn snapshot() -> serde_json::Value {
     let (legacy_gathers, legacy_misses) = legacy::snapshot();
     serde_json::json!({
-        "enabled":enabled(), "configured_workers":pool::WORKERS, "batches":BATCHES.load(Ordering::Relaxed),
+        "enabled":enabled(), "configured_workers":pool::WORKERS, "readers":readers(),
+        "batches":BATCHES.load(Ordering::Relaxed),
         "miss_positions":ROWS.load(Ordering::Relaxed), "unique_reads":READS.load(Ordering::Relaxed),
         "successful_bytes":BYTES.load(Ordering::Relaxed), "nanoseconds":NANOS.load(Ordering::Relaxed),
         "serial_fallback_batches":SERIAL.load(Ordering::Relaxed),

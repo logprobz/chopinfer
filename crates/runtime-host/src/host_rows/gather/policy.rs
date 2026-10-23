@@ -38,6 +38,13 @@ impl Policy {
 
     fn apply(&self, command: &Command) -> Result<serde_json::Value, String> {
         let mode = mode(&command.mode)?;
+        // Refuse before any measurement state changes.
+        if command
+            .miss_readers
+            .is_some_and(|readers| !crate::host_rows::fetch::valid_readers(readers))
+        {
+            return Err("mapped miss readers must be 1 to the reader thread count".into());
+        }
         if command.reset_cache {
             crate::host_rows::resident::reset_for_measurement()?;
         }
@@ -54,6 +61,9 @@ impl Policy {
         };
         if let Some(enabled) = command.miss_fetch {
             crate::host_rows::fetch::set_for_measurement(enabled);
+        }
+        if let Some(readers) = command.miss_readers {
+            crate::host_rows::fetch::set_readers_for_measurement(readers)?;
         }
         self.mode.store(mode, Ordering::Release);
         Ok(serde_json::json!({
@@ -93,6 +103,8 @@ struct Command {
     replay_rows: Option<Vec<crate::host_rows::resident::replay::Replay>>,
     #[serde(default)]
     miss_fetch: Option<bool>,
+    #[serde(default)]
+    miss_readers: Option<usize>,
 }
 
 fn mode(value: &str) -> Result<u8, String> {
@@ -276,6 +288,7 @@ mod tests {
                 release_page_tables: false,
                 replay_rows: None,
                 miss_fetch: None,
+                miss_readers: None,
             };
             let record = advance(&policy, &command, &mut last).unwrap().unwrap();
             assert_eq!(record["epoch"], command.epoch);
@@ -294,6 +307,7 @@ mod tests {
                     release_page_tables: false,
                     replay_rows: None,
                     miss_fetch: None,
+                    miss_readers: None,
                 },
                 &mut last
             )
@@ -373,6 +387,52 @@ mod tests {
             let expected = selected.unwrap_or(before);
             assert_eq!(crate::host_rows::fetch::enabled(), expected);
             assert_eq!(record["miss_fetch"]["enabled"], expected);
+        }
+    }
+
+    #[test]
+    fn measurement_switch_sets_the_miss_reader_window_or_refuses_unchanged() {
+        const CHILD: &str = "MAPPED_READERS_POLICY_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "host_rows::gather::policy::tests::measurement_switch_sets_the_miss_reader_window_or_refuses_unchanged",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("CHOPINFER_MAPPED_MISS_READERS")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+            return;
+        }
+        let policy = Policy::new(0, true);
+        let default = crate::host_rows::fetch::readers();
+        for (epoch, selected) in [(1, Some(16)), (2, None), (3, Some(1)), (4, Some(default))] {
+            let before = crate::host_rows::fetch::readers();
+            let command: Command = serde_json::from_value(serde_json::json!({
+                "epoch":epoch, "mode":"sync", "reset_cache":false, "miss_readers":selected,
+            }))
+            .unwrap();
+            let record = policy.apply(&command).unwrap();
+            let expected = selected.unwrap_or(before);
+            assert_eq!(crate::host_rows::fetch::readers(), expected);
+            assert_eq!(record["miss_fetch"]["readers"], expected);
+        }
+        for refused in [0, 4096] {
+            let command: Command = serde_json::from_value(serde_json::json!({
+                "epoch":9, "mode":"off", "reset_cache":false, "miss_readers":refused,
+            }))
+            .unwrap();
+            assert!(policy.apply(&command).is_err());
+            assert_eq!(crate::host_rows::fetch::readers(), default);
+            assert_eq!(policy.mode.load(Ordering::Relaxed), 1);
         }
     }
 }

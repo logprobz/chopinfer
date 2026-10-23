@@ -136,6 +136,7 @@ impl Entry {
         group_stride: u32,
         fold_k: u32,
         modulo_scale_rows: bool,
+        packed: bool,
     ) -> EntrySpec {
         let q = self.query;
         let ptr = |name: &str, cxx_type: &str| EntryParam::DevicePointer {
@@ -167,7 +168,7 @@ impl Entry {
                 },
             ],
             format!(
-                "chop::gemm::mxfp8_fold::run<{},{},{},{},{},{},{},{},{},{},{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
+                "chop::gemm::mxfp8_fold::run<{},{},{},{},{},{},{},{},{},{},{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
                 q.n,
                 q.k,
                 q.groups,
@@ -178,7 +179,8 @@ impl Entry {
                 single_chain,
                 fold_k,
                 modulo_scale_rows,
-                kernel_core::mxfp8_gemm::NON_FINITE_INPUT
+                kernel_core::mxfp8_gemm::NON_FINITE_INPUT,
+                if packed { ",true" } else { "" }
             ),
             128,
             1,
@@ -192,7 +194,22 @@ impl Entry {
             self.query.activation_group_stride,
             128,
             false,
+            false,
         )
+    }
+
+    /// The entry reading `mxfp8-fold-packed-8x128-v1` weight codes
+    /// (`gemm::mxfp8_fold_packed`): same parameters, plan and arithmetic.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        crate::gemm::mxfp8_fold_packed::check(self.query.groups, self.query.n, self.query.k)?;
+        Ok(self.spec_impl(
+            crate::gemm::mxfp8_fold_packed::symbol(&self.symbol),
+            false,
+            self.query.activation_group_stride,
+            128,
+            false,
+            true,
+        ))
     }
 
     /// A deliberately incorrect lab-only body. No backend registration or
@@ -204,6 +221,7 @@ impl Entry {
             self.query.activation_group_stride,
             128,
             false,
+            false,
         )
     }
 
@@ -213,6 +231,7 @@ impl Entry {
             false,
             self.query.activation_group_stride,
             256,
+            false,
             false,
         )
     }
@@ -224,6 +243,7 @@ impl Entry {
             self.query.activation_group_stride,
             128,
             true,
+            false,
         )
     }
 
@@ -320,6 +340,52 @@ pub fn lab_entries() -> Vec<Entry> {
         }
     }
     entries
+}
+
+/// Shapes the packed layout holds (N divisible by 8, K by 64), covering both
+/// tilings, a final 64-K fold, groups and padded activation strides. The
+/// lab compares each entry with its packed twin bit for bit.
+pub fn packed_lab_entries() -> Vec<Entry> {
+    [
+        (1, 8, 64, 1, 0, DType::F32),
+        (8, 64, 576, 1, 0, DType::F32),
+        (8, 40, 1280, 1, 32, DType::Bf16),
+        (32, 72, 4096, 1, 0, DType::F32),
+        (8, 16, 192, 2, 32, DType::F32),
+        (17, 24, 576, 3, 32, DType::Bf16),
+    ]
+    .into_iter()
+    .map(|(capacity, n, k, groups, pad, output)| {
+        let q = Mxfp8FoldGemmQuery {
+            m_capacity: capacity,
+            n,
+            k,
+            groups,
+            activation_group_stride: k + pad,
+            activation_row_stride: groups * (k + pad) + pad,
+            output,
+            execution: BlockScaledExecution::NativeBlockScaledMma,
+        };
+        Entry::new(
+            q,
+            format!(
+                "chop_mxfp8_fold_packed_lab_m{capacity}_n{n}_k{k}_g{groups}_{}_v2",
+                if output == DType::F32 { "f32" } else { "bf16" }
+            ),
+        )
+        .unwrap()
+    })
+    .collect()
+}
+
+/// [`packed_lab_entries`] and their packed twins in one cubin.
+pub fn packed_lab_cubin_spec(name: &str) -> Result<CubinSpec, Refusal> {
+    let entries = packed_lab_entries();
+    let mut spec = cubin_spec(name, &entries)?;
+    for entry in &entries {
+        spec.entries.push(entry.packed_spec()?);
+    }
+    Ok(spec)
 }
 
 pub fn group_offset_control() -> Entry {

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "../common/convert.cuh"
 #include "../common/ptx.cuh"
+#include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_fold {
 
@@ -30,6 +31,9 @@ struct Operand {
   const uint32_t* failed_rows;
   uint32_t token_base;
   bool modulo_scale_rows;
+  // Codes stored as mxfp8-fold-packed-8x128-v1 (weights only: rows counted
+  // within the group, stride == k, N divisible by 8 and K by 64).
+  bool packed_layout = false;
 
   __device__ __forceinline__ uint32_t scale(uint32_t row, uint32_t col) const {
     if (row >= rows || col >= k) return 127;
@@ -42,6 +46,7 @@ struct Operand {
   __device__ __forceinline__ uint32_t packed(uint32_t row, uint32_t col) const {
     if (row >= rows || col >= k) return 0;
     if (failed_rows && failed_rows[row - token_base]) return 0;
+    if (packed_layout) return mxfp8_fold_packed::load_word(codes + offset, row, col, k);
     const uint64_t at = offset + uint64_t(row) * stride + col;
     uint32_t result = 0;
 #pragma unroll
@@ -55,7 +60,8 @@ struct Operand {
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          bool F32Output, bool Decode, bool SingleChain = false,
-         int FoldK = 128, bool ModuloScaleRows = false, uint32_t NonFiniteFlag = 1>
+         int FoldK = 128, bool ModuloScaleRows = false, uint32_t NonFiniteFlag = 1,
+         bool PackedWeights = false>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
                     const uint8_t* weights, const uint8_t* weight_scales,
                     void* output, const uint32_t* live_rows, uint32_t* status,
@@ -64,6 +70,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
   static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
   static_assert(FoldK == 128 || FoldK == 256);
+  static_assert(!PackedWeights || (N % 8 == 0 && K % 64 == 0));
   ptx::griddep_launch_dependents();
   ptx::griddep_wait();
   const uint32_t live = min(rows, *live_rows);
@@ -102,7 +109,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   const Operand activation{activations, activation_scales, uint64_t(g) * GroupStride,
                            RowStride, live, K, failed_rows, token_base, false};
   const Operand weight{weights, weight_scales, uint64_t(g) * N * K, K, N, K,
-                       nullptr, 0, ModuloScaleRows};
+                       nullptr, 0, ModuloScaleRows, PackedWeights};
   const Operand a = Decode ? weight : activation;
   const Operand b = Decode ? activation : weight;
   const uint32_t ma = Decode ? column_base + warp * 16 : token_base;

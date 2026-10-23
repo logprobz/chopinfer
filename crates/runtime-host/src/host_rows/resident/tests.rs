@@ -679,6 +679,36 @@ fn joint_gathers_of_every_rank_match_plane_by_plane_bytes_and_cache_counts() {
 }
 
 #[test]
+fn large_copies_neither_read_nor_fill_the_resident_cache() {
+    let registry = registry(1);
+    let codes = mapping("large-bypass", &source(100, 97), 34);
+    attach(&registry, vec![(Arc::clone(&codes), 97)]).unwrap();
+    let cache = &codes.resident.get().unwrap().cache;
+    // Row 5 is resident; row 9 is not.
+    copy(&codes, 97, 5, 0, 97);
+    let counts = || {
+        [&cache.hits, &cache.misses, &cache.insertions, &cache.copies]
+            .map(|count| count.load(Ordering::Relaxed))
+    };
+    let before = counts();
+    let rows = [5_u32, 9, 5];
+    let mut out = vec![0xa5; rows.len() * 97];
+    crate::host_rows::fetch::copy_large(&mut [crate::host_rows::fetch::PlaneCopy {
+        mapping: &codes,
+        width: 97,
+        rows: &rows,
+        out: &mut out,
+    }])
+    .unwrap();
+    let expected = rows
+        .iter()
+        .flat_map(|&r| codes.bytes()[r as usize * 97..][..97].to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(out, expected);
+    assert_eq!(counts(), before);
+}
+
+#[test]
 fn synchronous_chunked_prefill_fills_the_same_cache_as_verify() {
     use super::super::gather::{GatherProbe, ReadAhead, gather_span_v1};
     struct Clock;

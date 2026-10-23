@@ -103,15 +103,32 @@ pub fn gather_plane_v1(
 ) -> Result<(), String> {
     // Apply the complete gather's cache policy before queued resident lookups.
     // Invalid widths still reach the checked mapped path and are refused.
-    if crate::host_rows::fetch::enabled()
-        && plane.row_bytes != 0
-        && crate::host_rows::gather::use_resident(output.len() / plane.row_bytes)
-    {
-        let ids = checked_ids(plane, input, output.len())?;
-        // Keep the existing gather counters. Queued descriptor reads supply
-        // the misses directly, so this path needs no mmap read-ahead hint.
-        let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
-        return crate::host_rows::fetch::copy_rows(&plane.mapping, plane.row_bytes, &ids, output);
+    if crate::host_rows::fetch::enabled() && plane.row_bytes != 0 {
+        if crate::host_rows::gather::use_resident(output.len() / plane.row_bytes) {
+            let ids = checked_ids(plane, input, output.len())?;
+            // Keep the existing gather counters. Queued descriptor reads
+            // supply the misses directly, so this path needs no mmap
+            // read-ahead hint.
+            let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
+            return crate::host_rows::fetch::copy_rows(
+                &plane.mapping,
+                plane.row_bytes,
+                &ids,
+                output,
+            );
+        }
+        if crate::host_rows::fetch::reads_large(&plane.mapping, output.len()) {
+            let ids = checked_ids(plane, input, output.len())?;
+            let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
+            return crate::host_rows::fetch::copy_large(&mut [
+                crate::host_rows::fetch::PlaneCopy {
+                    mapping: &plane.mapping,
+                    width: plane.row_bytes,
+                    rows: &ids,
+                    out: output,
+                },
+            ]);
+        }
     }
     let probe = MappedProbe::asynchronous(&plane.mapping, plane.row_bytes);
     crate::host_rows::fetch::legacy::observe(|| {
@@ -129,71 +146,130 @@ pub fn gather_plane_v1(
     })
 }
 
+/// How a plane leads a joint gather ([`gather_planes_v1`]).
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Lead {
+    No,
+    /// Its misses join the other resident-path leaders' in one batch.
+    Resident,
+    /// All its rows join the other large leaders' in one batch.
+    Large,
+}
+
 /// Gathers every plane of one prepared gather, `outputs[i]` holding plane
-/// `i`'s rows. With joint plane reads (`CHOPINFER_MAPPED_MISS_JOINT_PLANES`,
-/// on by default with started reads), the first plane of each mapping and
-/// row width that takes the queued-read path (every gather below the
-/// large-gather size) leads: the leaders' ids are all checked before any
-/// write, and their misses are read as one batch, so the gather waits for
-/// the device once rather than once per plane. Every other plane (another
-/// rank's copy of a leader's rows, or a large gather on the mapped path)
-/// then gathers on its own, as [`gather_plane_v1`] does; another rank's copy
-/// finds the leaders' rows in the resident cache, or without one in the page
-/// cache. The bytes equal gathering plane by plane: each is the mapped
-/// table's row or a resident copy of it.
+/// `i`'s rows. The first plane of each mapping and row width leads when its
+/// rows take queued reads: below the large-gather size with joint plane
+/// reads (`CHOPINFER_MAPPED_MISS_JOINT_PLANES`), above it with large reads
+/// (`CHOPINFER_MAPPED_LARGE_GATHER_FETCH`); both are on by default with
+/// started reads. Every leader's ids are checked before any write. The
+/// resident-path leaders (at least two) read their misses as one batch, and
+/// the large leaders read all their rows as one batch, so the gather waits
+/// for the device once per route rather than once per plane. Another rank's
+/// plane of a large leader's table, width and ids copies the leader's bytes.
+/// Every other plane then gathers on its own, as [`gather_plane_v1`] does;
+/// another rank's copy of a resident-path leader finds its rows in the
+/// resident cache, or without one in the page cache. The bytes equal
+/// gathering plane by plane: each is the mapped table's row or a copy of it.
 pub fn gather_planes_v1(
     planes: &[MappedGatherPlaneV1],
     input: &[u8],
     outputs: &mut [&mut [u8]],
 ) -> Result<(), String> {
+    use crate::host_rows::{fetch, gather};
     if planes.len() != outputs.len() {
         return Err("mapped gather outputs differ from its planes".into());
     }
-    let mut leads = vec![false; planes.len()];
-    if crate::host_rows::fetch::enabled() && crate::host_rows::fetch::joint_planes() {
-        for (index, plane) in planes.iter().enumerate() {
-            let served = plane.row_bytes != 0
-                && crate::host_rows::gather::use_resident(outputs[index].len() / plane.row_bytes);
-            let first = !planes[..index].iter().zip(&leads).any(|(earlier, &led)| {
-                led && earlier.row_bytes == plane.row_bytes
-                    && Arc::ptr_eq(&earlier.mapping, &plane.mapping)
-            });
-            leads[index] = served && first;
+    let route = |plane: &MappedGatherPlaneV1, bytes: usize| {
+        if !fetch::enabled() || plane.row_bytes == 0 {
+            Lead::No
+        } else if gather::use_resident(bytes / plane.row_bytes) {
+            if fetch::joint_planes() {
+                Lead::Resident
+            } else {
+                Lead::No
+            }
+        } else if fetch::reads_large(&plane.mapping, bytes) {
+            Lead::Large
+        } else {
+            Lead::No
+        }
+    };
+    let mut leads = vec![Lead::No; planes.len()];
+    for (index, plane) in planes.iter().enumerate() {
+        let lead = route(plane, outputs[index].len());
+        let first = !planes[..index].iter().zip(&leads).any(|(earlier, &led)| {
+            led == lead
+                && earlier.row_bytes == plane.row_bytes
+                && Arc::ptr_eq(&earlier.mapping, &plane.mapping)
+        });
+        if first {
+            leads[index] = lead;
         }
     }
-    // One leader gains nothing from a joint read.
-    if leads.iter().filter(|&&led| led).count() < 2 {
-        leads.fill(false);
-    } else {
-        let ids = planes
-            .iter()
-            .zip(outputs.iter())
-            .zip(&leads)
-            .filter(|(_, led)| **led)
-            .map(|((plane, output), _)| checked_ids(plane, input, output.len()))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut copies = Vec::with_capacity(ids.len());
-        for (((plane, output), _), ids) in planes
-            .iter()
-            .zip(outputs.iter_mut())
-            .zip(&leads)
-            .filter(|(_, led)| **led)
-            .zip(&ids)
+    // One resident-path leader gains nothing from a joint read. A single
+    // large leader still serves the other ranks' copies.
+    if leads.iter().filter(|&&lead| lead == Lead::Resident).count() < 2 {
+        for lead in &mut leads {
+            if *lead == Lead::Resident {
+                *lead = Lead::No;
+            }
+        }
+    }
+    let ids = planes
+        .iter()
+        .zip(outputs.iter())
+        .zip(&leads)
+        .map(|((plane, output), &lead)| {
+            (lead != Lead::No)
+                .then(|| checked_ids(plane, input, output.len()))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for kind in [Lead::Resident, Lead::Large] {
+        let mut copies = Vec::new();
+        for (((plane, output), &lead), ids) in
+            planes.iter().zip(outputs.iter_mut()).zip(&leads).zip(&ids)
         {
+            if lead != kind {
+                continue;
+            }
             // Keep the gather counters each plane's own gather would count.
-            let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
-            copies.push(crate::host_rows::fetch::PlaneCopy {
+            let _ = gather::mapped_async_read_ahead_v1();
+            copies.push(fetch::PlaneCopy {
                 mapping: &plane.mapping,
                 width: plane.row_bytes,
-                rows: ids,
+                rows: ids.as_deref().expect("a leader's ids"),
                 out: output,
             });
         }
-        crate::host_rows::fetch::copy_planes(&mut copies)?;
+        match kind {
+            _ if copies.is_empty() => {}
+            Lead::Resident => fetch::copy_planes(&mut copies)?,
+            Lead::Large => fetch::copy_large(&mut copies)?,
+            Lead::No => unreachable!("only leaders copy"),
+        }
     }
-    for ((plane, output), &led) in planes.iter().zip(outputs.iter_mut()).zip(&leads) {
-        if !led {
-            gather_plane_v1(plane, input, output)?;
+    for index in 0..planes.len() {
+        if leads[index] != Lead::No {
+            continue;
+        }
+        let plane = &planes[index];
+        // The same table, width and ids give the same bytes.
+        let twin = (0..index).find(|&leader| {
+            let earlier = &planes[leader];
+            leads[leader] == Lead::Large
+                && earlier.row_bytes == plane.row_bytes
+                && earlier.index_offset == plane.index_offset
+                && outputs[leader].len() == outputs[index].len()
+                && Arc::ptr_eq(&earlier.mapping, &plane.mapping)
+        });
+        let (done, rest) = outputs.split_at_mut(index);
+        match twin {
+            Some(leader) => {
+                let _ = gather::mapped_async_read_ahead_v1();
+                rest[0].copy_from_slice(done[leader]);
+            }
+            None => gather_plane_v1(plane, input, rest[0])?,
         }
     }
     Ok(())

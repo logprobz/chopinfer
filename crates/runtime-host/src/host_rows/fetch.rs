@@ -3,7 +3,8 @@
 //! A miss is read through the mapping's descriptor, never the mapping, into
 //! owned bytes. Rows the page cache holds are copied at once; the device
 //! reads of the others start together, so a batch of cold rows waits about
-//! one device latency ([`start_reads`]).
+//! one device latency ([`start_reads`]). Gathers too large for the resident
+//! cache read all their rows the same way ([`copy_large`]).
 pub(crate) mod legacy;
 mod pool;
 
@@ -16,6 +17,7 @@ const ENV: &str = "CHOPINFER_MAPPED_MISS_FETCH";
 const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
 const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
 const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
+const LARGE_ENV: &str = "CHOPINFER_MAPPED_LARGE_GATHER_FETCH";
 /// Reader threads one batch's rows are split across. A drafted DSpark step
 /// gathers its first Engram layer after the drafter, and at 32 rows on rows
 /// no request read before about 450 of each plane's 768 rows miss; with 16
@@ -26,6 +28,8 @@ const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
 /// flight whatever this count.
 const DEFAULT_READERS: usize = 64;
 const TILE_BYTES: usize = 4 << 20;
+/// The most output bytes one plane of a fetch writes.
+const MAX_OUT_BYTES: usize = 256 << 20;
 static BATCHES: AtomicU64 = AtomicU64::new(0);
 static ROWS: AtomicU64 = AtomicU64::new(0);
 static READS: AtomicU64 = AtomicU64::new(0);
@@ -36,6 +40,9 @@ static MAPPED: AtomicU64 = AtomicU64::new(0);
 static CACHED: AtomicU64 = AtomicU64::new(0);
 static COLD: AtomicU64 = AtomicU64::new(0);
 static JOINT: AtomicU64 = AtomicU64::new(0);
+static LARGE_GATHERS: AtomicU64 = AtomicU64::new(0);
+static LARGE_ROWS: AtomicU64 = AtomicU64::new(0);
+static FANOUT_COPIES: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -108,6 +115,23 @@ pub(crate) fn joint_planes() -> bool {
     start_reads() && *JOINT_PLANES.get_or_init(|| configured(std::env::var_os(JOINT_ENV)))
 }
 
+/// `CHOPINFER_MAPPED_LARGE_GATHER_FETCH`: with started reads, unset or `1`
+/// (the default) reads a large gather, one too large for the resident cache
+/// ([`super::gather::use_resident`]), through the reader threads
+/// ([`copy_large`]); anything else copies it from the mapping as before.
+/// Without started reads large gathers copy from the mapping.
+pub(crate) fn large_reads() -> bool {
+    static LARGE: OnceLock<bool> = OnceLock::new();
+    enabled() && start_reads() && *LARGE.get_or_init(|| configured(std::env::var_os(LARGE_ENV)))
+}
+
+/// Whether [`copy_large`] reads `bytes` output bytes of `mapping`: large
+/// reads are on, the mapping kept its descriptor, and the output fits one
+/// fetch's bound.
+pub(crate) fn reads_large(mapping: &MappedRowsV1, bytes: usize) -> bool {
+    large_reads() && mapping.source.is_some() && bytes <= MAX_OUT_BYTES
+}
+
 /// Started reads count the rows the page cache served without waiting and
 /// the rows they had to start.
 fn count_cold_rows(cached: usize, cold: usize) {
@@ -125,6 +149,9 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "serial_fallback_batches":SERIAL.load(Ordering::Relaxed), "start_reads":start_reads(),
         "page_cached_reads":CACHED.load(Ordering::Relaxed), "started_reads":COLD.load(Ordering::Relaxed),
         "joint_planes":joint_planes(), "joint_batches":JOINT.load(Ordering::Relaxed),
+        "large_reads":large_reads(), "large_gathers":LARGE_GATHERS.load(Ordering::Relaxed),
+        "large_rows":LARGE_ROWS.load(Ordering::Relaxed),
+        "large_fanout_copies":FANOUT_COPIES.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })
@@ -134,7 +161,7 @@ fn validate(mapping: &MappedRowsV1, width: usize, rows: &[u32], out: &[u8]) -> R
     if width == 0
         || !mapping.len().is_multiple_of(width as u64)
         || rows.len().checked_mul(width) != Some(out.len())
-        || out.len() > 256 << 20
+        || out.len() > MAX_OUT_BYTES
         || rows
             .iter()
             .any(|&row| u64::from(row) >= mapping.len() / width as u64)
@@ -382,6 +409,158 @@ fn copy_planes_with(
     }
     elapsed(started);
     Ok(())
+}
+
+/// Copies every plane's rows as exact reads of their file ranges through the
+/// reader threads, all planes in one batch, so the gather waits for the
+/// device once: the large-gather route ([`reads_large`]). Every position is
+/// read, duplicates included, as the mapped copy reads them; the resident
+/// cache is neither consulted nor filled, so a streaming gather cannot
+/// displace the rows decode steps reuse. Refuses a bad row or a plane
+/// without a descriptor before any write.
+pub(crate) fn copy_large(planes: &mut [PlaneCopy<'_>]) -> Result<(), String> {
+    copy_large_with(planes, pool::read_groups_into)
+}
+
+fn copy_large_with(
+    planes: &mut [PlaneCopy<'_>],
+    read: impl FnOnce(&[pool::Group<'_>], &mut [&mut [u8]]) -> Result<bool, String>,
+) -> Result<(), String> {
+    let mut sources = Vec::with_capacity(planes.len());
+    for plane in planes.iter() {
+        validate(plane.mapping, plane.width, plane.rows, plane.out)?;
+        sources.push(
+            plane
+                .mapping
+                .source
+                .as_ref()
+                .ok_or("a large mapped gather needs the mapping's descriptor")?,
+        );
+    }
+    let started = std::time::Instant::now();
+    let requests = planes
+        .iter()
+        .map(|plane| {
+            let base = plane.mapping.file_offset();
+            // validate established row * width < mapping length, and the
+            // mapping constructor checked its whole file interval.
+            plane
+                .rows
+                .iter()
+                .map(|&row| (base + u64::from(row) * plane.width as u64, plane.width))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let groups = sources
+        .into_iter()
+        .zip(&requests)
+        .map(|(source, requests)| (source, requests.as_slice()))
+        .collect::<Vec<_>>();
+    let serial = read(
+        &groups,
+        &mut planes
+            .iter_mut()
+            .map(|plane| &mut *plane.out)
+            .collect::<Vec<_>>(),
+    )?;
+    let rows = planes.iter().map(|plane| plane.rows.len()).sum::<usize>() as u64;
+    BATCHES.fetch_add(planes.len() as u64, Ordering::Relaxed);
+    ROWS.fetch_add(rows, Ordering::Relaxed);
+    for plane in planes.iter() {
+        count_reads(plane.rows.len(), plane.width, false);
+    }
+    if serial {
+        SERIAL.fetch_add(1, Ordering::Relaxed);
+    }
+    if planes.len() > 1 {
+        JOINT.fetch_add(1, Ordering::Relaxed);
+    }
+    LARGE_GATHERS.fetch_add(1, Ordering::Relaxed);
+    LARGE_ROWS.fetch_add(rows, Ordering::Relaxed);
+    elapsed(started);
+    Ok(())
+}
+
+/// A large gather's bytes for the ranks that gather the same rows after
+/// the first: a tensor-parallel layer gathers its rows of one shared mapping
+/// once per rank ([`LargeFanout::rows`]).
+#[derive(Default)]
+pub(crate) struct LargeFanout {
+    kept: Vec<Kept>,
+}
+
+struct Kept {
+    mapping: std::sync::Weak<MappedRowsV1>,
+    width: usize,
+    rows: Vec<u32>,
+    bytes: std::sync::Arc<Vec<u8>>,
+    left: usize,
+}
+
+/// The most bytes a fanout keeps at once.
+const FANOUT_BYTES: usize = 1 << 30;
+
+impl LargeFanout {
+    /// `rows` of `mapping`, `width` bytes each, end to end: the copy an
+    /// earlier gather of the same rows kept, or read now ([`copy_large`])
+    /// and kept for `later` more gathers of them. A kept copy is released
+    /// after its last use, when another gather of its mapping and width
+    /// replaces it, or with its mapping. The bytes equal a fresh read: the
+    /// mapped file never changes.
+    pub(crate) fn rows(
+        &mut self,
+        mapping: &std::sync::Arc<MappedRowsV1>,
+        width: usize,
+        rows: &[u32],
+        later: usize,
+    ) -> Result<std::sync::Arc<Vec<u8>>, String> {
+        let same = |kept: &Kept| {
+            kept.width == width
+                && kept
+                    .mapping
+                    .upgrade()
+                    .is_some_and(|kept| std::sync::Arc::ptr_eq(&kept, mapping))
+        };
+        if let Some(index) = self
+            .kept
+            .iter()
+            .position(|kept| same(kept) && kept.rows == rows)
+        {
+            let kept = &mut self.kept[index];
+            kept.left -= 1;
+            let bytes = std::sync::Arc::clone(&kept.bytes);
+            if kept.left == 0 {
+                self.kept.swap_remove(index);
+            }
+            FANOUT_COPIES.fetch_add(1, Ordering::Relaxed);
+            return Ok(bytes);
+        }
+        self.kept
+            .retain(|kept| kept.mapping.strong_count() > 0 && !same(kept));
+        let length = rows
+            .len()
+            .checked_mul(width)
+            .ok_or("mapped miss fetch has invalid rows or output extent")?;
+        let mut bytes = vec![0; length];
+        copy_large(&mut [PlaneCopy {
+            mapping,
+            width,
+            rows,
+            out: &mut bytes,
+        }])?;
+        let bytes = std::sync::Arc::new(bytes);
+        let held = self.kept.iter().map(|kept| kept.bytes.len()).sum::<usize>();
+        if later > 0 && held + length <= FANOUT_BYTES {
+            self.kept.push(Kept {
+                mapping: std::sync::Arc::downgrade(mapping),
+                width,
+                rows: rows.to_vec(),
+                bytes: std::sync::Arc::clone(&bytes),
+                left: later,
+            });
+        }
+        Ok(bytes)
+    }
 }
 
 #[cfg(test)]

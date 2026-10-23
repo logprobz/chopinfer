@@ -339,3 +339,126 @@ fn a_plane_without_a_descriptor_or_past_one_tile_reads_every_plane_alone() {
         assert_eq!(scale_out, scales.expected(&scale_rows));
     }
 }
+
+#[test]
+fn large_copies_read_every_position_of_every_plane_in_one_batch() {
+    let codes = Fixture::new("large-codes", 3000, 97);
+    let scales = Fixture::new("large-scales", 3000, 8);
+    let rows = [5, 2999, 5, 0, 1234, 2999];
+    let mut code_out = vec![0xa5; rows.len() * 97];
+    let mut scale_out = vec![0xa5; rows.len() * 8];
+    let mut asked = Vec::new();
+    copy_large_with(
+        &mut [
+            PlaneCopy {
+                mapping: &codes.mapping,
+                width: 97,
+                rows: &rows,
+                out: &mut code_out,
+            },
+            PlaneCopy {
+                mapping: &scales.mapping,
+                width: 8,
+                rows: &rows,
+                out: &mut scale_out,
+            },
+        ],
+        |groups, outputs| {
+            asked.push(
+                groups
+                    .iter()
+                    .map(|(_, requests)| requests.to_vec())
+                    .collect::<Vec<_>>(),
+            );
+            pool::read_groups_into(groups, outputs)
+        },
+    )
+    .unwrap();
+    // One read for both tables, every position in order, duplicates too.
+    let reads = |width: usize| {
+        rows.iter()
+            .map(|&row| (300 + u64::from(row) * width as u64, width))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(asked, [vec![reads(97), reads(8)]]);
+    assert_eq!(code_out, codes.expected(&rows));
+    assert_eq!(scale_out, scales.expected(&rows));
+    // The served reader copies the same bytes.
+    code_out.fill(0xa5);
+    copy_large(&mut [PlaneCopy {
+        mapping: &codes.mapping,
+        width: 97,
+        rows: &rows,
+        out: &mut code_out,
+    }])
+    .unwrap();
+    assert_eq!(code_out, codes.expected(&rows));
+    // A bad row in any plane is refused before any read or write.
+    let mut poison = (vec![0xa5; 2 * 97], vec![0xa5; 2 * 8]);
+    let refuse = |_: &[pool::Group<'_>], _: &mut [&mut [u8]]| -> Result<bool, String> {
+        panic!("read after a bad row")
+    };
+    assert!(
+        copy_large_with(
+            &mut [
+                PlaneCopy {
+                    mapping: &codes.mapping,
+                    width: 97,
+                    rows: &[1, 2],
+                    out: &mut poison.0,
+                },
+                PlaneCopy {
+                    mapping: &scales.mapping,
+                    width: 8,
+                    rows: &[1, 3000],
+                    out: &mut poison.1,
+                },
+            ],
+            refuse,
+        )
+        .is_err()
+    );
+    assert!(poison.0.iter().chain(&poison.1).all(|&b| b == 0xa5));
+}
+
+#[test]
+fn a_large_fanout_serves_later_ranks_the_first_ranks_bytes() {
+    let mut f = Fixture::new("large-fanout", 500, 97);
+    let rows = (0..300_u32).map(|i| i * 37 % 500).collect::<Vec<_>>();
+    let expected = f.expected(&rows);
+    let copies = || FANOUT_COPIES.load(Ordering::Relaxed);
+    let mut fanout = LargeFanout::default();
+    // Four ranks: one read, then three kept copies, then none kept.
+    let first = fanout.rows(&f.mapping, 97, &rows, 3).unwrap();
+    assert_eq!(*first, expected);
+    let before = copies();
+    for left in [2, 1, 0] {
+        let bytes = fanout.rows(&f.mapping, 97, &rows, 3).unwrap();
+        assert!(Arc::ptr_eq(&bytes, &first));
+        assert_eq!(fanout.kept.len(), usize::from(left > 0));
+    }
+    assert!(copies() >= before + 3);
+    // Other rows, or a single rank, read afresh.
+    let other = fanout.rows(&f.mapping, 97, &rows[1..], 3).unwrap();
+    assert_eq!(*other, f.expected(&rows[1..]));
+    let again = fanout.rows(&f.mapping, 97, &rows, 3).unwrap();
+    assert!(!Arc::ptr_eq(&again, &first) && *again == expected);
+    assert_eq!(fanout.kept.len(), 1, "one copy per mapping and width");
+    let mut alone = LargeFanout::default();
+    alone.rows(&f.mapping, 97, &rows, 0).unwrap();
+    assert!(alone.kept.is_empty());
+    // Bad rows are refused; a mapping without a descriptor cannot be read.
+    assert!(fanout.rows(&f.mapping, 97, &[500], 3).is_err());
+    assert!(reads_large(&f.mapping, expected.len()) == large_reads());
+    assert!(!reads_large(&f.mapping, MAX_OUT_BYTES + 1));
+    drop((fanout, first, other, again));
+    let key = f.mapping.key;
+    super::super::REGISTRY.lock().unwrap().remove(&key);
+    Arc::get_mut(&mut f.mapping).unwrap().source = None;
+    assert!(!reads_large(&f.mapping, expected.len()));
+    assert!(
+        LargeFanout::default()
+            .rows(&f.mapping, 97, &rows, 3)
+            .is_err()
+    );
+}

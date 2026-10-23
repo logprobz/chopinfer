@@ -1978,6 +1978,9 @@ struct HostStateV1<D> {
     kv_transactions: SlotTableV1<KvTransactionRecordV1>,
     states: SlotTableV1<StateRecordV1>,
     mapped_gathers: SlotTableV1<MappedGatherRecordV1>,
+    /// Large synchronous gathers' bytes for the later ranks that gather the
+    /// same rows.
+    large_fanout: crate::host_rows::fetch::LargeFanout,
     collectives: SlotTableV1<CollectiveRecordV1>,
     /// The connections that hold this instance's leases of lent rank
     /// images, open for as long as the instance lives.
@@ -2198,6 +2201,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 kv_transactions: SlotTableV1::new(),
                 states: SlotTableV1::new(),
                 mapped_gathers: SlotTableV1::new(),
+                large_fanout: Default::default(),
                 collectives: SlotTableV1::new(),
                 keeper_leases: Vec::new(),
                 #[cfg(test)]
@@ -4630,10 +4634,32 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         let probe = MappedProbe::new(&mapping, row_bytes);
         let ahead = ReadAhead::configured(&probe).with_resident(mapping.resident_plane(row_bytes));
+        // A gather too large for the resident cache reads its rows through
+        // the reader threads, all in flight at once, rather than faulting
+        // them from the mapping; the bytes are the same.
+        let large = !crate::host_rows::gather::use_resident(gather.rows.len())
+            && usize::try_from(range.length)
+                .is_ok_and(|bytes| crate::host_rows::fetch::reads_large(&mapping, bytes));
+        // Every rank of a tensor-parallel layer gathers the same rows of a
+        // shared mapping in turn; the first rank's read serves the others.
+        let later = (state.config.topology.rank_count() as usize).saturating_sub(1);
+        let read = if large {
+            let read = state
+                .large_fanout
+                .rows(&mapping, row_bytes, gather.rows, later)
+                .map_err(|error| {
+                    eprintln!("host gather_mapped_rows: {error}");
+                    BundleStatusV1::HostError
+                })?;
+            Some(read)
+        } else {
+            None
+        };
         state
             .device
-            .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| {
-                gather_rows_v1(table, row_bytes, gather.rows, at, chunk, &ahead);
+            .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| match &read {
+                Some(read) => chunk.copy_from_slice(&read[at..at + chunk.len()]),
+                None => gather_rows_v1(table, row_bytes, gather.rows, at, chunk, &ahead),
             })
             .inspect_err(|status| {
                 eprintln!(

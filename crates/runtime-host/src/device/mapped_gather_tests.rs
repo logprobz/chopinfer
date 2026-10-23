@@ -137,10 +137,24 @@ fn disabled_async_read_ahead_copies_without_advice() {
     assert!(probe.asked.lock().unwrap().is_empty());
 }
 
+/// Whether this process maps the page holding the mapping's first byte.
+#[cfg(target_os = "linux")]
+fn mapped_first_page(mapping: &crate::host_rows::MappedRowsV1) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let address = mapping.bytes().as_ptr() as u64;
+    let mut file = std::fs::File::open("/proc/self/pagemap").unwrap();
+    file.seek(SeekFrom::Start(
+        address / crate::host_rows::page_bytes_v1() as u64 * 8,
+    ))
+    .unwrap();
+    let mut entry = [0; 8];
+    file.read_exact(&mut entry).unwrap();
+    u64::from_ne_bytes(entry) & (1 << 63) != 0
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn default_dispatch_uses_descriptor_reads_and_zero_restores_mapping_access() {
-    use std::io::{Read, Seek, SeekFrom};
     const CHILD: &str = "MAPPED_FETCH_DISPATCH_TEST";
     if let Some(mode) = std::env::var_os(CHILD) {
         let plane = plane("dispatch");
@@ -150,17 +164,7 @@ fn default_dispatch_uses_descriptor_reads_and_zero_restores_mapping_access() {
             .mapping
             .advise(crate::host_rows::RowAdviceV1::DontNeed)
             .unwrap();
-        let present = || {
-            let address = plane.mapping.bytes().as_ptr() as u64;
-            let mut file = std::fs::File::open("/proc/self/pagemap").unwrap();
-            file.seek(SeekFrom::Start(
-                address / crate::host_rows::page_bytes_v1() as u64 * 8,
-            ))
-            .unwrap();
-            let mut entry = [0; 8];
-            file.read_exact(&mut entry).unwrap();
-            u64::from_ne_bytes(entry) & (1 << 63) != 0
-        };
+        let present = || mapped_first_page(&plane.mapping);
         assert!(!present());
         let mut output = vec![0xa5; wanted.len()];
         gather_plane_v1(&plane, &input(&ids), &mut output).unwrap();
@@ -361,5 +365,101 @@ fn plane_outputs_place_each_plane_in_its_stream_and_refuse_overlap() {
             plane_outputs(&mut outputs, places, lengths).is_err(),
             "{places:?} {lengths:?}"
         );
+    }
+}
+
+/// The large-gather size: a gather of this many rows skips the resident cache.
+const LARGE: usize = 65_536;
+
+/// Ids for a large gather of [`ranks`], one more for its shifted plane.
+fn large_ids() -> Vec<u32> {
+    (0..=LARGE).map(|i| (i * 37 % 200) as u32).collect()
+}
+
+fn check_ranks(planes: &[MappedGatherPlaneV1], ids: &[u32], outputs: &[Vec<u8>]) {
+    let rows = ids.len() - 1;
+    for (index, (plane, output)) in planes.iter().zip(outputs).enumerate() {
+        let live = if index == 7 { &ids[1..] } else { &ids[..rows] };
+        assert!(*output == expected(plane, live), "plane {index}");
+    }
+}
+
+#[test]
+fn large_gathers_of_every_rank_and_plane_equal_their_mapped_bytes() {
+    let planes = ranks("large");
+    let ids = large_ids();
+    check_ranks(&planes, &ids, &gather_ranks(&planes, &ids).unwrap());
+    // One plane alone takes the same route.
+    let mut output = vec![0xa5; LARGE * 97];
+    gather_plane_v1(&planes[0], &input(&ids), &mut output).unwrap();
+    assert!(output == expected(&planes[0], &ids[..LARGE]));
+    // A codes row past the scales table is refused before any plane is
+    // written.
+    let mut bad = ids.clone();
+    bad[60_000] = 250;
+    let outputs = gather_ranks(&planes, &bad).unwrap_err();
+    assert!(outputs.iter().flatten().all(|&byte| byte == 0xa5));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
+    const CHILD: &str = "MAPPED_LARGE_GATHER_TEST";
+    if let Some(mode) = std::env::var_os(CHILD) {
+        let planes = ranks("large-route");
+        let codes = &planes[0].mapping;
+        codes
+            .advise(crate::host_rows::RowAdviceV1::DontNeed)
+            .unwrap();
+        assert!(!mapped_first_page(codes));
+        let large = || {
+            let snapshot = crate::host_rows::fetch::snapshot();
+            let count = |key: &str| snapshot[key].as_u64().unwrap();
+            (count("large_gathers"), count("large_rows"))
+        };
+        let before = large();
+        let ids = large_ids();
+        let outputs = gather_ranks(&planes, &ids).unwrap();
+        let after = large();
+        let counted = (after.0 - before.0, after.1 - before.1);
+        // Checked before the expected bytes, which read the mapping.
+        let touched = mapped_first_page(codes);
+        if mode == "large" {
+            // Rank 0's codes and scales are one batch and the shifted plane
+            // another; the other ranks copy rank 0's bytes.
+            assert_eq!(counted, (2, 3 * LARGE as u64));
+            assert!(!touched, "large reads touched the mapping");
+        } else {
+            assert_eq!(counted, (0, 0));
+            assert!(touched, "the mapped copy must read the mapping");
+        }
+        check_ranks(&planes, &ids, &outputs);
+        return;
+    }
+    for mode in ["large", "mapped"] {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "device::mapped_gather::tests::large_gathers_read_through_descriptors_and_zero_restores_the_mapping",
+                "--nocapture",
+            ])
+            .env(CHILD, mode)
+            .env_remove("CHOPINFER_MAPPED_MISS_FETCH")
+            .env_remove("CHOPINFER_MAPPED_MISS_START")
+            .env_remove("CHOPINFER_MAPPED_LARGE_GATHER_CACHE");
+        if mode == "mapped" {
+            command.env("CHOPINFER_MAPPED_LARGE_GATHER_FETCH", "0");
+        } else {
+            command.env_remove("CHOPINFER_MAPPED_LARGE_GATHER_FETCH");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
     }
 }

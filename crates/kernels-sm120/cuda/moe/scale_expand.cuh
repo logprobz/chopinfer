@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "../common/ptx.cuh"
 
 namespace chop::moe::scale_expand {
 
@@ -16,7 +17,7 @@ __device__ __forceinline__ uint32_t lower_bound(
 
 // The host validates bank structure once, before upload. Active ids are
 // unique and in [0, experts); a null list selects every expert. Launch with
-// grid (ceil(rows / 64), projections, experts), block (256, 1, 1), no PDL.
+// grid (ceil(rows / 64), projections, slots), block (256, 1, 1), with PDL.
 template<int Width>
 __device__ __forceinline__ void run(
     const uint8_t* __restrict__ bank,
@@ -24,6 +25,10 @@ __device__ __forceinline__ void run(
     uint8_t* __restrict__ output,
     uint32_t rows, uint32_t groups, uint32_t projections, uint32_t experts) {
     static_assert(Width == 1 || Width == 2 || Width == 4);
+    // Nothing is read or written before the predecessor completes: it may
+    // write the active list, and the output's previous readers precede it.
+    ptx::griddep_launch_dependents();
+    ptx::griddep_wait();
     const uint32_t slot = blockIdx.z;
     uint32_t expert = slot;
     if (active) {

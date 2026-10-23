@@ -19,8 +19,15 @@ extern "C" __global__ void chop_moe_scale_expand_w1_v1(
     uint32_t experts);
 ```
 
-Launch with grid `(ceil(rows / 64), projections, experts)`, block
-`(256, 1, 1)`, no dynamic shared memory, no workspace and PDL disabled.
+Launch with grid `(ceil(rows / 64), projections, slots)`, block
+`(256, 1, 1)`, no dynamic shared memory, no workspace and PDL enabled.
+`slots` is the expert count, or with an active list any bound on its
+count (`plan_slots`); slots past the count exit at once. Every CTA calls
+`griddepcontrol.launch_dependents` and then `griddepcontrol.wait` before
+it reads the active list or writes the output, so the expansion follows
+its predecessor's completion: the routes that write the list and,
+transitively, every earlier reader of the output whose kernel waits for
+its own predecessor. The bundle's launch lists admit only PDL launches.
 Each CTA owns one 64-row tile of one expert projection. It binary-searches
 the sorted exception records for that tile, writes all base-plus-offset
 bytes, waits at a block barrier, then applies the exceptions. Output bank
@@ -65,8 +72,11 @@ The DeepSeek integration must allocate compressed bank storage and raw
 scratch, launch expansion after Route and before the first corresponding
 scale consumer, and bind that raw scratch as the existing scale role.
 Gate/up uses `rows=576, groups=160, projections=2` at TP4; down uses
-`rows=5120, groups=18, projections=1`; both use 384 experts. Order these
-launches with normal stream dependencies, including inside captured graphs.
+`rows=5120, groups=18, projections=1`; both use 384 experts. Launch them
+in stream order between the routes and the consumers, including inside
+captured graphs. Every consumer the bundle selects reads its weight scales
+only after its own `griddepcontrol.wait`; the one-row floor kernel loads
+them before its wait, so it must keep binding raw banks.
 
 The direct path already binds `active` to `scratch.active_experts` in
 `models/deepseek41/bundle/src/lower/moe_direct.rs`. `route_floor.cuh` and

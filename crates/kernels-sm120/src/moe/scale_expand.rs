@@ -8,9 +8,13 @@
 //! remaining words are unread. Null selects all experts. Only selected
 //! experts' bytes are written, at their original matrix positions.
 //!
-//! Order routing, expansion and scale consumers on the same stream with
-//! ordinary launch dependencies. This entry uses no PDL. It requires no
-//! host readback, device allocation, scratch initialization or live-count grid.
+//! Order routing, expansion and scale consumers on the same stream. The
+//! entry launches with PDL: every CTA waits for its predecessor before it
+//! reads the active list or writes the raw bank, so it follows the routes
+//! and, transitively, every earlier reader of the raw bank whose kernel
+//! waits for its own predecessor. A consumer reads the raw bank only after
+//! its own wait. It requires no host readback, device allocation, scratch
+//! initialization or live-count grid.
 
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::backend::View;
@@ -32,18 +36,25 @@ pub fn symbol(width: u32) -> Result<&'static str, Refusal> {
 
 /// A fixed grid covering the maximum active count, including empty steps.
 pub fn plan(query: ScaleExpandQuery) -> Result<LaunchPlan, Refusal> {
+    plan_slots(query, query.experts)
+}
+
+/// A grid of `slots` active-list positions, for a caller that bounds the
+/// active count below the expert count (a decode bucket's rows times its
+/// top-k). Slots past the count exit at once; experts past `slots` would be
+/// skipped, so a null active list needs every expert's slot.
+pub fn plan_slots(query: ScaleExpandQuery, slots: u32) -> Result<LaunchPlan, Refusal> {
     query.validate()?;
+    if slots == 0 || slots > query.experts {
+        return Err(Refusal("scale expansion slots must be 1..=experts"));
+    }
     let plan = LaunchPlan {
-        grid: [
-            query.rows.div_ceil(TILE_ROWS),
-            query.projections,
-            query.experts,
-        ],
+        grid: [query.rows.div_ceil(TILE_ROWS), query.projections, slots],
         block: [THREADS, 1, 1],
         cluster: [1; 3],
         dynamic_shared_bytes: 0,
         workspace_bytes: 0,
-        pdl: false,
+        pdl: true,
     };
     plan.validate()?;
     Ok(plan)
@@ -144,7 +155,7 @@ mod tests {
             let p = plan(q).unwrap();
             assert_eq!(p.grid, [rows.div_ceil(64), 2, 7]);
             assert_eq!(p.block, [256, 1, 1]);
-            assert!(!p.pdl);
+            assert!(p.pdl);
             assert_eq!((p.workspace_bytes, p.dynamic_shared_bytes), (0, 0));
         }
         for q in [
@@ -170,6 +181,9 @@ mod tests {
                 ..query()
             };
             assert_eq!(plan(q).unwrap().grid, [tiles, projections, 384]);
+            // A one-row top-6 decode bucket lists at most six experts.
+            assert_eq!(plan_slots(q, 6).unwrap().grid, [tiles, projections, 6]);
+            assert!(plan_slots(q, 0).is_err() && plan_slots(q, 385).is_err());
         }
     }
 

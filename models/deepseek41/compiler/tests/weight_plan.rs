@@ -398,3 +398,156 @@ fn the_encoder_image_plans_every_view_on_every_rank() {
         assert_eq!(first.get_or_insert(records.clone()), &records);
     }
 }
+
+/// Every MXFP8 dense codes view of every rank is stored in the packed fold
+/// layout every fold kernel reads: one `Mxfp8FoldPacked` record per
+/// destination matrix, eight-row strips of 64-K multiples, as many bytes
+/// as the rank's share of the row-major tensor. Its scales stay packed
+/// operand pieces of one UE8M0 scale per row and 32 K, expert banks stay
+/// packed MXFP4 pieces, and the only row-major E4M3 views left are the
+/// Engram tables' mapped planes. The flash geometry plans rank 0 of each
+/// rank count, a synthetic geometry (`CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS`)
+/// every rank.
+#[test]
+fn every_dense_codes_view_is_packed_in_folds() {
+    use kernel_core::weight_transform::mxfp8_fold::LAYOUT_ID;
+    use kernel_core::weight_transform::{MXFP8_FOLD_PACKED, PACKED_OPERAND};
+    let mut folds = 0;
+    for geometry in GEOMETRIES {
+        let mut groups = std::collections::BTreeSet::new();
+        let tensors: std::collections::BTreeMap<_, _> = synthetic::tensors(geometry)
+            .unwrap()
+            .into_iter()
+            .map(|tensor| (tensor.name.clone(), tensor))
+            .collect();
+        for &ranks in SUPPORTED_RANKS {
+            if check_ranks(geometry, ranks).is_err() {
+                continue;
+            }
+            let planned = if geometry.id == FLASH.id { 1 } else { ranks };
+            for rank in 0..planned {
+                let request = request(geometry, ranks, rank);
+                let plan = plan(&request).unwrap().expect("the text image is planned");
+                let index =
+                    bundle_runtime::index::parse(&plan.components[0].bytes, rank, INDEX_SCHEMA)
+                        .unwrap();
+                let covering = |offset: u64, bytes: u64| {
+                    plan.records
+                        .iter()
+                        .filter(|r| offset <= r.arena_offset && r.arena_offset < offset + bytes)
+                        .collect::<Vec<_>>()
+                };
+                let mapped: std::collections::BTreeSet<_> =
+                    plan.views.iter().map(|view| view.id.as_str()).collect();
+                let before = folds;
+                for (name, view) in &index.views {
+                    let at = format!("{} tp{ranks} rank {rank} {name}", geometry.id);
+                    let records = covering(view.offset, view.bytes);
+                    match view.layout_id.as_str() {
+                        LAYOUT_ID => {
+                            folds += 1;
+                            groups.insert(
+                                name.split('.')
+                                    .map(|part| {
+                                        if part.bytes().all(|b| b.is_ascii_digit()) {
+                                            "N"
+                                        } else {
+                                            part
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("."),
+                            );
+                            assert_eq!(view.dtype, "F8_E4M3", "{at}");
+                            assert!(!records.is_empty(), "{at}");
+                            let mut bytes = 0;
+                            for record in &records {
+                                assert_eq!(record.transform, MXFP8_FOLD_PACKED, "{at}");
+                                assert!(record.params.is_empty(), "{at}");
+                                let [.., n, k] = record.stored_shape[..] else {
+                                    panic!("{at}: a matrix record");
+                                };
+                                assert!(n % 8 == 0 && k % 64 == 0, "{at}: {n} x {k}");
+                                assert_eq!(
+                                    record.byte_length,
+                                    record.stored_shape.iter().product::<u64>(),
+                                    "{at}"
+                                );
+                                bytes += record.byte_length;
+                            }
+                            assert_eq!(bytes, view.bytes, "{at}");
+                            let tensor = &tensors[name.as_str()];
+                            assert!(
+                                [tensor.bytes(), tensor.bytes() / u64::from(ranks)]
+                                    .contains(&view.bytes),
+                                "{at}: {} bytes for a {:?} tensor",
+                                view.bytes,
+                                tensor.shape
+                            );
+                            let stem = name.strip_suffix(".weight").unwrap();
+                            let scales = &index.views[&format!("{stem}.scale")];
+                            assert_eq!(scales.layout_id, "mxfp8_ue8m0_scale_rows_v1", "{at}");
+                            assert_eq!(scales.bytes, view.bytes / 32, "{at}");
+                            for record in covering(scales.offset, scales.bytes) {
+                                assert_eq!(record.transform, PACKED_OPERAND, "{at} scales");
+                            }
+                        }
+                        "mxfp8_e4m3_rows_v1" => {
+                            assert!(mapped.contains(name.as_str()), "{at}: row-major codes");
+                        }
+                        "mxfp4_e2m1_rows_v1" | "mxfp4_ue8m0_scale_rows_v1" => {
+                            assert!(!records.is_empty(), "{at}");
+                            for record in records {
+                                assert_eq!(record.transform, PACKED_OPERAND, "{at}");
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                eprintln!(
+                    "{} tp{ranks} rank {rank}: {} packed fold codes views",
+                    geometry.id,
+                    folds - before
+                );
+                // Every attention projection of the first layer is one.
+                for matrix in ["wq_a", "wq_b", "wkv", "wo_a", "wo_b"] {
+                    let name = format!("layers.0.attn.{matrix}.weight");
+                    assert_eq!(
+                        index.views[&name].layout_id, LAYOUT_ID,
+                        "{} tp{ranks} {name}",
+                        geometry.id
+                    );
+                }
+                for matrix in ["w1", "w3", "w2"] {
+                    let name = format!("layers.0.ffn.shared_experts.{matrix}.weight");
+                    assert_eq!(
+                        index.views[&name].layout_id, LAYOUT_ID,
+                        "{} tp{ranks} {name}",
+                        geometry.id
+                    );
+                }
+            }
+        }
+        // Every block-32 FP8 dense projection of the main layers and the
+        // drafter: attention, the indexer's wq_b, Engram's wkv, the shared
+        // experts and main_proj.
+        let mut expected: std::collections::BTreeSet<String> = [
+            "layers.N.attn.indexer.wq_b",
+            "layers.N.engram.wkv",
+            "mtp.N.main_proj",
+        ]
+        .into_iter()
+        .map(|stem| format!("{stem}.weight"))
+        .collect();
+        for prefix in ["layers", "mtp"] {
+            for matrix in ["wq_a", "wq_b", "wkv", "wo_a", "wo_b"] {
+                expected.insert(format!("{prefix}.N.attn.{matrix}.weight"));
+            }
+            for matrix in ["w1", "w2", "w3"] {
+                expected.insert(format!("{prefix}.N.ffn.shared_experts.{matrix}.weight"));
+            }
+        }
+        assert_eq!(groups, expected, "{}", geometry.id);
+    }
+    assert!(folds > 0);
+}

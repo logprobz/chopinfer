@@ -301,6 +301,7 @@ fn varied_checkpoint(
 fn every_planned_view_is_the_checkpoint_s() {
     use kernel_core::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
     use kernel_core::transform::{Layout, Packed, Transform};
+    use kernel_core::weight_transform::mxfp8_fold::{LAYOUT_ID as FOLD_LAYOUT, Mxfp8FoldLayout};
     let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
         eprintln!("no synthetic geometry is compiled: skipped");
         return;
@@ -345,7 +346,9 @@ fn every_planned_view_is_the_checkpoint_s() {
                     .collect();
                 groups.insert(generic.join("."));
                 let expected = match view.layout_id.as_str() {
-                    "mxfp8_e4m3_rows_v1" | "mxfp8_ue8m0_scale_rows_v1" => {
+                    // Dense codes are stored in the packed fold layout,
+                    // their rows' row-major codes permuted.
+                    "mxfp8_e4m3_rows_v1" | "mxfp8_ue8m0_scale_rows_v1" | FOLD_LAYOUT => {
                         let stem = name
                             .strip_suffix(".weight")
                             .or_else(|| name.strip_suffix(".scale"))
@@ -358,8 +361,15 @@ fn every_planned_view_is_the_checkpoint_s() {
                             Split::Rows => (share(rows, r, n), 0..k),
                             Split::K => (0..rows, share(k, r, n)),
                         };
+                        let fold = Mxfp8FoldLayout {
+                            groups: 1,
+                            n: (rows.end - rows.start) as usize,
+                            k: (columns.end - columns.start) as usize,
+                        };
                         let (codes, scales) = mxfp8_rows(&codes, &scales, rows, columns);
-                        if name.ends_with(".weight") {
+                        if view.layout_id == FOLD_LAYOUT {
+                            fold.pack(&codes).unwrap_or_else(|e| panic!("{at}: {e}"))
+                        } else if name.ends_with(".weight") {
                             codes
                         } else {
                             scales

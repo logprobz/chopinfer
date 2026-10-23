@@ -7,11 +7,14 @@
 //! bound checkpoint operands (`projection_spec::derive`):
 //!
 //! - every projection's resident sections, under the record policy of its
-//!   family ([`policy`]): a dense or grouped dense projection is one packed
-//!   operand per section (block-32 FP8 resident as MXFP8 rows, E4M3 codes
-//!   with one UE8M0 scale per row and 32 K), fused dense operands one
-//!   packed piece each, an expert bank expert-major packed pieces, a lookup
-//!   table its rows;
+//!   family ([`policy`]): a block-32 FP8 dense projection (single, grouped
+//!   or fused operands) is resident as MXFP8 rows, its E4M3 codes stored as
+//!   `mxfp8-fold-packed-8x128-v1` (one `Mxfp8FoldPacked` gather per
+//!   destination matrix: the rank's rows or K slice, a grouped projection's
+//!   groups one after another) and its UE8M0 scales, one per row and 32 K,
+//!   as one packed operand piece per matrix; a BF16 dense projection is its
+//!   rows, an expert bank expert-major packed pieces, a lookup table its
+//!   rows;
 //! - every side tensor's rank copy (norms, the mixers, the router biases,
 //!   and the attention sinks of the rank's heads).
 //!
@@ -106,11 +109,16 @@ pub struct View {
 }
 
 /// The record policy of a derived operation of `family` reading `operands`
-/// source tensors in `format`: expert banks as expert-major packed pieces
-/// (a whole bank's sources would pass the 64 sources one record may name),
-/// fused dense operands (the shared expert's w1 and w3) as one packed piece
-/// per operand, which the bundle binds as its own view, lookup tables as
-/// rows, every other projection one packed operand per resident section.
+/// source tensors resident in `format`: expert banks as expert-major packed
+/// pieces (a whole bank's sources would pass the 64 sources one record may
+/// name), lookup tables as rows. Every MXFP8 dense projection (the block-32
+/// FP8 ones: the layers' and drafter's attention and shared experts,
+/// main_proj, the indexers' wq_b, Engram's wkv) stores its codes in the
+/// packed fold layout every fold kernel reads and its scales as packed
+/// operand pieces, which admit codes and scales together
+/// ([`RecordPolicy::Mxfp8FoldPieces`]); fused operands (the shared expert's
+/// w1 and w3) are one piece each, which the bundle binds as its own view.
+/// Any other dense projection is one packed operand per resident section.
 ///
 /// A BF16 dense projection is stored row-major too: the exact F32
 /// projection reads every one of them (the routers, the compressors' and
@@ -121,6 +129,7 @@ pub fn policy(family: KernelFamily, operands: u32, format: WeightFormat) -> Opti
     use model_compiler_sdk::quantization::format::RecordLayout;
     match family {
         KernelFamily::GroupedExpert => Some(RecordPolicy::PackedPieces),
+        KernelFamily::Dense if format == WeightFormat::Mxfp8 => Some(RecordPolicy::Mxfp8FoldPieces),
         KernelFamily::Dense if operands > 1 => Some(RecordPolicy::PackedPieces),
         KernelFamily::Dense if format == WeightFormat::Bf16 => {
             Some(RecordPolicy::Sections(RecordLayout::Rows))

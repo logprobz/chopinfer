@@ -362,7 +362,7 @@ impl Instance {
             // Route only the peer-visible planes to the private allocation
             // owner; arithmetic and copies keep their explicit
             // compute/communication streams.
-            let bound = bundle_runtime::scratch::bind_named(declared, |name, bytes| {
+            let bound = bundle_runtime::scratch::bind_named(declared, &[], |name, bytes| {
                 let owner = if matches!(name, "partial" | "reduced" | "embedded") {
                     self.dma.get(rank).map_or(stream, |dma| dma.owner)
                 } else {

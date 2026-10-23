@@ -11,11 +11,23 @@ pub fn allocation_error(error: AllocationError) -> BundleAbiError {
     })
 }
 
-/// A bound declaration and the device bytes its binding allocated.
+/// Leaves of a declaration, by declaration path, that share one allocation
+/// sized to the largest of them. The model that names a region holds that
+/// no two of its members are live at once and that no two run concurrently.
+/// A leaf outside every region keeps its own allocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Region {
+    pub name: &'static str,
+    pub members: &'static [&'static str],
+}
+
+/// A bound declaration, the device bytes its binding allocated, and the
+/// bytes of each region in the order the regions were given.
 #[derive(Clone, Debug)]
 pub struct Bound<M> {
     pub spans: M,
     pub bytes: u64,
+    pub regions: Vec<(&'static str, u64)>,
 }
 
 /// The allocator records acquisitions in the caller's `Held` list. On any
@@ -25,40 +37,94 @@ pub fn bind<R: Traversal<Allocation>>(
     declaration: R,
     mut allocate: impl FnMut(u64) -> Result<DeviceBufferSpanV1, BundleAbiError>,
 ) -> Result<R::Mapped<DeviceBufferSpanV1>, BundleAbiError> {
-    bind_named(declaration, |_, bytes| allocate(bytes)).map(|bound| bound.spans)
+    bind_named(declaration, &[], |_, bytes| allocate(bytes)).map(|bound| bound.spans)
 }
 
-/// [`bind`], passing `allocate` each allocation's declaration path (such as
-/// `rows[1].flags`) and returning the bytes it allocated.
+/// [`bind`] with `regions`, passing `allocate` each allocation's name (a
+/// leaf's declaration path, such as `rows[1].flags`, or a region's name)
+/// and returning the bytes it allocated. A region allocates where its first
+/// member is declared, and every member's span starts at the region's start.
+/// A member path that names no leaf, or a leaf in two regions, is refused
+/// before anything is allocated.
 pub fn bind_named<R: Traversal<Allocation>>(
     declaration: R,
+    regions: &[Region],
     mut allocate: impl FnMut(&str, u64) -> Result<DeviceBufferSpanV1, BundleAbiError>,
 ) -> Result<Bound<R::Mapped<DeviceBufferSpanV1>>, BundleAbiError> {
-    let mut names = Vec::new();
-    declaration.visit_named(&mut |name, _| names.push(name.to_owned()));
-    let mut names = names.into_iter();
-    let mut bytes = 0_u64;
-    let spans =
-        declaration.try_map(&mut |layout| {
-            let name = names.next().ok_or(BundleAbiError::InvalidRange(
-                "scratch traversal orders differ",
-            ))?;
-            let span = allocate(&name, layout.allocation_bytes())?;
-            if span.length < layout.allocation_bytes()
-                || span.offset.checked_add(layout.allocation_bytes()).is_none()
-            {
-                return Err(BundleAbiError::InvalidRange("scratch allocation range"));
-            }
-            bytes = bytes.checked_add(layout.allocation_bytes()).ok_or(
-                BundleAbiError::InvalidRange("scratch allocation size overflow"),
+    let mut leaves = Vec::new();
+    declaration
+        .visit_named(&mut |name, layout| leaves.push((name.to_owned(), layout.allocation_bytes())));
+    let mut region_of = vec![None; leaves.len()];
+    let mut sizes = vec![0_u64; regions.len()];
+    for (index, region) in regions.iter().enumerate() {
+        for &member in region.members {
+            let leaf = leaves.iter().position(|(name, _)| name == member).ok_or(
+                BundleAbiError::InvalidRange("scratch region member names no buffer"),
             )?;
-            Ok(DeviceBufferSpanV1::new(
-                span.buffer,
-                span.offset,
-                layout.span_bytes(),
-            ))
-        })?;
-    Ok(Bound { spans, bytes })
+            if region_of[leaf].replace(index).is_some() {
+                return Err(BundleAbiError::InvalidRange(
+                    "scratch buffer is a member of two regions",
+                ));
+            }
+            sizes[index] = sizes[index].max(leaves[leaf].1);
+        }
+    }
+    let checked = |span: DeviceBufferSpanV1, bytes: u64| {
+        if span.length < bytes || span.offset.checked_add(bytes).is_none() {
+            return Err(BundleAbiError::InvalidRange("scratch allocation range"));
+        }
+        Ok(span)
+    };
+    let mut allocated = vec![None; regions.len()];
+    let mut bytes = 0_u64;
+    let mut leaf = 0;
+    let spans = declaration.try_map(&mut |layout| {
+        let (name, _) = leaves.get(leaf).ok_or(BundleAbiError::InvalidRange(
+            "scratch traversal orders differ",
+        ))?;
+        let span =
+            match region_of[leaf] {
+                Some(region) => match allocated[region] {
+                    Some(span) => span,
+                    None => {
+                        let span = checked(
+                            allocate(regions[region].name, sizes[region])?,
+                            sizes[region],
+                        )?;
+                        allocated[region] = Some(span);
+                        bytes = bytes.checked_add(sizes[region]).ok_or(
+                            BundleAbiError::InvalidRange("scratch allocation size overflow"),
+                        )?;
+                        span
+                    }
+                },
+                None => {
+                    let span = checked(
+                        allocate(name, layout.allocation_bytes())?,
+                        layout.allocation_bytes(),
+                    )?;
+                    bytes = bytes.checked_add(layout.allocation_bytes()).ok_or(
+                        BundleAbiError::InvalidRange("scratch allocation size overflow"),
+                    )?;
+                    span
+                }
+            };
+        leaf += 1;
+        Ok(DeviceBufferSpanV1::new(
+            span.buffer,
+            span.offset,
+            layout.span_bytes(),
+        ))
+    })?;
+    Ok(Bound {
+        spans,
+        bytes,
+        regions: regions
+            .iter()
+            .zip(sizes)
+            .map(|(region, bytes)| (region.name, bytes))
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -244,7 +310,7 @@ mod tests {
         for (present, listed) in [(false, false), (true, true)] {
             let mut names = Vec::new();
             let mut requested = 0;
-            let bound = bind_named(declaration(present, listed), |name, bytes| {
+            let bound = bind_named(declaration(present, listed), &[], |name, bytes| {
                 names.push(name.to_owned());
                 requested += bytes;
                 Ok(DeviceBufferSpanV1::new(handle(names.len()), 0, bytes))
@@ -261,6 +327,94 @@ mod tests {
             let list = if listed { 222 } else { 0 };
             assert_eq!(bound.bytes, 20 + 12 + 40 + 206 + 48 + optional + list);
         }
+    }
+    #[test]
+    fn region_members_share_one_allocation_of_the_largest() {
+        const REGIONS: &[Region] = &[
+            Region {
+                name: "early",
+                members: &["groups[1].epoch", "plain", "comm.flags"],
+            },
+            Region {
+                name: "late",
+                members: &["tail"],
+            },
+        ];
+        let mut requests = Vec::new();
+        let bound = bind_named(declaration(false, false), REGIONS, |name, bytes| {
+            requests.push((name.to_owned(), bytes));
+            Ok(DeviceBufferSpanV1::new(handle(requests.len()), 7, bytes))
+        })
+        .unwrap();
+        // A region allocates where its first member is declared, at its
+        // largest member's physical bytes; `plain` keeps its visible 12.
+        assert_eq!(
+            requests
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), *bytes))
+                .collect::<Vec<_>>(),
+            [
+                ("early", 53),
+                ("rows[0]", 4),
+                ("rows[1]", 8),
+                ("comm.epoch", 24),
+                ("groups[0].flags", 50),
+                ("groups[0].epoch", 51),
+                ("groups[1].flags", 52),
+                ("late", 48),
+            ]
+        );
+        let early = |bytes| DeviceBufferSpanV1::new(handle(1), 7, bytes);
+        assert_eq!(bound.spans.plain, early(12));
+        assert_eq!(bound.spans.comm.flags, early(16));
+        assert_eq!(bound.spans.groups[1].epoch, early(53));
+        assert_eq!(
+            bound.spans.rows[0],
+            DeviceBufferSpanV1::new(handle(2), 7, 4)
+        );
+        assert_eq!(bound.spans.tail, DeviceBufferSpanV1::new(handle(8), 7, 48));
+        assert_eq!(bound.bytes, 53 + 4 + 8 + 24 + 50 + 51 + 52 + 48);
+        assert_eq!(bound.regions, [("early", 53), ("late", 48)]);
+        // Unknown members, a leaf in two regions and an absent optional
+        // leaf are refused before any allocation.
+        let refused: [&[Region]; 3] = [
+            &[Region {
+                name: "unknown",
+                members: &["missing"],
+            }],
+            &[
+                Region {
+                    name: "a",
+                    members: &["tail"],
+                },
+                Region {
+                    name: "b",
+                    members: &["rows[0]", "tail"],
+                },
+            ],
+            &[Region {
+                name: "absent",
+                members: &["optional.flags"],
+            }],
+        ];
+        for regions in refused {
+            let mut called = false;
+            let result = bind_named(declaration(false, false), regions, |_, bytes| {
+                called = true;
+                Ok(DeviceBufferSpanV1::new(handle(0), 0, bytes))
+            });
+            assert!(matches!(result, Err(BundleAbiError::InvalidRange(_))));
+            assert!(!called);
+        }
+        // A region's backing must hold its largest member.
+        let result = bind_named(declaration(false, false), REGIONS, |name, bytes| {
+            let bytes = if name == "early" { 52 } else { bytes };
+            Ok(DeviceBufferSpanV1::new(handle(0), 0, bytes))
+        });
+        assert!(matches!(
+            result,
+            Err(BundleAbiError::InvalidRange("scratch allocation range"))
+        ));
     }
     #[test]
     fn scratch_accepts_exact_offset_boundary() {

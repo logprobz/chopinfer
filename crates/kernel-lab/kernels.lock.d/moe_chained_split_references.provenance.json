@@ -1,10 +1,10 @@
 [
   {
     "name": "chop_moe_chain_lab_split_fp8block",
-    "source_closure_sha256": "d13348ddd8192479a825f50632b6ae134d5dce89b87a101e4bdaf9bd5f5b3737"
+    "source_closure_sha256": "31601cd871c211a12641d1c4579ed7a36851caf42715215587aa5da59bfe5b82"
   },
   {
     "name": "chop_moe_chain_lab_split_nvfp4",
-    "source_closure_sha256": "eec92ed898785c7ea166ac532eba9693b34c01bf297e4d72cf5560fecfe6aff5"
+    "source_closure_sha256": "5f0281901f58036c9473932256ff4c239b3958dfa7e6a9fa06fd03ba15e73479"
   }
 ]

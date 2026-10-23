@@ -1,22 +1,22 @@
 [
   {
     "name": "chop_moe_chain_e288l72k8_bf16",
-    "source_closure_sha256": "00e76ab2a6b340d421446cf11a181a0d2a8d12329461262f90bce6bf84556b0f"
+    "source_closure_sha256": "17cc2cf1d4b02c0077198d3abb22e248060095a3fd7459e82e6c5bb0a0021b35"
   },
   {
     "name": "chop_moe_chain_e288l72k8_bf16_bw4",
-    "source_closure_sha256": "da37f61d3d0a87e28ebf65dcf8c6031ed8ea1bed598b7c74e4a5f9879c1be701"
+    "source_closure_sha256": "2c37f2e0b9a5e5099a7bc98d40f2ef1166973d764f97008cef86b3a5324061b2"
   },
   {
     "name": "chop_moe_chain_e288l72k8_fp8block",
-    "source_closure_sha256": "468ccb529475f83768458e1d88d1487fa564e92652ab6016ce46ba5687c22f6d"
+    "source_closure_sha256": "7be582c2faa7083b7216bf1ce85a78a60627f9562ff661b38928609f11d805c9"
   },
   {
     "name": "chop_moe_chain_e288l72k8_fp8block_bw4",
-    "source_closure_sha256": "2195fe963aac5840594a6ce285df3f8a6507799a4a49fb3a3beedd16c13d28e4"
+    "source_closure_sha256": "286bad041e272b0f0d87b48d6eb2c8d8b06c2cca596da33bc47556e2c0a95c25"
   },
   {
     "name": "chop_moe_chain_lab_bw4_mutants",
-    "source_closure_sha256": "2c35996a05cf0da87f37ea6fa9d1419769b07b4a9a7db293b36867c20ed0900f"
+    "source_closure_sha256": "ce9dbce376c42947fd5069cc3b1ac0412b5f7f36d0472b699231da73d11a2f60"
   }
 ]

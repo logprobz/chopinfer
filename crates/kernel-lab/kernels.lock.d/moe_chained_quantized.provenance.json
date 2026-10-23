@@ -1,7 +1,7 @@
 [
   {
     "name": "chop_moe_chain_quantized_lab",
-    "source_closure_sha256": "13e31e45b5406b5eb67daad57a98803b0aa996b339f1497a72b56ffdb7be0b2c"
+    "source_closure_sha256": "024ec7e4258f47f5d71a40032e1e02f398f31fc31fc36b17d5d57064f7a89827"
   },
   {
     "name": "chop_moe_chain_quantized_probes",

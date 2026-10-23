@@ -34,7 +34,38 @@ __device__ __forceinline__ void copy16(uint8_t* dst, const uint8_t* src, bool va
                   "r"(valid ? 16 : 0) : "memory");
 }
 
-template<int N, int K, int Groups, int RowStride, int GroupStride, bool Paired>
+// A packed strip keeps its contiguous fold in one 1024-byte shared slot.
+// A final half fold occupies its first 512 bytes; the rest is zero-filled.
+template<int N, int K>
+__device__ __forceinline__ void copy_packed_chunk(uint8_t* dst, const uint8_t* weights,
+    uint32_t group, uint32_t column_base, uint32_t chunk, uint32_t fold, uint32_t end) {
+  const uint32_t strip = chunk / 64;
+  const uint32_t byte = (chunk % 64) * 16;
+  const bool valid = fold < end && column_base + strip * 8 < N &&
+      byte < mxfp8_fold_packed::fold_bytes(fold, K);
+  const uint64_t at = mxfp8_fold_packed::fold_offset(
+      (group * N + column_base) / 8 + strip, fold, K) + byte;
+  copy16(dst + fold_row_chunk(chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
+}
+
+// One aligned vector supplies two unchanged MMA steps. Keep the vector
+// shared load explicit so the packed lane runs use the swizzle together.
+template<int K>
+__device__ __forceinline__ uint4 packed_fragment(const uint8_t* codes,
+    uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
+  const bool half = K % 128 != 0 && fold == K / 128;
+  if (half && step >= 2) return uint4{};
+  const uint32_t at = warp * 1024 +
+      mxfp8_fold_packed::segment_word(quad, step * 32 + lane * 4, half);
+  const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
+  uint4 value;
+  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
+      : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w)
+      : "r"(uint32_t(__cvta_generic_to_shared(address))));
+  return value;
+}
+
+template<int N, int K, int Groups, int RowStride, int GroupStride, bool Paired, bool PackedWeights = false>
 __device__ void partials(const uint8_t* activations, const uint8_t* activation_scales,
                         const uint8_t* weights, const uint8_t* weight_scales,
                         const uint8_t* weights2, const uint8_t* weight_scales2,
@@ -74,6 +105,13 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
       const uint64_t at = a ? uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col
                             : (uint64_t(g) * N + row) * K + col;
       const uint8_t* src = a ? activations : weights;
+      if constexpr (PackedWeights) {
+        if (!a) {
+          copy_packed_chunk<N, K>(codes[stage] + 16 * 128, weights, g, column_base,
+              chunk - 16 * 8, fold, Folds);
+          continue;
+        }
+      }
       copy16(codes[stage] + fold_row_chunk(r, chunk % 8), src + (valid ? at : 0), valid);
     }
     for (int i = threadIdx.x; i < 32 * 4; i += 64) {
@@ -98,6 +136,7 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
     else asm volatile("cp.async.wait_group 0;" ::: "memory");
     __syncthreads();
     ptx::D4 partial{};
+    uint4 packed_b;
 #pragma unroll
     for (int step = 0; step < 4; ++step) {
       ptx::A4 af{};
@@ -106,10 +145,18 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
       for (int i = 0; i < 4; ++i)
         af.v[i] = *reinterpret_cast<const uint32_t*>(codes[stage] +
             fold_row_chunk(quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
+      if constexpr (PackedWeights) {
+        if ((step & 1) == 0)
+          packed_b = packed_fragment<K>(codes[stage] + 16 * 128,
+              warp, quad, lane4, step, first_fold + stage);
+        bf.v[0] = (step & 1) ? packed_b.z : packed_b.x;
+        bf.v[1] = (step & 1) ? packed_b.w : packed_b.y;
+      } else {
 #pragma unroll
       for (int i = 0; i < 2; ++i)
         bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[stage] +
             fold_row_chunk(16 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
+      }
       const uint32_t sa = scales[stage][(quad + (lane4 & 1) * 8) * 4 + step];
       const uint32_t sb = scales[stage][(16 + warp * 8 + quad) * 4 + step];
       ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(partial, af, bf, sa, sb);

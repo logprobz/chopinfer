@@ -455,8 +455,8 @@ mod tests {
         assert!(arguments(ScaleExpandQuery { width: 3, ..q }, bank, None, output).is_err());
     }
 
-    /// DeepSeek's TP4 banks: gate/up in 64-row tiles of 160 groups, down
-    /// in 512-row tiles of 18 groups.
+    /// Gate/up with 160 groups and down with 18 groups exercise 64-row
+    /// and 512-row tiles, respectively.
     #[test]
     fn paired_expansion_tiles_both_banks_and_packs_absent_ones_as_null() {
         let gate = PairBank {

@@ -72,9 +72,9 @@ Grid x covers the first bank's tiles, then the second's; grid z holds the
 slots, block `(256, 1, 1)`, PDL as above. A null encoded bank takes no
 tiles, so either bank may be absent (`pair_arguments` packs null pointers
 and a zero shape). `PairBank::tile_rows` sizes each bank's tiles: whole
-64-row strips holding at least 8 KiB of scales, so DeepSeek's TP4 gate/up
-bank (160 groups) takes 64-row tiles and its down bank (18 groups) 512-row
-tiles. Each thread writes four output bytes at a time where the output is
+64-row strips holding at least 8 KiB of scales. A bank with 160 groups
+takes 64-row tiles, while a bank with 18 groups takes 512-row tiles.
+Each thread writes four output bytes at a time where the output is
 word aligned, with byte loops for an unaligned head and the tail, then
 applies the tile's exceptions after a block barrier. The first warp finds
 the tile's exception range with a 32-ary search, both bounds at once, so a
@@ -99,11 +99,11 @@ Views carry opaque handles and byte extents; the bundle's host services
 resolve them as for other kernel-core argument lists. This is a low-level
 launcher, with no new generic `Backend` method.
 
-The DeepSeek bundle allocates both raw banks in one scratch region, the
+The caller can allocate both raw banks in one scratch region, the
 down bank after the gate/up bank at a 256-byte boundary, and launches the
 paired entry once per layer at the end of the routes stage, before the
 first scale consumer, binding that raw scratch as the existing scale roles.
-Gate/up uses `rows=576, groups=160, projections=2` at TP4; down uses
+For example, gate/up uses `rows=576, groups=160, projections=2`; down uses
 `rows=5120, groups=18, projections=1`; both use 384 experts. The
 expansion stays in stream order between the routes and the consumers,
 including inside captured graphs, on the routed branch beside the shared
@@ -111,9 +111,8 @@ expert. Every consumer the bundle selects reads its weight scales only
 after its own `griddepcontrol.wait`; the one-row floor kernel loads them
 before its wait, so it must keep binding raw banks.
 
-The direct path already binds `active` to `scratch.active_experts` in
-`models/deepseek41/bundle/src/lower/moe_direct.rs`. `route_floor.cuh` and
-the fused `router_finish.cuh` / `router_finish_r2.cuh` publish the same
+The caller can bind `active` to the expert list that `route_floor.cuh` and
+the fused `router_finish.cuh` / `router_finish_r2.cuh` publish, with the same
 `[count, ids...]` prefix: unique IDs in ascending order. The count is at
 most `min(experts, live_tokens * top_k)`. An empty step publishes zero;
 unused words can retain old values. These are full expert IDs, independent

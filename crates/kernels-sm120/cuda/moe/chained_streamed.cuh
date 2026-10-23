@@ -6,6 +6,11 @@
 // every routed row of that expert. The small queue is the GEMV/narrow-M
 // case; the wide queue handles experts with 9..64 rows. Only the merge
 // adds chains, in ascending K order, before the unchanged epilogue.
+//
+// With Tiled the weights are stored in 64-row by 128-K tiles
+// (`row-tiles-64x128-groups`), as in chained_absorb.cuh: an item's loads
+// are one contiguous 4096-byte code tile and one 256-byte scale tile, and
+// each lane still loads the same 16 code bytes and scale byte.
 namespace chop::moe::streamed {
 constexpr int Threads = 128, Columns = 64, Stride = 136;
 
@@ -86,7 +91,7 @@ __device__ __forceinline__ uint32_t shuffle(uint32_t word, int source) {
   return __shfl_sync(0xffffffffu, word, source);
 }
 
-template<class C, int Rows>
+template<class C, int Rows, bool Tiled = false>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -94,6 +99,9 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
   using L = Layout<C>;
   constexpr int H = C::halves, Fragments = Rows / 8;
   static_assert(Rows == 8 || Rows == 64);
+  static_assert(!Tiled || (C::k % 128 == 0 && C::loop_k == C::k && C::n % 64 == 0 &&
+                           C::weight_rows % 64 == 0 && Columns == 64 && Threads == 128),
+                "row tiles need whole 64x128 tiles, one per item");
   __shared__ __align__(16) uint16_t activations[Rows][Stride];
   __shared__ int32_t rows[Rows];
   if (blockDim.x != Threads) __trap();
@@ -136,8 +144,17 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
       for (int r = 0; r < 2; ++r) {
         const uint64_t wr = uint64_t(expert) * C::weight_rows + h * C::n + column + warp * 16 + g + r * 8;
         const bool valid = k < C::k;
-        owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
-        scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+        if constexpr (Tiled) {
+          // The item's 64 columns are one strip, so wr's tile is the item's
+          // and its row in the tile is the lane's.
+          const uint64_t tile = (uint64_t(expert) * C::weight_rows + h * C::n + column) / 64 * L::blocks + block;
+          const int row = warp * 16 + g + r * 8;
+          owned[h][r] = valid ? load16(weight + tile * 4096 + row * 64 + t * 16) : make_uint4(0,0,0,0);
+          scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
+        } else {
+          owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
+          scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+        }
         check(owned[h][r], uint8_t(scales[h][r]));
       }
 

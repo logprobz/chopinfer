@@ -1,4 +1,10 @@
 //! Exact low-shared-memory rework, with a direct-load control and L2 hints.
+//!
+//! The direct gate queues also have builds reading their bank in 64-row by
+//! 128-K tiles ([`ROW_TILES_64X128`]); each lane loads the same bytes, so
+//! their chains and partials are the row-major queues'.
+//!
+//! [`ROW_TILES_64X128`]: kernel_core::precision::layout::ROW_TILES_64X128
 use super::{
     floor::{Entry, Stage},
     row_bias, streamed,
@@ -76,6 +82,39 @@ pub fn entry(e: &Entry, s: Stage, loads: Loads) -> EntrySpec {
     }
     spec
 }
+/// The gate stages with a row-tiled build, small then wide.
+pub const TILED: [Stage; 2] = [Stage::GateSmall, Stage::GateWide];
+
+/// The direct gate queue reading its bank in row tiles
+/// (`row-tiles-64x128-groups`).
+pub fn tiled_symbol(e: &Entry, s: Stage) -> String {
+    symbol(e, s, Loads::Direct).replace("_bandwidth_direct_", "_bandwidth_tiles_")
+}
+
+/// The direct gate small or wide queue's ABI and launch with its bank in
+/// row tiles: the same operands, read at the tiled addresses.
+pub fn tiled_entry(e: &Entry, s: Stage) -> Result<EntrySpec, Refusal> {
+    let rows = match s {
+        Stage::GateSmall => 8,
+        Stage::GateWide => 64,
+        _ => return Err(Refusal("only the gate queues read a row-tiled bank")),
+    };
+    let gate = &e.gate.query.projection.gemm;
+    if gate.k % 128 != 0 || e.gate.columns() % 64 != 0 {
+        return Err(Refusal("row tiles need whole 64-row by 128-K tiles"));
+    }
+    let mut spec = entry(e, s, Loads::Direct);
+    let call = format!(",{rows}>(input,");
+    assert_eq!(
+        spec.body.matches("chop::moe::streamed::compute<").count(),
+        1
+    );
+    assert_eq!(spec.body.matches(&call).count(), 1);
+    spec.symbol = tiled_symbol(e, s);
+    spec.body = spec.body.replace(&call, &format!(",{rows},true>(input,"));
+    Ok(spec)
+}
+
 pub fn router(e: &Entry) -> row_bias::Router {
     row_bias::Router {
         experts: e.experts(),
@@ -103,6 +142,22 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
             })
             .collect(),
     )
+}
+
+/// [`cubin_spec`] and, after its entries, the tiled direct gate queues of
+/// each bank in `tiled`.
+pub fn tiled_cubin_spec(
+    name: &str,
+    entries: &[Entry],
+    tiled: &[Entry],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = cubin_spec(name, entries);
+    for e in tiled {
+        for s in TILED {
+            spec.entries.push(tiled_entry(e, s)?);
+        }
+    }
+    Ok(spec)
 }
 
 /// The gate finisher with the same bits and fewer serial L2 round trips

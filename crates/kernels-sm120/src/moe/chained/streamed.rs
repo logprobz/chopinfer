@@ -1,5 +1,10 @@
 //! A weight strip feeds every row of its expert once. Independent 128-K
 //! MMA chains write scratch; a separate merge folds them in ascending K.
+//!
+//! A gate/up projection's small and wide queues also have builds reading
+//! the bank in 64-row by 128-K tiles (`row-tiles-64x128-groups`); each lane
+//! loads the same bytes, so their chains and partials are the row-major
+//! queues'.
 use super::quantized::Projection;
 use crate::moe::{SM_COUNT, ptr};
 use kernel_build::{CubinSpec, EntrySpec};
@@ -135,4 +140,60 @@ pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
         "chained_streamed.cuh",
         projections.iter().flat_map(entries).collect(),
     )
+}
+
+/// The small or wide queue of a gate/up projection reading its bank in row
+/// tiles.
+pub fn tiled_symbol(p: &Projection, stage: Stage) -> String {
+    format!("{}_tiles_v1", symbol(p, stage).trim_end_matches("_v1"))
+}
+
+/// The queues of `p` with a row-tiled build: small, and wide when the
+/// projection has one.
+pub fn tiled_stages(p: &Projection) -> Vec<Stage> {
+    stages(p)
+        .into_iter()
+        .filter(|s| matches!(s, Stage::Small | Stage::Wide))
+        .collect()
+}
+
+/// The queue's ABI and launch with its bank in row tiles: the same operands,
+/// read at the tiled addresses.
+pub fn tiled_entry(p: &Projection, stage: Stage) -> Result<EntrySpec, Refusal> {
+    let rows = match stage {
+        Stage::Small => 8,
+        Stage::Wide => 64,
+        _ => return Err(Refusal("only the small and wide queues read weights")),
+    };
+    if !p.gate_up() {
+        return Err(Refusal("only the gate/up bank is stored in row tiles"));
+    }
+    if p.query.projection.gemm.k % 128 != 0 || p.columns() % 64 != 0 {
+        return Err(Refusal("row tiles need whole 64-row by 128-K tiles"));
+    }
+    let mut e = entries(p)
+        .into_iter()
+        .find(|e| e.symbol == symbol(p, stage))
+        .ok_or(Refusal("the projection has no such queue"))?;
+    let call = format!(",{rows}>(input,");
+    assert_eq!(e.body.matches(&call).count(), 1);
+    e.symbol = tiled_symbol(p, stage);
+    e.body = e.body.replace(&call, &format!(",{rows},true>(input,"));
+    Ok(e)
+}
+
+/// [`cubin_spec`] and, after its entries, the tiled queues of each
+/// projection in `tiled`.
+pub fn tiled_cubin_spec(
+    name: &str,
+    projections: &[Projection],
+    tiled: &[Projection],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = cubin_spec(name, projections);
+    for p in tiled {
+        for stage in tiled_stages(p) {
+            spec.entries.push(tiled_entry(p, stage)?);
+        }
+    }
+    Ok(spec)
 }

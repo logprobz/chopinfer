@@ -178,4 +178,101 @@ mod tests {
         assert_eq!(with[..served.len()], served[..]);
         assert_eq!(with.len(), served.len() + 1);
     }
+
+    /// The tiled direct gate queues (small and wide), the tiled resident
+    /// gate and the streamed module's tiled gate queues are the row-major
+    /// ones with their weights read at the row-tile addresses: same ABI,
+    /// bounds and launch, new symbols, and the modules that add them keep
+    /// every row-major entry.
+    #[test]
+    fn the_tiled_direct_resident_and_streamed_gates_differ_only_in_their_weight_addresses() {
+        use kernels_sm120::moe::chained::{streamed, streamed_resident};
+        let entries = entries(&FLASH).unwrap();
+        let projections = super::super::moe::streamed_projections(&FLASH).unwrap();
+        let backbone = projections
+            .iter()
+            .filter(|p| p.gate_up() && p.query.projection.gemm.grouped.unwrap().experts == 384)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(backbone.len(), 2);
+        let mut pairs = Vec::new();
+        for p in &projections {
+            for stage in streamed::tiled_stages(p) {
+                let rows = streamed::entries(p)
+                    .into_iter()
+                    .find(|e| e.symbol == streamed::symbol(p, stage))
+                    .unwrap();
+                let tiled = streamed::tiled_entry(p, stage);
+                if !p.gate_up() {
+                    assert!(tiled.is_err());
+                    continue;
+                }
+                let n = if stage == streamed::Stage::Small {
+                    8
+                } else {
+                    64
+                };
+                pairs.push((rows, tiled.unwrap(), n));
+            }
+        }
+        assert_eq!(pairs.len(), 6);
+        for entry in &entries {
+            for (stage, rows) in [(floor::Stage::GateSmall, 8), (floor::Stage::GateWide, 64)] {
+                pairs.push((
+                    bandwidth::entry(entry, stage, bandwidth::Loads::Direct),
+                    bandwidth::tiled_entry(entry, stage).unwrap(),
+                    rows,
+                ));
+            }
+            pairs.push((
+                streamed_resident::entry(&entry.gate),
+                streamed_resident::tiled_entry(&entry.gate).unwrap(),
+                8,
+            ));
+            for stage in [floor::Stage::DownSmall, floor::Stage::DownWide] {
+                assert!(bandwidth::tiled_entry(entry, stage).is_err());
+            }
+        }
+        let mut symbols = std::collections::BTreeSet::new();
+        for (rows, tiled, n) in &pairs {
+            assert!(tiled.symbol.contains("_tiles_") && symbols.insert(tiled.symbol.clone()));
+            assert_eq!(
+                tiled.body.replace(&tiled.symbol, &rows.symbol),
+                rows.body
+                    .replace(&format!(",{n}>(input,"), &format!(",{n},true>(input,"))
+            );
+            assert_eq!(
+                (&tiled.params, tiled.max_threads, tiled.min_blocks),
+                (&rows.params, rows.max_threads, rows.min_blocks)
+            );
+        }
+        let gates = entries.iter().map(|e| e.gate.clone()).collect::<Vec<_>>();
+        for (served, with, added) in [
+            (
+                bandwidth::cubin_spec("bandwidth", &entries),
+                bandwidth::tiled_cubin_spec("bandwidth", &entries, &entries[..1]).unwrap(),
+                2,
+            ),
+            (
+                streamed_resident::cubin_spec("resident", &gates),
+                streamed_resident::tiled_cubin_spec("resident", &gates, &gates[..1]).unwrap(),
+                1,
+            ),
+            (
+                streamed::cubin_spec("streamed", &projections),
+                streamed::tiled_cubin_spec("streamed", &projections, &backbone).unwrap(),
+                3,
+            ),
+        ] {
+            let ids = |spec: &kernel_build::CubinSpec| {
+                spec.entries
+                    .iter()
+                    .map(|e| (e.symbol.clone(), e.body.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let (with, served) = (ids(&with), ids(&served));
+            assert_eq!(with[..served.len()], served[..]);
+            assert_eq!(with.len(), served.len() + added);
+        }
+    }
 }

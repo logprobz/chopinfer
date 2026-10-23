@@ -104,6 +104,13 @@ use super::*;
 // the same verifies bound without regions, every line is otherwise equal.
 // Shared fold state and workspace give each fold operation's layers one
 // handle and renumber the rest; every line is otherwise equal.
+// The 8-row bucket launches the 16-row status folds with 8 rows: at 8 rows
+// each layer's eleven launches (the WKV and WQ_a prefetch initialize/fold
+// pairs, WQ_b's stream fold, WO_a's input quantizer and prefetch pair and
+// WO_b's input quantizer and prefetch pair) become six with the same
+// operands, the stream fold's packed weights and state replaced by the
+// layer's weights (1760 launches to 960, same audit). No other line
+// changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0x10872a93b8f0eabf)),
     (6, (8680, 0xd748b3377111a4da)),

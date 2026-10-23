@@ -1,9 +1,12 @@
-//! Audit the status folds (`sm120::fold_fused`): in the 16- and 32-row
+//! Audit the status folds (`sm120::fold_fused`): in the 8-, 16- and 32-row
 //! decode and verify buckets of every backbone layer each replaces its
 //! projection's admission and fold (WO_a also WO_b's input quantizer) on
 //! the same operands, the sliced quantizer replaces WO_a's input quantizer
-//! on its spans, and every other launch is retained. Then the producers
-//! whose rejected-row zeroing the status folds rely on.
+//! on its spans, and every other launch is retained. At 8 rows the served
+//! admission and fold are the prefetch fold's initialize and fold, and
+//! WQ_b's is one packed stream fold whose packed weights and state the
+//! status fold replaces by the layer's weights. Then the producers whose
+//! rejected-row zeroing the status folds rely on.
 use super::*;
 use crate::sm120::fold_fused;
 use std::collections::BTreeSet;
@@ -50,9 +53,9 @@ fn run(kv: KvLayout) -> Run {
         }
     }
     if kv.storage == KvStorage::Native {
-        // Four rows per item: verify 32 on slots 0..8, then verify 16 on
-        // slots 8..12.
-        for (first, count) in [(0_u64, 8_u64), (8, 4)] {
+        // Four rows per item: verify 32 on slots 0..8, verify 16 on slots
+        // 8..12, then verify 8 on slots 12..14.
+        for (first, count) in [(0_u64, 8_u64), (8, 4), (12, 2)] {
             let from = host.device.journal.borrow().len();
             let tokens = vec![7; 4];
             let items = (first..first + count)
@@ -214,10 +217,50 @@ const PROJECTIONS: [&str; 5] = [
     "attention.o-b",
 ];
 
+/// The projection's fold shape: N, K and groups.
+fn shape(id: &str) -> (u32, u32, u32) {
+    let q = if id == "attention.q-b" {
+        fold_fused::wide(16).unwrap().base.query
+    } else {
+        fold_fused::fused(id, 16).unwrap().cluster.base.query
+    };
+    (q.n, q.k, q.groups)
+}
+
+/// Whether the served folds of a `rows` bucket are the ones the 8-row
+/// bucket selects: prefetch folds with their initialize launch and WQ_b's
+/// packed stream fold, rather than a cluster or row-local fold.
+fn prefetched(rows: u32) -> bool {
+    fold_fused::tile(rows) != Some(rows)
+}
+
 /// The projection whose served admission (`true`) or fold `line` launches
 /// at `rows` rows.
 fn served(line: &str, rows: u32) -> Option<(&'static str, bool)> {
     let s = symbol(line);
+    if prefetched(rows) {
+        return PROJECTIONS.into_iter().find_map(|id| {
+            let (n, k, groups) = shape(id);
+            if id == "attention.q-b" {
+                let stream = crate::sm120::mxfp8_fold_stream::catalog(&FLASH)
+                    .unwrap()
+                    .into_iter()
+                    .find(|e| {
+                        let q = e.ticket.query;
+                        !e.ticket.paired && (q.n, q.k, q.groups) == (n, k, groups)
+                    })?;
+                return (stream.ticket.symbol == s).then_some((id, false));
+            }
+            let [initialize, fold] = crate::sm120::mxfp8_fold::prefetch_entries(&FLASH, 4)
+                .unwrap()
+                .into_iter()
+                .find(|e| !e.paired && (e.query.n, e.query.k, e.query.groups) == (n, k, groups))?
+                .symbols();
+            [(initialize, true), (fold, false)]
+                .into_iter()
+                .find_map(|(symbol, admit)| (symbol == s).then_some((id, admit)))
+        });
+    }
     let (fold, admit) = match s.strip_suffix("_admit_v1") {
         Some(fold) => (fold, true),
         None => (s, false),
@@ -294,6 +337,23 @@ fn split(journal: &[String]) -> Split {
 fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, String> {
     let (old_journal, new_journal) = (split(before), split(after));
     let (before, after) = (&old_journal.records, &new_journal.records);
+    // The layer weights of WQ_b's wide folds at 16 rows, in launch order:
+    // each case launches the same projections of the same layers and ranks
+    // in the same order, and the 16-row folds are audited against the
+    // reference's row-local folds, which bind them.
+    let wide = status_fold("attention.q-b", 16);
+    let mut in_decode_16 = false;
+    let wide_weights: Vec<Span> = after
+        .iter()
+        .filter(|l| {
+            if let Some(name) = l.strip_prefix("case ") {
+                in_decode_16 = name == "decode 16";
+            }
+            in_decode_16 && l.starts_with("launch ") && symbol(l) == wide
+        })
+        .map(|l| spans(l)[2].clone())
+        .collect();
+    let mut packed_folds = 0;
     let (mut i, mut j) = (0, 0);
     let mut case = String::new();
     let mut changed = Vec::new();
@@ -304,6 +364,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         if a == b {
             if let Some(name) = a.strip_prefix("case ") {
                 case = name.to_owned();
+                packed_folds = 0;
             }
             i += 1;
             j += 1;
@@ -327,6 +388,39 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
                 ));
             }
             changed.push((case.clone(), "attention.o-a input".into()));
+            i += 1;
+            j += 1;
+            continue;
+        }
+        if served(a, rows) == Some(("attention.q-b", false)) && prefetched(rows) {
+            // WQ_b's packed stream fold, which admits rows itself, becomes
+            // the wide fold over the layer's weights: every other operand is
+            // kept, and only the packed weights and the stream fold's two
+            // state spans go.
+            let id = "attention.q-b";
+            let (old, new) = (spans(a), spans(b));
+            if symbol(b) != status_fold(id, rows)
+                || old_journal.captured[i] != new_journal.captured[j]
+            {
+                return Err(format!("{id} at {case} is not its status fold: {b}"));
+            }
+            let weights = wide_weights
+                .get(packed_folds)
+                .ok_or("more packed WQ_b folds than 16-row wide folds")?;
+            if new.get(2) != Some(weights) {
+                return Err(format!(
+                    "{id} at {case} does not bind the layer's weights: {b}"
+                ));
+            }
+            if let Some(span) = new.iter().find(|s| *s != weights && !old.contains(s)) {
+                return Err(format!("{id} at {case} binds another operand: {span:?}"));
+            }
+            let dropped: Vec<_> = old.iter().filter(|s| !new.contains(s)).collect();
+            if old.len() < 7 || dropped != [&old[2], &old[5], &old[6]] {
+                return Err(format!("{id} at {case} drops an operand: {dropped:?}"));
+            }
+            packed_folds += 1;
+            changed.push((case.clone(), id.to_owned()));
             i += 1;
             j += 1;
             continue;
@@ -364,9 +458,17 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         let new = spans(b);
         let flags = new.iter().filter(|s| s.0.starts_with("flags")).count();
         let wo = matches!(id, "attention.o-a" | "attention.o-b");
+        // A cluster status fold's slabs follow its admission's 256 flag
+        // bytes; at 8 rows it takes its own slabs at the prefetch fold's
+        // workspace offset.
+        let slab_bytes = if prefetched(rows) {
+            fold_fused::fused(id, rows).map(|e| e.workspace())
+        } else {
+            workspace.2.checked_sub(256)
+        };
         for span in &new {
             let slabs = (&span.0, span.1) == (&workspace.0, workspace.1)
-                && span.2 + 256 == workspace.2
+                && Some(span.2) == slab_bytes
                 && id != "attention.q-b";
             let kept = old.contains(span) && *span != workspace;
             if !(kept || slabs || wo && span.0.starts_with("flags")) {
@@ -437,9 +539,9 @@ fn status_folds_change_only_their_decode_and_verify_projections() {
     for kv in KV_LAYOUTS {
         let [before, after] = journals(kv);
         let changed = audit(&before, &after).unwrap();
-        let mut cases = vec!["decode 16", "decode 32"];
+        let mut cases = vec!["decode 8", "decode 16", "decode 32"];
         if kv.storage == KvStorage::Native {
-            cases.extend(["verify 32", "verify 16"]);
+            cases.extend(["verify 32", "verify 16", "verify 8"]);
         }
         // Every backbone layer on each of the four ranks, not the drafter's.
         let mut expected = Vec::new();

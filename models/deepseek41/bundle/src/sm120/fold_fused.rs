@@ -1,10 +1,11 @@
-//! Folds that admit rows by status for Flash TP4's 16- and 32-row decode
-//! and verify buckets: WQ_a, WKV, WO_a and WO_b on their cluster schedules
-//! (`fold_cluster::SERVED`) without the admission launch, WO_a quantizing
-//! WO_b's input in its merge after the row-sliced 8192-column quantizer
-//! (`row/ceil_sliced.cuh`), WO_b failing rows by status and WO_a's block
-//! flags, and WQ_b's row-local fold on 48-column tiles without its
-//! admission (`mxfp8_fold_local_wide.cuh`).
+//! Folds that admit rows by status for Flash TP4's 8-, 16- and 32-row
+//! decode and verify buckets: WQ_a, WKV, WO_a and WO_b on their cluster
+//! schedules (`fold_cluster::SERVED`) without the admission launch, WO_a
+//! quantizing WO_b's input in its merge after the row-sliced 8192-column
+//! quantizer (`row/ceil_sliced.cuh`), WO_b failing rows by status and
+//! WO_a's block flags, and WQ_b's row-local fold on 48-column tiles without
+//! its admission (`mxfp8_fold_local_wide.cuh`). The 8-row bucket launches
+//! the 16-row tile's folds and quantizer with 8 rows (`tile`).
 //!
 //! A fold that fails exactly the rows with a nonzero status after its
 //! producer wait gives the admission kernel's result, and leaves the status
@@ -32,6 +33,18 @@
 //! 29.5/29.0 at 32 rows (16 slices of 8 warps). WQ_b 11.2/11.2 -> 9.3/9.2
 //! and 13.2/13.3 -> 11.1/11.1. WQ_a 9.0/9.1 -> 7.2/7.2 and 11.3/11.2 ->
 //! 11.1/11.1. WKV 7.0/7.2 -> 6.9/7.0 and 9.2/9.3 -> 8.9/9.0.
+//!
+//! SM120, 300 W, 1800 MHz lock (1.73-1.79 GHz read), 2026-10-23 (lab
+//! fold_fused8): the 16-row tile's functions at 8 rows against the served
+//! 8-row launches (the prefetch folds with their initialize launches,
+//! WQ_b's stream fold, the cached and F32 input quantizers), bit for bit
+//! equal at every row count up to 8 with rejected rows and captured layers
+//! 0 and 39. Warm medians in us per layer on two devices: WO chain
+//! 39.6/39.6 -> 23.2/23.3, WQ_b 20.0/19.2 -> 12.7/12.8, WQ_a 12.9/13.1 ->
+//! 9.0/8.9, WKV 10.8/10.9 -> 8.7/8.7; over copies that keep the weights
+//! out of L2, 43.0/42.5 -> 26.4/26.1, 17.6/17.2 -> 11.9/11.8, 14.4/14.3 ->
+//! 8.8/8.7 and 10.4/10.2 -> 5.2/5.1 us, and 16.7/15.6 -> 12.6/11.7 mJ per
+//! layer of board energy for all four.
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{
     mxfp8_fold,
@@ -42,7 +55,9 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_fused";
 pub const CUBIN: &str = "mxfp8_fold_fused_deepseek41_sm120";
 /// The row buckets every fused fold serves.
-pub const ROWS: [u32; 2] = [16, 32];
+pub const ROWS: [u32; 3] = [8, 16, 32];
+/// The row tiles the cubin holds, each with its folds and quantizer.
+pub const TILES: [u32; 2] = [16, 32];
 /// The projections whose served cluster fold a fused twin replaces.
 pub const CLUSTER: [&str; 4] = [
     "attention.q-a",
@@ -50,19 +65,30 @@ pub const CLUSTER: [&str; 4] = [
     "attention.o-a",
     "attention.o-b",
 ];
-/// Rows, slices per row and warps per slice of WO_a's input quantizer.
+/// Tile rows, slices per row and warps per slice of WO_a's input
+/// quantizer.
 pub const SLICED: &[(u32, u32, u32)] = &[(16, 32, 8), (32, 16, 8)];
-/// WQ_b's wide fold at both buckets: column tile and folds in flight.
+/// WQ_b's wide fold at every bucket: column tile and folds in flight.
 pub const WIDE: (u32, u32) = (48, 4);
 /// WO_a's input: the rank's heads, BF16.
 const ATTENTION: u32 = 8192;
 
-/// The fused twin of `id`'s served cluster fold at `rows` rows.
+/// The row tile bucket `rows` launches: 8 rows run the 16-row tile.
+pub fn tile(rows: u32) -> Option<u32> {
+    match rows {
+        8 | 16 => Some(16),
+        32 => Some(32),
+        _ => None,
+    }
+}
+
+/// The fused twin of `id`'s served cluster fold at the tile of `rows`
+/// rows.
 pub fn fused(id: &str, rows: u32) -> Option<Entry> {
     if !CLUSTER.contains(&id) {
         return None;
     }
-    let mut cluster = super::fold_cluster::served(id, rows)?;
+    let mut cluster = super::fold_cluster::served(id, tile(rows)?)?;
     let q = cluster.base.query;
     cluster.base = mxfp8_fold::Entry::new(
         q,
@@ -83,11 +109,9 @@ pub fn fused(id: &str, rows: u32) -> Option<Entry> {
     })
 }
 
-/// WQ_b's wide fold, which both buckets launch.
+/// WQ_b's wide fold, which every bucket launches.
 pub fn wide(rows: u32) -> Option<mxfp8_fold_local_wide::Entry> {
-    if !ROWS.contains(&rows) {
-        return None;
-    }
+    tile(rows)?;
     let base = super::mxfp8_fold::prefill_entries(&FLASH, 4)
         .unwrap()
         .into_iter()
@@ -102,11 +126,12 @@ pub fn wide(rows: u32) -> Option<mxfp8_fold_local_wide::Entry> {
     })
 }
 
-/// WO_a's input quantizer at `rows` rows.
+/// WO_a's input quantizer at the tile of `rows` rows.
 pub fn sliced(rows: u32) -> Option<Quantizer> {
+    let tile = tile(rows)?;
     SLICED
         .iter()
-        .find(|s| s.0 == rows)
+        .find(|s| s.0 == tile)
         .map(|&(_, slices, warps)| Quantizer {
             width: ATTENTION,
             slices,
@@ -118,12 +143,13 @@ pub fn sliced(rows: u32) -> Option<Quantizer> {
 }
 
 pub fn entries() -> Vec<Entry> {
-    ROWS.iter()
+    TILES
+        .iter()
         .flat_map(|&rows| CLUSTER.iter().filter_map(move |id| fused(id, rows)))
         .collect()
 }
 pub fn quantizers() -> Vec<Quantizer> {
-    ROWS.iter().filter_map(|&rows| sliced(rows)).collect()
+    TILES.iter().filter_map(|&rows| sliced(rows)).collect()
 }
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
@@ -170,7 +196,7 @@ mod tests {
     use super::*;
     #[test]
     fn fused_folds_mirror_the_served_cluster_schedules() {
-        for rows in ROWS {
+        for rows in TILES {
             for id in CLUSTER {
                 let f = fused(id, rows).unwrap();
                 let c = super::super::fold_cluster::served(id, rows).unwrap();
@@ -190,7 +216,19 @@ mod tests {
             assert_eq!(sliced(rows).unwrap().capacity, 32);
             sliced(rows).unwrap().validate().unwrap();
         }
-        assert!(fused("attention.o-a", 8).is_none() && sliced(8).is_none() && wide(8).is_none());
+        // The 8-row bucket launches the 16-row tile's functions.
+        for id in CLUSTER {
+            assert_eq!(
+                fused(id, 8).unwrap().symbol(),
+                fused(id, 16).unwrap().symbol()
+            );
+        }
+        assert_eq!(sliced(8).unwrap().symbol, sliced(16).unwrap().symbol);
+        assert_eq!(wide(8).unwrap().symbol(), wide(16).unwrap().symbol());
+        for rows in [1, 2, 4, 6, 12, 24] {
+            assert!(fused("attention.o-a", rows).is_none() && sliced(rows).is_none());
+            assert!(wide(rows).is_none());
+        }
         let spec = cubins(&[FLASH]).unwrap().pop().unwrap().1;
         // Eight folds, two quantizers and one wide fold; no lab controls.
         assert_eq!(spec.entries.len(), 11);

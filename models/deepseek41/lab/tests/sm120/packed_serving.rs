@@ -252,17 +252,27 @@ fn images(entry: &Entry, rows: u32, workspace: u64, seed: u64) -> LabResult<Vec<
     Ok(result)
 }
 
-fn load(session: &Session) -> LabResult<runtime_cuda::Module> {
+fn verified_directory() -> LabResult<std::path::PathBuf> {
     let directory = std::env::var_os(CUBINS)
         .map(std::path::PathBuf::from)
         .ok_or_else(|| format!("{CUBINS} is required"))?;
     kernel_build::report::BuildReport::read(&directory.join("kernel-build-report.json"))
         .and_then(|r| r.verify_current())
         .map_err(|e| e.to_string())?;
+    Ok(directory)
+}
+fn load(session: &Session) -> LabResult<runtime_cuda::Module> {
+    let directory = verified_directory()?;
     session.load_cubin(
         &std::fs::read(directory.join(format!("{}.cubin", family::CUBIN)))
             .map_err(|e| e.to_string())?,
     )
+}
+
+#[test]
+#[ignore = "requires the staged packed serving family"]
+fn packed_serving_staged_report_is_current() {
+    verified_directory().unwrap();
 }
 
 #[test]

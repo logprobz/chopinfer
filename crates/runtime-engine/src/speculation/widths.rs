@@ -3,7 +3,7 @@
 //!
 //! A package may prepare its fastest plans for some verify row counts only,
 //! so a step between them runs slower than the next prepared one up:
-//! DeepSeek Flash at TP4 (300 W, 2026-10-23) verified 24 rows of four items
+//! A four-rank serving check (300 W, 2026-10-23) verified 24 rows of four items
 //! in 43.4 ms and 32 rows of eight in 37.6 ms. A balanced plan with widths
 //! verifies the widest one between its decode rows and the rows its depth
 //! limits reach, filled by acceptance. Like the rest of a balanced plan it

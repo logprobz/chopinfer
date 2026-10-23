@@ -154,7 +154,7 @@ mod tests {
         }
     }
 
-    /// With DeepSeek's schedule and prepared widths, each concurrency
+    /// With this schedule and these prepared widths, each concurrency
     /// verifies the widest width its limits reach, filled by acceptance:
     /// two items 8 rows, three to five items 16, six to eight 32, and one
     /// item keeps its 6. No item goes deeper than its schedule allows, and

@@ -70,12 +70,16 @@ pub fn packed_records(
     Ok(records)
 }
 
-/// Legacy single-section layouts that already have dedicated host transforms.
+/// Single-section layouts that have dedicated host transforms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecordLayout {
     Rows,
     Fragment,
     Mxfp4Strips,
+    /// MXFP8 E4M3 codes as `mxfp8-fold-packed-8x128-v1`
+    /// ([`WeightTransform::Mxfp8FoldPacked`]): codes only, N divisible by 8
+    /// and K by 64.
+    Mxfp8Fold,
 }
 
 /// Build a legacy gather/fragment record without changing its wire transform.
@@ -133,6 +137,10 @@ pub fn section_record(
         }
         (RecordLayout::Mxfp4Strips, PackedSection::LocalScales, FormatId::Mxfp4) => {
             WeightTransform::Mxfp4Moe(Mxfp4Section::Scales)
+        }
+        // A dense 32x32 UE8M0 operand's codes are its MXFP8 rows' codes.
+        (RecordLayout::Mxfp8Fold, PackedSection::Codes, FormatId::Mxfp8 | FormatId::Fp8Block32) => {
+            WeightTransform::Mxfp8FoldPacked
         }
         (RecordLayout::Fragment, PackedSection::Codes, _) => {
             return Err(error("format has no fragment code transform"));

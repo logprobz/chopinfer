@@ -4,6 +4,7 @@ use kernel_core::contract::WeightFormat;
 use kernel_core::precision::format::LayoutVariant;
 use kernel_core::precision::{ScaleScope, TensorSpan};
 use kernel_core::weight_transform::WeightTransform;
+use kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout;
 use projection_spec::derive::OperandSlice;
 use std::collections::BTreeMap;
 
@@ -14,6 +15,14 @@ pub enum RecordPolicy {
     Packed,
     /// Expert-major, operand-major PackedOperand pieces; globals remain copies.
     PackedPieces,
+    /// MXFP8 operands' pieces in [`PackedPieces`](Self::PackedPieces) order
+    /// with their codes as `mxfp8-fold-packed-8x128-v1`: each destination
+    /// matrix's codes are one `Mxfp8FoldPacked` gather of its rows or K
+    /// slice, and its local scales one PackedOperand piece, which still
+    /// reads the codes to admit codes and scales together. A grouped
+    /// operand's groups are consecutive matrices, so their pieces form the
+    /// packed layout of the stacked rows.
+    Mxfp8FoldPieces,
     /// Existing Copy, Fragment or Mxfp4Moe pieces, chosen through the format plug-in.
     Sections(RecordLayout),
     /// A section encoding with an explicit plug-in layout variant.
@@ -41,10 +50,34 @@ pub fn bind_record_policy(
         .slices
         .iter()
         .any(|s| s.source.weight.format != operation.packing.format);
-    if expanded && !matches!(policy, RecordPolicy::Packed | RecordPolicy::PackedPieces) {
+    if expanded
+        && !matches!(
+            policy,
+            RecordPolicy::Packed | RecordPolicy::PackedPieces | RecordPolicy::Mxfp8FoldPieces
+        )
+    {
         return Err(error(
             "a row-expanded operand is recorded as packed operands, not section copies",
         ));
+    }
+    if policy == RecordPolicy::Mxfp8FoldPieces {
+        let plan = &operation.packing;
+        if plan.format != WeightFormat::Mxfp8
+            || !matches!(plan.layout.id.as_str(), "row-major" | "row-major-groups")
+            || operation
+                .slices
+                .iter()
+                .any(|s| s.source.weight.global_scale.is_some())
+        {
+            return Err(error(
+                "packed fold pieces hold row-major MXFP8 operands without global scales",
+            ));
+        }
+        for view in &mut operation.views {
+            if view.role == ViewRole::Weight(PackedSection::Codes) {
+                view.layout = Mxfp8FoldLayout::weight_layout().id;
+            }
+        }
     }
     if policy == RecordPolicy::Packed {
         operation.variant_records = records(&operation)?;
@@ -72,6 +105,12 @@ pub fn bind_record_policy(
                         fused_gate_up: operation.packing.projections == 2,
                     },
                 ),
+                // Its scales are packed operand pieces.
+                RecordLayout::Mxfp8Fold => {
+                    return Err(error(
+                        "packed fold codes are recorded by the Mxfp8FoldPieces policy",
+                    ));
+                }
             };
             let layout = registry::by_id(pieces[0].format)?.layout_for_weight(
                 weight,
@@ -243,7 +282,11 @@ fn emit(
     for slice in pieces {
         let weight = &slice.source.weight;
         let plugin = registry::by_id(slice.format)?;
-        let mut records = if policy == RecordPolicy::PackedPieces {
+        let packs = matches!(
+            policy,
+            RecordPolicy::PackedPieces | RecordPolicy::Mxfp8FoldPieces
+        );
+        let mut records = if packs {
             let mut plan = operation.packing.clone();
             plan.experts = 1;
             plan.projections = 1;
@@ -262,7 +305,11 @@ fn emit(
                 let WeightTransform::PackedOperand(ref p) = r.transform else {
                     unreachable!("packed_records emits PackedOperand")
                 };
-                (p.section != PackedSection::GlobalScales).then_some((
+                let kept = match policy {
+                    RecordPolicy::Mxfp8FoldPieces => p.section == PackedSection::LocalScales,
+                    _ => p.section != PackedSection::GlobalScales,
+                };
+                kept.then_some((
                     p.section,
                     r,
                     std::iter::once(&weight.codes)
@@ -290,7 +337,9 @@ fn emit(
             let Some(span) = span else {
                 continue;
             };
-            if policy == RecordPolicy::PackedPieces && section != PackedSection::GlobalScales {
+            if policy == RecordPolicy::PackedPieces && section != PackedSection::GlobalScales
+                || policy == RecordPolicy::Mxfp8FoldPieces && section != PackedSection::Codes
+            {
                 continue;
             }
             let view = operation
@@ -337,6 +386,7 @@ fn emit(
                     records: layout, ..
                 } => layout,
                 RecordPolicy::PackedPieces => RecordLayout::Rows,
+                RecordPolicy::Mxfp8FoldPieces => RecordLayout::Mxfp8Fold,
                 RecordPolicy::Packed => unreachable!("Packed is bound separately"),
             };
             let launch_dtype = if section == PackedSection::Codes {

@@ -531,3 +531,60 @@ fn imported_origins_bank_coordinates_and_bf16_lookup_scale_are_preserved() {
     weight.local_scale.as_mut().unwrap().convention = ScaleConvention::Reciprocal;
     assert!(matrix_source(plugin, &weight, vec![0..128], 0..128).is_err());
 }
+
+/// MXFP8 and block-32 FP8 codes gather into packed folds; the layout has
+/// no scale transform, holds E4M3 codes only and needs N divisible by 8
+/// and K by 64.
+#[test]
+fn fold_layout_records_e4m3_codes_only() {
+    for id in [FormatId::Mxfp8, FormatId::Fp8Block32] {
+        let base = legacy_record("F8_E4M3", 16, 192, 1);
+        let record = section_record(
+            registry::by_id(id).unwrap(),
+            PackedSection::Codes,
+            DType::Fp8E4M3,
+            DType::Fp8E4M3,
+            RecordLayout::Mxfp8Fold,
+            base.clone(),
+        )
+        .unwrap();
+        assert_eq!(record.transform, WeightTransform::Mxfp8FoldPacked);
+        assert_eq!(record.transform.id(), 10);
+        assert_eq!(
+            (&record.sources, &record.ranges, &record.stored_shape),
+            (&base.sources, &base.ranges, &base.stored_shape)
+        );
+        assert_eq!(record.output_bytes().unwrap(), 16 * 192);
+        assert!(
+            section_record(
+                registry::by_id(id).unwrap(),
+                PackedSection::LocalScales,
+                DType::Ue8M0,
+                DType::Ue8M0,
+                RecordLayout::Mxfp8Fold,
+                legacy_record("U8", 16, 6, 1),
+            )
+            .is_err()
+        );
+    }
+    for (id, dtype, rows, k) in [
+        (FormatId::Bf16, DType::Bf16, 16, 64),
+        (FormatId::Mxfp8, DType::Fp8E4M3, 12, 64),
+        (FormatId::Mxfp8, DType::Fp8E4M3, 16, 96),
+    ] {
+        let name = dtype.checkpoint_dtype().unwrap();
+        let width = if dtype == DType::Bf16 { 2 } else { 1 };
+        assert!(
+            section_record(
+                registry::by_id(id).unwrap(),
+                PackedSection::Codes,
+                dtype,
+                dtype,
+                RecordLayout::Mxfp8Fold,
+                legacy_record(name, rows, k, width),
+            )
+            .is_err(),
+            "{id:?} {rows} x {k}"
+        );
+    }
+}

@@ -199,14 +199,15 @@ fn packed_comparison_detects_a_moved_strip_on_gpu() {
 #[test]
 #[ignore = "requires an idle GPU and the packed family cubins"]
 fn packed_timing_stays_within_three_percent_on_gpu() {
-    timing_probe::timing_test(512 << 20, |session| {
+    timing_probe::timing_test(support::TIMING_MEMORY_BYTES, |session| {
         let module = support::load(session, CUBINS, family::CUBIN)?;
         let function = |s: &str| module.function(s).map_err(|e| e.to_string());
+        let mut slow = Vec::new();
         for entry in family::entries()
             .iter()
             .filter(|e| e.ticket.query.n >= 5120)
         {
-            for rows in [1, 6, 16, entry.ticket.query.m_capacity] {
+            for rows in support::TIMING_ROWS.into_iter().chain([9, 12]).filter(|&rows| rows <= entry.ticket.query.m_capacity) {
                 let calls = launches(entry, rows);
                 let packed = packed(entry, calls.clone());
                 let mut images = support::images(
@@ -218,11 +219,17 @@ fn packed_timing_stays_within_three_percent_on_gpu() {
                 )?;
                 support::admit_all(&mut images, 7);
                 packed_fold::compare(session, &function, &calls, &packed, &images)?;
-                let ratio = support::time(session, &module, [&calls, &packed], &images)?;
-                println!("{} rows={rows} packed/row-major={ratio:.6}", entry.symbol());
-                assert!(ratio <= 1.03, "{} rows={rows}: {ratio}", entry.symbol());
+                let timing = support::time(session, &module, [&calls, &packed], &images)?;
+                let ratio = timing.paired_ratio;
+                let served = support::reuse_served(entry.ticket.query, rows, entry.ticket.paired, entry.tile_n, 4);
+                println!("{} rows={rows} packed/row-major={ratio:.6} row_major_us={:.6} packed_us={:.6} reps={} served={}",
+                    entry.symbol(), timing.row_major_us, timing.packed_us, timing.repetitions, if served { "yes" } else { "no" });
+                if served && let Some(failure) = timing.failure() {
+                    slow.push(format!("{} rows={rows}: {failure}", entry.symbol()));
+                }
             }
         }
+        assert!(slow.is_empty(), "served packed timing failures:\n{}", slow.join("\n"));
         Ok(())
     })
     .unwrap();

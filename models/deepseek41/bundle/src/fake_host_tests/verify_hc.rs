@@ -98,7 +98,7 @@ use super::*;
 // WO_a's input quantizer and pair and WO_b's input quantizer) become six:
 // the status folds of WQ_a, WKV and WQ_b, the sliced quantizer, WO_a and
 // WO_b (1920 launches to 960, audited by
-// `fold_fused::status_folds_change_only_their_decode_and_verify_projections`).
+// `fold_fused::status_folds_change_only_native_decode_and_verify_projections`).
 // Scratch regions (`buffers::REGIONS`) give each rank's region members one
 // handle and renumber the other buffers and the streams; audited against
 // the same verifies bound without regions, every line is otherwise equal.

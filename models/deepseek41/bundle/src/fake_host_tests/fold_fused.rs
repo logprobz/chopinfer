@@ -534,64 +534,84 @@ fn journals(kv: KvLayout) -> [Vec<String>; 2] {
     journals
 }
 
+/// The serving layout of `storage`. Fails if the layouts change, so none
+/// drops out of the split audits.
+fn layout(storage: KvStorage) -> KvLayout {
+    assert_eq!(
+        KV_LAYOUTS.map(|kv| kv.storage),
+        [KvStorage::Native, KvStorage::Bf16]
+    );
+    KV_LAYOUTS
+        .into_iter()
+        .find(|kv| kv.storage == storage)
+        .unwrap()
+}
+
 #[test]
-fn status_folds_change_only_their_decode_and_verify_projections() {
-    for kv in KV_LAYOUTS {
-        let [before, after] = journals(kv);
-        let changed = audit(&before, &after).unwrap();
-        let mut cases = vec!["decode 8", "decode 16", "decode 32"];
-        if kv.storage == KvStorage::Native {
-            cases.extend(["verify 32", "verify 16", "verify 8"]);
-        }
-        // Every backbone layer on each of the four ranks, not the drafter's.
-        let mut expected = Vec::new();
-        for case in cases {
-            for piece in PROJECTIONS.into_iter().chain(["attention.o-a input"]) {
-                expected.push((
-                    (case.to_owned(), piece.to_owned()),
-                    4 * FLASH.layers() as usize,
-                ));
-            }
-        }
-        expected.sort();
-        let mut counted = BTreeMap::new();
-        for key in changed {
-            *counted.entry(key).or_insert(0) += 1;
-        }
-        assert_eq!(counted.into_iter().collect::<Vec<_>>(), expected, "{kv:?}");
-        // The audit refuses a moved operand, a lost launch, a kept admission
-        // and an operand bound in place of the flags.
-        let at = after
-            .iter()
-            .position(|l| symbol(l) == status_fold("attention.o-a", 32))
-            .unwrap();
-        let mut bad = after.clone();
-        bad[at] = bad[at].replacen("offset: 0,", "offset: 64,", 1);
-        assert!(audit(&before, &bad).is_err());
-        let mut bad = after.clone();
-        bad.remove(at);
-        assert!(audit(&before, &bad).is_err());
-        let fold = crate::sm120::fold_cluster::served("attention.o-a", 32).unwrap();
-        let admit = before
-            .iter()
-            .find(|l| symbol(l) == format!("{}_admit_v1", fold.symbol()))
-            .unwrap();
-        let mut bad = after.clone();
-        bad.insert(at, admit.clone());
-        assert!(audit(&before, &bad).is_err());
-        let mut bad = after.clone();
-        bad[at] = bad[at].replacen("raw: flags", "raw: buffer", 1);
-        assert!(audit(&before, &bad).is_err());
-        // And a capture that lost a node more than its folds.
-        let captured = after
-            .iter()
-            .position(|l| l.starts_with("captured "))
-            .unwrap();
-        let mut bad = after.clone();
-        let (head, count) = bad[captured].rsplit_once(' ').unwrap();
-        bad[captured] = format!("{head} {}", count.parse::<u64>().unwrap() - 1);
-        assert!(audit(&before, &bad).is_err());
+fn status_folds_change_only_native_decode_and_verify_projections() {
+    check_projection_changes(layout(KvStorage::Native));
+}
+
+#[test]
+fn status_folds_change_only_bf16_decode_projections() {
+    check_projection_changes(layout(KvStorage::Bf16));
+}
+
+fn check_projection_changes(kv: KvLayout) {
+    let [before, after] = journals(kv);
+    let changed = audit(&before, &after).unwrap();
+    let mut cases = vec!["decode 8", "decode 16", "decode 32"];
+    if kv.storage == KvStorage::Native {
+        cases.extend(["verify 32", "verify 16", "verify 8"]);
     }
+    // Every backbone layer on each of the four ranks, not the drafter's.
+    let mut expected = Vec::new();
+    for case in cases {
+        for piece in PROJECTIONS.into_iter().chain(["attention.o-a input"]) {
+            expected.push((
+                (case.to_owned(), piece.to_owned()),
+                4 * FLASH.layers() as usize,
+            ));
+        }
+    }
+    expected.sort();
+    let mut counted = BTreeMap::new();
+    for key in changed {
+        *counted.entry(key).or_insert(0) += 1;
+    }
+    assert_eq!(counted.into_iter().collect::<Vec<_>>(), expected, "{kv:?}");
+    // The audit refuses a moved operand, a lost launch, a kept admission
+    // and an operand bound in place of the flags.
+    let at = after
+        .iter()
+        .position(|l| symbol(l) == status_fold("attention.o-a", 32))
+        .unwrap();
+    let mut bad = after.clone();
+    bad[at] = bad[at].replacen("offset: 0,", "offset: 64,", 1);
+    assert!(audit(&before, &bad).is_err());
+    let mut bad = after.clone();
+    bad.remove(at);
+    assert!(audit(&before, &bad).is_err());
+    let fold = crate::sm120::fold_cluster::served("attention.o-a", 32).unwrap();
+    let admit = before
+        .iter()
+        .find(|l| symbol(l) == format!("{}_admit_v1", fold.symbol()))
+        .unwrap();
+    let mut bad = after.clone();
+    bad.insert(at, admit.clone());
+    assert!(audit(&before, &bad).is_err());
+    let mut bad = after.clone();
+    bad[at] = bad[at].replacen("raw: flags", "raw: buffer", 1);
+    assert!(audit(&before, &bad).is_err());
+    // And a capture that lost a node more than its folds.
+    let captured = after
+        .iter()
+        .position(|l| l.starts_with("captured "))
+        .unwrap();
+    let mut bad = after.clone();
+    let (head, count) = bad[captured].rsplit_once(' ').unwrap();
+    bad[captured] = format!("{head} {}", count.parse::<u64>().unwrap() - 1);
+    assert!(audit(&before, &bad).is_err());
 }
 
 /// Each audited header's statement that stores a rejected row (nonzero
@@ -765,7 +785,16 @@ fn engines(body: &str) -> Vec<&'static str> {
 /// from WO_a's merge. This fails if a status fold reads another producer
 /// or an audited producer stops zeroing.
 #[test]
-fn status_folds_read_codes_only_from_zeroing_producers() {
+fn status_folds_read_native_codes_only_from_zeroing_producers() {
+    check_zeroing_producers(layout(KvStorage::Native));
+}
+
+#[test]
+fn status_folds_read_bf16_codes_only_from_zeroing_producers() {
+    check_zeroing_producers(layout(KvStorage::Bf16));
+}
+
+fn check_zeroing_producers(kv: KvLayout) {
     for (header, statement) in ZEROING {
         assert!(
             kernel_source(header).contains(statement),
@@ -782,65 +811,58 @@ fn status_folds_read_codes_only_from_zeroing_producers() {
     }
     let bodies = bodies();
     let mut producers = BTreeSet::new();
-    for kv in KV_LAYOUTS {
-        let [_, after] = journals(kv);
-        let mut case = String::new();
-        let mut first = 0;
-        for (at, line) in after.iter().enumerate() {
-            if let Some(name) = line.strip_prefix("case ") {
-                case = name.to_owned();
-                first = at;
-                continue;
+    let [_, after] = journals(kv);
+    let mut case = String::new();
+    let mut first = 0;
+    for (at, line) in after.iter().enumerate() {
+        if let Some(name) = line.strip_prefix("case ") {
+            case = name.to_owned();
+            first = at;
+            continue;
+        }
+        let Some(rows) = case
+            .split_once(' ')
+            .filter(|(kind, _)| *kind != "prefill")
+            .and_then(|(_, rows)| rows.parse::<u32>().ok())
+            .filter(|rows| fold_fused::ROWS.contains(rows))
+        else {
+            continue;
+        };
+        let Some(id) = PROJECTIONS
+            .into_iter()
+            .find(|id| line.starts_with("launch ") && symbol(line) == status_fold(id, rows))
+        else {
+            continue;
+        };
+        // The step's latest launch before the fold that binds its codes,
+        // past the twin fold that reads them too (WQ_a beside WKV).
+        let codes = spans(line)[0].clone();
+        let overlaps = |s: &Span| s.0 == codes.0 && s.1 < codes.1 + codes.2 && codes.1 < s.1 + s.2;
+        let producer = after[first..at]
+            .iter()
+            .rev()
+            .filter(|l| l.starts_with("launch ") && spans(l).iter().any(overlaps))
+            .find(|l| {
+                !["attention.q-a", "attention.kv"]
+                    .into_iter()
+                    .any(|twin| symbol(l) == status_fold(twin, rows))
+            })
+            .unwrap_or_else(|| panic!("{id} at {case} reads codes no launch of the step wrote"));
+        let p = symbol(producer);
+        match id {
+            "attention.o-a" => {
+                assert_eq!(p, fold_fused::sliced(rows).unwrap().symbol, "{case}")
             }
-            let Some(rows) = case
-                .split_once(' ')
-                .filter(|(kind, _)| *kind != "prefill")
-                .and_then(|(_, rows)| rows.parse::<u32>().ok())
-                .filter(|rows| fold_fused::ROWS.contains(rows))
-            else {
-                continue;
-            };
-            let Some(id) = PROJECTIONS
-                .into_iter()
-                .find(|id| line.starts_with("launch ") && symbol(line) == status_fold(id, rows))
-            else {
-                continue;
-            };
-            // The step's latest launch before the fold that binds its codes,
-            // past the twin fold that reads them too (WQ_a beside WKV).
-            let codes = spans(line)[0].clone();
-            let overlaps =
-                |s: &Span| s.0 == codes.0 && s.1 < codes.1 + codes.2 && codes.1 < s.1 + s.2;
-            let producer = after[first..at]
-                .iter()
-                .rev()
-                .filter(|l| l.starts_with("launch ") && spans(l).iter().any(overlaps))
-                .find(|l| {
-                    !["attention.q-a", "attention.kv"]
-                        .into_iter()
-                        .any(|twin| symbol(l) == status_fold(twin, rows))
-                })
-                .unwrap_or_else(|| {
-                    panic!("{id} at {case} reads codes no launch of the step wrote")
+            "attention.o-b" => assert_eq!(p, status_fold("attention.o-a", rows), "{case}"),
+            _ => {
+                let body = bodies.get(p).unwrap_or_else(|| {
+                    panic!("{id} at {case} reads codes of {p}, whose rejected rows are not audited")
                 });
-            let p = symbol(producer);
-            match id {
-                "attention.o-a" => {
-                    assert_eq!(p, fold_fused::sliced(rows).unwrap().symbol, "{case}")
-                }
-                "attention.o-b" => assert_eq!(p, status_fold("attention.o-a", rows), "{case}"),
-                _ => {
-                    let body = bodies.get(p).unwrap_or_else(|| {
-                        panic!(
-                            "{id} at {case} reads codes of {p}, whose rejected rows are not audited"
-                        )
-                    });
-                    assert!(
-                        !engines(body).is_empty(),
-                        "{id}'s producer {p} calls no audited engine: {body}"
-                    );
-                    producers.insert((id, p.to_owned()));
-                }
+                assert!(
+                    !engines(body).is_empty(),
+                    "{id}'s producer {p} calls no audited engine: {body}"
+                );
+                producers.insert((id, p.to_owned()));
             }
         }
     }

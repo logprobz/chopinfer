@@ -574,7 +574,7 @@ mod tests {
             maximum_tokens: 1 << 20,
             maximum_aspect_ratio: 200.0,
         };
-        let qwen = ImageRecipe {
+        let symmetric_recipe = ImageRecipe {
             factor: 32,
             minimum_pixels: 4096,
             maximum_pixels: 1 << 20,
@@ -587,15 +587,15 @@ mod tests {
             mean: [0.5; 3],
             std: [0.5; 3],
         };
-        let mimo = ImageRecipe {
+        let channel_recipe = ImageRecipe {
             minimum_pixels: 8192,
             value_scale: 1.0,
             mean: [123.675, 116.28, 103.53],
             std: [58.395, 57.12, 57.375],
-            ..qwen
+            ..symmetric_recipe
         };
         let mut seed = 0x2545_f491_u32;
-        for recipe in [qwen, mimo] {
+        for recipe in [symmetric_recipe, channel_recipe] {
             for (width, height) in [(40, 30), (64, 64), (512, 384), (1000, 333), (33, 1300)] {
                 let data = (0..width * height * 3)
                     .map(|_| {
@@ -623,7 +623,7 @@ mod tests {
         }
         let bilinear = ImageRecipe {
             interpolation: Interpolation::Bilinear,
-            ..qwen
+            ..symmetric_recipe
         };
         let image = RgbImage::new(64, 64, vec![9; 64 * 64 * 3], limits).unwrap();
         assert!(image_canvas(&image, bilinear, limits).is_err());

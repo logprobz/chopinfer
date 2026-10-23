@@ -610,39 +610,45 @@ fn image_modality(
 /// of each in-tree image model and both payload elements.
 #[test]
 fn canvas_payloads_keep_the_keys_rows_and_bytes_of_their_rows() {
-    let qwen = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
+    let symmetric_grid = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
         "factor": 32, "minimum_pixels": 65536, "maximum_pixels": 16_777_216,
         "upscale_small_side": false, "interpolation": "bicubic-antialias",
         "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 0.00392156862745098,
         "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]}});
-    let mimo = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
+    let channel_grid = serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
         "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 1_048_576,
         "upscale_small_side": false, "interpolation": "bicubic-antialias",
         "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
         "mean": [123.675, 116.28, 103.53], "std": [58.395, 57.12, 57.375]}});
-    let glm = serde_json::json!({"tag": TOKEN_BUDGET_TAG_V1, "parameters": {
+    let token_budget = serde_json::json!({"tag": TOKEN_BUDGET_TAG_V1, "parameters": {
         "patch": 14, "temporal_patch": 2, "merge": 2, "minimum_tokens": 16,
         "maximum_tokens": 8000, "value_scale": 0.00392156862745098,
         "mean": [0.48145466, 0.4578275, 0.40821073],
         "std": [0.26862954, 0.26130258, 0.27577711], "alpha_background": "none"}});
-    let deepseek = serde_json::json!({"tag": CENTERED_PAD_TAG_V1, "parameters": {
+    let centered_pad = serde_json::json!({"tag": CENTERED_PAD_TAG_V1, "parameters": {
         "patch": 14, "downsample": 3, "minimum_pixels": 295_936, "maximum_tokens": 1024,
         "pad": [127, 127, 127], "value_divisor": 255.0, "mean": [0.5, 0.5, 0.5],
         "std": [0.5, 0.5, 0.5], "alpha_background": "none", "value_rounding": "bf16"}});
     let declarations = [
         (
-            "qwen38",
-            image_modality(qwen.clone(), "f32", 1536, 16_384, false),
+            "patch-grid-f32",
+            image_modality(symmetric_grid.clone(), "f32", 1536, 16_384, false),
         ),
         (
-            "qwen38-bf16",
-            image_modality(qwen, "bf16", 1536, 16_384, false),
+            "patch-grid-bf16",
+            image_modality(symmetric_grid, "bf16", 1536, 16_384, false),
         ),
-        ("mimo26", image_modality(mimo, "f32", 1536, 1024, false)),
-        ("glm5next", image_modality(glm, "f32", 1176, 8000, false)),
         (
-            "deepseek41",
-            image_modality(deepseek, "f32", 588, 1024, true),
+            "channel-normalized-grid",
+            image_modality(channel_grid, "f32", 1536, 1024, false),
+        ),
+        (
+            "token-budget",
+            image_modality(token_budget, "f32", 1176, 8000, false),
+        ),
+        (
+            "centered-pad",
+            image_modality(centered_pad, "f32", 588, 1024, true),
         ),
     ];
     let fixtures = [
@@ -746,8 +752,8 @@ fn canvas_payloads_keep_the_keys_rows_and_bytes_of_their_rows() {
     }
 }
 
-/// The Qwen38 recipe with an F32 encoder.
-fn qwen38_declaration() -> serde_json::Value {
+/// The patch-grid recipe with an F32 encoder.
+fn patch_grid_declaration() -> serde_json::Value {
     image_modality(
         serde_json::json!({"tag": "image.patch-grid.v1", "parameters": {
             "factor": 32, "minimum_pixels": 65536, "maximum_pixels": 16_777_216,
@@ -802,7 +808,7 @@ fn inline_jpegs(images: &[Vec<u8>]) -> PreparedPrompt {
 #[test]
 fn inline_images_are_refused_from_their_headers_before_decoding() {
     let pool = Arc::new(MediaMemoryV1::new(1 << 32));
-    let backend = backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 32);
+    let backend = backend_for(patch_grid_declaration(), None, Arc::clone(&pool), 1 << 32);
     let whole = inline_jpegs(&[jpeg(false), jpeg(false)]);
     let cancellation = CancellationSignal::new();
     let (prepared, count) = backend
@@ -856,7 +862,12 @@ fn inline_images_are_refused_from_their_headers_before_decoding() {
         .unwrap();
     let (allowance, first) = (plan.allowance, plan.images[0].reserved);
     drop(plan);
-    let tight = backend_for(qwen38_declaration(), None, Arc::clone(&pool), allowance - 1);
+    let tight = backend_for(
+        patch_grid_declaration(),
+        None,
+        Arc::clone(&pool),
+        allowance - 1,
+    );
     let error = tight
         .prepare_prompt_within(broken, &cancellation, None)
         .unwrap_err();
@@ -876,7 +887,7 @@ fn inline_images_are_refused_from_their_headers_before_decoding() {
 fn inline_images_wait_for_their_planned_need() {
     let images = [jpeg(false), jpeg(false), jpeg(false)];
     let probe = backend_for(
-        qwen38_declaration(),
+        patch_grid_declaration(),
         None,
         Arc::new(MediaMemoryV1::new(1 << 32)),
         1 << 32,
@@ -900,7 +911,7 @@ fn inline_images_wait_for_their_planned_need() {
     // Others hold all but the need: the request prepares without waiting.
     let pool = Arc::new(MediaMemoryV1::new(2 * need));
     let backend = Arc::new(backend_for(
-        qwen38_declaration(),
+        patch_grid_declaration(),
         None,
         Arc::clone(&pool),
         REQUEST_MEDIA_PREPARATION_BYTES_V1,
@@ -946,7 +957,7 @@ fn image_decodes_share_bounded_slots() {
         let slots = Arc::new(DecodeSlotsV1::new(limit));
         let pool = Arc::new(MediaMemoryV1::new(1 << 33));
         let backend = Arc::new(
-            backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 30)
+            backend_for(patch_grid_declaration(), None, Arc::clone(&pool), 1 << 30)
                 .with_decode_slots(Arc::clone(&slots)),
         );
         let workers = (0..8)
@@ -1000,7 +1011,7 @@ fn image_decodes_share_bounded_slots() {
 #[test]
 fn a_failed_image_releases_its_request_and_leaves_earlier_images_reclaimable() {
     let pool = Arc::new(MediaMemoryV1::new(1 << 32));
-    let backend = backend_for(qwen38_declaration(), None, Arc::clone(&pool), 1 << 32);
+    let backend = backend_for(patch_grid_declaration(), None, Arc::clone(&pool), 1 << 32);
     let mut good = jpeg(false);
     good.push(7);
     let error = backend

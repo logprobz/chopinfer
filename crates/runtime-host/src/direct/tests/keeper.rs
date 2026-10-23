@@ -294,18 +294,37 @@ fn a_missing_keeper_fails_only_a_start_that_requires_it() {
 /// tiled bytes.
 #[test]
 fn a_keeper_of_row_major_banks_lends_nothing_to_a_row_tiled_plan() {
+    lends_nothing(
+        "row-tiles",
+        "row-major-groups",
+        kernel_core::precision::layout::ROW_TILES_64X128,
+    );
+}
+
+/// Nor does a keeper of the row-major or row-tiled bank lend to a server
+/// that plans it in quad-lane row tiles.
+#[test]
+fn a_keeper_of_row_tiled_banks_lends_nothing_to_a_quad_lane_plan() {
+    use kernel_core::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
+    for (name, kept) in [
+        ("lanes-rows", "row-major-groups"),
+        ("lanes-tiles", ROW_TILES_64X128),
+    ] {
+        lends_nothing(name, kept, ROW_TILES_64X128_LANES);
+    }
+}
+
+/// A keeper of the bank planned in `kept`, in keeper directory `name`, lends
+/// nothing to a server that plans it in `planned`.
+fn lends_nothing(name: &str, kept: &str, planned: &str) {
     use super::packed::{bank_checkpoint, bank_plans};
     let (root, tensors) = bank_checkpoint();
-    let (rows, row_major) = bank_plans(ROLE, "row-major-groups", &tensors);
-    let (tiles, tiled) = bank_plans(
-        ROLE,
-        kernel_core::precision::layout::ROW_TILES_64X128,
-        &tensors,
-    );
-    let directory = KeeperDirectory::new("row-tiles");
-    let keeper = keep(&root.0, &rows, &directory.0, |_| {});
+    let (keeps, kept_bytes) = bank_plans(ROLE, kept, &tensors);
+    let (plans, planned_bytes) = bank_plans(ROLE, planned, &tensors);
+    let directory = KeeperDirectory::new(name);
+    let keeper = keep(&root.0, &keeps, &directory.0, |_| {});
     let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
-    let image = Arc::new(sharing_image(&opened, &tiles, 2, 128 << 10));
+    let image = Arc::new(sharing_image(&opened, &plans, 2, 128 << 10));
     let required = host(
         Arc::clone(&image),
         ArenaSourceV1::Borrow {
@@ -325,9 +344,12 @@ fn a_keeper_of_row_major_banks_lends_nothing_to_a_row_tiled_plan() {
     let arenas = upload(&preferred).unwrap();
     for (rank, arena) in arenas.iter().enumerate() {
         let (bytes, lent, _) = preferred.rank_arena_v1(*arena);
-        assert!(!lent, "rank {rank}");
-        assert_eq!(bytes, tiled[rank], "rank {rank}");
-        assert_ne!(bytes, row_major[rank], "rank {rank}");
+        assert!(!lent, "{kept} -> {planned} rank {rank}");
+        assert_eq!(
+            bytes, planned_bytes[rank],
+            "{kept} -> {planned} rank {rank}"
+        );
+        assert_ne!(bytes, kept_bytes[rank], "{kept} -> {planned} rank {rank}");
     }
     assert_eq!(keeper.join(), Ok(KeeperExitV1::Released));
 }

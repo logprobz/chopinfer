@@ -1,10 +1,10 @@
 [
   {
     "name": "chop_moe_chain_e288l72k8_formats_nvfp4",
-    "source_closure_sha256": "9451e0d67913ad6ad0a5abdcf06c0e521aa72bb720833081a36fb67b9052843f"
+    "source_closure_sha256": "bb0fe4540dd016d4c32fe1b226a5db69bac6b4a5e5613645dc988960f795bb05"
   },
   {
     "name": "chop_moe_chain_lab_formats_nvfp4",
-    "source_closure_sha256": "745efcd10623ae4482986140955ccd4c6aad7e55b3148efba16b7b96c2b551bb"
+    "source_closure_sha256": "313979b37094eb35d5e47acce8b8f7000347dded3531b920bc98ee0bcbafe8d2"
   }
 ]

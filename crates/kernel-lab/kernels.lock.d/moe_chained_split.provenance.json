@@ -1,43 +1,43 @@
 [
   {
     "name": "chop_moe_chain_e288l288k8_bf16",
-    "source_closure_sha256": "1d4e76ba82e630886fa90fe65320c337367e847ae66256f8dbc063f69db28446"
+    "source_closure_sha256": "354fd9a4327b35d541d30b88b0ed9dc361172b251975581f262f72562b831d47"
   },
   {
     "name": "chop_moe_chain_e288l288k8_bf16_bw4",
-    "source_closure_sha256": "32569636a6d7692768886373efd585f11708969bc4973950fe23ab05d4629ac9"
+    "source_closure_sha256": "525ed19fcac0a753df93a7532212dce3aab093566d68337b48c55cee9c6da912"
   },
   {
     "name": "chop_moe_chain_e288l288k8_fp8block",
-    "source_closure_sha256": "28026c25d414f19e0b5811beb9b51fdad9b67977bb55d755a83e8366ecca24d0"
+    "source_closure_sha256": "c5e677b491dc461b4073f476d3cfeca9422f53659322a9a5fb5f807be605c809"
   },
   {
     "name": "chop_moe_chain_e288l288k8_fp8block_bw4",
-    "source_closure_sha256": "3076bed96b35ed91aaa87c217bc502ca4e20403015b53e6ca9703f5a152193dd"
+    "source_closure_sha256": "471f8728c083381f74a0e3959d54b6d4afe5022f76c0475498b86990d8d893cf"
   },
   {
     "name": "chop_moe_chain_e288l288k8_fp8block_tp",
-    "source_closure_sha256": "7e89c3e88ee8d6205dd6f8d86a355286630011ce750c4a81f97e4e50a13b7d20"
+    "source_closure_sha256": "3c7504eff72f7726e0aef1787e097523d4c4e262440c52ef73f72dfd1b5e7b31"
   },
   {
     "name": "chop_moe_chain_e288l288k8_fp8block_ws",
-    "source_closure_sha256": "aa3cf5d784b565807bae14dc7cc4d28a7bd2db7f6bf19c452b9d4e4e2241351e"
+    "source_closure_sha256": "622d694a9e3da8b4688216b1e243a8b8c3b0205fb8976718a9120aba1a4c454b"
   },
   {
     "name": "chop_moe_chain_e288l288k8_mxfp8",
-    "source_closure_sha256": "2e354a194d21d6bcf3d9abbc4167d4ed6f6ab9ac3d63e8b38cdae49916b96bf8"
+    "source_closure_sha256": "34e0d488e3cb1f94c75dff62a1490c891408ff89cba2d17f76b3570a9cfa83b7"
   },
   {
     "name": "chop_moe_chain_e288l288k8_nvfp4",
-    "source_closure_sha256": "ad3967e8aae63dee3ba2d09fad1f57f1dd188104d2e69baf65895f5b10c20a77"
+    "source_closure_sha256": "60c070219e9f9b8c421b96fba90ecd630cef56511605d370c6f3593a2d0005df"
   },
   {
     "name": "chop_moe_chain_e288l288k8_nvfp4_bw4",
-    "source_closure_sha256": "169ee94579216fa7e10458dfd5e5a8aab64a13ce790a882f2d64ba7105f9f6c5"
+    "source_closure_sha256": "04bfe2d7bb63d4605c251cf62ba5b04de9e8adef19fbdb15fda532055ac47fad"
   },
   {
     "name": "chop_moe_chain_e288l288k8_route",
-    "source_closure_sha256": "5cfb2e2886ba58d859b1fef4efc8aac870be1381db674c80981029b0ad1395a6"
+    "source_closure_sha256": "a9513e85c9d872b8e5fe869c33a456039c0bc0eb5d4930a4d8624f6ed0a4f0b4"
   },
   {
     "name": "chop_moe_chain_e288l288k8_sum_add",

@@ -229,6 +229,15 @@ class CoreGuards(unittest.TestCase):
                     self.assertTrue(any(rules[label].search(line) for line in text.splitlines()),
                                     'clean: remove it from PENDING')
 
+    def test_reviewed_blobs_are_replaced_versions(self):
+        current = {line.split()[2] for line in subprocess.run(
+            ['git', 'ls-tree', '-r', 'HEAD'], cwd=ROOT, check=True, capture_output=True,
+            text=True).stdout.splitlines()}
+        for blob in leak_guard.REVIEWED_BLOBS:
+            with self.subTest(blob=blob):
+                self.assertRegex(blob, r'^[0-9a-f]{40}$')
+                self.assertNotIn(blob, current, 'still in the tree: fix the file instead')
+
     def test_only_the_quoted_licence_contact_address_is_allowed(self):
         email = next(pattern for label, pattern, _ in leak_guard.RULES if label == 'email address')
         quoted = 'model-business' + '@notice.qwencloud.com'

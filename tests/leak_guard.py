@@ -164,6 +164,13 @@ PENDING = {
         'crates/runtime-bundle/src/lib.rs',
     },
 }
+# File versions reviewed as safe to publish although they match a rule, keyed
+# by blob so that any other content is still checked. A later commit replaced
+# each one; the entry only lets the history that carries it reach origin.
+REVIEWED_BLOBS = {
+    # chopinfer-top's mountinfo parser tests: synthetic mount points.
+    '4fb9fdd7557c0629683d7d3f9aaf6817b789de6b',
+}
 DENYLIST_FILES = [Path(os.environ.get('CHOPINFER_LEAK_DENYLIST') or
                        Path.home() / '.config/chopinfer/leak-denylist'),
                   ROOT / 'leak-denylist.local']
@@ -370,7 +377,7 @@ def check_rev(rev, bases, history, rules, objects, failures):
                     citations.check(f'{commit[:12]}:{name} added line', lines, failures)
     by_blob = {}
     for (name, blob), where in pairs.items():
-        if name != SELF:
+        if name != SELF and blob not in REVIEWED_BLOBS:
             by_blob.setdefault(blob, []).append((name, where))
     for blob, places in by_blob.items():
         kind, data = objects.read(blob)

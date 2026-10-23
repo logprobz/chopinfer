@@ -1,5 +1,5 @@
 //! Split full prefill tiles from a short tail using the existing fold engine.
-use super::{mxfp8_fold::Entry, mxfp8_prefill as tiled};
+use super::{mxfp8_fold::Entry, mxfp8_fold_packed, mxfp8_prefill as tiled};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, Validate};
 
@@ -54,6 +54,21 @@ pub fn specs(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
         .replace("mxfp8_fold::run<", "mxfp8_prefill_split::tail<");
     specs.push(tail);
     Ok(specs)
+}
+
+/// The tail entry reading `mxfp8-fold-packed-8x128-v1` weight codes
+/// (`gemm::mxfp8_fold_packed`), with the parameters, plan and arithmetic
+/// of [`tail_symbol`]'s entry.
+pub fn packed_tail_spec(e: &Entry) -> Result<EntrySpec, Refusal> {
+    if e.decode() {
+        return Err(Refusal("split prefill requires the non-decode fold entry"));
+    }
+    let mut tail = e.packed_spec()?;
+    tail.symbol = mxfp8_fold_packed::symbol(&tail_symbol(e));
+    tail.body = tail
+        .body
+        .replace("mxfp8_fold::run<", "mxfp8_prefill_split::tail<");
+    Ok(tail)
 }
 
 pub fn plan(e: &Entry, rows: u32) -> Result<LaunchPlan, Refusal> {

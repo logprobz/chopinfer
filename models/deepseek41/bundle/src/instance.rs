@@ -346,8 +346,8 @@ impl Instance {
             }
             memory.take("prefill_counts");
             let mut declared = Scratch::of_storage(&shape, self.config.kv.storage);
-            // The raw bank the experts read where the rank image stores a
-            // routed scale bank encoded.
+            // The raw banks the experts read where the rank image stores a
+            // routed scale bank encoded: both of a layer's, gate/up then down.
             let encoded = crate::buffers::encoded_scales(&shape, &indexes[rank])
                 .map_err(|_| BundleAbiError::InvalidRange("deepseek41 weight view layout"))?;
             if !encoded.is_empty() {

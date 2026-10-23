@@ -358,32 +358,39 @@ impl MoeOps {
         self.banks[usize::from(!gate_up)]
     }
 
-    /// The launch of a `phase` step that expands the gate/up (`gate_up`) or
-    /// down scale bank the rank image stores `encoded` at offset `width`
-    /// into the raw bank `output`: the experts the routes list in `active`,
-    /// at most each row's top-k, or every expert without a list.
+    /// The launch of a `phase` step that expands a layer's gate/up and down
+    /// scale banks the rank image stores encoded, each as its offset width,
+    /// encoded view and raw output (`None` for a bank stored raw): the
+    /// experts the routes list in `active`, at most each row's top-k, or
+    /// every expert without a list.
     pub(crate) fn expand_scales(
         &self,
         phase: Phase,
-        gate_up: bool,
-        width: u32,
-        encoded: DeviceBufferSpanV1,
+        banks: [Option<(u32, DeviceBufferSpanV1, DeviceBufferSpanV1)>; 2],
         active: Option<DeviceBufferSpanV1>,
-        output: DeviceBufferSpanV1,
     ) -> Result<Lowered, Refusal> {
-        let bank = self.scale_bank(gate_up);
+        let experts = self.banks[0].experts;
         // A step's live rows are at most its phase's rows: a decode bucket
         // or verify bucket holds them, a prefill is exactly them
         // (`instance::execute::phase_of`), so the routes list at most the
         // rows' top-k experts.
         let slots = match active {
-            Some(_) => bank.experts.min(phase.rows().saturating_mul(self.top_k)),
-            None => bank.experts,
+            Some(_) => experts.min(phase.rows().saturating_mul(self.top_k)),
+            None => experts,
         };
         let mut bind = Bind::default();
-        let views = [bind.view(encoded), bind.view(output)];
+        let mut launch_banks = [None, None];
+        for (at, bank) in banks.into_iter().enumerate() {
+            launch_banks[at] = bank.map(|(width, encoded, output)| {
+                (
+                    self.banks[at],
+                    width,
+                    [bind.view(encoded), bind.view(output)],
+                )
+            });
+        }
         let active = active.map(|span| bind.view(span));
-        let launch = crate::Kernels::scale_expand(bank, width, slots, views, active, phase.rows())?;
+        let launch = crate::Kernels::scale_expand(launch_banks, slots, active, phase.rows())?;
         Ok(bind.lowered(launch))
     }
 

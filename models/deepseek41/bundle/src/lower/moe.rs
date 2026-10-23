@@ -13,6 +13,12 @@ use crate::ops::shared::ActivationViews;
 use crate::program::Phase;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
+/// Layer `layer`'s routed gate/up (`gate_up`) or down scale bank view.
+fn scale_bank_name(layer: u32, gate_up: bool) -> String {
+    let bank = if gate_up { "gate_up" } else { "down" };
+    layer_view(layer, &format!("ffn.experts.{bank}.scale"))
+}
+
 impl Lowering<'_> {
     /// The normed rows quantized to E4M3 per 32 with ceil UE8M0 scales.
     pub(super) fn quantize_input(&self, phase: Phase) -> Result<Option<Vec<Lowered>>, String> {
@@ -63,48 +69,76 @@ impl Lowering<'_> {
             routes: self.route_spans(),
             live_rows: self.inputs.live_tokens,
         };
-        ops.routes(phase, self.rank, &views)
-            .map(Some)
-            .map_err(|refusal| format!("routes of layer {layer}: {refusal}"))
+        let mut launches = ops
+            .routes(phase, self.rank, &views)
+            .map_err(|refusal| format!("routes of layer {layer}: {refusal}"))?;
+        let listed = ops.lists_active(phase, self.rank);
+        launches.extend(self.expand_scales(phase, layer, listed)?);
+        Ok(Some(launches))
     }
 
-    /// Layer `layer`'s gate/up (`gate_up`) or down scale bank as its
-    /// experts bind it: the placed view, or where the rank image stores the
-    /// bank encoded, the raw bank in scratch after the launch that expands
-    /// it there, of the experts the routes list where `listed` (every expert
-    /// otherwise). The expansion waits for its predecessor before it reads
-    /// or writes, so it follows the routes and every read of the previous
-    /// bank.
-    pub(super) fn expert_scales(
+    /// The launch expanding layer `layer`'s routed scale banks the rank
+    /// image stores encoded into their raw banks in scratch
+    /// (`Scratch::expert_scales`), both in one launch after the routes: the
+    /// experts the routes list where `listed` (every expert otherwise). None
+    /// while both banks are stored raw. The expansion waits for its
+    /// predecessor before it reads or writes, so it follows the routes and,
+    /// on one stream, every read of the previous layer's banks.
+    pub(super) fn expand_scales(
         &self,
         phase: Phase,
         layer: u32,
-        gate_up: bool,
         listed: bool,
-    ) -> Result<(Vec<Lowered>, DeviceBufferSpanV1), String> {
-        let bank = if gate_up { "gate_up" } else { "down" };
-        let name = layer_view(layer, &format!("ffn.experts.{bank}.scale"));
-        let Some((encoded, width)) = self.buffers.encoded_scale(&name) else {
-            return Ok((Vec::new(), self.buffers.view(&name)?));
+    ) -> Result<Option<Lowered>, String> {
+        let encoded = [true, false]
+            .map(|gate_up| self.buffers.encoded_scale(&scale_bank_name(layer, gate_up)));
+        let Some(first) = encoded.iter().position(Option::is_some) else {
+            return Ok(None);
         };
+        let name = scale_bank_name(layer, first == 0);
         let ops = self
             .ops
             .moe
             .as_ref()
             .ok_or_else(|| format!("{name} is stored encoded without the routed MoE ops"))?;
-        let scratch = &self.buffers.scratch;
-        let output = scratch
+        let mut expanded = [None, None];
+        for (at, bank) in encoded.into_iter().enumerate() {
+            if let Some((encoded, width)) = bank {
+                expanded[at] = Some((width, encoded, self.expert_scales(layer, at == 0)?));
+            }
+        }
+        let active = listed.then_some(self.buffers.scratch.active_experts);
+        ops.expand_scales(phase, expanded, active)
+            .map(Some)
+            .map_err(|refusal| format!("{name}: {refusal}"))
+    }
+
+    /// Layer `layer`'s gate/up (`gate_up`) or down scale bank as its
+    /// experts bind it: the placed view, or where the rank image stores the
+    /// bank encoded, its raw bank in scratch, which the routes stage expands
+    /// ([`Self::expand_scales`]).
+    pub(super) fn expert_scales(
+        &self,
+        layer: u32,
+        gate_up: bool,
+    ) -> Result<DeviceBufferSpanV1, String> {
+        let name = scale_bank_name(layer, gate_up);
+        if self.buffers.encoded_scale(&name).is_none() {
+            return self.buffers.view(&name);
+        }
+        let ops = self
+            .ops
+            .moe
+            .as_ref()
+            .ok_or_else(|| format!("{name} is stored encoded without the routed MoE ops"))?;
+        let expanded = self
+            .buffers
+            .scratch
             .expert_scales
             .ok_or_else(|| format!("{name} is stored encoded, but no raw bank is allocated"))?;
-        let active = listed.then_some(scratch.active_experts);
-        let expand = ops
-            .expand_scales(phase, gate_up, width, encoded, active, output)
-            .map_err(|refusal| format!("{name}: {refusal}"))?;
-        let bytes = ops.scale_bank(gate_up).bytes();
-        Ok((
-            vec![expand],
-            DeviceBufferSpanV1::new(output.buffer, output.offset, bytes),
-        ))
+        let banks = [true, false].map(|gate_up| ops.scale_bank(gate_up).bytes());
+        crate::buffers::expanded_scale_bank(expanded, banks, gate_up)
+            .map_err(|error| format!("{name}: {error}"))
     }
 
     /// Layer `layer`'s experts' gate/up, from the quantized input into the
@@ -141,13 +175,11 @@ impl Lowering<'_> {
                 None,
             )
         };
-        let listed = ops.lists_active(phase, self.rank);
-        let (mut launches, scales) = self.expert_scales(phase, layer, gate_up, listed)?;
         let views = ExpertViews {
             activation,
             activation_scales,
             codes: view("weight")?,
-            scales,
+            scales: self.expert_scales(layer, gate_up)?,
             output,
             output_quantized,
             route_weights: scratch.expert_weights,
@@ -156,11 +188,9 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: self.carried(phase, scratch.row_status)?,
         };
-        let experts = ops
-            .experts(phase, gate_up, &views)
-            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))?;
-        launches.extend(experts);
-        Ok(Some(launches))
+        ops.experts(phase, gate_up, &views)
+            .map(Some)
+            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))
     }
 
     /// The rank's routed rows summed per token into the sublayer's F32

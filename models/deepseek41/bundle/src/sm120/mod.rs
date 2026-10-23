@@ -361,38 +361,54 @@ impl crate::Kernels {
         cubin != scale_expand::CUBIN || encoded
     }
 
-    /// The launch expanding the encoded scale bank `encoded` into the raw
-    /// bank `output` (`kernels_sm120::moe::scale_expand`): the experts the
-    /// `active` list names, over its first `slots` positions, or every
-    /// expert without a list. Each CTA waits for its predecessor before it
-    /// reads or writes, so the expansion follows the routes and the raw
-    /// bank's previous readers; every consumer reads after its own wait.
+    /// The launch expanding a layer's encoded gate/up and down scale banks
+    /// (either may be absent) into their raw banks
+    /// (`kernels_sm120::moe::scale_expand`): each bank's shape, offset width
+    /// and `[encoded, output]` views. It expands the experts the `active`
+    /// list names, over its first `slots` positions, or every expert without
+    /// a list. Each CTA waits for its predecessor before it reads or writes,
+    /// so the expansion follows the routes and the raw banks' previous
+    /// readers; every consumer reads after its own wait.
     pub(crate) fn scale_expand(
-        bank: model_deepseek41_contract::moe::ScaleBank,
-        width: u32,
+        banks: [Option<(
+            model_deepseek41_contract::moe::ScaleBank,
+            u32,
+            [kernel_core::backend::View; 2],
+        )>; 2],
         slots: u32,
-        [encoded, output]: [kernel_core::backend::View; 2],
         active: Option<kernel_core::backend::View>,
         rows: u32,
     ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        use kernel_core::contract::Refusal;
         use kernels_sm120::moe::scale_expand as expand;
-        let query = expand::ScaleExpandQuery {
-            width,
-            rows: bank.rows,
-            groups: bank.groups,
-            projections: bank.projections,
-            experts: bank.experts,
-        };
-        if active.is_none() && slots != bank.experts {
-            return Err(kernel_core::contract::Refusal(
+        let mut experts = banks.iter().flatten().map(|(bank, _, _)| bank.experts);
+        let first = experts
+            .next()
+            .ok_or(Refusal("a scale expansion needs an encoded bank"))?;
+        if experts.any(|e| e != first) {
+            return Err(Refusal("paired scale banks hold every expert alike"));
+        }
+        if active.is_none() && slots != first {
+            return Err(Refusal(
                 "an expansion without an active list covers every expert",
             ));
         }
+        let banks = banks.map(|bank| {
+            bank.map(|(bank, width, [encoded, output])| {
+                let bank = expand::PairBank {
+                    width,
+                    rows: bank.rows,
+                    groups: bank.groups,
+                    projections: bank.projections,
+                };
+                (bank, encoded, output)
+            })
+        });
         Ok(kernel_core::backend::Launch {
-            symbol: expand::symbol(width)?.into(),
+            symbol: expand::PAIR_SYMBOL.into(),
             rows,
-            plan: expand::plan_slots(query, slots)?,
-            arguments: expand::arguments(query, encoded, active, output)?,
+            plan: expand::pair_plan(banks.map(|b| b.map(|(bank, _, _)| bank)), first, slots)?,
+            arguments: expand::pair_arguments(banks, active, first)?,
             collective: false,
             persistent: false,
         })

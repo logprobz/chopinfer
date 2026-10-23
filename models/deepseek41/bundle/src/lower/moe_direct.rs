@@ -43,21 +43,7 @@ impl Lowering<'_> {
         };
         let s = &self.buffers.scratch;
         let weight = |name| self.buffers.view(&layer_view(layer, name));
-        // The routes list the experts with routes; a projection's scales,
-        // when stored encoded, expand before its first launch.
-        let (mut calls, scales) = match point {
-            Point::Gate | Point::Down => {
-                let (expand, span) =
-                    self.expert_scales(phase, layer, point == Point::Gate, true)?;
-                (expand, Some(span))
-            }
-            _ => (Vec::new(), None),
-        };
-        let scales = |role: &str, name| match scales {
-            Some(span) if (role == "gate_scales") == (point == Point::Gate) => Ok(span),
-            _ => weight(name),
-        };
-        calls.extend(op.launch(point, self.buffers.workspace, |role| {
+        let mut calls = op.launch(point, self.buffers.workspace, |role| {
             Ok(match role {
                 "wide" => s.normed_wide,
                 "logits" => s.router_logits,
@@ -76,9 +62,9 @@ impl Lowering<'_> {
                 "input_codes" => s.normed_codes,
                 "input_scales" => s.normed_scales,
                 "gate_weight" => weight("ffn.experts.gate_up.weight")?,
-                "gate_scales" => scales(role, "ffn.experts.gate_up.scale")?,
+                "gate_scales" => self.expert_scales(layer, true)?,
                 "down_weight" => weight("ffn.experts.down.weight")?,
-                "down_scales" => scales(role, "ffn.experts.down.scale")?,
+                "down_scales" => self.expert_scales(layer, false)?,
                 "intermediate" => s.expert_intermediate,
                 "codes" => s.intermediate_codes,
                 "scales" => s.intermediate_scales,
@@ -88,7 +74,12 @@ impl Lowering<'_> {
                 "output" => s.partial,
                 _ => return Err(format!("unbound MoE pipeline role {role}")),
             })
-        })?);
+        })?;
+        // The routes list the experts with routes; the banks the rank
+        // image stores encoded expand after them, beside the shared expert.
+        if point == Point::Route {
+            calls.extend(self.expand_scales(phase, layer, true)?);
+        }
         calls.extend(partial);
         Ok(Some(calls))
     }

@@ -1,6 +1,6 @@
-//! A routed scale bank the rank image stores encoded expands into the raw
-//! bank before its first expert launch, on every path that binds it, and
-//! no other launch binds the encoded bank.
+//! The routed scale banks the rank image stores encoded expand into their
+//! raw banks in one launch after the routes, on every path that binds
+//! them, and no other launch binds an encoded bank.
 use crate::buffers::RankBuffers;
 use crate::lower::{KvExtent, Lowering, layer_view, tests::buffers};
 use crate::ops::{Lowered, Ops};
@@ -89,7 +89,7 @@ fn rank_buffers(shape: &Shape, ops: &Ops, rank: u32) -> RankBuffers {
 }
 
 /// `raw` with layer 0's gate/up bank stored encoded at width 1 and its
-/// down bank at width 4, and the expanded bank allocated.
+/// down bank at width 4, and the expanded banks allocated.
 fn encoded(shape: &Shape, raw: &RankBuffers, rank: u32) -> RankBuffers {
     let mut b = raw.clone();
     let bytes = crate::buffers::expert_scale_bytes(shape).unwrap();
@@ -165,8 +165,9 @@ fn bound(launch: &PreparedLaunch) -> Vec<Option<DeviceBufferSpanV1>> {
 }
 
 /// Every phase kind, the direct and grouped paths at TP4 and the grouped
-/// path at TP1 and TP2: each projection's launches are its raw lowering's
-/// after one expansion, the raw scale bank rebound to the expanded one.
+/// path at TP1 and TP2: the routes stage is its raw lowering's, then one
+/// expansion of both banks; each projection's launches are its raw
+/// lowering's, the raw scale banks rebound to the expanded ones.
 #[test]
 fn encoded_scale_banks_expand_before_their_experts() {
     let decode = [1, 2, 4, 8, 16, 32].map(Phase::Decode);
@@ -183,8 +184,28 @@ fn encoded_scale_banks_expand_before_their_experts() {
             let raw = rank_buffers(&shape, &ops, rank);
             let encoded = encoded(&shape, &raw, rank);
             let expanded = encoded.scratch.expert_scales.unwrap();
-            let scale_view =
-                |bank: &str| raw.views[&layer_view(0, &format!("ffn.experts.{bank}.scale"))];
+            let banks = [true, false].map(|gate_up| moe_ops.scale_bank(gate_up));
+            let raw_bank = |at: usize| {
+                let bank = if at == 0 { "gate_up" } else { "down" };
+                raw.views[&layer_view(0, &format!("ffn.experts.{bank}.scale"))]
+            };
+            // The gate/up bank, then the down bank at a 256-byte boundary.
+            let expanded_bank = |at: usize| {
+                let offset = if at == 0 {
+                    0
+                } else {
+                    banks[0].bytes().next_multiple_of(256)
+                };
+                DeviceBufferSpanV1::new(
+                    expanded.buffer,
+                    expanded.offset + offset,
+                    banks[at].bytes(),
+                )
+            };
+            assert!(
+                expanded_bank(1).offset + expanded_bank(1).length
+                    <= expanded.offset + expanded.length
+            );
             for phase in decode.iter().chain(&verify).chain(&prefill).copied() {
                 let stages = if phase.prefill() {
                     vec![
@@ -206,95 +227,101 @@ fn encoded_scale_banks_expand_before_their_experts() {
                 // expansion writes every expert's scales.
                 let listed = is_direct || moe_ops.lists_active(phase, rank);
                 assert!(listed, "{at}");
+                let mut rebound = [0, 0];
                 for ((stage, old), (_, new)) in before.iter().zip(&after) {
-                    let (bank, width) = match stage {
-                        Stage::ExpertsGateUp(_) => ("gate_up", 1),
-                        Stage::ExpertsDown(_) => ("down", 4),
-                        _ => {
-                            assert_eq!(old.len(), new.len(), "{at} {stage:?}");
-                            for (a, b) in old.iter().zip(new) {
-                                assert_eq!(a.launch.symbol, b.launch.symbol, "{at}");
-                                assert_eq!(bound(&a.launch), bound(&b.launch), "{at}");
-                            }
-                            continue;
+                    let old_launches = if matches!(stage, Stage::Route(_)) {
+                        // The routes, then the expansion of both banks: the
+                        // encoded banks into the expanded ones, a PDL launch
+                        // like the rest, after the routes list the experts.
+                        assert_eq!(new.len(), old.len() + 1, "{at}");
+                        let expand = &new.last().unwrap().launch;
+                        assert_eq!(expand.symbol, "chop_moe_scale_expand_pair_v1", "{at}");
+                        assert!(expand.plan.pdl, "{at}");
+                        assert!(
+                            new[..old.len()].iter().any(|op| bound(&op.launch)
+                                .contains(&Some(encoded.scratch.active_experts))),
+                            "{at}: no route launch lists the active experts"
+                        );
+                        let spans = bound(expand);
+                        assert_eq!(
+                            spans[..5],
+                            [
+                                Some(raw_bank(0)),
+                                Some(raw_bank(1)),
+                                Some(encoded.scratch.active_experts),
+                                Some(expanded_bank(0)),
+                                Some(expanded_bank(1)),
+                            ],
+                            "{at}"
+                        );
+                        // Each bank's shape and width; its tile rows
+                        // follow from its groups.
+                        for (index, (bank, width)) in banks.iter().zip([1, 4]).enumerate() {
+                            let first = 5 + 5 * index;
+                            assert_eq!(
+                                expand.arguments.0[first..first + 4],
+                                [bank.rows, bank.groups, bank.projections, width]
+                                    .map(Argument::U32),
+                                "{at}"
+                            );
                         }
-                    };
-                    let shape_of = moe_ops.scale_bank(bank == "gate_up");
-                    // The expansion first: the encoded bank into the
-                    // expanded one, a PDL launch like the rest.
-                    let expand = &new[0].launch;
-                    assert_eq!(
-                        expand.symbol,
-                        format!("chop_moe_scale_expand_w{width}_v1"),
-                        "{at} {stage:?}"
-                    );
-                    assert!(expand.plan.pdl, "{at}");
-                    let spans = bound(expand);
-                    assert_eq!(spans[0], Some(scale_view(bank)), "{at}");
-                    assert_eq!(
-                        spans[1],
-                        listed.then_some(encoded.scratch.active_experts),
-                        "{at}"
-                    );
-                    assert_eq!(spans[2], Some(expanded), "{at}");
-                    assert_eq!(
-                        expand.arguments.0[3..],
-                        [
-                            Argument::U32(shape_of.rows),
-                            Argument::U32(shape_of.groups),
-                            Argument::U32(shape_of.projections),
-                            Argument::U32(shape_of.experts),
-                        ],
-                        "{at}"
-                    );
-                    let slots = if listed {
-                        shape_of.experts.min(phase.rows() * set.top_k)
+                        assert_eq!(
+                            expand.arguments.0[15],
+                            Argument::U32(banks[0].experts),
+                            "{at}"
+                        );
+                        let slots = banks[0].experts.min(phase.rows() * set.top_k);
+                        assert_eq!(expand.plan.grid[2], slots, "{at}");
+                        &new[..old.len()]
                     } else {
-                        shape_of.experts
+                        &new[..]
                     };
-                    assert_eq!(expand.plan.grid[2], slots, "{at}");
-                    // Then the raw lowering's launches, the scales rebound.
-                    assert_eq!(new.len(), old.len() + 1, "{at} {stage:?}");
-                    let raw_scales = scale_view(bank);
-                    let mut rebound = 0;
-                    for (a, b) in old.iter().zip(&new[1..]) {
+                    // Otherwise the raw lowering's launches, the scales
+                    // rebound.
+                    assert_eq!(old.len(), old_launches.len(), "{at} {stage:?}");
+                    for (a, b) in old.iter().zip(old_launches) {
                         assert_eq!(a.launch.symbol, b.launch.symbol, "{at}");
                         assert_eq!(a.launch.plan, b.launch.plan, "{at}");
                         assert_eq!(a.launch.rows, b.launch.rows, "{at}");
                         for (x, y) in bound(&a.launch).into_iter().zip(bound(&b.launch)) {
-                            match x {
-                                Some(x) if x.buffer == raw_scales.buffer => {
-                                    rebound += 1;
-                                    assert!(x.offset + x.length <= shape_of.bytes(), "{at}");
+                            let Some(x) = x else {
+                                assert_eq!(y, None, "{at}");
+                                continue;
+                            };
+                            match (0..2).find(|&bank| x.buffer == raw_bank(bank).buffer) {
+                                Some(bank) => {
+                                    rebound[bank] += 1;
+                                    let base = expanded_bank(bank);
+                                    assert!(x.offset + x.length <= base.length, "{at}");
                                     assert_eq!(
                                         y,
                                         Some(DeviceBufferSpanV1::new(
-                                            expanded.buffer,
-                                            expanded.offset + x.offset,
+                                            base.buffer,
+                                            base.offset + x.offset,
                                             x.length,
                                         )),
                                         "{at}"
                                     );
                                 }
-                                _ => assert_eq!(x, y, "{at}"),
+                                None => assert_eq!(Some(x), y, "{at}"),
                             }
                         }
                     }
-                    assert!(rebound > 0, "{at} {stage:?}");
                 }
-                // No launch but an expansion binds an encoded bank.
+                assert!(rebound.iter().all(|&n| n > 0), "{at}");
+                // No launch but the expansion binds an encoded bank.
                 for (_, launches) in &after {
                     for lowered in launches {
                         if lowered.launch.symbol.starts_with("chop_moe_scale_expand_") {
                             continue;
                         }
-                        for bank in ["gate_up", "down"] {
+                        for bank in 0..2 {
                             assert!(
                                 bound(&lowered.launch)
                                     .iter()
                                     .flatten()
-                                    .all(|s| s.buffer != scale_view(bank).buffer),
-                                "{at}: {} binds the encoded {bank} bank",
+                                    .all(|s| s.buffer != raw_bank(bank).buffer),
+                                "{at}: {} binds an encoded bank",
                                 lowered.launch.symbol
                             );
                         }
@@ -313,13 +340,42 @@ fn encoded_scale_banks_expand_before_their_experts() {
                         .collect();
                     let s = &encoded.scratch;
                     let readonly = [s.normed_codes, s.normed_scales, span(999, rank, 4)];
-                    crate::shared_overlap::checked_units(&stages, &launches, &readonly)
+                    crate::shared_overlap::checked_units(&stages, &launches, &readonly, false)
                         .unwrap_or_else(|e| panic!("{at}: {e}"));
                 }
             }
         }
         assert_eq!(direct > 0, ranks == Ranks::TP4, "{ranks:?}");
     }
+}
+
+/// One encoded bank expands alone; the other binds its placed view.
+#[test]
+fn a_single_encoded_bank_expands_alone() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let kernels = crate::Kernels::new(&shape).unwrap();
+    let set = moe::expert_sets(&FLASH)[0];
+    let ops = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+    let raw = rank_buffers(&shape, &ops, 0);
+    let mut b = encoded(&shape, &raw, 0);
+    let gate_up = layer_view(0, "ffn.experts.gate_up.scale");
+    b.encoded_scales.remove(&gate_up);
+    let phase = Phase::Decode(4);
+    let lowered = lower(&shape, &ops, &b, 0, phase, &crate::program::moe(0)).unwrap();
+    let expand = &lowered[1].1.last().unwrap().launch;
+    assert_eq!(expand.symbol, "chop_moe_scale_expand_pair_v1");
+    assert_eq!(bound(expand)[0], None);
+    assert_eq!(bound(expand)[3], None);
+    assert_eq!(expand.arguments.0[5..10], [0; 5].map(Argument::U32));
+    let gate = lowered
+        .iter()
+        .find(|(stage, _)| *stage == Stage::ExpertsGateUp(0))
+        .unwrap();
+    assert!(
+        gate.1
+            .iter()
+            .any(|op| bound(&op.launch).contains(&Some(raw.views[&gate_up])))
+    );
 }
 
 /// The measured one-row floor binds the drafter's banks, which the plan

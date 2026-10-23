@@ -1,6 +1,6 @@
 //! A rank image that stores the routed scale banks encoded: create admits
-//! them, allocates the raw bank and loads the expansion, and every step
-//! expands each layer's banks before its experts.
+//! them, allocates the raw banks and loads the expansion, and every step
+//! expands each layer's banks after its routes.
 use super::*;
 use model_deepseek41_contract::weight_plan::encoded_scale_layout;
 
@@ -32,16 +32,15 @@ fn encoded_scale_banks_expand_in_every_step() {
     };
     let mut views = Views::default();
     step(&mut instance, &prompt(7, 0, 0, 3, true), &mut views);
-    // Each rank expands each layer's gate/up and down bank once.
-    let (gate_up, down) = (
-        launches("chop_moe_scale_expand_w1_v1"),
-        launches("chop_moe_scale_expand_w2_v1"),
-    );
-    assert_eq!((gate_up, down), (4 * layers, 4 * layers));
-    assert_eq!(launches("chop_moe_scale_expand_w4_v1"), 0);
+    // Each rank expands each layer's gate/up and down banks in one launch.
+    let pair = "chop_moe_scale_expand_pair_v1";
+    let expanded = launches(pair);
+    assert_eq!(expanded, 4 * layers);
+    for width in [1, 2, 4] {
+        assert_eq!(launches(&format!("chop_moe_scale_expand_w{width}_v1")), 0);
+    }
     step(&mut instance, &decode(&[(7, 0, 3, 1)]), &mut views);
-    assert!(launches("chop_moe_scale_expand_w1_v1") > gate_up);
-    assert!(launches("chop_moe_scale_expand_w2_v1") > down);
+    assert!(launches(pair) > expanded);
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());

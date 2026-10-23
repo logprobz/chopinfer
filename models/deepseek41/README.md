@@ -51,10 +51,10 @@ The routed expert scale banks of the main layers are stored encoded
 (`scale-row-offset-v1`, [encoded expert scale banks](../../docs/kernel-library.md#encoded-expert-scale-banks)).
 The bundle exports `chop_bundle_weight_census_v1`, the host measures the
 banks on the CPU before planning, and each bank takes the offset width that
-stores it smallest. Each layer expands its gate/up bank after the routes,
-and its down bank after the gate/up's last launch, for the experts with
-routes into one raw bank in scratch (70.8 MB at TP4). The experts read that
-bank unchanged. DSpark's banks stay raw: the one-row floor kernel loads
+stores it smallest. At the end of each layer's routes stage, one launch
+expands both banks for the experts with routes into raw banks in scratch
+(106.2 MB at TP4), on the routed branch beside the shared expert. The
+experts read those banks unchanged. DSpark's banks stay raw: the one-row floor kernel loads
 scales before its PDL wait. On the official checkpoint at TP4, each rank's
 routed scale banks shrink from 4,246,732,800 to about 697,200,000 bytes,
 decoding bitwise to the raw banks (2026-10-23, CPU). `CHOPINFER_WEIGHT_CENSUS=0`

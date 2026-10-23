@@ -179,10 +179,10 @@ kernel_core::scratch_record! {
         pub route_offsets: value,
         pub active_experts: value,
         pub padded_rows: value,
-        /// The raw routed scale bank the experts read where the rank image
-        /// stores a layer's bank encoded ([`encoded_scales`]): the gate/up's
-        /// expanded after the routes, then the down's after the gate/up's
-        /// last read. Absent while every bank is stored raw.
+        /// The raw routed scale banks the experts read where the rank image
+        /// stores a layer's banks encoded ([`encoded_scales`]), gate/up then
+        /// down ([`expert_scale_bytes`]): both expanded in one launch after
+        /// the routes. Absent while every bank is stored raw.
         pub expert_scales: option,
         /// The experts' gate/up output per route, `[rows, top_k, local
         /// intermediate]` BF16, and its E4M3 codes and UE8M0 scales.
@@ -762,16 +762,43 @@ pub fn encoded_scales(
     Ok(encoded)
 }
 
-/// The bytes of the raw scale bank the experts read (`Scratch::expert_scales`)
-/// of an instance of `shape`: the larger of a layer's raw banks.
+/// The raw scale banks the experts read (`Scratch::expert_scales`) of an
+/// instance of `shape`: a layer's gate/up bank, then its down bank at the
+/// next 256-byte boundary ([`expanded_scale_bank`]).
 pub fn expert_scale_bytes(shape: &Shape) -> Result<u64, String> {
     use kernel_core::gated_mlp::GatedMlpProjection;
     use model_deepseek41_contract::moe;
     let set = moe::expert_sets(shape.geometry)[0];
-    [GatedMlpProjection::GateUp, GatedMlpProjection::Down]
-        .into_iter()
-        .map(|kind| moe::scale_bank(shape.geometry, shape.ranks(), set, kind).map(|b| b.bytes()))
-        .try_fold(0, |most, bytes| Ok(most.max(bytes?)))
+    let bytes = |kind| moe::scale_bank(shape.geometry, shape.ranks(), set, kind).map(|b| b.bytes());
+    let gate_up = bytes(GatedMlpProjection::GateUp)?;
+    Ok(gate_up.next_multiple_of(256) + bytes(GatedMlpProjection::Down)?)
+}
+
+/// The gate/up (`gate_up`) or down raw bank within the expanded banks
+/// `expanded` (`Scratch::expert_scales`), of `banks` bytes each, laid out
+/// as [`expert_scale_bytes`] states.
+pub fn expanded_scale_bank(
+    expanded: DeviceBufferSpanV1,
+    banks: [u64; 2],
+    gate_up: bool,
+) -> Result<DeviceBufferSpanV1, String> {
+    let (offset, bytes) = if gate_up {
+        (0, banks[0])
+    } else {
+        (banks[0].next_multiple_of(256), banks[1])
+    };
+    if offset + bytes > expanded.length {
+        return Err(format!(
+            "the expanded scale banks take {} bytes, more than their {}",
+            offset + bytes,
+            expanded.length
+        ));
+    }
+    Ok(DeviceBufferSpanV1::new(
+        expanded.buffer,
+        expanded.offset + offset,
+        bytes,
+    ))
 }
 
 /// Index source `source`'s status of the first `rows` rows in `status`
@@ -929,7 +956,18 @@ mod tests {
             let refused = encoded_scales(&shape, &index(&[(name, bytes, dtype, w2.clone())]));
             assert!(refused.is_err(), "{name} {bytes} {dtype}");
         }
-        assert!(expert_scale_bytes(&shape).unwrap() == 384 * 2 * 576 * 160);
+        // Both expanded banks, the down bank after the gate/up's.
+        let banks = [384 * 2 * 576 * 160, 384 * 5120 * 18];
+        let bytes = expert_scale_bytes(&shape).unwrap();
+        assert_eq!(bytes, banks[0] + banks[1]);
+        let handle = runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(1, 1);
+        let expanded = DeviceBufferSpanV1::new(handle, 512, bytes);
+        let gate_up = expanded_scale_bank(expanded, banks, true).unwrap();
+        let down = expanded_scale_bank(expanded, banks, false).unwrap();
+        assert_eq!((gate_up.offset, gate_up.length), (512, banks[0]));
+        assert_eq!((down.offset, down.length), (512 + banks[0], banks[1]));
+        let short = DeviceBufferSpanV1::new(handle, 512, bytes - 1);
+        assert!(expanded_scale_bank(short, banks, false).is_err());
     }
 
     #[test]

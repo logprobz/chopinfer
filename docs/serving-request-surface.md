@@ -469,7 +469,8 @@ The main differences, besides the refused fields above:
   omitted. Usage has `prompt_tokens_details.cached_tokens` but no
   `completion_tokens_details`.
 - Responses echo the requested model alias.
-- Speculative decoding is adaptive by default.
+- Speculative decoding is adaptive by default; the DeepSeek DSpark profiles
+  plan balanced drafts.
 - Prefix caching resumes at captured anchors rather than at any cached
   64-token block ([KV pool](numerics.md#kv-offload-and-prefix-state)).
 - The Responses store is bounded; vLLM's is not.

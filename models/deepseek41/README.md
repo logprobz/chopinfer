@@ -324,8 +324,14 @@ chunk ends.
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms
 and exact greedy equality. DSpark computes all five proposals per block;
-scheduler budgets select the emitted prefix. Its profile uses the shared
-`per-block` draft-cost model and native KV at TP4. Its paired-teacher policy
+scheduler budgets select the emitted prefix. Its profiles plan balanced
+drafts at native KV and TP4: every stream drafts the deepest common depth
+that fits the 32 verify rows (five at C1, three at C8, one at C16, none at
+C32), and no plan reads a step time, so identical processes run identical
+step shapes. On 2026-10-23, identical processes under the adaptive policy
+differed by up to 1.43x in C8 throughput, while drafting every stream at a
+fixed depth held them within 1.2%. `--speculation adaptive` with the shared
+`per-block` draft-cost model remains available. Its paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 
 The speculative-verification copy set must have mean absolute logprob

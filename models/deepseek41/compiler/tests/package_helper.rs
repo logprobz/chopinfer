@@ -113,8 +113,10 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
     result
 }
 
+/// DSpark profiles plan balanced drafts, which read no step time, from full
+/// five-proposal blocks.
 #[test]
-fn dspark_profiles_keep_adaptive_full_block_drafting() {
+fn dspark_profiles_keep_balanced_full_block_drafting() {
     let document = profiles(&FLASH, &[4]).unwrap();
     let file: serde_json::Value = serde_json::from_str(&document).unwrap();
     for name in [
@@ -123,7 +125,7 @@ fn dspark_profiles_keep_adaptive_full_block_drafting() {
         "tp4-dspark-upper-skip-2048",
     ] {
         let speculation = &file["profiles"][name]["speculation"];
-        assert_eq!(speculation["mode"], "adaptive");
+        assert_eq!(speculation["mode"], "balanced");
         assert_eq!(speculation["tokens"], 5);
         assert_eq!(speculation["draft_cost"], "per-block");
         assert_eq!(speculation["drafter"], "dspark");

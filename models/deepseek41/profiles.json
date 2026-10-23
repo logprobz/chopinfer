@@ -87,7 +87,7 @@
         3
       ],
       "speculation": {
-        "mode": "adaptive",
+        "mode": "balanced",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -123,7 +123,7 @@
         3
       ],
       "speculation": {
-        "mode": "adaptive",
+        "mode": "balanced",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -195,7 +195,7 @@
         3
       ],
       "speculation": {
-        "mode": "adaptive",
+        "mode": "balanced",
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"

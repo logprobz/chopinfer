@@ -58,6 +58,9 @@ impl RankDeviceMemoryV1 {
     }
 }
 
+/// One Prometheus gauge: its name and the rank value it reports, when known.
+type GaugeV1 = (&'static str, fn(&RankDeviceMemoryV1) -> Option<u64>);
+
 /// The shared record of every rank, empty until a serving KV pool is sized.
 #[derive(Clone, Debug, Default)]
 pub struct DeviceMemoryReportV1(Arc<Mutex<Vec<RankDeviceMemoryV1>>>);
@@ -112,7 +115,7 @@ impl DeviceMemoryReportV1 {
             return String::new();
         }
         let mut output = String::new();
-        let gauges: [(&str, fn(&RankDeviceMemoryV1) -> Option<u64>); 6] = [
+        let gauges: [GaugeV1; 6] = [
             ("chop_device_memory_total_bytes", |rank| rank.total_bytes),
             ("chop_device_memory_own_bytes", |rank| rank.own_bytes),
             ("chop_device_memory_kv_bytes", |rank| Some(rank.kv_bytes)),

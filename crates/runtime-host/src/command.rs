@@ -2531,6 +2531,7 @@ fn serve_v1(
     let served_context_tokens = engine_config
         .maximum_sequence_tokens()
         .min(package.manifest().kv_layout().maximum_sequence_tokens() as usize);
+    let device_memory = crate::device_memory::DeviceMemoryReportV1::default();
     let engine = ServedEngineV1 {
         selection: selection.clone(),
         host: host.clone(),
@@ -2551,6 +2552,7 @@ fn serve_v1(
         prefix_cache: serving.prefix_cache,
         kv_offload: serving.kv_offload,
         debug_reference_tokens: debug_reference_tokens.map(Path::to_path_buf),
+        device_memory: device_memory.clone(),
         model_options: model_options.clone(),
         package,
         library,
@@ -2563,7 +2565,8 @@ fn serve_v1(
         serving_backend_config_v1(&serving)?.with_tokenizer_input_bytes(tokenizer_input_bytes),
         policy,
     )
-    .map_err(|error| run_error(format!("the generation worker did not start: {error}")))?;
+    .map_err(|error| run_error(format!("the generation worker did not start: {error}")))?
+    .with_device_memory(device_memory);
     let backend = if media_enabled {
         backend.with_media_processing(
             allowed_local_media_path.map(Path::to_path_buf),
@@ -2755,6 +2758,8 @@ struct ServedEngineV1 {
     prefix_cache: bool,
     kv_offload: crate::offload::KvOffloadOptionsV1,
     debug_reference_tokens: Option<PathBuf>,
+    /// Where the host services publish each rank's device memory.
+    device_memory: crate::device_memory::DeviceMemoryReportV1,
 }
 
 trait ServingPoolControlV1: crate::offload::KvOffloadExecutorV1 {
@@ -2763,6 +2768,7 @@ trait ServingPoolControlV1: crate::offload::KvOffloadExecutorV1 {
         options: crate::offload::KvOffloadOptionsV1,
     ) -> Result<Option<crate::offload::HostArenaPlanV1>, String>;
     fn pages(&self) -> Option<u64>;
+    fn attach_device_memory(&self, report: crate::device_memory::DeviceMemoryReportV1);
     fn prepare(
         &self,
         batch: &PreparedAppendBatch,
@@ -2783,6 +2789,9 @@ impl<D: HostDeviceBackendV1> ServingPoolControlV1 for crate::services::HostServi
     }
     fn pages(&self) -> Option<u64> {
         self.serving_kv_pages()
+    }
+    fn attach_device_memory(&self, report: crate::device_memory::DeviceMemoryReportV1) {
+        self.attach_device_memory_report(report);
     }
     fn prepare(
         &self,
@@ -2920,6 +2929,7 @@ impl ServedEngineV1 {
             "startup bundle create: {:.3}s",
             create_started.elapsed().as_secs_f64()
         );
+        pool_control.attach_device_memory(self.device_memory.clone());
         let config = if serving_kv {
             let pages = pool_control
                 .pages()

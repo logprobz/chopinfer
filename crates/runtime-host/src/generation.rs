@@ -364,6 +364,9 @@ pub struct EngineGenerationBackend {
     image_cache: Arc<crate::media_cache::PreparedImageCacheV1>,
     video: Option<crate::video::VideoDecodeServiceV1>,
     video_unavailable: Option<String>,
+    /// What each rank's device holds once the serving KV pool is sized,
+    /// when the host services publish it.
+    device_memory: Option<crate::device_memory::DeviceMemoryReportV1>,
 }
 
 impl EngineGenerationBackend {
@@ -558,7 +561,19 @@ impl EngineGenerationBackend {
             image_cache,
             video: None,
             video_unavailable: None,
+            device_memory: None,
         })
+    }
+
+    /// Reports `report` in the metrics and, once startup warmup finishes,
+    /// what warmup left free on each rank.
+    #[must_use]
+    pub fn with_device_memory(
+        mut self,
+        report: crate::device_memory::DeviceMemoryReportV1,
+    ) -> Self {
+        self.device_memory = Some(report);
+        self
     }
 
     /// Media memory budgets other than the process's, for tests.
@@ -1123,6 +1138,7 @@ impl EngineGenerationBackend {
                 cache: Arc::clone(&self.image_cache),
                 refusals: Arc::clone(&self.media_refusals),
             }),
+            device_memory: self.device_memory.clone(),
         }
     }
 
@@ -1181,7 +1197,15 @@ impl GenerationBackend for EngineGenerationBackend {
             sent.map_err(|_| "generation worker unavailable".to_owned())?;
             receiver
                 .await
-                .map_err(|_| "generation worker failed during warmup cleanup".to_owned())?
+                .map_err(|_| "generation worker failed during warmup cleanup".to_owned())??;
+            // Warmup captured the graphs it reached; what each rank has left
+            // is what later captures can take.
+            if !begin && let Some(report) = &self.device_memory {
+                for line in report.warmup_lines() {
+                    eprintln!("{line}");
+                }
+            }
+            Ok(())
         })
     }
 
@@ -1607,6 +1631,7 @@ pub struct NativeRuntimeMetricsV1 {
     kv: KvMetrics,
     state: Arc<AtomicU8>,
     media: Option<MediaHostMetricsV1>,
+    device_memory: Option<crate::device_memory::DeviceMemoryReportV1>,
 }
 
 /// The host memory media preparation holds and its refusals. The pool is the
@@ -1727,6 +1752,9 @@ impl NativeRuntimeMetricsV1 {
         output.push_str(&self.engine.snapshot().prometheus());
         if let Some(media) = &self.media {
             output.push_str(&media.prometheus());
+        }
+        if let Some(device_memory) = &self.device_memory {
+            output.push_str(&device_memory.prometheus());
         }
         let kv = self.kv.snapshot();
         output.push_str(&kv.prometheus());

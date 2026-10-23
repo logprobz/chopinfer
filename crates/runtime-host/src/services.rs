@@ -1787,6 +1787,10 @@ struct HostStateV1<D> {
     symbols: SlotTableV1<SymbolRecordV1>,
     kv: SlotTableV1<PhysicalKvRecordV1>,
     serving_kv: Option<ServingKvRecordV1>,
+    /// Each rank's memory once the serving KV pool is sized, by rank, and
+    /// where it is published.
+    device_memory: Vec<crate::device_memory::RankDeviceMemoryV1>,
+    device_memory_report: Option<crate::device_memory::DeviceMemoryReportV1>,
     offload: Option<crate::offload::OffloadQueue>,
     kv_requests: SlotTableV1<KvRequestRecordV1>,
     kv_transactions: SlotTableV1<KvTransactionRecordV1>,
@@ -1868,6 +1872,21 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             .serving_kv
             .as_ref()
             .map(|pool| pool.plan.page_capacity())
+    }
+
+    /// Publishes each rank's device memory to `report` now and after every
+    /// graph capture.
+    pub fn attach_device_memory_report(&self, report: crate::device_memory::DeviceMemoryReportV1) {
+        let mut state = self.state.borrow_mut();
+        report.publish(&state.device_memory);
+        state.device_memory_report = Some(report);
+    }
+
+    /// Each rank's device memory once the serving KV pool is sized; empty
+    /// before.
+    #[must_use]
+    pub fn device_memory(&self) -> Vec<crate::device_memory::RankDeviceMemoryV1> {
+        self.state.borrow().device_memory.clone()
     }
 
     /// Makes a prepared mixed batch's new pages ready before bundle execute.
@@ -1964,6 +1983,8 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 symbols: SlotTableV1::new(),
                 kv: SlotTableV1::new(),
                 serving_kv: None,
+                device_memory: Vec::new(),
+                device_memory_report: None,
                 offload: None,
                 kv_requests: SlotTableV1::new(),
                 kv_transactions: SlotTableV1::new(),
@@ -3263,6 +3284,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         let layout = contract.layout;
         let mut ranks = Vec::new();
+        let mut rooms = Vec::new();
         let mut available = u64::MAX;
         for rank in 0..layout.rank_count() as u32 {
             let context_key = *state
@@ -3302,6 +3324,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             };
             available = available.min(rank_available);
             ranks.push((context_key, pool_key, context, pool));
+            rooms.push(memory);
         }
         let budget = available;
         let mut capacity = budget / layout.page_bytes();
@@ -3317,6 +3340,8 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             );
             BundleStatusV1::ResourceExhausted
         })?;
+        let contexts = ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
+        let kv_bytes = plan.bytes_per_rank_pool();
         let mut allocated = Vec::new();
         for (context_key, pool_key, context, pool) in ranks {
             let result = (|| {
@@ -3354,6 +3379,31 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             plan,
             rank_buffers: allocated,
         });
+        // Each pool allocation synchronized its stream, so free memory now
+        // has the pool in it.
+        let mut device_memory = Vec::with_capacity(rooms.len());
+        for (rank, (context, room)) in contexts.into_iter().zip(rooms).enumerate() {
+            let free = state
+                .device
+                .free_device_memory(context)
+                .unwrap_or_else(|_| room.free.saturating_sub(kv_bytes));
+            let memory = crate::device_memory::RankDeviceMemoryV1 {
+                rank: rank as u32,
+                total_bytes: room.total,
+                own_bytes: room.own,
+                kv_bytes,
+                reserve_bytes: SERVING_KV_RESERVE_BYTES_V1,
+                free_after_sizing_bytes: free,
+                free_bytes: free,
+                free_low_bytes: free,
+            };
+            eprintln!("{}", memory.sizing_line());
+            device_memory.push(memory);
+        }
+        if let Some(report) = &state.device_memory_report {
+            report.publish(&device_memory);
+        }
+        state.device_memory = device_memory;
         Ok(capacity)
     }
 
@@ -4564,6 +4614,16 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 "graph capture memory rank {rank}: {before} bytes free before, {after} after, {} held",
                 i128::from(before) - i128::from(after)
             );
+            if let Some(memory) = state
+                .device_memory
+                .iter_mut()
+                .find(|memory| memory.rank == rank)
+            {
+                memory.observe_free(after);
+            }
+            if let Some(report) = &state.device_memory_report {
+                report.publish(&state.device_memory);
+            }
         }
         Ok(BundleGraphHandleV1::from_parts(
             graph_key.generation,

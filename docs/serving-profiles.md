@@ -24,6 +24,35 @@ covers, or null for experimental profiles. Startup warns above that count.
 The shared default is 32; MiMo/Qwen TP4 AR and MiMo DFlash have evidence
 through 64. Package capacity alone is not serving qualification.
 
+## GPU memory
+
+`--gpu-memory-utilization F` (profile field `gpu_memory_utilization`, image
+variable `CHOPINFER_GPU_MEMORY_UTILIZATION`) is the share of each GPU's total
+memory this server's own allocations may take: weights, workspaces, encoders,
+drafter and request state, the sampler, the KV pool and its reserve. Every
+profile uses 1.0, which gives the pool all free memory but the reserve. Lower
+it to leave memory for other programs on the same GPUs. The server counts its
+own allocations, so memory another program allocates or releases does not
+move its share. The CUDA context and loaded kernel code are the driver's and
+come on top. When F leaves no room for one KV page, startup refuses and logs
+the smallest utilization that fits. `--kv-memory-fraction` is gone: it took a
+share of the memory left after the model, so its 0.9 default left a tenth of
+that memory unused. Evidence recorded before 2026-10-22 ran at that 0.9; the
+larger pool changes KV capacity, not arithmetic.
+
+Bundles allocate everything they use before the host sizes the pool, and the
+conformance suite refuses device memory a bundle acquires after it. Only CUDA
+graphs come later: they embed the pool's addresses, so they are captured once
+it exists, at startup warmup and for batch shapes warmup did not reach. The
+host keeps a fixed 1 GiB per rank out of the pool for them and the driver.
+Server logs from 2026-10-05 to 2026-10-22 measured graph memory per GPU of
+about 8 MiB (MiMo TP4 AR), 56 MiB (Qwen TP4 MTP), 68 MiB (MiMo DFlash), at
+most 140 MiB live over a GLM soak, and 0.7 GiB (DeepSeek DSpark). A capture
+that finds no memory fails the generation worker, so startup logs each rank's
+free memory after warmup and warns below 256 MiB
+([observability](operations-observability.md#chopinfer-metrics)); lower the
+utilization or `--max-sequences` when a rank warns.
+
 ## Qualification scope
 
 Qualification is tied to actual checkpoint tensors, package, host, topology,

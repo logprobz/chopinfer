@@ -92,9 +92,18 @@ count lookups; the vLLM ones count tokens.
 | `chop_requests_waiting`, `chop_requests_waiting_by_stage` | Requests waiting before they run, by stage ([request surface](serving-request-surface.md)) |
 | `chop_transport_buffer_budget_bytes`, `chop_transport_buffer_reserved_bytes`, `chop_transport_read_bytes_total` | Connection read-buffer budget, its reservations, and bytes read |
 | `chop_process_uptime_seconds` | Seconds on the server's monotonic metrics clock, which starts when the listener opens; it resets when the server restarts |
+| `chop_device_memory_{total,own,kv,reserve}_bytes{rank}` | Each rank's device memory when the serving KV pool was sized: the device's total, what this process's own allocations held before the pool, the pool, and the reserve kept for what is allocated after it ([GPU memory](serving-profiles.md#gpu-memory)) |
+| `chop_device_memory_free_bytes{rank}`, `chop_device_memory_free_low_bytes{rank}` | Each rank's free device memory after the latest CUDA graph capture (or the sizing), and the lowest seen since the sizing. Graphs captured later come out of it |
 
 `chop_step_gpu_seconds` is absent with the native bundle executor, which
 reports no device time; host wall time is never substituted.
+
+At startup the host logs one `serving KV memory rank R` line per rank as it
+sizes the pool, and one `device memory after warmup rank R` line per rank
+when warmup ends: the pool, the memory warmup's graphs took since the sizing,
+and what is left. A rank left with less than 256 MiB also logs a warning,
+since a graph captured later (a batch shape warmup missed, a GLM prefill
+program) needs room there.
 
 ## Refused batches
 

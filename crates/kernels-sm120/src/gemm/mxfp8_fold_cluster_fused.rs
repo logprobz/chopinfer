@@ -6,7 +6,7 @@
 use super::mxfp8_fold_cluster;
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::{
-    backend::{Launch, View},
+    backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
     contract::{Argument as A, ArgumentList, LaunchPlan, Refusal},
     mxfp8_gemm::Mxfp8FoldGemmBuffers,
     precision::quantizer::BlockQuantization,
@@ -48,6 +48,16 @@ pub struct Quantized {
     pub flags: View,
 }
 
+/// A fused fold's buffers: the projection's, its quantized output (with
+/// `Entry::quantize`) and its producer's block flags (with
+/// `Entry::pending`).
+#[derive(Clone, Copy, Debug)]
+pub struct FusedBuffers {
+    pub fold: Mxfp8FoldGemmBuffers<View>,
+    pub quantized: Option<Quantized>,
+    pub pending: Option<View>,
+}
+
 impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
         let c = &self.cluster;
@@ -82,6 +92,39 @@ impl Entry {
     /// The partial slabs; no admission flags.
     pub fn workspace(&self) -> u64 {
         self.cluster.workspace() - 256
+    }
+    fn info(&self, need: Need) -> Result<OpInfo, Refused> {
+        self.validate()?;
+        // The cluster fold's guarantees, one launch and no admission.
+        let mut info = self.cluster.prepare(need)?.info().clone();
+        info.implementation = format!("sm120.mxfp8-fold.cluster-status.v1:{self:?}");
+        info.workspace = self.workspace();
+        info.symbols = vec![(self.symbol(), self.cluster.shared_bytes())];
+        need.check(&info)?;
+        Ok(info)
+    }
+    /// The fold over its own and its fused buffers.
+    pub fn prepare(&self, need: Need) -> Result<Prepared<FusedBuffers>, Refused> {
+        Ok(Box::new(Op {
+            entry: self.clone(),
+            info: self.info(need)?,
+            capacity: need.capacity,
+        }))
+    }
+    /// A fold with neither a quantized output nor pending flags over the
+    /// projection's buffers alone.
+    pub fn prepare_plain(
+        &self,
+        need: Need,
+    ) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
+        if self.quantize || self.pending != 0 {
+            return Err(Refusal("a fused fold with fused buffers needs them bound").into());
+        }
+        Ok(Box::new(Op {
+            entry: self.clone(),
+            info: self.info(need)?,
+            capacity: need.capacity,
+        }))
     }
     pub fn plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
         self.validate()?;
@@ -247,6 +290,50 @@ impl Entry {
             collective: false,
             persistent: false,
         })
+    }
+}
+
+struct Op {
+    entry: Entry,
+    info: OpInfo,
+    capacity: u32,
+}
+impl PreparedOp<FusedBuffers> for Op {
+    fn info(&self) -> &OpInfo {
+        &self.info
+    }
+    fn launches(
+        &self,
+        b: &FusedBuffers,
+        work: View,
+        counts: Counts,
+    ) -> Result<Vec<Launch>, Refusal> {
+        if counts.rows > self.capacity {
+            return Err(Refusal("fused cluster fold rows exceed prepared capacity"));
+        }
+        Ok(vec![self.entry.launch(
+            &b.fold,
+            b.quantized,
+            b.pending,
+            work,
+            counts.rows,
+        )?])
+    }
+}
+impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
+    fn info(&self) -> &OpInfo {
+        &self.info
+    }
+    fn launches(
+        &self,
+        b: &Mxfp8FoldGemmBuffers<View>,
+        work: View,
+        counts: Counts,
+    ) -> Result<Vec<Launch>, Refusal> {
+        if counts.rows > self.capacity {
+            return Err(Refusal("fused cluster fold rows exceed prepared capacity"));
+        }
+        Ok(vec![self.entry.launch(b, None, None, work, counts.rows)?])
     }
 }
 
@@ -528,6 +615,65 @@ mod tests {
         assert!(b.control_spec().body.contains(",64,false,"));
         assert!(b.control_spec().body.ends_with(",true>(activations,activation_scales,weights,weight_scales,output,codes_out,scales_out,flags_out,pending,workspace,live_rows,status,status_row_offset,rows);"));
         assert_eq!(floor_bits(), 1e-4_f32.to_bits());
+    }
+    #[test]
+    fn prepared_fused_folds_declare_one_launch_and_its_ring() {
+        let a = Entry {
+            cluster: cluster(1024, 4096, 2, 32, 64, 8, 3),
+            pending: 0,
+            quantize: true,
+        };
+        let op = a.prepare(Need::rows(32)).unwrap();
+        assert_eq!(op.info().workspace, a.workspace());
+        assert_eq!(op.info().symbols, [(a.symbol(), a.cluster.shared_bytes())]);
+        assert!(a.prepare(Need::rows(33)).is_err());
+        assert!(a.prepare_plain(Need::rows(32)).is_err());
+        let v = |handle, bytes| View { handle, bytes };
+        let size = a.cluster.base.bytes(32);
+        let fold = Mxfp8FoldGemmBuffers {
+            activations: v(1, size.activations),
+            activation_scales: v(2, size.activation_scales),
+            weights: v(3, size.weights),
+            weight_scales: v(4, size.weight_scales),
+            output: v(5, size.output),
+            live_rows: v(6, 4),
+            status: v(7, 128),
+            status_row_offset: 0,
+        };
+        let quantized = Some(Quantized {
+            codes: v(9, 32 * 2048),
+            scales: v(10, 32 * 64),
+            flags: v(11, 32 * 64),
+        });
+        let work = v(8, a.workspace());
+        let buffers = FusedBuffers {
+            fold,
+            quantized,
+            pending: None,
+        };
+        let calls = op.launches(&buffers, work, Counts::rows(16)).unwrap();
+        assert_eq!(calls, [a.launch(&fold, quantized, None, work, 16).unwrap()]);
+        assert!(op.launches(&buffers, work, Counts::rows(33)).is_err());
+        let kv = Entry {
+            cluster: cluster(512, 5120, 1, 32, 16, 8, 5),
+            pending: 0,
+            quantize: false,
+        };
+        let plain = kv.prepare_plain(Need::rows(32)).unwrap();
+        let size = kv.cluster.base.bytes(32);
+        let fold = Mxfp8FoldGemmBuffers {
+            activations: v(1, size.activations),
+            activation_scales: v(2, size.activation_scales),
+            weights: v(3, size.weights),
+            weight_scales: v(4, size.weight_scales),
+            output: v(5, size.output),
+            ..fold
+        };
+        let work = v(8, kv.workspace());
+        assert_eq!(
+            plain.launches(&fold, work, Counts::rows(32)).unwrap(),
+            [kv.launch(&fold, None, None, work, 32).unwrap()]
+        );
     }
     #[test]
     fn fused_folds_refuse_partial_blocks_and_distributed_merges() {

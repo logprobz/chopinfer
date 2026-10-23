@@ -9,17 +9,27 @@
 // from +0 and stores exactly as the wide queue's fragment of those rows, so
 // every chain and partial is unchanged and the merge and finishers are the
 // served ones.
+//
+// With Tiled the weights are stored in 64-row by 128-K tiles
+// (`row-tiles-64x128-groups`): tile (strip, block) holds the 64 rows of one
+// 64-row strip over one 128-K block, 64 code bytes and 4 scale bytes per
+// row, tiles in K order within each strip. An item's loads are then one
+// contiguous 4096-byte code tile and one 256-byte scale tile; each lane
+// still loads the same 16 code bytes and scale byte.
 namespace chop::moe::absorb {
 using namespace streamed;
 constexpr int Rows = 8;
 
-template<class C>
+template<class C, bool Tiled = false>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
     const int32_t* live_tokens, void* scratch) {
   using L = Layout<C>;
   constexpr int H = C::halves;
+  static_assert(!Tiled || (C::k % 128 == 0 && C::loop_k == C::k && C::n % 64 == 0 &&
+                           C::weight_rows % 64 == 0 && Columns == 64 && Threads == 128),
+                "row tiles need whole 64x128 tiles, one per item");
   __shared__ __align__(16) uint16_t activations[Rows][Stride];
   __shared__ int32_t rows[Rows];
   if (blockDim.x != Threads) __trap();
@@ -57,8 +67,17 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
       for (int r = 0; r < 2; ++r) {
         const uint64_t wr = uint64_t(expert) * C::weight_rows + h * C::n + column + warp * 16 + g + r * 8;
         const bool valid = k < C::k;
-        owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
-        scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+        if constexpr (Tiled) {
+          // The item's 64 columns are one strip, so wr's tile is the item's
+          // and its row in the tile is the lane's.
+          const uint64_t tile = (uint64_t(expert) * C::weight_rows + h * C::n + column) / 64 * L::blocks + block;
+          const int row = warp * 16 + g + r * 8;
+          owned[h][r] = valid ? load16(weight + tile * 4096 + row * 64 + t * 16) : make_uint4(0,0,0,0);
+          scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
+        } else {
+          owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
+          scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+        }
         check(owned[h][r], uint8_t(scales[h][r]));
       }
 

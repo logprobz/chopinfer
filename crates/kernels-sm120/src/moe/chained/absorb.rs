@@ -3,6 +3,12 @@
 //! keeps its weight strip in registers and runs the 8-row fragment over
 //! each 8 rows of the expert: every chain and partial is the streamed
 //! queues', so the merge and the finishers are unchanged.
+//!
+//! The gate queue also has a build reading its bank in 64-row by 128-K
+//! tiles ([`ROW_TILES_64X128`]); each lane loads the same bytes, so its
+//! chains and partials are the row-major queue's.
+//!
+//! [`ROW_TILES_64X128`]: kernel_core::precision::layout::ROW_TILES_64X128
 use super::{
     bandwidth::{self, Loads},
     floor::{Entry, Stage},
@@ -56,6 +62,26 @@ pub fn entry(e: &Entry, stage: Stage) -> EntrySpec {
     s
 }
 
+/// The gate queue reading its bank in row tiles (`row-tiles-64x128-groups`).
+pub fn tiled_symbol(e: &Entry) -> String {
+    symbol(e, Stage::GateSmall).replace("_absorb_", "_absorb_tiles_")
+}
+
+/// The gate queue's ABI and launch with its bank in row tiles:
+/// the same operands, read at the tiled addresses.
+pub fn tiled_entry(e: &Entry) -> Result<EntrySpec, Refusal> {
+    let gate = &e.gate.query.projection.gemm;
+    if gate.k % 128 != 0 || e.gate.columns() % 64 != 0 {
+        return Err(Refusal("row tiles need whole 64-row by 128-K tiles"));
+    }
+    let mut s = entry(e, Stage::GateSmall);
+    assert_eq!(s.body.matches("chop::moe::absorb::compute<").count(), 1);
+    assert_eq!(s.body.matches(">(input,").count(), 1);
+    s.symbol = tiled_symbol(e);
+    s.body = s.body.replace(">(input,", ",true>(input,");
+    Ok(s)
+}
+
 /// Both absorbing queues, once per expert bank.
 pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
     super::spec(
@@ -66,4 +92,18 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
             .flat_map(|e| STAGES.into_iter().map(move |s| entry(e, s)))
             .collect(),
     )
+}
+
+/// [`cubin_spec`] and, after its entries, the tiled gate queue of each
+/// bank in `tiled`.
+pub fn tiled_cubin_spec(
+    name: &str,
+    entries: &[Entry],
+    tiled: &[Entry],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = cubin_spec(name, entries);
+    for e in tiled {
+        spec.entries.push(tiled_entry(e)?);
+    }
+    Ok(spec)
 }

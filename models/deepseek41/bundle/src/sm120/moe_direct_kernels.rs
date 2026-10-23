@@ -143,4 +143,39 @@ mod tests {
             }
         }
     }
+
+    /// The tiled absorbing gate queue is the row-major one with its weights
+    /// read at the row-tile addresses: same ABI, bounds and launch, a new
+    /// symbol, and the module that adds it keeps every row-major entry.
+    #[test]
+    fn the_tiled_absorbing_gate_differs_only_in_its_weight_addresses() {
+        let entries = entries(&FLASH).unwrap();
+        for entry in &entries {
+            let rows = absorb::entry(entry, floor::Stage::GateSmall);
+            let tiled = absorb::tiled_entry(entry).unwrap();
+            assert_eq!(
+                tiled.symbol,
+                rows.symbol.replace("_moe_absorb_", "_moe_absorb_tiles_")
+            );
+            assert_eq!(
+                tiled.body.replace(&tiled.symbol, &rows.symbol),
+                rows.body.replace(">(input,", ",true>(input,")
+            );
+            assert_eq!(
+                (&tiled.params, tiled.max_threads, tiled.min_blocks),
+                (&rows.params, rows.max_threads, rows.min_blocks)
+            );
+        }
+        let served = absorb::cubin_spec("absorb", &entries);
+        let with = absorb::tiled_cubin_spec("absorb", &entries, &entries[..1]).unwrap();
+        let ids = |spec: &kernel_build::CubinSpec| {
+            spec.entries
+                .iter()
+                .map(|e| (e.symbol.clone(), e.body.clone()))
+                .collect::<Vec<_>>()
+        };
+        let (with, served) = (ids(&with), ids(&served));
+        assert_eq!(with[..served.len()], served[..]);
+        assert_eq!(with.len(), served.len() + 1);
+    }
 }

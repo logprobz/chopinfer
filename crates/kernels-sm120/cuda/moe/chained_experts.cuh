@@ -59,9 +59,11 @@ constexpr int kStepK = 64;     // K per shared-memory step
 constexpr int kStride = 72;    // BF16 elements per shared row (conflict-free 32-bit loads)
 
 // One instance's constants. `Experts` is 1 for a dense projection. Gate/up
-// weights of an expert are [2 N, K]: N gate rows, then N up rows.
+// weights of an expert are [2 N, K]: N gate rows, then N up rows. `Tiles`
+// reads a grouped MXFP4 gate/up bank stored in 64-row by 128-K tiles
+// (`row-tiles-64x128-groups`) rather than rows.
 template<Weights W, Projection P, int Experts, int TopK, int N, int K, int RowTile,
-         bool Grouped, class Clamp>
+         bool Grouped, class Clamp, bool Tiles = false>
 struct Config {
   static constexpr Weights weights = W;
   static constexpr bool gate_up = P == Projection::gate_up;
@@ -74,6 +76,7 @@ struct Config {
   static constexpr int row_tile = RowTile;
   static constexpr bool grouped = Grouped;
   using clamp = Clamp;
+  static constexpr bool tiles = Tiles;
   static constexpr int halves = gate_up ? 2 : 1;
   static constexpr int weight_rows = halves * N;
   static constexpr int tile_rows = halves * kTileN;
@@ -82,6 +85,8 @@ struct Config {
   static_assert(Grouped || Experts == 1, "a dense projection has one weight");
   static_assert(gate_up || !Clamp::enabled, "the clamp belongs to gate/up");
   static_assert(W != Weights::fp8_block128 || N % 128 == 0, "whole 128-row scale blocks");
+  static_assert(!Tiles || (W == Weights::mxfp4 && P == Projection::gate_up && Grouped),
+                "row tiles hold a grouped MXFP4 gate/up bank");
 };
 
 __device__ __forceinline__ uint32_t lds32(const uint16_t* p) {
@@ -182,6 +187,31 @@ __device__ __forceinline__ void load_weights(
       const uint4 v = *reinterpret_cast<const uint4*>(
           weight + (global * K + k0 + part * 8) * 2);
       *reinterpret_cast<uint4*>(&tile[row][part * 8]) = v;
+    }
+  } else if constexpr (C::tiles) {
+    // The row-major MXFP4 load below, from row tiles: each 64-row half of
+    // the CTA's rows is one 64-row strip of the bank (N and n0 are
+    // multiples of 64), and its 128-K block's tile holds 64 code bytes and
+    // 4 scales per row.
+#pragma unroll
+    for (int i = 0; i < C::tile_rows * 4 / kThreads; ++i) {
+      const int chunk = threadIdx.x + i * kThreads;
+      const int row = chunk >> 2, part = chunk & 3;
+      const int k = k0 + part * 16, r = row & (kTileN - 1);
+      const uint64_t strip =
+          (uint64_t(expert) * C::weight_rows + weight_row<C>(n0, row - r)) / 64;
+      const uint64_t stored = strip * (K / 128) + k / 128;
+      const uint2 codes = *reinterpret_cast<const uint2*>(
+          weight + stored * 4096 + r * 64 + (k % 128) / 2);
+      const uint8_t scale = local_scales[stored * 256 + r * 4 + (k % 128) / 32];
+      uint32_t out[8];
+#pragma unroll
+      for (int b = 0; b < 8; ++b) {
+        const uint32_t word = b < 4 ? codes.x : codes.y;
+        out[b] = convert::scaled_mxfp4_bf16x2(uint8_t(word >> (8 * (b & 3))), scale);
+      }
+      *reinterpret_cast<uint4*>(&tile[row][part * 16]) = make_uint4(out[0], out[1], out[2], out[3]);
+      *reinterpret_cast<uint4*>(&tile[row][part * 16 + 8]) = make_uint4(out[4], out[5], out[6], out[7]);
     }
   } else if constexpr (C::weights == Weights::mxfp4) {
 #pragma unroll

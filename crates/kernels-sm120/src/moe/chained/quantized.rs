@@ -400,6 +400,33 @@ impl Projection {
         }
         entry
     }
+
+    /// The symbol of [`Self::tiled_entry`].
+    pub fn tiled_symbol(&self) -> String {
+        format!("{}_row_tiles_v1", self.symbol.trim_end_matches("_v1"))
+    }
+
+    /// The column entry ([`Self::entry`]) reading a gate/up bank stored in
+    /// 64-row by 128-K tiles (`row-tiles-64x128-groups`, `Config`'s
+    /// `Tiles`): the same ABI, launch and arithmetic.
+    pub fn tiled_entry(&self) -> Result<EntrySpec, Refusal> {
+        if self.active
+            || self.streamed
+            || self.prefill
+            || !self.gate_up()
+            || !self.query.projection.gemm.k.is_multiple_of(128)
+        {
+            return Err(Refusal(
+                "row tiles cover the column schedule's gate/up bank of whole 128-K blocks",
+            ));
+        }
+        let mut entry = self.entry();
+        let call = ">>(reinterpret_cast<const uint16_t*>(input),";
+        assert_eq!(entry.body.matches(call).count(), 1);
+        entry.body = entry.body.replace(call, &format!(",true{call}"));
+        entry.symbol = self.tiled_symbol();
+        Ok(entry)
+    }
 }
 
 pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
@@ -413,6 +440,19 @@ pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
         "chained_quantized.cuh",
         projections.iter().map(Projection::entry).collect(),
     )
+}
+
+/// [`cubin_spec`] with the tiled entries of `tiled` after the served ones.
+pub fn tiled_cubin_spec(
+    name: &str,
+    projections: &[Projection],
+    tiled: &[Projection],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = cubin_spec(name, projections);
+    for p in tiled {
+        spec.entries.push(p.tiled_entry()?);
+    }
+    Ok(spec)
 }
 
 pub fn active_cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {

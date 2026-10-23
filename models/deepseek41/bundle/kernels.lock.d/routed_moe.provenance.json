@@ -1,7 +1,7 @@
 [
   {
     "name": "moe_deepseek41_compute_sm120",
-    "source_closure_sha256": "cf576c96d21bc088187ce1ed7566f0e6260a34b4e3008685c9f80e480afa29cf"
+    "source_closure_sha256": "1c5123e043a0bd4659312fd2531b9b6be4294a9f4ec2f2977821f33cc85e5723"
   },
   {
     "name": "moe_deepseek41_quantize_sm120",

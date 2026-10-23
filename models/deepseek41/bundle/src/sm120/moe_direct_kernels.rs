@@ -179,6 +179,62 @@ mod tests {
         assert_eq!(with.len(), served.len() + 1);
     }
 
+    /// The column kernel's tiled gate/up entry (TP4 serves its 8192-token
+    /// build at Verify 65-192 and in native-off prefill) is the row-major
+    /// one with its weights read at the row-tile addresses: same ABI,
+    /// bounds and launch, a new symbol. Down, streamed and active
+    /// projections have none, and the module that adds it keeps every
+    /// row-major entry.
+    #[test]
+    fn the_tiled_column_gate_differs_only_in_its_weight_addresses() {
+        use kernels_sm120::moe::chained::quantized;
+        let compute = super::super::moe::projections(&FLASH, 4).unwrap();
+        let call = ">>(reinterpret_cast<const uint16_t*>(input),";
+        for p in &compute {
+            let Ok(tiled) = p.tiled_entry() else {
+                assert!(!p.gate_up(), "{}", p.symbol);
+                continue;
+            };
+            let rows = p.entry();
+            assert_eq!(tiled.symbol, p.symbol.replace("_v1", "_row_tiles_v1"));
+            assert_eq!(tiled.symbol, p.tiled_symbol());
+            assert_eq!(tiled.body, rows.body.replace(call, &format!(",true{call}")));
+            assert_eq!(
+                (&tiled.params, tiled.max_threads, tiled.min_blocks),
+                (&rows.params, rows.max_threads, rows.min_blocks)
+            );
+        }
+        for p in super::super::moe::streamed_projections(&FLASH)
+            .unwrap()
+            .iter()
+            .chain(&super::super::moe::active_projections(&FLASH, 4).unwrap())
+        {
+            assert!(p.tiled_entry().is_err(), "{}", p.symbol);
+        }
+        let backbone = compute
+            .iter()
+            .filter(|p| {
+                p.gate_up()
+                    && p.tokens_capacity == 8192
+                    && p.query.projection.gemm.grouped.unwrap().experts == 384
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(backbone.len(), 1);
+        let served = quantized::cubin_spec("column", &compute);
+        let with = quantized::tiled_cubin_spec("column", &compute, &backbone).unwrap();
+        let ids = |spec: &kernel_build::CubinSpec| {
+            spec.entries
+                .iter()
+                .map(|e| (e.symbol.clone(), e.body.clone()))
+                .collect::<Vec<_>>()
+        };
+        let (with, served) = (ids(&with), ids(&served));
+        assert_eq!(with[..served.len()], served[..]);
+        assert_eq!(with.len(), served.len() + 1);
+        assert!(with[served.len()].1.contains(",true>>("));
+    }
+
     /// The tiled direct gate queues (small and wide), the tiled resident
     /// gate and the streamed module's tiled gate queues are the row-major
     /// ones with their weights read at the row-tile addresses: same ABI,

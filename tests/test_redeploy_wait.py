@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
@@ -118,9 +119,16 @@ class ProcessFiles(unittest.TestCase):
     """The redeploy stop path reads a server's /proc files while it exits."""
 
     def test_a_running_process_reads_its_state_and_environment(self):
-        child = subprocess.Popen(["sleep", "60"], env={"CHOPINFER_TEST_MARK": "1"})
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import sys; print('ready', flush=True); sys.stdin.read(1)"],
+            env={"CHOPINFER_TEST_MARK": "1"}, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        )
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
+        self.addCleanup(child.stdin.close)
+        self.addCleanup(child.stdout.close)
+        # Wait for child startup before reading its process environment.
+        self.assertEqual(child.stdout.readline(), b"ready\n")
         state, started = WAIT.process_state(child.pid)
         self.assertIn(state, "RS")
         self.assertTrue(started.isdigit())

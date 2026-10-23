@@ -187,3 +187,155 @@ fn evicted_rows_are_started_together_and_copied_exactly() {
     copy_rows(&f.mapping, 264, &rows, &mut out).unwrap();
     assert_eq!(out, f.expected(&rows));
 }
+
+#[test]
+fn joint_planes_read_every_planes_misses_in_one_wait_and_copy_exactly() {
+    let codes = Fixture::new("joint-codes", 3000, 97);
+    let scales = Fixture::new("joint-scales", 3000, 8);
+    let code_rows = [5, 2999, 5, 0, 1234, 2999];
+    let scale_rows = [7, 7, 0];
+    let mut code_out = vec![0xa5; code_rows.len() * 97];
+    let mut scale_out = vec![0xa5; scale_rows.len() * 8];
+    let mut asked = Vec::new();
+    copy_planes_with(
+        &mut [
+            PlaneCopy {
+                mapping: &codes.mapping,
+                width: 97,
+                rows: &code_rows,
+                out: &mut code_out,
+            },
+            PlaneCopy {
+                mapping: &scales.mapping,
+                width: 8,
+                rows: &[],
+                out: &mut [],
+            },
+            PlaneCopy {
+                mapping: &scales.mapping,
+                width: 8,
+                rows: &scale_rows,
+                out: &mut scale_out,
+            },
+        ],
+        |groups| {
+            asked.push(
+                groups
+                    .iter()
+                    .map(|(_, requests)| requests.to_vec())
+                    .collect::<Vec<_>>(),
+            );
+            pool::read_groups(groups)
+        },
+    )
+    .unwrap();
+    // One read for both tables, each distinct row once in first-use order,
+    // and none for the plane without rows.
+    let reads = |width: usize, rows: &[u64]| {
+        rows.iter()
+            .map(|&row| (300 + row * width as u64, width))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        asked,
+        [vec![reads(97, &[5, 2999, 0, 1234]), reads(8, &[7, 0])]]
+    );
+    assert_eq!(code_out, codes.expected(&code_rows));
+    assert_eq!(scale_out, scales.expected(&scale_rows));
+    // The served reader copies the same bytes.
+    code_out.fill(0xa5);
+    scale_out.fill(0xa5);
+    copy_planes(&mut [
+        PlaneCopy {
+            mapping: &codes.mapping,
+            width: 97,
+            rows: &code_rows,
+            out: &mut code_out,
+        },
+        PlaneCopy {
+            mapping: &scales.mapping,
+            width: 8,
+            rows: &scale_rows,
+            out: &mut scale_out,
+        },
+    ])
+    .unwrap();
+    assert_eq!(code_out, codes.expected(&code_rows));
+    assert_eq!(scale_out, scales.expected(&scale_rows));
+    // A bad row in any plane, or a read that answers the wrong shape,
+    // publishes no plane.
+    type Read = fn(&[pool::Group<'_>]) -> Result<pool::GroupRows, String>;
+    let refused = |rows: &[u32], read: Read| {
+        let mut code_poison = vec![0xa5; code_rows.len() * 97];
+        let mut scale_poison = vec![0xa5; rows.len() * 8];
+        let failed = copy_planes_with(
+            &mut [
+                PlaneCopy {
+                    mapping: &codes.mapping,
+                    width: 97,
+                    rows: &code_rows,
+                    out: &mut code_poison,
+                },
+                PlaneCopy {
+                    mapping: &scales.mapping,
+                    width: 8,
+                    rows,
+                    out: &mut scale_poison,
+                },
+            ],
+            read,
+        )
+        .is_err();
+        failed && code_poison.iter().chain(&scale_poison).all(|&b| b == 0xa5)
+    };
+    assert!(refused(&[1, 3000], |_| panic!("read after a bad row")));
+    assert!(refused(&[1, 2], |_| Ok((vec![Vec::new()], false))));
+    assert!(refused(&[1, 2], |groups| {
+        // The first group's rows are right; the second's are missing.
+        let (mut rows, serial) = pool::read_groups(&groups[..1])?;
+        rows.push(Vec::new());
+        Ok((rows, serial))
+    }));
+}
+
+#[test]
+fn a_plane_without_a_descriptor_or_past_one_tile_reads_every_plane_alone() {
+    let codes = Fixture::new("alone-codes", 100, 264);
+    let mut scales = Fixture::new("alone-scales", 5000, 8);
+    let code_rows = [17, 2, 17, 99];
+    let refuse =
+        |_: &[pool::Group<'_>]| -> Result<pool::GroupRows, String> { panic!("planes read alone") };
+    // One more distinct row than a tile of 8-byte rows.
+    let wide = (0..4097_u32).collect::<Vec<_>>();
+    for scale_rows in [wide, vec![5, 9, 5]] {
+        let mut code_out = vec![0xa5; code_rows.len() * 264];
+        let mut scale_out = vec![0xa5; scale_rows.len() * 8];
+        if scale_rows.len() < 4097 {
+            // The process's mapping registry holds a weak reference; drop it
+            // so this test owns the mapping alone and can close its source.
+            let key = scales.mapping.key;
+            super::super::REGISTRY.lock().unwrap().remove(&key);
+            Arc::get_mut(&mut scales.mapping).unwrap().source = None;
+        }
+        copy_planes_with(
+            &mut [
+                PlaneCopy {
+                    mapping: &codes.mapping,
+                    width: 264,
+                    rows: &code_rows,
+                    out: &mut code_out,
+                },
+                PlaneCopy {
+                    mapping: &scales.mapping,
+                    width: 8,
+                    rows: &scale_rows,
+                    out: &mut scale_out,
+                },
+            ],
+            refuse,
+        )
+        .unwrap();
+        assert_eq!(code_out, codes.expected(&code_rows));
+        assert_eq!(scale_out, scales.expected(&scale_rows));
+    }
+}

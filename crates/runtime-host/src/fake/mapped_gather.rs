@@ -1,6 +1,6 @@
 //! Delayed uploads for testing the prepared gather's consumption boundary.
 use super::*;
-use crate::device::mapped_gather::{MappedGatherPlanV1, gather_plane_v1};
+use crate::device::mapped_gather::{MappedGatherPlanV1, gather_planes_v1};
 use runtime_bundle_abi::MappedGatherStatsV1;
 
 pub(super) struct Gather {
@@ -55,17 +55,32 @@ impl FakeHostDeviceV1 {
         let input = &self
             .require(plan.indices.object, FakeObjectKindV1::Buffer)?
             .bytes[start..end];
-        let mut pending = Vec::new();
-        let mut failed = false;
-        for plane in &plan.planes {
-            let mut bytes = vec![0; rows as usize * plane.row_bytes];
-            failed |= gather_plane_v1(plane, input, &mut bytes).is_err();
-            let range = DeviceRangeV1 {
-                length: bytes.len() as u64,
-                ..plane.destination
-            };
-            pending.push((plane.stream, range, bytes));
-        }
+        let mut outputs = plan
+            .planes
+            .iter()
+            .map(|plane| vec![0; rows as usize * plane.row_bytes])
+            .collect::<Vec<_>>();
+        let failed = gather_planes_v1(
+            &plan.planes,
+            input,
+            &mut outputs
+                .iter_mut()
+                .map(Vec::as_mut_slice)
+                .collect::<Vec<_>>(),
+        )
+        .is_err();
+        let pending = plan
+            .planes
+            .iter()
+            .zip(outputs)
+            .map(|(plane, bytes)| {
+                let range = DeviceRangeV1 {
+                    length: bytes.len() as u64,
+                    ..plane.destination
+                };
+                (plane.stream, range, bytes)
+            })
+            .collect::<Vec<_>>();
         let gather = self
             .mapped_gathers
             .get_mut(&object.get())

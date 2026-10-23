@@ -614,6 +614,71 @@ fn served_async_gathers_fill_reuse_and_refuse_bad_ids_before_writes() {
 }
 
 #[test]
+fn joint_gathers_of_every_rank_match_plane_by_plane_bytes_and_cache_counts() {
+    use crate::device::mapped_gather::{gather_plane_v1, gather_planes_v1};
+    let gather = |label: &str, identity: u8, joint: bool| {
+        let registry = registry(1);
+        let codes = mapping(&format!("{label}-codes"), &source(10, 256), identity);
+        let scales = mapping(&format!("{label}-scales"), &source(10, 8), identity);
+        // Four ranks share each table, as a tensor-parallel layer gather does.
+        let planes = (0..4)
+            .flat_map(|_| {
+                [
+                    gather_plane(Arc::clone(&codes), 256, 0),
+                    gather_plane(Arc::clone(&scales), 8, 0),
+                ]
+            })
+            .collect::<Vec<_>>();
+        register_checked(
+            &registry,
+            &planes,
+            HOST_RESERVE_BYTES + registry.config.total_bytes as u64,
+        )
+        .unwrap();
+        let rows = [1_usize, 3, 1];
+        let input = rows
+            .iter()
+            .flat_map(|&row| (row as u32).to_le_bytes())
+            .collect::<Vec<_>>();
+        for _ in 0..2 {
+            let mut outputs = planes
+                .iter()
+                .map(|plane| vec![0xa5; plane.row_bytes * rows.len()])
+                .collect::<Vec<_>>();
+            if joint {
+                let mut slices = outputs
+                    .iter_mut()
+                    .map(Vec::as_mut_slice)
+                    .collect::<Vec<_>>();
+                gather_planes_v1(&planes, &input, &mut slices).unwrap();
+            } else {
+                for (plane, output) in planes.iter().zip(&mut outputs) {
+                    gather_plane_v1(plane, &input, output).unwrap();
+                }
+            }
+            for (plane, output) in planes.iter().zip(&outputs) {
+                let expected = rows
+                    .iter()
+                    .flat_map(|&row| {
+                        plane.mapping.bytes()[row * plane.row_bytes..][..plane.row_bytes].to_vec()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(*output, expected);
+            }
+        }
+        let cache = &codes.resident.get().unwrap().cache;
+        (
+            cache.hits.load(Ordering::Relaxed),
+            cache.misses.load(Ordering::Relaxed),
+        )
+    };
+    let by_plane = gather("by-plane", 32, false);
+    // Rows 1 and 3 of each table miss once; every other copy is a hit.
+    assert_eq!(by_plane, (44, 4));
+    assert_eq!(gather("joint-ranks", 33, true), by_plane);
+}
+
+#[test]
 fn synchronous_chunked_prefill_fills_the_same_cache_as_verify() {
     use super::super::gather::{GatherProbe, ReadAhead, gather_span_v1};
     struct Clock;

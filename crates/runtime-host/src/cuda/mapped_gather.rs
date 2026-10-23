@@ -1,6 +1,6 @@
 //! CUDA ownership for one prepared mapped-row gather.
 use super::*;
-use crate::device::mapped_gather::{MappedGatherPlanV1, gather_plane_v1};
+use crate::device::mapped_gather::{MappedGatherPlanV1, gather_planes_v1, plane_outputs};
 use runtime_bundle_abi::MappedGatherStatsV1;
 use runtime_cuda::{HostTransform, HostTransformTarget};
 
@@ -90,11 +90,12 @@ impl Gather {
                 &self.producer,
                 &self.targets,
                 move |input, outputs| {
-                    for (plane, (output, start)) in planes.iter().zip(positions) {
-                        let length = rows as usize * plane.row_bytes;
-                        gather_plane_v1(plane, input, &mut outputs[output][start..start + length])?;
-                    }
-                    Ok(())
+                    let lengths = planes
+                        .iter()
+                        .map(|plane| rows as usize * plane.row_bytes)
+                        .collect::<Vec<_>>();
+                    let mut outputs = plane_outputs(outputs, &positions, &lengths)?;
+                    gather_planes_v1(&planes, input, &mut outputs)
                 },
             )
             .map_err(driver_status);

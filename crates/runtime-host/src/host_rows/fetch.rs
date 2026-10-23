@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 const ENV: &str = "CHOPINFER_MAPPED_MISS_FETCH";
 const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
 const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
+const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
 /// Reader threads one batch's rows are split across. A drafted DSpark step
 /// gathers its first Engram layer after the drafter, and at 32 rows on rows
 /// no request read before about 450 of each plane's 768 rows miss; with 16
@@ -34,6 +35,7 @@ static SERIAL: AtomicU64 = AtomicU64::new(0);
 static MAPPED: AtomicU64 = AtomicU64::new(0);
 static CACHED: AtomicU64 = AtomicU64::new(0);
 static COLD: AtomicU64 = AtomicU64::new(0);
+static JOINT: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -96,6 +98,16 @@ pub(crate) fn start_reads() -> bool {
     *START.get_or_init(|| configured(std::env::var_os(START_ENV)))
 }
 
+/// `CHOPINFER_MAPPED_MISS_JOINT_PLANES`: with started reads, unset or `1`
+/// (the default) reads the misses of every plane a gather joins
+/// ([`copy_planes`]) in one batch, so the gather waits for the device once,
+/// not once per plane; anything else reads each plane's misses on their own.
+/// Without started reads every plane reads alone, as before them.
+pub(crate) fn joint_planes() -> bool {
+    static JOINT_PLANES: OnceLock<bool> = OnceLock::new();
+    start_reads() && *JOINT_PLANES.get_or_init(|| configured(std::env::var_os(JOINT_ENV)))
+}
+
 /// Started reads count the rows the page cache served without waiting and
 /// the rows they had to start.
 fn count_cold_rows(cached: usize, cold: usize) {
@@ -112,6 +124,7 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "successful_bytes":BYTES.load(Ordering::Relaxed), "nanoseconds":NANOS.load(Ordering::Relaxed),
         "serial_fallback_batches":SERIAL.load(Ordering::Relaxed), "start_reads":start_reads(),
         "page_cached_reads":CACHED.load(Ordering::Relaxed), "started_reads":COLD.load(Ordering::Relaxed),
+        "joint_planes":joint_planes(), "joint_batches":JOINT.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })
@@ -268,6 +281,107 @@ fn elapsed(started: std::time::Instant) {
         started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
         Ordering::Relaxed,
     );
+}
+
+/// One plane of a joint copy ([`copy_planes`]).
+pub(crate) struct PlaneCopy<'a> {
+    pub(crate) mapping: &'a MappedRowsV1,
+    pub(crate) width: usize,
+    pub(crate) rows: &'a [u32],
+    pub(crate) out: &'a mut [u8],
+}
+
+/// [`copy_rows`] for several planes with one wait for the device: each
+/// plane's resident hits are copied first, then the descriptor reads of every
+/// plane's misses go out as one batch, then each plane's fetched rows are
+/// copied and published, plane by plane in order. Where a plane has no
+/// descriptor or more distinct misses than one tile, every plane reads its
+/// misses on its own instead. The bytes copied equal [`copy_rows`] plane by
+/// plane: every row is an exact read of its file range, or a resident copy
+/// of one.
+pub(crate) fn copy_planes(planes: &mut [PlaneCopy<'_>]) -> Result<(), String> {
+    copy_planes_with(planes, pool::read_groups)
+}
+
+fn copy_planes_with(
+    planes: &mut [PlaneCopy<'_>],
+    read: impl FnOnce(&[pool::Group<'_>]) -> Result<pool::GroupRows, String>,
+) -> Result<(), String> {
+    for plane in planes.iter() {
+        validate(plane.mapping, plane.width, plane.rows, plane.out)?;
+    }
+    let misses = planes
+        .iter_mut()
+        .map(|plane| {
+            plane.mapping.resident_plane(plane.width).map_or_else(
+                || (0..plane.rows.len()).collect::<Vec<_>>(),
+                |resident| resident.copy_resident_rows(plane.rows, plane.out),
+            )
+        })
+        .collect::<Vec<_>>();
+    let work = planes
+        .iter()
+        .zip(&misses)
+        .map(|(plane, misses)| requests(plane.mapping, plane.width, plane.rows, misses))
+        .collect::<Vec<_>>();
+    let joint = planes.iter().zip(&work).all(|(plane, (requests, _))| {
+        plane.mapping.source.is_some() && requests.len() <= tile_rows(plane.width)
+    });
+    if !joint {
+        for (plane, misses) in planes.iter_mut().zip(&misses) {
+            copy_misses(plane.mapping, plane.width, plane.rows, misses, plane.out)?;
+        }
+        return Ok(());
+    }
+    let missing = misses.iter().filter(|misses| !misses.is_empty()).count();
+    if missing == 0 {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    BATCHES.fetch_add(missing as u64, Ordering::Relaxed);
+    ROWS.fetch_add(
+        misses.iter().map(Vec::len).sum::<usize>() as u64,
+        Ordering::Relaxed,
+    );
+    if missing > 1 {
+        JOINT.fetch_add(1, Ordering::Relaxed);
+    }
+    let groups = planes
+        .iter()
+        .zip(&work)
+        .filter_map(|(plane, (requests, _))| {
+            let source = plane.mapping.source.as_ref()?;
+            (!requests.is_empty()).then_some((source, requests.as_slice()))
+        })
+        .collect::<Vec<_>>();
+    let (data, serial) = read(&groups)?;
+    if data.len() != groups.len()
+        || data
+            .iter()
+            .zip(&groups)
+            .any(|(rows, (_, requests))| rows.len() != requests.len())
+    {
+        return Err("mapped joint read answered another shape".into());
+    }
+    let mut data = data.into_iter();
+    for ((plane, misses), (requests, slots)) in planes.iter_mut().zip(&misses).zip(&work) {
+        if requests.is_empty() {
+            continue;
+        }
+        let rows = data.next().expect("one answer per group");
+        count_reads(requests.len(), plane.width, serial);
+        publish(
+            plane.mapping,
+            plane.width,
+            plane.rows,
+            misses,
+            slots,
+            &rows,
+            plane.out,
+        );
+    }
+    elapsed(started);
+    Ok(())
 }
 
 #[cfg(test)]

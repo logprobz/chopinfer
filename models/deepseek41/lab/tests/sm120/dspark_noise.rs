@@ -231,8 +231,11 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                     let rows: Vec<Vec<f32>> = (0..ROWS)
                         .map(|r| row(pattern, r + 10 * rank, VOCAB as usize))
                         .collect();
-                    let image: Vec<u8> =
-                        rows.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+                    let image: Vec<u8> = rows
+                        .iter()
+                        .flatten()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect();
                     for live_width in [VOCAB, 33, VOCAB + 5] {
                         for live_rows in [ROWS, 5, 0] {
                             for captured in [false, true] {
@@ -247,7 +250,8 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                                 s.stream.synchronize().map_err(|e| e.to_string())?;
                                 let got = s.download_f32(&logits, (ROWS * VOCAB) as usize)?;
                                 let label = format!(
-                                    "rank={rank} position={position} {pattern} width={live_width} live={live_rows} graph={captured}"
+                                    "rank={rank} position={position} {pattern} \
+                                     width={live_width} live={live_rows} graph={captured}"
                                 );
                                 let columns = live_width.clamp(1, VOCAB) as usize;
                                 for (r, input) in rows.iter().enumerate() {
@@ -278,7 +282,8 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                                         let error = (f64::from(y) - want).abs();
                                         if !(error <= bound) {
                                             return Err(format!(
-                                                "{label} row {r}: {y} against {want} exceeds {bound}"
+                                                "{label} row {r}: {y} against {want} \
+                                                 exceeds {bound}"
                                             ));
                                         }
                                         worst = worst.max(error / bound);
@@ -323,8 +328,10 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                 }
                 for (r, input) in full.iter().enumerate() {
                     let noise = record(r as u32);
-                    let device = kernel_core::oracle::sharded_argmax_final(&pairs[r]).map_err(|e| e.to_string())? as u32;
-                    let expected = draft_noise::proposal(input, &noise, position).map_err(|e| e.to_string())?;
+                    let device = kernel_core::oracle::sharded_argmax_final(&pairs[r])
+                        .map_err(|e| e.to_string())? as u32;
+                    let expected = draft_noise::proposal(input, &noise, position)
+                        .map_err(|e| e.to_string())?;
                     proposals += 1;
                     if device == expected {
                         exact += 1;
@@ -334,13 +341,15 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                         vocab_per_rank: VOCAB * RANKS,
                         ranks: 1,
                     };
-                    let values = draft_noise::reference(&whole, 0, input, &noise, position).map_err(|e| e.to_string())?;
+                    let values = draft_noise::reference(&whole, 0, input, &noise, position)
+                        .map_err(|e| e.to_string())?;
                     let (a, b) = (values[device as usize], values[expected as usize]);
                     let bound = draft_noise::bound(input[device as usize], &noise, a)
                         + draft_noise::bound(input[expected as usize], &noise, b);
                     if (a - b).abs() > bound {
                         return Err(format!(
-                            "{pattern} position {position} row {r}: device {device} ({a}) against {expected} ({b})"
+                            "{pattern} position {position} row {r}: \
+                             device {device} ({a}) against {expected} ({b})"
                         ));
                     }
                     near += 1;
@@ -348,12 +357,18 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
             }
         }
         assert_eq!(proposals, PATTERNS.len() * 5 * ROWS as usize);
-        eprintln!("DSPARK_NOISE_PROPOSALS proposals={proposals} exact={exact} near_ties={near} PASS");
+        eprintln!(
+            "DSPARK_NOISE_PROPOSALS proposals={proposals} exact={exact} near_ties={near} PASS"
+        );
         // 3. A draft step's five selections, with and without the noise.
         let mut timings = 0;
         if probe.is_some() {
             upload(&logits, &vec![0; (TIMED_ROWS * VOCAB) as usize * 4])?;
-            for (label, of) in [("sampled", sampled as fn(u32) -> NoiseRecord), ("greedy", |_| NoiseRecord::GREEDY)] {
+            let greedy = |_: u32| NoiseRecord::GREEDY;
+            for (label, of) in [
+                ("sampled", sampled as fn(u32) -> NoiseRecord),
+                ("greedy", greedy),
+            ] {
                 upload(&noise, &records(TIMED_ROWS, of))?;
                 for rows in [1, 4, 8, 16, TIMED_ROWS] {
                     upload(&live, &rows.to_le_bytes())?;
@@ -379,9 +394,11 @@ fn dspark_noise_gpu_keeps_greedy_rows_and_couples_sampled_proposals() {
                         [EvictionMode::Read; 2],
                         |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()),
                     )?;
-                    let (a, b) = (timing.arms[0].median_ms * 1000., timing.arms[1].median_ms * 1000.);
+                    let a = timing.arms[0].median_ms * 1000.;
+                    let b = timing.arms[1].median_ms * 1000.;
                     eprintln!(
-                        "DSPARK_NOISE_TIMING records={label} rows={rows} argmax_step_us={a:.2} coupled_step_us={b:.2} added_step_us={:.2} ratio={:.4}",
+                        "DSPARK_NOISE_TIMING records={label} rows={rows} argmax_step_us={a:.2} \
+                         coupled_step_us={b:.2} added_step_us={:.2} ratio={:.4}",
                         b - a,
                         timing.paired_ratio
                     );

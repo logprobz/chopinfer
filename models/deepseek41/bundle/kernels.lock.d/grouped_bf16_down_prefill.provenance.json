@@ -1,6 +1,6 @@
 [
   {
     "name": "grouped_bf16_down_prefill_deepseek41_sm120",
-    "source_closure_sha256": "828eeb7065a03c1eac0953fb5ec0d365c151d1f25737a2c3a8bc535eb745ebdc"
+    "source_closure_sha256": "5c6dbc22e90e0e403b46d276b254b280ab3d80007f399a34e19d4ac5fe7081b0"
   }
 ]

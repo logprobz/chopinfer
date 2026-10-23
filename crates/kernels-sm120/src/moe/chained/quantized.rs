@@ -427,6 +427,23 @@ impl Projection {
         entry.symbol = self.tiled_symbol();
         Ok(entry)
     }
+
+    /// The symbol of [`Self::lanes_entry`].
+    pub fn lanes_symbol(&self) -> String {
+        format!("{}_lanes_v1", self.symbol.trim_end_matches("_v1"))
+    }
+
+    /// [`Self::tiled_entry`] reading its tiles' code bytes in quad-lane
+    /// order (`row-tiles-64x128-lanes`, `Config`'s `Lanes`): the same ABI,
+    /// launch, shared tile and arithmetic.
+    pub fn lanes_entry(&self) -> Result<EntrySpec, Refusal> {
+        let mut entry = self.tiled_entry()?;
+        let call = ",true>>(reinterpret_cast<const uint16_t*>(input),";
+        assert_eq!(entry.body.matches(call).count(), 1);
+        entry.body = entry.body.replace(call, &format!(",true{call}"));
+        entry.symbol = self.lanes_symbol();
+        Ok(entry)
+    }
 }
 
 pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
@@ -451,6 +468,20 @@ pub fn tiled_cubin_spec(
     let mut spec = cubin_spec(name, projections);
     for p in tiled {
         spec.entries.push(p.tiled_entry()?);
+    }
+    Ok(spec)
+}
+
+/// [`cubin_spec`] with the quad-lane entries of `lanes` after the served
+/// ones.
+pub fn lanes_cubin_spec(
+    name: &str,
+    projections: &[Projection],
+    lanes: &[Projection],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = cubin_spec(name, projections);
+    for p in lanes {
+        spec.entries.push(p.lanes_entry()?);
     }
     Ok(spec)
 }

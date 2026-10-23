@@ -581,10 +581,10 @@ f64 oracle is `kernel_core::gated_mlp_oracle`.
 
 ### Quad-lane gate queues
 
-The direct gate small and wide queues, the resident8 gate and the
-absorbing gate small queue have builds reading their bank in quad-lane row
-tiles (`row-tiles-64x128-lanes`, `chained_lanes.cuh`,
-`chained::lanes`). The bank is `row-tiles-64x128-groups` with each row's
+The direct gate small and wide queues, the streamed module's gate small
+and wide queues, the resident8 gate and the absorbing gate small queue
+have builds reading their bank in quad-lane row tiles
+(`row-tiles-64x128-lanes`, `chained_lanes.cuh`, `chained::lanes`). The bank is `row-tiles-64x128-groups` with each row's
 64-byte K block reordered (`kernel_core::transform::QuadLaneLayout`):
 byte `16 * g + 4 * q + t` moves to `16 * t + 4 * g + q`.
 
@@ -608,6 +608,13 @@ compares them with the per-code rules and the lane bytes with the shuffled
 ones on the host. `tests/chained_lanes.rs` builds the Flash backbone's four
 queues beside their row-tiled twins: no spills, no more registers, as many
 BF16 MMAs and no shuffles.
+
+The column kernel's quad-lane build (`chained::Config`'s `Lanes`,
+`quantized::Projection::lanes_entry`) changes only its tiled load. Each
+thread loads its eight bytes of the step's 64-K half of a tile row, which
+are that half's row-tiled bytes `4 * b + part`, and stores each converted
+BF16 pair where the row-tiled load stores it, with the same scale. The
+shared tile, and so everything after the load, is the row-tiled kernel's.
 
 ## Native block-scaled prefill tiles
 

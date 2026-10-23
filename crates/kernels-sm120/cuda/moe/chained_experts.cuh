@@ -61,9 +61,10 @@ constexpr int kStride = 72;    // BF16 elements per shared row (conflict-free 32
 // One instance's constants. `Experts` is 1 for a dense projection. Gate/up
 // weights of an expert are [2 N, K]: N gate rows, then N up rows. `Tiles`
 // reads a grouped MXFP4 gate/up bank stored in 64-row by 128-K tiles
-// (`row-tiles-64x128-groups`) rather than rows.
+// (`row-tiles-64x128-groups`) rather than rows; with `Lanes` too, those
+// tiles' code bytes are in quad-lane order (`row-tiles-64x128-lanes`).
 template<Weights W, Projection P, int Experts, int TopK, int N, int K, int RowTile,
-         bool Grouped, class Clamp, bool Tiles = false>
+         bool Grouped, class Clamp, bool Tiles = false, bool Lanes = false>
 struct Config {
   static constexpr Weights weights = W;
   static constexpr bool gate_up = P == Projection::gate_up;
@@ -77,6 +78,7 @@ struct Config {
   static constexpr bool grouped = Grouped;
   using clamp = Clamp;
   static constexpr bool tiles = Tiles;
+  static constexpr bool lanes = Lanes;
   static constexpr int halves = gate_up ? 2 : 1;
   static constexpr int weight_rows = halves * N;
   static constexpr int tile_rows = halves * kTileN;
@@ -87,6 +89,7 @@ struct Config {
   static_assert(W != Weights::fp8_block128 || N % 128 == 0, "whole 128-row scale blocks");
   static_assert(!Tiles || (W == Weights::mxfp4 && P == Projection::gate_up && Grouped),
                 "row tiles hold a grouped MXFP4 gate/up bank");
+  static_assert(!Lanes || Tiles, "quad lanes order the bytes of row tiles");
 };
 
 __device__ __forceinline__ uint32_t lds32(const uint16_t* p) {
@@ -187,6 +190,32 @@ __device__ __forceinline__ void load_weights(
       const uint4 v = *reinterpret_cast<const uint4*>(
           weight + (global * K + k0 + part * 8) * 2);
       *reinterpret_cast<uint4*>(&tile[row][part * 8]) = v;
+    }
+  } else if constexpr (C::lanes) {
+    // The row-tiled load below, from quad-lane row tiles: a tile row's
+    // byte 16g + 4q + t is at 16t + 4g + q, so part `part`'s eight bytes
+    // of the step's half of a tile row are that half's row-tiled bytes
+    // 4b + part (b = 0..7), the BF16 pairs of the step's K 8b + 2 part,
+    // in 32-K groups 2 half and 2 half + 1. Each pair is stored where the
+    // row-tiled load stores it, with the same scale, so `tile` is the same.
+#pragma unroll
+    for (int i = 0; i < C::tile_rows * 4 / kThreads; ++i) {
+      const int chunk = threadIdx.x + i * kThreads;
+      const int row = chunk >> 2, part = chunk & 3;
+      const int r = row & (kTileN - 1), half = (k0 % 128) / 64;
+      const uint64_t strip =
+          (uint64_t(expert) * C::weight_rows + weight_row<C>(n0, row - r)) / 64;
+      const uint64_t stored = strip * (K / 128) + k0 / 128;
+      const uint2 codes = *reinterpret_cast<const uint2*>(
+          weight + stored * 4096 + r * 64 + part * 16 + half * 8);
+      const uint32_t scales = *reinterpret_cast<const uint32_t*>(local_scales + stored * 256 + r * 4);
+      const uint8_t low = uint8_t(scales >> (16 * half)), high = uint8_t(scales >> (16 * half + 8));
+#pragma unroll
+      for (int b = 0; b < 8; ++b) {
+        const uint32_t word = b < 4 ? codes.x : codes.y;
+        *reinterpret_cast<uint32_t*>(&tile[row][8 * b + 2 * part]) =
+            convert::scaled_mxfp4_bf16x2(uint8_t(word >> (8 * (b & 3))), b < 4 ? low : high);
+      }
     }
   } else if constexpr (C::tiles) {
     // The row-major MXFP4 load below, from row tiles: each 64-row half of

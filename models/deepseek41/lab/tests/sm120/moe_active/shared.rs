@@ -7,11 +7,14 @@ use kernels_sm120::moe::chained::{RoutedSum, RoutedSumOutput};
 pub fn weights(a: &mut Arena<'_>) -> LabResult<[QuantizedWeights<View>; 3]> {
     let mut make = |n: usize, k: usize, seed: usize| -> LabResult<QuantizedWeights<View>> {
         let codes = if a.session.is_some() {
-            a.bytes(
-                &(0..n * k)
-                    .map(|i| ((i.wrapping_mul(seed) % 96) as u8) | if i % 3 == 0 { 128 } else { 0 })
-                    .collect::<Vec<_>>(),
-            )?
+            let row_major = (0..n * k)
+                .map(|i| ((i.wrapping_mul(seed) % 96) as u8) | if i % 3 == 0 { 128 } else { 0 })
+                .collect::<Vec<_>>();
+            let packed =
+                kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout { groups: 1, n, k }
+                    .pack(&row_major)
+                    .map_err(|e| e.to_string())?;
+            a.bytes(&packed)?
         } else {
             a.filled((n * k) as u64, 0)?
         };
@@ -39,7 +42,7 @@ pub fn append(
     weights: [QuantizedWeights<View>; 3],
 ) -> LabResult<()> {
     let fold = bundle_deepseek41::sm120::mxfp8_fold::entries(&FLASH, 4)?;
-    let mut backend = Sm120::new();
+    let mut backend = Sm120::new().with_packed_fold_weights();
     for e in &fold {
         backend = backend.with_mxfp8_fold(e.clone());
     }

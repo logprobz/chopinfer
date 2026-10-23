@@ -614,8 +614,9 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// the unwired acceptance reducer, and the vision encoder's, which only
-    /// an encoder instance loads.
+    /// the unwired acceptance reducer, the one-launch HC boundary, which the
+    /// column-block pair replaced (packaged and locked for the labs), and the
+    /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         (![
@@ -639,6 +640,7 @@ impl crate::Kernels {
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
+            && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)

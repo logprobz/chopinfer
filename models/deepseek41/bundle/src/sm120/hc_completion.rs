@@ -1,5 +1,7 @@
 //! One-launch decode HC boundaries replacing the served chain producer and
-//! fused finish/norm tail: the tail layout and the split norm layout.
+//! fused finish/norm tail: the tail layout and the split norm layout. The
+//! column-block pair (`hc_cols`) replaced them at C1 and C8; the cubin is
+//! still built, locked and packaged for the labs, and no instance loads it.
 use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::completion::{self, Entry, Layout, Mutation};
 use model_deepseek41_contract::geometry::FLASH;

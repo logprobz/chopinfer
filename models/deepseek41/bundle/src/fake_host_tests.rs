@@ -1162,6 +1162,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// regions: every other line is identical once handle, symbol, stream,
 /// event and graph ids are mapped, no offset or length changes, and the
 /// only handles that merge are each rank's members of one region.
+/// No instance loads the retired one-launch HC boundary module: ten
+/// resolves and eleven releases per rank fewer, ids shifted only.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1228,6 +1230,8 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
                     !cubin.starts_with("position_candidates_runtime_"),
                     "default loaded {cubin}"
                 );
+                // The column-block pair retired the one-launch HC boundary.
+                assert_ne!(*cubin, crate::sm120::hc_completion::CUBIN, "{topology}");
                 assert!(crate::serves(cubin, &shape), "{topology}: {cubin}");
             }
             let lines = host.device.journal.borrow().clone();
@@ -1351,6 +1355,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// window KV projection beside the query chain, the row-local rings, the
 /// cluster folds and the status folds change it as in `FLASH_JOURNALS`, and
 /// so do the shared fold storage and the scratch regions.
+/// cluster folds, the status folds and the retired one-launch module change
+/// it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

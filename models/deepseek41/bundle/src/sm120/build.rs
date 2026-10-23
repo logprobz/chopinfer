@@ -45,7 +45,7 @@ mod engram_hash_rows;
 mod hc;
 #[allow(dead_code, reason = "the bundle selects the measured column pairs")]
 mod hc_cols;
-#[allow(dead_code, reason = "the bundle selects the one-launch boundary")]
+#[allow(dead_code, reason = "packaged for the labs; no instance loads it")]
 mod hc_completion;
 #[allow(dead_code)]
 mod hc_expand_mix;

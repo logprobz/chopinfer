@@ -428,7 +428,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// one-launch boundaries per rank into the column producer (grid 40 x 1)
 /// and the split finish (grid 2 x 1, 1024 threads) over the same operands,
 /// without the ticket; graph pieces keep their count and gain those nodes,
-/// and no other line changes.
+/// and no other line changes. No instance then loads the one-launch module:
+/// ten resolves and eleven releases per rank fewer, ids shifted only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (21367, 0xdc729a9318532df4)),
     (Ranks::TP4, (53919, 0xaf07dffefb7f79c9)),

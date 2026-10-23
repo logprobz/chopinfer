@@ -82,7 +82,8 @@ use super::*;
 // (grid 2 x 8, 1024 threads): the producer over the boundary's first seven
 // operands and its workspace and live count, the finish over the tail's own;
 // the ticket is no longer bound. Graph pieces keep their count and gain those
-// nodes; no other line changes.
+// nodes; no other line changes. No instance then loads the one-launch
+// module, which shifts the excerpts' resource ids only.
 // The cluster folds' sixteen resolves shift ids only. At 16 and 32 rows the
 // WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
 // WO_b's ring pair become their cluster admit/fold pairs (1280 launches,

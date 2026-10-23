@@ -688,7 +688,9 @@ fn census_items_measure_raw_scale_sections() {
                     ..record.clone()
                 },
             };
-            let (counts, read) = measure_census_item_v1(&checkpoint, &item).unwrap();
+            let [(counts, read)] = measure_census_v1(&checkpoint, &[&item]).unwrap()[..] else {
+                panic!("one item measured");
+            };
             let bytes = &raw[record.arena_offset as usize..][..record.byte_length as usize];
             assert_eq!(
                 counts,
@@ -726,4 +728,40 @@ fn census_items_measure_raw_scale_sections() {
     let mut output = vec![0; image.arena_bytes(0) as usize];
     let error = image.read(0, &mut output).unwrap_err();
     assert!(error.contains("the plan counted"), "{error}");
+}
+
+/// Every rank's slice of one matrix reads its scale tensor once.
+#[test]
+fn census_items_of_one_scale_tensor_share_one_read() {
+    use runtime_bundle_abi::weight_plan::{CENSUS_SCALE_ROW_OFFSET_V1, CensusItemV1};
+    let (root, plans, _, _) = fixture(2);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let items: Vec<CensusItemV1> = plans
+        .iter()
+        .flat_map(|plan| &plan.records)
+        .filter_map(|record| {
+            let WeightTransform::PackedOperand(operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!("the fixture packs every record");
+            };
+            (operand.section == PackedSection::LocalScales).then(|| {
+                let (rows, groups) = operand.plan.scale_shape();
+                CensusItemV1 {
+                    kind: CENSUS_SCALE_ROW_OFFSET_V1,
+                    rows: rows as u64,
+                    groups: groups as u64,
+                    record: WeightRecordV1 {
+                        arena_offset: 0,
+                        ..record.clone()
+                    },
+                }
+            })
+        })
+        .collect();
+    // Two experts, four ranks each: two scale tensors of 2048 bytes.
+    assert_eq!(items.len(), 8);
+    let borrowed: Vec<&CensusItemV1> = items.iter().collect();
+    let measured = measure_census_v1(&checkpoint, &borrowed).unwrap();
+    assert_eq!(measured.iter().map(|(_, read)| read).sum::<u64>(), 2 * 2048);
 }

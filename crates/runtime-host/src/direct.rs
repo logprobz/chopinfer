@@ -2777,14 +2777,99 @@ fn digest_v1(bytes: &[u8]) -> [u8; 32] {
 /// One census item's counts per width and the source bytes it read.
 type CensusMeasureV1 = ([u64; 3], u64);
 
+/// A census item ready to measure: its record checked against the
+/// checkpoint, where each source lies, and the source a packed operand's
+/// standalone scales come from.
+struct CensusRecordV1<'a> {
+    item: &'a CensusItemV1,
+    prepared: PreparedRecord,
+    /// `(shard, begin, length)` of each source.
+    sources: Vec<(usize, u64, u64)>,
+    scales: Option<usize>,
+}
+
+impl CensusRecordV1<'_> {
+    fn error(&self, reason: impl std::fmt::Display) -> String {
+        format!("census item over {:?}: {reason}", self.item.record.sources)
+    }
+}
+
+fn census_record_v1<'a>(
+    checkpoint: &DirectCheckpointV1,
+    item: &'a CensusItemV1,
+) -> Result<CensusRecordV1<'a>, String> {
+    let error = |reason: String| format!("census item over {:?}: {reason}", item.record.sources);
+    if item.kind != CENSUS_SCALE_ROW_OFFSET_V1 {
+        return Err(error(format!("unknown census kind {}", item.kind)));
+    }
+    let mut sources = Vec::with_capacity(item.record.sources.len());
+    let mut described = Vec::with_capacity(item.record.sources.len());
+    for source in &item.record.sources {
+        let shard = checkpoint
+            .shards
+            .get(source.file as usize)
+            .ok_or_else(|| error(format!("names file {}", source.file)))?;
+        let (tensor, begin) = shard
+            .tensors
+            .get(&source.tensor)
+            .ok_or_else(|| error(format!("tensor {} is not in {}", source.tensor, shard.name)))?;
+        sources.push((source.file as usize, *begin, tensor.byte_length));
+        described.push(tensor.clone());
+    }
+    let transform = WeightTransform::decode(item.record.transform, &item.record.params)
+        .map_err(|e| error(e.0))?;
+    if matches!(transform, WeightTransform::Bundle(_)) {
+        return Err(error("a census measures shared transforms only".into()));
+    }
+    let prepared = WeightRecord {
+        transform,
+        sources: described,
+        axis: item.record.axis,
+        ranges: item.record.ranges.clone(),
+        stored_shape: item.record.stored_shape.clone(),
+    }
+    .prepare(item.record.byte_length)
+    .map_err(|e| error(e.0))?;
+    let scales = match &prepared.record().transform {
+        WeightTransform::PackedOperand(operand) => {
+            operand.independent_scale_source(prepared.record())
+        }
+        _ => None,
+    };
+    Ok(CensusRecordV1 {
+        item,
+        prepared,
+        sources,
+        scales,
+    })
+}
+
 /// Measures `items` on worker threads: each one's counts and the source
-/// bytes it read.
+/// bytes it read. Items whose packed scales stand alone and come from one
+/// tensor (every rank's slice of a matrix) are measured together from one
+/// read of it.
 fn measure_census_v1(
     checkpoint: &DirectCheckpointV1,
     items: &[&CensusItemV1],
 ) -> Result<Vec<CensusMeasureV1>, String> {
+    let records = items
+        .iter()
+        .map(|item| census_record_v1(checkpoint, item))
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut groups: BTreeMap<(usize, u64), Vec<usize>> = BTreeMap::new();
+    let mut alone = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        match record.scales {
+            Some(source) => {
+                let (shard, begin, _) = record.sources[source];
+                groups.entry((shard, begin)).or_default().push(index);
+            }
+            None => alone.push(vec![index]),
+        }
+    }
+    let work: Vec<Vec<usize>> = groups.into_values().chain(alone).collect();
     let next = AtomicUsize::new(0);
-    let threads = process_cpus_v1().clamp(1, items.len().max(1));
+    let threads = process_cpus_v1().clamp(1, work.len().max(1));
     let results: Vec<Result<Vec<(usize, CensusMeasureV1)>, String>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {
@@ -2792,10 +2877,10 @@ fn measure_census_v1(
                     let mut done = Vec::new();
                     loop {
                         let index = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(item) = items.get(index) else {
+                        let Some(group) = work.get(index) else {
                             return Ok(done);
                         };
-                        done.push((index, measure_census_item_v1(checkpoint, item)?));
+                        done.extend(measure_census_group_v1(checkpoint, &records, group)?);
                     }
                 })
             })
@@ -2818,48 +2903,15 @@ fn measure_census_v1(
     Ok(measured)
 }
 
-/// One item's counts: its record produced as the load would produce it
-/// (only the scale tensor read when the record's scales stand alone) and
-/// measured as its kind says.
-fn measure_census_item_v1(
+/// Measures the items of `group`, which share their standalone scale source
+/// when there are several: each record produced as the load would produce
+/// it (from that source alone when it can be) and measured as its kind says.
+fn measure_census_group_v1(
     checkpoint: &DirectCheckpointV1,
-    item: &CensusItemV1,
-) -> Result<CensusMeasureV1, String> {
-    let error = |reason: String| format!("census item over {:?}: {reason}", item.record.sources);
-    if item.kind != CENSUS_SCALE_ROW_OFFSET_V1 {
-        return Err(error(format!("unknown census kind {}", item.kind)));
-    }
-    let mut sources = Vec::with_capacity(item.record.sources.len());
-    let mut described = Vec::with_capacity(item.record.sources.len());
-    for source in &item.record.sources {
-        let shard = checkpoint
-            .shards
-            .get(source.file as usize)
-            .ok_or_else(|| error(format!("names file {}", source.file)))?;
-        let (tensor, begin) = shard
-            .tensors
-            .get(&source.tensor)
-            .ok_or_else(|| error(format!("tensor {} is not in {}", source.tensor, shard.name)))?;
-        sources.push((shard, *begin, tensor.byte_length));
-        described.push(tensor.clone());
-    }
-    let transform = WeightTransform::decode(item.record.transform, &item.record.params)
-        .map_err(|e| error(e.0))?;
-    if matches!(transform, WeightTransform::Bundle(_)) {
-        return Err(error("a census measures shared transforms only".into()));
-    }
-    let prepared = WeightRecord {
-        transform,
-        sources: described,
-        axis: item.record.axis,
-        ranges: item.record.ranges.clone(),
-        stored_shape: item.record.stored_shape.clone(),
-    }
-    .prepare(item.record.byte_length)
-    .map_err(|e| error(e.0))?;
-    let bytes_read = AtomicU64::new(0);
-    let mut read = |index: usize, offset: u64, buffer: &mut [u8]| {
-        let (shard, begin, length) = sources[index];
+    records: &[CensusRecordV1<'_>],
+    group: &[usize],
+) -> Result<Vec<(usize, CensusMeasureV1)>, String> {
+    let read_at = |(shard, begin, length): (usize, u64, u64), offset: u64, buffer: &mut [u8]| {
         if offset
             .checked_add(buffer.len() as u64)
             .is_none_or(|end| end > length)
@@ -2868,37 +2920,62 @@ fn measure_census_item_v1(
                 "census read outside its tensor".into(),
             ));
         }
+        let shard = &checkpoint.shards[shard];
         shard
             .file
             .read_exact_at(buffer, begin + offset)
-            .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
-        bytes_read.fetch_add(buffer.len() as u64, Ordering::Relaxed);
-        Ok(())
+            .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))
     };
-    let record = prepared.record();
-    let independent = match &record.transform {
-        WeightTransform::PackedOperand(operand) => operand
-            .independent_scale_source(record)
-            .map(|index| (operand, index)),
-        _ => None,
-    };
-    let bytes = match independent {
-        Some((operand, index)) => {
-            let mut scales = vec![0; sources[index].2 as usize];
-            read(index, 0, &mut scales).map_err(|e| error(e.0))?;
-            match operand
-                .independent_scales(record, &scales, Vec::new())
-                .map_err(|e| error(e.0))?
-            {
-                Some(bytes) => bytes,
-                None => prepared.produce_whole(&mut read).map_err(|e| error(e.0))?,
+    // The shared standalone scale tensor, read once for the group.
+    let mut shared = None;
+    let mut measured = Vec::with_capacity(group.len());
+    for &index in group {
+        let record = &records[index];
+        let mut read_bytes = 0;
+        let whole = |record: &CensusRecordV1<'_>, read_bytes: &mut u64| {
+            let mut read = |source: usize, offset: u64, buffer: &mut [u8]| {
+                read_at(record.sources[source], offset, buffer)?;
+                *read_bytes += buffer.len() as u64;
+                Ok(())
+            };
+            record
+                .prepared
+                .produce_whole(&mut read)
+                .map_err(|e| record.error(e.0))
+        };
+        let bytes = match record.scales {
+            Some(source) => {
+                if shared.is_none() {
+                    let mut scales = vec![0; record.sources[source].2 as usize];
+                    read_at(record.sources[source], 0, &mut scales)
+                        .map_err(|e| record.error(e.0))?;
+                    read_bytes += scales.len() as u64;
+                    shared = Some(scales);
+                }
+                let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform
+                else {
+                    unreachable!("standalone scales come from packed operands");
+                };
+                let scales = shared.as_deref().expect("read above");
+                match operand
+                    .independent_scales(record.prepared.record(), scales, Vec::new())
+                    .map_err(|e| record.error(e.0))?
+                {
+                    Some(bytes) => bytes,
+                    None => whole(record, &mut read_bytes)?,
+                }
             }
-        }
-        None => prepared.produce_whole(&mut read).map_err(|e| error(e.0))?,
-    };
-    let counts = kernel_core::precision::scale_offset::census(&bytes, item.rows, item.groups)
-        .map_err(|e| error(e.to_string()))?;
-    Ok((counts, bytes_read.into_inner()))
+            None => whole(record, &mut read_bytes)?,
+        };
+        let counts = kernel_core::precision::scale_offset::census(
+            &bytes,
+            record.item.rows,
+            record.item.groups,
+        )
+        .map_err(|e| record.error(e))?;
+        measured.push((index, (counts, read_bytes)));
+    }
+    Ok(measured)
 }
 
 /// The checkpoint this process loads (`serve --model` or `--checkpoint`),

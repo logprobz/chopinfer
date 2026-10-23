@@ -121,8 +121,16 @@ fn row_bases(row: &[u8]) -> ([u8; 3], [u64; 3]) {
     if span <= 2 {
         return (bases, exceptions);
     }
-    // Counts of each value above the row's lowest.
-    let mut counts = [0_u32; 256];
+    // Counts of each value above the row's lowest. Trained scales span a
+    // few values, so the common case clears a small array per row.
+    let mut small = [0_u32; 32];
+    let mut large = Vec::new();
+    let counts: &mut [u32] = if span <= small.len() {
+        &mut small[..span]
+    } else {
+        large.resize(span, 0);
+        &mut large
+    };
     for &scale in row {
         counts[usize::from(scale - low)] += 1;
     }

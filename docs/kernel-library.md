@@ -273,6 +273,20 @@ weight scales before its own `griddepcontrol.wait` must keep binding raw
 banks: in DeepSeek, that is the one-row floor kernel, which serves only the
 drafter's banks.
 
+### Packed FP8 fold layout
+
+The MXFP8 fold kernels read E4M3 codes in `mxfp8-fold-packed-8x128-v1`:
+eight-row tiles of 128-K folds, 32 lanes each, with every lane owning one
+row and every fourth 4-byte word of it. Today each bundle builds that copy
+at create with the `*_prepare_v1` kernels, beside the row-major codes that
+the prefill and remaining decode readers use. The closed-set weight
+transform `MXFP8_FOLD_PACKED` (`kernel_core::weight_transform::mxfp8_fold`)
+writes the same permutation at load from the checkpoint's codes, for N
+divisible by 8 and K divisible by 64, and its CPU oracle and a lab parity
+test pin it to the prepare kernels. No weight plan uses it yet: a
+projection can store only the packed layout once every reader of its codes
+reads that layout.
+
 ## Ownership and source changes
 
 `kernel-build-report.json` beside the cubins records the transitive

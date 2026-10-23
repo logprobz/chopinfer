@@ -19,15 +19,19 @@
 // With Config's Tiles the weights are stored in 64-row by 128-K tiles
 // (`row-tiles-64x128-groups`): a weight row's 128-K stage is one 64-byte
 // tile row and its four scale bytes one aligned word, so each copy moves
-// the same bytes into the same shared slot.
+// the same bytes into the same shared slot. With Lanes too the tile rows'
+// bytes are in quad-lane order (`row-tiles-64x128-lanes`): a thread copies
+// whole tile rows and, after its own wait, restores their row-tiled order
+// in place (`untangle`) before the stage barrier, so every warp reads the
+// same shared bytes.
 namespace chop::moe::native_grouped {
 namespace lay = layout;
 
 template<int Experts, int TopK, int K, int N, int Halves, int Capacity, class Clamp,
-         bool Tiles = false>
+         bool Tiles = false, bool Lanes = false>
 struct Config {
   static constexpr int experts = Experts, top_k = TopK, k = K, n = N, halves = Halves;
-  static constexpr bool tiles = Tiles;
+  static constexpr bool tiles = Tiles, lanes = Lanes;
   static constexpr int capacity = Capacity;
   static constexpr bool gate_up = Halves == 2;
   using clamp = Clamp;
@@ -43,6 +47,7 @@ struct Config {
   static_assert(int64_t(Capacity) * TopK < (int64_t(1) << 31));
   static_assert(!Tiles || (K % lay::StageK == 0 && weight_rows % 64 == 0 && scale_words == 1),
                 "row tiles need whole 64x128 tiles");
+  static_assert(!Lanes || Tiles, "quad lanes order the bytes of row tiles");
 };
 
 template<int RowWarps, int ColWarps, int Stages>
@@ -172,16 +177,30 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
     copy16(st.act + lay::act_store(r, c),
            input + (valid ? uint64_t(source) * C::k + k : 0), valid);
   }
-  for (int v = threadIdx.x; v < WR * 4; v += T::threads) {
-    const int w = v >> 2, q = v & 3, col = column + w % TC, byte = k0 / 2 + q * 16;
-    const bool valid = col < C::n && byte < C::k / 2;
-    const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
-    if constexpr (C::tiles) {
-      const uint64_t at = (row / 64 * C::blocks + block) * 4096 + row % 64 * 64 + q * 16;
-      copy16(st.weight + lay::weight_store(w, q), weight + (valid ? at : 0), valid);
-    } else {
-      copy16(st.weight + lay::weight_store(w, q),
-             weight + (valid ? row * (C::k / 2) + byte : 0), valid);
+  if constexpr (C::lanes) {
+    // Whole tile rows per thread, lane chunk q into chunk q's slot; the
+    // copying thread untangles them (`untangle`, the same assignment).
+    for (int w = threadIdx.x; w < WR; w += T::threads) {
+      const int col = column + w % TC;
+      const bool valid = col < C::n;
+      const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
+      const uint64_t at = (row / 64 * C::blocks + block) * 4096 + row % 64 * 64;
+#pragma unroll
+      for (int q = 0; q < 4; ++q)
+        copy16(st.weight + lay::weight_store(w, q), weight + (valid ? at + q * 16 : 0), valid);
+    }
+  } else {
+    for (int v = threadIdx.x; v < WR * 4; v += T::threads) {
+      const int w = v >> 2, q = v & 3, col = column + w % TC, byte = k0 / 2 + q * 16;
+      const bool valid = col < C::n && byte < C::k / 2;
+      const uint64_t row = uint64_t(expert) * C::weight_rows + (w / TC) * C::n + col;
+      if constexpr (C::tiles) {
+        const uint64_t at = (row / 64 * C::blocks + block) * 4096 + row % 64 * 64 + q * 16;
+        copy16(st.weight + lay::weight_store(w, q), weight + (valid ? at : 0), valid);
+      } else {
+        copy16(st.weight + lay::weight_store(w, q),
+               weight + (valid ? row * (C::k / 2) + byte : 0), valid);
+      }
     }
   }
   constexpr int SW = C::scale_words;
@@ -202,6 +221,32 @@ __device__ __forceinline__ void issue(Shared<C, T>& s, int slot, int block, int 
         copy_scale(&st.weight_scale[w][word], weight_scales, row * C::groups + k0 / lay::GroupK,
                    word, weight_scale_bytes, col < C::n);
       }
+    }
+  }
+}
+
+// Restores the row-tiled order of the quad-lane tile rows this thread
+// copied into stage `slot` (`issue`'s assignment), once its own copies have
+// landed: word g of the four lane chunks, transposed as bytes, is row-tiled
+// chunk g. No other thread reads those rows before the stage barrier.
+template<class C, class T>
+__device__ __forceinline__ void untangle(Shared<C, T>& s, int slot) {
+  constexpr int WR = tile_weight_rows<C, T>;
+  auto& st = s.stage[slot];
+  for (int w = threadIdx.x; w < WR; w += T::threads) {
+    uint4 lane[4];
+#pragma unroll
+    for (int q = 0; q < 4; ++q)
+      lane[q] = *reinterpret_cast<const uint4*>(st.weight + lay::weight_store(w, q));
+    uint4 chunk[4] = {
+        make_uint4(lane[0].x, lane[1].x, lane[2].x, lane[3].x),
+        make_uint4(lane[0].y, lane[1].y, lane[2].y, lane[3].y),
+        make_uint4(lane[0].z, lane[1].z, lane[2].z, lane[3].z),
+        make_uint4(lane[0].w, lane[1].w, lane[2].w, lane[3].w)};
+#pragma unroll
+    for (int g = 0; g < 4; ++g) {
+      lay::transpose_bytes(chunk[g].x, chunk[g].y, chunk[g].z, chunk[g].w);
+      *reinterpret_cast<uint4*>(st.weight + lay::weight_store(w, g)) = chunk[g];
     }
   }
 }
@@ -434,6 +479,7 @@ __device__ void compute(void* arena, const uint8_t* input, const uint8_t* weight
 #pragma unroll 1
     for (int b = 0; b < C::blocks; ++b) {
       wait<S - 2>();
+      if constexpr (C::lanes) untangle(s, b % S);
       __syncthreads();
       // The slot of block b - 1, which every thread has finished reading.
       if (Tune::global && b + S - 1 < C::blocks)

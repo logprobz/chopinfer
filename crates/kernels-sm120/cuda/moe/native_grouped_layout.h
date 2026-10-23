@@ -59,6 +59,17 @@ CHOP_NATIVE_INLINE int weight_load(int w, int q, int t) {
   return w * WeightRowBytes + weight_chunk(w, q) * 16 + t * 4;
 }
 
+// The 4x4 transpose of four words as bytes: byte i of word j becomes byte
+// j of word i.
+CHOP_NATIVE_INLINE void transpose_bytes(uint32_t& w0, uint32_t& w1, uint32_t& w2, uint32_t& w3) {
+  const uint32_t a = byte_perm(w0, w1, 0x5140), b = byte_perm(w0, w1, 0x7362);
+  const uint32_t c = byte_perm(w2, w3, 0x5140), d = byte_perm(w2, w3, 0x7362);
+  w0 = byte_perm(a, c, 0x5410);
+  w1 = byte_perm(a, c, 0x7632);
+  w2 = byte_perm(b, d, 0x5410);
+  w3 = byte_perm(b, d, 0x7632);
+}
+
 // Eight packed E2M1 codes (element 2j in the low nibble of byte j) into the
 // instruction's byte containers, each code in bits 5:2: `low` holds
 // elements 0..3, `high` elements 4..7.

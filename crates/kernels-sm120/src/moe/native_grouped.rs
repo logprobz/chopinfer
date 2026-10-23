@@ -411,6 +411,29 @@ pub fn row_tiles_entry(shape: &Shape, entry: &EntrySpec) -> Result<EntrySpec, Re
     Ok(e)
 }
 
+/// The symbol of compute entry `symbol`'s quad-lane build.
+pub fn lanes_symbol(symbol: &str) -> String {
+    format!("{}_lanes_v1", symbol.trim_end_matches("_v1"))
+}
+
+/// [`row_tiles_entry`] with the tiles' code bytes in quad-lane order
+/// (`row-tiles-64x128-lanes`, `Config`'s `Lanes`): each thread copies whole
+/// tile rows and restores their row-tiled order in shared memory before
+/// the stage barrier, so its ABI, launch and arithmetic are the row-tiled
+/// entry's.
+pub fn lanes_entry(shape: &Shape, entry: &EntrySpec) -> Result<EntrySpec, Refusal> {
+    let mut e = row_tiles_entry(shape, entry)?;
+    let config = shape.config();
+    let tiles = format!("{},true>", &config[..config.len() - 1]);
+    assert!(e.body.contains(&tiles));
+    e.symbol = lanes_symbol(&entry.symbol);
+    e.body = e.body.replace(
+        &tiles,
+        &format!("{},true,true>", &config[..config.len() - 1]),
+    );
+    Ok(e)
+}
+
 /// One cubin of `instances`; `lab` adds the lab variants and the probe.
 pub fn cubin_spec(
     name: &str,

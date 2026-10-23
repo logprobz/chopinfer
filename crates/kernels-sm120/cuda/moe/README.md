@@ -584,9 +584,10 @@ f64 oracle is `kernel_core::gated_mlp_oracle`.
 The direct gate small and wide queues, the streamed module's gate small
 and wide queues, the resident8 gate and the absorbing gate small queue
 have builds reading their bank in quad-lane row tiles
-(`row-tiles-64x128-lanes`, `chained_lanes.cuh`, `chained::lanes`). The bank is `row-tiles-64x128-groups` with each row's
-64-byte K block reordered (`kernel_core::transform::QuadLaneLayout`):
-byte `16 * g + 4 * q + t` moves to `16 * t + 4 * g + q`.
+(`row-tiles-64x128-lanes`, `chained_lanes.cuh`, `chained::lanes`). The
+bank is `row-tiles-64x128-groups` with each row's 64-byte K block
+reordered (`kernel_core::transform::QuadLaneLayout`): byte
+`16 * g + 4 * q + t` moves to `16 * t + 4 * g + q`.
 
 - Lane t of a quad then loads exactly the bytes it converts. Word g of its
   16-byte load holds group g's bytes, and one 4-byte load holds the row's
@@ -615,6 +616,17 @@ thread loads its eight bytes of the step's 64-K half of a tile row, which
 are that half's row-tiled bytes `4 * b + part`, and stores each converted
 BF16 pair where the row-tiled load stores it, with the same scale. The
 shared tile, and so everything after the load, is the row-tiled kernel's.
+
+The native prefill gate/up tiles' quad-lane builds (`native_grouped.cuh`'s
+`Lanes`, `native_grouped::lanes_entry`) cannot convert in place: the
+block-scaled MMA takes whole 4-byte words of a row's K. Each thread copies
+whole tile rows into the row-tiled shared slots instead and, after its own
+stage wait, restores their row-tiled order in place (`untangle`: word g of
+the four lane chunks, transposed as bytes, is chunk g) before the stage
+barrier. Every warp then reads the row-tiled build's shared bytes, so the
+outputs are its bit for bit. `tests/native_grouped_layout.cpp` checks the
+untangle on the host, and `tests/native_grouped_build.rs` builds the fused
+ceil and scanned tiles beside their row-tiled twins.
 
 ## Native block-scaled prefill tiles
 

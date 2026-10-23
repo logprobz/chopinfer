@@ -154,6 +154,28 @@ int main() {
   assert(emulate(false) == 800);
   // Negative control: natural-order activation fragments must disagree.
   assert(emulate(true) == 0);
-  std::printf("NATIVE_LAYOUT_COMPLETE groups=800 negative_control_rejected=1\n");
+  // A quad-lane tile row (kernel_core::transform::QuadLaneLayout: byte
+  // 16g + 4q + t at 16t + 4g + q) untangles to its row-tiled bytes: word g
+  // of the four lane chunks, transposed as bytes, is chunk g. Copied as
+  // they are, the lane chunks differ.
+  int untangled = 0, tangled = 0;
+  std::mt19937 bytes(0x6c616e65);
+  for (int trial = 0; trial < 256; ++trial) {
+    uint8_t row[64], lanes[64];
+    for (auto& v : row) v = uint8_t(bytes());
+    if (trial == 0) for (int i = 0; i < 64; ++i) row[i] = uint8_t(i);
+    for (int i = 0; i < 64; ++i) lanes[(i % 4) * 16 + (i / 16) * 4 + (i / 4) % 4] = row[i];
+    uint32_t chunk[4][4];
+    std::memcpy(chunk, lanes, sizeof chunk);
+    tangled += std::memcmp(lanes, row, 64) != 0;
+    for (int g = 0; g < 4; ++g) {
+      uint32_t w[4] = {chunk[0][g], chunk[1][g], chunk[2][g], chunk[3][g]};
+      lay::transpose_bytes(w[0], w[1], w[2], w[3]);
+      assert(std::memcmp(w, row + 16 * g, 16) == 0);
+    }
+    ++untangled;
+  }
+  assert(tangled == 256);
+  std::printf("NATIVE_LAYOUT_COMPLETE groups=800 negative_control_rejected=1 untangled=%d\n", untangled);
   return 0;
 }

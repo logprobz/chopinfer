@@ -44,7 +44,9 @@ use model_compiler_sdk::quantization::declared::{self, Admitted};
 use model_compiler_sdk::quantization::import::ImportedOperand;
 use model_compiler_sdk::quantization::projection::metadata::HeaderCompanionRules;
 use model_compiler_sdk::quantization::projection::{RecordPolicy, bind_record_policy, records};
-use model_compiler_sdk::weight_plan::{RequestCache, RequestFiles, RequestKey, plan_identity};
+use model_compiler_sdk::weight_plan::{
+    RequestCache, RequestFiles, RequestKey, census as scale_census, plan_identity,
+};
 use projection_spec::ProjectionKind;
 use projection_spec::bind::{BoundDeclaration, CheckpointMetadata};
 use projection_spec::derive::{
@@ -52,7 +54,8 @@ use projection_spec::derive::{
 };
 use projection_spec::registry::Registry;
 use runtime_bundle_abi::weight_plan::{
-    NamedBytesV1, PlannedViewV1, ViewPlacementV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
+    NamedBytesV1, PlannedViewV1, ViewPlacementV1, WeightCensusV1, WeightPlanRequestV1,
+    WeightPlanV1, WeightRecordV1,
 };
 use serde_json::{Value, json};
 
@@ -702,9 +705,217 @@ fn index(
     .map_err(|e| e.to_string())
 }
 
+/// Whether `view` is a routed expert bank's local scales, which a census
+/// may let the plan store encoded: the main layers' banks, one packed
+/// matrix per piece, each admitted by its format. DSpark's banks stay raw.
+fn encodable(view: &View) -> bool {
+    !view.mapped
+        && view.name.starts_with("layers.")
+        && view.name.contains(".ffn.experts.")
+        && view.name.ends_with(".scale")
+        && !view.pieces.is_empty()
+        && view.pieces.iter().all(|piece| {
+            matches!(
+                &piece.transform,
+                WeightTransform::PackedOperand(operand)
+                    if operand.section == PackedSection::LocalScales
+                        && scale_census::scale_code(operand).is_some()
+            )
+        })
+}
+
+fn packed(piece: &Piece) -> &kernel_core::weight_transform::PackedOperand {
+    match &piece.transform {
+        WeightTransform::PackedOperand(operand) => operand,
+        _ => unreachable!("encodable views hold packed operands"),
+    }
+}
+
+/// The text image's census for the request's rank: every raw local-scale
+/// matrix of each [`encodable`] bank, banks in view order and matrices in
+/// piece order, or `None` for another image role or when there is none.
+pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, String> {
+    if !(request.image_role.is_empty() || request.image_role == RANK_IMAGE_ROLE) {
+        return Ok(None);
+    }
+    if request.rank >= request.ranks {
+        return Err(format!(
+            "rank {} is past the {} ranks",
+            request.rank, request.ranks
+        ));
+    }
+    let planned = planned(request)?;
+    let census = rank_census(request, &planned)?;
+    Ok((!census.items.is_empty()).then_some(census))
+}
+
+fn rank_census(request: &WeightPlanRequestV1, planned: &Planned) -> Result<WeightCensusV1, String> {
+    let files = RequestFiles::new(request);
+    let mut items = Vec::new();
+    for view in planned.ranks[request.rank as usize]
+        .iter()
+        .filter(|view| encodable(view))
+    {
+        for piece in &view.pieces {
+            let sources = piece
+                .sources
+                .iter()
+                .map(|tensor| {
+                    let file = planned
+                        .files
+                        .get(tensor)
+                        .ok_or_else(|| format!("{tensor} is in no file"))?;
+                    files.source(tensor, file)
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let record = WeightRecordV1 {
+                arena_offset: 0,
+                byte_length: piece.bytes,
+                transform: piece.transform.id(),
+                params: piece.transform.encode_params().map_err(|e| e.to_string())?,
+                sources,
+                axis: piece.axis,
+                ranges: piece.ranges.clone(),
+                stored_shape: piece.stored_shape.clone(),
+            };
+            items.push(
+                scale_census::scale_item(packed(piece), record)
+                    .map_err(|e| format!("{}: {e}", view.name))?,
+            );
+        }
+    }
+    Ok(WeightCensusV1 {
+        ranks: request.ranks,
+        rank: request.rank,
+        items,
+    })
+}
+
+/// The layout identifier of an encoded scale bank at `width`.
+#[must_use]
+pub fn encoded_scale_layout(width: u32) -> String {
+    format!("{}.w{width}", kernel_core::precision::scale_offset::FORMAT)
+}
+
+/// `views` with each [`encodable`] bank stored encoded at the width that
+/// stores it smallest, from this rank's measured `counts` (in census order),
+/// or raw when no width is smaller. An encoded bank is its offset table (an
+/// inline record) and one encoded block per matrix; the codes records of the
+/// same operands carry the same encoding, so the host still packs each
+/// matrix once.
+fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String> {
+    use kernel_core::precision::scale_offset;
+    let mut views = views.to_vec();
+    let mut next = 0;
+    // The operand of each encoded matrix as its codes record states it,
+    // with its sources, and the encoding that record must carry.
+    let mut codes = BTreeMap::new();
+    for view in views.iter_mut().filter(|view| encodable(view)) {
+        let measured = counts
+            .get(next..next + view.pieces.len())
+            .ok_or("the census counts fewer matrices than the plan's banks")?;
+        next += view.pieces.len();
+        let matrices: Vec<_> = view
+            .pieces
+            .iter()
+            .zip(measured)
+            .map(|(piece, counts)| (scale_census::scale_shape(packed(piece)), *counts))
+            .collect();
+        let Some(width) =
+            scale_census::bank_width(&matrices).map_err(|e| format!("{}: {e}", view.name))?
+        else {
+            continue;
+        };
+        let mut pieces = Vec::with_capacity(view.pieces.len() + 1);
+        let mut blocks = Vec::with_capacity(view.pieces.len());
+        for (piece, ((rows, groups), counts)) in view.pieces.iter().zip(&matrices) {
+            let mut operand = packed(piece).clone();
+            let code = scale_census::scale_code(&operand).expect("an encodable operand");
+            let encoding = scale_census::encoding(code, width, *counts);
+            operand.local_encoding = Some(encoding);
+            let bytes = scale_offset::encoded_bytes(*rows, *groups, width, encoding.exceptions)
+                .map_err(|e| format!("{}: {e}", view.name))?;
+            blocks.push(bytes);
+            let mut key = operand.clone();
+            key.section = PackedSection::Codes;
+            key.local_encoding = None;
+            codes.insert(
+                (
+                    piece.sources.clone(),
+                    WeightTransform::PackedOperand(Box::new(key))
+                        .encode_params()
+                        .map_err(|e| e.to_string())?,
+                ),
+                encoding,
+            );
+            pieces.push(Piece {
+                offset: 0,
+                bytes,
+                transform: WeightTransform::PackedOperand(Box::new(operand)),
+                sources: piece.sources.clone(),
+                axis: piece.axis,
+                ranges: piece.ranges.clone(),
+                stored_shape: piece.stored_shape.clone(),
+            });
+        }
+        let layout =
+            scale_offset::bank_layout(&blocks).map_err(|e| format!("{}: {e}", view.name))?;
+        if layout.table.len() > kernel_core::weight_transform::INLINE_BYTES_MAX {
+            return Err(format!("{}: a bank table past the inline limit", view.name));
+        }
+        for (piece, offset) in pieces.iter_mut().zip(&layout.offsets) {
+            piece.offset = *offset;
+        }
+        let table_bytes = layout.table.len() as u64;
+        pieces.insert(
+            0,
+            Piece {
+                offset: 0,
+                bytes: table_bytes,
+                transform: WeightTransform::Inline(layout.table),
+                sources: Vec::new(),
+                axis: None,
+                ranges: Vec::new(),
+                stored_shape: vec![table_bytes],
+            },
+        );
+        view.pieces = pieces;
+        view.bytes = layout.bytes;
+        view.dtype = "U8".into();
+        view.shape = vec![layout.bytes];
+        view.layout_id = encoded_scale_layout(width);
+    }
+    if next != counts.len() {
+        return Err("the census counts more matrices than the plan's banks".into());
+    }
+    for view in &mut views {
+        for piece in &mut view.pieces {
+            let WeightTransform::PackedOperand(operand) = &mut piece.transform else {
+                continue;
+            };
+            if operand.section != PackedSection::Codes || operand.local_encoding.is_some() {
+                continue;
+            }
+            let key = (
+                piece.sources.clone(),
+                WeightTransform::PackedOperand(operand.clone())
+                    .encode_params()
+                    .map_err(|e| e.to_string())?,
+            );
+            if let Some(encoding) = codes.get(&key) {
+                operand.local_encoding = Some(*encoding);
+            }
+        }
+    }
+    Ok(views)
+}
+
 /// The text image's plan for the request's rank, the encoder image's
 /// (`encoder_plan`), or `None` for another image role. The primary image
-/// (an empty role) is the text image.
+/// (an empty role) is the text image. With a census from the host, the
+/// routed expert scale banks are stored encoded ([`encode_banks`]); the
+/// cached derivation stays census-free, so a census changes only this
+/// rank's last step.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
     if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
         return encoder_plan::plan(request).map(Some);
@@ -719,7 +930,16 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
         ));
     }
     let planned = planned(request)?;
-    let views = &planned.ranks[request.rank as usize];
+    let raw = &planned.ranks[request.rank as usize];
+    let encoded = if request.census.is_empty() {
+        None
+    } else {
+        let census = rank_census(request, &planned)?;
+        let counts = scale_census::counts(request, &census)?
+            .ok_or("a request with a census measured nothing for this rank")?;
+        Some(encode_banks(raw, counts)?)
+    };
+    let views = encoded.as_deref().unwrap_or(raw);
     let (offsets, arena_bytes) = offsets(views);
     let files = RequestFiles::new(request);
     let mut records = Vec::new();

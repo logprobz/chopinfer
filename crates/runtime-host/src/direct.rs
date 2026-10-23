@@ -2707,11 +2707,39 @@ fn census_v1(
             documents.push((rank, census, bytes));
         }
     }
+    let (answer, unique, bytes_read) = census_counts_v1(checkpoint, &documents)?;
+    eprintln!(
+        "startup weight_census: {}",
+        serde_json::json!({
+            "image_role": image_role,
+            "ranks": ranks,
+            "items": documents.iter().map(|(_, census, _)| census.items.len()).sum::<usize>(),
+            "unique_items": unique,
+            "bytes_read": bytes_read,
+            "seconds": started.elapsed().as_secs_f64(),
+            "checkpoint_identity": checkpoint.identity_hex(),
+        })
+    );
+    Ok(answer)
+}
+
+/// Every rank's measured census for the census documents `documents`
+/// (each rank's census and its bytes as the bundle emitted them), each
+/// distinct item measured once, with the distinct items and the source bytes
+/// read.
+pub fn census_counts_v1(
+    checkpoint: &DirectCheckpointV1,
+    documents: &[(
+        u32,
+        runtime_bundle_abi::weight_plan::WeightCensusV1,
+        Vec<u8>,
+    )],
+) -> Result<(Vec<CensusRankV1>, usize, u64), String> {
     // Ranks that read the same bytes the same way share one measurement.
     let mut unique: Vec<&CensusItemV1> = Vec::new();
     let mut slots = BTreeMap::new();
     let mut indices = Vec::with_capacity(documents.len());
-    for (_, census, _) in &documents {
+    for (_, census, _) in documents {
         let mut slot_of = Vec::with_capacity(census.items.len());
         for item in &census.items {
             let slot = *slots.entry(format!("{item:?}")).or_insert_with(|| {
@@ -2733,19 +2761,7 @@ fn census_v1(
             counts: slot_of.into_iter().map(|slot| measured[slot].0).collect(),
         })
         .collect();
-    eprintln!(
-        "startup weight_census: {}",
-        serde_json::json!({
-            "image_role": image_role,
-            "ranks": ranks,
-            "items": documents.iter().map(|(_, census, _)| census.items.len()).sum::<usize>(),
-            "unique_items": unique.len(),
-            "bytes_read": bytes_read,
-            "seconds": started.elapsed().as_secs_f64(),
-            "checkpoint_identity": checkpoint.identity_hex(),
-        })
-    );
-    Ok(answer)
+    Ok((answer, unique.len(), bytes_read))
 }
 
 fn digest_v1(bytes: &[u8]) -> [u8; 32] {

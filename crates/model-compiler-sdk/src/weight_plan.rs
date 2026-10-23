@@ -2,6 +2,8 @@
 //! cache of what it reads from a request, the record sources of the request's
 //! files and a plan's identity. What a plan places where stays the model's.
 use runtime_bundle_abi::weight_plan::{RecordSourceV1, WeightPlanRequestV1, WeightPlanV1};
+
+pub mod census;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

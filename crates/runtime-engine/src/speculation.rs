@@ -15,6 +15,8 @@ use block_cost::BlockStep;
 mod depths;
 mod diagnostics;
 #[cfg(test)]
+mod lock_tests;
+#[cfg(test)]
 mod low_concurrency_tests;
 #[cfg(test)]
 mod realized_tests;

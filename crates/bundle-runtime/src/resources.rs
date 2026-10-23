@@ -54,6 +54,27 @@ pub fn release_all(services: &HostServicesV1, held: &mut Vec<Held>) -> Result<()
     Ok(())
 }
 
+thread_local! {
+    /// Bytes [`allocate_span`] allocated on this thread, by pool.
+    static ALLOCATED: std::cell::RefCell<std::collections::BTreeMap<u64, u64>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The bytes [`allocate_span`] has allocated from `pool` on this thread so
+/// far, released buffers included. A bundle takes the difference across a
+/// step of its create to attribute that step's device memory to each rank.
+pub fn allocated_bytes(pool: BundleMemoryPoolHandleV1) -> u64 {
+    ALLOCATED.with(|allocated| allocated.borrow().get(&pool.raw).copied().unwrap_or(0))
+}
+
+fn tally(pool: BundleMemoryPoolHandleV1, bytes: u64) {
+    ALLOCATED.with(|allocated| {
+        let mut allocated = allocated.borrow_mut();
+        let total = allocated.entry(pool.raw).or_default();
+        *total = total.saturating_add(bytes);
+    });
+}
+
 /// Allocates one 256-byte aligned device buffer and records it in `held`.
 pub fn allocate_span(
     services: &HostServicesV1,
@@ -70,6 +91,7 @@ pub fn allocate_span(
                 .log(format!("allocate_device_buffer of {bytes} bytes failed: {error}").as_bytes());
         })?;
     held.push(Held::Buffer(buffer));
+    tally(pool, bytes);
     Ok(DeviceBufferSpanV1::new(buffer, 0, bytes))
 }
 
@@ -98,5 +120,28 @@ pub fn status(error: BundleAbiError) -> BundleStatusV1 {
         BundleAbiError::Status(value) => value,
         BundleAbiError::MissingHostService(_) => BundleStatusV1::Unsupported,
         _ => BundleStatusV1::HostError,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocated_bytes_accumulate_per_pool() {
+        let [first, second] = [
+            BundleMemoryPoolHandleV1::from_parts(1, 41),
+            BundleMemoryPoolHandleV1::from_parts(1, 42),
+        ];
+        let before = [allocated_bytes(first), allocated_bytes(second)];
+        tally(first, 256);
+        tally(first, 1);
+        tally(second, 7);
+        assert_eq!(allocated_bytes(first) - before[0], 257);
+        assert_eq!(allocated_bytes(second) - before[1], 7);
+        assert_eq!(
+            allocated_bytes(BundleMemoryPoolHandleV1::from_parts(1, 43)),
+            0
+        );
     }
 }

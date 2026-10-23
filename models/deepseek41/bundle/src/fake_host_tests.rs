@@ -64,6 +64,7 @@ mod scale_banks;
 mod selected_cache;
 mod shared_overlap;
 mod short_prefill;
+mod startup_memory;
 mod verify_hc;
 mod wide_hc;
 use crate::shape::Shape;

@@ -11,6 +11,13 @@ pub fn allocation_error(error: AllocationError) -> BundleAbiError {
     })
 }
 
+/// A bound declaration and the device bytes its binding allocated.
+#[derive(Clone, Debug)]
+pub struct Bound<M> {
+    pub spans: M,
+    pub bytes: u64,
+}
+
 /// The allocator records acquisitions in the caller's `Held` list. On any
 /// failure those acquisitions remain there for the caller's cleanup.
 /// Returned handles and offsets are retained; no memory is initialized.
@@ -18,19 +25,40 @@ pub fn bind<R: Traversal<Allocation>>(
     declaration: R,
     mut allocate: impl FnMut(u64) -> Result<DeviceBufferSpanV1, BundleAbiError>,
 ) -> Result<R::Mapped<DeviceBufferSpanV1>, BundleAbiError> {
-    declaration.try_map(&mut |layout| {
-        let span = allocate(layout.allocation_bytes())?;
-        if span.length < layout.allocation_bytes()
-            || span.offset.checked_add(layout.allocation_bytes()).is_none()
-        {
-            return Err(BundleAbiError::InvalidRange("scratch allocation range"));
-        }
-        Ok(DeviceBufferSpanV1::new(
-            span.buffer,
-            span.offset,
-            layout.span_bytes(),
-        ))
-    })
+    bind_named(declaration, |_, bytes| allocate(bytes)).map(|bound| bound.spans)
+}
+
+/// [`bind`], passing `allocate` each allocation's declaration path (such as
+/// `rows[1].flags`) and returning the bytes it allocated.
+pub fn bind_named<R: Traversal<Allocation>>(
+    declaration: R,
+    mut allocate: impl FnMut(&str, u64) -> Result<DeviceBufferSpanV1, BundleAbiError>,
+) -> Result<Bound<R::Mapped<DeviceBufferSpanV1>>, BundleAbiError> {
+    let mut names = Vec::new();
+    declaration.visit_named(&mut |name, _| names.push(name.to_owned()));
+    let mut names = names.into_iter();
+    let mut bytes = 0_u64;
+    let spans =
+        declaration.try_map(&mut |layout| {
+            let name = names.next().ok_or(BundleAbiError::InvalidRange(
+                "scratch traversal orders differ",
+            ))?;
+            let span = allocate(&name, layout.allocation_bytes())?;
+            if span.length < layout.allocation_bytes()
+                || span.offset.checked_add(layout.allocation_bytes()).is_none()
+            {
+                return Err(BundleAbiError::InvalidRange("scratch allocation range"));
+            }
+            bytes = bytes.checked_add(layout.allocation_bytes()).ok_or(
+                BundleAbiError::InvalidRange("scratch allocation size overflow"),
+            )?;
+            Ok(DeviceBufferSpanV1::new(
+                span.buffer,
+                span.offset,
+                layout.span_bytes(),
+            ))
+        })?;
+    Ok(Bound { spans, bytes })
 }
 
 #[cfg(test)]
@@ -209,6 +237,29 @@ mod tests {
                     (0..cutoff).map(handle).collect::<Vec<_>>()
                 );
             }
+        }
+    }
+    #[test]
+    fn named_binding_passes_paths_and_totals_its_allocations() {
+        for (present, listed) in [(false, false), (true, true)] {
+            let mut names = Vec::new();
+            let mut requested = 0;
+            let bound = bind_named(declaration(present, listed), |name, bytes| {
+                names.push(name.to_owned());
+                requested += bytes;
+                Ok(DeviceBufferSpanV1::new(handle(names.len()), 0, bytes))
+            })
+            .unwrap();
+            let mut expected = Vec::new();
+            bound
+                .spans
+                .visit_named(&mut |name, _| expected.push(name.to_owned()));
+            assert_eq!(names, expected);
+            assert_eq!(bound.bytes, requested);
+            // Physical bytes: `plain`'s 20, not its 12 visible ones.
+            let optional = if present { 72 + 58 } else { 0 };
+            let list = if listed { 222 } else { 0 };
+            assert_eq!(bound.bytes, 20 + 12 + 40 + 206 + 48 + optional + list);
         }
     }
     #[test]

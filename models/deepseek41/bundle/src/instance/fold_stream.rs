@@ -42,6 +42,15 @@ fn scratch_key(weight: &str, paired: bool, implementation: &str) -> Option<Scrat
     })
 }
 
+/// The bytes one rank's folds allocated: their packed weight copies, their
+/// state and their workspace.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct FoldBytes {
+    pub packed: u64,
+    pub state: u64,
+    pub workspace: u64,
+}
+
 fn empty() -> Span {
     Span::new(
         runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
@@ -60,7 +69,8 @@ pub(super) fn initialize(
     resolved: &BTreeMap<String, BundleCudaSymbolHandleV1>,
     views: &mut BTreeMap<String, Span>,
     held: &mut Vec<Held>,
-) -> Result<(), BundleAbiError> {
+) -> Result<FoldBytes, BundleAbiError> {
+    let mut bytes = FoldBytes::default();
     // This cache belongs to one rank. Layers and row buckets submit in
     // order; fork/join events also order successive uses on the side lane.
     // Target and drafter never share mutable storage (module documentation).
@@ -125,8 +135,11 @@ pub(super) fn initialize(
                 if let Some(key) = key {
                     scratch.insert(key, spans);
                 }
+                bytes.state += spans[0].length;
+                bytes.workspace += spans[1].length;
                 spans
             };
+            bytes.packed += packed[0].length + packed[1].length;
             let storage = Storage {
                 packed,
                 state: state_span,
@@ -170,7 +183,7 @@ pub(super) fn initialize(
             }
         }
     }
-    Ok(())
+    Ok(bytes)
 }
 
 #[cfg(test)]

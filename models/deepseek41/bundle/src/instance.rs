@@ -23,6 +23,7 @@ pub(crate) mod execute;
 mod fold_stream;
 mod indexer_graphs;
 mod media;
+mod memory;
 pub(crate) mod prefill;
 mod prefill_cache;
 pub(crate) mod prefill_engram;
@@ -47,7 +48,6 @@ use bundle_runtime::state::{Extent, RequestState};
 use bundle_runtime::table::{InstanceTable, Live};
 use bundle_runtime::transaction::{self, Ended, Failure, Retire, Stage, Steps};
 use bundle_runtime::upload::{BlockTableMirror, InputLayout, PhaseArena};
-use kernel_core::allocation::Traversal;
 use model_deepseek41_contract::serving::{
     DeepSeek, INDEX_SCHEMA, MAX_VERIFY_ROWS, PAGE_TOKENS, RANK_IMAGE_ROLE, REQUEST_STATE_ID,
     index_role,
@@ -157,6 +157,8 @@ pub struct Instance {
     encoder_kernels: Option<crate::Kernels>,
     /// The vision encoder of an instance serving images.
     pub(super) media: Option<crate::encoders::Media>,
+    /// What create allocated on each rank, logged once create completes.
+    memory: memory::Ledger,
 }
 
 impl Live for Instance {
@@ -254,6 +256,7 @@ impl Instance {
         let (image, indexes) =
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
+        let mut memory = memory::Ledger::open(ranks.iter().map(|&(_, pool, _)| pool));
         if self.dspark.is_none() && crate::device_results::enabled(shape, self.config.kv.storage) {
             for &(context, _, _) in &ranks {
                 let event = services.create_event(context)?;
@@ -301,6 +304,7 @@ impl Instance {
             };
             let _ = services.log(format!("{NAME}: prefill DMA copies: {copies}").as_bytes());
         }
+        memory.take("dma");
         let limits = model_limits(&self.config);
         let layouts = [
             InputLayout::prefill_capacity_within::<DeepSeek>(items),
@@ -331,6 +335,7 @@ impl Instance {
                     block_tables,
                 });
             }
+            memory.take("inputs");
             if self.config.prefill.skip {
                 let counts: Vec<u8> = (0..=model_deepseek41_contract::serving::PREFILL_TOKENS)
                     .flat_map(u32::to_le_bytes)
@@ -339,6 +344,7 @@ impl Instance {
                 services.copy_host_to_device(stream, span, &counts)?;
                 self.prefill_counts.push(span);
             }
+            memory.take("prefill_counts");
             let mut declared = Scratch::of_storage(&shape, self.config.kv.storage);
             // The raw bank the experts read where the rank image stores a
             // routed scale bank encoded.
@@ -353,29 +359,19 @@ impl Instance {
             if let Some(drafter) = &self.dspark {
                 drafter.reserve_engram(&mut declared);
             }
-            // Named traversal has the same leaf order as bind. Route only the
-            // peer-visible planes to the private allocation owner; arithmetic
-            // and copies keep their explicit compute/communication streams.
-            let mut owners = Vec::new();
-            declared.visit_named(&mut |name, _| {
+            // Route only the peer-visible planes to the private allocation
+            // owner; arithmetic and copies keep their explicit
+            // compute/communication streams.
+            let bound = bundle_runtime::scratch::bind_named(declared, |name, bytes| {
                 let owner = if matches!(name, "partial" | "reduced" | "embedded") {
                     self.dma.get(rank).map_or(stream, |dma| dma.owner)
                 } else {
                     stream
                 };
-                owners.push(owner);
-            });
-            let mut owners = owners.into_iter();
-            let bound = bundle_runtime::scratch::bind(declared, |bytes| {
-                allocate_span(
-                    services,
-                    pool,
-                    owners.next().expect("one owner per declared scratch leaf"),
-                    bytes,
-                    held,
-                )
+                allocate_span(services, pool, owner, bytes, held)
             })?;
-            assert!(owners.next().is_none(), "scratch traversal orders agree");
+            memory.add(rank, "scratch", bound.bytes);
+            let bound = bound.spans;
             if crate::ops::indexer::prefill::enabled(&shape, self.config.kv.storage) {
                 let counts: Vec<u8> = (0..=model_deepseek41_contract::serving::PREFILL_TOKENS)
                     .flat_map(u32::to_le_bytes)
@@ -409,6 +405,7 @@ impl Instance {
                 None => None,
             };
             mix_scratch.push((partials, tickets));
+            memory.take("mix");
             // The spans the ops size: the sorted routed rows and the
             // backend workspace (at least one byte, so every rank binds a
             // span), and the routes' bias choice, zeroed: text rows.
@@ -424,6 +421,7 @@ impl Instance {
                     .map_or(0, |ops| ops.sorted_rows_bytes()),
             );
             let sorted = allocate_span(services, pool, stream, sorted.max(4), held)?;
+            memory.take("sorted_rows");
             let workspace = self
                 .ops
                 .workspace()
@@ -431,6 +429,7 @@ impl Instance {
                 .max(1)
                 .next_multiple_of(256);
             let workspace = allocate_span(services, pool, stream, workspace, held)?;
+            memory.take("workspace");
             let shared_workspace = self
                 .ops
                 .shared_workspace()
@@ -438,9 +437,11 @@ impl Instance {
                 .max(1)
                 .next_multiple_of(256);
             let shared_workspace = allocate_span(services, pool, stream, shared_workspace, held)?;
+            memory.take("shared_workspace");
             if let Some(drafter) = &mut self.dspark {
                 drafter.allocate(services, (context, pool, stream), held)?;
             }
+            memory.take("dspark");
             if let Some(bound) = scratch.last() {
                 services.zero_device_buffer(stream, bound.bias_select)?;
                 services.zero_device_buffer(stream, bound.index_status)?;
@@ -452,6 +453,7 @@ impl Instance {
                 .as_ref()
                 .map_or(4, |ops| ops.table_bytes());
             let table = allocate_span(services, pool, stream, table, held)?;
+            memory.take("rope_table");
             // One admitted eager item uses this arena at any serving capacity.
             // Reserve it before the host sizes its KV pool.
             let prefill_cache = if crate::Kernels::prefill_cache_eligible(
@@ -479,6 +481,7 @@ impl Instance {
             } else {
                 None
             };
+            memory.take("prefill_cache");
             op_spans.push((sorted, workspace, table, shared_workspace, prefill_cache));
             // The all-reduce's comm state, which the peers write: zeroed
             // before any step, after peer access.
@@ -490,6 +493,7 @@ impl Instance {
                 spans.push(span);
             }
             comm.push(spans);
+            memory.take("comm");
             // The logits moves' comm state, likewise.
             let logits = match self.ops.logits.as_ref().map(|ops| ops.state()) {
                 Some([exchange_flags, exchange_epoch, gather_flags, gather_epoch]) => {
@@ -512,6 +516,7 @@ impl Instance {
                 None => None,
             };
             logits_comm.push(logits);
+            memory.take("logits_comm");
         }
         // The window rings and compressor tails of every bucket item, which
         // the host allocates per state slot; zeroed, as a new request's
@@ -540,6 +545,7 @@ impl Instance {
                 Ok(bound)
             })
             .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        memory.take("dspark");
         let mut shared = self.ops.shared_bytes();
         if let Some(drafter) = &self.dspark {
             for (entry, bytes) in drafter.shared_bytes() {
@@ -692,7 +698,8 @@ impl Instance {
                 }
                 views[rank].insert(crate::ops::exact_f32::domain_name(&name), flags);
             }
-            fold_stream::initialize(
+            memory.take("weight_domain");
+            let folds = fold_stream::initialize(
                 &self.ops,
                 self.dspark.as_ref(),
                 services,
@@ -702,6 +709,9 @@ impl Instance {
                 &mut views[rank],
                 held,
             )?;
+            memory.add(rank, "fold_packed", folds.packed);
+            memory.add(rank, "fold_state", folds.state);
+            memory.add(rank, "fold_workspace", folds.workspace);
             self.symbols.push(resolved);
         }
         // The vision encoder's cubins, image and working memory, before the
@@ -718,6 +728,7 @@ impl Instance {
             media.encoder.block_taps = self.taps.selects_blocks();
             self.media = Some(media);
         }
+        memory.take("encoder");
         let (pages, pools) = acquire::serving_kv(
             log,
             self.config.kv.layout_id,
@@ -725,6 +736,7 @@ impl Instance {
             shape.ranks(),
         )?;
         self.kv_pages = pages;
+        memory.sized();
         for (
             (
                 ((((scratch, encoded_scales), views), (kv_pool, state)), (comm, logits)),
@@ -785,6 +797,8 @@ impl Instance {
         if execute::overlap::enabled() && self.ops.reduce.is_some() {
             self.overlap = execute::overlap::acquire(services, &ranks, held)?;
         }
+        memory.take("overlap");
+        self.memory = memory;
         // Allocations on a private stream must exist before either active
         // lane can use them. No peer-visible plane has a create-time producer.
         for dma in &self.dma {
@@ -945,6 +959,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         image: None,
         encoder_kernels: media.then_some(kernels),
         media: None,
+        memory: memory::Ledger::default(),
     };
     if let Err(error) = instance.acquire() {
         instance.log(&format!("create failed: {error}"));
@@ -956,16 +971,19 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&error);
         return Err(Failed::releasing(instance, BundleStatusV1::Unsupported));
     }
+    instance.memory.take("other");
     if let Err(error) = instance.prepare_dspark_cycle() {
         instance.log(&format!(
             "create failed preparing DSpark device cycle: {error}"
         ));
         return Err(Failed::releasing(instance, status(error)));
     }
+    instance.memory.take("dspark_cycle");
     if let Err(error) = instance.prepare_prefill_engram() {
         instance.log(&format!("create failed preparing prefill Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
     }
+    instance.memory.take("prefill_engram");
     if let Err(error) = instance.prepare_ar_engram() {
         instance.log(&format!("create failed preparing AR Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
@@ -976,10 +994,17 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         ));
         return Err(Failed::releasing(instance, status(error)));
     }
+    instance.memory.take("ar_engram");
     instance.log_one_row_twins();
     if let Err(error) = instance.configure_dspark_graphs() {
         instance.log(&format!("create failed configuring DSpark graphs: {error}"));
         return Err(Failed::releasing(instance, status(error)));
+    }
+    instance.memory.take("dspark_graphs");
+    for line in instance.memory.lines() {
+        let _ = instance
+            .services
+            .log(format!("startup memory: {line}").as_bytes());
     }
     instance.log(&format!(
         "{} KV pages per rank, {} items; ops prepared on {} and {}",

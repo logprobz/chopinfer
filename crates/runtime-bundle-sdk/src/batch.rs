@@ -1,6 +1,12 @@
 use std::error::Error;
 use std::fmt;
 
+mod draft_sampling;
+pub use draft_sampling::{
+    BATCH_REQUEST_MAGIC_V6, DRAFT_SAMPLING_BYTES_V1, DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1,
+    InvalidDraftSamplingV1,
+};
+
 /// The fixed prefix of one V1 batch request.
 pub const BATCH_REQUEST_MAGIC_V1: &[u8; 12] = b"chopbatch-v1";
 
@@ -66,6 +72,7 @@ pub enum BatchReadErrorV1 {
     InvalidMedia,
     InvalidStateSlots,
     InvalidPositionAxes,
+    InvalidDraftSampling,
 }
 
 impl fmt::Display for BatchReadErrorV1 {
@@ -115,6 +122,9 @@ impl fmt::Display for BatchReadErrorV1 {
             Self::InvalidPositionAxes => {
                 formatter.write_str("position axes must enclose V3 or V4 and cover whole items")
             }
+            Self::InvalidDraftSampling => formatter.write_str(
+                "draft sampling must enclose V3, V4 or V5 with one valid record per item",
+            ),
         }
     }
 }
@@ -537,6 +547,7 @@ pub struct BatchRequestV1 {
     appends: Vec<BatchAppendV1>,
     media: BatchMediaSectionV3,
     state_slots: Option<Vec<u64>>,
+    draft_sampling: Option<Vec<DraftSamplingV1>>,
 }
 
 impl BatchRequestV1 {
@@ -552,7 +563,21 @@ impl BatchRequestV1 {
             appends,
             media: BatchMediaSectionV3::default(),
             state_slots: None,
+            draft_sampling: None,
         }
+    }
+
+    /// One draft sampling record per item, which makes the record V6.
+    #[must_use]
+    pub fn with_draft_sampling(mut self, records: Vec<DraftSamplingV1>) -> Self {
+        self.draft_sampling = Some(records);
+        self
+    }
+
+    /// Each item's sampling inputs for drafting, when the host sent them.
+    #[must_use]
+    pub fn draft_sampling(&self) -> Option<&[DraftSamplingV1]> {
+        self.draft_sampling.as_deref()
     }
 
     /// One host-owned slot ID per item; the enclosed payload remains V3.
@@ -626,6 +651,7 @@ pub enum BatchWriteErrorV1 {
     InvalidMedia,
     InvalidStateSlots,
     InvalidPositionAxes,
+    InvalidDraftSampling,
 }
 
 impl fmt::Display for BatchWriteErrorV1 {
@@ -650,6 +676,9 @@ impl fmt::Display for BatchWriteErrorV1 {
             }
             Self::InvalidPositionAxes => formatter
                 .write_str("position axes require V3 and one position per phase row of each item"),
+            Self::InvalidDraftSampling => {
+                formatter.write_str("draft sampling requires V3 and one record per item")
+            }
         }
     }
 }
@@ -667,6 +696,9 @@ impl BatchCodecV1 {
 
     /// Decodes either supported version from its fixed magic.
     pub fn decode(bytes: &[u8]) -> Result<BatchRequestV1, BatchReadErrorV1> {
+        if bytes.starts_with(BATCH_REQUEST_MAGIC_V6) {
+            return draft_sampling::decode_v6(bytes);
+        }
         if bytes.starts_with(BATCH_REQUEST_MAGIC_V5) {
             return decode_position_axes_v5(bytes);
         }
@@ -712,6 +744,9 @@ impl BatchCodecV1 {
 
     /// Encodes the selected version without host or model dependencies.
     pub fn encode(request: &BatchRequestV1) -> Result<Vec<u8>, BatchWriteErrorV1> {
+        if request.draft_sampling.is_some() {
+            return draft_sampling::encode_v6(request);
+        }
         if request.has_position_axes() {
             return encode_position_axes_v5(request);
         }

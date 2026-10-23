@@ -1930,6 +1930,15 @@ pub const KV_OFFLOAD_CAPABILITY_V1: &str = "chop.kv-offload.v1";
 /// A batch carrying any such positions then arrives as `chopbatch-v5`.
 pub const POSITION_AXES_CAPABILITY_V1: &str = "chop.position-axes.v1";
 
+/// Capability for speculative bundles that draft sampled requests from the
+/// host sampler's own noise. A batch holding an item with bundle drafts
+/// then arrives as `chopbatch-v6`: the enclosed record and one draft
+/// sampling record per item (seed, generated index of the item's first
+/// sampled row, temperature, top-p, min-p, top-k and flags; see
+/// `runtime_bundle_sdk::DraftSamplingV1`). Drafts stay proposals: the host
+/// accepts a draft only when it equals the target's sample at its row.
+pub const DRAFT_SAMPLING_CAPABILITY_V1: &str = "chop.draft-sampling.v1";
+
 /// Capability of bundles whose serving KV pages store K and V as FP8 E4M3.
 /// The host reports the pool's tokens as FP8 KV tokens.
 pub const FP8_KV_CAPABILITY_V1: &str = "chop.kv-cache.fp8-e4m3.v1";

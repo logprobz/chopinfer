@@ -288,3 +288,130 @@ fn an_anchor_marks_a_v3_prompt_ending_prefill_item() {
         Err(BatchReadErrorV1::InvalidAnchor)
     );
 }
+
+#[test]
+fn v6_appends_one_draft_sampling_record_per_item_around_v3_v4_and_v5() {
+    use runtime_bundle_sdk::{
+        BATCH_REQUEST_MAGIC_V6, DRAFT_SAMPLING_BYTES_V1, DRAFT_SAMPLING_PROCESSED_V1,
+        DraftSamplingV1,
+    };
+    let sampled = DraftSamplingV1::new(0x0102_0304_0506_0708, 41, 0.7, 0.9, 0.05, 20, 0).unwrap();
+    let processed =
+        DraftSamplingV1::new(5, 0, 1.0, 1.0, 0.0, 0, DRAFT_SAMPLING_PROCESSED_V1).unwrap();
+    let base = BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        vec![
+            BatchItemV1::verify(1, 6, true, vec![12]),
+            BatchItemV1::new(3, true, 1, true, vec![7]),
+        ],
+        vec![
+            BatchAppendV1::new(8, 6, 14, vec![1], None),
+            BatchAppendV1::new(4, 1, 5, vec![2], None),
+        ],
+    );
+    let records = vec![sampled, DraftSamplingV1::GREEDY];
+    for enclosed in [
+        base.clone(),
+        base.clone().with_state_slots(vec![3, 4]),
+        base.clone()
+            .with_state_slots(vec![3, 4])
+            .with_position_axes_for_test(),
+    ] {
+        let request = enclosed.clone().with_draft_sampling(records.clone());
+        let bytes = request.encode().unwrap();
+        assert!(bytes.starts_with(BATCH_REQUEST_MAGIC_V6));
+        let inner = enclosed.encode().unwrap();
+        assert_eq!(bytes[16..16 + inner.len()], inner[..]);
+        let tail = &bytes[16 + inner.len()..];
+        assert_eq!(tail.len(), 4 + 2 * DRAFT_SAMPLING_BYTES_V1);
+        assert_eq!(tail[..4], 2_u32.to_le_bytes());
+        assert_eq!(tail[4..12], 0x0102_0304_0506_0708_u64.to_le_bytes());
+        assert_eq!(tail[12..20], 41_u64.to_le_bytes());
+        assert_eq!(tail[20..28], 0.7_f64.to_bits().to_le_bytes());
+        assert_eq!(tail[44..48], 20_u32.to_le_bytes());
+        let decoded = BatchCodecV1::decode(&bytes).unwrap();
+        assert_eq!(decoded, request);
+        assert_eq!(decoded.draft_sampling(), Some(&records[..]));
+        assert_eq!(decoded.draft_sampling().unwrap()[0].generated(), 41);
+        assert!(decoded.draft_sampling().unwrap()[0].sampled());
+        assert!(!decoded.draft_sampling().unwrap()[1].sampled());
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        assert_eq!(BatchCodecV1::decode(&inner).unwrap().draft_sampling(), None);
+    }
+    assert_eq!(processed.flags(), DRAFT_SAMPLING_PROCESSED_V1);
+    // One record per item, valid parameters, known flags, no nesting.
+    assert_eq!(
+        base.clone().with_draft_sampling(vec![sampled]).encode(),
+        Err(BatchWriteErrorV1::InvalidDraftSampling)
+    );
+    for (temperature, top_p, min_p, flags) in [
+        (-1.0, 1.0, 0.0, 0),
+        (f64::NAN, 1.0, 0.0, 0),
+        (1.0, 0.0, 0.0, 0),
+        (1.0, 1.5, 0.0, 0),
+        (1.0, 1.0, 2.0, 0),
+        (1.0, 1.0, 0.0, 2),
+    ] {
+        assert!(DraftSamplingV1::new(1, 2, temperature, top_p, min_p, 0, flags).is_err());
+    }
+    let bytes = base
+        .clone()
+        .with_draft_sampling(records.clone())
+        .encode()
+        .unwrap();
+    let mut short = bytes.clone();
+    short.truncate(bytes.len() - 1);
+    assert!(matches!(
+        BatchCodecV1::decode(&short),
+        Err(BatchReadErrorV1::Truncated { .. })
+    ));
+    let mut flagged = bytes.clone();
+    let flags_at = bytes.len() - 4;
+    flagged[flags_at] = 2;
+    assert_eq!(
+        BatchCodecV1::decode(&flagged),
+        Err(BatchReadErrorV1::InvalidDraftSampling)
+    );
+    let mut counted = bytes.clone();
+    let count_at = bytes.len() - 4 - 2 * DRAFT_SAMPLING_BYTES_V1;
+    counted[count_at] = 3;
+    assert!(matches!(
+        BatchCodecV1::decode(&counted),
+        Err(BatchReadErrorV1::UnexpectedCount { .. })
+    ));
+    let mut nested = BATCH_REQUEST_MAGIC_V6.to_vec();
+    nested.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    nested.extend_from_slice(&bytes);
+    nested.extend_from_slice(&bytes[bytes.len() - 4 - 2 * DRAFT_SAMPLING_BYTES_V1..]);
+    assert_eq!(
+        BatchCodecV1::decode(&nested),
+        Err(BatchReadErrorV1::InvalidDraftSampling)
+    );
+}
+
+trait PositionAxesForTest {
+    fn with_position_axes_for_test(self) -> Self;
+}
+
+impl PositionAxesForTest for BatchRequestV1 {
+    /// Explicit positions on the decode item make the enclosed record V5.
+    fn with_position_axes_for_test(self) -> Self {
+        let items = self
+            .items()
+            .iter()
+            .cloned()
+            .map(|item| {
+                if item.is_decode() {
+                    item.with_position_axes(vec![[4, 0, 0]])
+                } else {
+                    item
+                }
+            })
+            .collect();
+        let mut request = BatchRequestV1::new(self.version(), items, self.appends().to_vec());
+        if let Some(slots) = self.state_slots() {
+            request = request.with_state_slots(slots.to_vec());
+        }
+        request
+    }
+}

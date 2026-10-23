@@ -1,6 +1,8 @@
-//! Page-cache advice for checkpoint ranges read by a direct load.
+//! Page-cache advice for checkpoint ranges read by a direct load, and reads
+//! that take only the bytes the page cache already holds.
 
-// SAFETY-REVIEWED: this module contains the one posix_fadvise call.
+// SAFETY-REVIEWED: this module contains the one posix_fadvise call and the
+// one preadv2 call.
 #![allow(unsafe_code)]
 
 use std::fs::File;
@@ -40,6 +42,44 @@ pub fn advise_v1(file: &File, offset: u64, length: u64, advice: CacheAdviceV1) -
     #[cfg(not(target_os = "linux"))]
     let _ = (file, offset, length, advice);
     Ok(())
+}
+
+/// Copies into `buffer` the bytes at `offset` of `file` that the page cache
+/// holds now, without waiting for the device (`preadv2` with `RWF_NOWAIT`):
+/// the count copied, short where an uncached page begins, or `WouldBlock`
+/// when the first page is not cached. Linux 6.8 starts no device read for
+/// the missing pages, so a caller that needs them starts one
+/// ([`CacheAdviceV1::WillNeed`]). Another platform answers `Unsupported`.
+pub(crate) fn read_cached_v1(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(offset) = i64::try_from(offset) else {
+            return Err(io::Error::other("read offset exceeds the file offset type"));
+        };
+        let vector = libc::iovec {
+            iov_base: buffer.as_mut_ptr().cast(),
+            iov_len: buffer.len(),
+        };
+        // SAFETY-REVIEWED: preadv2 writes at most `buffer.len()` bytes into
+        // the one live, exclusively borrowed buffer the vector names, for a
+        // descriptor `file` keeps open.
+        let read = unsafe {
+            libc::preadv2(
+                file.as_raw_fd(),
+                &raw const vector,
+                1,
+                offset,
+                libc::RWF_NOWAIT,
+            )
+        };
+        usize::try_from(read).map_err(|_| io::Error::last_os_error())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, buffer, offset);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
 }
 
 /// How many of the pages `length` bytes at `offset` of `file` touch are in

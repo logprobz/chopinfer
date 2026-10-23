@@ -1,4 +1,9 @@
 //! Bounded descriptor reads for ordered resident-cache misses.
+//!
+//! A miss is read through the mapping's descriptor, never the mapping, into
+//! owned bytes. Rows the page cache holds are copied at once; the device
+//! reads of the others start together, so a batch of cold rows waits about
+//! one device latency ([`start_reads`]).
 pub(crate) mod legacy;
 mod pool;
 
@@ -9,12 +14,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 const ENV: &str = "CHOPINFER_MAPPED_MISS_FETCH";
 const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
-/// Reads one batch keeps in flight. A drafted DSpark step gathers its first
-/// Engram layer after the drafter, and at 32 rows on rows no request read
-/// before about 450 of each plane's 768 rows miss; with 16 in flight the
-/// device waited 1.1-2.1 ms for them per C8 step. 450 random 256-byte reads
-/// of an Engram codes plane took 2.0 ms at 16 in flight, 0.84 ms at 64 and
-/// 0.76 ms at 128 on the serving host's NVMe drive.
+const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
+/// Reader threads one batch's rows are split across. A drafted DSpark step
+/// gathers its first Engram layer after the drafter, and at 32 rows on rows
+/// no request read before about 450 of each plane's 768 rows miss; with 16
+/// blocking reads in flight the device waited 1.1-2.1 ms for them per C8
+/// step. 450 random 256-byte reads of an Engram codes plane took 2.0 ms at
+/// 16 in flight, 0.84 ms at 64 and 0.76 ms at 128 on the serving host's NVMe
+/// drive. Started reads ([`start_reads`]) keep every cold row of a batch in
+/// flight whatever this count.
 const DEFAULT_READERS: usize = 64;
 const TILE_BYTES: usize = 4 << 20;
 static BATCHES: AtomicU64 = AtomicU64::new(0);
@@ -24,6 +32,8 @@ static BYTES: AtomicU64 = AtomicU64::new(0);
 static NANOS: AtomicU64 = AtomicU64::new(0);
 static SERIAL: AtomicU64 = AtomicU64::new(0);
 static MAPPED: AtomicU64 = AtomicU64::new(0);
+static CACHED: AtomicU64 = AtomicU64::new(0);
+static COLD: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -74,6 +84,25 @@ pub(super) fn set_readers_for_measurement(readers: usize) -> Result<(), String> 
     Ok(())
 }
 
+/// `CHOPINFER_MAPPED_MISS_START`: unset or `1` (the default) starts the
+/// device reads of every row of a batch the page cache lacks before waiting
+/// for any of them; anything else reads each row with one blocking read, at
+/// most [`readers`] in flight. A device busy with another reader (a server
+/// loading its checkpoint from the same drive) takes about 1 to 5 ms per
+/// 4 KiB read, so blocking reads waited that long for every 64 cold rows.
+/// The bytes copied are the same either way.
+pub(crate) fn start_reads() -> bool {
+    static START: OnceLock<bool> = OnceLock::new();
+    *START.get_or_init(|| configured(std::env::var_os(START_ENV)))
+}
+
+/// Started reads count the rows the page cache served without waiting and
+/// the rows they had to start.
+fn count_cold_rows(cached: usize, cold: usize) {
+    CACHED.fetch_add(cached as u64, Ordering::Relaxed);
+    COLD.fetch_add(cold as u64, Ordering::Relaxed);
+}
+
 pub(crate) fn snapshot() -> serde_json::Value {
     let (legacy_gathers, legacy_misses) = legacy::snapshot();
     serde_json::json!({
@@ -81,7 +110,8 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "batches":BATCHES.load(Ordering::Relaxed),
         "miss_positions":ROWS.load(Ordering::Relaxed), "unique_reads":READS.load(Ordering::Relaxed),
         "successful_bytes":BYTES.load(Ordering::Relaxed), "nanoseconds":NANOS.load(Ordering::Relaxed),
-        "serial_fallback_batches":SERIAL.load(Ordering::Relaxed),
+        "serial_fallback_batches":SERIAL.load(Ordering::Relaxed), "start_reads":start_reads(),
+        "page_cached_reads":CACHED.load(Ordering::Relaxed), "started_reads":COLD.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })

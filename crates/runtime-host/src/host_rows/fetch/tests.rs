@@ -157,3 +157,33 @@ fn successful_descriptor_reads_never_fault_the_original_mapping() {
         "queued reads must not dereference the table mmap"
     );
 }
+
+#[test]
+fn evicted_rows_are_started_together_and_copied_exactly() {
+    use crate::page_cache::{CacheAdviceV1, advise_v1, cached_pages_v1};
+    let f = Fixture::new("evicted", 4000, 264);
+    let file = File::open(&f.path).unwrap();
+    file.sync_all().unwrap();
+    advise_v1(&file, 0, 0, CacheAdviceV1::DontNeed).unwrap();
+    let evicted =
+        cached_pages_v1(&file, 0, 300 + f.bytes.len() as u64).is_ok_and(|(cached, _)| cached == 0);
+    let rows = (0..700_u64)
+        .map(|i| (i * 2_654_435_761 % 4000) as u32)
+        .collect::<Vec<_>>();
+    let started = || COLD.load(Ordering::Relaxed);
+    let before = started();
+    let mut out = vec![0xa5; rows.len() * 264];
+    copy_rows(&f.mapping, 264, &rows, &mut out).unwrap();
+    assert_eq!(out, f.expected(&rows));
+    if start_reads() && evicted {
+        // Rows on distinct pages were all cold; later rows of a page may
+        // find it cached once an earlier share read it.
+        assert!(started() > before);
+    } else {
+        eprintln!("skipped started-read count: reads not started or file not evicted");
+    }
+    // The same rows again come from the page cache, byte for byte.
+    out.fill(0xa5);
+    copy_rows(&f.mapping, 264, &rows, &mut out).unwrap();
+    assert_eq!(out, f.expected(&rows));
+}

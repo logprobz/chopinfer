@@ -2,6 +2,8 @@
 #[path = "../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
 mod registration;
+#[path = "../../sm120/routed_moe.rs"]
+mod routed_moe;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 use std::path::PathBuf;
@@ -18,10 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if out.starts_with(repository) {
         return Err("build outputs must stay outside the repository".into());
     }
-    let specs = registration::cubins(GEOMETRIES)?
-        .into_iter()
-        .map(|(_, spec)| spec)
-        .collect::<Vec<_>>();
+    let specs = routed_moe::cubins(GEOMETRIES)?;
     let dir = root.join("../bundle/kernels.lock.d");
     let mut options = BuildOptions::from_env();
     options.emit_cargo_directives = false;

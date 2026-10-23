@@ -6,7 +6,7 @@
 //! balanced synthetic case and captured layer 14, worker 1 the skewed
 //! synthetic case and captured layer 39, each on its own rank.
 use super::captured::{BANKS, Banks, READY, WORKER, captures, case_inputs, json};
-use super::pipeline::{Inputs, Pipeline, build, native_buffers, queue};
+use super::pipeline::{Inputs, Pipeline, build, gate_tiles, native_buffers, queue};
 use super::*;
 use kernel_core::contract::Argument;
 use kernel_core::precision::buffers::QuantizedWeights;
@@ -158,7 +158,8 @@ pub fn run(session: &Session) -> LabResult<()> {
             super::synthetic::bank(&mut a, &host_w[0])?,
             super::synthetic::bank(&mut a, &host_w[1])?,
         ];
-        let s = super::synthetic::setup(&mut a, synthetic, &host_w, banks)?;
+        let mut s = super::synthetic::setup(&mut a, synthetic, &host_w, banks)?;
+        s.inputs.gate_tiles = gate_tiles(&mut a, set, banks[0], &host_w[0])?;
         let p = build(&mut a, set, capacity, capacity, &s.inputs)?;
         runner.run(&a, &s.prefix)?;
         runner.run(&a, &s.route)?;
@@ -194,7 +195,8 @@ pub fn run(session: &Session) -> LabResult<()> {
     };
     let gate = bank(&mut a, &host_gate)?;
     let down = bank(&mut a, &host_down)?;
-    let inputs = case_inputs(&mut a, &c, gate, down)?;
+    let tiles = gate_tiles(&mut a, set, gate, &host_gate)?;
+    let inputs = case_inputs(&mut a, &c, gate, down, tiles)?;
     let p = build(&mut a, set, capacity, capacity, &inputs)?;
     let (record, failures) = case(
         &mut runner,

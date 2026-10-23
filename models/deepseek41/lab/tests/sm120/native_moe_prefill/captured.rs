@@ -5,7 +5,7 @@
 //! checks of `checks::qualify` run, and with CHOPINFER_NATIVE_MOE_TIMING=1
 //! the 8192-row chunks are timed. Worker w takes ranks w and w + 2.
 use super::checks::{Host, qualify};
-use super::pipeline::{Inputs, build};
+use super::pipeline::{Inputs, build, gate_tiles};
 use super::*;
 use kernel_core::moe::RouteMetadata;
 use kernel_core::precision::buffers::QuantizedWeights;
@@ -227,13 +227,15 @@ fn authenticate(
     Ok(failures)
 }
 
-/// A captured case's quantized input, routes and the given banks, padded
-/// to the 8192-row capacity.
+/// A captured case's quantized input, routes and the given banks (with the
+/// gate/up bank's row tiles, [`gate_tiles`]), padded to the 8192-row
+/// capacity.
 pub fn case_inputs(
     a: &mut Arena<'_>,
     c: &Capture,
     gate: QuantizedWeights<View>,
     down: QuantizedWeights<View>,
+    gate_tiles: Option<QuantizedWeights<View>>,
 ) -> LabResult<Inputs> {
     let set = family::serving::target_set();
     let capacity = super::synthetic::CAPACITY as usize;
@@ -274,6 +276,7 @@ pub fn case_inputs(
         routes,
         gate,
         down,
+        gate_tiles,
     };
     Ok(inputs)
 }
@@ -317,6 +320,7 @@ pub fn run(session: &Session) -> LabResult<()> {
                 local_scales: Some(a.bytes(&host_down[1])?),
                 global_scales: None,
             };
+            let tiles = gate_tiles(&mut a, set, gate, &host_gate)?;
             let keep = a.next;
             for c in cases
                 .iter()
@@ -334,7 +338,7 @@ pub fn run(session: &Session) -> LabResult<()> {
                 let codes = c.common("input.e4m3")?;
                 let scales = c.common("input.ue8m0")?;
                 let ids = ints(&c.common("ids.i32")?);
-                let inputs = case_inputs(&mut a, c, gate, down)?;
+                let inputs = case_inputs(&mut a, c, gate, down, tiles)?;
                 let p = build(&mut a, set, capacity as u32, rows as u32, &inputs)?;
                 runner.run(&a, &p.exact.launches())?;
                 let auth = authenticate(&a, c, &p.exact.out, rows)?;

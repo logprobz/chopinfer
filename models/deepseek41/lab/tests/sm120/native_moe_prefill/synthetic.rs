@@ -3,7 +3,7 @@
 //! timing. CHOPINFER_NATIVE_MOE_MEMCHECK=1 runs criterion 6's reduced
 //! matrix (no oracle, no timing) under compute-sanitizer.
 use super::checks::{Host, qualify};
-use super::pipeline::{Inputs, build, first_difference, snapshot};
+use super::pipeline::{Inputs, build, first_difference, gate_tiles, snapshot};
 use super::*;
 use kernel_core::contract::MoeQuery;
 use kernel_core::moe::{RouteBuffers, RouteMetadata};
@@ -228,6 +228,7 @@ pub fn setup(
             routes: metadata,
             gate: banks[0],
             down: banks[1],
+            gate_tiles: None,
         },
         prefix,
         route: route_ops,
@@ -283,6 +284,7 @@ pub fn run(session: &Session) -> LabResult<()> {
         ];
         let banks = [bank(&mut a, &host_w[0])?, bank(&mut a, &host_w[1])?];
         let mut s = setup(&mut a, case, &host_w, banks)?;
+        s.inputs.gate_tiles = gate_tiles(&mut a, set, banks[0], &host_w[0])?;
         let p = build(&mut a, set, CAPACITY, CAPACITY, &s.inputs)?;
         runner.run(&a, &s.prefix)?;
         let lives: &[u32] = if memcheck() {
@@ -434,12 +436,17 @@ fn cpu_plan() {
             .into_iter()
             .flat_map(|s| s.entries.into_iter().map(|e| e.symbol))
             .collect();
-    // The bundle serves the target bank's gate/up compute tiles as their
-    // row-tiled builds over its row-tiled bank (`moe_row_tiles`).
-    let tiled = bundle_deepseek41::sm120::moe_row_tiles::symbols(&FLASH).unwrap();
-    let served = |symbol: &String| {
-        Runner::serving(symbol) || tiled.get(symbol).is_some_and(|t| Runner::serving(t))
-    };
+    // The lean cubin as the bundle serves it: the target bank's scanned
+    // gate/up as its row-tiled build (`moe_row_tiles`).
+    let lean_symbols: std::collections::BTreeSet<String> = lean_symbols
+        .into_iter()
+        .map(|s| {
+            super::row_tiled_bank::symbols()
+                .get(&s)
+                .cloned()
+                .unwrap_or(s)
+        })
+        .collect();
     for case in cases() {
         let mut a = Arena::new(None);
         let set = case.set;
@@ -456,10 +463,30 @@ fn cpu_plan() {
                 global_scales: None,
             },
         ];
-        let s = setup(&mut a, case, &[host_w.clone(), host_w], banks).unwrap();
+        let mut s = setup(&mut a, case, &[host_w.clone(), host_w.clone()], banks).unwrap();
+        s.inputs.gate_tiles = gate_tiles(&mut a, set, banks[0], &host_w).unwrap();
+        assert_eq!(
+            s.inputs.gate_tiles.is_some(),
+            set == family::serving::target_set()
+        );
         for (capacity, rows) in [(CAPACITY, CAPACITY), (CAPACITY, 65), (4096, 4096)] {
             let p = build(&mut a, set, capacity, rows, &s.inputs).unwrap();
             let fused = super::pipeline::fuses_ceil(set, rows);
+            // Every launch of both arms runs from the bundle or the lab
+            // cubin, and none reads the row-major target bank's gate/up
+            // through an entry the bundle serves only as a row-tiled build.
+            for op in p.exact.launches().iter().chain(&p.native.launches()) {
+                assert!(
+                    Runner::serving(&op.symbol) || symbols.contains(&op.symbol),
+                    "{}",
+                    op.symbol
+                );
+                assert!(
+                    !super::row_tiled_bank::symbols().contains_key(&op.symbol),
+                    "{}",
+                    op.symbol
+                );
+            }
             for op in p.native.launches() {
                 op.plan.validate_geometry().unwrap();
                 assert!(op.plan.dynamic_shared_bytes <= native::MAX_SHARED_BYTES);
@@ -467,7 +494,10 @@ fn cpu_plan() {
                     // Target-bank serving tiles run from the bundle (as
                     // their row-tiled builds); the fused ceil entries are
                     // the bundle's alone.
-                    assert_eq!(served(&op.symbol), set == family::serving::target_set());
+                    assert_eq!(
+                        Runner::serving(&op.symbol),
+                        set == family::serving::target_set()
+                    );
                     // The unfused target steps' scanned entries and
                     // admission scans are the bundle's lean cubin's.
                     let lean = set == family::serving::target_set()

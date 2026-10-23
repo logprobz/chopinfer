@@ -17,6 +17,47 @@ pub struct Inputs {
     pub routes: RouteMetadata<View>,
     pub gate: QuantizedWeights<View>,
     pub down: QuantizedWeights<View>,
+    /// The gate/up bank in the row tiles the bundle serves it in, where it
+    /// does ([`gate_tiles`]): both arms' gate/up launches of entries the
+    /// bundle serves as row-tiled builds run those builds over it. None
+    /// keeps every launch on the row-major bank.
+    pub gate_tiles: Option<QuantizedWeights<View>>,
+}
+
+/// The row-major gate/up bank `gate` of `set` (host copy `host`) in the row
+/// tiles the bundle serves it in at TP4 (`row_tiled_bank`), uploaded, or
+/// none where it stores rows. Without a session, views of its size.
+pub fn gate_tiles(
+    a: &mut Arena<'_>,
+    set: moe::Experts,
+    gate: QuantizedWeights<View>,
+    host: &[Vec<u8>; 2],
+) -> LabResult<Option<QuantizedWeights<View>>> {
+    if !row_tiled_bank::tiled(4, set) {
+        return Ok(None);
+    }
+    let views = [
+        gate.codes,
+        gate.local_scales.ok_or("gate/up scales missing")?,
+    ];
+    let [codes, scales] = if a.session.is_none() {
+        [a.filled(views[0].bytes, 0)?, a.filled(views[1].bytes, 0)?]
+    } else {
+        let [mut codes, mut scales] = host.clone();
+        let k = family::shape(set, GatedMlpProjection::GateUp).k as usize;
+        row_tiled_bank::pack(
+            &mut codes,
+            &mut scales,
+            views[0].bytes as usize / (k / 2),
+            k,
+        )?;
+        [a.bytes(&codes)?, a.bytes(&scales)?]
+    };
+    Ok(Some(QuantizedWeights {
+        codes,
+        local_scales: Some(scales),
+        global_scales: None,
+    }))
 }
 
 /// One arm's outputs.
@@ -182,7 +223,15 @@ pub fn build(
             q,
         ))
     };
-    let (exact, _) = arm(a)?;
+    // Gate/up launches as the bundle serves them over the tiled bank.
+    let tiled = |ops: Vec<Launch>| -> LabResult<Vec<Launch>> {
+        match i.gate_tiles {
+            Some(tiles) => row_tiled_bank::launches(ops, i.gate, Some(tiles)),
+            None => Ok(ops),
+        }
+    };
+    let (mut exact, _) = arm(a)?;
+    exact.gate = tiled(exact.gate)?;
     let (mut native_arm, q) = arm(a)?;
     let shapes = family::KINDS.map(|kind| family::shape(set, kind));
     // Fused steps keep the gate/up tile the fused ceil was qualified on.
@@ -241,6 +290,7 @@ pub fn build(
         gate.extend(q.iter().cloned());
         gate
     };
+    native_arm.gate = tiled(native_arm.gate)?;
     native_arm.down = ops(
         &shapes[1],
         &tiles[1],
@@ -249,16 +299,34 @@ pub fn build(
     native_arm.workspaces = queues.to_vec();
     if set == family::serving::target_set() {
         // The bundle's wrapper must launch exactly these entries and
-        // operands (its workspace handles differ).
+        // operands (its workspace handles differ), over a tiled bank as the
+        // served routed op wraps it (`moe_row_tiles_op`).
+        let served = Inputs {
+            gate: i.gate_tiles.unwrap_or(i.gate),
+            ..*i
+        };
         for (kind, lab) in family::KINDS
             .into_iter()
             .zip([&native_arm.gate, &native_arm.down])
         {
             let op = serving_op(set, kind, capacity, rows, true)?;
+            let op = if i.gate_tiles.is_some() {
+                bundle_deepseek41::sm120::moe_row_tiles_op::prepare(
+                    &FLASH,
+                    4,
+                    set,
+                    kind,
+                    usage(capacity),
+                    op,
+                )
+                .map_err(|e| e.to_string())?
+            } else {
+                op
+            };
             let (ops, w) = op_launches(
                 a,
                 op.as_ref(),
-                &buffers(i, &out, kind == GatedMlpProjection::GateUp),
+                &buffers(&served, &out, kind == GatedMlpProjection::GateUp),
                 rows,
             )?;
             if ops.len() != lab.len() {

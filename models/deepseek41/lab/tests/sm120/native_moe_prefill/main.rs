@@ -9,6 +9,8 @@ mod family;
 #[path = "../../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
 mod registration;
+#[path = "../row_tiled_bank.rs"]
+mod row_tiled_bank;
 #[path = "../../../sm120/native_tune.rs"]
 #[allow(dead_code)]
 mod tune_family;

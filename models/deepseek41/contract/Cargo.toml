@@ -77,6 +77,10 @@ name = "build_moe_streamed"
 path = "examples/sm120/build_moe_streamed.rs"
 
 [[example]]
+name = "build_moe_scale_expand"
+path = "examples/sm120/build_moe_scale_expand.rs"
+
+[[example]]
 name = "build_moe_prefill"
 path = "examples/sm120/build_moe_prefill.rs"
 

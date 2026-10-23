@@ -11,6 +11,7 @@ use crate::ops::Lowered;
 use crate::ops::moe::{ExpertViews, QuantizeViews, RouteSpans, RouteViews, SumViews};
 use crate::ops::shared::ActivationViews;
 use crate::program::Phase;
+use runtime_bundle_abi::DeviceBufferSpanV1;
 
 impl Lowering<'_> {
     /// The normed rows quantized to E4M3 per 32 with ceil UE8M0 scales.
@@ -67,6 +68,45 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("routes of layer {layer}: {refusal}"))
     }
 
+    /// Layer `layer`'s gate/up (`gate_up`) or down scale bank as its
+    /// experts bind it: the placed view, or where the rank image stores the
+    /// bank encoded, the raw bank in scratch after the launch that expands
+    /// it there, of the experts the routes list where `listed` (every expert
+    /// otherwise). The expansion waits for its predecessor before it reads
+    /// or writes, so it follows the routes and every read of the previous
+    /// bank.
+    pub(super) fn expert_scales(
+        &self,
+        phase: Phase,
+        layer: u32,
+        gate_up: bool,
+        listed: bool,
+    ) -> Result<(Vec<Lowered>, DeviceBufferSpanV1), String> {
+        let bank = if gate_up { "gate_up" } else { "down" };
+        let name = layer_view(layer, &format!("ffn.experts.{bank}.scale"));
+        let Some((encoded, width)) = self.buffers.encoded_scale(&name) else {
+            return Ok((Vec::new(), self.buffers.view(&name)?));
+        };
+        let ops = self
+            .ops
+            .moe
+            .as_ref()
+            .ok_or_else(|| format!("{name} is stored encoded without the routed MoE ops"))?;
+        let scratch = &self.buffers.scratch;
+        let output = scratch
+            .expert_scales
+            .ok_or_else(|| format!("{name} is stored encoded, but no raw bank is allocated"))?;
+        let active = listed.then_some(scratch.active_experts);
+        let expand = ops
+            .expand_scales(phase, gate_up, width, encoded, active, output)
+            .map_err(|refusal| format!("{name}: {refusal}"))?;
+        let bytes = ops.scale_bank(gate_up).bytes();
+        Ok((
+            vec![expand],
+            DeviceBufferSpanV1::new(output.buffer, output.offset, bytes),
+        ))
+    }
+
     /// Layer `layer`'s experts' gate/up, from the quantized input into the
     /// weighted SwiGLU rows and their codes, or down, from those codes into
     /// the F32 routed rows. The rank's expert bank is the weight plan's
@@ -101,11 +141,13 @@ impl Lowering<'_> {
                 None,
             )
         };
+        let listed = ops.lists_active(phase, self.rank);
+        let (mut launches, scales) = self.expert_scales(phase, layer, gate_up, listed)?;
         let views = ExpertViews {
             activation,
             activation_scales,
             codes: view("weight")?,
-            scales: view("scale")?,
+            scales,
             output,
             output_quantized,
             route_weights: scratch.expert_weights,
@@ -114,9 +156,11 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: self.carried(phase, scratch.row_status)?,
         };
-        ops.experts(phase, gate_up, &views)
-            .map(Some)
-            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))
+        let experts = ops
+            .experts(phase, gate_up, &views)
+            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))?;
+        launches.extend(experts);
+        Ok(Some(launches))
     }
 
     /// The rank's routed rows summed per token into the sublayer's F32
@@ -222,3 +266,7 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("shared expert activation of layer {layer}: {refusal}"))
     }
 }
+
+#[cfg(test)]
+#[path = "moe_scales_tests.rs"]
+mod scales_tests;

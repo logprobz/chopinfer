@@ -239,6 +239,7 @@ impl Instance {
                     BundleAbiError::InvalidRange("deepseek41 rank index")
                 })?;
             ops.check_weight_layouts(shape.geometry, &index)
+                .and_then(|()| crate::buffers::encoded_scales(&shape, &index).map(|_| ()))
                 .map_err(|error| {
                     let _ = services.log(format!("{NAME} rank {rank} index: {error}").as_bytes());
                     BundleAbiError::InvalidRange("deepseek41 weight view layout")
@@ -308,6 +309,7 @@ impl Instance {
         ];
         let tables = BlockTableMirror::<DeepSeek>::device_bytes(limits, items);
         let mut scratch = Vec::new();
+        let mut encoded_scales = Vec::new();
         let mut comm = Vec::new();
         let mut logits_comm = Vec::new();
         let mut mix_scratch = Vec::new();
@@ -338,6 +340,16 @@ impl Instance {
                 self.prefill_counts.push(span);
             }
             let mut declared = Scratch::of_storage(&shape, self.config.kv.storage);
+            // The raw bank the experts read where the rank image stores a
+            // routed scale bank encoded.
+            let encoded = crate::buffers::encoded_scales(&shape, &indexes[rank])
+                .map_err(|_| BundleAbiError::InvalidRange("deepseek41 weight view layout"))?;
+            if !encoded.is_empty() {
+                let bytes = crate::buffers::expert_scale_bytes(&shape)
+                    .map_err(|_| BundleAbiError::InvalidRange("deepseek41 expert scale bank"))?;
+                declared.expert_scales = Some(kernel_core::allocation::Allocation::bytes(bytes));
+            }
+            encoded_scales.push(encoded);
             if let Some(drafter) = &self.dspark {
                 drafter.reserve_engram(&mut declared);
             }
@@ -583,6 +595,9 @@ impl Instance {
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
                 .filter(|cubin| {
+                    crate::Kernels::loads_scale_expand(cubin.name, !encoded_scales[rank].is_empty())
+                })
+                .filter(|cubin| {
                     !cubin.name.starts_with("position_candidates_runtime_")
                         || shape.runtime.candidate_topk_blocks
                             != shape.geometry.shape.candidates.top_blocks
@@ -711,10 +726,14 @@ impl Instance {
         )?;
         self.kv_pages = pages;
         for (
-            ((((scratch, views), (kv_pool, state)), (comm, logits)), (mix_partials, mix_tickets)),
+            (
+                ((((scratch, encoded_scales), views), (kv_pool, state)), (comm, logits)),
+                (mix_partials, mix_tickets),
+            ),
             (sorted_rows, workspace, rope_compressed, shared_workspace, prefill_cache),
         ) in scratch
             .into_iter()
+            .zip(encoded_scales)
             .zip(views)
             .zip(pools.into_iter().zip(state_views))
             .zip(comm.into_iter().zip(logits_comm))
@@ -735,6 +754,7 @@ impl Instance {
                 mix_partials,
                 mix_tickets,
                 rope_compressed,
+                encoded_scales,
             });
         }
         if let Some(drafter) = &mut self.dspark {

@@ -85,6 +85,10 @@ pub(crate) struct MoeOps {
     /// Each rank's routed sum of F32 rows.
     sums: Vec<Prepared<RoutedSumBuffers<View>>>,
     floor: Option<floor::Prepared>,
+    /// The raw gate/up and down scale banks, which an encoded bank expands
+    /// into (`expand_scales`), and the routes each token takes.
+    banks: [moe::ScaleBank; 2],
+    top_k: u32,
 }
 
 /// The route metadata's spans.
@@ -269,10 +273,16 @@ impl MoeOps {
             op.record(asks, *phase, *rows);
         }
         let [prefill, decode, verify] = USES;
+        let bank = |kind| moe::scale_bank(g, ranks, set, kind).map_err(refused);
         Ok(MoeOps {
             quantize,
             direct,
             floor,
+            banks: [
+                bank(GatedMlpProjection::GateUp)?,
+                bank(GatedMlpProjection::Down)?,
+            ],
+            top_k: set.top_k,
             kinds: [
                 kind(prefill, false)?,
                 kind(decode, false)?,
@@ -331,6 +341,50 @@ impl MoeOps {
                     }
             })
             .map_or(&self.kinds[index], |(_, kind)| kind)
+    }
+
+    /// Whether rank `rank`'s routes of a `phase` step list the experts with
+    /// routes (`RouteMetadata::active_experts`): an op lists the role in
+    /// its bytes when it writes it.
+    pub(crate) fn lists_active(&self, phase: Phase, rank: u32) -> bool {
+        self.kind(phase)
+            .routes
+            .get(rank as usize)
+            .is_some_and(|op| op.info().bytes_of("route.routes.active_experts").is_some())
+    }
+
+    /// The raw gate/up (`gate_up`) or down scale bank.
+    pub(crate) fn scale_bank(&self, gate_up: bool) -> moe::ScaleBank {
+        self.banks[usize::from(!gate_up)]
+    }
+
+    /// The launch of a `phase` step that expands the gate/up (`gate_up`) or
+    /// down scale bank the rank image stores `encoded` at offset `width`
+    /// into the raw bank `output`: the experts the routes list in `active`,
+    /// at most each row's top-k, or every expert without a list.
+    pub(crate) fn expand_scales(
+        &self,
+        phase: Phase,
+        gate_up: bool,
+        width: u32,
+        encoded: DeviceBufferSpanV1,
+        active: Option<DeviceBufferSpanV1>,
+        output: DeviceBufferSpanV1,
+    ) -> Result<Lowered, Refusal> {
+        let bank = self.scale_bank(gate_up);
+        // A step's live rows are at most its phase's rows: a decode bucket
+        // or verify bucket holds them, a prefill is exactly them
+        // (`instance::execute::phase_of`), so the routes list at most the
+        // rows' top-k experts.
+        let slots = match active {
+            Some(_) => bank.experts.min(phase.rows().saturating_mul(self.top_k)),
+            None => bank.experts,
+        };
+        let mut bind = Bind::default();
+        let views = [bind.view(encoded), bind.view(output)];
+        let active = active.map(|span| bind.view(span));
+        let launch = crate::Kernels::scale_expand(bank, width, slots, views, active, phase.rows())?;
+        Ok(bind.lowered(launch))
     }
 
     /// The sorted routed rows' bytes: the most any kind's routes write or

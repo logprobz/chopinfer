@@ -212,6 +212,8 @@ mod router_norm_entries;
 #[path = "rows.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod rows;
+#[allow(dead_code)]
+mod scale_expand;
 #[path = "shared.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod shared;
@@ -652,6 +654,7 @@ pub fn selection(
     specs.extend(moe::streamed_cubins(geometries).expect("streamed routed MoE cubins"));
     specs.extend(moe::prefill_cubins(geometries).expect("grouped prefill MoE cubins"));
     specs.extend(moe::floor_cubins(geometries).expect("fused decode MoE cubins"));
+    specs.push((scale_expand::FAMILY, scale_expand::cubin()));
     specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));

@@ -107,6 +107,11 @@ kernel_core::scratch_record! {
         pub route_offsets: value,
         pub active_experts: value,
         pub padded_rows: value,
+        /// The raw routed scale bank the experts read where the rank image
+        /// stores a layer's bank encoded ([`encoded_scales`]): the gate/up's
+        /// expanded after the routes, then the down's after the gate/up's
+        /// last read. Absent while every bank is stored raw.
+        pub expert_scales: option,
         /// The experts' gate/up output per route, `[rows, top_k, local
         /// intermediate]` BF16, and its E4M3 codes and UE8M0 scales.
         pub expert_intermediate: value,
@@ -326,6 +331,7 @@ impl Scratch<Allocation> {
             route_offsets: Allocation::bytes((experts + 1) * I32),
             active_experts: Allocation::bytes((experts + 1) * I32),
             padded_rows: Allocation::bytes(I32),
+            expert_scales: None,
             expert_intermediate: row(routed_width * BF16),
             intermediate_codes: row(routed_width),
             intermediate_scales: row(routed_width / 32),
@@ -605,16 +611,95 @@ pub struct RankBuffers {
     /// The compressed RoPE table (`RopeTable::Compressed`) of every served
     /// position, filled at create.
     pub rope_compressed: DeviceBufferSpanV1,
+    /// The routed scale banks the rank image stores encoded, by view name,
+    /// at their offset width ([`encoded_scales`]). Their consumers bind the
+    /// expanded bank (`Scratch::expert_scales`), never the view.
+    pub encoded_scales: BTreeMap<String, u32>,
 }
 
 impl RankBuffers {
-    /// The placed view `name`, or the error naming it.
+    /// The placed view `name`, or the error naming it. An encoded scale
+    /// bank is refused: no consumer reads it as placed.
     pub fn view(&self, name: &str) -> Result<DeviceBufferSpanV1, String> {
+        if self.encoded_scales.contains_key(name) {
+            return Err(format!(
+                "{name} is stored encoded; its consumers read its expansion"
+            ));
+        }
         self.views
             .get(name)
             .copied()
             .ok_or_else(|| format!("the rank image has no view {name}"))
     }
+
+    /// The encoded scale bank `name` and its offset width, or `None` for a
+    /// view stored raw.
+    pub fn encoded_scale(&self, name: &str) -> Option<(DeviceBufferSpanV1, u32)> {
+        Some((*self.views.get(name)?, *self.encoded_scales.get(name)?))
+    }
+}
+
+/// The routed scale banks rank index `index` stores encoded
+/// (`model_deepseek41_contract::weight_plan::encoded_scale_layout`), by view
+/// name, at their offset width. Each is a main layer's gate/up or down bank
+/// of U8 bytes, at least the encoding of the bank's raw shape
+/// ([`model_deepseek41_contract::moe::scale_bank`]) with no exceptions and
+/// within the expansion's 32-bit offsets. Any other view in that layout is
+/// refused.
+pub fn encoded_scales(
+    shape: &Shape,
+    index: &bundle_runtime::index::RankIndex,
+) -> Result<BTreeMap<String, u32>, String> {
+    use kernel_core::gated_mlp::GatedMlpProjection;
+    use model_deepseek41_contract::{moe, weight_plan::encoded_scale_width};
+    let g = shape.geometry;
+    let mut encoded = BTreeMap::new();
+    for (name, view) in &index.views {
+        let Some(width) = encoded_scale_width(&view.layout_id) else {
+            continue;
+        };
+        let kind = (0..g.layers())
+            .find_map(|layer| {
+                let bank = name.strip_prefix(&format!("layers.{layer}.ffn.experts."))?;
+                match bank {
+                    "gate_up.scale" => Some(GatedMlpProjection::GateUp),
+                    "down.scale" => Some(GatedMlpProjection::Down),
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| format!("{name} is stored as {}", view.layout_id))?;
+        let set = moe::expert_sets(g)[0];
+        let bank = moe::scale_bank(g, shape.ranks(), set, kind)?;
+        let minimum = kernel_core::precision::scale_expand::ScaleExpandQuery {
+            width,
+            rows: bank.rows,
+            groups: bank.groups,
+            projections: bank.projections,
+            experts: bank.experts,
+        }
+        .minimum_bank_bytes()
+        .map_err(|refusal| format!("{name}: {refusal}"))?;
+        if view.dtype != "U8" || view.bytes < minimum || view.bytes > u64::from(u32::MAX) {
+            return Err(format!(
+                "{name} is not an encoded bank of {} matrices",
+                bank.experts * bank.projections
+            ));
+        }
+        encoded.insert(name.clone(), width);
+    }
+    Ok(encoded)
+}
+
+/// The bytes of the raw scale bank the experts read (`Scratch::expert_scales`)
+/// of an instance of `shape`: the larger of a layer's raw banks.
+pub fn expert_scale_bytes(shape: &Shape) -> Result<u64, String> {
+    use kernel_core::gated_mlp::GatedMlpProjection;
+    use model_deepseek41_contract::moe;
+    let set = moe::expert_sets(shape.geometry)[0];
+    [GatedMlpProjection::GateUp, GatedMlpProjection::Down]
+        .into_iter()
+        .map(|kind| moe::scale_bank(shape.geometry, shape.ranks(), set, kind).map(|b| b.bytes()))
+        .try_fold(0, |most, bytes| Ok(most.max(bytes?)))
 }
 
 /// Index source `source`'s status of the first `rows` rows in `status`
@@ -698,6 +783,82 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use kernel_core::allocation::Traversal;
     use model_deepseek41_contract::geometry::FLASH;
+
+    /// An index admits encoded banks only as main layers' routed scale
+    /// banks of U8 bytes no shorter than their exception-free encoding.
+    #[test]
+    fn indexes_admit_encoded_scales_only_as_routed_banks() {
+        use model_deepseek41_contract::weight_plan::encoded_scale_layout;
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let index = |views: &[(&str, u64, &str, String)]| bundle_runtime::index::RankIndex {
+            rank: 0,
+            image: "rank0.img".into(),
+            image_bytes: 1 << 40,
+            sha256: None,
+            direct_identity: None,
+            views: views
+                .iter()
+                .map(|(name, bytes, dtype, layout_id)| {
+                    let view = runtime_bundle_sdk::rank_index::View {
+                        offset: 0,
+                        bytes: *bytes,
+                        dtype: (*dtype).into(),
+                        shape: vec![*bytes],
+                        layout_id: layout_id.clone(),
+                    };
+                    ((*name).to_owned(), view)
+                })
+                .collect(),
+        };
+        // 384 experts' two gate/up matrices of 576 rows of 160 groups, at
+        // width 2: a table of 769 offsets, and per row a base byte and 40
+        // offset bytes.
+        let gate_up = (769 * 4_u64).next_multiple_of(16) + 384 * 2 * (576 + 576 * 40);
+        let w2 = encoded_scale_layout(2);
+        let raw = "row-major".to_owned();
+        let last = format!("layers.{}.ffn.experts.gate_up.scale", FLASH.layers() - 1);
+        let admitted = encoded_scales(
+            &shape,
+            &index(&[
+                (&last, gate_up, "U8", w2.clone()),
+                (
+                    "layers.0.ffn.experts.down.scale",
+                    1 << 30,
+                    "U8",
+                    encoded_scale_layout(4),
+                ),
+                (
+                    "layers.0.ffn.experts.down.weight",
+                    1 << 30,
+                    "U8",
+                    raw.clone(),
+                ),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            admitted.into_iter().collect::<Vec<_>>(),
+            [
+                ("layers.0.ffn.experts.down.scale".into(), 4),
+                (last.clone(), 2)
+            ]
+        );
+        // Past the main layers is the drafter's namespace.
+        let drafter = format!("layers.{}.ffn.experts.gate_up.scale", FLASH.layers());
+        for (name, bytes, dtype) in [
+            (last.as_str(), gate_up - 1, "U8"),
+            (last.as_str(), gate_up, "BF16"),
+            (last.as_str(), 1 << 32, "U8"),
+            ("layers.0.ffn.experts.gate_up.weight", gate_up, "U8"),
+            ("layers.0.ffn.shared_experts.w1.scale", gate_up, "U8"),
+            ("mtp.0.ffn.experts.gate_up.scale", gate_up, "U8"),
+            (drafter.as_str(), gate_up, "U8"),
+        ] {
+            let refused = encoded_scales(&shape, &index(&[(name, bytes, dtype, w2.clone())]));
+            assert!(refused.is_err(), "{name} {bytes} {dtype}");
+        }
+        assert!(expert_scale_bytes(&shape).unwrap() == 384 * 2 * 576 * 160);
+    }
 
     #[test]
     fn prefill_index_counts_are_disjoint_and_bounded() {

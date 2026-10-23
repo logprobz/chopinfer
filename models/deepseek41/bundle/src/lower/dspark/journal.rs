@@ -214,6 +214,7 @@ fn dspark_full_block_journal_at_each_topology() {
                 rope_compressed: alloc(
                     u64::from(model_deepseek41_contract::own_ops::rope::MAX_POSITIONS) * 32 * 2 * 4,
                 ),
+                encoded_scales: Default::default(),
             });
         }
         let kv = KvExtent {

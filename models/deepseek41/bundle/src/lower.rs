@@ -673,6 +673,7 @@ mod tests {
             mix_partials: None,
             mix_tickets: None,
             rope_compressed: span(64),
+            encoded_scales: Default::default(),
         }
     }
 

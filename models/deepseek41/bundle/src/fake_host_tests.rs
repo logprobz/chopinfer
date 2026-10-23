@@ -60,6 +60,7 @@ mod producer_epilogues;
 mod projection_reuse;
 mod query_window;
 mod router_prefill;
+mod scale_banks;
 mod selected_cache;
 mod shared_overlap;
 mod short_prefill;

@@ -179,6 +179,8 @@ pub mod router_norm_entries;
 pub(crate) mod router_prefill;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
+#[allow(dead_code, reason = "the build script compiles the cubin spec")]
+mod scale_expand;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod shared;
 mod widen;
@@ -351,6 +353,49 @@ impl crate::Kernels {
         kernel_core::backend::Refused,
     > {
         moe_direct::prepare_set(shape, set)
+    }
+
+    /// Whether a rank loads `cubin`: the scale expansion only where its
+    /// image stores a routed scale bank encoded.
+    pub(crate) fn loads_scale_expand(cubin: &str, encoded: bool) -> bool {
+        cubin != scale_expand::CUBIN || encoded
+    }
+
+    /// The launch expanding the encoded scale bank `encoded` into the raw
+    /// bank `output` (`kernels_sm120::moe::scale_expand`): the experts the
+    /// `active` list names, over its first `slots` positions, or every
+    /// expert without a list. Each CTA waits for its predecessor before it
+    /// reads or writes, so the expansion follows the routes and the raw
+    /// bank's previous readers; every consumer reads after its own wait.
+    pub(crate) fn scale_expand(
+        bank: model_deepseek41_contract::moe::ScaleBank,
+        width: u32,
+        slots: u32,
+        [encoded, output]: [kernel_core::backend::View; 2],
+        active: Option<kernel_core::backend::View>,
+        rows: u32,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        use kernels_sm120::moe::scale_expand as expand;
+        let query = expand::ScaleExpandQuery {
+            width,
+            rows: bank.rows,
+            groups: bank.groups,
+            projections: bank.projections,
+            experts: bank.experts,
+        };
+        if active.is_none() && slots != bank.experts {
+            return Err(kernel_core::contract::Refusal(
+                "an expansion without an active list covers every expert",
+            ));
+        }
+        Ok(kernel_core::backend::Launch {
+            symbol: expand::symbol(width)?.into(),
+            rows,
+            plan: expand::plan_slots(query, slots)?,
+            arguments: expand::arguments(query, encoded, active, output)?,
+            collective: false,
+            persistent: false,
+        })
     }
 
     /// Whether the locked entry declares this pointer argument as const input.

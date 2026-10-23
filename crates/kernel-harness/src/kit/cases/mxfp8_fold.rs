@@ -179,9 +179,31 @@ pub fn case<'a>(
     capacity: u32,
     op: Prepared<Mxfp8FoldGemmBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
+    case_impl(query, capacity, op, false)
+}
+
+fn case_impl<'a>(
+    query: Mxfp8FoldGemmQuery,
+    capacity: u32,
+    op: Prepared<Mxfp8FoldGemmBuffers<View>>,
+    packed: bool,
+) -> LabResult<OpCase<'a>> {
     let a = activation(query, capacity);
     let w = weight(query, false);
+    // The oracle retains the same row-major patterns in its closure. It
+    // never decodes the bound weight image, which may have a packed layout.
     let compact = weight(query, true);
+    let codes = if packed {
+        kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+            groups: query.groups as usize,
+            n: query.n as usize,
+            k: query.k as usize,
+        }
+        .pack(&w.codes)
+        .map_err(|e| e.to_string())?
+    } else {
+        w.codes
+    };
     let Scales::Ue8M0(a_scales) = a.scales else {
         unreachable!()
     };
@@ -199,7 +221,7 @@ pub fn case<'a>(
             (Rows::Live, query.activation_row_stride as usize / 32),
             a_scales,
         ),
-        weights: Spec::weight(w.codes),
+        weights: Spec::weight(codes),
         weight_scales: Spec::weight(w_scales),
         output: Spec::output(
             query.output,
@@ -248,6 +270,17 @@ pub fn case<'a>(
         .live_counts(counts))
 }
 
+/// [`case`] over packed weight codes. The caller supplies an op prepared
+/// with `Sm120::with_packed_fold_weights`. Only the bound code image changes;
+/// the captured row-major oracle, poison, PDL and row checks are unchanged.
+pub fn packed_case<'a>(
+    query: Mxfp8FoldGemmQuery,
+    capacity: u32,
+    op: Prepared<Mxfp8FoldGemmBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    case_impl(query, capacity, op, true)
+}
+
 pub fn sm120() -> Sm120 {
     mxfp8_fold::lab_entries()
         .into_iter()
@@ -283,6 +316,76 @@ pub fn required<'a>() -> Vec<Required<'a>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_case_changes_only_bound_codes_and_keeps_oracle_inputs() {
+        use kernel_core::backend::Backend;
+        use kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout;
+        for k in [256, 576] {
+            let mut q = mxfp8_fold::packed_lab_entries()[0].query;
+            q.m_capacity = 4;
+            q.n = 24;
+            q.k = k;
+            q.groups = 2;
+            q.activation_group_stride = k + 32;
+            q.activation_row_stride = 2 * (k + 32) + 32;
+            let entry = mxfp8_fold::Entry::new(q, "packed_case_fixture_v1").unwrap();
+            let backend = Sm120::new().with_mxfp8_fold(entry);
+            let row = case(q, 4, backend.mxfp8_fold_gemm(&q, need(4)).unwrap()).unwrap();
+            let packed = packed_case(
+                q,
+                4,
+                backend
+                    .with_packed_fold_weights()
+                    .mxfp8_fold_gemm(&q, need(4))
+                    .unwrap(),
+            )
+            .unwrap();
+            let a = row.images();
+            let b = packed.images();
+            let codes = a.bytes("weights").unwrap();
+            assert_eq!(codes, weight(q, false).codes);
+            let layout = Mxfp8FoldLayout {
+                groups: 2,
+                n: 24,
+                k: k as usize,
+            };
+            assert!(
+                b.bytes("weights").unwrap() == layout.pack(codes).unwrap(),
+                "packed weight binding differs"
+            );
+            assert_ne!(b.bytes("weights").unwrap(), codes);
+            for role in [
+                "activations",
+                "activation_scales",
+                "weight_scales",
+                "status",
+            ] {
+                assert_eq!(a.bytes(role).unwrap(), b.bytes(role).unwrap(), "{role}");
+            }
+            assert_eq!(row.capacity, packed.capacity);
+            assert_eq!(row.info.guarantees, packed.info.guarantees);
+            assert_eq!(row.produced, packed.produced);
+            assert_eq!(row.pdl, packed.pdl);
+            assert_eq!(row.excluded, packed.excluded);
+            // The oracle captures row-major code patterns. Corrupting the
+            // bound packed view must not replace those reference operands.
+            let poisoned = b.with("weights", vec![0x7f; codes.len()]);
+            for live in [0, 1, 3, 4] {
+                let expected = row.case.expected(&a, live).unwrap();
+                let actual = packed.case.expected(&poisoned, live).unwrap();
+                assert_eq!(expected.len(), actual.len());
+                for ((name, left), (other, right)) in expected.into_iter().zip(actual) {
+                    assert_eq!(name, other);
+                    match (left, right) {
+                        (Expected::Values(a), Expected::Values(b)) => assert_eq!(a, b),
+                        (Expected::Bits(a), Expected::Bits(b)) => assert_eq!(a, b),
+                        _ => panic!("oracle result kind changed"),
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn requested_properties_have_a_distinct_row_and_split() {

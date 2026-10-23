@@ -148,7 +148,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--kv-cache-dtype auto|bf16|fp8|mixed] [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
-  [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...]
+  [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -1325,6 +1325,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculative-rows",
             "--speculation",
             "--speculation-costs",
+            "--speculation-depths",
             "--draft-cost",
             "--prefix-cache",
             "--verify-warmup",
@@ -1529,6 +1530,13 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation table requires --speculation-costs, which only it uses",
         ));
     }
+    if parsed.speculation_depths.is_some()
+        && !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)))
+    {
+        return Err(usage_error(
+            "--speculation-depths requires --speculation balanced, which only it uses",
+        ));
+    }
     let mut http_options = parsed.http_options.clone();
     http_options.api_key = resolve_api_key_v1(
         http_options.api_key,
@@ -1619,9 +1627,16 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
                     .map_err(|_| usage_error("--speculative-rows must be at most 65535"))
             })
             .transpose()?,
-        speculation_mode: match (parsed.speculation_mode, parsed.speculation_costs) {
-            (Some(SpeculationMode::Table(_)), Some(costs)) => SpeculationMode::Table(costs),
-            (mode, _) => mode.unwrap_or(SpeculationMode::Adaptive),
+        speculation_mode: match (
+            parsed.speculation_mode,
+            parsed.speculation_costs,
+            parsed.speculation_depths,
+        ) {
+            (Some(SpeculationMode::Table(_)), Some(costs), _) => SpeculationMode::Table(costs),
+            (Some(SpeculationMode::Balanced(_)), _, Some(depths)) => {
+                SpeculationMode::Balanced(depths)
+            }
+            (mode, _, _) => mode.unwrap_or(SpeculationMode::Adaptive),
         },
         draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
         allowed_local_media_path: parsed.allowed_local_media_path.clone(),
@@ -4825,6 +4840,8 @@ struct ArgumentsV1 {
     speculation_mode: Option<SpeculationMode>,
     /// `--speculation-costs`; table mode takes these costs.
     speculation_costs: Option<StepCosts>,
+    /// `--speculation-depths`; balanced mode takes this schedule.
+    speculation_depths: Option<DraftDepths>,
     draft_cost_model: Option<DraftCostModel>,
     prefix_cache: Option<bool>,
     kv_offload_gib: Option<u64>,
@@ -5213,6 +5230,12 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.speculation_costs, costs, flag)?;
                 }
+                "--speculation-depths" => {
+                    let depths = DraftDepths::parse(value).map_err(|error| {
+                        usage_error(format!("invalid --speculation-depths: {error:?}"))
+                    })?;
+                    set_once_v1(&mut parsed.speculation_depths, depths, flag)?;
+                }
                 "--kv-cache-dtype" => {
                     let dtype = KvCacheDtypeV1::parse(value).ok_or_else(|| {
                         usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
@@ -5420,6 +5443,7 @@ impl ArgumentsV1 {
             ("--speculative-rows", self.speculative_rows.is_some()),
             ("--speculation", self.speculation_mode.is_some()),
             ("--speculation-costs", self.speculation_costs.is_some()),
+            ("--speculation-depths", self.speculation_depths.is_some()),
             ("--draft-cost", self.draft_cost_model.is_some()),
             ("--kv-offload-gib", self.kv_offload_gib.is_some()),
             (
@@ -5932,7 +5956,7 @@ mod tests {
         BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1, BundleTopologyV1,
     };
 
-    use runtime_engine::{EngineConfig, SpeculationMode, StepCosts};
+    use runtime_engine::{DraftDepths, EngineConfig, SpeculationMode, StepCosts};
     use runtime_kv::KvGeometry;
     use runtime_model_api::ModelVocabulary;
     use runtime_scheduler::{
@@ -7402,6 +7426,56 @@ mod tests {
             panic!("table mode expected");
         };
         assert_eq!(parsed, StepCosts::parse(costs).unwrap());
+        // Only balanced mode takes a depth schedule.
+        for words in [
+            &["--speculation", "adaptive", "--speculation-depths", "16:0"][..],
+            &["--speculation-depths", "16:0"][..],
+        ] {
+            let mut words = words.to_vec();
+            words.splice(
+                0..0,
+                ["serve", "--bundle", "a", "--speculative-tokens", "5"],
+            );
+            assert!(
+                refusal(&words).contains("--speculation-depths requires --speculation balanced"),
+                "{words:?}"
+            );
+        }
+        assert!(
+            refusal(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--speculative-tokens",
+                "5",
+                "--speculation",
+                "balanced",
+                "--speculation-depths",
+                "16:0,8:3",
+            ])
+            .contains("invalid --speculation-depths")
+        );
+        let schedule = "1:5,8:3,16:0";
+        let balanced = parse_host_command_v1(&arguments(&[
+            "serve",
+            "--bundle",
+            "a",
+            "--speculative-tokens",
+            "5",
+            "--speculation",
+            "balanced",
+            "--speculation-depths",
+            schedule,
+        ]))
+        .unwrap();
+        let HostCommandV1::Serve {
+            speculation_mode: SpeculationMode::Balanced(depths),
+            ..
+        } = balanced
+        else {
+            panic!("balanced mode expected");
+        };
+        assert_eq!(depths, DraftDepths::parse(schedule).unwrap());
         let fixed = parse_host_command_v1(&arguments(&[
             "serve",
             "--bundle",

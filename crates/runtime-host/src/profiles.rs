@@ -104,6 +104,10 @@ pub(crate) struct Speculation {
     /// The step-cost table of `table` mode, in `--speculation-costs` form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub costs: Option<String>,
+    /// The depth schedule of `balanced` mode, in `--speculation-depths`
+    /// form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depths: Option<String>,
 }
 
 fn error(message: impl Into<String>) -> HostCommandErrorV1 {
@@ -214,6 +218,14 @@ impl Profile {
                 "profile table speculation needs valid costs, which only it uses",
             ));
         }
+        if self.speculation.depths.as_deref().is_some_and(|depths| {
+            self.speculation.mode != "balanced"
+                || runtime_engine::DraftDepths::parse(depths).is_err()
+        }) {
+            return Err(error(
+                "profile speculation depths must be valid, and only balanced mode takes them",
+            ));
+        }
         if self
             .context_parallel_size
             .is_some_and(|size| size == 0 || self.tensor_parallel % size != 0)
@@ -302,6 +314,9 @@ impl Profile {
             if let Some(costs) = &self.speculation.costs {
                 args.extend(["--speculation-costs".into(), costs.clone()]);
             }
+            if let Some(depths) = &self.speculation.depths {
+                args.extend(["--speculation-depths".into(), depths.clone()]);
+            }
         }
         args
     }
@@ -342,8 +357,10 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// `defaults` (a profile's options) under `explicit` options: an explicit
 /// flag replaces the default, `--speculative-tokens 0` also drops the
 /// default speculation mode, an explicit mode other than `table` or zero
-/// speculative tokens the default speculation costs, a non-TBT `--prefill-budget` the default TBT
-/// target. Duplicate explicit flags are kept for the serve parser to refuse.
+/// speculative tokens the default speculation costs, an explicit mode other
+/// than `balanced` or zero speculative tokens the default depth schedule, a
+/// non-TBT `--prefill-budget` the default TBT target. Duplicate explicit
+/// flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
     let flags: std::collections::BTreeSet<&str> =
@@ -355,6 +372,10 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
     let replace_costs = disable_speculation
         || explicit.iter().any(|(flag, values)| {
             flag == "--speculation" && values.first().is_some_and(|v| v != "table")
+        });
+    let replace_depths = disable_speculation
+        || explicit.iter().any(|(flag, values)| {
+            flag == "--speculation" && values.first().is_some_and(|v| v != "balanced")
         });
     let disable_tbt = explicit.iter().any(|(flag, values)| {
         flag == "--prefill-budget" && values.first().is_some_and(|v| v != "tbt")
@@ -378,6 +399,7 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             || option_replaced
             || (disable_speculation && flag == "--speculation")
             || (replace_costs && flag == "--speculation-costs")
+            || (replace_depths && flag == "--speculation-depths")
             || (disable_tbt && flag == "--decode-tbt-target-ms")
         {
             continue;
@@ -953,6 +975,61 @@ mod tests {
             };
             let refusal = refusal.to_string();
             assert!(refusal.contains("needs valid costs"), "{refusal}");
+        }
+    }
+
+    /// A balanced profile passes its depth schedule; an explicit schedule
+    /// replaces it, an explicit other mode drops it, and a schedule outside
+    /// balanced mode or an invalid one is refused.
+    #[test]
+    fn balanced_profiles_pass_their_depths_unless_the_mode_changes() {
+        let schedule = "1:5,8:3,16:0";
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "balanced".into();
+        entry["speculation"]["depths"] = schedule.into();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry.clone(),
+        };
+        let mode = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
+            let resolved =
+                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                crate::HostCommandV1::Serve {
+                    speculation_mode, ..
+                } => speculation_mode,
+                _ => panic!("serve"),
+            }
+        };
+        let balanced = |text: &str| {
+            runtime_engine::SpeculationMode::Balanced(
+                runtime_engine::DraftDepths::parse(text).unwrap(),
+            )
+        };
+        assert_eq!(mode(&[]), balanced(schedule));
+        assert_eq!(mode(&["--speculation", "balanced"]), balanced(schedule));
+        assert_eq!(mode(&["--speculation-depths", "8:2"]), balanced("8:2"));
+        assert_eq!(
+            mode(&["--speculation", "adaptive"]),
+            runtime_engine::SpeculationMode::Adaptive
+        );
+        for (mode, depths) in [("adaptive", schedule), ("balanced", "16:0,8:3")] {
+            let mut bad = entry.clone();
+            bad["speculation"]["mode"] = mode.into();
+            bad["speculation"]["depths"] = depths.into();
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: bad,
+            };
+            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+                panic!("{mode} {depths} accepted");
+            };
+            let refusal = refusal.to_string();
+            assert!(
+                refusal.contains("only balanced mode takes them"),
+                "{refusal}"
+            );
         }
     }
 

@@ -94,10 +94,21 @@ fn absorbs(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
 /// the direct down small and wide queues; 79 of 80 timed layers faster, no
 /// slow sample, A/A within 0.02 ms. Each strip keeps its codes, scales,
 /// chain, K order and partial address, so the finisher is unchanged. The
-/// module is the qualified lab module's bytes. Verify-32 and the drafter
-/// bank are unmeasured.
-fn strips2(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
-    entry.experts() == 384 && phase == ExecutionPhase::Decode && matches!(rows, 16 | 32)
+/// module is the qualified lab module's bytes. The drafter bank is
+/// unmeasured.
+///
+/// Verify-32 and Verify-16 serve the same queue. TP4, 300 W, 1800 MHz,
+/// 2026-10-23, captured full MoE graphs (OV2 strip2-verify), over the
+/// DSpark C8 K3 and C16 K1 captures at 32 rows and the C8 capture's 16-row
+/// prefixes: all 60 cases per GPU bitwise, memcheck and racecheck clean on
+/// the down small queues. Against serving it saves 0.41 (C8 K3) and 0.55 ms
+/// (C16 K1) per Verify-32 step and 0.46 ms per Verify-16 step, which also
+/// drops the direct down small and wide queues; 59 of 60 timed layers
+/// faster, no slow sample, A/A within 0.04 ms. Their router, gate and
+/// finisher launches equal the Decode buckets', so the down queue is the
+/// only difference either way.
+fn strips2(entry: &Entry, _phase: ExecutionPhase, rows: u32) -> bool {
+    entry.experts() == 384 && matches!(rows, 16 | 32)
 }
 
 fn prepare(
@@ -462,10 +473,8 @@ mod tests {
                                 (phase, rows),
                                 (ExecutionPhase::Decode, 32) | (ExecutionPhase::Verify, 32)
                             );
-                        let strips = set.count == 384
-                            && phase == ExecutionPhase::Decode
-                            && matches!(rows, 16 | 32)
-                            && point == Point::Down;
+                        let strips =
+                            set.count == 384 && matches!(rows, 16 | 32) && point == Point::Down;
                         assert!(!(absorbed && call.launch.symbol.contains("_wide_")));
                         assert!(!(strips && call.launch.symbol.contains("_wide_")));
                         if call.launch.symbol.contains("_small_") {
@@ -516,13 +525,12 @@ mod tests {
         }
     }
 
-    /// At Decode-16 and Decode-32 the backbone's down queues are one
-    /// two-strip launch: the symbol and grid differ from the same-row verify
-    /// bucket's down small launch (absorbing at 32, direct at 16), and its
-    /// operands, block and flags do not. Every other launch is the verify
-    /// bucket's.
+    /// At 16 and 32 rows, Decode and Verify alike, the backbone's down
+    /// queues are one two-strip launch with the positional ABI of the
+    /// queue it replaced (absorbing at 32, direct at 16), and every launch
+    /// of the two buckets is the same.
     #[test]
-    fn two_strip_down_queue_replaces_only_the_decode_down_queues() {
+    fn two_strip_down_queue_serves_decode_and_verify_at_16_and_32_rows() {
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         let set = model_deepseek41_contract::moe::expert_sets(&FLASH)
             .into_iter()
@@ -569,29 +577,30 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for rows in [16, 32] {
-            let decode = launches(ExecutionPhase::Decode, rows, Point::Down);
-            let verify = launches(ExecutionPhase::Verify, rows, Point::Down);
-            assert_eq!(decode.len(), 1, "rows={rows}");
-            assert_eq!(verify.len(), if rows == 32 { 1 } else { 2 }, "rows={rows}");
-            let (a, b) = (&decode[0].launch, &verify[0].launch);
-            assert_eq!(a.symbol, strip2::symbol(&entry));
+            // The previous Verify down queues: the absorbing small queue at
+            // 32 rows, the direct small queue (and a wide one) at 16. The
+            // two-strip queue keeps their positional ABI and spans.
+            let previous = if rows == 32 {
+                absorb::entry(&entry, Stage::DownSmall)
+            } else {
+                bandwidth::entry(&entry, Stage::DownSmall, bandwidth::Loads::Direct)
+            };
+            assert_eq!(strip2::entry(&entry).params, previous.params);
+            let down = launches(ExecutionPhase::Verify, rows, Point::Down);
+            assert_eq!(down.len(), 1, "rows={rows}");
+            assert_eq!(down[0].launch.symbol, strip2::symbol(&entry));
             assert_eq!(
-                b.symbol,
-                if rows == 32 {
-                    absorb::symbol(&entry, Stage::DownSmall)
-                } else {
-                    bandwidth::symbol(&entry, Stage::DownSmall, bandwidth::Loads::Direct)
-                }
+                down[0].launch.plan.grid,
+                strip2::plan(&entry, rows).unwrap().grid
             );
-            assert_eq!(a.plan.grid, strip2::plan(&entry, rows).unwrap().grid);
-            assert_eq!(a.plan.grid, [1504, 1, 1]);
-            assert_eq!(
-                (a.plan.block, a.plan.dynamic_shared_bytes, a.plan.pdl),
-                (b.plan.block, b.plan.dynamic_shared_bytes, b.plan.pdl)
-            );
-            assert_eq!(a.arguments, b.arguments);
-            assert_eq!(spans(a), spans(b));
-            for point in [Point::RouterPrepare, Point::Route, Point::Gate, Point::Sum] {
+            assert_eq!(down[0].launch.plan.grid, [1504, 1, 1]);
+            for point in [
+                Point::RouterPrepare,
+                Point::Route,
+                Point::Gate,
+                Point::Down,
+                Point::Sum,
+            ] {
                 let decode = launches(ExecutionPhase::Decode, rows, point);
                 let verify = launches(ExecutionPhase::Verify, rows, point);
                 assert_eq!(decode.len(), verify.len(), "{point:?} rows={rows}");

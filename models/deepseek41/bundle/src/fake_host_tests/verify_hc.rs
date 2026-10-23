@@ -60,8 +60,7 @@ use super::*;
 // Loading the two-CTA HC finish module shifts their resource ids only.
 // At 6 rows its 308 tails (77 per rank) change symbol to the 32-warp twin and
 // grid_x 1 to 2 with identical operands; no other line changes.
-// Loading the two-strip routed down module shifts their resource ids only;
-// verify keeps its down queues at every row count.
+// Loading the two-strip routed down module shifts their resource ids only.
 // Each layer's window KV projection binds the shared expert's workspace and
 // row status and runs on the side stream beside its query chain: its
 // launches change stream and those spans, and its fork and join add four
@@ -81,13 +80,18 @@ use super::*;
 // WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
 // WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
 // audited by `fold_cluster::cluster_folds_change_only_measured_decode_and_verify_projections`).
+// Verify-32 and Verify-16 serve the two-strip down queue: at 32 rows each
+// absorbing down small launch becomes the two-strip launch with the same
+// operands (160 launches); at 16 rows each direct down small and wide pair
+// becomes one two-strip launch with the small launch's operands (160 fewer
+// launches and captured nodes). No other line changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0x60ef41c3fb19c69f)),
     (6, (8680, 0x9c8cd5dcc4b8692f)),
     (8, (8212, 0x139d478f453b8ce2)),
     (12, (10136, 0xf5073975e2eff8da)),
-    (16, (9012, 0xd9f2fb496f5cea08)),
-    (32, (8704, 0x184a80f73ebdd8ef)),
+    (16, (8852, 0xc6e9019cee4d3bf0)),
+    (32, (8704, 0xbbe52d293c548b6f)),
 ];
 
 #[test]

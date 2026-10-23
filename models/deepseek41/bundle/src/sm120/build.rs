@@ -27,6 +27,7 @@ mod dspark_argmax;
 mod dspark_aux;
 mod dspark_cubin;
 mod dspark_entries;
+mod dspark_noise;
 #[allow(dead_code, reason = "the bundle registers the entry")]
 mod dspark_peer_embedding;
 mod dspark_quantize;
@@ -241,6 +242,7 @@ pub fn selection(
     specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
     specs.push((markov_row::FAMILY, markov_row::cubin_spec(manifest)));
     specs.push((dspark_argmax::FAMILY, dspark_argmax::cubin_spec()));
+    specs.push((dspark_noise::FAMILY, dspark_noise::cubin_spec()));
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),

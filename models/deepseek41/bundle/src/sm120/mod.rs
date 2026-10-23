@@ -16,6 +16,7 @@ pub mod dspark_argmax;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
 pub mod dspark_entries;
+pub mod dspark_noise;
 pub mod dspark_peer_embedding;
 pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
@@ -601,6 +602,7 @@ impl crate::Kernels {
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
             || cubin == dspark_argmax::CUBIN
+            || cubin == dspark_noise::CUBIN
             || cubin == dspark_quantize::cubin_name(g)
             || cubin == dspark_peer_embedding::cubin_name(g)
             || cubin == engram_hash_entries::CUBIN

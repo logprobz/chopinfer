@@ -170,5 +170,7 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     {
         backend = backend.with_row_argmax(entry);
     }
-    Ok(backend.with_sinkhorn(feature_entries(g)))
+    Ok(backend
+        .with_draft_noise(super::dspark_noise::entry())
+        .with_sinkhorn(feature_entries(g)))
 }

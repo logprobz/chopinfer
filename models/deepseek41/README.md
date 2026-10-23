@@ -57,8 +57,16 @@ expands both banks for the experts with routes into raw banks in scratch
 experts read those banks unchanged. DSpark's banks stay raw: the one-row floor kernel loads
 scales before its PDL wait. On the official checkpoint at TP4, each rank's
 routed scale banks shrink from 4,246,732,800 to about 697,200,000 bytes,
-decoding bitwise to the raw banks (2026-10-23, CPU). `CHOPINFER_WEIGHT_CENSUS=0`
-on the host plans every bank raw, which is the A/B control.
+decoding bitwise to the raw banks (2026-10-23, CPU). Encoding is on by
+default; `CHOPINFER_WEIGHT_CENSUS=0` on the host plans every bank raw, which
+is also the A/B control. Served at TP4 AR on 2026-10-23 (test KV mode,
+65,536 pages, a raw/encoded/encoded/raw sequence after a warm-up process),
+every greedy and long-prompt token and logprob bit equaled the raw server's,
+each rank had 3,296 MiB more free memory before its KV pool (60,676 more
+pages at utilization 1.0), the census took 6 to 7 s at startup, and greedy
+decode ran at 0.973, 0.974 and 0.961 of raw tokens per second at 1, 8 and
+32 sequences (single-launch expansion with one-thread exception searches;
+the warp search replaced them afterwards).
 
 ## Checkpoint and geometry
 

@@ -59,6 +59,19 @@ startup logs each rank's free memory after warmup and warns below 256 MiB
 ([observability](operations-observability.md#chopinfer-metrics)); raise the
 reserve or lower `--max-sequences` when a rank warns.
 
+### Lossless weight encodings
+
+A bundle that exports a weight census may store some weight sections in a
+smaller lossless encoding, which the host measures on the CPU at startup
+([direct weight loading](../BUNDLE_ARCHITECTURE.md#direct-weight-loading)). DeepSeek V4.1 stores
+its main layers' routed expert scale banks encoded and expands them on the
+device per layer; outputs are bitwise equal to raw banks
+([numerics](numerics.md#lossless-weight-encodings)). This is on by default. At TP4 it frees about
+3.3 GiB per GPU for the KV pool, adds the census to startup (about 7 s),
+and on 2026-10-23 cost 2 to 4 % of decode tokens per second at 1, 8 and 32
+sequences. Set `CHOPINFER_WEIGHT_CENSUS=0` in the server's environment to
+plan every section raw.
+
 ## Qualification scope
 
 Qualification is tied to actual checkpoint tensors, package, host, topology,

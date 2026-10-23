@@ -169,6 +169,9 @@ mod moe_pipeline_entries;
 #[allow(dead_code, reason = "the build compiles the frozen vector declaration")]
 mod moe_pipeline_vector;
 pub(crate) mod moe_router_finish;
+#[allow(dead_code, reason = "the build script serves the tiled builds")]
+pub mod moe_row_tiles;
+pub(crate) mod moe_row_tiles_op;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 pub mod ring_gather;

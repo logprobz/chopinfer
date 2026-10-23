@@ -185,6 +185,8 @@ mod moe_native_entries;
 mod moe_pipeline_entries;
 #[allow(dead_code)]
 mod moe_pipeline_vector;
+#[allow(dead_code)]
+mod moe_row_tiles;
 #[path = "mxfp8_fold.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod mxfp8_fold;
@@ -782,6 +784,12 @@ pub fn selection(
                 specs.push((family, spec));
             }
         }
+    }
+    // Each entry a served path launches on a row-tiled bank compiles as its
+    // row-tiled build, in place of the row-major entry.
+    for geometry in geometries {
+        let builds = moe_row_tiles::builds(geometry).expect("row-tiled MoE builds");
+        moe_row_tiles::serve(&mut specs, &builds).expect("row-tiled MoE entries");
     }
     Selection { specs, owners }
 }

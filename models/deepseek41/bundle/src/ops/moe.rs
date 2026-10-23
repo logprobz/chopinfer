@@ -15,17 +15,19 @@
 pub(crate) mod direct;
 pub(crate) mod floor;
 
-use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
+use kernel_core::backend::{Backend, Counts, OpInfo, Prepared, Refused, View};
 use kernel_core::contract::{MoeQuery, Refusal};
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::moe::{RouteBuffers, RouteMetadata, RoutedSumBuffers};
 use kernel_core::moe_experts::{GatedMlpBuffers, GatedMlpScratch, PreparedExperts};
 use kernel_core::precision::buffers::{ProjectionRouting, QuantizedWeights};
+use kernel_core::precision::layout::ROW_TILES_64X128;
 use kernel_core::precision::quantizer::BlockQuantizeBuffers;
 use kernel_core::precision::{ExecutionPhase, OperationUse};
 use kernel_core::router::RowBiasRouteBuffers;
 use model_deepseek41_contract::moe::{self, Experts};
 use model_deepseek41_contract::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, PREFILL_TOKENS};
+use model_deepseek41_contract::weight_plan::RoutedLayout;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::row_buckets::RowBuckets;
@@ -89,6 +91,10 @@ pub(crate) struct MoeOps {
     /// into (`expand_scales`), and the routes each token takes.
     banks: [moe::ScaleBank; 2],
     top_k: u32,
+    /// The layout every gate/up op reads the bank in: row tiles where the
+    /// served plan stores the TP4 backbone bank in them
+    /// (`sm120::moe_row_tiles`), rows otherwise.
+    gate_up_layout: RoutedLayout,
 }
 
 /// The route metadata's spans.
@@ -168,6 +174,15 @@ pub(crate) struct SumViews {
     pub live_rows: DeviceBufferSpanV1,
 }
 
+/// The layout an expert projection declares it reads its bank in
+/// (`OpInfo::weight_layouts`, role `weights`): row tiles, or rows.
+fn reads(info: &OpInfo) -> RoutedLayout {
+    match info.layout_of("weights") {
+        Some(layout) if layout.id == ROW_TILES_64X128 => RoutedLayout::Tiles,
+        _ => RoutedLayout::Rows,
+    }
+}
+
 impl MoeOps {
     /// The routed MoE ops of the declared expert bank on `backend`.
     pub(crate) fn prepare(
@@ -198,6 +213,7 @@ impl MoeOps {
                     // Opt-in and within-bound: every prefill kind, so chunking
                     // never changes a row's arithmetic.
                     let op = crate::Kernels::native_moe_prefill(shape, set, kind, usage, op)?;
+                    let op = crate::Kernels::row_tiled_moe_projection(shape, set, kind, usage, op)?;
                     asks.record(
                         format!("moe.experts {kind:?} {:?}", usage.phase),
                         need,
@@ -274,7 +290,7 @@ impl MoeOps {
         }
         let [prefill, decode, verify] = USES;
         let bank = |kind| moe::scale_bank(g, ranks, set, kind).map_err(refused);
-        Ok(MoeOps {
+        let ops = MoeOps {
             quantize,
             direct,
             floor,
@@ -283,6 +299,7 @@ impl MoeOps {
                 bank(GatedMlpProjection::Down)?,
             ],
             top_k: set.top_k,
+            gate_up_layout: crate::Kernels::moe_gate_up_layout(shape, set),
             kinds: [
                 kind(prefill, false)?,
                 kind(decode, false)?,
@@ -300,7 +317,24 @@ impl MoeOps {
                 })
                 .collect::<Result<_, Refused>>()?,
             sums,
-        })
+        };
+        let kinds = ops.kinds.iter().chain(ops.buckets.iter().map(|(_, k)| k));
+        for kind in kinds {
+            if reads(kind.gate_up.info()) != ops.gate_up_layout {
+                return Err(Refused::Rule(format!(
+                    "{}'s gate/up op {} reads its bank in another layout than {:?}",
+                    super::NAME,
+                    kind.gate_up.info().implementation,
+                    ops.gate_up_layout
+                )));
+            }
+        }
+        Ok(ops)
+    }
+
+    /// The layout every gate/up op reads the bank in.
+    pub(crate) fn gate_up_layout(&self) -> RoutedLayout {
+        self.gate_up_layout
     }
 
     pub(crate) fn floor(&self, phase: Phase) -> Option<&floor::Prepared> {

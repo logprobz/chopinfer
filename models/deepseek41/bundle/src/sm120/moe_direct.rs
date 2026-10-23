@@ -49,6 +49,11 @@ pub(super) fn prepare_set(
     let scaling = model_deepseek41_contract::moe::router(shape.geometry, set)
         .scaling_factor
         .to_bits();
+    let tiles = super::moe_row_tiles::builds_for(
+        shape.geometry,
+        super::moe_row_tiles_op::layout(shape.geometry, shape.ranks(), set),
+    )
+    .map_err(Refused::Rule)?;
     buckets(set)
         .into_iter()
         .map(|(phase, rows)| {
@@ -62,6 +67,7 @@ pub(super) fn prepare_set(
                     scaling,
                     super::moe_router_finish::qualified(set, phase, rows),
                     super::moe_router_finish::r2(set, phase, rows),
+                    &tiles,
                 )?,
             ))
         })
@@ -118,6 +124,7 @@ fn prepare(
     scaling: u32,
     fused_router: bool,
     r2: bool,
+    tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
 ) -> Result<Prepared, Refused> {
     let scratch = entry.workspace_bytes(rows)?;
     let routed_offset = if fused_router {
@@ -264,6 +271,17 @@ fn prepare(
         }
         if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
             continue;
+        }
+        // The TP4 backbone gate/up bank in row tiles: each gate queue
+        // launches its row-tiled build, which keeps the entry's parameters
+        // and launch (`moe_row_tiles`), and no queue reads the tiles as rows.
+        if let Some(tiled) = tiles.get(&spec.symbol) {
+            spec.symbol.clone_from(&tiled.symbol);
+        } else if !tiles.is_empty() && matches!(stage, Some(Stage::GateSmall | Stage::GateWide)) {
+            return Err(Refused::Rule(format!(
+                "{} would read the row-tiled backbone gate/up bank as rows",
+                spec.symbol
+            )));
         }
         let pointers = spec
             .params

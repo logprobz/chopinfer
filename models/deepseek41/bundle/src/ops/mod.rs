@@ -405,8 +405,9 @@ impl Ops {
     /// projection, the head or a routed expert projection reads in another
     /// layout than its op reads: such a view binds and runs, but on
     /// scrambled weights. Every routed consumer reads its bank as rows,
-    /// except the backbone's gate/up bank, which they read as the served
-    /// plan stores it at the shape's rank count ([`RoutedLayout::served`]).
+    /// except the backbone's gate/up consumers, which read the layout
+    /// their ops declare (`MoeOps::gate_up_layout`): row tiles where the
+    /// served plan stores the bank in them ([`RoutedLayout::served`]).
     pub(crate) fn check_weight_layouts(
         &self,
         shape: &Shape,
@@ -420,13 +421,19 @@ impl Ops {
             expected.push(("head.weight".to_owned(), head.weight_layout()?));
         }
         let rows = RoutedLayout::Rows.view_layouts()?;
-        let served = RoutedLayout::served(shape.ranks()).view_layouts()?;
+        let gate_up = self
+            .moe
+            .as_ref()
+            .map_or(RoutedLayout::served(shape.ranks()), |moe| {
+                moe.gate_up_layout()
+            })
+            .view_layouts()?;
         for name in index.views.keys() {
             let Some((stem, bank)) = name.split_once(".ffn.experts.") else {
                 continue;
             };
             let layouts = if stem.starts_with("layers.") && bank.starts_with("gate_up.") {
-                served
+                gate_up
             } else {
                 rows
             };

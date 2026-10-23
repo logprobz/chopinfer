@@ -1033,9 +1033,7 @@ mod tests {
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
                     // Every compute launch reads packed codes.
                     let packed = |call: &Lowered| {
-                        call.launch
-                            .symbol
-                            .strip_suffix(kernels_sm120::gemm::mxfp8_fold_packed::SUFFIX)
+                        crate::sm120::test_symbols::row_major_fold_symbol(&call.launch.symbol)
                             .unwrap_or_else(|| panic!("{} is row-major", call.launch.symbol))
                             .to_owned()
                     };

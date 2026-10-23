@@ -6,12 +6,12 @@ use crate::lower::{KvExtent, Lowering, layer_view, tests::buffers};
 use crate::ops::{Lowered, Ops};
 use crate::program::{Phase, Stage};
 use crate::shape::Shape;
+use crate::sm120::test_symbols::scale_expand_pair_symbol;
 use bundle_runtime::geometry::{Items, Ranks};
 use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::state::Extent;
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::contract::Argument;
-use kernels_sm120::moe::scale_expand::{PAIR_SYMBOL, PAIR_TILES_SYMBOL};
 use model_deepseek41_contract::moe::{self, Experts};
 use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_layout};
 use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
@@ -183,8 +183,8 @@ fn encoded_scale_banks_expand_before_their_experts() {
         let moe_ops = ops.moe.as_ref().unwrap();
         // The gate/up bank expands in the layout its consumers read.
         let pair_symbol = match moe_ops.gate_up_layout() {
-            RoutedLayout::Rows => PAIR_SYMBOL,
-            RoutedLayout::Tiles => PAIR_TILES_SYMBOL,
+            RoutedLayout::Rows => scale_expand_pair_symbol(false),
+            RoutedLayout::Tiles => scale_expand_pair_symbol(true),
         };
         let mut direct = 0;
         for rank in [0, ranks.get() - 1] {
@@ -370,7 +370,7 @@ fn a_single_encoded_bank_expands_alone() {
     let phase = Phase::Decode(4);
     let lowered = lower(&shape, &ops, &b, 0, phase, &crate::program::moe(0)).unwrap();
     let expand = &lowered[1].1.last().unwrap().launch;
-    assert_eq!(expand.symbol, PAIR_SYMBOL);
+    assert_eq!(expand.symbol, scale_expand_pair_symbol(false));
     assert_eq!(bound(expand)[0], None);
     assert_eq!(bound(expand)[3], None);
     assert_eq!(expand.arguments.0[5..10], [0; 5].map(Argument::U32));
@@ -438,19 +438,29 @@ fn the_expansion_writes_the_gate_up_bank_as_its_consumers_read_it() {
     };
     let tiled = launch(true, RoutedLayout::Tiles);
     let rows = launch(true, RoutedLayout::Rows);
-    assert_eq!(tiled.symbol, PAIR_TILES_SYMBOL);
-    assert_eq!(rows.symbol, PAIR_SYMBOL);
+    assert_eq!(tiled.symbol, scale_expand_pair_symbol(true));
+    assert_eq!(rows.symbol, scale_expand_pair_symbol(false));
     assert_eq!(
         (&tiled.plan, &tiled.arguments),
         (&rows.plan, &rows.arguments)
     );
     for layout in [RoutedLayout::Rows, RoutedLayout::Tiles] {
-        assert_eq!(launch(false, layout).symbol, PAIR_SYMBOL, "{layout:?}");
+        assert_eq!(
+            launch(false, layout).symbol,
+            scale_expand_pair_symbol(false),
+            "{layout:?}"
+        );
     }
     // Each expansion cubin, with its entry, and when a rank loads it.
     for (cubin, symbol) in [
-        ("moe_scale_expand_deepseek41_sm120", PAIR_SYMBOL),
-        ("moe_scale_expand_tiles_deepseek41_sm120", PAIR_TILES_SYMBOL),
+        (
+            "moe_scale_expand_deepseek41_sm120",
+            scale_expand_pair_symbol(false),
+        ),
+        (
+            "moe_scale_expand_tiles_deepseek41_sm120",
+            scale_expand_pair_symbol(true),
+        ),
     ] {
         let built = crate::CUBINS.iter().find(|c| c.name == cubin).unwrap();
         assert!(built.symbols.contains(&symbol), "{cubin}");

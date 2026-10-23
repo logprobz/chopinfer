@@ -319,7 +319,7 @@ fn served_symbols() -> BTreeMap<String, (&'static str, Kind)> {
             ]);
         }
         for (symbol, kind) in symbols {
-            let packed = kernels_sm120::gemm::mxfp8_fold_packed::symbol(&symbol);
+            let packed = crate::sm120::test_symbols::packed_fold_symbol(&symbol);
             for name in [symbol, packed] {
                 map.entry(name).or_insert((id, kind));
             }
@@ -348,7 +348,7 @@ fn folds() -> &'static [Fold] {
                 fold_fused::ROWS.into_iter().map(move |rows| Fold {
                     id,
                     rows,
-                    status: kernels_sm120::gemm::mxfp8_fold_packed::symbol(
+                    status: crate::sm120::test_symbols::packed_fold_symbol(
                         &if id == "attention.q-b" {
                             fold_fused::wide(rows).unwrap().symbol()
                         } else {

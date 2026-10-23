@@ -43,9 +43,7 @@ fn args(line: &str) -> &str {
 /// A launch's symbol without the packed suffix: both arms read packed codes.
 fn symbol(line: &str) -> &str {
     let symbol = line.split_whitespace().nth(2).unwrap();
-    symbol
-        .strip_suffix(kernels_sm120::gemm::mxfp8_fold_packed::SUFFIX)
-        .unwrap_or(symbol)
+    crate::sm120::test_symbols::row_major_fold_symbol(symbol).unwrap_or(symbol)
 }
 fn compute_spans(line: &str) -> Vec<(u64, u64, u64)> {
     let mut spans = journal_spans(line);

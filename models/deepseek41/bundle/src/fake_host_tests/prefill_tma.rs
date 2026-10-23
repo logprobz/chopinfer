@@ -56,7 +56,7 @@ fn staged_tiles() {
                 let tile = crate::sm120::mxfp8_fold::compact::tile(rows as u32);
                 assert_eq!(
                     symbol,
-                    kernels_sm120::gemm::mxfp8_fold_packed::symbol(&expected)
+                    crate::sm120::test_symbols::packed_fold_symbol(&expected)
                 );
                 assert!(
                     line.contains(&format!("grid_y: {},", rows / u64::from(tile))),

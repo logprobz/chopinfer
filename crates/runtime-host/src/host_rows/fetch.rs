@@ -246,8 +246,9 @@ fn requests(
     (requests, slots)
 }
 
-/// Copies each miss's fetched row into its output position and publishes it
-/// to the resident cache, in position order: completion order never changes
+/// Copies each miss's fetched row (row `slots[i]` of `data`, which holds the
+/// fetched rows end to end) into its output position and publishes it to the
+/// resident cache, in position order: completion order never changes
 /// publication order.
 fn publish(
     mapping: &MappedRowsV1,
@@ -255,12 +256,12 @@ fn publish(
     rows: &[u32],
     misses: &[usize],
     slots: &[usize],
-    data: &[Vec<u8>],
+    data: &[u8],
     out: &mut [u8],
 ) {
     let resident = mapping.resident_plane(width);
     for (&position, &slot) in misses.iter().zip(slots) {
-        let bytes = &data[slot];
+        let bytes = &data[slot * width..][..width];
         out[position * width..][..width].copy_from_slice(bytes);
         if let Some(plane) = resident {
             plane.publish_fetched(rows[position], bytes);
@@ -356,10 +357,9 @@ fn copy_planes_with(
         .collect::<Vec<_>>();
     let (data, serial) = read(&groups)?;
     if data.len() != groups.len()
-        || data
-            .iter()
-            .zip(&groups)
-            .any(|(rows, (_, requests))| rows.len() != requests.len())
+        || data.iter().zip(&groups).any(|(rows, (_, requests))| {
+            rows.len() != requests.iter().map(|&(_, length)| length).sum::<usize>()
+        })
     {
         return Err("mapped joint read answered another shape".into());
     }

@@ -122,34 +122,49 @@ impl Pool {
         Ok(Self { send })
     }
 
-    /// Started reads split the requests into at most `window` consecutive
-    /// shares, all admitted at once. Blocking reads make each row its own
-    /// share and keep at most `window` of them in flight.
+    /// Reads every group's requests from its own source as one batch. Started
+    /// reads cut all the groups' requests into consecutive shares of one size,
+    /// the rows over `window` rounded up (at most `window` shares, plus one
+    /// per further group), and admit them all at once, so every cold row of
+    /// every group is in flight together. Blocking reads make each row its
+    /// own share and keep at most `window` of them in flight.
     fn read(
         &self,
-        source: &Arc<File>,
-        requests: &[(u64, usize)],
+        groups: &[Group<'_>],
         window: usize,
         start: bool,
-    ) -> Result<Vec<Vec<u8>>, Failure> {
+    ) -> Result<Vec<Vec<Vec<u8>>>, Failure> {
         let window = window.max(1);
+        let total: usize = groups.iter().map(|(_, requests)| requests.len()).sum();
         let share = if start {
-            requests.len().div_ceil(window).max(1)
+            total.div_ceil(window).max(1)
         } else {
             1
         };
+        let all = groups
+            .iter()
+            .enumerate()
+            .flat_map(|(group, &(source, requests))| {
+                requests
+                    .chunks(share)
+                    .map(move |requests| (group, source, requests))
+            })
+            .collect::<Vec<_>>();
         let (reply, receive) = mpsc::channel();
         let mut reply = Some(reply);
-        let mut pending = requests.chunks(share).enumerate();
+        let mut pending = all
+            .iter()
+            .map(|&(_, source, requests)| (source, requests))
+            .enumerate();
         // Each reply admits the next share. The admission that finds no
         // share left drops this sender, so a lost reply ends the receive loop.
-        for _ in 0..window {
-            self.admit(source, &mut pending, start, &mut reply)?;
+        for _ in 0..if start { all.len().max(1) } else { window } {
+            self.admit(&mut pending, start, &mut reply)?;
         }
-        let mut shares = vec![None; requests.len().div_ceil(share)];
+        let mut shares = vec![None; all.len()];
         let mut failure = None;
         while let Ok((index, result)) = receive.recv() {
-            self.admit(source, &mut pending, start, &mut reply)?;
+            self.admit(&mut pending, start, &mut reply)?;
             match result {
                 Ok(rows) => shares[index] = Some(rows),
                 Err(error) => {
@@ -162,9 +177,12 @@ impl Pool {
         if let Some(error) = failure {
             return Err(Failure::Source(error));
         }
-        let mut rows = Vec::with_capacity(requests.len());
-        for share in shares {
-            rows.extend(
+        let mut rows = groups
+            .iter()
+            .map(|(_, requests)| Vec::with_capacity(requests.len()))
+            .collect::<Vec<Vec<Vec<u8>>>>();
+        for (&(group, _, _), share) in all.iter().zip(shares) {
+            rows[group].extend(
                 share.ok_or_else(|| Failure::Queue("mapped row read response is absent".into()))?,
             );
         }
@@ -173,15 +191,14 @@ impl Pool {
 
     fn admit<'a>(
         &self,
-        source: &Arc<File>,
-        pending: &mut impl Iterator<Item = (usize, &'a [(u64, usize)])>,
+        pending: &mut impl Iterator<Item = (usize, (&'a Arc<File>, &'a [(u64, usize)]))>,
         start: bool,
         reply: &mut Option<mpsc::Sender<Reply>>,
     ) -> Result<(), Failure> {
         let Some(sender) = reply.as_ref() else {
             return Ok(());
         };
-        let Some((index, requests)) = pending.next() else {
+        let Some((index, (source, requests))) = pending.next() else {
             *reply = None;
             return Ok(());
         };
@@ -197,36 +214,50 @@ impl Pool {
     }
 }
 
+/// One source's requests in a batch read.
+pub(super) type Group<'a> = (&'a Arc<File>, &'a [(u64, usize)]);
+/// Each group's rows in request order, and whether this thread read them
+/// because the reader threads were unavailable.
+pub(super) type GroupRows = (Vec<Vec<Vec<u8>>>, bool);
+
 pub(super) fn read(
     source: &Arc<File>,
     requests: &[(u64, usize)],
 ) -> Result<(Vec<Vec<u8>>, bool), String> {
+    let (mut rows, serial) = read_groups(&[(source, requests)])?;
+    Ok((rows.pop().unwrap_or_default(), serial))
+}
+
+/// Reads every group as one batch: one wait for all of them.
+pub(super) fn read_groups(groups: &[Group<'_>]) -> Result<GroupRows, String> {
     static POOL: OnceLock<Result<Pool, String>> = OnceLock::new();
     read_using(
         POOL.get_or_init(Pool::new).as_ref().map_err(String::as_str),
-        source,
-        requests,
+        groups,
         super::start_reads(),
     )
 }
 
 fn read_using(
     pool: Result<&Pool, &str>,
-    source: &Arc<File>,
-    requests: &[(u64, usize)],
+    groups: &[Group<'_>],
     start: bool,
-) -> Result<(Vec<Vec<u8>>, bool), String> {
+) -> Result<GroupRows, String> {
     match pool {
-        Ok(pool) => match pool.read(source, requests, super::readers(), start) {
+        Ok(pool) => match pool.read(groups, super::readers(), start) {
             Ok(rows) => return Ok((rows, false)),
             Err(Failure::Source(error)) => return Err(error),
             Err(Failure::Queue(error)) => fallback(&error),
         },
         Err(error) => fallback(error),
     }
-    // One share on this thread: started reads still keep its cold rows in
-    // flight together.
-    read_share(source, requests, start).map(|rows| (rows, true))
+    // One share per group on this thread: started reads still keep each
+    // group's cold rows in flight together.
+    groups
+        .iter()
+        .map(|&(source, requests)| read_share(source, requests, start))
+        .collect::<Result<_, _>>()
+        .map(|rows| (rows, true))
 }
 
 #[cfg(test)]
@@ -239,20 +270,26 @@ mod tests {
         std::fs::write(&path, [1, 9, 2, 8, 3, 7]).unwrap();
         let file = Arc::new(File::open(&path).unwrap());
         let requests = [(1, 3), (0, 2)];
-        let expected = (vec![vec![9, 2, 8], vec![1, 9]], true);
+        let expected = (vec![vec![vec![9, 2, 8], vec![1, 9]], vec![vec![7]]], true);
+        let groups: [Group<'_>; 2] = [(&file, &requests), (&file, &[(5, 1)])];
         for start in [false, true] {
             assert_eq!(
-                read_using(Err("reader admission unavailable"), &file, &requests, start).unwrap(),
+                read_using(Err("reader admission unavailable"), &groups, start).unwrap(),
                 expected
             );
             let (send, receive) = mpsc::sync_channel(1);
             drop(receive);
             assert_eq!(
-                read_using(Ok(&Pool { send }), &file, &requests, start).unwrap(),
+                read_using(Ok(&Pool { send }), &groups, start).unwrap(),
                 expected
             );
             assert!(
-                read_using(Err("reader admission unavailable"), &file, &[(5, 2)], start).is_err()
+                read_using(
+                    Err("reader admission unavailable"),
+                    &[(&file, &[(5, 2)])],
+                    start
+                )
+                .is_err()
             );
         }
         std::fs::remove_file(path).unwrap();
@@ -277,17 +314,33 @@ mod tests {
         for start in [false, true] {
             for window in [1, 2, 7, 64, WORKERS, 1000] {
                 assert!(
-                    pool.read(&file, &requests, window, start).ok() == Some(expected.clone()),
+                    pool.read(&[(&file, &requests)], window, start).ok()
+                        == Some(vec![expected.clone()]),
                     "window {window} start {start}"
                 );
                 assert!(
-                    pool.read(&file, &requests[..1], window, start).ok()
-                        == Some(expected[..1].to_vec())
+                    pool.read(&[(&file, &requests[..1])], window, start).ok()
+                        == Some(vec![expected[..1].to_vec()])
                 );
-                assert!(pool.read(&file, &[], window, start).ok() == Some(Vec::new()));
+                assert!(pool.read(&[(&file, &[])], window, start).ok() == Some(vec![Vec::new()]));
+                assert!(pool.read(&[], window, start).ok() == Some(Vec::new()));
+                // Groups come back each in its own request order.
+                let split = [
+                    (&file, &requests[..7]),
+                    (&file, &[]),
+                    (&file, &requests[7..]),
+                ];
+                assert!(
+                    pool.read(&split, window, start).ok()
+                        == Some(vec![
+                            expected[..7].to_vec(),
+                            Vec::new(),
+                            expected[7..].to_vec()
+                        ])
+                );
             }
             assert!(matches!(
-                pool.read(&file, &[(0, 2), (4095, 2)], 4, start),
+                pool.read(&[(&file, &[(0, 2)]), (&file, &[(4095, 2)])], 4, start),
                 Err(Failure::Source(_))
             ));
         }
@@ -310,7 +363,12 @@ mod tests {
         let requests = (0..10_u64).map(|i| (i * 5, 3)).collect::<Vec<_>>();
         let reader = {
             let (file, requests) = (Arc::clone(&file), requests.clone());
-            std::thread::spawn(move || Pool { send }.read(&file, &requests, 3, false).ok())
+            std::thread::spawn(move || {
+                Pool { send }
+                    .read(&[(&file, &requests)], 3, false)
+                    .ok()
+                    .map(|mut rows| rows.remove(0))
+            })
         };
         // This thread is the only worker: three rows arrive, and each reply
         // admits exactly one more.
@@ -342,7 +400,12 @@ mod tests {
         let requests = (0..10_u64).map(|i| (i * 5, 3)).collect::<Vec<_>>();
         let reader = {
             let (file, requests) = (Arc::clone(&file), requests.clone());
-            std::thread::spawn(move || Pool { send }.read(&file, &requests, 3, true).ok())
+            std::thread::spawn(move || {
+                Pool { send }
+                    .read(&[(&file, &requests)], 3, true)
+                    .ok()
+                    .map(|mut rows| rows.remove(0))
+            })
         };
         // Three consecutive shares (4, 4 and 2 rows) arrive with no reply
         // sent, and nothing else does: every row is handed out at once.
@@ -366,6 +429,71 @@ mod tests {
         }
         assert_eq!(reader.join().unwrap(), Some(expected_bytes(&requests)));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_started_read_of_two_sources_admits_both_before_any_reply() {
+        let path = |name: &str| {
+            std::env::temp_dir().join(format!("mapped-pool-{name}-{}", std::process::id()))
+        };
+        std::fs::write(path("codes"), (0..64_u8).collect::<Vec<_>>()).unwrap();
+        std::fs::write(path("scales"), (100..164_u8).collect::<Vec<_>>()).unwrap();
+        let codes = Arc::new(File::open(path("codes")).unwrap());
+        let scales = Arc::new(File::open(path("scales")).unwrap());
+        let (send, receive) = mpsc::sync_channel(QUEUE);
+        let wide = (0..6_u64).map(|i| (i * 8, 4)).collect::<Vec<_>>();
+        let narrow = (0..3_u64).map(|i| (i * 2, 1)).collect::<Vec<_>>();
+        let reader = {
+            let (codes, scales, wide, narrow) = (
+                Arc::clone(&codes),
+                Arc::clone(&scales),
+                wide.clone(),
+                narrow.clone(),
+            );
+            std::thread::spawn(move || {
+                Pool { send }
+                    .read(&[(&codes, &wide), (&scales, &narrow)], 3, true)
+                    .ok()
+            })
+        };
+        // Nine rows over a window of three make shares of three: two from the
+        // first source and one from the second, all before any reply.
+        let wait = std::time::Duration::from_millis(200);
+        let shares = (0..3)
+            .map(|_| receive.recv_timeout(wait).unwrap())
+            .collect::<Vec<_>>();
+        assert!(receive.recv_timeout(wait / 4).is_err());
+        assert_eq!(
+            shares
+                .iter()
+                .map(|w| (Arc::ptr_eq(&w.source, &scales), w.requests.clone()))
+                .collect::<Vec<_>>(),
+            [
+                (false, wide[..3].to_vec()),
+                (false, wide[3..].to_vec()),
+                (true, narrow.clone())
+            ]
+        );
+        for work in shares.into_iter().rev() {
+            let result = read_share(&work.source, &work.requests, work.start);
+            work.reply.send((work.index, result)).unwrap();
+        }
+        let expected = |bytes: &[u8], requests: &[(u64, usize)]| {
+            requests
+                .iter()
+                .map(|&(offset, length)| bytes[offset as usize..][..length].to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            reader.join().unwrap(),
+            Some(vec![
+                expected(&(0..64).collect::<Vec<u8>>(), &wide),
+                expected(&(100..164).collect::<Vec<u8>>(), &narrow)
+            ])
+        );
+        for name in ["codes", "scales"] {
+            std::fs::remove_file(path(name)).unwrap();
+        }
     }
 
     #[test]

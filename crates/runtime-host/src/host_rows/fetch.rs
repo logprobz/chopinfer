@@ -192,48 +192,82 @@ fn copy_misses_from(
                 target.copy_from_slice(&mapping.bytes()[row as usize * width..][..width]);
             }
         }
-        NANOS.fetch_add(
-            started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
-            Ordering::Relaxed,
-        );
+        elapsed(started);
         return Ok(());
     };
-    let tile_rows = (TILE_BYTES / width).clamp(1, 4096);
-    for tile in misses.chunks(tile_rows) {
-        let mut index = BTreeMap::new();
-        let mut requests = Vec::new();
-        let mut positions = Vec::with_capacity(tile.len());
-        for &position in tile {
-            let row = rows[position];
-            let slot = *index.entry(row).or_insert_with(|| {
-                let slot = requests.len();
-                // validate established row * width < mapping length, and the
-                // mapping constructor checked its whole file interval.
-                requests.push((mapping.file_offset() + u64::from(row) * width as u64, width));
-                slot
-            });
-            positions.push(slot);
-        }
+    for tile in misses.chunks(tile_rows(width)) {
+        let (requests, slots) = requests(mapping, width, rows, tile);
         let (data, serial) = pool::read(source, &requests)?;
-        READS.fetch_add(requests.len() as u64, Ordering::Relaxed);
-        BYTES.fetch_add((requests.len() * width) as u64, Ordering::Relaxed);
-        if serial {
-            SERIAL.fetch_add(1, Ordering::Relaxed);
-        }
-        // Completion order never changes publication order.
-        for (&position, slot) in tile.iter().zip(positions) {
-            let bytes = &data[slot];
-            out[position * width..][..width].copy_from_slice(bytes);
-            if let Some(plane) = mapping.resident_plane(width) {
-                plane.publish_fetched(rows[position], bytes);
-            }
+        count_reads(requests.len(), width, serial);
+        publish(mapping, width, rows, tile, &slots, &data, out);
+    }
+    elapsed(started);
+    Ok(())
+}
+
+fn tile_rows(width: usize) -> usize {
+    (TILE_BYTES / width).clamp(1, 4096)
+}
+
+/// One read per distinct row of `misses`, and each miss's read.
+fn requests(
+    mapping: &MappedRowsV1,
+    width: usize,
+    rows: &[u32],
+    misses: &[usize],
+) -> (Vec<(u64, usize)>, Vec<usize>) {
+    let mut index = BTreeMap::new();
+    let mut requests = Vec::new();
+    let mut slots = Vec::with_capacity(misses.len());
+    for &position in misses {
+        let row = rows[position];
+        let slot = *index.entry(row).or_insert_with(|| {
+            let slot = requests.len();
+            // validate established row * width < mapping length, and the
+            // mapping constructor checked its whole file interval.
+            requests.push((mapping.file_offset() + u64::from(row) * width as u64, width));
+            slot
+        });
+        slots.push(slot);
+    }
+    (requests, slots)
+}
+
+/// Copies each miss's fetched row into its output position and publishes it
+/// to the resident cache, in position order: completion order never changes
+/// publication order.
+fn publish(
+    mapping: &MappedRowsV1,
+    width: usize,
+    rows: &[u32],
+    misses: &[usize],
+    slots: &[usize],
+    data: &[Vec<u8>],
+    out: &mut [u8],
+) {
+    let resident = mapping.resident_plane(width);
+    for (&position, &slot) in misses.iter().zip(slots) {
+        let bytes = &data[slot];
+        out[position * width..][..width].copy_from_slice(bytes);
+        if let Some(plane) = resident {
+            plane.publish_fetched(rows[position], bytes);
         }
     }
+}
+
+fn count_reads(reads: usize, width: usize, serial: bool) {
+    READS.fetch_add(reads as u64, Ordering::Relaxed);
+    BYTES.fetch_add((reads * width) as u64, Ordering::Relaxed);
+    if serial {
+        SERIAL.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn elapsed(started: std::time::Instant) {
     NANOS.fetch_add(
         started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
         Ordering::Relaxed,
     );
-    Ok(())
 }
 
 #[cfg(test)]

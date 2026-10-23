@@ -17,6 +17,7 @@ mod gpu_state;
 pub mod kit;
 pub mod lab_entry;
 pub mod launch;
+pub mod packed_fold;
 pub mod poison;
 pub mod topology;
 

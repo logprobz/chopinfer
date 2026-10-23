@@ -361,7 +361,9 @@ impl Cache {
             "contention":self.contention.load(Ordering::Relaxed), "copies":self.copies.load(Ordering::Relaxed),
             "budget_skips":self.charge.budget.skipped.load(Ordering::Relaxed),
             "counter_scope":"row-plane copies, including rank fanout; partial-row misses do not insert",
-            "snapshot_consistency":"independent atomic counters"
+            "snapshot_consistency":"independent atomic counters",
+            // Process-wide: the descriptor reads of every cache's misses.
+            "miss_fetch":super::fetch::snapshot(),
         }).to_string());
     }
 }

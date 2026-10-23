@@ -40,6 +40,18 @@ __device__ __forceinline__ uint32_t word(const uint8_t* base, int row, int col) 
   return value;
 }
 
+// word(base, row, col) when `take`, else 0, as one predicated load. The
+// packed entries read A through it: the conditional form of the row-major
+// body becomes branch regions around their loads.
+__device__ __forceinline__ uint32_t word_if(const uint8_t* base, int row, int col, bool take) {
+  const uint32_t address = ptx::shared_address(base) +
+      smem::swizzle_128(base, row * 128 + col, 128);
+  uint32_t value;
+  asm volatile("{\n .reg .pred p;\n setp.ne.u32 p, %2, 0;\n mov.b32 %0, 0;\n"
+               " @p ld.shared.u32 %0, [%1];\n}" : "=r"(value) : "r"(address), "r"(uint32_t(take)));
+  return value;
+}
+
 // Packed weight codes (mxfp8-fold-packed-8x128-v1, PackedWeights) land in a
 // stage's weight plane in tile row order. A full fold arrives through the
 // 4-D packed map as one 128-byte segment per row, with the map's 128-byte
@@ -49,6 +61,11 @@ __device__ __forceinline__ uint32_t word(const uint8_t* base, int row, int col) 
 // words for k32 steps 2 * pair and 2 * pair + 1: word 2 * (step % 2) + i
 // is the row-major word at K byte step * 32 + i * 16 + lane4 * 4. With the
 // swizzle, each quarter warp (two rows of four lanes) covers all 32 banks.
+// Every address stays inside the weight plane (rows below 128; a half fold
+// reads its strip's 512 bytes), so callers load unconditionally, outside any
+// branch, and select the words where they are used: words of columns at or
+// past N or of K at or past K (TMA zero fill or stale shared memory) are
+// never selected.
 __device__ __forceinline__ ptx::A4 packed_words(
     const uint8_t* base, int row, int lane4, int pair, bool half) {
   const uint32_t offset = half
@@ -99,9 +116,16 @@ __device__ __forceinline__ void tail(
 #pragma unroll
           for (int i = 0; i < 2; ++i)
             if (col < N && k < K) {
-              if constexpr (PackedWeights)
-                b.v[i] = mxfp8_fold_packed::load_word(
-                    weights, group * N + col, k + i * 16 + lane4 * 4, K);
+              if constexpr (PackedWeights) {
+                // word_offset with its parts known: the strip row is quad
+                // (column tiles start on strips), the word is 2 * step + i
+                // of lane4's run, and a half fold's segments and runs are
+                // half as wide.
+                const uint32_t half = K % 128 != 0 && f == K / 128;
+                const uint64_t at = mxfp8_fold_packed::fold_offset((group * N + col) / 8, f, K) +
+                    ((quad * 128 + lane4 * 32) >> half) + (step * 2 + i) * 4;
+                b.v[i] = *reinterpret_cast<const uint32_t*>(weights + at);
+              }
               else
                 b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
                     (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);
@@ -263,7 +287,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
     // preserve existing locked instruction streams, including partial K.
     if constexpr (PackedWeights) {
       // The same four ordered MMAs, with B words loaded for two steps at
-      // once (packed_words) under the row-major predicates.
+      // once (packed_words) and selected under the row-major predicates.
       const bool half = K % 128 != 0 && f == folds - 1;
       constexpr int pair_unroll = K < 1024 && K % 128 == 0 ? 1 : 2;
 #pragma unroll pair_unroll
@@ -272,8 +296,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int n = 0; n < 4; ++n) {
           const int local = wn * 32 + n * 8 + quad;
-          words[n] = column0 + local < N && f * 128 + pair * 64 < K
-              ? packed_words(b, local, lane4, pair, half) : ptx::A4{};
+          words[n] = packed_words(b, local, lane4, pair, half);
         }
 #pragma unroll
         for (int odd = 0; odd < 2; ++odd) {
@@ -285,10 +308,9 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
           for (int m = 0; m < 4; ++m) {
             const int local = wm * 64 + m * 16 + quad;
 #pragma unroll
-            for (int i = 0; i < 4; ++i) {
-              af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
-                  ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
-            }
+            for (int i = 0; i < 4; ++i)
+              af[m].v[i] = word_if(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4,
+                                   ((active >> (2 * m + i % 2)) & 1) && k < K);
             const uint32_t row = token0 + local + (lane4 & 1) * 8;
             sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
                 ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;

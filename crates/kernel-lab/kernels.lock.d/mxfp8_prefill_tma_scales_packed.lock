@@ -1505,7 +1505,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "4157c1ada1d08f890a81857214e8a0203b9f2fc5cb08a02dec004a896d397854",
+    "cubin_sha256": "bbe1cf9d6b02a4bbe4f8ba06c367791041178793a908a79023ddd348e80a2ca6",
     "resources": [
       {
         "symbol": "chop_mxfp8_prefill_tma_scales_packed_lab_m256_n200_k1280_g1_p0_f32_v1_tma_scales_s2_v1_admit_v1",

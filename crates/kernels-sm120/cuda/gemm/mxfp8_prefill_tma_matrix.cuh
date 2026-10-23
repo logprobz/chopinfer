@@ -82,9 +82,16 @@ __device__ __forceinline__ void tail(
 #pragma unroll
           for (int i = 0; i < 2; ++i)
             if (col < N && k < K) {
-              if constexpr (PackedWeights)
-                b.v[i] = mxfp8_fold_packed::load_word(
-                    weights, group * N + col, k + i * 16 + lane4 * 4, K);
+              if constexpr (PackedWeights) {
+                // word_offset with its parts known: the strip row is quad
+                // (column tiles start on strips), the word is 2 * step + i
+                // of lane4's run, and a half fold's segments and runs are
+                // half as wide.
+                const uint32_t half = K % 128 != 0 && f == K / 128;
+                const uint64_t at = mxfp8_fold_packed::fold_offset((group * N + col) / 8, f, K) +
+                    ((quad * 128 + lane4 * 32) >> half) + (step * 2 + i) * 4;
+                b.v[i] = *reinterpret_cast<const uint32_t*>(weights + at);
+              }
               else
                 b.v[i] = *reinterpret_cast<const uint32_t*>(weights +
                     (uint64_t(group) * N + col) * K + k + i * 16 + lane4 * 4);

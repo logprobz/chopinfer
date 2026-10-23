@@ -1400,7 +1400,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "23222b300b4ac92f45a83a9efe09bc1fcd9f9b6c330426f59abcd4a4d3991553",
+    "cubin_sha256": "6d773abdf14b20563b7a914d24931b2e686a81eedcfee0b367f1563890211bcb",
     "resources": [
       {
         "symbol": "chop_mxfp8_prefill_packed_lab_m256_n200_k576_g1_p0_f32_v1_prefill_tma_v1_admit_v1",
@@ -1602,7 +1602,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_packed_lab_m256_n64_k576_g2_p32_bf16_v1_prefill_tma_v1_packed_v1",
-        "registers": 74,
+        "registers": 66,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

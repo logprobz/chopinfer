@@ -121,8 +121,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int n = 0; n < 4; ++n) {
           const int local = wn * 32 + n * 8 + quad;
-          words[n] = column0 + local < N
-              ? mxfp8_prefill::packed_words(b, local, lane4, pair, false) : ptx::A4{};
+          words[n] = mxfp8_prefill::packed_words(b, local, lane4, pair, false);
         }
 #pragma unroll
         for (int odd = 0; odd < 2; ++odd) {

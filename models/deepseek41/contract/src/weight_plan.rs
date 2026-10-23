@@ -810,6 +810,20 @@ fn encodable(view: &View) -> bool {
         })
 }
 
+/// `operand` as a census measures it: a matrix of a row-tiled bank as the
+/// row-major matrix it tiles (`bind_policy`), since an encoded section is
+/// encoded from rows and stored untiled; only a raw section is tiled
+/// (`PackedOperand::stored`).
+fn measured(
+    operand: &kernel_core::weight_transform::PackedOperand,
+) -> kernel_core::weight_transform::PackedOperand {
+    let mut operand = operand.clone();
+    if operand.plan.layout.id == ROW_TILES_64X128 {
+        operand.plan.layout.id = "row-major-groups".into();
+    }
+    operand
+}
+
 fn packed(piece: &Piece) -> &kernel_core::weight_transform::PackedOperand {
     match &piece.transform {
         WeightTransform::PackedOperand(operand) => operand,
@@ -821,6 +835,16 @@ fn packed(piece: &Piece) -> &kernel_core::weight_transform::PackedOperand {
 /// matrix of each [`encodable`] bank, banks in view order and matrices in
 /// piece order, or `None` for another image role or when there is none.
 pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, String> {
+    census_with(request, RoutedLayout::served(request.ranks))
+}
+
+/// [`census`] with the backbone's routed gate/up bank stored in `routed`:
+/// the same items either way, since a census measures each matrix as rows
+/// ([`measured`]).
+pub fn census_with(
+    request: &WeightPlanRequestV1,
+    routed: RoutedLayout,
+) -> Result<Option<WeightCensusV1>, String> {
     if !(request.image_role.is_empty() || request.image_role == RANK_IMAGE_ROLE) {
         return Ok(None);
     }
@@ -830,7 +854,7 @@ pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, S
             request.rank, request.ranks
         ));
     }
-    let planned = planned(request, RoutedLayout::served(request.ranks))?;
+    let planned = planned(request, routed)?;
     let census = rank_census(request, &planned)?;
     Ok((!census.items.is_empty()).then_some(census))
 }
@@ -854,18 +878,20 @@ fn rank_census(request: &WeightPlanRequestV1, planned: &Planned) -> Result<Weigh
                     files.source(tensor, file)
                 })
                 .collect::<Result<Vec<_>, String>>()?;
+            let operand = measured(packed(piece));
+            let transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
             let record = WeightRecordV1 {
                 arena_offset: 0,
                 byte_length: piece.bytes,
-                transform: piece.transform.id(),
-                params: piece.transform.encode_params().map_err(|e| e.to_string())?,
+                transform: transform.id(),
+                params: transform.encode_params().map_err(|e| e.to_string())?,
                 sources,
                 axis: piece.axis,
                 ranges: piece.ranges.clone(),
                 stored_shape: piece.stored_shape.clone(),
             };
             items.push(
-                scale_census::scale_item(packed(piece), record)
+                scale_census::scale_item(&operand, record)
                     .map_err(|e| format!("{}: {e}", view.name))?,
             );
         }

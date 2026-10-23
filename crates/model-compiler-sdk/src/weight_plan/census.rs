@@ -46,6 +46,11 @@ pub fn scale_item(operand: &PackedOperand, record: WeightRecordV1) -> Result<Cen
     {
         return Err("a census measures raw local-scale sections an encoding admits".into());
     }
+    // A row-tiled section is produced in its tiles, but encoded from rows
+    // and stored untiled (`PackedOperand::stored`).
+    if operand.plan.row_tiles().is_some() {
+        return Err("a census measures a row-tiled matrix as the row-major matrix it tiles".into());
+    }
     let (rows, groups) = scale_shape(operand);
     if rows.checked_mul(groups) != Some(record.byte_length) {
         return Err("a local-scale record differs from its scale grid".into());
@@ -186,6 +191,37 @@ mod tests {
         let mut bank = operand(WeightFormat::Mxfp4, DType::Ue8M0);
         bank.plan.experts = 2;
         assert_eq!(scale_code(&bank), None);
+    }
+
+    /// A row-tiled matrix's scales encode from rows, so its census item is
+    /// the row-major matrix's.
+    #[test]
+    fn a_census_measures_row_tiled_matrices_as_rows() {
+        let mut rows = operand(WeightFormat::Mxfp4, DType::Ue8M0);
+        (rows.plan.rows, rows.plan.k) = (64, 128);
+        let mut tiles = rows.clone();
+        tiles.plan.layout.id = kernel_core::precision::layout::ROW_TILES_64X128.into();
+        assert_eq!(scale_code(&tiles), Some(ScaleCode::Ue8m0));
+        let record = |operand: &PackedOperand| WeightRecordV1 {
+            arena_offset: 0,
+            byte_length: 64 * 4,
+            transform: 0,
+            params: kernel_core::weight_transform::WeightTransform::PackedOperand(Box::new(
+                operand.clone(),
+            ))
+            .encode_params()
+            .unwrap(),
+            sources: vec![],
+            axis: None,
+            ranges: vec![],
+            stored_shape: vec![64 * 4],
+        };
+        assert!(scale_item(&rows, record(&rows)).is_ok());
+        let error = scale_item(&tiles, record(&tiles)).unwrap_err();
+        assert!(
+            error.contains("as the row-major matrix it tiles"),
+            "{error}"
+        );
     }
 
     #[test]

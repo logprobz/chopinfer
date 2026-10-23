@@ -247,6 +247,125 @@ fn official_routed_scale_banks_round_trip() {
     eprintln!("census of four ranks: {census_seconds:.2} s");
 }
 
+/// The backbone's routed gate/up bank in row tiles takes the row-major
+/// plan's census, so one measurement serves either layout. Its scale banks
+/// are encoded from rows and stored untiled: each decodes to the row-major
+/// plan's bank, which tiles into the row-tiled plan's raw bank, the bytes
+/// the tiled expansion writes. Every other view is the row-tiled raw
+/// plan's. Runs when a synthetic geometry is compiled.
+#[test]
+fn row_tiled_banks_encode_their_scales_from_rows() {
+    use kernel_core::transform::RowTileLayout;
+    use model_deepseek41_contract::weight_plan::census_with;
+    let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
+        eprintln!("no synthetic geometry is compiled: skipped");
+        return;
+    };
+    let root = varied_checkpoint(geometry, "census-tiles");
+    let mut tiled_banks = 0;
+    for &ranks in SUPPORTED_RANKS {
+        if check_ranks(geometry, ranks).is_err() {
+            continue;
+        }
+        let (rows_image, rows_plans) =
+            prepare_with(&root, ranks, Some(RoutedLayout::Rows)).unwrap();
+        let (tiles_image, tiles_plans) =
+            prepare_with(&root, ranks, Some(RoutedLayout::Tiles)).unwrap();
+        let checkpoint = Arc::new(DirectCheckpointV1::open(&root).unwrap());
+        let (requests, censuses) = measured_requests(&checkpoint, ranks);
+        for (request, measured) in requests.iter().zip(&censuses) {
+            for routed in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+                assert_eq!(
+                    census_with(request, routed).unwrap().as_ref(),
+                    Some(measured)
+                );
+            }
+        }
+        let plans: Vec<_> = requests
+            .iter()
+            .map(|request| plan_with(request, RoutedLayout::Tiles).unwrap().unwrap())
+            .collect();
+        let image = image(checkpoint, plans.clone());
+        let (mut rows_start, mut tiles_start, mut start) = (0, 0, 0);
+        for rank in 0..ranks as usize {
+            let index = |plan: &WeightPlanV1| {
+                bundle_runtime::index::parse(&plan.components[0].bytes, rank as u32, INDEX_SCHEMA)
+                    .unwrap()
+            };
+            let (rows_index, tiles_index) = (index(&rows_plans[rank]), index(&tiles_plans[rank]));
+            let read = |image: &PlannedImageV1, start: u64, view: &bundle_runtime::index::View| {
+                let mut bytes = vec![0; view.bytes as usize];
+                image.read(start + view.offset, &mut bytes).unwrap();
+                bytes
+            };
+            let mut encoded_banks = 0;
+            for (name, view) in &index(&plans[rank]).views {
+                let at = format!("tp{ranks} rank {rank} {name}");
+                if image.mapped_view(rank as u32, name.as_bytes()).is_some() {
+                    continue;
+                }
+                let got = read(&image, start, view);
+                let tiled = read(&tiles_image, tiles_start, &tiles_index.views[name]);
+                let Some(width) = (1..=4).find(|w| view.layout_id == encoded_scale_layout(*w))
+                else {
+                    assert_eq!(view.layout_id, tiles_index.views[name].layout_id, "{at}");
+                    same(&got, &tiled, &at);
+                    continue;
+                };
+                encoded_banks += 1;
+                let kind = if name.ends_with(".gate_up.scale") {
+                    GatedMlpProjection::GateUp
+                } else {
+                    GatedMlpProjection::Down
+                };
+                let bank =
+                    moe::scale_bank(geometry, ranks, moe::expert_sets(geometry)[0], kind).unwrap();
+                let mut decoded = Vec::new();
+                for matrix in 0..(bank.experts * bank.projections) as usize {
+                    decoded.extend(
+                        scale_offset::decode_bank_matrix(
+                            &got,
+                            matrix,
+                            bank.rows.into(),
+                            bank.groups.into(),
+                            width,
+                        )
+                        .unwrap(),
+                    );
+                }
+                same(
+                    &decoded,
+                    &read(&rows_image, rows_start, &rows_index.views[name]),
+                    &at,
+                );
+                if kind == GatedMlpProjection::GateUp {
+                    let groups = bank.groups as usize;
+                    RowTileLayout {
+                        rows: decoded.len() / groups,
+                        row_bytes: groups,
+                        tile_rows: 64,
+                        tile_bytes: 4,
+                    }
+                    .pack_in_place(&mut decoded, &mut Vec::new())
+                    .unwrap();
+                    assert_ne!(
+                        tiles_index.views[name].layout_id, rows_index.views[name].layout_id,
+                        "{at}"
+                    );
+                    tiled_banks += 1;
+                }
+                same(&decoded, &tiled, &at);
+            }
+            assert!(encoded_banks > 0, "tp{ranks} rank {rank}: nothing encoded");
+            rows_start += rows_plans[rank].arena_bytes;
+            tiles_start += tiles_plans[rank].arena_bytes;
+            start += plans[rank].arena_bytes;
+        }
+    }
+    assert!(tiled_banks > 0, "no row-tiled bank was encoded");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn plans_refuse_counts_for_another_census() {
     let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {

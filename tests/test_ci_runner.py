@@ -2,6 +2,7 @@
 bound their workers, order artifact readers before incompatible writers and
 leave no process behind."""
 import io
+import json
 import os
 import pathlib
 import re
@@ -640,6 +641,69 @@ class Qualification(unittest.TestCase):
 
 
 class RustTests(unittest.TestCase):
+    def test_a_parallel_library_can_spawn_itself_after_nextest_starts(self):
+        # Cargo may replace an artifact during a second build. A live library
+        # test must still be able to start its executable in a child process.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            binary = root / "library-test"
+            ready, release = root / "ready", root / "release"
+            binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                import pathlib, subprocess, sys, time
+                if len(sys.argv) > 1:
+                    sys.exit(0)
+                root = pathlib.Path(__file__).parent
+                (root / "ready").touch()
+                deadline = time.monotonic() + 10
+                while not (root / "release").exists():
+                    if time.monotonic() > deadline:
+                        sys.exit(99)
+                    time.sleep(0.01)
+                sys.exit(subprocess.run([sys.executable, __file__, "child"]).returncode)
+                '''))
+            binary.chmod(0o755)
+            packages = [{"name": "heavy", "manifest_path": str(root / "Cargo.toml"),
+                         "metadata": {"chopinfer": {"lib-tests-in-one-process": True}}}]
+            listed = {"rust-build-meta": {"target-directory": str(root)}, "rust-binaries": {
+                "heavy": {"binary-id": "heavy", "kind": "lib", "binary-path": str(binary),
+                          "package-id": "heavy"},
+                "light": {"binary-id": "light", "kind": "lib", "binary-path": str(root / "light"),
+                          "package-id": "light"}}}
+            calls = []
+
+            def invoke(command):
+                calls.append(command)
+                if command[:3] == ["cargo", "nextest", "run"]:
+                    deadline = time.monotonic() + 10
+                    while not ready.exists():
+                        if time.monotonic() > deadline:
+                            self.fail("the library test did not start")
+                        time.sleep(0.01)
+                    if "--binaries-metadata" in command:
+                        metadata = pathlib.Path(command[command.index("--binaries-metadata") + 1])
+                        self.assertEqual(json.loads(metadata.read_text()), listed)
+                    else:
+                        # Model Cargo reclaiming the running executable for relinking.
+                        binary.unlink()
+                    release.touch()
+                else:
+                    self.assertEqual(command, ["cargo", "test", "--workspace", "--doc", *rust_tests.LOCKED])
+                return subprocess.CompletedProcess(command, 0)
+
+            output = io.BytesIO()
+            with io.TextIOWrapper(output, encoding="utf-8") as stdout, \
+                    patch.object(rust_tests, "workspace_packages", return_value=packages), \
+                    patch.object(rust_tests.subprocess, "check_output", return_value=json.dumps(listed).encode()) as build, \
+                    patch.object(rust_tests.subprocess, "run", side_effect=invoke), \
+                    patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", new_callable=io.StringIO):
+                status = rust_tests.run_nextest(["--workspace"], 2)
+                stdout.flush()
+                self.assertEqual(status, 0, output.getvalue().decode())
+            build.assert_called_once_with([
+                "cargo", "nextest", "list", "--workspace", "--list-type", "binaries-only",
+                "--message-format", "json", *rust_tests.LOCKED])
+            self.assertEqual(len(calls), 2)
+
     def test_nextest_runs_the_selection_then_its_doctests(self):
         self.assertEqual(rust_tests.commands(["--workspace"], "nextest", 12), [
             ["cargo", "nextest", "run", "--test-threads", "12", "--workspace", "--profile", "ci",

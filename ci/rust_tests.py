@@ -80,7 +80,7 @@ def choose(requested):
     return "nextest", note
 
 
-def library_binaries(selection, names, packages):
+def library_binaries(selection, names, packages, metadata_path):
     """{package: (binary path, working directory, environment)} for the
     library test binaries nextest builds for `names`, run as nextest would:
     from the package directory, with the build's library paths and build
@@ -88,6 +88,8 @@ def library_binaries(selection, names, packages):
     listed = json.loads(subprocess.check_output(
         ["cargo", "nextest", "list", *selection, "--list-type", "binaries-only", "--message-format", "json",
          *LOCKED]))
+    with open(metadata_path, "w", encoding="utf-8") as metadata:
+        json.dump(listed, metadata)
     meta = listed["rust-build-meta"]
     target = meta["target-directory"]
     library_path = []
@@ -119,8 +121,11 @@ def run_nextest(selection, threads):
     with tempfile.TemporaryDirectory(prefix="chopinfer-rust-tests-") as logs:
         try:
             if one_process:
-                # Listing builds every selected test binary, so both runs use one build.
-                for name, (binary, cwd, env) in library_binaries(selection, one_process, packages).items():
+                # Reuse the listed build so Cargo cannot replace a running test's executable.
+                metadata = os.path.join(logs, "binaries.json")
+                binaries = library_binaries(selection, one_process, packages, metadata)
+                run += ["--binaries-metadata", metadata]
+                for name, (binary, cwd, env) in binaries.items():
                     log = open(os.path.join(logs, name + ".log"), "w+b")
                     print(f"rust tests: {name} library tests in one process beside nextest", file=sys.stderr, flush=True)
                     children.append((name, subprocess.Popen([binary], cwd=cwd, env=env, stdin=subprocess.DEVNULL,

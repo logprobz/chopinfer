@@ -66,3 +66,24 @@ immediately before and after its upload wait. It includes event and submission
 overhead; it is not summed rank time or a whole-request critical-path measure.
 The served result is needed before selecting this candidate or deciding whether
 remaining exposed gather time warrants a cross-chunk interface extension.
+
+## Cold large gathers
+
+A chunk of more than 2,730 tokens gathers at least 65,536 rows per plane
+(24 per token), which skips the resident row cache. Before runtime-host read
+such gathers through its reader threads, the prepared gather copied them from
+the mapping with no read-ahead (asynchronous read-ahead is off unless
+`CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1`), one page fault at a time. Measured on
+CPU on 2026-10-23 on the serving host's drive, one 8,192-token chunk of one
+layer for four ranks (196,608 rows per plane, codes and scales cold, quiet
+drive) took 18 to 22 s that way, about 10 s of it the codes plane; the
+synchronous gather this candidate replaces took 1.9 to 2.6 s. A chunk
+gathers two layers. With the reader threads, the default since then, the
+same prepared chunk took 0.30 to 0.36 s per layer, in the same bytes.
+
+The old copy returns with `CHOPINFER_MAPPED_LARGE_GATHER_FETCH=0`,
+`CHOPINFER_MAPPED_MISS_START=0` or `CHOPINFER_MAPPED_MISS_FETCH=0`. Do not
+time or select this candidate under any of them without
+`CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1`. The served comparison must drop the
+Engram tables' pages before each timed run: repeated prompts find the rows
+in the page cache, and the cold cost then does not show.

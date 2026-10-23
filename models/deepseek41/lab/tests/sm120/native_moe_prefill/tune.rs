@@ -5,13 +5,12 @@
 //! served output bytes; the ablations only time. Worker 0 takes the
 //! balanced synthetic case and captured layer 14, worker 1 the skewed
 //! synthetic case and captured layer 39, each on its own rank.
-use super::captured::{BANKS, Banks, READY, WORKER, captures, case_inputs, json};
+use super::captured::{WORKER, captures, case_inputs, sealed};
 use super::pipeline::{Inputs, Pipeline, build, gate_tiles, native_buffers, queue};
 use super::*;
 use kernel_core::contract::Argument;
 use kernel_core::precision::buffers::QuantizedWeights;
 use kernels_sm120::moe::native_grouped::Tune;
-use std::path::{Path, PathBuf};
 
 /// Captured layers by worker.
 pub const LAYERS: [u32; 2] = [14, 39];
@@ -138,6 +137,8 @@ pub fn run(session: &Session) -> LabResult<()> {
     if worker > 1 {
         return Err("worker must be 0 or 1".into());
     }
+    // The captured case's inputs, before any GPU work.
+    let (manifest, banks) = sealed()?;
     let mut runner = Runner::new(session)?;
     let set = family::serving::target_set();
     let capacity = super::synthetic::CAPACITY;
@@ -169,15 +170,6 @@ pub fn run(session: &Session) -> LabResult<()> {
         failed += usize::from(failures > 0);
     }
     // The captured 8192-row chunk of this worker's layer and rank.
-    let ready = json(Path::new(&std::env::var(READY).map_err(|e| e.to_string())?))?;
-    let manifest_path = PathBuf::from(ready["path"].as_str().ok_or("missing manifest path")?);
-    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| e.to_string())?;
-    if ready["sha256"] != kernel_build::digest(&manifest_bytes) {
-        return Err("capture manifest digest mismatch".into());
-    }
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&manifest_bytes).map_err(|e| e.to_string())?;
-    let banks = Banks::open(Path::new(&std::env::var(BANKS).map_err(|e| e.to_string())?))?;
     let layer = LAYERS[worker as usize];
     let c = captures(&manifest, worker)?
         .into_iter()
@@ -309,5 +301,9 @@ fn tune_cpu_plan() {
 #[test]
 #[ignore = "requires the staged cubins, the capture named by CHOPINFER_NATIVE_MOE_READY and banks named by CHOPINFER_NATIVE_MOE_BANKS"]
 fn native_moe_tune_gpu() {
+    // Missing inputs fail here, with or without a GPU, never as a skip.
+    if let Err(e) = sealed() {
+        panic!("native_moe_tune_gpu: {e}");
+    }
     kernel_harness::gpu_test_with(kernel_harness::Cubins::NONE, 16 << 30, run).unwrap();
 }

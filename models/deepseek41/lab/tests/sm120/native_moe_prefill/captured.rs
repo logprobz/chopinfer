@@ -150,6 +150,60 @@ pub fn captures(manifest: &Value, worker: u32) -> LabResult<Vec<Capture>> {
     Ok(out)
 }
 
+/// The sealed capture's manifest and the sealed rank banks the captured
+/// harnesses read, or an error naming the missing input. Neither is in the
+/// repository (native_moe_prefill.md, "Captured inputs").
+pub fn sealed() -> LabResult<(Value, Banks)> {
+    let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    sealed_from(var(READY), var(BANKS))
+}
+
+/// [`sealed`] with READY and BANKS set to `ready` and `banks`.
+fn sealed_from(ready: Option<PathBuf>, banks: Option<PathBuf>) -> LabResult<(Value, Banks)> {
+    let named = |var: &str, path: Option<PathBuf>, what: &str| -> LabResult<PathBuf> {
+        let path = path.ok_or_else(|| {
+            format!(
+                "{var} is unset; it must name {what} (native_moe_prefill.md, \"Captured inputs\")"
+            )
+        })?;
+        if !path.exists() {
+            return Err(format!(
+                "{var} names {}, which does not exist; regenerate {what} \
+                 (native_moe_prefill.md, \"Captured inputs\")",
+                path.display()
+            ));
+        }
+        Ok(path)
+    };
+    let ready = json(&named(
+        READY,
+        ready,
+        "the sealed prefill capture's ready record",
+    )?)?;
+    let path = PathBuf::from(
+        ready["path"]
+            .as_str()
+            .ok_or_else(|| format!("{READY}: the ready record names no capture manifest"))?,
+    );
+    let bytes = std::fs::read(&path).map_err(|e| {
+        format!(
+            "{READY}: capture manifest {}: {e}; regenerate the capture \
+             (native_moe_prefill.md, \"Captured inputs\")",
+            path.display()
+        )
+    })?;
+    if ready["sha256"] != kernel_build::digest(&bytes) {
+        return Err(format!(
+            "{READY}: capture manifest {} differs from its sealed digest",
+            path.display()
+        ));
+    }
+    let manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let banks = Banks::open(&named(BANKS, banks, "the sealed rank banks")?)
+        .map_err(|e| format!("{BANKS}: {e}"))?;
+    Ok((manifest, banks))
+}
+
 /// The sealed banks: BANKS.json names each file's bytes and digest.
 pub struct Banks {
     root: PathBuf,
@@ -289,15 +343,8 @@ pub fn run(session: &Session) -> LabResult<()> {
     if worker > 1 {
         return Err("worker must be 0 or 1".into());
     }
-    let ready = json(Path::new(&std::env::var(READY).map_err(|e| e.to_string())?))?;
-    let manifest_path = PathBuf::from(ready["path"].as_str().ok_or("missing manifest path")?);
-    let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| e.to_string())?;
-    if ready["sha256"] != kernel_build::digest(&manifest_bytes) {
-        return Err("capture manifest digest mismatch".into());
-    }
-    let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|e| e.to_string())?;
+    let (manifest, banks) = sealed()?;
     let cases = captures(&manifest, worker)?;
-    let banks = Banks::open(Path::new(&std::env::var(BANKS).map_err(|e| e.to_string())?))?;
     let mut runner = Runner::new(session)?;
     let set = family::serving::target_set();
     let capacity = super::synthetic::CAPACITY as usize;
@@ -462,9 +509,26 @@ fn tile_timing(
     Ok(serde_json::json!(out))
 }
 
+/// Missing captured inputs fail naming the variable and what it must name,
+/// so the captured and tune tests never fail obscurely without them.
+#[test]
+fn missing_captured_inputs_are_named() {
+    let error = |r: LabResult<(Value, Banks)>| r.err().unwrap();
+    let e = error(sealed_from(None, None));
+    assert!(e.starts_with("CHOPINFER_NATIVE_MOE_READY is unset"), "{e}");
+    let gone = || Some(PathBuf::from("missing-capture-input"));
+    let e = error(sealed_from(gone(), None));
+    assert!(e.contains("which does not exist; regenerate"), "{e}");
+    assert!(e.starts_with("CHOPINFER_NATIVE_MOE_READY names"), "{e}");
+}
+
 #[test]
 #[ignore = "requires the capture named by CHOPINFER_NATIVE_MOE_READY and banks named by CHOPINFER_NATIVE_MOE_BANKS"]
 fn native_moe_captured_gpu() {
+    // Missing inputs fail here, with or without a GPU, never as a skip.
+    if let Err(e) = sealed() {
+        panic!("native_moe_captured_gpu: {e}");
+    }
     kernel_harness::gpu_test_with(kernel_harness::Cubins::NONE, 16 << 30, run).unwrap();
 }
 
@@ -473,11 +537,8 @@ fn native_moe_captured_gpu() {
 fn native_moe_captured_cpu_admission() {
     // The declared cases, the sealed banks' identity against the capture,
     // and the ordered-sum model, without a GPU.
-    let ready = json(Path::new(&std::env::var(READY).unwrap())).unwrap();
-    let bytes = std::fs::read(ready["path"].as_str().unwrap()).unwrap();
-    assert_eq!(ready["sha256"], kernel_build::digest(&bytes));
-    let manifest: Value = serde_json::from_slice(&bytes).unwrap();
-    let banks = Banks::open(Path::new(&std::env::var(BANKS).unwrap())).unwrap();
+    let (manifest, banks) =
+        sealed().unwrap_or_else(|e| panic!("native_moe_captured_cpu_admission: {e}"));
     let mut seen = 0;
     for worker in 0..2 {
         for c in captures(&manifest, worker).unwrap() {

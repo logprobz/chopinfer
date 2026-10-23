@@ -183,3 +183,38 @@ projection: 20 full layers save 5.41 ms each, 108 ms, plus up to about
 25 ms on the upper-skip layers if their ratio holds (timed only at 8192
 rows), so about 105 to 130 ms per 8192-row chunk, about 10% of
 chunk 0's 1005 ms. The serving A/B (criterion 8) measures it.
+
+## The row-tiled bank (2026-10-23)
+
+Flash TP4 serves its backbone gate/up bank in 64-row by 128-K row tiles,
+and the bundle embeds the fused ceil and scanned gate/up tiles and the
+column gate/up only as their row-tiled builds. The harnesses upload a
+tiled copy of the gate/up bank (`pipeline::gate_tiles`) and run both arms'
+launches of those entries as their row-tiled builds over it. The target
+bank's wrapper check compares the lab's launches with the served wrapper
+(`moe_row_tiles_op`) over the tiled bank. The lab and tune entries, the
+raw entry and the tile variants keep the row-major bank, so the serving
+checks still compare the served bits with them.
+
+## Captured inputs
+
+The captured and tune GPU tests read two inputs that are not in the
+repository:
+- `CHOPINFER_NATIVE_MOE_READY`: the ready record (path and digest) of the
+  sealed r7 prefill capture. The capture holds inputs, routes and the
+  exact producer's outputs at layers 0, 13, 14 and 39 on all four ranks,
+  for the chunks under criterion 2.
+- `CHOPINFER_NATIVE_MOE_BANKS`: the sealed rank banks of those layers,
+  each rank's gate/up and down weights and scales (64 files, 28.9 GB),
+  with `BANKS.json` naming each file's bytes and digest.
+
+The capture and banks behind the 2026-10-20 results were in temporary
+storage and are gone; only their manifests remain. The test that wrote the
+banks from the checkpoint lives only in an earlier lane's source snapshot
+(the L10 grouped-BF16 lane), not in this repository. Both must be
+regenerated before these tests run again. Without them, each test fails
+before any GPU work and names the missing input. The captured and tune
+harnesses share their path over the row-tiled bank with the synthetic
+harness: the tiled upload, both arms' remap and the wrapper check. The
+synthetic harness runs that path on GPU, and the captured and tune
+harnesses keep CPU coverage until their inputs exist.

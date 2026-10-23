@@ -1,6 +1,7 @@
 #pragma once
 #include "mxfp8_fold_cluster.cuh"
 #include "../row/ceil_parallel.cuh"
+#include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_fold_cluster_fused {
 using mxfp8_fold_cluster::Layout;
@@ -22,6 +23,14 @@ using mxfp8_fold_cluster::wait_newer;
 // status, so the status ends as the row quantizer would leave it.
 // IgnoreStatus is the lab control that admits every live row.
 //
+// PackedWeights reads weight codes stored as mxfp8-fold-packed-8x128-v1
+// (mxfp8_fold_packed.cuh). A strip's fold is 1024 contiguous bytes whose
+// 16-byte pieces are staged where the row-major chunks of the same row
+// went, and each lane takes its B words for two steps from one piece
+// (lane l's words of a row are bytes [32l, 32l + 32) of its segment). With
+// the chunk swizzle every quarter warp's 16-byte loads hit distinct banks.
+// Only the weight-code address changes.
+//
 // Quantize: the 32 outputs a warp merges are one 32-column block of one row
 // (whole blocks per tile and per rank share). The warp stages them in its
 // CTA's freed operand slots and quantizes them with the row quantizer's
@@ -34,7 +43,7 @@ using mxfp8_fold_cluster::wait_newer;
 // stored codes, unlike the row quantizer's zeros, are then dead.
 template<int N, int K, int Groups, int RowStride, int GroupStride, int TileN,
          int Rows, int Splits, int Stages, int Pending, bool Quantize,
-         uint32_t FloorBits, bool IgnoreStatus>
+         uint32_t FloorBits, bool IgnoreStatus, bool PackedWeights = false>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
     const uint8_t* weights, const uint8_t* weight_scales, float* output,
     uint8_t* codes_out, uint8_t* scales_out, uint8_t* flags_out,
@@ -54,6 +63,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   static_assert(Stages >= 2 && Stages <= Per);
   static_assert(!Quantize || (TileN % 32 == 0 && Outputs % 32 == 0 && Threads * 4 <= L::scales));
   static_assert(Pending % 16 == 0);
+  static_assert(!PackedWeights || N % 8 == 0);
   extern __shared__ __align__(16) uint8_t storage[];
   // A launch with less shared memory than the layout is a planning fault.
   if (dynamic_shared_bytes() < L::bytes) __trap();
@@ -71,7 +81,10 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     for (uint32_t chunk = threadIdx.x; chunk < TileN * 8; chunk += Threads) {
       const uint32_t row = column_base + chunk / 8;
       const bool valid = valid_fold(f);
-      const uint64_t at = (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
+      const uint64_t at = PackedWeights
+          ? mxfp8_fold_packed::fold_offset((g * N + row) / 8, fold, K) + (row % 8) * 128
+              + (chunk % 8) * 16
+          : (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
       mxfp8_fold_ticket::copy16(codes(f) + fold_row_chunk(Rows + chunk / 8, chunk % 8),
                                 weights + (valid ? at : 0), valid);
     }
@@ -157,13 +170,23 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     }
 #pragma unroll
     for (int group = 0; group < RowGroups; ++group) raw[f][group] = ptx::D4{};
+    [[maybe_unused]] uint4 piece;
 #pragma unroll
     for (int step = 0; step < 4; ++step) {
       ptx::B2 bf{};
+      if constexpr (PackedWeights) {
+        const uint32_t at = mxfp8_fold_packed::segment_word(0, step * 32 + lane4 * 4, false);
+        if (step % 2 == 0)
+          piece = *reinterpret_cast<const uint4*>(codes(f)
+              + fold_row_chunk(Rows + warp * 8 + quad, at / 16));
+        bf.v[0] = step % 2 ? piece.z : piece.x;
+        bf.v[1] = step % 2 ? piece.w : piece.y;
+      } else {
 #pragma unroll
-      for (int v = 0; v < 2; ++v)
-        bf.v[v] = *reinterpret_cast<const uint32_t*>(codes(f)
-            + fold_row_chunk(Rows + warp * 8 + quad, step * 2 + v) + lane4 * 4);
+        for (int v = 0; v < 2; ++v)
+          bf.v[v] = *reinterpret_cast<const uint32_t*>(codes(f)
+              + fold_row_chunk(Rows + warp * 8 + quad, step * 2 + v) + lane4 * 4);
+      }
       const uint32_t sb = scales(f)[(Rows + warp * 8 + quad) * 4 + step];
 #pragma unroll
       for (int group = 0; group < RowGroups; ++group) {

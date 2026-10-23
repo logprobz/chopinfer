@@ -416,6 +416,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases. The column-block HC pair's modules add fourteen resolves and
 /// sixteen releases per rank and shift ids only.
 /// The status folds change the TP4 history as in `FLASH_JOURNALS`.
+/// Scratch regions (`buffers::REGIONS`) remove ten allocations and their
+/// releases per rank, as in the text lifecycle; audited against the image
+/// lifecycle bound without regions, every other line is equal once ids are
+/// mapped, and only each rank's region members share a handle.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (23343, 0x3cc290637430e206)),
     (Ranks::TP4, (57871, 0x83cad1ba55e7f679)),

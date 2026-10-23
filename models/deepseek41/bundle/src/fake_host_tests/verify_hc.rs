@@ -91,6 +91,9 @@ use super::*;
 // the status folds of WQ_a, WKV and WQ_b, the sliced quantizer, WO_a and
 // WO_b (1920 launches to 960, audited by
 // `fold_fused::status_folds_change_only_their_decode_and_verify_projections`).
+// Scratch regions (`buffers::REGIONS`) give each rank's region members one
+// handle and renumber the other buffers and the streams; audited against
+// the same verifies bound without regions, every line is otherwise equal.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (8520, 0xeaddb53d42c1914a)),
     (6, (8680, 0xf8c3eaf8478f1253)),

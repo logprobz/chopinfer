@@ -60,7 +60,42 @@ pub fn logits_rows() -> u32 {
 /// stage; adding one is adding its declaration path to a stage's lines.
 /// The peer-written planes (`partial`, `reduced`, `embedded`) allocate on
 /// their DMA owner by name and stay outside every region.
-pub const REGIONS: &[Region] = &[];
+pub const REGIONS: &[Region] = &[
+    // Each stage's outputs, which the next stage consumes before its own
+    // outputs replace them.
+    Region {
+        name: "stage_outputs",
+        members: &[
+            // The phase's input: the rank's embedding rows.
+            "embedding",
+            // Engram, before its layer: the projected keys and value.
+            "engram_kv",
+            // Attention and its indexer, one projection after another.
+            "query_a",
+            "query",
+            "index_query",
+            "index_scores",
+            "attention",
+            "output_a",
+            // MoE: the experts' down output.
+            "routed",
+            // The head: the last streams' collapse.
+            "head_collapsed",
+        ],
+    },
+    // Operands a stage keeps live while its outputs above come and go.
+    Region {
+        name: "stage_operands",
+        members: &[
+            // Attention: the BF16 query, from its RoPE through the window
+            // and indexer to the attention.
+            "native_q",
+            // Engram: one layer's decoded table rows.
+            "engram_rows",
+            // MoE: none yet.
+        ],
+    },
+];
 
 #[cfg(test)]
 thread_local! {
@@ -943,18 +978,23 @@ mod tests {
     #[test]
     fn flash_scratch_fits_beside_the_weights() {
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let mut bytes = 0;
-        Scratch::of(&shape)
-            .visit(&mut |allocation: &Allocation| bytes += allocation.allocation_bytes());
+        let handle = runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(1, 1);
+        let bound =
+            bundle_runtime::scratch::bind_named(Scratch::of(&shape), REGIONS, |_, bytes| {
+                Ok(DeviceBufferSpanV1::new(handle, 0, bytes))
+            })
+            .unwrap();
         // At a prefill's 8192 rows the experts' F32 routed rows (six
-        // 5120-wide routes, 960 MiB), the two stream buffers (640 MiB), the
-        // rank's 16 heads' F32 queries and BF16 queries and attention output
-        // (768 MiB), one row block's selection scores (256 MiB), the staged
-        // windows of 32 items (134 MiB), the index sources' selections
-        // (128 MiB), the F32 index queries (128 MiB) and Engram's F32 keys
-        // and value (800 MiB) and table rows (243 MiB) dominate the
-        // 5.11 GiB.
-        assert!(bytes < 11 << 29, "{bytes}");
+        // 5120-wide routes, 960 MiB) size the region of the stages' outputs,
+        // which Engram's F32 keys and value (800 MiB), the rank's 16 heads'
+        // F32 queries and the index scores (256 MiB each) share with them.
+        // The regions save 1.96 GiB of the 5.46 GiB the buffers declare. The
+        // two stream buffers (640 MiB), the shared expert's and the
+        // reduction's partials (320 MiB), the wide norm (160 MiB), the
+        // staged windows of 32 items (130 MiB), the index sources'
+        // selections (128 MiB) and the region of the stages' operands
+        // (128 MiB) dominate the 3.495 GiB left.
+        assert!(bound.bytes < 7 << 29, "{}", bound.bytes);
     }
 
     #[test]

@@ -1155,6 +1155,12 @@ fn journal_steps(host: &Rc<Host>) {
 /// initialization count, every launch and every span length stay unchanged.
 /// All six journals match their predecessors after exactly those removals
 /// and the state/workspace aliases and resulting handle renumbering.
+/// The scratch regions (`buffers::REGIONS`) allocate each region once in
+/// place of one allocation per member: ten fewer allocations and releases
+/// per rank. Audited against the same lifecycles bound without
+/// regions: every other line is identical once handle, symbol, stream,
+/// event and graph ids are mapped, no offset or length changes, and the
+/// only handles that merge are each rank's members of one region.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1342,7 +1348,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// HC pair's modules fourteen resolves and sixteen releases. The two-strip
 /// routed down module adds two resolves and three releases per rank. The
 /// window KV projection beside the query chain, the row-local rings, the
-/// cluster folds and the status folds change it as in `FLASH_JOURNALS`.
+/// cluster folds and the status folds change it as in `FLASH_JOURNALS`, and
+/// so do the shared fold storage and the scratch regions.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {

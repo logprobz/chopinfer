@@ -17,9 +17,11 @@ namespace chop::gemm::mxfp8_prefill_matrix {
 // fragment, so no ldmatrix yields the fragment: each lane takes its B words
 // for two steps from one 16-byte shared load instead (lane l's words of a
 // row are bytes [32l, 32l + 32) of its segment, [16l, 16l + 16) in a half
-// segment). With the chunk swizzle every quarter warp's loads hit distinct
-// banks, except in a final half fold, where its two rows share them. Only
-// the weight-code address changes.
+// segment). With the chunk swizzle every quarter warp's 16-byte loads hit
+// distinct banks; a final half fold keeps that by staging odd rows'
+// segments in the other half of their rows (half_flip). The staging copies
+// do not branch on the operand, and the B loads are unguarded. Only the
+// weight-code address changes.
 template<int Rows, int Stages> struct Layout {
   static_assert(Rows == 32 || Rows == 64 || Rows == 128);
   static_assert(Stages >= 2 && Stages <= 4);
@@ -33,6 +35,21 @@ template<int Rows, int Stages> struct Layout {
 
 __device__ __forceinline__ uint32_t offset(int row, int k) {
   return uint32_t(row * 128 + k) ^ uint32_t((row & 7) * 16);
+}
+// In a final 64-K fold an odd weight row's half segment and its zero half
+// trade places, so the two rows each quarter warp's 16-byte B loads read
+// fall in opposite halves of the swizzled pieces and share no bank.
+__device__ __forceinline__ uint32_t half_flip(bool half, int row) {
+  return half ? uint32_t(row & 1) * 64 : 0;
+}
+// Byte of packed weight row `row`'s staged segment holding K bytes
+// [local, local + 4) of its fold, for a B load at step local / 32. In a
+// half fold the steps past K read the zero half.
+__device__ __forceinline__ uint32_t packed_at(bool half, int row, uint32_t local) {
+  const uint32_t at = half
+      ? mxfp8_fold_packed::segment_word(0, local % 64, true) + local / 64 * 64
+      : mxfp8_fold_packed::segment_word(0, local, false);
+  return at ^ half_flip(half, row);
 }
 __device__ __forceinline__ void copy16(void* dst, const void* src, bool valid) {
   const uint32_t at=ptx::shared_address(dst);
@@ -58,17 +75,44 @@ __device__ __forceinline__ void load(uint8_t* stage,int fold,uint3 tile,
     const uint32_t* admitted_rows) {
   using L=Layout<Rows,Stages>;
   const uint32_t row0=tile.y*Rows,col0=tile.x*128,group=tile.z;
-  for(int index=threadIdx.x;index<(Rows+128)*8;index+=L::threads) {
-    const int row=index/8,k=fold*128+(index%8)*16;
-    const bool activation=row<Rows;
-    const uint32_t logical=activation ? row0+row : col0+row-Rows;
-    const bool valid=k<K && (activation ? admitted_rows[row]!=0 : logical<N);
-    const uint64_t at=activation ? uint64_t(logical)*RowStride+uint64_t(group)*GroupStride+k
-        : PackedWeights ? mxfp8_fold_packed::fold_offset((group*N+logical)/8,fold,K)
-            +(logical%8)*(mxfp8_fold_packed::fold_bytes(fold,K)/8)+(index%8)*16
-        : (uint64_t(group)*N+logical)*K+k;
-    const uint8_t* base=activation ? input : weights;
-    copy16(stage+offset(row,(index%8)*16),base+(valid ? at : 0),valid);
+  if constexpr(PackedWeights) {
+    // The row-major loop's copies in its order: activation rows, then the
+    // tile's 16 strips, each fold one contiguous run, with no branch on
+    // the operand. Every thread makes the same number of copies (run traps
+    // any other block size). The loops stay rolled: unrolled, they cost
+    // registers. A half fold stages an odd row's segment in the other half
+    // of its row (see half_flip).
+    static_assert(Rows*8%L::threads==0 && 128*8%L::threads==0);
+#pragma unroll 1
+    for(int i=0;i<Rows*8/L::threads;++i) {
+      const int index=threadIdx.x+i*L::threads;
+      const int row=index/8,k=fold*128+(index%8)*16;
+      const bool valid=k<K && admitted_rows[row]!=0;
+      const uint64_t at=uint64_t(row0+row)*RowStride+uint64_t(group)*GroupStride+k;
+      copy16(stage+offset(row,(index%8)*16),input+(valid ? at : 0),valid);
+    }
+    const bool half=K%128!=0 && fold==K/128;
+    const uint8_t* strips=weights+mxfp8_fold_packed::fold_offset((group*N+col0)/8,fold,K);
+#pragma unroll 1
+    for(int i=0;i<128*8/L::threads;++i) {
+      const int index=threadIdx.x+i*L::threads;
+      const int row=index/8,piece=index%8;
+      const bool valid=fold*128+piece*16<K && col0+row<N;
+      const uint32_t at=row/8*8*K+row%8*(half ? 64 : 128)+piece*16;
+      copy16(stage+offset(Rows+row,piece*16^half_flip(half,row)),
+             valid ? strips+at : weights,valid);
+    }
+  } else {
+    for(int index=threadIdx.x;index<(Rows+128)*8;index+=L::threads) {
+      const int row=index/8,k=fold*128+(index%8)*16;
+      const bool activation=row<Rows;
+      const uint32_t logical=activation ? row0+row : col0+row-Rows;
+      const bool valid=k<K && (activation ? admitted_rows[row]!=0 : logical<N);
+      const uint64_t at=activation ? uint64_t(logical)*RowStride+uint64_t(group)*GroupStride+k
+          : (uint64_t(group)*N+logical)*K+k;
+      const uint8_t* base=activation ? input : weights;
+      copy16(stage+offset(row,(index%8)*16),base+(valid ? at : 0),valid);
+    }
   }
   auto* scales=reinterpret_cast<uint32_t*>(stage+L::code_bytes);
   for(int row=threadIdx.x;row<Rows+128;row+=L::threads) {
@@ -144,12 +188,11 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
       for(int n=0;n<4;++n) {
         const int row=Rows+wn*32+n*8+quad;
         if constexpr(PackedWeights) {
-          // A half fold's steps 2 and 3 read K past its end: the zeros
-          // row-major staging leaves there.
-          const uint32_t at=mxfp8_fold_packed::segment_word(0,step*32+lane4*4,half);
+          // Unguarded: a half fold's steps 2 and 3 read the zero half, the
+          // zeros row-major staging leaves past K.
           if(step%2==0)
-            piece[n]=half && step>=2 ? make_uint4(0,0,0,0)
-                : *reinterpret_cast<const uint4*>(codes+offset(row,at/16*16));
+            piece[n]=*reinterpret_cast<const uint4*>(codes
+                +offset(row,packed_at(half,row,step*32+lane4*4)/16*16));
           b[n].v[0]=step%2 ? piece[n].z : piece[n].x;
           b[n].v[1]=step%2 ? piece[n].w : piece[n].y;
         } else {

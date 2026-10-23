@@ -2093,7 +2093,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "591d7cdafc4ccdd0addfedf44d9ebe63b294fbf34458463768b8463f3dcda34f",
+    "cubin_sha256": "4206444be9d7b110bd13b7bf6e4031226dbacbec13db1f51175be43d32842741",
     "resources": [
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n72_k576_g1_f32_matrix_m32_n128_s3_v1_admit_v1",
@@ -2394,7 +2394,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n72_k576_g1_f32_matrix_m32_n128_s3_v1_packed_v1",
-        "registers": 159,
+        "registers": 145,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2403,7 +2403,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n136_k1280_g1_bf16_matrix_m64_n128_s3_v1_packed_v1",
-        "registers": 151,
+        "registers": 150,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2412,7 +2412,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n40_k448_g3_f32_matrix_m128_n128_s2_v1_packed_v1",
-        "registers": 240,
+        "registers": 238,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2421,24 +2421,6 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n256_k512_g2_bf16_matrix_m64_n128_s2_v1_packed_v1",
-        "registers": 162,
-        "shared_static_bytes": 1024,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 256,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1280_k5120_g1_f32_matrix_m32_n128_s3_v1_packed_v1",
-        "registers": 163,
-        "shared_static_bytes": 1024,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 128,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1280_k5120_g1_f32_matrix_m64_n128_s2_v1_packed_v1",
         "registers": 160,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -2447,8 +2429,26 @@
         "min_blocks": 1
       },
       {
+        "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1280_k5120_g1_f32_matrix_m32_n128_s3_v1_packed_v1",
+        "registers": 148,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1280_k5120_g1_f32_matrix_m64_n128_s2_v1_packed_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1280_k5120_g1_f32_matrix_m128_n128_s2_v1_packed_v1",
-        "registers": 242,
+        "registers": 237,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2457,7 +2457,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n8192_k1280_g1_f32_matrix_m128_n128_s2_v1_packed_v1",
-        "registers": 242,
+        "registers": 237,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2466,7 +2466,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1024_k4096_g2_f32_matrix_m64_n128_s2_v1_packed_v1",
-        "registers": 162,
+        "registers": 160,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2475,7 +2475,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n1024_k4096_g2_f32_matrix_m128_n128_s2_v1_packed_v1",
-        "registers": 240,
+        "registers": 239,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2484,7 +2484,7 @@
       },
       {
         "symbol": "chop_mxfp8_prefill_matrix_packed_lab_n5120_k2048_g1_f32_matrix_m128_n128_s2_v1_packed_v1",
-        "registers": 244,
+        "registers": 237,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

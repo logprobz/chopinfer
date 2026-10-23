@@ -130,6 +130,9 @@ impl Feedback {
                     verify_rows: BLOCK_ROWS + 1,
                 },
                 bonus,
+                // The successor drafts after the emitted rows: the accepted
+                // drafts and the target's correction or bonus token.
+                noise: input.noise.after(u64::from(emitted_rows)),
             });
         }
         let mut committed = state.clone();
@@ -210,6 +213,7 @@ impl Plan {
                     && input.rows.slot == draft.block.slot
                     && input.rows.start == draft.block.main_rows
                     && input.tokens == [draft.bonus]
+                    && input.noise == draft.noise
             })
     }
 }

@@ -10,6 +10,8 @@ pub(crate) struct Layout {
     pub item_slots: (u64, u64),
     pub predecessor_ids: (u64, u64),
     pub live_items: (u64, u64),
+    /// One `kernel_core::draft_noise::NoiseRecord` per item.
+    pub noise: (u64, u64),
     pub keys: (u64, u64),
     pub bytes: u64,
 }
@@ -21,6 +23,9 @@ impl Layout {
         }
         let words = items
             .checked_mul(4)
+            .ok_or("DSpark metadata items overflow")?;
+        let records = items
+            .checked_mul(kernel_core::draft_noise::NOISE_BYTES as u64)
             .ok_or("DSpark metadata items overflow")?;
         let keys = rows
             .checked_mul(cells)
@@ -46,6 +51,7 @@ impl Layout {
             item_slots: range(words)?,
             predecessor_ids: range(words)?,
             live_items: range(4)?,
+            noise: range(records)?,
             keys: range(keys)?,
             bytes: end,
         })
@@ -140,11 +146,13 @@ mod tests {
             layout.item_slots,
             layout.predecessor_ids,
             layout.live_items,
+            layout.noise,
             layout.keys,
         ];
         assert!(ranges.windows(2).all(|w| w[0].0 + w[0].1 <= w[1].0));
         assert!(ranges.iter().all(|&(start, _)| start % 128 == 0));
         assert_eq!(layout.bytes, layout.keys.0 + layout.keys.1);
+        assert_eq!(layout.noise.1, 32 * 32);
         assert!(Layout::new(u64::MAX, 32, 160, 133).is_err());
         assert!(Layout::new(4096, u64::MAX, 160, 133).is_err());
     }

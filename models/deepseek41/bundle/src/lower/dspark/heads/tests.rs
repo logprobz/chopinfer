@@ -14,14 +14,19 @@ fn argument_span(launch: &Lowered, index: usize) -> Span {
 #[test]
 fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
     for shape in crate::shape::topologies() {
+        for mode in [DraftMode::Greedy, DraftMode::Sampled] {
+            dispatch_positions(shape, mode);
+        }
+    }
+}
+
+const NOISE: &str = kernels_sm120::row::draft_noise::SYMBOL;
+
+fn dispatch_positions(shape: Shape, mode: DraftMode) {
+    {
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let heads = Heads::prepare(
-            kernels.backend.as_ref(),
-            kernels.own.as_ref(),
-            shape,
-            DraftMode::Greedy,
-        )
-        .unwrap();
+        let heads =
+            Heads::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, mode).unwrap();
         let host = crate::fake_host_tests::FakeHost::new(shape, crate::config::KV_LAYOUTS[0]);
         let table = HostServicesTableV1::new(Rc::clone(&host));
         let services = table.caller();
@@ -145,6 +150,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                 gathered,
                 live_width: alloc(4),
                 live_items: alloc(4),
+                noise: alloc(u64::from(DECODE_BATCH) * 32),
                 draft_ids: alloc(u64::from(rows) * 4),
             });
             let view = views.last().unwrap();
@@ -197,6 +203,38 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                     ..views[rank as usize]
                 };
                 let program = heads.position(rank, position, items, &v, &peers).unwrap();
+                // Sampled mode adds the noise between the Markov step and
+                // the argmax, on the Markov output, at this position and
+                // this rank's first global ID; greedy mode has none.
+                let at = |symbol: &str| program.iter().position(|op| op.launch.symbol == symbol);
+                let markov_at = at("chop_deepseek41_dspark_markov_tiled_v1").unwrap();
+                let argmax_at = at("chop_dspark_argmax_f32_wide_v1").unwrap();
+                match (mode, at(NOISE)) {
+                    (DraftMode::Greedy, noise) => assert_eq!(noise, None),
+                    (DraftMode::Sampled, Some(noise_at)) => {
+                        assert!(markov_at < noise_at && noise_at < argmax_at);
+                        let noise = &program[noise_at];
+                        assert_eq!(argument_span(noise, 0), v.position_logits);
+                        assert_eq!(argument_span(noise, 1), v.noise);
+                        assert_eq!(argument_span(noise, 2), v.live_items);
+                        assert_eq!(argument_span(noise, 3), v.live_width);
+                        assert_eq!(
+                            noise.launch.arguments.0[4..],
+                            [
+                                kernel_core::contract::Argument::U32(shape.vocab_rows()),
+                                kernel_core::contract::Argument::U32(rank * shape.vocab_rows()),
+                                kernel_core::contract::Argument::U32(position),
+                            ]
+                        );
+                        assert_eq!(
+                            noise.launch.plan.grid,
+                            [items, shape.vocab_rows().div_ceil(2048), 1]
+                        );
+                        assert!(!noise.collective);
+                        assert_eq!(argument_span(&program[argmax_at], 0), v.position_logits);
+                    }
+                    (DraftMode::Sampled, None) => panic!("sampled mode adds the noise"),
+                }
                 let confidence = program
                     .iter()
                     .find(|op| op.launch.symbol == "chop_deepseek41_dspark_confidence_parallel_v1")
@@ -308,6 +346,17 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
         )
         .unwrap();
         let journal = host.journal.borrow();
+        assert_eq!(
+            journal
+                .iter()
+                .filter(|line| line.starts_with("launch") && line.contains(NOISE))
+                .count(),
+            if mode == DraftMode::Sampled {
+                shape.ranks() as usize * 5
+            } else {
+                0
+            }
+        );
         for symbol in [
             peer_symbol(&shape).as_str(),
             "chop_deepseek41_dspark_markov_tiled_v1",
@@ -332,7 +381,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                 .count(),
             shape.ranks() as usize
         );
-        eprintln!("DSpark head journal: {}", shape.topology());
+        eprintln!("DSpark head journal: {} {mode:?}", shape.topology());
     }
 }
 

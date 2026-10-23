@@ -1276,6 +1276,24 @@ pub(crate) fn dspark_hash_ids(
     })
 }
 
+/// Each rank's drafter noise plane and the instance's draft mode.
+#[cfg(test)]
+pub(crate) fn dspark_noise(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Option<(
+    Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
+    crate::lower::dspark::DraftMode,
+)> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table.get_mut(handle)?.dspark.as_ref()?;
+        Some((
+            device.ranks.iter().map(|rank| rank.noise).collect(),
+            device.mode,
+        ))
+    })
+}
+
 #[cfg(test)]
 pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 #[cfg(test)]

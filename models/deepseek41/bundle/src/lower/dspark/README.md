@@ -13,8 +13,14 @@ positions. `Metadata::slots` maps requests to committed state;
 `Metadata::staged_slots` is the identity mapping into the per-item draft
 windows. Upload both in separate buffers. The initialized bonus/noise
 tokens, positions, text-router bias and position-row indices are independent
-of K. Sampled draft selection has a named refusal; the current heads use
-greedy selection with lower-token-ID ties.
+of K. Each position selects its draft by the shared sharded argmax, with
+lower-token-ID ties. In `DraftMode::Sampled`, the serving default, a
+sampled item's Markov logits first take the target sampler's noise
+(`kernel_core::draft_noise`): `x / T + g` with the request's seed and the
+generated index of the draft position, from the host's V6 draft sampling
+records (`chop.draft-sampling.v1`). Greedy items' logits keep their bits,
+so their drafts equal `DraftMode::Greedy`'s. `CHOPINFER_DSPARK_COUPLED=0`
+drafts every item greedily.
 
 The caller uses these operations in order:
 
@@ -35,7 +41,8 @@ The caller uses these operations in order:
    hidden output must have separate storage from streams, pre weights,
    normalized rows and logits; overlapping bindings are refused.
 4. `Heads::position` processes positions 0 through 4 sequentially
-   on every rank, starting from the bonus IDs. Allocate one immutable
+   on every rank, starting from the bonus IDs. In sampled mode bind
+   `PositionViews::noise` to one noise record per drafting item. Allocate one immutable
    `position_rows` buffer per position. Initialize the candidate-pair planes
    and both collective states, and use normal collective segmentation.
    Set `PositionViews::hidden_f32` to the same `HeadViews::hidden_f32` output.

@@ -24,12 +24,75 @@ pub struct Input {
     pub rows: Rows,
     /// All prefill or host verification tokens, or only the bonus for decode.
     pub tokens: Vec<u32>,
+    /// The target sampler's noise inputs for the item's drafts.
+    pub noise: Noise,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DraftInput {
     pub block: DraftBlock,
     pub bonus: u32,
+    pub noise: Noise,
+}
+
+/// The target sampler's noise inputs for one drafting item
+/// (`kernel_core::draft_noise::NoiseRecord`): the request's seed, the
+/// generated index of the token the target samples at draft position zero
+/// (the item's first verify row) and the temperature's bits, zero for a
+/// greedy item. Draft position `j` draws at `generated + j`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Noise {
+    pub seed: u64,
+    pub generated: u64,
+    pub temperature: u64,
+}
+
+impl Noise {
+    /// Drafts the argmax of the item's logits.
+    pub const GREEDY: Noise = Noise {
+        seed: 0,
+        generated: 0,
+        temperature: 0,
+    };
+
+    /// The noise of an item the host samples at `temperature`; a
+    /// temperature outside the host sampler's range drafts greedily.
+    pub fn sampled(seed: u64, generated: u64, temperature: f64) -> Noise {
+        let record = kernel_core::draft_noise::NoiseRecord {
+            seed,
+            generated,
+            temperature,
+        };
+        if temperature > 0.0 && record.validate().is_ok() {
+            Noise {
+                seed,
+                generated,
+                temperature: temperature.to_bits(),
+            }
+        } else {
+            Noise::GREEDY
+        }
+    }
+
+    pub fn record(self) -> kernel_core::draft_noise::NoiseRecord {
+        kernel_core::draft_noise::NoiseRecord {
+            seed: self.seed,
+            generated: self.generated,
+            temperature: f64::from_bits(self.temperature),
+        }
+    }
+
+    /// The noise of the item's next cycle after `emitted` tokens: the
+    /// accepted drafts and the target's correction or bonus token.
+    pub fn after(self, emitted: u64) -> Noise {
+        if self == Noise::GREEDY {
+            return self;
+        }
+        Noise {
+            generated: self.generated.wrapping_add(emitted),
+            ..self
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -277,6 +340,7 @@ impl Runtime {
                 .map(|(&block, &index)| DraftInput {
                     block,
                     bonus: inputs[index].tokens[0],
+                    noise: inputs[index].noise,
                 })
                 .collect::<Vec<_>>();
             self.host_result(host.draft(&draft_inputs))?;

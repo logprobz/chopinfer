@@ -17,11 +17,7 @@ impl Instance {
         }
         // Validate the complete batch before any chunk can mutate staging.
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        crate::lower::dspark::metadata(
-            device.shape.geometry,
-            inputs,
-            crate::lower::dspark::DraftMode::Greedy,
-        )?;
+        crate::lower::dspark::metadata(device.shape.geometry, inputs)?;
         let chunk_items = device.draft_chunk_items;
         if inputs.len() <= chunk_items {
             return self.dspark_draft_chunk(inputs);

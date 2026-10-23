@@ -17,7 +17,7 @@ mod state_capture;
 
 use std::collections::BTreeMap;
 
-use crate::dspark::execution::{Input, TargetRows};
+use crate::dspark::execution::{Input, Noise, TargetRows};
 use crate::dspark::staging::{Adapter, PhaseTimes, Program, Rank, Readback};
 use crate::dspark::state::{
     BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection, Rows, Snapshot,
@@ -133,7 +133,37 @@ impl Program for Work<'_> {
     }
 }
 
-fn inputs(phase: &PhaseInputs, drafts: &[u32]) -> Result<Vec<Input>, String> {
+/// Each drafting request's noise from the batch's draft sampling records:
+/// the target sampler's seed, the generated index of its first verify row
+/// and its temperature. Without records (a host that sends none) or in
+/// greedy mode every item drafts greedily.
+fn noise(
+    batch: &runtime_bundle_sdk::BatchRequestV1,
+    mode: crate::lower::dspark::DraftMode,
+) -> BTreeMap<u64, Noise> {
+    let (crate::lower::dspark::DraftMode::Sampled, Some(records)) = (mode, batch.draft_sampling())
+    else {
+        return BTreeMap::new();
+    };
+    batch
+        .items()
+        .iter()
+        .zip(records)
+        .filter(|(item, record)| item.bundle_drafts() && record.sampled())
+        .map(|(item, record)| {
+            (
+                item.request_id(),
+                Noise::sampled(record.seed(), record.generated(), record.temperature()),
+            )
+        })
+        .collect()
+}
+
+fn inputs(
+    phase: &PhaseInputs,
+    drafts: &[u32],
+    noise: &BTreeMap<u64, Noise>,
+) -> Result<Vec<Input>, String> {
     (0..phase.request_ids.len())
         .map(|item| {
             let start = phase.q_start[item] as usize;
@@ -162,6 +192,14 @@ fn inputs(phase: &PhaseInputs, drafts: &[u32]) -> Result<Vec<Input>, String> {
                     .get(start..start + known)
                     .ok_or("DSpark input rows exceed tokens")?
                     .to_vec(),
+                noise: if budget > 0 {
+                    noise
+                        .get(&phase.request_ids[item])
+                        .copied()
+                        .unwrap_or(Noise::GREEDY)
+                } else {
+                    Noise::GREEDY
+                },
             })
         })
         .collect()
@@ -262,8 +300,10 @@ impl Instance {
         let prepare = || -> Result<(Vec<Input>, TextMasks), String> {
             let batch =
                 BatchCodecV1::decode(request).map_err(|e| format!("DSpark batch: {e:?}"))?;
-            let mut rows = inputs(&step.prefill, &[])?;
-            rows.extend(inputs(&step.decode, &step.bundle_drafts(&batch))?);
+            let mode = self.dspark.as_ref().ok_or("DSpark is absent")?.mode;
+            let noise = noise(&batch, mode);
+            let mut rows = inputs(&step.prefill, &[], &noise)?;
+            rows.extend(inputs(&step.decode, &step.bundle_drafts(&batch), &noise)?);
             let image = self
                 .config
                 .media

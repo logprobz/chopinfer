@@ -21,6 +21,7 @@ fn pending(items: u32, k: u32, start: u64) -> (State, Feedback) {
                 kind: Kind::Decode { drafts: k },
             },
             tokens: vec![7],
+            noise: crate::dspark::execution::Noise::GREEDY,
         })
         .collect();
     state
@@ -132,6 +133,7 @@ fn predicts_every_acceptance_depth_without_committing_original_state() {
                     ..feedback.inputs[0].rows
                 },
                 tokens: vec![17],
+                noise: crate::dspark::execution::Noise::GREEDY,
             }];
             assert!(plan.matches(&actual, &next));
             let mut changed = next;
@@ -193,6 +195,7 @@ fn a_different_commit_or_reused_slot_cannot_consume_the_preview() {
             ..feedback.inputs[0].rows
         },
         tokens: vec![17],
+        noise: crate::dspark::execution::Noise::GREEDY,
     }];
     assert!(!plan.matches(&state, &next));
     let mut state = plan.committed.clone();
@@ -210,4 +213,80 @@ fn a_different_commit_or_reused_slot_cannot_consume_the_preview() {
         )
         .unwrap();
     assert!(!plan.matches(&state, &next));
+}
+
+/// A sampled item's successor drafts after the rows its cycle emitted:
+/// its accepted drafts and the correction after a rejection, or every
+/// draft and the bonus. The host's next step must send that noise for the
+/// prediction to be consumed; any other record discards it.
+#[test]
+fn a_sampled_successor_restarts_its_noise_after_the_emitted_rows() {
+    use crate::dspark::execution::Noise;
+    for depth in 0..=5 {
+        let (state, mut feedback) = pending(2, 5, 3);
+        feedback.inputs[0].noise = Noise::sampled(0x55, 40, 0.8);
+        outcome(&mut feedback, depth);
+        let plan = feedback.plan(&state, 100).unwrap().unwrap();
+        let emitted = u64::from(depth) + 1;
+        assert_eq!(
+            plan.drafts[0].noise,
+            Noise::sampled(0x55, 40 + emitted, 0.8)
+        );
+        assert_eq!(plan.drafts[1].noise, Noise::GREEDY);
+        let mut actual = state;
+        let committed = actual
+            .begin_commit(&[(1, depth + 1), (2, depth + 1)])
+            .unwrap();
+        actual.complete_commit(committed).unwrap();
+        let next = |noise: Noise| {
+            [
+                Input {
+                    rows: Rows {
+                        start: 3 + emitted,
+                        ..feedback.inputs[0].rows
+                    },
+                    tokens: vec![17],
+                    noise,
+                },
+                Input {
+                    rows: Rows {
+                        start: 3 + emitted,
+                        ..feedback.inputs[1].rows
+                    },
+                    tokens: vec![18],
+                    noise: Noise::GREEDY,
+                },
+            ]
+        };
+        assert!(plan.matches(&actual, &next(Noise::sampled(0x55, 40 + emitted, 0.8))));
+        for other in [
+            Noise::sampled(0x55, 40, 0.8),
+            Noise::sampled(0x55, 41 + emitted, 0.8),
+            Noise::sampled(0x56, 40 + emitted, 0.8),
+            Noise::sampled(0x55, 40 + emitted, 1.0),
+            Noise::GREEDY,
+        ] {
+            assert!(!plan.matches(&actual, &next(other)), "{other:?}");
+        }
+    }
+}
+
+#[test]
+fn noise_records_keep_the_temperature_and_refuse_values_the_host_never_sends() {
+    use crate::dspark::execution::Noise;
+    let noise = Noise::sampled(9, 12, 0.7);
+    assert_eq!(
+        noise.record(),
+        kernel_core::draft_noise::NoiseRecord {
+            seed: 9,
+            generated: 12,
+            temperature: 0.7,
+        }
+    );
+    assert_eq!(noise.after(3).record().generated, 15);
+    assert_eq!(Noise::GREEDY.after(3), Noise::GREEDY);
+    assert_eq!(Noise::GREEDY.record().encode(), [0; 32]);
+    for temperature in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-300, 1000.0] {
+        assert_eq!(Noise::sampled(9, 12, temperature), Noise::GREEDY);
+    }
 }

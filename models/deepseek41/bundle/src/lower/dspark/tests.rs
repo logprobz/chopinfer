@@ -13,18 +13,16 @@ fn input(rows: u64, budget: u32) -> DraftInput {
             verify_rows: budget + 1,
         },
         bonus: 42,
+        noise: crate::dspark::execution::Noise::GREEDY,
     }
 }
 
 #[test]
 fn every_budget_builds_the_same_full_noncausal_block() {
     for main_rows in [1, 127, 128, 129, 511] {
-        let full = metadata(&FLASH, &[input(main_rows, 5)], DraftMode::Greedy).unwrap();
+        let full = metadata(&FLASH, &[input(main_rows, 5)]).unwrap();
         for budget in 1..5 {
-            assert_eq!(
-                metadata(&FLASH, &[input(main_rows, budget)], DraftMode::Greedy).unwrap(),
-                full
-            );
+            assert_eq!(metadata(&FLASH, &[input(main_rows, budget)]).unwrap(), full);
         }
         let stride = FLASH.shape.attention.window as usize + 5;
         let expected = (0..main_rows.min(128) as i32)
@@ -49,15 +47,20 @@ fn every_budget_builds_the_same_full_noncausal_block() {
 }
 
 #[test]
-fn metadata_refuses_sampled_drafts_empty_history_and_duplicate_leases() {
+fn metadata_refuses_empty_history_and_duplicate_leases_and_ignores_noise() {
+    // The noise selects proposals only; the block's rows do not change.
+    let sampled = DraftInput {
+        noise: crate::dspark::execution::Noise::sampled(9, 40, 1.0),
+        ..input(1, 5)
+    };
     assert_eq!(
-        metadata(&FLASH, &[input(1, 5)], DraftMode::Sampled).unwrap_err(),
-        "DSpark currently supports greedy draft selection only"
+        metadata(&FLASH, &[sampled]).unwrap(),
+        metadata(&FLASH, &[input(1, 5)]).unwrap()
     );
-    assert!(metadata(&FLASH, &[input(0, 5)], DraftMode::Greedy).is_err());
-    assert!(metadata(&FLASH, &[input(1, 0)], DraftMode::Greedy).is_err());
-    assert!(metadata(&FLASH, &[input(1, 5), input(1, 5)], DraftMode::Greedy).is_err());
-    assert!(metadata(&FLASH, &[input(i32::MAX as u64, 5)], DraftMode::Greedy).is_err());
+    assert!(metadata(&FLASH, &[input(0, 5)]).is_err());
+    assert!(metadata(&FLASH, &[input(1, 0)]).is_err());
+    assert!(metadata(&FLASH, &[input(1, 5), input(1, 5)]).is_err());
+    assert!(metadata(&FLASH, &[input(i32::MAX as u64, 5)]).is_err());
 }
 
 #[test]
@@ -65,7 +68,7 @@ fn every_compiled_topology_prepares_the_drafter_primitives() {
     let mut tested = 0;
     for shape in crate::shape::topologies() {
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy);
+        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape);
         assert!(
             prepared.is_ok(),
             "{}: {:?}",
@@ -101,8 +104,7 @@ fn main_projection_binds_only_measured_packed_fold_rows() {
     let span = |id, bytes| Span::new(BundleDeviceBufferHandleV1::from_raw(id), 0, bytes);
     for shape in crate::shape::topologies() {
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let prepared =
-            Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape).unwrap();
         let n = u64::from(shape.geometry.shape.hidden);
         let k = n * shape.geometry.shape.dspark.targets.len() as u64;
         for count in [1, 2, 4, 6, 16, 17, 21, 22, 23, 25, 26, 48, 64, 65, 8192] {
@@ -187,7 +189,7 @@ fn feature_packing_preserves_full_prefill_capacity_and_row_order() {
 
     let shape = crate::shape::topologies()[0];
     let kernels = crate::Kernels::new(&shape).unwrap();
-    let prepared = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+    let prepared = Prepared::prepare(kernels.backend.as_ref(), shape).unwrap();
     let targets = shape.geometry.shape.dspark.targets.len() as u32;
     assert_eq!(targets, 3);
     assert_eq!(

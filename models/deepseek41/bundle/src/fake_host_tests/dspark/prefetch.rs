@@ -32,6 +32,7 @@ fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
                 kind: Kind::Decode { drafts: 5 },
             },
             tokens: vec![7],
+            noise: crate::dspark::execution::Noise::GREEDY,
         }],
         metadata: DeviceCycleMetadataV1 {
             cycle_epoch: 1,

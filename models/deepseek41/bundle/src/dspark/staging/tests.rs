@@ -281,6 +281,7 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
             kind: Kind::Prefill { rows: 3 },
         },
         tokens: vec![1, 2, 3],
+        noise: crate::dspark::execution::Noise::GREEDY,
     };
     runtime.execute(&mut adapter, &[prompt]).unwrap();
     runtime.commit(&mut adapter, &[]).unwrap();
@@ -293,6 +294,7 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
             kind: Kind::Decode { drafts: budget },
         },
         tokens: vec![4],
+        noise: crate::dspark::execution::Noise::GREEDY,
     };
     adapter.times = Some(PhaseTimes::default());
     let proposed = runtime.execute(&mut adapter, &[input]).unwrap();
@@ -565,6 +567,7 @@ fn deferred_adapter_keeps_confidence_bits_and_commits_only_retained_text_history
                     kind: Kind::Decode { drafts: 2 },
                 },
                 tokens: vec![4],
+                noise: crate::dspark::execution::Noise::GREEDY,
             }],
         )
         .unwrap();

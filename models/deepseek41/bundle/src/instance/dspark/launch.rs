@@ -419,9 +419,16 @@ impl Instance {
     ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let g = device.shape.geometry;
-        let meta = dspark::metadata(g, inputs, DraftMode::Greedy)?;
+        let meta = dspark::metadata(g, inputs)?;
         let items = inputs.len() as u32;
         let live = items * BLOCK_ROWS;
+        // Greedy items' records leave their rows unchanged.
+        let noise = (device.mode == DraftMode::Sampled).then(|| {
+            inputs
+                .iter()
+                .flat_map(|input| input.noise.record().encode())
+                .collect::<Vec<_>>()
+        });
         for (rank, stored) in device.ranks.iter().enumerate() {
             let stream = self.ranks[rank].2;
             let mut arrays = vec![
@@ -452,6 +459,9 @@ impl Instance {
             ];
             arrays.push((stored.inputs.live_tokens, live.to_le_bytes().to_vec()));
             arrays.push((stored.live_items, items.to_le_bytes().to_vec()));
+            if let Some(noise) = &noise {
+                arrays.push((stored.noise, noise.clone()));
+            }
             self.upload_drafter_metadata(rank, arrays)?;
             // Drafts take the text bias. The flags are zero unless a
             // prefill's image flags may still be set.
@@ -619,6 +629,7 @@ impl Instance {
                             gathered: stored.gathered,
                             live_width: stored.live_width,
                             live_items: stored.live_items,
+                            noise: stored.noise,
                             draft_ids: stored.draft_ids,
                         },
                         &peers,

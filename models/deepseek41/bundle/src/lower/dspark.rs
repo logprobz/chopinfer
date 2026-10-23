@@ -18,19 +18,19 @@ use crate::dspark::state::BLOCK_ROWS;
 use crate::ops::Lowered;
 use crate::program::{Phase, Stage, Sublayer};
 
+/// How the drafter selects each position's proposal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DraftMode {
+    /// Every item proposes the argmax of its Markov logits.
     Greedy,
+    /// A sampled item proposes the argmax of its Markov logits divided by
+    /// its temperature plus the target sampler's Gumbel noise at the
+    /// generated index of the position (`kernel_core::draft_noise`), so a
+    /// drafter that agrees with the target proposes the target's sample.
+    /// Greedy items propose exactly what `Greedy` proposes. Penalties, bias,
+    /// masks and filters are not applied; verification rejects a proposal
+    /// they exclude.
     Sampled,
-}
-
-impl DraftMode {
-    pub fn validate(self) -> Result<(), String> {
-        match self {
-            Self::Greedy => Ok(()),
-            Self::Sampled => Err("DSpark currently supports greedy draft selection only".into()),
-        }
-    }
 }
 
 /// Host-generated metadata for all five rows of every drafting item. K
@@ -53,8 +53,7 @@ pub struct Metadata {
     pub position_rows: [Vec<u32>; BLOCK_ROWS as usize],
 }
 
-pub fn metadata(g: &Geometry, inputs: &[DraftInput], mode: DraftMode) -> Result<Metadata, String> {
-    mode.validate()?;
+pub fn metadata(g: &Geometry, inputs: &[DraftInput]) -> Result<Metadata, String> {
     if inputs.is_empty() || inputs.len() > model_deepseek41_contract::serving::DECODE_BATCH as usize
     {
         return Err("DSpark draft batch is outside the served capacity".into());

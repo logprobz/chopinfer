@@ -1,9 +1,13 @@
-//! The full-block vocabulary projection and five sequential greedy Markov
-//! steps. Token IDs stay on the device until Engram staging reads the block.
+//! The full-block vocabulary projection and five sequential Markov steps,
+//! each selecting its position's draft: greedily, or for a sampled item
+//! from its Markov logits plus the target sampler's noise at that position
+//! (`DraftMode::Sampled`). Token IDs stay on the device until Engram
+//! staging reads the block.
 
 use kernel_core::backend::{Backend, Counts, Need, Prepared, Refused, View};
 use kernel_core::collective::{AllReduceBuffers, GatherBuffers, RankViews};
 use kernel_core::contract::{ArgmaxLayout, CommQuery, DType, Refusal, RowQuery};
+use kernel_core::draft_noise::{DraftNoise, DraftNoiseBuffers};
 use kernel_core::precision::buffers::ProjectionBuffers;
 use kernel_core::replicated_embedding::{ReplicatedEmbedding, ReplicatedEmbeddingBuffers};
 use kernel_core::rmsnorm::RmsNormBuffers;
@@ -41,6 +45,8 @@ pub struct Heads {
     reduce: Vec<Prepared<AllReduceBuffers<View>>>,
     logits_row: Prepared<GatherByIndexBuffers<View>>,
     markov: Prepared<MarkovStepBuffers<View>>,
+    /// Each rank's coupled noise on its Markov logits, in sampled mode.
+    noise: Option<Vec<Prepared<DraftNoiseBuffers<View>>>>,
     confidence: Prepared<ConfidenceHeadBuffers<View>>,
     partial: Vec<Prepared<ArgmaxPartialBuffers<View>>>,
     gather: Vec<Prepared<GatherBuffers<View>>>,
@@ -96,6 +102,9 @@ pub struct PositionViews {
     pub gathered: Span,
     pub live_width: Span,
     pub live_items: Span,
+    /// One `kernel_core::draft_noise::NoiseRecord` per drafting item;
+    /// read in sampled mode only.
+    pub noise: Span,
     pub draft_ids: Span,
 }
 
@@ -106,7 +115,6 @@ impl Heads {
         shape: Shape,
         mode: DraftMode,
     ) -> Result<Self, Refused> {
-        mode.validate().map_err(Refused::Rule)?;
         let g = shape.geometry;
         let need = Need::rows(DECODE_BATCH);
         let every = Need::rows(PREFILL_TOKENS);
@@ -188,6 +196,23 @@ impl Heads {
             },
             need,
         )?;
+        let noise = match mode {
+            DraftMode::Greedy => None,
+            DraftMode::Sampled => Some(
+                (0..shape.ranks())
+                    .map(|rank| {
+                        backend.draft_noise(
+                            &DraftNoise {
+                                vocab_per_rank: width,
+                                ranks: shape.ranks(),
+                            },
+                            rank,
+                            need,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+        };
         let confidence = own.dspark_confidence(
             &ConfidenceHead {
                 hidden: g.shape.hidden,
@@ -244,6 +269,7 @@ impl Heads {
             reduce,
             logits_row,
             markov,
+            noise,
             confidence,
             partial,
             gather,
@@ -265,6 +291,7 @@ impl Heads {
         .into_iter()
         .chain(self.embedding.iter().map(|op| op.info()))
         .chain(self.peer.iter().flatten().map(|op| op.info()))
+        .chain(self.noise.iter().flatten().map(|op| op.info()))
         .chain(self.reduce.iter().map(|op| op.info()))
         .chain(self.partial.iter().map(|op| op.info()))
         .chain(self.gather.iter().map(|op| op.info()))
@@ -336,8 +363,11 @@ impl Heads {
 
     /// Append positions 0..5 in order on every rank, with the predecessor
     /// IDs initialized to each item's bonus ID. All ranks enter every
-    /// collective. The final argmax writes both the next predecessor and
-    /// this position of the item-major five-ID output, with lower-ID ties.
+    /// collective. In sampled mode each sampled item's Markov logits take
+    /// the target sampler's noise at its generated index plus `position`
+    /// before the argmax; greedy items' logits keep their bits. The final
+    /// argmax writes both the next predecessor and this position of the
+    /// item-major five-ID output, with lower-ID ties.
     pub fn position(
         &self,
         rank: u32,
@@ -439,6 +469,17 @@ impl Heads {
             live_rows: bind.view(v.live_items),
         };
         result.extend(run(bind.launch(&self.markov, &buffers, counts))?);
+        if let Some(noise) = &self.noise {
+            let mut bind = Bind::default();
+            let buffers = DraftNoiseBuffers {
+                logits: bind.view(v.position_logits),
+                live_width: bind.view(v.live_width),
+                noise: bind.view(v.noise),
+                live_rows: bind.view(v.live_items),
+                position,
+            };
+            result.extend(run(bind.launch(&noise[rank as usize], &buffers, counts))?);
+        }
         let hidden_offset = u64::from(position) * u64::from(self.shape.geometry.shape.hidden) * 4;
         let score_offset = u64::from(position) * 4;
         let mut bind = Bind::default();

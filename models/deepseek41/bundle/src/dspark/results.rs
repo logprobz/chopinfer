@@ -162,6 +162,7 @@ mod tests {
                     kind: Kind::Decode { drafts },
                 },
                 tokens: vec![1],
+                noise: crate::dspark::execution::Noise::GREEDY,
             })
             .collect();
         let metadata = DeviceCycleMetadataV1 {

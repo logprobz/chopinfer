@@ -4,7 +4,7 @@ use super::*;
 use crate::buffers::{RankBuffers, Scratch, StateSpans};
 use crate::dspark::execution::DraftInput;
 use crate::dspark::state::DraftBlock;
-use crate::lower::dspark::{self, BlockViews, CatchUpViews, DraftMode, Prepared, Window};
+use crate::lower::dspark::{self, BlockViews, CatchUpViews, Prepared, Window};
 use crate::lower::{KvExtent, Lowering};
 use crate::ops::{Lowered, Ops};
 use crate::program::Phase;
@@ -56,7 +56,7 @@ fn dspark_full_block_journal_at_each_topology() {
             },
         );
         assert!(ops.glue.is_some(), "{:?}", ops.missing);
-        let draft = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+        let draft = Prepared::prepare(kernels.backend.as_ref(), shape).unwrap();
         let mut shared = ops.shared_bytes();
         for (symbol, bytes) in draft.symbols() {
             let most = shared.entry(symbol.clone()).or_insert(0);
@@ -236,8 +236,8 @@ fn dspark_full_block_journal_at_each_topology() {
                     verify_rows: 3,
                 },
                 bonus: 4,
+                noise: crate::dspark::execution::Noise::GREEDY,
             }],
-            DraftMode::Greedy,
         )
         .unwrap();
         for stage in 0..g.dspark_stages() {

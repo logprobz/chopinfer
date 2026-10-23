@@ -281,6 +281,7 @@ fn input(budget: u32) -> Input {
             kind: Kind::Decode { drafts: budget },
         },
         tokens: vec![4],
+        noise: crate::dspark::execution::Noise::GREEDY,
     }
 }
 
@@ -675,6 +676,7 @@ fn deferred_rows_of_drafting_items_share_one_batched_projection() {
             kind: Kind::Decode { drafts: budget },
         },
         tokens: vec![3],
+        noise: crate::dspark::execution::Noise::GREEDY,
     };
     // Request 41's restored rows are bulk and project eagerly at its first
     // step, before request 42's deferred rows.
@@ -796,6 +798,7 @@ fn mixed_batch_stages_correct_tokens_for_prefill_ar_and_verify_items() {
                 kind: Kind::Prefill { rows: 2 },
             },
             tokens: vec![8, 9],
+            noise: crate::dspark::execution::Noise::GREEDY,
         },
         Input {
             rows: Rows {
@@ -805,6 +808,7 @@ fn mixed_batch_stages_correct_tokens_for_prefill_ar_and_verify_items() {
                 kind: Kind::Decode { drafts: 0 },
             },
             tokens: vec![10],
+            noise: crate::dspark::execution::Noise::GREEDY,
         },
         input(2),
     ];

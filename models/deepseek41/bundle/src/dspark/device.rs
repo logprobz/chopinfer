@@ -44,6 +44,8 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Device {
     pub shape: Shape,
     pub config: Config,
+    /// Sampled unless `CHOPINFER_DSPARK_COUPLED=0` at create.
+    pub mode: DraftMode,
     pub cycle: super::cycle::Cycle,
     pub prefetch: super::prefetch::Cache,
     pub results: super::results::Results,
@@ -100,10 +102,45 @@ pub(crate) struct Rank {
     pub gathered: Span,
     pub live_items: Span,
     pub live_width: Span,
+    pub noise: Span,
     pub reduce_state: Vec<Span>,
     pub gather_state: Vec<Span>,
     /// The early Engram gathers' destination (`early_engram_bytes`).
     pub engram_early: Option<Span>,
+}
+
+/// Sampled requests draft from the target sampler's noise
+/// (`DraftMode::Sampled`) unless `CHOPINFER_DSPARK_COUPLED=0`, which drafts
+/// every request greedily, as the drafter did before coupling.
+fn draft_mode() -> Result<DraftMode, String> {
+    #[cfg(test)]
+    if let Some(mode) = TEST_MODE.with(std::cell::Cell::get) {
+        return Ok(mode);
+    }
+    match std::env::var("CHOPINFER_DSPARK_COUPLED") {
+        Err(std::env::VarError::NotPresent) => Ok(DraftMode::Sampled),
+        Ok(value) if value == "1" => Ok(DraftMode::Sampled),
+        Ok(value) if value == "0" => Ok(DraftMode::Greedy),
+        _ => Err("CHOPINFER_DSPARK_COUPLED must be 0 or 1".into()),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_MODE: std::cell::Cell<Option<DraftMode>> = const { std::cell::Cell::new(None) };
+}
+
+/// Creates instances in `mode` while `f` runs on this thread.
+#[cfg(test)]
+pub(crate) fn with_mode<T>(mode: DraftMode, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<DraftMode>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_MODE.with(|cell| cell.set(self.0));
+        }
+    }
+    let _restore = Restore(TEST_MODE.with(|cell| cell.replace(Some(mode))));
+    f()
 }
 
 pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
@@ -161,15 +198,11 @@ impl Device {
         if let Some(missing) = ops.missing.first() {
             return Err(missing.clone());
         }
-        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy)
+        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape)
             .map_err(|e| format!("DSpark operations: {e:?}"))?;
-        let heads = Heads::prepare(
-            kernels.backend.as_ref(),
-            kernels.own.as_ref(),
-            shape,
-            DraftMode::Greedy,
-        )
-        .map_err(|e| format!("DSpark heads: {e:?}"))?;
+        let mode = draft_mode()?;
+        let heads = Heads::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, mode)
+            .map_err(|e| format!("DSpark heads: {e:?}"))?;
         let ring_gathers = [1, 32]
             .into_iter()
             .map(|divisor| {
@@ -193,6 +226,7 @@ impl Device {
         Ok(Self {
             shape,
             config,
+            mode,
             cycle,
             prefetch: super::prefetch::Cache::new(),
             results: super::results::Results::new(kernels.own.as_ref(), g.shape.vocab)?,
@@ -469,6 +503,7 @@ impl Device {
             gathered: alloc(items * 2 * 4 * u64::from(self.shape.ranks()))?,
             live_items: plane(metadata_layout.live_items)?,
             live_width,
+            noise: plane(metadata_layout.noise)?,
             reduce_state,
             gather_state,
             engram_early: if self.cycle.early_enabled {

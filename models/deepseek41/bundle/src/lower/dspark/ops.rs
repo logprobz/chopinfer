@@ -16,7 +16,7 @@ use model_deepseek41_contract::serving::{DECODE_BATCH, PREFILL_TOKENS};
 use model_deepseek41_contract::{latent, latent_glue, moe, rows as row_contract};
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 
-use super::{BLOCK_ROWS, DraftMode, Lowering};
+use super::{BLOCK_ROWS, Lowering};
 use crate::buffers::rows;
 use crate::ops::{Bind, Lowered};
 use crate::program::Phase;
@@ -150,8 +150,7 @@ impl Prepared {
     pub fn shape(&self) -> Shape {
         self.shape
     }
-    pub fn prepare(backend: &dyn Backend, shape: Shape, mode: DraftMode) -> Result<Self, Refused> {
-        mode.validate().map_err(Refused::Rule)?;
+    pub fn prepare(backend: &dyn Backend, shape: Shape) -> Result<Self, Refused> {
         let g = shape.geometry;
         let need = Need::rows(PREFILL_TOKENS);
         let feature = backend.sinkhorn_head(
@@ -640,8 +639,7 @@ mod tests {
     fn full_budget_workspace_covers_draft_attention() {
         for shape in crate::shape::topologies() {
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let prepared =
-                Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+            let prepared = Prepared::prepare(kernels.backend.as_ref(), shape).unwrap();
             let required = prepared.attention.info().bytes_of("workspace").unwrap();
             assert!(
                 prepared.workspace() >= required,

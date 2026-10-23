@@ -434,6 +434,12 @@ fn cpu_plan() {
             .into_iter()
             .flat_map(|s| s.entries.into_iter().map(|e| e.symbol))
             .collect();
+    // The bundle serves the target bank's gate/up compute tiles as their
+    // row-tiled builds over its row-tiled bank (`moe_row_tiles`).
+    let tiled = bundle_deepseek41::sm120::moe_row_tiles::symbols(&FLASH).unwrap();
+    let served = |symbol: &String| {
+        Runner::serving(symbol) || tiled.get(symbol).is_some_and(|t| Runner::serving(t))
+    };
     for case in cases() {
         let mut a = Arena::new(None);
         let set = case.set;
@@ -458,12 +464,10 @@ fn cpu_plan() {
                 op.plan.validate_geometry().unwrap();
                 assert!(op.plan.dynamic_shared_bytes <= native::MAX_SHARED_BYTES);
                 if op.symbol.starts_with("chop_moe_native_") {
-                    // Target-bank serving tiles run from the bundle; the
-                    // fused ceil entries are the bundle's alone.
-                    assert_eq!(
-                        Runner::serving(&op.symbol),
-                        set == family::serving::target_set()
-                    );
+                    // Target-bank serving tiles run from the bundle (as
+                    // their row-tiled builds); the fused ceil entries are
+                    // the bundle's alone.
+                    assert_eq!(served(&op.symbol), set == family::serving::target_set());
                     // The unfused target steps' scanned entries and
                     // admission scans are the bundle's lean cubin's.
                     let lean = set == family::serving::target_set()

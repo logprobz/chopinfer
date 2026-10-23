@@ -2,6 +2,8 @@
 #[path = "../../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
 mod registration;
+#[path = "../row_tiled_bank.rs"]
+mod row_tiled_bank;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::contract::MoeQuery;
 use kernel_core::gated_mlp::GatedMlpProjection;
@@ -120,7 +122,17 @@ struct Inputs {
     scales: View,
     live: View,
     logits: View,
-    weights: [QuantizedWeights<View>; 2],
+    weights: Banks,
+}
+
+/// A routed set's gate/up and down banks, row-major, with the gate/up bank
+/// in the row tiles the bundle stores it in at Flash TP4 when it does
+/// (`moe_row_tiles`, the backbone set).
+#[derive(Clone, Copy)]
+struct Banks {
+    gate: QuantizedWeights<View>,
+    down: QuantizedWeights<View>,
+    gate_tiles: Option<QuantizedWeights<View>>,
 }
 
 fn arm(a: &mut Arena<'_>, case: Case, inputs: Inputs) -> LabResult<Arm> {
@@ -130,7 +142,12 @@ fn arm(a: &mut Arena<'_>, case: Case, inputs: Inputs) -> LabResult<Arm> {
         scales,
         live,
         logits,
-        weights: [gate_weights, down_weights],
+        weights:
+            Banks {
+                gate: gate_weights,
+                down: down_weights,
+                gate_tiles,
+            },
     } = inputs;
     let set = case.set;
     let backend = registration::register(Sm120::new(), &FLASH, 4)?;
@@ -263,6 +280,7 @@ fn arm(a: &mut Arena<'_>, case: Case, inputs: Inputs) -> LabResult<Arm> {
         down.launches(&down_b, workspace, Counts::rows(rows))
             .map_err(|e| format!("{} serving down: {e}", case.label()))?,
     );
+    let launches = row_tiled_bank::launches(launches, gate_weights, gate_tiles)?;
     let outputs = vec![
         rb.route.ids,
         rb.route.weights,
@@ -323,35 +341,60 @@ fn arm(a: &mut Arena<'_>, case: Case, inputs: Inputs) -> LabResult<Arm> {
     Ok(arm)
 }
 
+/// The synthetic routed banks of `set` (gate/up 1152 by 5120, down 5120 by
+/// 576 per expert), with the gate/up bank's row tiles where the bundle
+/// stores them.
+fn banks(a: &mut Arena<'_>, set: moe::Experts) -> LabResult<Banks> {
+    let experts = set.count as usize;
+    let (gate, gate_tiles) = weights(a, experts, 1152, 5120, row_tiled_bank::tiled(4, set))?;
+    Ok(Banks {
+        gate,
+        down: weights(a, experts, 5120, 576, false)?.0,
+        gate_tiles,
+    })
+}
+
+/// A synthetic row-major bank, and with `tiled` its copy in row tiles.
 fn weights(
     a: &mut Arena<'_>,
     experts: usize,
     n: usize,
     k: usize,
-) -> LabResult<QuantizedWeights<View>> {
+    tiled: bool,
+) -> LabResult<(QuantizedWeights<View>, Option<QuantizedWeights<View>>)> {
     let count = experts * n * k / 2;
     if a.session.is_none() {
-        return Ok(QuantizedWeights {
-            codes: a.filled(count as u64, 0)?,
-            local_scales: Some(a.filled((experts * n * k / 32) as u64, 0)?),
-            global_scales: None,
-        });
+        let mut bank = || -> LabResult<_> {
+            Ok(QuantizedWeights {
+                codes: a.filled(count as u64, 0)?,
+                local_scales: Some(a.filled((experts * n * k / 32) as u64, 0)?),
+                global_scales: None,
+            })
+        };
+        return Ok((bank()?, if tiled { Some(bank()?) } else { None }));
     }
-    let codes = (0..count)
+    let mut codes = (0..count)
         .map(|i| {
             let x = (i as u32).wrapping_mul(747796405).wrapping_add(2891336453);
             (x ^ (x >> 16)) as u8
         })
         .collect::<Vec<_>>();
-    let codes = a.bytes(&codes)?;
-    let scales = (0..experts * n * k / 32)
+    let mut scales = (0..experts * n * k / 32)
         .map(|i| 120 + (i % 5) as u8)
         .collect::<Vec<_>>();
-    Ok(QuantizedWeights {
-        codes,
-        local_scales: Some(a.bytes(&scales)?),
-        global_scales: None,
-    })
+    let mut upload = |codes: &[u8], scales: &[u8]| -> LabResult<_> {
+        Ok(QuantizedWeights {
+            codes: a.bytes(codes)?,
+            local_scales: Some(a.bytes(scales)?),
+            global_scales: None,
+        })
+    };
+    let rows = upload(&codes, &scales)?;
+    if !tiled {
+        return Ok((rows, None));
+    }
+    row_tiled_bank::pack(&mut codes, &mut scales, experts * n, k)?;
+    Ok((rows, Some(upload(&codes, &scales)?)))
 }
 fn append_sum(a: &mut Arena<'_>, case: Case, inputs: Inputs, arm: &mut Arm) -> LabResult<()> {
     use kernel_core::moe::RoutedSumBuffers;

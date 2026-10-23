@@ -83,10 +83,7 @@ fn vector_cpu_matrix() {
         };
         let live = a.bytes(&case.rows.to_le_bytes()).unwrap();
         let (input, scales, prefix) = source(&mut a, case, live).unwrap();
-        let weights = [
-            weights(&mut a, case.set.count as usize, 1152, 5120).unwrap(),
-            weights(&mut a, case.set.count as usize, 5120, 576).unwrap(),
-        ];
+        let weights = banks(&mut a, case.set).unwrap();
         let inputs = Inputs {
             input,
             scales,
@@ -199,10 +196,7 @@ fn run(session: &Session) -> LabResult<()> {
             next: 0,
             buffers: BTreeMap::new(),
         };
-        let weights = [
-            weights(&mut a, set.count as usize, 1152, 5120)?,
-            weights(&mut a, set.count as usize, 5120, 576)?,
-        ];
+        let weights = banks(&mut a, set)?;
         let weights_keep = a.next;
         for case in cases().into_iter().filter(|c| c.set == set) {
             let live = a.bytes(&case.rows.to_le_bytes())?;

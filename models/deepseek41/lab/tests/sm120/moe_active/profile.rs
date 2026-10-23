@@ -35,10 +35,7 @@ pub(super) fn run(session: &Session) -> LabResult<()> {
         scales: a.filled(u64::from(rows) * 160, 124)?,
         live: a.bytes(&rows.to_le_bytes())?,
         logits: a.bytes(&case.logits())?,
-        weights: [
-            weights(&mut a, set.count as usize, 1152, 5120)?,
-            weights(&mut a, set.count as usize, 5120, 576)?,
-        ],
+        weights: banks(&mut a, set)?,
     };
     let shared = shared::weights(&mut a)?;
     let arms = [Mode::Old, Mode::BlockWarps, Mode::Streamed]

@@ -35,7 +35,7 @@ fn build(
     case: Case,
     live: View,
     source: &input::Source,
-    routed: [QuantizedWeights<View>; 2],
+    routed: Banks,
     shared: [QuantizedWeights<View>; 3],
 ) -> LabResult<Vec<Arm>> {
     [Mode::Old, Mode::PrefillGrouped]
@@ -104,7 +104,7 @@ fn mutant(arm: &Arm) -> Vec<Launch> {
 fn compare(
     a: &mut Arena<'_>,
     case: Case,
-    routed: [QuantizedWeights<View>; 2],
+    routed: Banks,
     shared: [QuantizedWeights<View>; 3],
     calibration: &serde_json::Value,
 ) -> LabResult<()> {
@@ -306,10 +306,7 @@ fn suite(bank: usize) {
             next: 0,
             buffers: BTreeMap::new(),
         };
-        let routed = [
-            weights(&mut a, set.count as usize, 1152, 5120)?,
-            weights(&mut a, set.count as usize, 5120, 576)?,
-        ];
+        let routed = banks(&mut a, set)?;
         let shared = shared::weights(&mut a)?;
         let weights_end = a.next;
         let mut errors = Vec::new();
@@ -358,10 +355,7 @@ fn prefill_cpu_dry_run() {
             next: 0,
             buffers: BTreeMap::new(),
         };
-        let routed = [
-            weights(&mut a, set.count as usize, 1152, 5120).unwrap(),
-            weights(&mut a, set.count as usize, 5120, 576).unwrap(),
-        ];
+        let routed = banks(&mut a, set).unwrap();
         let shared = shared::weights(&mut a).unwrap();
         for case in cases(set) {
             let live = a.filled(4, 0).unwrap();

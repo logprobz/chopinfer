@@ -174,10 +174,7 @@ pub(super) fn run(session: &Session) -> LabResult<()> {
             next: 0,
             buffers: BTreeMap::new(),
         };
-        let weights = [
-            weights(&mut a, set.count as usize, 1152, 5120)?,
-            weights(&mut a, set.count as usize, 5120, 576)?,
-        ];
+        let weights = banks(&mut a, set)?;
         let weights_keep = a.next;
         for case in cases().into_iter().filter(|c| c.set == set) {
             let live = a.bytes(&case.rows.to_le_bytes())?;

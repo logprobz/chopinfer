@@ -16,10 +16,7 @@ fn cpu_matrix() {
         };
         let live = a.bytes(&case.rows.to_le_bytes()).unwrap();
         let (input, scales, prefix) = source(&mut a, case, live).unwrap();
-        let weights = [
-            weights(&mut a, case.set.count as usize, 1152, 5120).unwrap(),
-            weights(&mut a, case.set.count as usize, 5120, 576).unwrap(),
-        ];
+        let weights = banks(&mut a, case.set).unwrap();
         let inputs = Inputs {
             input,
             scales,

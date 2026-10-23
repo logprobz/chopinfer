@@ -83,6 +83,9 @@ mod reduce;
 #[path = "../../../bundle/src/sm120/widen.rs"]
 mod widen;
 
+// The bundle's row-tiled Flash TP4 gate/up bank, for the MoE harnesses.
+mod row_tiled_bank;
+
 mod moe;
 mod moe_active;
 

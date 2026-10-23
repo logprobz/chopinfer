@@ -56,6 +56,7 @@
 //! | `ngram_decode`, `ple_conv_decode` | `item * entry` (u32 times u64) | u64, words and elements | 256 items x 92,224 elements: 47 MB | none needed |
 //! | `logits_topk`, DFlash `argmax_partial` | `u64(row) * Capacity + c` | u64, elements | 8,191 x 248,320 F32: 8.1 GB | none needed |
 //! | norms, SwiGLU, router, permute, gather, quantize, combine | `u64(row) * Width`, `u64(token) * Experts` | u64, elements | 8,192 rows | none needed |
+//! | `scale_expand` raw matrix bank | `u64(matrix) * rows * groups` | u64, bytes | encoded bank below 4 GiB, expanded bank can exceed 4 GiB | `scale_expand_high_matrix_offsets_on_gpu` in kernel-lab-families (2 GiB and 4 GiB offsets) |
 //!
 //! Linear engine (`kernels-sm120/cuda/linear`):
 //!

@@ -3,18 +3,29 @@
 // Prefill-only plain BF16 RMSNorm and ceil E4M3/32. The norm's 256-thread
 // pack mapping, tree, rsqrt and BF16 store boundary match row.cuh. Publish
 // every materialized norm output before releasing dependent consumers.
+//
+// With `Certify`, the norm also writes `certified[row]`: whether every BF16
+// output element, widened, is an exact F32 projection's tensor operand
+// (`exact_f32::tensor_operand`). The widened rows are exact by
+// construction, so this is the flag `exact_f32::zero_prefill::prepare`
+// derives as `single`, and `exact_f32::certified` reads the BF16 rows and
+// the flag in its place. The other outputs are unchanged.
 #include "row.cuh"
 #include "ceil_parallel.cuh"
+#include "../gemm/exact_f32.cuh"
 
 namespace chop::row::rmsnorm_prefill {
 
-enum class Mutation { none, round_before_weight, clear_status };
+// `certify_all` (lab-only) certifies every row, out-of-domain ones too.
+enum class Mutation { none, round_before_weight, clear_status, certify_all };
 
-template<int Width, uint32_t FloorBits, bool CacheGroups, Mutation M = Mutation::none>
+template<int Width, uint32_t FloorBits, bool CacheGroups, Mutation M = Mutation::none,
+         bool Certify = false>
 __device__ void run(const void* input, const uint16_t* weight, void* normed,
                     float* widened, uint8_t* codes, uint8_t* scales,
                     const uint32_t* live_rows, uint32_t* status,
-                    uint64_t status_row_offset, float eps) {
+                    uint64_t status_row_offset, float eps,
+                    uint32_t* certified = nullptr) {
   static_assert(Width > 0 && Width % 32 == 0);
   if (blockDim.x != 256) __trap();
   __shared__ float sums[8];
@@ -39,6 +50,7 @@ __device__ void run(const void* input, const uint16_t* weight, void* normed,
   }
   const float total = sum_cta(square, sums);
   const float inv = rsqrtf(total / Width + eps);
+  bool operands = true;
   for (int c = threadIdx.x * 8; c < Width; c += blockDim.x * 8) {
     const uint4 packed = *reinterpret_cast<const uint4*>(x + base + c);
     const uint4 wpacked = *reinterpret_cast<const uint4*>(weight + c);
@@ -51,6 +63,7 @@ __device__ void run(const void* input, const uint16_t* weight, void* normed,
       float n = bf(in[j]) * inv;
       if constexpr (M == Mutation::round_before_weight) n = bf(to_bf(n));
       out[j] = to_bf(n * w);
+      if constexpr (Certify) operands &= exact_f32::tensor_operand(bf(out[j]));
     }
     *reinterpret_cast<uint4*>(y + base + c) = result;
     *reinterpret_cast<uint4*>(staged + c) = result;
@@ -63,7 +76,12 @@ __device__ void run(const void* input, const uint16_t* weight, void* normed,
   }
   if constexpr (M == Mutation::clear_status)
     if (threadIdx.x == 0) status[status_row_offset + row] = 0;
-  __syncthreads();
+  if constexpr (Certify) {
+    const int admitted = __syncthreads_and(operands);
+    if (threadIdx.x == 0) certified[row] = M == Mutation::certify_all || admitted;
+  } else {
+    __syncthreads();
+  }
   const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
   uint32_t flags = 0;
   #pragma unroll 1

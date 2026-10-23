@@ -9,6 +9,8 @@ pub enum Mutation {
     None,
     RoundBeforeWeight,
     ClearStatus,
+    /// Lab-only: certify every row (`certify` entries).
+    CertifyAll,
 }
 
 #[derive(Clone, Debug)]
@@ -16,6 +18,10 @@ pub struct Entry {
     pub reference: rmsnorm_quantize::Entry,
     pub cache_groups: bool,
     pub mutation: Mutation,
+    /// Also write each row's exact F32 projection certificate
+    /// (`f32_projection::certified`) through a trailing `certified` U32
+    /// pointer; the other outputs are unchanged.
+    pub certify: bool,
 }
 impl Entry {
     pub fn new(
@@ -28,6 +34,7 @@ impl Entry {
             reference: rmsnorm_quantize::Entry::new(query, capacity, symbol)?,
             cache_groups,
             mutation: Mutation::None,
+            certify: false,
         };
         entry.validate()?;
         Ok(entry)
@@ -51,6 +58,9 @@ impl Entry {
                 "prefill norm staging exceeds default shared memory",
             ));
         }
+        if self.mutation == Mutation::CertifyAll && !self.certify {
+            return Err(Refusal("only a certifying norm certifies every row"));
+        }
         Ok(())
     }
     pub fn plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
@@ -67,10 +77,21 @@ impl Entry {
             Mutation::None => "none",
             Mutation::RoundBeforeWeight => "round_before_weight",
             Mutation::ClearStatus => "clear_status",
+            Mutation::CertifyAll => "certify_all",
         };
-        spec.body = format!(
-            "chop::row::rmsnorm_prefill::run<{width},{floor:#x}u,{cached},chop::row::rmsnorm_prefill::Mutation::{mutation}>(input,weight,normed,widened,codes,scales,live_rows,status,status_row_offset,__uint_as_float(eps_bits));"
-        );
+        if self.certify {
+            spec.params.push(kernel_build::EntryParam::DevicePointer {
+                name: "certified".into(),
+                cxx_type: "uint32_t".into(),
+            });
+            spec.body = format!(
+                "chop::row::rmsnorm_prefill::run<{width},{floor:#x}u,{cached},chop::row::rmsnorm_prefill::Mutation::{mutation},true>(input,weight,normed,widened,codes,scales,live_rows,status,status_row_offset,__uint_as_float(eps_bits),certified);"
+            );
+        } else {
+            spec.body = format!(
+                "chop::row::rmsnorm_prefill::run<{width},{floor:#x}u,{cached},chop::row::rmsnorm_prefill::Mutation::{mutation}>(input,weight,normed,widened,codes,scales,live_rows,status,status_row_offset,__uint_as_float(eps_bits));"
+            );
+        }
         Ok(spec)
     }
 }

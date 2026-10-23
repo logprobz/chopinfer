@@ -206,7 +206,10 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
+    pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
+    /// Row-local folds by projection and decode or verify bucket.
+    local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     stream: Vec<(&'static str, u32, fold_stream::Op)>,
     stream_pair: Vec<(u32, fold_stream::Op)>,
     tensors: Vec<(&'static str, &'static str)>,
@@ -271,9 +274,13 @@ impl DenseOps {
                     ..moe::quantizer(width)
                 };
                 let what = format!("dense.quantize {input:?} w{width}");
-                let op = RowBuckets::prepare(asks, what, every, |need| {
+                let mut op = RowBuckets::prepare(asks, &what, every, |need| {
                     backend.block_quantize(&query, need)
                 })?;
+                if crate::Kernels::dense_quantize_one_row(shape, width, input) {
+                    op =
+                        op.with_one_row(asks, what, |need| backend.block_quantize(&query, need))?;
+                }
                 Ok(((width, input), op))
             })
             .collect::<Result<_, Refused>>()?;
@@ -285,6 +292,7 @@ impl DenseOps {
             .collect();
         let short_prefill = short_prefill::enabled(shape);
         let mut decode = Vec::new();
+        let mut local = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
             for capacity in 1..=crate::Kernels::dense_decode_capacity() {
@@ -301,6 +309,15 @@ impl DenseOps {
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
+                if let Some(op) = crate::Kernels::prepare_local_fold(shape, dense.id, query, need)?
+                {
+                    asks.record(
+                        format!("dense.{} local {capacity}", dense.id),
+                        need,
+                        op.info(),
+                    );
+                    local.push((dense.id, capacity, op));
+                }
                 // Decode lowers the shared gate and up as one pair, so single
                 // packed folds of either would hold storage no launch reads.
                 if !pair_only(dense.id)
@@ -335,7 +352,9 @@ impl DenseOps {
             }
         }
         Ok(DenseOps {
+            dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
+            local,
             stream,
             stream_pair,
             tensors,
@@ -361,6 +380,9 @@ impl DenseOps {
             return Vec::new();
         };
         let mut result = Vec::new();
+        if let Some(op) = self.dual.as_ref().and_then(|dual| dual.initializer(weight)) {
+            result.push((false, op, fold_stream::allocation_bytes(op, false)));
+        }
         for paired in [false, true] {
             let ops: Vec<_> = if paired {
                 if *id != "moe.shared-gate" {
@@ -391,6 +413,38 @@ impl DenseOps {
             }
         }
         result
+    }
+
+    /// Projection `id` through its row-local fold, if one serves the
+    /// phase's decode or verify bucket.
+    pub(crate) fn local(
+        &self,
+        id: &str,
+        phase: Phase,
+        views: &GemmViews,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Option<Vec<Lowered>>, Refusal> {
+        let rows = phase.rows();
+        let Some((_, _, op)) = self
+            .local
+            .iter()
+            .find(|(of, capacity, _)| !phase.prefill() && *of == id && *capacity == rows)
+        else {
+            return Ok(None);
+        };
+        let mut bind = Bind::default();
+        let buffers = Mxfp8FoldGemmBuffers {
+            activations: bind.view(views.activations),
+            activation_scales: bind.view(views.activation_scales),
+            weights: bind.view(views.weights),
+            weight_scales: bind.view(views.weight_scales),
+            output: bind.view(views.output),
+            live_rows: bind.view(views.live_rows),
+            status: bind.view(views.status),
+            status_row_offset: 0,
+        };
+        bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
+            .map(Some)
     }
 
     /// The quantization of `rows` rows of `width` columns of `input`.

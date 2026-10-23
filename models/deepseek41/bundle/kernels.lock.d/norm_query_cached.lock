@@ -182,7 +182,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "c887f6de826fb750d7a5d035f1731127a8e9d25e24d481ff8c571d4a51948d87",
+    "cubin_sha256": "fe5eca0964fd5cac7011e1a7d07bac9df92a86649cf372b976a022204fd70115",
     "resources": [
       {
         "symbol": "chop_norm_quantize_deepseek41_query_cached8_v1",

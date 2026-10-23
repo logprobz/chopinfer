@@ -23,6 +23,7 @@ fn run_without_last(reference: bool) -> Vec<String> {
     }
     let mut ends = [1u64; 32];
     let mut records = Vec::new();
+    let mut captured = std::collections::BTreeSet::new();
     for (rows, width) in [
         (1u32, 1u32),
         (8, 1),
@@ -69,16 +70,21 @@ fn run_without_last(reference: bool) -> Vec<String> {
             .iter()
             .filter(|l| l.starts_with("launch ") && l.contains("_reuse32_"))
             .count();
-        if reference || rows <= 8 {
+        // One verify graph serves every item count of its rows: a repeated
+        // key replays the graph checked at its capture.
+        let first = captured.insert((rows, width > 1));
+        if !first {
+            assert_eq!(changed, 0, "rows={rows} width={width}");
+            assert!(lines.iter().any(|line| line.starts_with("replay ")));
+        } else if reference || rows <= 8 {
             assert_eq!(changed, 0, "rows={rows}");
         } else {
             assert!(changed >= 4, "row bucket must reach the reuse head");
         }
-        if !reference && rows == 32 {
+        if first && !reference && rows == 32 {
             assert_eq!(
-                changed,
-                4 * (40 * 4 + 1),
-                "two dense admit/compute pairs and one head per rank"
+                changed, 4,
+                "one head per rank (WO_a and WO_b at 32 rows run their cluster folds)"
             );
         }
         records.push(format!("case rows={rows} width={width}"));
@@ -141,7 +147,7 @@ fn modules_retain_the_gpu_qualified_bytes() {
     for (name, expected) in [
         (
             "mxfp8_fold_reuse_deepseek41_sm120",
-            "d662749709d266d62049d699c40687c1166b0adf6de44435a3b693c391a5dd54",
+            "640d2fa0b820958c2ecd2ec674481785b01eea2a03d73271c783f66300641b85",
         ),
         (
             "f32_decode_reuse_deepseek41_sm120",

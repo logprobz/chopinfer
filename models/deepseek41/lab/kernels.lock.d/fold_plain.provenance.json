@@ -1,0 +1,22 @@
+[
+  {
+    "name": "plain_fold_local_rows_deepseek41_sm120",
+    "source_closure_sha256": "ea3542fa7f52b3ffa42e13534a9e51e26c3f542a09d97e39d7112fe7a783cf0c"
+  },
+  {
+    "name": "plain_mxfp8_fold_decode_deepseek41_sm120_v1",
+    "source_closure_sha256": "5c163cf1be32a5441305a2e9b1de40525ddbce810b4c1dd3afd8c4d741220b18"
+  },
+  {
+    "name": "plain_mxfp8_fold_prefetch_deepseek41_sm120_v3",
+    "source_closure_sha256": "106198edebbeb05c52592b347bbc28a09e847ffbb345aa2bdca0e2c1ab4e7c71"
+  },
+  {
+    "name": "plain_mxfp8_fold_reuse_deepseek41_sm120",
+    "source_closure_sha256": "7668afa16fd00a1532c6a131d402278527d133f2b679051113ab464556c55895"
+  },
+  {
+    "name": "plain_mxfp8_fold_ticket_deepseek41_sm120_v2",
+    "source_closure_sha256": "8ab2ab362fa084aaec046defe56988770bf8a37aca701b71682d40454ced9c62"
+  }
+]

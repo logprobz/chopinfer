@@ -236,7 +236,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "44864c4cdcca40ec24e99349cb64aba42f0b55dff086c8de8a660ca135e5100c",
+    "cubin_sha256": "ecf485bb200c5bef13e47641e874bb419778a0bfacc7ea69f361f5ac3cc89139",
     "resources": [
       {
         "symbol": "chop_deepseek41_moe_ceil_w5120_cached_v1",

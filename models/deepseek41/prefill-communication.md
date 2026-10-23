@@ -3,8 +3,9 @@
 Native Flash TP4 now defaults to BF16 input partials for prefill only; see
 [communication-partials.md](communication-partials.md). Set
 `CHOPINFER_DEEPSEEK41_BF16_PARTIALS=0` to retain the F32-partial arithmetic
-described below or to use the explicit F32 DMA transport. Overlap remains
-off by default and must be bitwise against its selected sequential path.
+described below. The DMA transport carries the partial format of the
+collective it replaces. Overlap remains off by default and must be bitwise
+against its selected sequential path.
 
 The optional attention schedule splits the final output projection into two
 row ranges for chunks of at least 1024 rows. The first range is aligned to
@@ -138,14 +139,21 @@ Both overlap modes remain explicit experiments.
 
 ## Ordered DMA transport
 
-DMA is opt-in. An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA`, `0`, or any value
-other than `1` keeps the existing reduction path and allocates no DMA inbox,
-owner stream or events. This also applies to legacy create records without
-prefill options and to the explicit full-prefill profile. Package defaults
-remain 8192-row chunks with upper-layer skip enabled. Negotiated skip uses
-its own executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the
-original F32 transport when DMA is off. Overlap remains off by default,
-and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` retains sequential work.
+An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA` selects DMA for the negotiated
+upper-skip executor only (see [sparse DMA admission](#sparse-dma-admission)):
+the create record's prefill profile must negotiate upper-skip chunks and the
+BF16 gather must be prepared. Package defaults are 8192-row chunks with
+upper-layer skip, so they take it. Legacy create records without prefill
+options, the explicit full-prefill profile and chunked profiles without skip
+allocate no DMA inbox, owner stream or events. DSpark instances take the
+upper-skip default for their target prefill chunks. Full-schedule and
+two-part executions keep the SM transport unless `1` is set, and DSpark
+instances keep it there even then. `0`, or any
+value other than `1`, turns DMA off everywhere. Negotiated skip uses its own
+executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the original
+F32 transport when DMA is off, and also turns off the upper-skip default.
+Overlap remains off by default, and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0`
+retains sequential work.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
 text-request Flash TP4 autoregressive prefills. It applies to sequential
@@ -162,7 +170,28 @@ An ordinary local kernel calls the existing phased transport's sum helper:
 positive F32 zero, sources in ascending rank order, then one BF16 rounding.
 Three ordered permutations gather those BF16 owner intervals. Changing the
 owner interval does not change any element's arithmetic. Cross-device
-events order each permutation and join all final peer reads before reuse.
+events join three points: every partial before any scatter, every owner sum
+before any gather, and all final peer reads before reuse. Each rank issues
+its scatter copies, its sum and its gather copies on its own stream, so the
+permutations keep their order there without a barrier between them. On
+2026-10-20 at 250 W, a four-GPU probe of this schedule against one with a
+barrier after every permutation matched every output element and guard at
+8192, 8191, 4096, 2496 and 640 rows, and took 3.921 against 3.963 ms per
+8192-row reduction, about 3.3 ms less per upper-skip chunk.
+
+Where the step's collective reduces BF16 partials (the two-shot and turns
+entries of the BF16-partial contract), the transport carries BF16 partials
+instead. Each rank first rounds the rows it sends, every row outside its
+own interval, once to BF16 with the phased BF16 entries' rounding helper.
+The scatter copies those BF16 rows, half the F32 bytes, into BF16 slots.
+The owner sum calls the phased BF16 sum helper: its own F32 rows rounded as
+sent, every source's BF16 value widened, positive F32 zero, ascending rank
+order, one BF16 rounding. The gather is unchanged. The output is the
+replaced collective's bits. The rounded rows use the second half of the
+same inbox allocation, so the BF16 payload allocates nothing more. The
+payload is chosen from the replaced launch's symbol on every rank; a
+collective the transport does not recognize keeps the step on the
+collectives.
 
 Each rank keeps a private 160 MiB inbox and eight events. A and B reuse the
 inbox only after the previous collective's global join. The overlap audit
@@ -267,3 +296,193 @@ With concurrent builds, sequential DMA upload time varied from 249.9 to
 for DMA versus 2125.0/2207.8 ms for BF16. CUDA traces place the long gaps
 inside host upload work between driver calls, with short transfer calls.
 The GPU-time route decision does not establish a quiet-host TTFT gain.
+
+### Sparse DMA admission
+
+The exact upper-skip schedule takes DMA for native Flash TP4, single-request
+text prefill with overlap disabled, both by default and with
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1`; `0` retains the SM transport. This
+includes a DSpark instance's target prefill chunks: their Engram rows,
+feature captures and feature packing run as ordinary launches on each
+rank's main stream, and every DMA call joins all main streams on its final
+gather before the next launch. The CPU journal of a DSpark target chunk keeps
+every compute and feature launch with its operands and replaces only the 73
+phased reductions. The inbox costs 160 MiB per rank of KV pages on DSpark
+profiles too. Under package defaults the unset and explicit settings produce
+the same create, execute and release journal, for AR and DSpark instances. The adapter recognizes only
+the F32-partial, BF16-result phased contract and the BF16-partial two-shot
+and turns entries, and carries their payload. It validates every rank's
+original input and output row interval before substituting a DMA call.
+It does not select a partial format or change any compute dispatch, KV mutation,
+ring update, index write or head-row copy. Intervals below 512 rows retain
+the composed transport.
+
+Every call uses the shared owner-sum kernel and the runtime's qualified
+peer-copy service. The owner sum calls the same rank-ordered F32 block sum
+as the phased kernel, with one final BF16 conversion. All peer reads join
+before compute or the next call can reuse partials, outputs or inboxes.
+The journal audit checks every compute and DMA span against stream/event
+ordering. Removing the waits must expose an alias. Tests cover full and odd
+chunks, smaller cones, cached attention composition and resource release.
+
+As with full-chunk DMA, sparse DMA uses synchronous Engram uploads. Selecting
+both experimental switches must finish every mapped row upload before the
+first compute launch; the async Engram plan cannot bypass those uploads.
+The execution entry rejects simultaneous DMA and async-gather plans.
+
+The earlier isolated sparse qualification on 2026-10-19 passed all 40 raw
+state artifacts and served token/logprob bits. At offset 0, communication
+exclusive time fell from 316.15 to 200.90 ms and the GPU envelope from
+1361.82 to 1278.20 ms. These are historical measurements on a different
+integration. The trace analyzer checks owner sums against incoming scatter
+copies and outgoing gather copies on all ranks; independent outgoing
+scatters can legally overlap an owner's sum.
+
+On 2026-10-20 at 250 W, this port on round 7 passed the raw-state comparison
+of DMA=1 against DMA=0: all 40 artifacts (8 full-vocabulary F32 logit rows,
+16 rank snapshots and 16 committed KV files at 8192, 24576, 32767 and 32768
+tokens, including restored continuations) were byte-identical, with no live
+resources left and no Xids. That job stopped at its first served arm on a
+pinned KV page count, so the TTFT ABBA and Nsight profiles of this port
+remain to be measured, now against the unset default.
+
+### Consuming gathered intervals as they land
+
+After each hidden reduction the served graph runs only row-local kernels
+before the next projection: the HC expand of the reduced rows, the prefill
+mix and the next sublayer's cached norm-ceil. Where every rank's next three
+launches are exactly the expand, the r8 c4 prefill mix and the cached
+norm-ceil (before MoE, its form that also writes each row's router
+certification flag), each sized to the call's rows, and the rows divide into whole
+eight-row mix tiles per owner, the DMA call runs them per owner interval.
+Each rank's gather copies move to its own copy lane, which records an event
+after each phase. Its main stream runs the chain on its own interval right
+after its sum, then on each other interval once that interval's copy event
+fires, while the later copies proceed. The final peer-read join is
+unchanged. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME=0` keeps the chain
+after the call.
+
+Each interval's launch keeps the original symbol and arguments. Its row
+views are narrowed to the interval, its live count is read from the prefill
+count table, the norm's status rows are addressed through its row offset,
+and its row grid is sized to the interval. These entries compute every row
+from that row's inputs alone: the expand indexes rows by block, the mix
+keeps per-row accumulators in eight-row tiles with zeroed padding, and the
+norm-ceil runs one block per row, its certification flag included. No argument of the chain other than the
+expand's reduced rows may overlap anything the call reads or writes. Any
+other chain, the embedding reduction and odd chunks keep the serial order.
+At package defaults on an 8192-row chunk this splits 40 calls per rank: the
+38 full-row calls the chain follows and the 2240- and 2496-row cone calls.
+
+The CPU journal audit distinguishes reads (peer-copy sources and the
+expand's reduced rows) from writes and checks every consumer against every
+copy and owner sum. Removing the waits before the interval consumers must
+expose an alias.
+
+On 2026-10-21 at 250 W, a four-GPU probe ran the BF16 DMA reduction followed
+by these entries, compiled from the same headers with the bundle cubins'
+registers and shared memory, serially and per interval. At all 18
+reduction sizes of a chunk, in two passes, the per-interval outputs (HC
+streams, collapsed rows, pre, post, comb, normed rows, codes, scales and
+status) equalled the serial ones byte for byte on every rank, every rank's
+digest equalled rank 0's, the reduced rows matched the host fold, and a run
+that skipped one interval differed. At 8192 rows the serial reduction and
+chain took 4.10 ms and the per-interval form 3.19 ms; over a chunk's
+reductions the chain's 66.7 ms was 58% hidden, a 38.7 ms saving. Below
+about 1400 rows the per-interval form was slower; the admitted cone calls
+are above that. The probe's norm-ceil had no widened output; 24 of the 41
+full-row chains here also write one, addressed per row the same way.
+
+That evidence, and every earlier DMA measurement here, used F32 partials.
+Native Flash TP4 prefill now defaults to BF16 partials, which the transport
+carries as BF16. On 2026-10-21 at 250 W, the BF16-payload DMA build passed
+all 40 raw-state artifacts against its base and a quiet-host tp4-ar ABBA
+(bitwise tokens and logprobs in all four arms; 1168 BF16 owner sums, 1752
+roundings and 7008 peer copies audited in a profile). Its TTFT gain over
+the base's BF16-partial collectives was 3.6 ms at 8K and 8.9 ms at 32K:
+both move 3 bytes per element, and the profile's 137.4 ms of communication
+per chunk was 135.6 ms outside compute. DMA's value is that it leaves the
+SMs free for the interval consumers above.
+
+### Producing sent intervals before their pulls
+
+Before most MoE reductions the last launch on every rank is the route-row
+sum that writes the call's F32 partial rows (the routed rows of each token
+in top-k order plus the shared expert's addend). Where it is exactly that
+sum, sized to the call's rows and writing exactly the call's partial rows,
+the call has a BF16 payload, and the rows divide into 32-row owner
+intervals, the DMA call runs the sum per owner interval. Each rank's main
+stream produces and rounds the interval it sends in scatter phase 0, then
+phase 1, then phase 2, recording an event after each, and produces its own
+interval last. Each destination pulls on its copy lane, each pull waiting
+only for its own source's event for that phase; the lane first waits for
+its rank's main stream to reach the call. The owner sum waits for the
+rank's own interval and its three pulls, and still adds every rank's rows
+in rank order. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE=0` keeps one sum
+launch before the call.
+
+Each interval's launch keeps the original symbol and arguments, with its
+row views narrowed to the interval, its live count read from the prefill
+count table and one block per token. In the upper cone the sums read
+compact routed rows, route ids and addends from the start of their capacity
+buffers; those views narrow the same way. The sum computes every token from
+that token's routes and addend alone, so each row's bytes are unchanged. No
+argument of the sum other than its partial rows may overlap anything the
+call reads or writes. At package defaults on an 8192-row chunk this splits
+36 calls per rank: the 20 full-row MoE calls and the 16 cone calls. The CPU
+journal audit checks every pull after its source's rounding, and removing
+the waits before the pulls must expose an alias; dropping one interval's
+launch fails the split coverage check.
+
+On 2026-10-21 at 250 W, a four-GPU probe ran the served sum in its served
+input state (all six routes of every token read, 0.857 ms at 8192 rows, as
+served) feeding the BF16 DMA reduction, serially and per interval. At all 18
+reduction sizes in two passes the reduced rows matched the host fold on
+every rank, the per-interval F32 partial rows equalled the serial ones byte
+for byte, and a run that skipped one interval's sum differed. At 8192 rows
+the serial sum and reduction took 3.58 ms and the per-interval form 3.04 ms;
+over a chunk's 36 MoE reductions that is 83.0 against 70.4 ms, a 12.6 ms
+saving with 65% of the sum hidden. The attention output fold before the
+other reductions takes TMA maps and is not split.
+
+In the served job on 2026-10-21 (whole machine, 250 W, ABBA over one
+install, the producer form against one sum before each call) the 40 raw
+state artifacts and all tokens and logprobs matched byte for byte, and TTFT
+fell from 2.921 to 2.881 s at 32K (39.8 ms) and from 0.718 to 0.707 s at 8K.
+
+### Pushing copies from each source
+
+Every peer copy can run on its source's stream instead of its destination's.
+The host's peer-copy service accepts a stream of either end's context (the
+destination's pulls, the source's pushes) and refuses any other; the
+issuing context needs the directed lease and pool grant to the other end's
+allocation, which the instance grants on every pair. At creation the
+instance pushes 16 bytes once per ordered pair between the DMA inboxes. A
+host from before pushes refuses the first with `InvalidArgument` before
+submitting anything, and the instance then pulls; a later refusal fails
+creation, never a step. The bundle logs the direction it chose ("prefill
+DMA copies: pushed by each source" or "pulled by each destination").
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH=0` keeps every copy a pull.
+
+A pushing call issues the same copies with the same bytes, in the same
+permutation order, each on its source's main stream (or its lane where the
+call produces or consumes intervals). Each destination waits for the copy
+event its sender records after that phase's copy, before its sum or that
+interval's consumers. A lane that pushes a produced interval also waits for
+its destination to reach the call, so the copy cannot overwrite an inbox
+the destination's previous sum still reads. Launches are unchanged. The CPU
+journal audit checks every owner sum after the copies into its inbox, and
+removing the waits before the sums must expose an alias.
+
+On 2026-10-21 at 250 W, a four-GPU probe replayed one call's copies on the
+served schedule (three scatter and three gather permutations, each rank's
+copies in phase order on one stream, no barrier between phases), pulled and
+pushed, at 8192, 8191, 2496, 1600 and 576 rows in two passes, with every
+copied row checked in both modes. Pushes took 1.21 ms for the three
+full-row phases of either part (0.40 ms a phase, about 52 GB/s on every
+pair), against 1.59 to 1.95 ms pulled, and 0.37 against 0.55 to 0.61 ms at
+2496 rows. Pulled phases fall into steps one phase apart, and the fastest
+equal the pushed ones: pulls of different destinations pile up on one
+source's link when the phases drift, while each source's pushes stay in
+order on its stream. In served prefill the copies sourced from GPU 0 ran at
+41 to 46 GB/s against up to 52 GB/s for the others.

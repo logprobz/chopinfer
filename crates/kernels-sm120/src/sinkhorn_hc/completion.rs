@@ -41,7 +41,7 @@ pub enum Mutation {
     ReverseFold,
 }
 impl Mutation {
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Mutation::None => "none",
             Mutation::ClearStatus => "clear_status",

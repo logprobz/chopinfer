@@ -42,6 +42,23 @@ impl At for FakeHost {
     }
 }
 
+type RopeTables = std::sync::Arc<[Vec<u8>; 2]>;
+
+/// The full-context RoPE tables of `geometry`, kept for the rest of the test
+/// process. The bundle's cache keeps tables only while an instance holds
+/// them, so each create rebuilt them: 65% of this suite's CPU time
+/// (2026-10-21). Create still takes them from `rope_tables::tables_for`,
+/// which returns this allocation while it lives.
+fn kept_rope_tables(geometry: &'static model_mimo26_contract::geometry::Geometry) -> RopeTables {
+    static KEPT: std::sync::Mutex<BTreeMap<&'static str, RopeTables>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    let mut kept = KEPT.lock().unwrap();
+    let tables = kept.entry(geometry.id).or_insert_with(|| {
+        crate::rope_tables::tables_for(geometry, u64::from(geometry.context_tokens()))
+    });
+    std::sync::Arc::clone(tables)
+}
+
 /// The package the fake host serves, and what tests set and read.
 #[derive(Default)]
 struct Package {
@@ -80,6 +97,8 @@ struct Package {
     peer_grants: Cell<u32>,
     kv_acquires: Cell<u32>,
     table_uploads_before_kv: Cell<usize>,
+    /// Uploads whose source is a plane of [`kept_rope_tables`].
+    kept_rope_uploads: Cell<usize>,
     kv_resolves: Cell<u32>,
     copies: RefCell<Vec<(u64, u64, u64)>>,
     /// (stream slot, symbol) per launch, and (stream slot, event slot, wait)
@@ -530,6 +549,8 @@ impl FakePackage for Package {
         ))
     }
     fn component(&self, slot: u32) -> (String, Vec<u8>) {
+        // Create reads components before it builds its RoPE tables.
+        kept_rope_tables(self.tp().geometry);
         let rank = slot - 1;
         if rank == PRECISION {
             return (
@@ -648,6 +669,13 @@ impl FakePackage for Package {
         source: &[u8],
     ) -> HostServiceResultV1<()> {
         let recorded = self.journaled(source);
+        let kept = kept_rope_tables(self.tp().geometry);
+        if kept
+            .iter()
+            .any(|plane| std::ptr::eq(plane.as_slice(), source))
+        {
+            self.kept_rope_uploads.set(self.kept_rope_uploads.get() + 1);
+        }
         if source.len() == crate::prefix_projected::HEADER_BYTES as usize
             && source.starts_with(b"DFCTX001")
         {
@@ -6991,6 +7019,37 @@ fn hybrid_tables_are_context_sized_before_kv_and_bound_every_phase() {
         assert_eq!(host.launch_symbols.borrow().len(), before);
     }
     instance.destroy().unwrap();
+}
+
+#[test]
+fn create_uploads_the_kept_full_context_rope_tables() {
+    let api = BundleApiV1::new_with_prefix_cache(crate::BUNDLE_MIMO26_EXTENDED_API_V1).unwrap();
+    let host = Rc::new(FakeHost::default());
+    let mut instance = api
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &configuration())
+        .unwrap();
+    // Every rank uploads both planes from the kept allocation, not a copy.
+    assert_eq!(host.kept_rope_uploads.get(), 2 * RANKS as usize);
+    instance.destroy().unwrap();
+    // The kept bytes are the generator's rows.
+    let geometry = host.tp().geometry;
+    let tables = kept_rope_tables(geometry);
+    let tokens = u64::from(geometry.context_tokens());
+    let row = crate::rope_tables::bytes_per_position(geometry) as usize;
+    for (plane, theta) in [geometry.rope_theta(), geometry.swa_rope_theta()]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(tables[plane].len(), tokens as usize * row);
+        for position in [0, 1, 4095, tokens / 2 + 7, tokens - 1] {
+            let at = position as usize * row;
+            assert_eq!(
+                tables[plane][at..at + row],
+                crate::rope_tables::rows_for(geometry, position, 1, theta),
+                "plane {plane} position {position}"
+            );
+        }
+    }
 }
 
 #[test]

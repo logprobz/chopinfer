@@ -55,6 +55,65 @@ impl Config {
         }
         Ok(Some(config))
     }
+
+    /// The budgets fitted to `lockable`, the bytes this process may still
+    /// lock: the total becomes `lockable` and the set size shrinks by the same
+    /// factor, so the requested number of sets still fits. `None` when the
+    /// budgets already fit, the limit is unknown or unlimited, or not even one
+    /// set could be locked.
+    fn clamped(self, lockable: Option<u64>) -> Option<Self> {
+        let lockable = usize::try_from(lockable?).unwrap_or(usize::MAX);
+        if self.total_bytes <= lockable {
+            return None;
+        }
+        let scaled = self.set_bytes as u128 * lockable as u128 / self.total_bytes as u128;
+        let set_bytes = (scaled as usize).max(HEADER_BYTES + SHARDS * super::page_bytes_v1());
+        (set_bytes <= lockable).then_some(Self {
+            set_bytes,
+            total_bytes: lockable,
+        })
+    }
+}
+
+/// The bytes this process may still lock: the soft RLIMIT_MEMLOCK less its
+/// locked memory, or `None` when the limit is unlimited or unreadable.
+fn lockable_bytes() -> Option<u64> {
+    let field = |text: &str, name: &str| -> Option<u64> {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name))?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    };
+    let limit = field(
+        &std::fs::read_to_string("/proc/self/limits").ok()?,
+        "Max locked memory",
+    )?;
+    let locked = field(
+        &std::fs::read_to_string("/proc/self/status").ok()?,
+        "VmLck:",
+    )?;
+    Some(limit.saturating_sub(locked.saturating_mul(1024)))
+}
+
+/// Fits the budgets to RLIMIT_MEMLOCK, logging once when they shrink: a set
+/// the process cannot lock would otherwise leave every row set uncached.
+fn fitted(config: Config) -> Config {
+    let lockable = lockable_bytes();
+    let Some(clamped) = config.clamped(lockable) else {
+        return config;
+    };
+    runtime_engine::logging::line(
+        serde_json::json!({
+            "schema":"chopinfer.mapped-row-cache.v1", "phase":"clamped",
+            "reason":"RLIMIT_MEMLOCK", "lockable_bytes":lockable,
+            "requested_set_bytes":config.set_bytes, "requested_total_bytes":config.total_bytes,
+            "set_bytes":clamped.set_bytes, "total_bytes":clamped.total_bytes,
+        })
+        .to_string(),
+    );
+    clamped
 }
 
 struct Budget {
@@ -133,7 +192,7 @@ fn registry() -> Result<Option<&'static Registry>, String> {
                 Ok(None)
             })
             .map(|config| {
-                config.map(|config| Registry {
+                config.map(fitted).map(|config| Registry {
                     config,
                     budget: Arc::new(Budget {
                         limit: config.total_bytes,
@@ -317,11 +376,19 @@ impl Plane {
     /// Copy only the exact requested bytes. A contended shard falls back to
     /// the original mapping. No lock is held while a source page may fault.
     pub(crate) fn copy(&self, table: &[u8], row: u32, within: usize, out: &mut [u8]) {
+        if !self.copy_hit(row, within, out) {
+            self.copy_miss(table, row, within, out);
+        }
+    }
+
+    /// The cached half of [`Self::copy`]: copies a cached row and returns
+    /// true, or copies nothing and returns false.
+    pub(crate) fn copy_hit(&self, row: u32, within: usize, out: &mut [u8]) -> bool {
         let cache = &self.cache;
         let (shard, bucket) = cache.bucket(row);
         let tag = u64::from(row) + 1;
         let bit = 1_u64 << self.index;
-        let (offset, width) = cache.planes[self.index];
+        let offset = cache.planes[self.index].0;
         let mut hit = false;
         if let Ok(mut shard) = cache.shards[shard].try_lock() {
             shard.clock = shard.clock.saturating_add(1);
@@ -342,15 +409,28 @@ impl Plane {
         }
         if hit {
             cache.hits.fetch_add(1, Ordering::Relaxed);
-        } else {
-            cache.misses.fetch_add(1, Ordering::Relaxed);
-            super::fetch::legacy::record(1);
-            let source = row as usize * width + within;
-            out.copy_from_slice(&table[source..source + out.len()]);
-            if within == 0 && out.len() == width {
-                self.store_full_row(row, out);
-            }
+            self.counted();
         }
+        hit
+    }
+
+    /// The uncached half of [`Self::copy`], after [`Self::copy_hit`]
+    /// returned false: copies from the mapping and keeps a whole row.
+    pub(crate) fn copy_miss(&self, table: &[u8], row: u32, within: usize, out: &mut [u8]) {
+        let cache = &self.cache;
+        let width = cache.planes[self.index].1;
+        cache.misses.fetch_add(1, Ordering::Relaxed);
+        super::fetch::legacy::record(1);
+        let source = row as usize * width + within;
+        out.copy_from_slice(&table[source..source + out.len()]);
+        if within == 0 && out.len() == width {
+            self.store_full_row(row, out);
+        }
+        self.counted();
+    }
+
+    fn counted(&self) {
+        let cache = &self.cache;
         if cache.copies.fetch_add(1, Ordering::Relaxed) % 65536 == 65535 {
             cache.report("sample");
         }

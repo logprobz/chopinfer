@@ -136,13 +136,39 @@ pub fn qualify(
     }
     let raw_host = floats(&a.read(raw)?);
     let down_x_host = a.read(down_x)?;
-    // Every other tile gives the same bits.
+    // Every other tile, and on the target bank each binding candidate's
+    // loop on its tile (super::tune_family::candidates), gives the same bits.
     let mut variants = Vec::new();
-    for kind in family::KINDS {
-        for tile in family::tiles(kind) {
-            if *tile == family::serving::tile(kind) {
-                continue;
-            }
+    let target = set == family::serving::target_set();
+    let others = family::KINDS
+        .into_iter()
+        .flat_map(|kind| {
+            family::tiles(kind)
+                .iter()
+                .filter(move |t| **t != family::serving::tile(kind))
+                .map(move |t| (kind, *t, None))
+        })
+        .chain(
+            super::tune_family::candidates()
+                .into_iter()
+                .filter(|_| target)
+                .map(|(kind, tile, tune)| (kind, tile, Some(tune))),
+        );
+    for (kind, tile, tune) in others {
+        {
+            let tile = &tile;
+            let native_ops = |shape: &Shape,
+                              tile: &Tile,
+                              rows: u32,
+                              buffers: &native::Buffers,
+                              variant: Variant|
+             -> LabResult<Vec<Launch>> {
+                match tune {
+                    None => native_ops(shape, tile, rows, buffers, variant),
+                    Some(t) => native::tune_launches(shape, tile, rows, buffers, t, variant)
+                        .map_err(|e| e.to_string()),
+                }
+            };
             let gate = kind == GatedMlpProjection::GateUp;
             let shape = if gate { gate_shape } else { down_shape };
             let vq = queue(a, &shape, tile)?;
@@ -187,10 +213,10 @@ pub fn qualify(
             let difference = first_difference(&got, &expected, bytes);
             if let Some(at) = difference {
                 failures.push(format!(
-                    "{kind:?} tile {tile:?} differs from the serving tile at byte {at}"
+                    "{kind:?} tile {tile:?} loop {tune:?} differs from the serving tile at byte {at}"
                 ));
             }
-            variants.push(serde_json::json!({"kind":format!("{kind:?}"),"tile":format!("{tile:?}"),"bitwise":difference.is_none()}));
+            variants.push(serde_json::json!({"kind":format!("{kind:?}"),"tile":format!("{tile:?}"),"loop":tune.map_or("served", |t| t.name()),"bitwise":difference.is_none()}));
         }
     }
     // Criterion 5's control output: native down without its first chain.

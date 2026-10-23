@@ -34,6 +34,11 @@ pub(crate) fn install() -> io::Result<()> {
     Ok(())
 }
 
+/// Whether SIGTERM or SIGINT arrived since [`install`].
+pub(crate) fn stopping() -> bool {
+    STOPPING.load(Ordering::SeqCst)
+}
+
 pub(crate) async fn shutdown() {
     while !STOPPING.load(Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_millis(10)).await;

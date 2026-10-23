@@ -79,7 +79,8 @@ mod tests {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = super::super::Ops::prepare(&kernels, &shape, KvStorage::Native);
+            let ops =
+                super::super::Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
             assert!(ops.shared.is_some(), "{:?}", ops.missing);
             let ids: Vec<&str> = super::super::dense::projections(&shape)
                 .iter()

@@ -38,7 +38,33 @@ impl NormPrefillOps {
         views: RmsNormQuantizeBuffers<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
         let mut bind = Bind::default();
-        let buffers = RmsNormQuantizeBuffers {
+        let buffers = Self::bind(&mut bind, views);
+        bind.launch(&self.input, &buffers, Counts::rows(rows))
+    }
+
+    /// An MoE-input norm whose router runs in it (`sm120::router_norm`):
+    /// the served launch, also certifying each row into `certified`.
+    pub(crate) fn launch_certified(
+        &self,
+        rows: u32,
+        views: RmsNormQuantizeBuffers<DeviceBufferSpanV1>,
+        certified: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let mut bind = Bind::default();
+        let buffers = Self::bind(&mut bind, views);
+        let certified = bind.view(certified);
+        let served = self
+            .input
+            .launches(&buffers, View::EMPTY, Counts::rows(rows))?;
+        let launch = crate::Kernels::router_in_norm_norm(served, certified)?;
+        Ok(bind.lowered_launches(vec![launch]))
+    }
+
+    fn bind(
+        bind: &mut Bind,
+        views: RmsNormQuantizeBuffers<DeviceBufferSpanV1>,
+    ) -> RmsNormQuantizeBuffers<View> {
+        RmsNormQuantizeBuffers {
             input: bind.view(views.input),
             weight: bind.view(views.weight),
             normed: bind.view(views.normed),
@@ -48,8 +74,7 @@ impl NormPrefillOps {
             live_rows: bind.view(views.live_rows),
             status: bind.view(views.status),
             status_row_offset: views.status_row_offset,
-        };
-        bind.launch(&self.input, &buffers, Counts::rows(rows))
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 from dataclasses import asdict, dataclass
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import tempfile
@@ -161,6 +162,15 @@ class Owned:
         # Popen.poll() would reap the leader and permit its SID to be reused.
         return os.waitid(os.P_PID, self.process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
 
+    def wait(self, seconds):
+        """Sleeps up to `seconds`, waking as soon as the leader exits."""
+        if self.pidfd is None or self.reaped:
+            time.sleep(seconds)
+            return
+        poller = select.poll()
+        poller.register(self.pidfd, select.POLLIN)
+        poller.poll(seconds * 1000)
+
     def members(self):
         if self.process is None:
             return []
@@ -240,6 +250,10 @@ class Owned:
                         signal.pidfd_send_signal(self.pidfd, sig)
                     except ProcessLookupError:
                         pass
+                # Anchors take no SIGTERM: once only they remain, the KILL
+                # round retires them without waiting out the TERM window.
+                if sig == signal.SIGTERM and not others and error is None:
+                    break
                 if time.monotonic() >= end:
                     break
                 time.sleep(min(0.05, max(0, end - time.monotonic())))
@@ -287,7 +301,7 @@ class Commands:
                         check()
                     if time.monotonic() >= end:
                         raise Refusal(f'command timed out: {argv[0]}')
-                    time.sleep(min(0.05, max(0, end - time.monotonic())))
+                    owned.wait(min(0.05, max(0, end - time.monotonic())))
                 need(time.monotonic() <= end, 'command completed after its deadline')
             except BaseException as failure:
                 error = failure

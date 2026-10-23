@@ -3,20 +3,50 @@ use crate::instance::execute::overlap::with_mode;
 use crate::ops::with_dma;
 use std::collections::BTreeSet;
 
+mod bf16;
 mod defaults;
+mod skip;
 
 const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
+const BF16_ROUND: &str = "chop_comm_owned_round_bf16_v1";
+const BF16_SUM: &str = "chop_comm_owned_sum_bf16_v1";
 type Span = (u64, u64, u64);
 
 fn host() -> Rc<Host> {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
+    host.device
+        .ordinary_symbols
+        .borrow_mut()
+        .extend([SUM, BF16_ROUND, BF16_SUM].map(String::from));
     host
 }
 
+/// A launch of the transport's owner sums. The BF16 rounding is checked as
+/// compute: the copies that read its rows must be ordered after it.
+fn transport_launch(line: &str) -> bool {
+    line.starts_with("launch ") && [SUM, BF16_SUM].iter().any(|s| line.contains(s))
+}
+
+/// Each peer copy's issuing, source and destination rank, in order.
+fn copy_ranks(host: &Host, journal: &[String]) -> Vec<(u32, u32, u32)> {
+    let ranks = host.device.stream_ranks.borrow();
+    journal
+        .iter()
+        .filter(|l| l.starts_with("peer-copy "))
+        .map(|l| {
+            let words = l.split_whitespace().collect::<Vec<_>>();
+            let number = |at: usize| words[at].parse::<u32>().unwrap();
+            (ranks[&number(1)], number(2) - 1, number(3) - 1)
+        })
+        .collect()
+}
+
 fn capture(mode: u8, rows: u64) -> Vec<String> {
-    let host = host();
-    let mut instance = with_dma(true, || with_mode(mode, || create(&host, 4)));
+    capture_on(&host(), mode, rows)
+}
+
+fn capture_on(host: &Rc<Host>, mode: u8, rows: u64) -> Vec<String> {
+    let mut instance = with_dma(true, || with_mode(mode, || create(host, 4)));
     host.device.journal.borrow_mut().clear();
     let batch = prompt(7, 0, 0, rows, true);
     instance
@@ -29,6 +59,15 @@ fn capture(mode: u8, rows: u64) -> Vec<String> {
     journal
 }
 
+/// Whether span `index` of `line` is only read: a peer copy's source, and
+/// the reduced rows an HC expand reads. Every other span counts as written.
+fn read_only(line: &str, index: usize) -> bool {
+    (line.starts_with("peer-copy ") && index == 0)
+        || (line.starts_with("launch ")
+            && line.contains(" chop_sinkhorn_hc_deepseek41_expand_f32_v1 ")
+            && index == 1)
+}
+
 fn intersects(a: Span, b: Span) -> bool {
     a.0 == b.0 && a.1 < b.1 + b.2 && b.1 < a.1 + a.2 && a.2 != 0 && b.2 != 0
 }
@@ -37,7 +76,18 @@ fn intersects(a: Span, b: Span) -> bool {
 /// records/waits. Host submission order alone creates no cross-stream edge.
 /// Check DMA reads and writes, including remote sources, against all compute
 /// spans while retaining only histories subsumed by later ordered accesses.
+/// Two reads never conflict.
 fn audit(journal: &[String]) -> Result<usize, String> {
+    audit_with(journal, false)
+}
+
+/// As `audit`, and also between transport accesses: each owner sum after
+/// the copies into its inbox, each gather after the sum it reads.
+fn audit_transport(journal: &[String]) -> Result<usize, String> {
+    audit_with(journal, true)
+}
+
+fn audit_with(journal: &[String], transport_too: bool) -> Result<usize, String> {
     let spans = super::shared_overlap::journal_spans;
     let relevant = |s: &&String| {
         matches!(
@@ -57,13 +107,13 @@ fn audit(journal: &[String]) -> Result<usize, String> {
         .collect::<BTreeMap<_, _>>();
     let interesting = journal
         .iter()
-        .filter(|s| s.starts_with("peer-copy ") || (s.starts_with("launch ") && s.contains(SUM)))
+        .filter(|s| s.starts_with("peer-copy ") || transport_launch(s))
         .flat_map(|s| spans(s))
         .map(|s| s.0)
         .collect::<BTreeSet<_>>();
     let mut clocks = vec![vec![0_u64; streams.len()]; streams.len()];
     let mut events = BTreeMap::<u32, Vec<u64>>::new();
-    let mut history = BTreeMap::<u64, Vec<(Span, Vec<u64>, bool)>>::new();
+    let mut history = BTreeMap::<u64, Vec<(Span, Vec<u64>, bool, bool)>>::new();
     let ordered = |a: &[u64], b: &[u64]| a.iter().zip(b).all(|(a, b)| a <= b);
     let mut accesses = 0;
     for line in journal.iter().filter(relevant) {
@@ -80,29 +130,33 @@ fn audit(journal: &[String]) -> Result<usize, String> {
         if words[0] == "record" {
             events.insert(words[2].parse().unwrap(), clocks[stream].clone());
         }
-        let transport = words[0] == "peer-copy" || (words[0] == "launch" && line.contains(SUM));
-        for span in spans(line)
+        let transport = words[0] == "peer-copy" || transport_launch(line);
+        for (index, span) in spans(line)
             .into_iter()
-            .filter(|s| interesting.contains(&s.0))
+            .enumerate()
+            .filter(|(_, s)| interesting.contains(&s.0))
         {
+            let read = read_only(line, index);
             let previous = history.entry(span.0).or_default();
-            for (other, clock, other_transport) in previous.iter() {
-                if transport != *other_transport
+            for (other, clock, other_transport, other_read) in previous.iter() {
+                if (transport != *other_transport
+                    || (transport_too && transport && *other_transport))
+                    && !(read && *other_read)
                     && intersects(span, *other)
                     && !ordered(clock, &clocks[stream])
                 {
-                    return Err(format!(
-                        "unordered compute/DMA alias {span:?} and {other:?}: {line}"
-                    ));
+                    return Err(format!("unordered alias {span:?} and {other:?}: {line}"));
                 }
             }
-            previous.retain(|(other, clock, kind)| {
+            // A later read never stands in for an earlier write.
+            previous.retain(|(other, clock, kind, other_read)| {
                 !(*kind == transport
+                    && (!read || *other_read)
                     && span.1 <= other.1
                     && span.1 + span.2 >= other.1 + other.2
                     && ordered(clock, &clocks[stream]))
             });
-            previous.push((span, clocks[stream].clone(), transport));
+            previous.push((span, clocks[stream].clone(), transport, read));
             accesses += usize::from(transport);
         }
     }
@@ -149,6 +203,63 @@ fn prefill_dma_preserves_all_owner_intervals_and_orders_every_transfer() {
             audit(&missing_waits).is_err(),
             "a removed producer/join wait must fail ordering"
         );
+    }
+}
+
+/// Creation pushes once per ordered pair where the host allows it, and
+/// every step's copy then runs on its source's stream; a host that refuses
+/// the first push leaves the instance pulling, step for step as before.
+#[test]
+fn prefill_dma_pushes_only_where_the_host_allows_it() {
+    for (mode, rows) in [(0, 8192), (0, 8191), (2, 8191)] {
+        let pulled = capture(mode, rows);
+        for pull_only in [false, true] {
+            let host = host();
+            host.pull_only.set(pull_only);
+            let journal = crate::ops::with_dma_push(true, || capture_on(&host, mode, rows));
+            if pull_only {
+                assert_eq!(journal, pulled);
+                continue;
+            }
+            let issued = copy_ranks(&host, &journal);
+            assert_eq!(issued.len(), copy_ranks(&host, &pulled).len());
+            assert!(issued.iter().all(|&(issuer, from, _)| issuer == from));
+            assert_eq!(audit(&journal), audit(&pulled));
+            assert!(audit_transport(&pulled).is_ok());
+            assert_eq!(audit_transport(&journal), audit_transport(&pulled));
+            let missing_waits = journal
+                .into_iter()
+                .filter(|s| !s.starts_with("wait "))
+                .collect::<Vec<_>>();
+            assert!(audit(&missing_waits).is_err());
+        }
+    }
+    // The setup pushes: one per ordered pair, each on its source's owner
+    // stream, or none past the refused first.
+    for (pull_only, pushes) in [(false, 12), (true, 0)] {
+        let host = host();
+        host.pull_only.set(pull_only);
+        let mut instance = with_dma(true, || {
+            crate::ops::with_dma_push(true, || create(&host, 4))
+        });
+        let journal = host.device.journal.borrow().clone();
+        let issued = copy_ranks(&host, &journal);
+        assert_eq!(issued.len(), pushes);
+        assert!(
+            issued
+                .iter()
+                .all(|&(issuer, from, to)| issuer == from && from != to)
+        );
+        assert_eq!(
+            issued
+                .iter()
+                .map(|&(_, from, to)| (from, to))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            pushes
+        );
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 

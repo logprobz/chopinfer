@@ -52,6 +52,14 @@ pub fn synthetic(base: &mxfp8_fold::Entry, rows: u32) -> Input {
     input.weight_scales = pattern(size.weight_scales, 381, true);
     input
 }
+/// Weights of a pair's second bank: the synthetic pattern with other salts.
+pub fn second_bank(base: &mxfp8_fold::Entry) -> (Vec<u8>, Vec<u8>) {
+    let size = base.bytes(1);
+    (
+        pattern(size.weights, 977, false),
+        pattern(size.weight_scales, 419, true),
+    )
+}
 pub fn manifest() -> LabResult<Value> {
     serde_json::from_slice(
         &std::fs::read(root().join("inputs/manifest.json")).map_err(|e| e.to_string())?,

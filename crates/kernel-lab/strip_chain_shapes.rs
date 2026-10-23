@@ -3,14 +3,15 @@
 //! tests that check and time them (`tests/tiled_chain_splits.rs`,
 //! `tests/projection_latency.rs`).
 //!
-//! - Sweep: BF16 decode projections of six shapes (n x K: 2048 x 4096,
-//!   4096 x 2048, 128 x 4096, 64 x 4096 with BF16 outputs, 320 x 4096 and
-//!   the vocabulary head's 38720 x 4096 with F32 outputs) at 1, 4, 8, 16
-//!   and 32 rows, each beside the entry a decode bucket of that shape runs
-//!   today (`current`: `TiledChains` at `gemm::chain_splits`, else one-split
-//!   `Tiled`) and the one-split `Tiled` entry whose bits every chain
-//!   schedule keeps (`one`), in 1, 2 and 4 strips per CTA at the split
-//!   counts `sweep_splits` gives. One cubin per shape.
+//! - Sweep: BF16 decode projections of eight shapes (n x K: 2048 x 4096,
+//!   4096 x 2048, 128 x 4096, 64 x 4096, 4096 x 1536 and 2048 x 128 with
+//!   BF16 outputs, 320 x 4096 and the vocabulary head's 38720 x 4096 with
+//!   F32 outputs) at 1, 4, 8, 16 and 32 rows, each beside the entry a
+//!   decode bucket of that shape runs today (`current`: `TiledChains` at
+//!   `gemm::chain_splits`, else one-split `Tiled`) and the one-split
+//!   `Tiled` entry whose bits every chain schedule keeps (`one`), in 1, 2
+//!   and 4 strips per CTA at the split counts `sweep_splits` gives. One
+//!   cubin per shape.
 //! - Mutants: two shapes, each unmodified and with every deliberate defect
 //!   of `chop::gemm::StripsMutation` that applies to it (no or a late
 //!   dependency wait at one split; those, temporaries shared across tiles
@@ -51,6 +52,8 @@ pub fn shapes() -> Vec<(&'static str, u32, u32, DType)> {
         ("n4096_k2048", 4096, 2048, DType::Bf16),
         ("n128_k4096", 128, 4096, DType::Bf16),
         ("n64_k4096", 64, 4096, DType::Bf16),
+        ("n4096_k1536", 4096, 1536, DType::Bf16),
+        ("n2048_k128", 2048, 128, DType::Bf16),
         ("n320_k4096_f32", 320, 4096, DType::F32),
         ("n38720_k4096_f32", 38720, 4096, DType::F32),
     ]

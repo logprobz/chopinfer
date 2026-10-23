@@ -83,7 +83,7 @@ fn bf16_partials_cover_prefill_decode_and_replayed_graphs() {
 }
 
 #[test]
-fn bf16_partials_refuse_unadmitted_grids_and_f32_dma() {
+fn bf16_partials_refuse_unadmitted_grids_and_compose_with_dma() {
     let host = host(false);
     let record = crate::config::tests::record(&host.shape, host.kv, 1, false);
     let result = with_bf16_partials(true, || {
@@ -97,10 +97,11 @@ fn bf16_partials_refuse_unadmitted_grids_and_f32_dma() {
             .any(|line| line.contains("cannot admit"))
     );
     assert_eq!(host.acquired.get(), host.released.get());
-    let error = with_bf16_partials(true, || with_dma(true, || crate::Kernels::new(&host.shape)))
-        .err()
-        .expect("F32 DMA must not bypass partial rounding");
-    assert!(error.contains("PREFILL_DMA=0"));
+    // Prefill DMA carries rounded BF16 partials, so the two selections
+    // compose (`prefill_dma::bf16`).
+    assert!(
+        with_bf16_partials(true, || with_dma(true, || crate::Kernels::new(&host.shape))).is_ok()
+    );
 }
 
 #[test]

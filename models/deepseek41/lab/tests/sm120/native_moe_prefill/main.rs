@@ -9,6 +9,9 @@ mod family;
 #[path = "../../../../bundle/src/sm120/moe.rs"]
 #[allow(dead_code)]
 mod registration;
+#[path = "../../../sm120/native_tune.rs"]
+#[allow(dead_code)]
+mod tune_family;
 
 mod captured;
 mod checks;
@@ -17,6 +20,7 @@ mod pipeline;
 mod probe;
 mod synthetic;
 mod timing;
+mod tune;
 
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::gated_mlp::GatedMlpProjection;
@@ -96,6 +100,10 @@ impl<'a> Arena<'a> {
 pub struct Runner<'a> {
     pub session: &'a Session,
     lab: Module,
+    /// The tuning cubin, when staged beside the lab cubin.
+    tune: Option<Module>,
+    /// The tuning cubin's symbols, which resolve only there.
+    tune_symbols: std::collections::BTreeSet<String>,
     embedded: BTreeMap<&'static str, Module>,
     functions: BTreeMap<String, Function>,
 }
@@ -105,9 +113,20 @@ impl<'a> Runner<'a> {
             std::path::PathBuf::from(std::env::var(CUBINS).map_err(|e| format!("{CUBINS}: {e}"))?);
         let bytes = std::fs::read(dir.join(format!("{}.cubin", family::CUBIN)))
             .map_err(|e| e.to_string())?;
+        let tune = dir.join(format!("{}.cubin", tune_family::CUBIN));
+        let tune = if tune.exists() {
+            Some(session.load_cubin(&std::fs::read(tune).map_err(|e| e.to_string())?)?)
+        } else {
+            None
+        };
         Ok(Self {
             session,
             lab: session.load_cubin(&bytes)?,
+            tune,
+            tune_symbols: tune_family::cubins()
+                .into_iter()
+                .flat_map(|s| s.entries.into_iter().map(|e| e.symbol))
+                .collect(),
             embedded: BTreeMap::new(),
             functions: BTreeMap::new(),
         })
@@ -128,6 +147,13 @@ impl<'a> Runner<'a> {
                     self.embedded.insert(name, self.session.load_cubin(bytes)?);
                 }
                 self.embedded[name].function(&op.symbol)
+            } else if self.tune_symbols.contains(&op.symbol) {
+                // Looked up by name in the cubin that defines it, so no
+                // driver lookup misses (the sanitizer reports those).
+                self.tune
+                    .as_ref()
+                    .ok_or_else(|| format!("{}: the tuning cubin is not staged", op.symbol))?
+                    .function(&op.symbol)
             } else {
                 self.lab.function(&op.symbol)
             }

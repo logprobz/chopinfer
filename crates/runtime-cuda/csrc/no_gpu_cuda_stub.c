@@ -47,6 +47,10 @@ static _Thread_local size_t ordering_violations;
    copy that reads its source during the call may. Such a write is unordered
    against every stream, its own included. */
 static _Thread_local int api_call_copies;
+/* When not negative, this thread sees synthetic GPUs 0..count-1 whatever
+   CUDA_VISIBLE_DEVICES says, so a test does not depend on its caller's
+   environment. Negative reads the variable, as the real driver does. */
+static _Thread_local int visible_override = -1;
 static _Thread_local void* owned_events[1024];
 static _Thread_local size_t device_used_bytes;
 static _Thread_local size_t retained_contexts;
@@ -175,6 +179,7 @@ void runtime_cuda_fake_reset(void) {
   loaded_modules = 0;
   ordering_violations = 0;
   api_call_copies = 0;
+  visible_override = -1;
   host_copy_polls = 0;
   host_copy_sequence = 0;
   hold_later_host_copies = 0;
@@ -206,6 +211,10 @@ size_t runtime_cuda_fake_ordering_violations(void) {
 
 void runtime_cuda_fake_set_api_call_copies(int enabled) {
   api_call_copies = enabled != 0;
+}
+
+void runtime_cuda_fake_set_visible_devices(int count) {
+  visible_override = count < 0 ? -1 : count > 8 ? 8 : count;
 }
 
 int cuCtxSetCurrent(void* context) {
@@ -252,8 +261,8 @@ int cuMemcpyPeerAsync(
     void* source_context,
     size_t bytes,
     void* stream) {
-  (void)source_context;
-  if (current_context != destination_context) return 201;
+  /* A pull runs in the destination's context, a push in the source's. */
+  if (current_context != destination_context && current_context != source_context) return 201;
   int result = result_for(18);
   if (result) return result;
   check_ordered_write(destination, stream);
@@ -433,6 +442,10 @@ int cuGraphLaunch(void* executable, void* stream) {
 /* Emulate numeric CUDA visibility over eight synthetic GPUs. No driver or
    device file is opened. UUID and MIG filtering remain real-driver checks. */
 static int visible_devices(int* physical) {
+  if (visible_override >= 0) {
+    for (int i = 0; i < visible_override; ++i) physical[i] = i;
+    return visible_override;
+  }
   const char* value = getenv("CUDA_VISIBLE_DEVICES");
   if (value == NULL) {
     for (int i = 0; i < 8; ++i) physical[i] = i;
@@ -759,4 +772,75 @@ int runtime_cuda_copy_pages(uint64_t* dst, uint64_t* src, size_t* sizes,
     if (result) return result;
   }
   return result;
+}
+
+/* Lendable memory. Fake device memory is host memory, so a lendable
+   allocation is a shared mapping of an anonymous file: its export is a real
+   descriptor, and an import maps the same bytes again, in this process or
+   another. A handle is the mapping's own descriptor. As on a device, an
+   import grants no access until it is set, and read-only access faults
+   writes. */
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+
+int runtime_cuda_vmm_granularity(int ordinal, size_t* granularity) {
+  (void)ordinal;
+  if (granularity == NULL) return 1;
+  *granularity = (size_t)2 << 20;
+  return 0;
+}
+static int fake_vmm_map(int fd, size_t bytes, int protection, uint64_t* handle, uint64_t* address) {
+  void* mapped = mmap(NULL, bytes, protection, MAP_SHARED, fd, 0);
+  if (mapped == MAP_FAILED) return 2;
+  *handle = (uint64_t)fd;
+  *address = (uint64_t)(uintptr_t)mapped;
+  return 0;
+}
+int runtime_cuda_vmm_create(int ordinal, size_t bytes, uint64_t* handle, uint64_t* address) {
+  (void)ordinal;
+  if (handle == NULL || address == NULL || bytes == 0 || bytes % ((size_t)2 << 20) != 0) return 1;
+  int fd = (int)syscall(SYS_memfd_create, "chopinfer-fake-lent", 1u /* MFD_CLOEXEC */);
+  if (fd < 0) return 2;
+  if (ftruncate(fd, (off_t)bytes) != 0) {
+    close(fd);
+    return 2;
+  }
+  int result = fake_vmm_map(fd, bytes, PROT_READ | PROT_WRITE, handle, address);
+  if (result != 0) close(fd);
+  return result;
+}
+int runtime_cuda_vmm_export(uint64_t handle, int* fd) {
+  if (fd == NULL) return 1;
+  int exported = dup((int)handle);
+  if (exported < 0) return 1;
+  *fd = exported;
+  return 0;
+}
+int runtime_cuda_vmm_import(int fd, size_t bytes, uint64_t* handle, uint64_t* address) {
+  if (fd < 0 || handle == NULL || address == NULL || bytes == 0) return 1;
+  int own = dup(fd);
+  if (own < 0) return 1;
+  struct stat st;
+  if (fstat(own, &st) != 0 || (size_t)st.st_size != bytes) {
+    close(own);
+    return 1;
+  }
+  int result = fake_vmm_map(own, bytes, PROT_NONE, handle, address);
+  if (result != 0) close(own);
+  return result;
+}
+int runtime_cuda_vmm_set_access(uint64_t address, size_t bytes, const int* ordinals, size_t count,
+                                int read_only) {
+  if (ordinals == NULL || count == 0 || count > 16) return 1;
+  return mprotect((void*)(uintptr_t)address, bytes, read_only ? PROT_READ : PROT_READ | PROT_WRITE) == 0 ? 0 : 1;
+}
+int runtime_cuda_vmm_unmap(uint64_t address, size_t bytes) {
+  return munmap((void*)(uintptr_t)address, bytes) == 0 ? 0 : 1;
+}
+int runtime_cuda_vmm_release(uint64_t handle, uint64_t address, size_t bytes) {
+  int first = 0;
+  if (address != 0 && munmap((void*)(uintptr_t)address, bytes) != 0) first = 1;
+  if (close((int)handle) != 0 && first == 0) first = 1;
+  return first;
 }

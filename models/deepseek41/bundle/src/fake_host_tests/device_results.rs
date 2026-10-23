@@ -186,3 +186,99 @@ fn default_device_results_only_select_qualified_topologies_and_kv() {
         }
     }
 }
+
+/// With device results, AR decode's per-layer Engram uploads complete after
+/// the ready sample is submitted and before the step can commit; every
+/// stream launches what the synchronous route launches, and the next step
+/// uploads again.
+#[test]
+fn ready_ar_steps_complete_their_per_layer_engram_uploads() {
+    // Decode-8, and the one-row bucket a single request decodes in.
+    for count in [8, 1] {
+        ready_ar_steps_at(count);
+    }
+}
+
+fn ready_ar_steps_at(count: u32) {
+    use super::ar_engram::{launches, order};
+    let run = |on: bool| {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(true);
+        let mut instance = crate::device_results::with_override(None, || {
+            crate::instance::ar_engram::with_enabled(on, || {
+                let record = crate::config::tests::record(&host.shape, host.kv, count, false);
+                api()
+                    .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+                    .unwrap()
+                    .create(
+                        HostServicesTableV1::new(Rc::new(super::dspark::host::MappedHost::new(
+                            Rc::clone(&host),
+                        ))),
+                        &record,
+                    )
+                    .unwrap()
+            })
+        });
+        for slot in 0..count {
+            step(
+                &mut instance,
+                &prompt(u64::from(slot) + 1, u64::from(slot), 0, 3, true),
+                &mut Views::default(),
+            );
+        }
+        let ids = (1..=u64::from(count)).collect::<Vec<_>>();
+        let from = host.device.journal.borrow().len();
+        let mut steps = Vec::new();
+        for (epoch, position) in [(9, 3), (10, 4)] {
+            let request = decode(
+                &ids.iter()
+                    .enumerate()
+                    .map(|(slot, &id)| (id, slot as u64, position, 1 + slot as u32))
+                    .collect::<Vec<_>>(),
+            );
+            let mut sink = ReadySink {
+                host: host.clone(),
+                epoch,
+                ids: ids.clone(),
+                ready: Vec::new(),
+                legacy: Vec::new(),
+            };
+            let begin = host.device.journal.borrow().len();
+            instance.execute(&request, &mut sink).unwrap();
+            assert!(sink.legacy.is_empty());
+            assert_eq!(
+                sink.ready
+                    .iter()
+                    .map(|view| view.logits.row_count)
+                    .sum::<u32>(),
+                count
+            );
+            steps.push(host.device.journal.borrow()[begin..].to_vec());
+            instance.commit().unwrap();
+        }
+        let launched = launches(&host, from);
+        for id in &ids {
+            instance.retire_request(*id).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        (launched, steps)
+    };
+    let (off, off_steps) = run(false);
+    let (on, on_steps) = run(true);
+    assert_eq!(off, on);
+    for (off, on) in off_steps.iter().zip(&on_steps) {
+        assert!(order(off).contains(&"sync") && !order(off).contains(&"ids"));
+        let kinds = order(on);
+        assert!(!kinds.contains(&"sync"));
+        assert_eq!(kinds.iter().filter(|&&k| k == "ids").count(), 2);
+        assert_eq!(kinds.iter().filter(|&&k| k == "wait").count(), 2 * 4);
+        assert_eq!(kinds.iter().filter(|&&k| k == "complete").count(), 2);
+        let sample = on.iter().position(|line| line == "ready-sample").unwrap();
+        let complete = on
+            .iter()
+            .position(|line| line.starts_with("async mapped complete"))
+            .unwrap();
+        assert!(sample < complete, "uploads complete after the ready sample");
+    }
+}

@@ -21,8 +21,12 @@ pub(crate) struct PlanTrace {
     probe_rechecks: u8,
     idle_plans: u16,
     cooldown_plans: u8,
+    trial_steps: u32,
+    trial_wait_plans: u16,
     resume_gain: f64,
-    measured_verify_costs: Vec<(usize, f64, f64)>,
+    /// Per measured row bucket: rows, time, drafting sequences averaged and
+    /// the fitted cost of one more drafting sequence, if measured.
+    measured_verify_costs: Vec<(usize, f64, f64, Option<f64>)>,
 }
 
 impl PlanTrace {
@@ -45,9 +49,12 @@ impl PlanTrace {
             "probe_rechecks": self.probe_rechecks,
             "idle_plans": self.idle_plans,
             "cooldown_plans": self.cooldown_plans,
+            "trial_steps": self.trial_steps,
+            "trial_wait_plans": self.trial_wait_plans,
             "resume_gain": self.resume_gain,
-            "measured_verify_costs": self.measured_verify_costs.iter().map(|&(rows, micros, items)| {
-                serde_json::json!({"rows": rows, "micros": micros, "drafting_items": items})
+            "measured_verify_costs": self.measured_verify_costs.iter().map(|&(rows, micros, items, item_micros)| {
+                serde_json::json!({"rows": rows, "micros": micros, "drafting_items": items,
+                                   "micros_per_drafting_item": item_micros})
             }).collect::<Vec<_>>(),
         })
     }
@@ -99,6 +106,8 @@ impl SpeculationPolicy {
             probe_rechecks: state.rechecks,
             idle_plans: state.idle,
             cooldown_plans: state.remaining,
+            trial_steps: state.trial,
+            trial_wait_plans: state.trial_wait,
             resume_gain: if state.disabled {
                 super::RESUME_GAIN
             } else {
@@ -108,7 +117,11 @@ impl SpeculationPolicy {
                 .block_steps
                 .steps
                 .range((items, 0)..(items + 1, 0))
-                .map(|(&(_, rows), step)| (rows, step.micros, step.sequences))
+                .map(|(&(_, rows), step)| {
+                    let prior = self.costs.estimate(1) * super::PRIOR_SEQUENCE_COST;
+                    let item = self.block_steps.sequence_cost(items, rows, prior);
+                    (rows, step.micros, step.sequences, item)
+                })
                 .collect(),
         });
     }

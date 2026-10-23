@@ -1732,6 +1732,7 @@ pub struct Engine<E: ModelExecutor> {
     next_output_cycle: u64,
     host_clock: compatibility::HostClock,
     batch_observer: BatchObserver,
+    startup_step_observer: StartupStepObserver,
 }
 
 /// Told, before each formed batch executes, whether it prefills prompt
@@ -1749,6 +1750,20 @@ impl fmt::Debug for BatchObserver {
     }
 }
 
+/// Told each step's shape while startup warmup runs.
+#[derive(Default)]
+struct StartupStepObserver(Option<Box<dyn Fn(warmup::StartupStep) + Send>>);
+
+impl fmt::Debug for StartupStepObserver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(if self.0.is_some() {
+            "StartupStepObserver(set)"
+        } else {
+            "StartupStepObserver(unset)"
+        })
+    }
+}
+
 impl<E: ModelExecutor> Engine<E> {
     /// Calls `observer` with each batch's kind once the step has formed it,
     /// after any preemption, restore and drafting, and before it executes:
@@ -1756,6 +1771,13 @@ impl<E: ModelExecutor> Engine<E> {
     /// included. A caller timing the step learns what it now waits for.
     pub fn observe_batches(&mut self, observer: Box<dyn Fn(bool) + Send>) {
         self.batch_observer = BatchObserver(Some(observer));
+    }
+
+    /// Calls `observer` with each committed step's shape and accepted draft
+    /// tokens between [`Self::begin_startup_warmup`] and
+    /// [`Self::finish_startup_warmup`], and never otherwise.
+    pub fn observe_startup_steps(&mut self, observer: Box<dyn Fn(warmup::StartupStep) + Send>) {
+        self.startup_step_observer = StartupStepObserver(Some(observer));
     }
 
     /// Isolates startup generations before any live request is submitted.
@@ -1905,6 +1927,7 @@ impl<E: ModelExecutor> Engine<E> {
             next_output_cycle: 1,
             host_clock: compatibility::HostClock::default(),
             batch_observer: BatchObserver::default(),
+            startup_step_observer: StartupStepObserver::default(),
         };
         // An engine that has served nothing still holds a pool, so its
         // occupancy is published before the first request rather than read as
@@ -2718,6 +2741,21 @@ impl<E: ModelExecutor> Engine<E> {
             };
             self.pending_step_trace = Some(record);
         }
+        if self.startup_checkpoint.is_some()
+            && let Some(observer) = &self.startup_step_observer.0
+        {
+            observer(warmup::StartupStep {
+                prefill_tokens,
+                decode_rows,
+                verify_items,
+                verify_rows: rows.verify_rows,
+                accepted_tokens: verified
+                    .iter()
+                    .flatten()
+                    .map(|&(_, accepted, _, _)| accepted)
+                    .sum(),
+            });
+        }
 
         if let Some(arena) = self.arena.as_mut() {
             // Pins last one step: the next step pins what its chunks cover.
@@ -2768,12 +2806,15 @@ impl<E: ModelExecutor> Engine<E> {
                 }
             }
         }
-        if let Some(policy) = self.speculation.as_mut()
-            && batch
-                .items()
-                .iter()
-                .all(|item| !matches!(item.phase(), BatchPhase::Prefill { .. }))
-        {
+        let prefilled = batch
+            .items()
+            .iter()
+            .any(|item| matches!(item.phase(), BatchPhase::Prefill { .. }));
+        if let Some(policy) = self.speculation.as_mut().filter(|_| prefilled) {
+            // A step that also prefilled trains no step time; the drafts it
+            // accepted must not count toward the next timed step.
+            policy.untimed_step();
+        } else if let Some(policy) = self.speculation.as_mut() {
             let drafts = batch
                 .items()
                 .iter()
@@ -4946,6 +4987,177 @@ mod transaction_tests {
                 fixed
             );
         }
+    }
+
+    /// Emits, for every row, the token that follows a history of its
+    /// length; its host drafter proposes the same tokens, so every draft is
+    /// accepted. Records whether each batch prefilled and verified.
+    #[derive(Default)]
+    struct Successor {
+        batches: Vec<(bool, bool)>,
+    }
+
+    fn successor(length: usize) -> u32 {
+        (length % 6 + 2) as u32
+    }
+
+    impl ModelExecutor for Successor {
+        fn draft_tokens_v1(
+            &mut self,
+            _id: RequestId,
+            history: &[u32],
+            maximum: usize,
+        ) -> Result<Vec<u32>, ExecutorError> {
+            Ok((0..maximum).map(|k| successor(history.len() + k)).collect())
+        }
+
+        type TransactionState<'a> = NoopModelTransactionState;
+
+        fn execute<'a>(
+            &'a mut self,
+            items: &[ModelBatchItem],
+            _kv_plan: &PreparedAppendBatch,
+        ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+            let phase = |verify: bool| {
+                items.iter().any(|item| {
+                    matches!(item.phase(), BatchPhase::Verify { .. }) == verify
+                        && (verify || matches!(item.phase(), BatchPhase::Prefill { .. }))
+                })
+            };
+            self.batches.push((phase(false), phase(true)));
+            let mut rows = Vec::new();
+            for item in items {
+                let Some(work) = item.sampling() else {
+                    continue;
+                };
+                let drafts = match item.draft() {
+                    Some(_) => item.input_tokens()[1..].to_vec(),
+                    None => Vec::new(),
+                };
+                for row in 0..=drafts.len() {
+                    let mut logits = vec![0.0; 8];
+                    let length = work.for_verify_row(&drafts, row).history.len();
+                    logits[successor(length) as usize] = 4.0;
+                    rows.push(LogitsRow::new(item.request_id(), logits).unwrap());
+                }
+            }
+            Ok(ModelTransaction::no_op(rows))
+        }
+    }
+
+    /// Drafts a step accepted beside a prefill train no step time, so they
+    /// must not inflate the realized throughput of the next timed step.
+    #[test]
+    fn drafts_accepted_beside_a_prefill_do_not_carry_into_the_next_step() {
+        let vocabulary = ModelVocabulary::new(8).unwrap();
+        let config = EngineConfig::new(
+            SchedulerConfig::new(2, 4, 16, 16, 1).unwrap(),
+            KvGeometry::new(4, 16).unwrap(),
+            vocabulary,
+            64,
+            4,
+        )
+        .unwrap()
+        .with_speculation(
+            SpeculationConfig::new(2, 16, SpeculationMode::Fixed, DraftSource::Host).unwrap(),
+        );
+        let mut engine = Engine::new(config, Successor::default()).unwrap();
+        let request = |id| {
+            EngineRequest::new(
+                RequestId::new(id),
+                vec![1, 2, 3, 4],
+                12,
+                SamplingParameters::new(0.0).unwrap(),
+                1,
+                Vec::new(),
+                vocabulary,
+            )
+            .unwrap()
+        };
+        engine.submit(request(1)).unwrap();
+        // The first request prefills, then verifies alone.
+        while !engine
+            .executor
+            .batches
+            .last()
+            .is_some_and(|&(_, verify)| verify)
+        {
+            engine.step().unwrap();
+            let _ = engine.drain_events();
+        }
+        assert_eq!(engine.speculation.as_ref().unwrap().pending_accepted(), 0);
+        let first = RequestId::new(1);
+        let before = engine.requests[&first].history.len();
+        engine.submit(request(2)).unwrap();
+        engine.step().unwrap();
+        let _ = engine.drain_events();
+        // The second request's prefill shares a step with the first's
+        // verification, which accepted both of its drafts.
+        assert_eq!(engine.executor.batches.last(), Some(&(true, true)));
+        assert_eq!(engine.requests[&first].history.len(), before + 3);
+        assert_eq!(engine.speculation.as_ref().unwrap().pending_accepted(), 0);
+    }
+
+    #[test]
+    fn startup_steps_are_observed_only_during_startup_warmup() {
+        let config = EngineConfig::new(
+            SchedulerConfig::new(2, 4, 16, 16, 1).unwrap(),
+            KvGeometry::new(4, 16).unwrap(),
+            ModelVocabulary::new(8).unwrap(),
+            64,
+            4,
+        )
+        .unwrap();
+        let mut engine = Engine::new(config, Retaining::default()).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&seen);
+        engine.observe_startup_steps(Box::new(move |step| log.lock().unwrap().push(step)));
+        let submit = |engine: &mut Engine<Retaining>, ids: std::ops::RangeInclusive<u64>| {
+            for id in ids {
+                engine
+                    .submit(
+                        EngineRequest::new(
+                            RequestId::new(id),
+                            vec![1, 2, 3, 4],
+                            3,
+                            SamplingParameters::new(0.0).unwrap(),
+                            1,
+                            Vec::new(),
+                            ModelVocabulary::new(8).unwrap(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        };
+        let run = |engine: &mut Engine<Retaining>| {
+            while engine.step().unwrap() != StepStatus::Idle {
+                let _ = engine.drain_events();
+            }
+        };
+        engine.begin_startup_warmup().unwrap();
+        submit(&mut engine, 1..=2);
+        run(&mut engine);
+        engine.finish_startup_warmup().unwrap();
+        let steps = seen.lock().unwrap().clone();
+        // Both prompts prefill in the first step; the rest decode both rows
+        // until each has its three tokens.
+        assert_eq!(
+            steps.first(),
+            Some(&warmup::StartupStep {
+                prefill_tokens: 8,
+                ..warmup::StartupStep::default()
+            })
+        );
+        assert!(steps.len() > 1);
+        assert!(steps[1..].iter().all(|step| step.prefill_tokens == 0
+            && step.decode_rows == 2
+            && step.verify_items == 0
+            && step.accepted_tokens == 0));
+        // Served steps are not reported.
+        submit(&mut engine, 3..=3);
+        run(&mut engine);
+        assert_eq!(*seen.lock().unwrap(), steps);
     }
 
     #[test]

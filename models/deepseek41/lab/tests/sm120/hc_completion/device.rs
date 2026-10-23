@@ -1,15 +1,60 @@
-use super::{artifacts, buffers, registration, served};
+use super::{artifacts, buffers, registration, served, twin};
 pub use buffers::Input;
 use kernel_core::{backend::View, contract::Argument};
 use kernel_harness::{LabResult, Session, launch};
-use kernels_sm120::sinkhorn_hc::completion::{Entry, Layout};
+use kernels_sm120::sinkhorn_hc::{
+    completion::{self, Layout, Mutation},
+    finish_twin,
+};
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument as A, Module, Stream};
 use std::collections::BTreeMap;
 pub type Output = buffers::Output<4096>;
-pub const VARIANTS: [&str; 5] = ["tail8", "tail16", "tail32", "split8", "split16"];
+pub const VARIANTS: [&str; 8] = [
+    "tail8", "tail16", "tail32", "split8", "split16", "twin8", "twin16", "twin32",
+];
+/// Timed arms: the served pair against itself (A/A), then every variant.
+pub const TIMING_VARIANTS: [&str; 9] = [
+    "served", "tail8", "tail16", "tail32", "split8", "split16", "twin8", "twin16", "twin32",
+];
 const GUARD: usize = 64;
 
-pub fn variant(name: &str) -> LabResult<(Entry, u32)> {
+/// A replacement composed from the served pair's own validated launches.
+#[derive(Clone, Debug)]
+pub enum Candidate {
+    /// One launch for the producer and the tail.
+    Completion(completion::Entry, u32),
+    /// The served producer, then the tail on two CTAs per row.
+    Twin(finish_twin::Entry, u32),
+}
+impl Candidate {
+    pub fn launches(&self) -> usize {
+        match self {
+            Candidate::Completion(..) => 1,
+            Candidate::Twin(..) => 2,
+        }
+    }
+    pub fn symbol(&self) -> String {
+        match self {
+            Candidate::Completion(e, w) => e.symbol(*w),
+            Candidate::Twin(e, w) => e.symbol(*w),
+        }
+    }
+    pub fn mutation(&self) -> Mutation {
+        match self {
+            Candidate::Completion(e, _) => e.mutation,
+            Candidate::Twin(e, _) => e.mutation,
+        }
+    }
+}
+
+pub fn variant(name: &str) -> LabResult<Candidate> {
+    if let Some(w) = name.strip_prefix("twin") {
+        let warps: u32 = w.parse().map_err(|_| "invalid warp count")?;
+        if !finish_twin::WARPS.contains(&warps) {
+            return Err("unsupported warp count".into());
+        }
+        return Ok(Candidate::Twin(twin::served(), warps));
+    }
     let (layout, warps) = if let Some(w) = name.strip_prefix("tail") {
         (Layout::Tail, w)
     } else if let Some(w) = name.strip_prefix("split") {
@@ -21,7 +66,17 @@ pub fn variant(name: &str) -> LabResult<(Entry, u32)> {
     if !layout.warps().contains(&warps) {
         return Err("unsupported warp count".into());
     }
-    Ok((registration::entry(layout), warps))
+    Ok(Candidate::Completion(registration::entry(layout), warps))
+}
+
+/// Every mutation control: the completion's at eight warps, the two-CTA
+/// finish's at 32.
+pub fn controls() -> Vec<Candidate> {
+    registration::controls()
+        .into_iter()
+        .map(|e| Candidate::Completion(e, 8))
+        .chain(twin::controls().into_iter().map(|e| Candidate::Twin(e, 32)))
+        .collect()
 }
 
 pub struct Kernels {
@@ -99,8 +154,8 @@ pub fn reset(s: &Stream, i: &Input, o: &Output, prior: u32, alias: bool) -> LabR
     Ok(())
 }
 
-/// The served pair (`variant == "served"`) or one candidate launch composed
-/// from that pair's own validated launches. Returns the launch count.
+/// The served pair (`variant == "served"`) or a candidate composed from that
+/// pair's own validated launches. Returns the launch count.
 #[allow(clippy::too_many_arguments)]
 pub fn launch(
     s: &Stream,
@@ -116,16 +171,7 @@ pub fn launch(
         "served" => None,
         name => Some(self::variant(name)?),
     };
-    launch_with(
-        s,
-        k,
-        i,
-        o,
-        t,
-        candidate.as_ref().map(|(e, w)| (e, *w)),
-        widen,
-        alias,
-    )
+    launch_with(s, k, i, o, t, candidate.as_ref(), widen, alias)
 }
 
 /// As `launch`, with an explicit candidate entry (or none for the served
@@ -137,7 +183,7 @@ pub fn launch_with(
     i: &Input,
     o: &Output,
     t: &Tickets,
-    candidate: Option<(&Entry, u32)>,
+    candidate: Option<&Candidate>,
     widen: bool,
     alias: bool,
 ) -> LabResult<usize> {
@@ -204,12 +250,20 @@ pub fn launch_with(
     if plans.len() != 2 {
         return Err("served HC reference must have two launches".into());
     }
-    if let Some((entry, warps)) = candidate {
-        plans = vec![
-            entry
-                .compose(&plans[0], &plans[1], views[22], warps)
-                .map_err(|e| e.to_string())?,
-        ];
+    match candidate {
+        None => {}
+        Some(Candidate::Completion(entry, warps)) => {
+            plans = vec![
+                entry
+                    .compose(&plans[0], &plans[1], views[22], *warps)
+                    .map_err(|e| e.to_string())?,
+            ];
+        }
+        Some(Candidate::Twin(entry, warps)) => {
+            plans[1] = entry
+                .compose(&plans[1], *warps)
+                .map_err(|e| e.to_string())?;
+        }
     }
     for plan in &plans {
         let args = plan

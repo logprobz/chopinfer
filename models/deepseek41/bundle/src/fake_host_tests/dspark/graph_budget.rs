@@ -71,9 +71,228 @@ fn selected_adaptive_warmup_geometries_fit_the_graph_budget_and_replay() {
         let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
         assert_eq!(stats.epoch, 0, "warmup evicted its earlier shapes");
         assert_eq!(stats.denied, 0);
-        assert!(stats.peak <= 384 * 4);
+        assert!(stats.peak <= 512 * 4);
         eprintln!("selected warmup pass {repeat}: {stats:?}");
     }
+    for request in 1..=32 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// Target keys (rows, items) a TP4 DSpark startup on round 9 captured or
+/// lowered eagerly, in order: the decode waves (zero items), the selected
+/// verify shapes and the completion tails of their waves. 131 keys of three
+/// pieces on four ranks, plus catch-up and draft graphs, need 1692 handles.
+const RECORDED_STARTUP_KEYS: [(u32, u32); 131] = [
+    (1, 0),
+    (2, 0),
+    (4, 0),
+    (8, 0),
+    (16, 0),
+    (32, 0),
+    (2, 1),
+    (3, 1),
+    (4, 1),
+    (5, 1),
+    (6, 1),
+    (3, 2),
+    (4, 2),
+    (5, 2),
+    (6, 2),
+    (7, 2),
+    (8, 2),
+    (9, 2),
+    (10, 2),
+    (11, 2),
+    (12, 2),
+    (6, 3),
+    (18, 3),
+    (12, 3),
+    (9, 3),
+    (5, 4),
+    (6, 4),
+    (7, 4),
+    (8, 4),
+    (9, 4),
+    (10, 4),
+    (11, 4),
+    (12, 4),
+    (13, 4),
+    (14, 4),
+    (15, 4),
+    (16, 4),
+    (17, 4),
+    (18, 4),
+    (19, 4),
+    (20, 4),
+    (21, 4),
+    (22, 4),
+    (23, 4),
+    (24, 4),
+    (10, 5),
+    (30, 5),
+    (20, 5),
+    (15, 5),
+    (12, 6),
+    (32, 6),
+    (22, 6),
+    (17, 6),
+    (14, 7),
+    (32, 7),
+    (22, 7),
+    (17, 7),
+    (12, 7),
+    (9, 8),
+    (10, 8),
+    (11, 8),
+    (12, 8),
+    (13, 8),
+    (14, 8),
+    (15, 8),
+    (16, 8),
+    (17, 8),
+    (18, 8),
+    (19, 8),
+    (20, 8),
+    (21, 8),
+    (22, 8),
+    (23, 8),
+    (24, 8),
+    (25, 8),
+    (26, 8),
+    (27, 8),
+    (28, 8),
+    (29, 8),
+    (30, 8),
+    (31, 8),
+    (32, 8),
+    (18, 9),
+    (32, 9),
+    (24, 9),
+    (19, 9),
+    (14, 9),
+    (20, 10),
+    (32, 10),
+    (24, 10),
+    (15, 10),
+    (22, 11),
+    (32, 11),
+    (24, 11),
+    (20, 11),
+    (16, 11),
+    (24, 12),
+    (32, 12),
+    (20, 12),
+    (16, 12),
+    (26, 13),
+    (32, 13),
+    (25, 13),
+    (21, 13),
+    (17, 13),
+    (28, 14),
+    (32, 14),
+    (26, 14),
+    (22, 14),
+    (18, 14),
+    (30, 15),
+    (32, 15),
+    (26, 15),
+    (23, 15),
+    (19, 15),
+    (17, 16),
+    (18, 16),
+    (19, 16),
+    (20, 16),
+    (21, 16),
+    (22, 16),
+    (23, 16),
+    (24, 16),
+    (25, 16),
+    (26, 16),
+    (27, 16),
+    (28, 16),
+    (29, 16),
+    (30, 16),
+    (31, 16),
+    (32, 16),
+];
+
+/// The recorded startup keys must all be captured: the default budget held
+/// 1536 handles, filled at (20, 16) and lowered the 13 widest 16-item
+/// verify keys eagerly, which C16 serving reaches.
+#[test]
+fn recorded_startup_warmup_keys_fit_the_graph_budget() {
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 32);
+    for slot in 0..32 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    for &(rows, items) in &RECORDED_STARTUP_KEYS {
+        if items == 0 {
+            let decode: Vec<_> = (0..u64::from(rows))
+                .map(|slot| (slot + 1, slot, state(&instance, slot + 1).end, 7))
+                .collect();
+            execute(&mut instance, &host, &super::super::decode(&decode));
+            instance.commit().unwrap();
+            continue;
+        }
+        // Five drafts on the first items, the rest on the next one.
+        let mut left = rows - items;
+        let drafts: Vec<u32> = (0..items)
+            .map(|_| {
+                let take = left.min(5);
+                left -= take;
+                take
+            })
+            .collect();
+        assert_eq!(left, 0, "({rows}, {items}) is unreachable");
+        let mut batch_items = Vec::new();
+        let mut appends = Vec::new();
+        let mut kept_rows = Vec::new();
+        for (slot, &depth) in drafts.iter().enumerate() {
+            let request = slot as u64 + 1;
+            let start = state(&instance, request).end;
+            let width = depth + 1;
+            batch_items.push(if depth == 0 {
+                BatchItemV1::new(request, true, 1, true, vec![7])
+            } else {
+                kept_rows.push(kept(request, 1));
+                BatchItemV1::verify(request, width, true, vec![7])
+            });
+            appends.push(BatchAppendV1::new(
+                start,
+                u64::from(width),
+                start + u64::from(width),
+                (0..(start + u64::from(width)).div_ceil(64))
+                    .map(|page| slot as u64 * 8 + page)
+                    .collect(),
+                None,
+            ));
+        }
+        let batch = BatchRequestV1::new(BatchWireVersionV1::V3, batch_items, appends)
+            .with_state_slots((0..u64::from(items)).collect())
+            .encode()
+            .unwrap();
+        execute(&mut instance, &host, &batch);
+        instance.commit_accepted(&kept_rows).unwrap();
+    }
+    let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+    eprintln!("recorded startup keys: {stats:?}");
+    assert_eq!(stats.denied, 0, "{stats:?}");
+    assert_eq!(stats.epoch, 0, "{stats:?}");
+    let eager = host
+        .logs
+        .borrow()
+        .iter()
+        .filter(|line| line.contains("\"event\":\"target-eager\""))
+        .count();
+    assert_eq!(eager, 0);
     for request in 1..=32 {
         instance.retire_request(request).unwrap();
     }

@@ -19,6 +19,8 @@ mod ceil_cached;
 mod ceil_parallel;
 #[allow(dead_code)]
 mod ceil_prefill;
+#[allow(dead_code, reason = "the bundle registers the measured part counts")]
+mod ceil_split;
 mod confidence_parallel;
 mod dspark_argmax;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
@@ -41,12 +43,16 @@ mod engram_hash_rows;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
+#[allow(dead_code, reason = "the bundle selects the measured column pairs")]
+mod hc_cols;
 #[allow(dead_code, reason = "the bundle selects the one-launch boundary")]
 mod hc_completion;
 #[allow(dead_code)]
 mod hc_expand_mix;
 #[allow(dead_code, reason = "the bundle selects measured fused tails")]
 mod hc_finish_norm;
+#[allow(dead_code, reason = "the bundle selects the measured two-CTA tails")]
+mod hc_finish_twin;
 #[allow(dead_code)]
 mod hc_mixer_probe;
 #[allow(
@@ -100,6 +106,8 @@ mod prefill_cache;
 mod prefill_heads;
 #[allow(dead_code)]
 mod query_prefill;
+#[allow(dead_code, reason = "the bundle registers the twins where they serve")]
+mod query_window;
 #[allow(dead_code)]
 mod replicated_embedding;
 mod ring_gather_cubin;
@@ -114,6 +122,8 @@ mod compressor_bf16;
 #[path = "dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod dense;
+#[allow(dead_code)]
+mod dense_dual;
 #[allow(dead_code)]
 mod f32_blocked;
 #[allow(dead_code)]
@@ -131,6 +141,10 @@ mod f32_split;
 mod f32_wide;
 #[allow(dead_code)]
 mod f32_zero;
+#[allow(dead_code)]
+mod fold_cluster;
+#[allow(dead_code)]
+mod fold_local_rows;
 #[allow(dead_code)]
 mod head_last;
 #[path = "indexer.rs"]
@@ -191,6 +205,8 @@ mod reduce;
 #[path = "routed_sum.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod routed_sum;
+#[allow(dead_code)]
+mod router_norm_entries;
 #[path = "rows.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod rows;
@@ -307,6 +323,15 @@ pub fn selection(
             moe_native_entries::WIDE_CUBIN.into(),
             model_deepseek41_contract::geometry::FLASH.id,
         ));
+        specs.extend(
+            moe_native_entries::lean_cubins()
+                .into_iter()
+                .map(|s| (moe_native_entries::LEAN_FAMILY, s)),
+        );
+        owners.push((
+            moe_native_entries::LEAN_CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
         let spec = prefill_cache::cubin().expect("decoded prefill cubin");
         owners.push((
             spec.name.clone(),
@@ -384,6 +409,9 @@ pub fn selection(
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
             owners.push((hc_completion::CUBIN.into(), geometry.id));
+            owners.push((hc_finish_twin::CUBIN.into(), geometry.id));
+            owners.push((hc_cols::PRODUCER_CUBIN.into(), geometry.id));
+            owners.push((hc_cols::FINISH_CUBIN.into(), geometry.id));
             owners.push((hc_round_rows::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
@@ -395,6 +423,12 @@ pub fn selection(
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
         owners.push((ceil_prefill::cubin_name(geometry), geometry.id));
+        owners.extend(
+            ceil_split::cubins(std::slice::from_ref(geometry))
+                .expect("split ceil cubins")
+                .into_iter()
+                .map(|(_, spec)| (spec.name, geometry.id)),
+        );
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
         owners.push((reduce::rounding_cubin(geometry), geometry.id));
@@ -472,8 +506,12 @@ pub fn selection(
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
+            owners.push((fold_local_rows::CUBIN.into(), geometry.id));
+            owners.push((fold_cluster::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
+            owners.push((dense_dual::CUBIN.into(), geometry.id));
+            owners.push((query_window::CUBIN.into(), geometry.id));
         }
         owners.push((f32_split::cubin_name(geometry), geometry.id));
         for features in f32_prefill::TILE_FEATURES {
@@ -483,6 +521,7 @@ pub fn selection(
             owners.push((f32_blocked::serving_cubin_name(geometry), geometry.id));
             owners.push((f32_wide::cubin_name(geometry), geometry.id));
             owners.push((f32_zero::CUBIN.into(), geometry.id));
+            owners.push((router_norm_entries::CUBIN.into(), geometry.id));
         }
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
@@ -540,6 +579,15 @@ pub fn selection(
             hc_completion::FAMILY,
             hc_completion::cubin().expect("one-launch HC boundary cubin"),
         ));
+        specs.push((
+            hc_finish_twin::FAMILY,
+            hc_finish_twin::cubin().expect("two-CTA HC finish cubin"),
+        ));
+        specs.extend(
+            hc_cols::cubins()
+                .expect("column-block HC pair cubins")
+                .map(|spec| (hc_cols::FAMILY, spec)),
+        );
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))
                 .expect("qualified rounded chain cubin"),
@@ -562,9 +610,11 @@ pub fn selection(
         window_fused::FAMILY,
         window_fused::cubin().expect("fused window cubin"),
     ));
+    specs.extend(query_window::cubins(geometries).expect("query window twin cubin"));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
     specs.extend(ceil_cached::cubins(geometries).expect("cached ceil cubins"));
     specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));
+    specs.extend(ceil_split::cubins(geometries).expect("split ceil cubins"));
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));
     specs.extend(hc::cubins(geometries));
@@ -610,6 +660,9 @@ pub fn selection(
         prefill_tma_matrix::cubins(geometries).expect("qualified prefill TMA matrix cubin"),
     );
     specs.extend(prefill_tma_scales::cubins(geometries).expect("qualified staged-scale cubin"));
+    specs.extend(dense_dual::cubins(geometries).expect("captured dual fold cubin"));
+    specs.extend(fold_local_rows::cubins(geometries).expect("captured row-local fold cubin"));
+    specs.extend(fold_cluster::cubins(geometries).expect("measured cluster fold cubin"));
     specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(
@@ -636,6 +689,12 @@ pub fn selection(
             .expect("certified router prefill cubins")
             .into_iter()
             .map(|s| (f32_zero::FAMILY, s)),
+    );
+    specs.extend(
+        router_norm_entries::cubins(geometries)
+            .expect("router-in-norm cubins")
+            .into_iter()
+            .map(|s| (router_norm_entries::FAMILY, s)),
     );
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));

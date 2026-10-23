@@ -1,0 +1,145 @@
+[
+  {
+    "name": "bandwidth_moe_deepseek41_strip2_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_moe_strip2_e384_k6_down_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 8,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_moe_strip2_e128_k3_down_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 8,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "847b11c317e36a8e8a56d341a427fd3f14249b9be9775fce9a1ae7267106b53c",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_moe_strip2_e384_k6_down_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 8
+      },
+      {
+        "symbol": "chop_deepseek41_moe_strip2_e128_k3_down_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 8
+      }
+    ]
+  }
+]

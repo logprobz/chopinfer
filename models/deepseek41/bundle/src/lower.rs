@@ -180,11 +180,13 @@ impl Lowering<'_> {
             }
             _ => self.stage_inner(phase, stage)?,
         };
-        if matches!(
-            stage,
-            Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_)
-        ) && let Some(launches) = &mut lowered
-        {
+        let side = match stage {
+            Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_) => true,
+            // The window KV projection runs beside the query chain.
+            Stage::Project(_, "attention.kv") => crate::shared_overlap::kv_relocated(phase),
+            _ => false,
+        };
+        if side && let Some(launches) = &mut lowered {
             // Relocate at the stage boundary so split, paired and future
             // shared kernels all receive the same independent workspace.
             for lowered in launches {
@@ -685,7 +687,7 @@ mod tests {
             own: Box::new(HcOnly),
             gather_state: [0; 2],
         };
-        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
         assert!(ops.hc.is_some() && ops.rows.is_none());
         let buffers = buffers(&shape, 0);
         let live = DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(999, 1), 0, 4);

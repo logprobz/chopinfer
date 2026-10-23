@@ -14,6 +14,9 @@ mod registration;
 #[path = "../../../bundle/src/sm120/shared.rs"]
 #[allow(dead_code)]
 mod shared;
+// The registration tests check each parallel entry against its cached twin.
+#[cfg(test)]
+use bundle_deepseek41::sm120::ceil_cached;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 use std::path::PathBuf;

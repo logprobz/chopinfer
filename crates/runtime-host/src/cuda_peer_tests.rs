@@ -207,13 +207,6 @@ fn peer_copy_refuses_wrong_contexts_streams_and_bounds_before_submission() {
             source,
         ),
         (
-            f.streams[1],
-            f.contexts[0],
-            destination,
-            f.contexts[1],
-            source,
-        ),
-        (
             f.streams[0],
             f.contexts[0],
             DeviceRangeV1 {
@@ -242,6 +235,92 @@ fn peer_copy_refuses_wrong_contexts_streams_and_bounds_before_submission() {
     }
     assert_eq!(fake_driver::call_count(18), 0);
     assert_eq!(fake_driver::call_count(5), fences);
+    f.finish();
+}
+
+/// The bytes of the destination buffer after a copy of the fixture ranges.
+fn destination_bytes(f: &mut Fixture) -> [u8; 2048] {
+    let mut actual = [0; 2048];
+    f.device
+        .copy_device_to_host(
+            f.streams[0],
+            &mut actual,
+            DeviceRangeV1 {
+                object: f.buffers[0],
+                offset: 0,
+                length: 2048,
+            },
+        )
+        .unwrap();
+    actual
+}
+
+fn copied(actual: &[u8; 2048]) -> bool {
+    actual[..1280].iter().all(|&byte| byte == 0xa5)
+        && actual[1280..1536]
+            .iter()
+            .zip(256..512)
+            .all(|(&byte, index)| byte == (index % 251) as u8)
+        && actual[1536..].iter().all(|&byte| byte == 0xa5)
+}
+
+#[test]
+fn peer_copy_pushes_on_the_source_stream_without_a_submission_fence() {
+    let mut f = Fixture::new();
+    let (destination, source) = f.ranges();
+    let reverse = f
+        .device
+        .acquire_peer_access(f.contexts[1], f.contexts[0])
+        .unwrap();
+    // The push writes the destination from another context's stream.
+    f.device.synchronize_stream(f.streams[0]).unwrap();
+    let fences = fake_driver::call_count(5);
+    f.device
+        .copy_peer_to_peer(
+            f.streams[1],
+            f.contexts[0],
+            destination,
+            f.contexts[1],
+            source,
+        )
+        .expect("the source's stream pushes its rows");
+    assert_eq!(fake_driver::call_count(18), 1);
+    assert_eq!(
+        fake_driver::call_count(5),
+        fences,
+        "peer submission must not synchronize the host"
+    );
+    assert_eq!(f.device.peer_copies.len(), 1);
+    assert!(copied(&destination_bytes(&mut f)));
+    assert_eq!(fake_driver::ordering_violations(), 0);
+    f.device
+        .release_peer_access(reverse.object, reverse.host_acquired)
+        .unwrap();
+    f.finish();
+}
+
+#[test]
+fn peer_copy_refuses_a_third_context_stream_and_the_pull_still_runs() {
+    let mut f = Fixture::new();
+    let third = f.device.create_context(2, 2).unwrap();
+    let stream = f.device.create_stream(third, 0).unwrap();
+    let (destination, source) = f.ranges();
+    let fences = fake_driver::call_count(5);
+    assert_eq!(
+        f.device
+            .copy_peer_to_peer(stream, f.contexts[0], destination, f.contexts[1], source),
+        Err(BundleStatusV1::InvalidArgument)
+    );
+    // A refusal submits nothing, so a caller that falls back to pulling
+    // finds the pair as it was.
+    assert_eq!(fake_driver::call_count(18), 0);
+    assert_eq!(fake_driver::call_count(5), fences);
+    assert!(f.device.peer_copies.is_empty());
+    f.copy().expect("the destination's stream pulls");
+    assert_eq!(fake_driver::call_count(18), 1);
+    assert!(copied(&destination_bytes(&mut f)));
+    f.device.release_stream(stream).unwrap();
+    f.device.release_context(third).unwrap();
     f.finish();
 }
 

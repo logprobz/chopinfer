@@ -366,7 +366,9 @@ impl InstalledBundleHostV1 {
             runtime_bundle::DEFAULT_MAXIMUM_SCORED_ROWS,
             runtime_bundle::BundleBatchLimitsV1::maximum_scored_rows,
         );
-        let mut config = HostInstanceConfigV1::new(topology).with_batch_limits(batch_limits);
+        let mut config = HostInstanceConfigV1::new(topology)
+            .with_batch_limits(batch_limits)
+            .with_arena_source(crate::weight_keeper::selected_arena_source_v1());
         if manifest.model_options().is_some() {
             self.with_model_options_defaults()?;
             config = config.with_model_options(

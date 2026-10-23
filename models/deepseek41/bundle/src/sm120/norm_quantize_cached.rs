@@ -13,6 +13,7 @@ pub fn entry(g: &Geometry) -> Entry {
             .expect("input norm entry")
             .remove(0),
         prefix: format!("chop_norm_quantize_{}_input", g.kernel_tag),
+        early_release: false,
     }
 }
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {

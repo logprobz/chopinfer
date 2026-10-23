@@ -25,6 +25,15 @@ pub struct Entry {
     pub cached_groups: bool,
     /// Prefill-only warp count, zero for the existing implementations.
     pub prefill_warps: u32,
+    /// Decode parallel or cached groups that signal dependents as soon as
+    /// their own producer wait returns, instead of after the row's stores.
+    /// Values and the row-status protocol are unchanged.
+    pub early_release: bool,
+    /// Decode cached groups split over a cluster of this many CTAs per row
+    /// (`row/ceil_split.cuh`), zero for one CTA per row; implies
+    /// `cached_groups`. Codes, scales and the row status are the cached
+    /// entry's.
+    pub split_parts: u32,
 }
 
 impl Entry {
@@ -40,6 +49,8 @@ impl Entry {
             parallel_groups: false,
             cached_groups: false,
             prefill_warps: 0,
+            early_release: false,
+            split_parts: 0,
         };
         entry.validate()?;
         Ok(entry)
@@ -61,6 +72,28 @@ impl Entry {
         Ok(self)
     }
 
+    /// Signal dependents once this entry's producer wait returns, so a
+    /// dependent loads its immutable operands while the rows quantize.
+    pub fn early_release(mut self) -> Result<Self, Refusal> {
+        self.early_release = true;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Split each row's cached groups over a cluster of `parts` CTAs, for a
+    /// separately named entry: the cached entry's group arithmetic and row
+    /// status, `parts` times the grid.
+    pub fn split(mut self, parts: u32) -> Result<Self, Refusal> {
+        if parts == 0 {
+            return Err(Refusal("a split entry needs at least two parts"));
+        }
+        self.parallel_groups = true;
+        self.cached_groups = true;
+        self.split_parts = parts;
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Use a separately named prefill entry with bounded row parallelism.
     pub fn prefill(mut self, warps: u32) -> Result<Self, Refusal> {
         if ![4, 8, 16].contains(&warps) {
@@ -74,6 +107,8 @@ impl Entry {
     pub fn threads(&self) -> u32 {
         if self.prefill_warps != 0 {
             self.prefill_warps * 32
+        } else if self.split_parts != 0 {
+            (self.query.width / 32 / self.split_parts).min(32) * 32
         } else if self.parallel_groups {
             (self.query.width / 32).min(32) * 32
         } else {
@@ -106,6 +141,20 @@ impl Entry {
         {
             return Err(Refusal("parallel groups require ceil E4M3 code output"));
         }
+        if self.split_parts != 0
+            && (!self.cached_groups
+                || ![2, 4, 8].contains(&self.split_parts)
+                || !self.query.width.is_multiple_of(32 * self.split_parts))
+        {
+            return Err(Refusal(
+                "split ceil groups need the cached mapping, 2, 4 or 8 parts and whole groups per part",
+            ));
+        }
+        if self.early_release && (!self.parallel_groups || self.prefill_warps != 0) {
+            return Err(Refusal(
+                "early dependent release needs the parallel decode mapping",
+            ));
+        }
         if self.capacity == 0 || self.capacity > crate::backend::MAX_CAPACITY {
             return Err(Refusal("block quantization capacity exceeds SM120 bounds"));
         }
@@ -126,12 +175,13 @@ impl Entry {
         if rows > self.capacity {
             return Err(Refusal("block quantization rows exceed capacity"));
         }
+        let parts = self.split_parts.max(1);
         let plan = LaunchPlan {
-            grid: [rows.max(1), 1, 1],
+            grid: [rows.max(1) * parts, 1, 1],
             block: [self.threads(), 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
-            cluster: [1, 1, 1],
+            cluster: [parts, 1, 1],
             pdl: true,
         };
         crate::backend::check_plan(&plan)?;
@@ -175,6 +225,8 @@ impl Entry {
         }
         let engine = if self.prefill_warps != 0 {
             "block_quantize_prefill"
+        } else if self.split_parts != 0 {
+            "block_quantize_split"
         } else if self.cached_groups {
             "block_quantize_cached"
         } else if self.parallel_groups {
@@ -218,10 +270,14 @@ impl Entry {
         } else {
             (query.width, "")
         };
-        let prefill = if self.prefill_warps == 0 {
-            String::new()
-        } else {
+        let prefill = if self.prefill_warps != 0 {
             format!(",{}", self.prefill_warps)
+        } else if self.split_parts != 0 {
+            format!(",{},{}", self.early_release, self.split_parts)
+        } else if self.early_release {
+            ",true".into()
+        } else {
+            String::new()
         };
         EntrySpec::new(
             self.symbol.clone(),
@@ -301,6 +357,8 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         headers: [
             Some(if entries.iter().any(|e| e.prefill_warps != 0) {
                 "row/ceil_prefill.cuh"
+            } else if entries.iter().any(|e| e.split_parts != 0) {
+                "row/ceil_split.cuh"
             } else if entries
                 .iter()
                 .any(|e| e.parallel_groups && !e.cached_groups)
@@ -314,7 +372,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
             // Cubins without cached entries keep their single header.
             entries
                 .iter()
-                .any(|e| e.cached_groups)
+                .any(|e| e.cached_groups && e.split_parts == 0)
                 .then_some("row/ceil_cached.cuh"),
         ]
         .into_iter()
@@ -423,6 +481,30 @@ mod cached_tests {
         .unwrap()
     }
     #[test]
+    fn early_release_changes_only_the_template_flag() {
+        for base in [
+            entry(8192, DType::Bf16).cached().unwrap(),
+            entry(2048, DType::F32).parallel().unwrap(),
+        ] {
+            let early = base.clone().early_release().unwrap();
+            assert_eq!(early.plan(8).unwrap(), base.plan(8).unwrap());
+            let (a, b) = (base.spec(), early.spec());
+            assert_eq!(
+                (a.symbol, a.params, a.max_threads),
+                (b.symbol, b.params, b.max_threads)
+            );
+            assert_eq!(a.body.replacen("u>(", "u,true>(", 1), b.body);
+        }
+        assert!(entry(2048, DType::F32).early_release().is_err());
+        assert!(
+            entry(512, DType::Bf16)
+                .prefill(8)
+                .unwrap()
+                .early_release()
+                .is_err()
+        );
+    }
+    #[test]
     fn cached_groups_keep_the_parallel_mapping_and_abi() {
         for (width, input) in [(8192, DType::Bf16), (2048, DType::F32), (1280, DType::F32)] {
             let parallel = entry(width, input).parallel().unwrap();
@@ -444,6 +526,61 @@ mod cached_tests {
         let mut prefill = entry(512, DType::Bf16).prefill(8).unwrap();
         prefill.cached_groups = true;
         assert!(prefill.validate().is_err());
+    }
+    #[test]
+    fn split_groups_keep_the_cached_abi_over_a_row_cluster() {
+        for (width, input, parts, threads) in [
+            (8192, DType::Bf16, 8, 1024),
+            (8192, DType::Bf16, 4, 1024),
+            (2048, DType::F32, 4, 512),
+            (2048, DType::F32, 8, 256),
+        ] {
+            for early in [false, true] {
+                let mut cached = entry(width, input).cached().unwrap();
+                let mut split = entry(width, input).split(parts).unwrap();
+                if early {
+                    cached = cached.early_release().unwrap();
+                    split = split.early_release().unwrap();
+                }
+                assert!(split.parallel_groups && split.cached_groups);
+                assert_eq!(split.threads(), threads);
+                for rows in [0, 1, 8, 32] {
+                    let plan = split.plan(rows).unwrap();
+                    assert_eq!(plan.grid, [rows.max(1) * parts, 1, 1]);
+                    assert_eq!(plan.cluster, [parts, 1, 1]);
+                    assert_eq!(plan.block, [threads, 1, 1]);
+                    assert!(plan.pdl);
+                }
+                let (a, b) = (cached.spec(), split.spec());
+                assert_eq!(a.params, b.params);
+                let template = if early { "u,true>(" } else { "u>(" };
+                assert_eq!(
+                    a.body
+                        .replace("block_quantize_cached", "block_quantize_split")
+                        .replacen(template, &format!("u,{early},{parts}>("), 1),
+                    b.body
+                );
+                assert_eq!(
+                    cubin_spec("m", std::slice::from_ref(&split))
+                        .unwrap()
+                        .headers,
+                    ["#include \"row/ceil_split.cuh\""]
+                );
+            }
+        }
+        for parts in [0, 1, 3, 16] {
+            assert!(entry(8192, DType::Bf16).split(parts).is_err(), "{parts}");
+        }
+        // Whole 32-element groups in every part.
+        assert!(entry(96, DType::Bf16).split(2).is_err());
+        assert_eq!(entry(1280, DType::F32).split(8).unwrap().threads(), 160);
+        assert!(
+            entry(512, DType::Bf16)
+                .prefill(8)
+                .unwrap()
+                .split(2)
+                .is_err()
+        );
     }
     #[test]
     fn existing_cubins_keep_their_single_header() {

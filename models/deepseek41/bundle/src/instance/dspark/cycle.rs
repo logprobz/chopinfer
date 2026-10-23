@@ -1,14 +1,16 @@
 //! Device target tokens and overlapped mapped rows, behind the lifecycle adapter.
 mod graphs;
 use super::Instance;
-use crate::dspark::cycle::{LayerGather, Pending};
+use crate::dspark::cycle::{Deferred, LayerGather, Pending};
 use crate::dspark::device::{DECODE_BASE, slice};
 use crate::dspark::execution::{DraftInput, Input};
 use crate::dspark::staging::DeviceTarget;
 use crate::dspark::state::BLOCK_ROWS;
+use crate::engram_rows::Hashed;
+use crate::instance::ar_engram;
 use bundle_runtime::graphs::GraphCache;
 use bundle_runtime::inputs::{PackedStep, PhaseInputs};
-use bundle_runtime::resources::Held;
+use bundle_runtime::resources::{Held, upload_bytes};
 use bundle_runtime::upload::{DeviceInputs, InputLayout};
 use runtime_bundle_abi::{
     BundleAbiError, BundleStatusV1, ExecuteResultSinkV1, MappedGatherPlaneV1,
@@ -26,6 +28,7 @@ impl Instance {
         let Some(device) = &mut self.dspark else {
             return Ok(());
         };
+        device.cycle.undrafted = ar_engram::enabled().map_err(BundleAbiError::Status)?;
         let memory = device
             .cycle
             .memory
@@ -120,6 +123,12 @@ impl Instance {
                 graphs,
             });
         }
+        if device.cycle.undrafted {
+            let layers = device.cycle.layers.len();
+            self.log(&format!(
+                "CHOPINFER_DEEPSEEK41_AR_ENGRAM: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
+            ));
+        }
         Ok(())
     }
 
@@ -209,7 +218,7 @@ impl Instance {
             return Ok(());
         };
         let Some(pending) = &device.cycle.pending else {
-            return Ok(());
+            return self.upload_deferred_engram(inputs);
         };
         if !inputs.decode || pending.inputs.len() != inputs.request_ids.len() {
             return Err("DSpark device target phase differs".into());
@@ -300,6 +309,91 @@ impl Instance {
         Ok(())
     }
 
+    /// Takes an undrafted decode step's host-hashed ids for its target
+    /// launch, which uploads them where the device hash writes a drafted
+    /// step's and gathers each layer's rows through the same prepared
+    /// gathers (`upload_deferred_engram`). The ids, the rows' destinations
+    /// and the target's launches are the synchronous gather's.
+    pub(crate) fn defer_dspark_engram(&mut self, hashed: &Hashed) -> Result<bool, String> {
+        let Some(device) = self.dspark.as_mut() else {
+            return Ok(false);
+        };
+        let cycle = &mut device.cycle;
+        let stride = cycle.hash.shape.stride as usize;
+        if !cycle.undrafted || cycle.layers.is_empty() || hashed.rows() > stride {
+            return Ok(false);
+        }
+        if cycle.pending.is_some() || cycle.gathering || cycle.deferred.is_some() {
+            return Err("DSpark device cycle is already pending".into());
+        }
+        let columns = cycle.hash.shape.columns() as usize;
+        let ids = ar_engram::layer_major(hashed, cycle.layers.len(), columns, stride)
+            .map_err(|error| error.to_string())?;
+        cycle.deferred = Some(Deferred {
+            ids,
+            rows: hashed.rows() as u32,
+        });
+        Ok(true)
+    }
+
+    /// Uploads a deferred step's ids on rank 0's stream, the gathers'
+    /// producer, and enqueues every layer's gather of its rows.
+    fn upload_deferred_engram(&mut self, inputs: &PhaseInputs) -> Result<(), String> {
+        let services = &self.services;
+        let stream = self.ranks[0].2;
+        let Some(cycle) = self.dspark.as_mut().map(|device| &mut device.cycle) else {
+            return Ok(());
+        };
+        let Some(deferred) = &cycle.deferred else {
+            return Ok(());
+        };
+        if cycle.gathering || !inputs.decode || inputs.live_tokens() != deferred.rows {
+            return Err("DSpark deferred Engram rows differ from the target phase".into());
+        }
+        let memory = cycle.memory.ok_or("DSpark hash memory is absent")?;
+        upload_bytes(services, stream, memory.ids, &deferred.ids).map_err(|e| e.to_string())?;
+        let rows = u64::from(deferred.rows) * cycle.hash.shape.columns();
+        for layer in &cycle.layers {
+            services
+                .enqueue_mapped_gather(layer.gather, rows)
+                .map_err(|e| e.to_string())?;
+        }
+        cycle.gathering = true;
+        Ok(())
+    }
+
+    /// Completes a deferred step's gathers once the phase's streams
+    /// finished: a copy still running refuses the step before any result
+    /// is published.
+    fn finish_deferred_engram(&mut self) -> Result<(), String> {
+        let Some(device) = self.dspark.as_mut() else {
+            return Ok(());
+        };
+        let sequence = device.diagnostic.step_id;
+        let cycle = &mut device.cycle;
+        let Some(deferred) = cycle.deferred.take() else {
+            return Ok(());
+        };
+        if !cycle.gathering {
+            return Err("DSpark deferred Engram rows were never gathered".into());
+        }
+        let mut layers = Vec::new();
+        for layer in &cycle.layers {
+            let stats = self
+                .services
+                .complete_mapped_gather(layer.gather)
+                .map_err(|e| e.to_string())?
+                .ok_or("DSpark mapped layer upload is incomplete at target boundary")?;
+            layers.push(ar_engram::layer_trace(layer.layer, &stats));
+        }
+        cycle.gathering = false;
+        if ar_engram::traced() {
+            let message = ar_engram::step_trace(sequence, deferred.rows, &layers);
+            let _ = self.services.log(message.as_bytes());
+        }
+        Ok(())
+    }
+
     pub(crate) fn wait_dspark_rows(&self, layer: usize) -> Result<(), BundleAbiError> {
         let Some(device) = &self.dspark else {
             return Ok(());
@@ -326,7 +420,7 @@ impl Instance {
             return Ok(());
         };
         let Some(pending) = &device.cycle.pending else {
-            return Ok(());
+            return self.finish_deferred_engram();
         };
         // Add the host callback scopes and each consumer's exposed wait.
         // Per-layer values retain attribution when the callbacks overlap.

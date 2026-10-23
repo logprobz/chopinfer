@@ -287,10 +287,14 @@ impl HcOps {
         bind.launch_within(op, &b, workspace, Counts::rows(rows))
     }
 
+    // TP4, 250 W, 2026-10-21, 16-row boundaries of real captured rows
+    // (hc_tail16, hc16-r1): at Decode-16 the tail is bitwise against the
+    // rounded expansion mixer and input norm it replaces, memcheck clean,
+    // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
         matches!(
             phase,
-            Phase::Decode(1 | 8 | 32)
+            Phase::Decode(1 | 8 | 16 | 32)
                 | Phase::Verify {
                     rows: 4 | 6 | 8 | 12 | 16 | 32,
                     ..
@@ -689,11 +693,46 @@ mod tests {
                     continue;
                 }
                 let chain = chain.unwrap();
-                if matches!(rows, 4 | 6 | 12 | 16 | 32) {
+                // Measured verify buckets keep the producer and run the tail
+                // on two CTAs per row with the tail's own arguments.
+                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+                    .iter()
+                    .find(|(bucket, _)| *bucket == rows)
+                {
+                    let twin = crate::sm120::hc_finish_twin::served();
+                    assert_eq!(chain.len(), 2);
+                    assert!(chain[0].symbol.ends_with("hc_round_chain_w4_v1"));
+                    assert_eq!(chain[1].symbol, twin.symbol(warps));
+                    assert_eq!(chain[1].plan, twin.plan(rows, rows, warps).unwrap());
+                    assert_eq!(chain[1].arguments.0.len(), 18);
+                    continue;
+                }
+                // Measured wide buckets run the column-block producer and
+                // split finish over both launches' own arguments.
+                if let Some(b) = crate::sm120::hc_cols::BUCKETS
+                    .iter()
+                    .find(|b| b.rows == rows)
+                {
+                    let (producer, finish) = (
+                        crate::sm120::hc_cols::producer(),
+                        crate::sm120::hc_cols::finish(),
+                    );
+                    assert_eq!(chain.len(), 2);
+                    assert_eq!(chain[0].symbol, producer.symbol(b.tile, b.transposed));
+                    assert_eq!(
+                        chain[0].plan,
+                        producer.plan(rows, rows, b.tile, b.transposed).unwrap()
+                    );
+                    assert_eq!(chain[0].arguments.0.len(), 9);
+                    assert_eq!(chain[1].symbol, finish.symbol(b.warps));
+                    assert_eq!(chain[1].plan, finish.plan(rows, rows, b.warps).unwrap());
+                    assert_eq!(chain[1].arguments.0.len(), 18);
+                    continue;
+                }
+                if matches!(rows, 4 | 6 | 12) {
                     assert_eq!(chain.len(), 2);
                     assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
                     assert!(chain[0].symbol.ends_with(match rows {
-                        32 => "hc_round_rows_r2_v1",
                         4 => "hc_round_chain_w8_v1",
                         _ => "hc_round_chain_w4_v1",
                     }));
@@ -733,7 +772,7 @@ mod tests {
                     assert_eq!(selected, qualified, "{phase:?}");
                     assert_eq!(
                         ops.has_finish_norm(phase),
-                        qualified || matches!(phase, Phase::Decode(32))
+                        qualified || matches!(phase, Phase::Decode(16 | 32))
                     );
                 }
             }

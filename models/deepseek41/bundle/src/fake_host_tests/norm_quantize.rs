@@ -97,6 +97,15 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
 
 #[test]
 fn decode_journal_fuses_norm_quantizers_and_widens() {
+    decode_journal(false);
+}
+
+#[test]
+fn dual_decode_reference_preserves_the_previous_projection_order() {
+    crate::sm120::dense_dual::with_reference(|| decode_journal(true));
+}
+
+fn decode_journal(reference: bool) {
     for kv in KV_LAYOUTS {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, kv);
@@ -160,16 +169,23 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
             kv.storage,
             launches.len() / ranks
         );
+        assert_eq!(
+            count("chop_mxfp8_dual_n1280_n512_k5120_g1_f32_v1 "),
+            if reference { 0 } else { ranks * layers }
+        );
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
         if let Some(dir) = std::env::var_os("CHOPINFER_NORM_JOURNALS") {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
+            let name = format!("decode.{:?}.reference{reference}.journal", kv.storage);
+            std::fs::write(dir.join(&name), lines.join("\n")).unwrap();
             std::fs::write(
-                dir.join(format!("decode.{:?}.journal", kv.storage)),
-                lines.join("\n"),
+                dir.join(format!("{name}.full")),
+                host.device.journal.borrow().join("\n"),
             )
             .unwrap();
+            super::decode_attention::export_handles(&host.device, &dir, &name);
         }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
     }
 }

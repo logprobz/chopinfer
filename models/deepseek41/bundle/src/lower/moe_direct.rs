@@ -442,7 +442,8 @@ mod tests {
                         .flat_map(|(_, ops)| ops.into_iter().map(|op| op.launch))
                         .collect::<Vec<_>>();
                     let readonly = [b.scratch.normed_codes, b.scratch.normed_scales, live];
-                    crate::shared_overlap::checked_units(&stages, &launches, &readonly).unwrap();
+                    crate::shared_overlap::checked_units(&stages, &launches, &readonly, false)
+                        .unwrap();
                     if selected {
                         assert!(launches.last().unwrap().symbol.ends_with("_down_finish_v1"));
                         assert!(
@@ -469,7 +470,7 @@ mod tests {
                             .flat_map(|(_, ops)| ops.into_iter().map(|op| op.launch))
                             .collect::<Vec<_>>();
                         assert!(
-                            crate::shared_overlap::checked_units(&stages, &bad, &readonly)
+                            crate::shared_overlap::checked_units(&stages, &bad, &readonly, false)
                                 .unwrap_err()
                                 .contains("unordered scratch alias")
                         );

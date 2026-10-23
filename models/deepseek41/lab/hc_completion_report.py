@@ -1,4 +1,5 @@
-"""Require the complete C1/C8 HC completion matrix, memcheck, timing and peer parity."""
+"""Require the complete HC completion and two-CTA finish matrix, memcheck, timing and peer parity
+for the run's row counts (C1/C8 decode, Verify-6)."""
 import argparse
 import json
 import math
@@ -6,13 +7,21 @@ from pathlib import Path
 import re
 from collections import defaultdict
 
-VARIANTS = ["tail8", "tail16", "tail32", "split8", "split16"]
+VARIANTS = ["tail8", "tail16", "tail32", "split8", "split16", "twin8", "twin16", "twin32"]
+# The served pair timed against itself (A/A), then every variant.
+TIMING_VARIANTS = ["served", *VARIANTS]
 CONFIGURATIONS = ["served", "other"]
 SPECIALS = ["sum_nan", "sum_inf", "sum_subnormal", "negative_zero", "weight_nan",
             "gamma_inf", "gamma_last_nan", "random"]
 CONTROLS = [f"chop_hc_completion_{m}_{layout}_w8_v1" for layout, m in
             [("tail", "clearstatus"), ("tail", "wrongfloor"), ("split", "clearstatus"),
-             ("split", "wrongfloor"), ("split", "reversefold")]]
+             ("split", "wrongfloor"), ("split", "reversefold")]] + \
+           [f"chop_hc_finish_twin_{m}_w32_v1" for m in ("clearstatus", "wrongfloor", "reversefold")]
+
+
+def launches(variant):
+    """Launches per boundary: the served pair and the two-CTA finish keep two."""
+    return 2 if variant == "served" or variant.startswith("twin") else 1
 SELECTORS = {
     "memcheck": "replay::memcheck_real_c1_c8_on_gpu",
     "matrix": "replay::real_c1_c8_bitwise_invariances_and_controls_on_gpu",
@@ -42,6 +51,15 @@ def listing(text, selector):
 def markers(text, name):
     """Markers anywhere in a line: libtest prefixes the first output line."""
     return [json.loads(v) for v in re.findall(re.escape(name) + r" (\{[^\r\n]*\})", text)]
+
+
+def declared(coverage):
+    """The coverage the frozen lab wrote must name this report's arms."""
+    rows = sorted({c["rows"] for c in coverage["cases"]})
+    require(coverage["rows"] == rows and coverage["variants"] == VARIANTS
+            and coverage["timing_variants"] == TIMING_VARIANTS and coverage["controls"] == CONTROLS,
+            "coverage arms differ from the report")
+    return rows
 
 
 def first_by_rows(coverage):
@@ -77,6 +95,7 @@ def labels(coverage):
 
 
 def matrix(value, text, coverage, memcheck=False):
+    rows = declared(coverage)
     executed = result(text)
     cases = {c["id"]: c for c in coverage["cases"]}
     if memcheck:
@@ -106,7 +125,7 @@ def matrix(value, text, coverage, memcheck=False):
         require(len(captured) == len(cases) and {r["case"] for r in captured} == cases.keys()
                 and all(r["outputs"] >= 6 and r["passed"] is (not r["failures"]) for r in captured),
                 "missing captured-output comparison")
-        require(value["negatives"] == len(CONTROLS) * 2, "mutation control count differs")
+        require(value["negatives"] == len(CONTROLS) * len(rows), "mutation control count differs")
     else:
         require(not captured and value["negatives"] == 0, "memcheck runs only the comparisons")
     per_case = len(VARIANTS) * len(configurations)
@@ -123,7 +142,7 @@ def matrix(value, text, coverage, memcheck=False):
 
 def memcheck_cases(coverage):
     picked = []
-    for rows in (1, 8):
+    for rows in coverage["rows"]:
         picked.extend([c for c in coverage["cases"] if c["rows"] == rows][:2])
     return picked
 
@@ -149,9 +168,10 @@ def step_totals(records, keys):
 
 
 def timing(value, text, coverage):
+    declared(coverage)
     require(result(text), "timing test failed")
     cases = {c["id"]: c for c in coverage["cases"]}
-    expected = {(c, v, h) for c in cases for v in VARIANTS for h in (False, True)}
+    expected = {(c, v, h) for c in cases for v in TIMING_VARIANTS for h in (False, True)}
     got = [(r["case"], r["variant"], r["hot"]) for r in value["records"]]
     require(value["cases"] == len(cases) and value["corpus_sha256"] == coverage["corpus_sha256"]
             and len(got) == coverage["timing_records"] and len(got) == len(expected) and set(got) == expected,
@@ -160,12 +180,12 @@ def timing(value, text, coverage):
         case = cases[r["case"]]
         require(r["rows"] == case["rows"] and r["widen"] is case["widening"] and r["rounds"] == coverage["rounds"]
                 and r["warmup"] == coverage["warmup"] and r["reference_launches"] == 2
-                and r["candidate_launches"] == 1, "timing plan differs")
+                and r["candidate_launches"] == launches(r["variant"]), "timing plan differs")
         require(all(isinstance(r[k], (int, float)) and math.isfinite(r[k]) and r[k] > 0
                     for k in ("reference_us", "candidate_us", "paired_ratio")), "invalid event timing")
     done = markers(text, "HC_COMPLETION_TIMING_CASE")
     require(sorted((r["case"], r["rows"], r["records"]) for r in done)
-            == sorted((c["id"], c["rows"], 2 * len(VARIANTS)) for c in cases.values()), "timing markers differ")
+            == sorted((c["id"], c["rows"], 2 * len(TIMING_VARIANTS)) for c in cases.values()), "timing markers differ")
     require(re.findall(r"HC_COMPLETION_TIMING_RESULT[^\r\n]*", text)
             == [f"HC_COMPLETION_TIMING_RESULT cases={len(cases)} records={len(expected)} PASS"], "timing summary differs")
     return step_totals(value["records"], ("rows", "variant", "hot"))
@@ -214,7 +234,7 @@ def analyze(root, out):
     peer = peers(*matrices) if len(matrices) == 2 else ["missing device"]
     failed |= bool(peer)
     value = dict(results=results, peer_mismatches=peer, passed=not failed,
-                 scope="Exact real-input lab only: every captured C1/C8 boundary against the served pair. No serving promotion by itself.")
+                 scope="Exact real-input lab only: every captured boundary of the run's row counts against the served pair. No serving promotion by itself.")
     (out / "analysis.json").write_text(json.dumps(value, indent=2) + "\n")
     print("HC_COMPLETION_PAIR " + json.dumps(dict(passed=not failed, cases=len(coverage["cases"]),
                                                   reports_per_gpu=coverage["matrix_reports"],

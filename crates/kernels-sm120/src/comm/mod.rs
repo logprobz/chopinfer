@@ -8,6 +8,7 @@ pub mod input;
 pub mod ll_bf16;
 pub mod ll_f32;
 pub mod norm_weights;
+pub mod owned_sum_bf16;
 pub mod owned_sum_f32;
 pub mod phased_bf16;
 pub mod phased_f32;

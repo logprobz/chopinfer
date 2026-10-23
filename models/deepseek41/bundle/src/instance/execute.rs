@@ -33,12 +33,17 @@ use crate::indexer_workloads::Route as IndexerRoute;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
+pub(crate) mod ar_status;
 pub(crate) mod dma;
+#[cfg(test)]
+#[path = "graph_key_tests.rs"]
+mod graph_key_tests;
 #[cfg(test)]
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
 mod micro;
 pub(crate) mod overlap;
+pub(crate) mod plan_cache;
 pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).
@@ -49,9 +54,12 @@ const VERIFY: usize = 2;
 /// One phase of a step, planned before the step opens.
 struct Run {
     prefill_engram: Option<super::prefill_engram::Plan>,
+    /// A decode phase whose Engram rows upload per layer and join at their
+    /// consumers (`super::ar_engram`) instead of before the first launch.
+    ar_engram: bool,
     indexer_route: IndexerRoute,
     dma: Option<dma::Plan>,
-    skip: Option<skip::Plan>,
+    skip: Option<std::rc::Rc<skip::Plan>>,
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
     inputs: PhaseInputs,
@@ -60,8 +68,9 @@ struct Run {
     layout: InputLayout,
     /// Rows the head scores.
     head_rows: u32,
-    /// A decode or verify phase's graph bucket: (tokens, items), items 0
-    /// for decode. An eager prefill has none.
+    /// A decode or verify phase's graph key in `indexer_route`'s bank:
+    /// (tokens, 0) for decode, `verify_graph_key` for verify. An eager
+    /// prefill has none.
     graph: Option<(u32, u32)>,
     capture: Option<GraphReservation>,
     /// Each rank's launches and whether each waits for its peers: empty
@@ -187,6 +196,18 @@ type PhasePlan = (Phase, usize, InputLayout, Option<(u32, u32)>);
 type Programs = (Vec<Vec<PreparedLaunch>>, Vec<Vec<bool>>, Vec<Vec<Stage>>);
 
 /// `values` as little-endian bytes.
+/// A verify phase's graph key within the bank of its indexer route
+/// (`Route::select`, which `plan_run` hands lowering and the graph caches
+/// alike). Lowering reads the live item count only to select that route,
+/// so one graph of the rows replays at every item count: the key is
+/// (route, rows). The cache needs a nonzero item slot that can carry the
+/// rows; the fewest items is a fixed slot, not a live count. Device inputs
+/// keep their fixed allocation and are uploaded every step.
+/// `target_programs_are_a_function_of_their_graph_key` pins this.
+fn verify_graph_key(rows: u32) -> (u32, u32) {
+    (rows, rows.div_ceil(MAX_VERIFY_ROWS))
+}
+
 fn i32_bytes(values: &[i32]) -> Vec<u8> {
     values
         .iter()
@@ -284,14 +305,12 @@ impl Instance {
                 items,
             )
             .ok_or(BundleStatusV1::InvalidArgument)?;
-            // Every verify graph holds the exact rows and items. Device
-            // inputs keep their fixed allocation, independent of this key.
             if live == 0 || live > items.get() || rows < live || rows > live * MAX_VERIFY_ROWS {
                 return Err(BundleStatusV1::InvalidArgument);
             }
             let layout = InputLayout::verify_within::<DeepSeek>(items);
             let phase = Phase::Verify { rows, items: live };
-            Ok((phase, VERIFY, layout, Some((rows, live))))
+            Ok((phase, VERIFY, layout, Some(verify_graph_key(rows))))
         } else {
             let bucket = items.bucket(live).ok_or(BundleStatusV1::InvalidArgument)?;
             Ok((
@@ -427,12 +446,21 @@ impl Instance {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
         let indexer_route =
             IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
+        let ar_engram = arena == DECODE && self.ar_engram_serves(graph);
         let capture = if self.dspark.is_some() {
             graph.and_then(|key| {
                 let reservation = self.reserve_dspark_target(key, indexer_route);
                 if reservation.is_none() {
                     // Decide before lowering, so no cached rank leaves an
                     // empty program in an eager fallback. Keep exact widths.
+                    graph = None;
+                }
+                reservation
+            })
+        } else if ar_engram {
+            graph.and_then(|key| {
+                let reservation = self.reserve_ar_engram(key, indexer_route);
+                if reservation.is_none() {
                     graph = None;
                 }
                 reservation
@@ -503,6 +531,7 @@ impl Instance {
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             prefill_engram: None,
+            ar_engram,
             indexer_route,
             dma: None,
             skip: None,
@@ -526,7 +555,7 @@ impl Instance {
             phase,
         };
         if skipping {
-            run.skip = Some(skip::Plan::prepare(self, &run).map_err(|error| {
+            run.skip = Some(self.plans.plan(self, &run).map_err(|error| {
                 self.log(&error);
                 BundleStatusV1::InternalError
             })?);
@@ -559,6 +588,7 @@ impl Instance {
             && run.media.is_none()
             && run.engram.is_some()
             && run.dma.is_none()
+            && run.skip.as_ref().is_none_or(|skip| !skip.uses_dma())
             && run.micro.is_none()
             && run.overlap.is_none()
             && !self.taps.text();
@@ -700,7 +730,9 @@ impl Instance {
                 }
                 if let (Some(engram), Some(hashed), Some(image)) = (
                     &self.engram,
-                    run.engram.as_ref().filter(|_| run.prefill_engram.is_none()),
+                    run.engram
+                        .as_ref()
+                        .filter(|_| run.prefill_engram.is_none() && !run.ar_engram),
                     self.image,
                 ) {
                     engram
@@ -793,14 +825,14 @@ impl Instance {
         if self.taps.text() && run.arena == PREFILL {
             return self.launch_tapped(&streams, run, &programs, &collectives);
         }
-        if self.dspark.is_some() && run.arena != PREFILL {
+        if run.ar_engram || (self.dspark.is_some() && run.arena != PREFILL) {
             let live_tokens = (0..streams.len())
                 .map(|rank| {
                     DeviceInputs::within(self.arenas[run.arena][rank], &run.layout).live_tokens
                 })
                 .collect::<Vec<_>>();
             return self
-                .launch_dspark_target(
+                .launch_layered_target(
                     &streams,
                     run.graph,
                     run.capture.as_mut(),
@@ -1049,6 +1081,7 @@ impl Instance {
                     scratch.normed_codes,
                     scratch.normed_scales,
                 ],
+                self.shared_overlap.serves_kv(bucket),
             )
             .map_err(|error| {
                 self.log(&format!("shared expert overlap: {error}"));
@@ -1191,6 +1224,10 @@ impl Instance {
             .is_some_and(|gathers| !gathers.idle())
         {
             return BundleStatusV1::InvalidState;
+        }
+        if let Err(error) = self.settle_ar_engram() {
+            self.log(&format!("AR Engram: a failed step's uploads: {error}"));
+            return status(error);
         }
         // Taps a failed execute left are removed, never published.
         #[cfg(feature = "diagnostic-taps")]
@@ -1336,6 +1373,13 @@ impl Instance {
         };
         for run in runs.iter_mut() {
             self.upload(run)?;
+            if run.ar_engram {
+                self.begin_ar_engram(
+                    run.engram
+                        .as_ref()
+                        .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
+                )?;
+            }
             if run.prefill_engram.is_some() {
                 self.prefill_engram
                     .as_ref()
@@ -1360,8 +1404,10 @@ impl Instance {
                 self.clear_flags()?;
             }
             if ready_epoch.is_none() {
-                self.check_index_status(run)?;
-                self.check_row_status(run)?;
+                self.check_status(run)?;
+                if run.ar_engram {
+                    self.finish_ar_engram()?;
+                }
                 if run.prefill_engram.is_some() {
                     self.prefill_engram
                         .as_ref()
@@ -1397,8 +1443,10 @@ impl Instance {
                 // The AR sampler runs during validation. Failed status still
                 // refuses execute, so none of its queued samples is published.
                 for run in runs.iter() {
-                    self.check_index_status(run)?;
-                    self.check_row_status(run)?;
+                    self.check_status(run)?;
+                    if run.ar_engram {
+                        self.finish_ar_engram()?;
+                    }
                     if run.prefill_engram.is_some() {
                         self.prefill_engram
                             .as_ref()

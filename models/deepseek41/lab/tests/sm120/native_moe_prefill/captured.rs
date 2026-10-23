@@ -227,6 +227,57 @@ fn authenticate(
     Ok(failures)
 }
 
+/// A captured case's quantized input, routes and the given banks, padded
+/// to the 8192-row capacity.
+pub fn case_inputs(
+    a: &mut Arena<'_>,
+    c: &Capture,
+    gate: QuantizedWeights<View>,
+    down: QuantizedWeights<View>,
+) -> LabResult<Inputs> {
+    let set = family::serving::target_set();
+    let capacity = super::synthetic::CAPACITY as usize;
+    let top = set.top_k as usize;
+    let rows = c.rows();
+    let codes = c.common("input.e4m3")?;
+    let scales = c.common("input.ue8m0")?;
+    let ids = ints(&c.common("ids.i32")?);
+    let route_weights = c.common("route_weights.f32")?;
+    if codes.len() != rows * 5120 || scales.len() != rows * 160 || ids.len() != rows * top {
+        return Err("captured input extent mismatch".into());
+    }
+    let metadata = |name: &str| c.read(name);
+    let routes = RouteMetadata {
+        counts: Some(padded(
+            a,
+            &metadata("counts.i32")?,
+            (set.count as usize + 1) * 4,
+        )?),
+        offsets: padded(a, &metadata("offsets.i32")?, (set.count as usize + 1) * 4)?,
+        sorted_rows: padded(
+            a,
+            &metadata("sorted_rows.i32")?,
+            (capacity * top + set.count as usize * 64) * 4,
+        )?,
+        padded_rows: padded(a, &metadata("padded_rows.i32")?, 4)?,
+        active_experts: Some(padded(
+            a,
+            &metadata("active.i32")?,
+            (set.count as usize + 1) * 4,
+        )?),
+    };
+    let inputs = Inputs {
+        codes: padded(a, &codes, capacity * 5120)?,
+        scales: padded(a, &scales, capacity * 160)?,
+        live: a.bytes(&(rows as u32).to_le_bytes())?,
+        route_weights: padded(a, &route_weights, capacity * top * 4)?,
+        routes,
+        gate,
+        down,
+    };
+    Ok(inputs)
+}
+
 pub fn run(session: &Session) -> LabResult<()> {
     let worker: u32 = std::env::var(WORKER)
         .map_err(|e| e.to_string())?
@@ -283,46 +334,7 @@ pub fn run(session: &Session) -> LabResult<()> {
                 let codes = c.common("input.e4m3")?;
                 let scales = c.common("input.ue8m0")?;
                 let ids = ints(&c.common("ids.i32")?);
-                let route_weights = c.common("route_weights.f32")?;
-                if codes.len() != rows * 5120
-                    || scales.len() != rows * 160
-                    || ids.len() != rows * top
-                {
-                    return Err("captured input extent mismatch".into());
-                }
-                let metadata = |name: &str| c.read(name);
-                let routes = RouteMetadata {
-                    counts: Some(padded(
-                        &mut a,
-                        &metadata("counts.i32")?,
-                        (set.count as usize + 1) * 4,
-                    )?),
-                    offsets: padded(
-                        &mut a,
-                        &metadata("offsets.i32")?,
-                        (set.count as usize + 1) * 4,
-                    )?,
-                    sorted_rows: padded(
-                        &mut a,
-                        &metadata("sorted_rows.i32")?,
-                        (capacity * top + set.count as usize * 64) * 4,
-                    )?,
-                    padded_rows: padded(&mut a, &metadata("padded_rows.i32")?, 4)?,
-                    active_experts: Some(padded(
-                        &mut a,
-                        &metadata("active.i32")?,
-                        (set.count as usize + 1) * 4,
-                    )?),
-                };
-                let inputs = Inputs {
-                    codes: padded(&mut a, &codes, capacity * 5120)?,
-                    scales: padded(&mut a, &scales, capacity * 160)?,
-                    live: a.bytes(&(rows as u32).to_le_bytes())?,
-                    route_weights: padded(&mut a, &route_weights, capacity * top * 4)?,
-                    routes,
-                    gate,
-                    down,
-                };
+                let inputs = case_inputs(&mut a, c, gate, down)?;
                 let p = build(&mut a, set, capacity as u32, rows as u32, &inputs)?;
                 runner.run(&a, &p.exact.launches())?;
                 let auth = authenticate(&a, c, &p.exact.out, rows)?;

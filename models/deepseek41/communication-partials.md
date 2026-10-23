@@ -9,9 +9,9 @@ and BF16 KV storage retain F32 partials by default.
 `CHOPINFER_DEEPSEEK41_BF16_PARTIALS=0` keeps F32 partials in every phase.
 `prefill` explicitly selects the prefill-only route; `1` selects the
 experimental all-phase route on Flash TP4. Invalid values select F32.
-These are bit-changing precision choices. Explicit prefill DMA requires
-`BF16_PARTIALS=0`: its F32 adapter bypasses partial rounding, so selecting
-both transports is refused at create.
+These are bit-changing precision choices. Prefill DMA carries the BF16
+partials with the same rounding and rank-ordered sum, so it composes with
+this default; see [prefill-communication.md](prefill-communication.md).
 
 The candidate declares `CommQuery::AllReduce` with dtype BF16. Each rank
 rounds its completed F32 partial once to BF16. The transport exchanges BF16,

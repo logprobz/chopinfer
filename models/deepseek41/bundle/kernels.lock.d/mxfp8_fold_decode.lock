@@ -3303,7 +3303,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "af7c09849029d1fe8b2248dfb945f515543fcdf6ea065fd1deba2fad05c09040",
+    "cubin_sha256": "0cba29f08b942253fa028ae1825d7cde6063373b791252ffaa08a08e43bf1127",
     "resources": [
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1024_k4096_g2_f32_v1_admit_v1",
@@ -3316,7 +3316,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1024_k4096_g2_f32_v1_partials_v1",
-        "registers": 40,
+        "registers": 51,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3343,7 +3343,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1024_k4096_g4_f32_v1_partials_v1",
-        "registers": 40,
+        "registers": 51,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3370,7 +3370,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1024_k4096_g8_f32_v1_partials_v1",
-        "registers": 40,
+        "registers": 51,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3397,7 +3397,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1152_k5120_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3424,7 +3424,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1152_k5120_g1_f32_v1_pair_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3451,7 +3451,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n1280_k5120_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3478,7 +3478,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n16384_k1280_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3505,7 +3505,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n2304_k5120_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3532,7 +3532,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n2304_k5120_g1_f32_v1_pair_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3559,7 +3559,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n25600_k6144_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3586,7 +3586,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n32768_k1280_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3613,7 +3613,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n4096_k1280_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3640,7 +3640,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k1152_g1_f32_v1_partials_v1",
-        "registers": 40,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3667,7 +3667,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k15360_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3694,7 +3694,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k2048_g1_f32_v1_partials_v1",
-        "registers": 37,
+        "registers": 51,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3721,7 +3721,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k2304_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3748,7 +3748,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k4096_g1_f32_v1_partials_v1",
-        "registers": 36,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3775,7 +3775,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k576_g1_f32_v1_partials_v1",
-        "registers": 40,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3802,7 +3802,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n5120_k8192_g1_f32_v1_partials_v1",
-        "registers": 36,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3829,7 +3829,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n512_k5120_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3856,7 +3856,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n576_k5120_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3883,7 +3883,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n576_k5120_g1_f32_v1_pair_v1_partials_v1",
-        "registers": 38,
+        "registers": 50,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3910,7 +3910,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_decode_n8192_k1280_g1_f32_v1_partials_v1",
-        "registers": 38,
+        "registers": 52,
         "shared_static_bytes": 9472,
         "local_bytes": 0,
         "stack_bytes": 0,

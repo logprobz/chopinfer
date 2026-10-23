@@ -635,7 +635,7 @@ fn peer_dma_requires_the_directed_lease_and_pool_grant() {
 }
 
 #[test]
-fn peer_dma_contexts_must_own_their_spans_and_destination_stream() {
+fn peer_dma_contexts_must_own_their_spans() {
     let h = cross_harness();
     let lease = h
         .services()
@@ -645,7 +645,7 @@ fn peer_dma_contexts_must_own_their_spans_and_destination_stream() {
         .set_memory_pool_peer_access(h.owner_pool, h.consumer, true)
         .unwrap();
     for (stream, destination, source) in [
-        (h.owner_stream, h.consumer, h.owner),
+        (h.owner_stream, h.owner, h.owner),
         (h.consumer_stream, h.owner, h.owner),
         (h.consumer_stream, h.consumer, h.consumer),
     ] {
@@ -661,6 +661,116 @@ fn peer_dma_contexts_must_own_their_spans_and_destination_stream() {
         );
     }
     h.services().release_peer_access(lease).unwrap();
+}
+
+#[test]
+fn peer_dma_pushes_from_the_source_stream_with_the_source_lease_and_grant() {
+    let h = cross_harness();
+    let push = || {
+        h.services().copy_peer_to_peer(
+            h.owner_stream,
+            h.consumer,
+            h.span(h.consumer_buffer),
+            h.owner,
+            h.span(h.owner_buffer),
+        )
+    };
+    // The pull's edge does not let the source write the destination.
+    let pull_lease = h
+        .services()
+        .acquire_peer_access(h.consumer, h.owner)
+        .unwrap();
+    h.services()
+        .set_memory_pool_peer_access(h.owner_pool, h.consumer, true)
+        .unwrap();
+    assert_eq!(
+        push(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    let push_lease = h
+        .services()
+        .acquire_peer_access(h.owner, h.consumer)
+        .unwrap();
+    assert_eq!(
+        push(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    h.services()
+        .set_memory_pool_peer_access(h.consumer_pool, h.owner, true)
+        .unwrap();
+    push().unwrap();
+    h.services().release_peer_access(push_lease).unwrap();
+    assert_eq!(
+        push(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    h.services().release_peer_access(pull_lease).unwrap();
+}
+
+#[test]
+fn peer_dma_refuses_a_stream_of_a_third_context() {
+    let backend = Rc::new(HostServicesV1Backend::new(
+        FakeHostDeviceV1::new(),
+        HostInstanceConfigV1::new(
+            HostTopologyV1::new(vec![0, 1, 2]).expect("the three-rank topology is valid"),
+        ),
+    ));
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let services = table.caller();
+    let contexts = (0..3)
+        .map(|rank| services.select_context(rank, rank as i32).unwrap())
+        .collect::<Vec<_>>();
+    let pools = contexts
+        .iter()
+        .map(|&context| services.select_memory_pool(context).unwrap())
+        .collect::<Vec<_>>();
+    let streams = contexts
+        .iter()
+        .map(|&context| services.create_stream(context, 0).unwrap())
+        .collect::<Vec<_>>();
+    let buffers = pools
+        .iter()
+        .zip(&streams)
+        .map(|(&pool, &stream)| {
+            services
+                .allocate_device_buffer(pool, stream, 64, 16)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    // Every context reaches every other's memory.
+    let mut leases = Vec::new();
+    for owner in 0..3 {
+        for peer in 0..3 {
+            if owner != peer {
+                leases.push(
+                    services
+                        .acquire_peer_access(contexts[owner], contexts[peer])
+                        .unwrap(),
+                );
+                services
+                    .set_memory_pool_peer_access(pools[peer], contexts[owner], true)
+                    .unwrap();
+            }
+        }
+    }
+    let copy = |stream: usize| {
+        services.copy_peer_to_peer(
+            streams[stream],
+            contexts[0],
+            DeviceBufferSpanV1::new(buffers[0], 0, 64),
+            contexts[1],
+            DeviceBufferSpanV1::new(buffers[1], 0, 64),
+        )
+    };
+    assert_eq!(
+        copy(2),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+    );
+    copy(0).expect("the destination's stream pulls");
+    copy(1).expect("the source's stream pushes");
+    for lease in leases.into_iter().rev() {
+        services.release_peer_access(lease).unwrap();
+    }
 }
 
 #[test]

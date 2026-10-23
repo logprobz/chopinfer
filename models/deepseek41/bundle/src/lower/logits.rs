@@ -151,7 +151,7 @@ mod tests {
         fn new() -> Rig {
             let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+            let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
             assert!(ops.logits.is_some(), "{:?}", ops.missing);
             // Each rank's logits comm state, of the sizes the ops state.
             let state = ops.logits.as_ref().unwrap().state();

@@ -9,8 +9,10 @@ use std::time::Duration;
 const CONTROL: &str = "CHOPINFER_MAPPED_ROW_CONTROL";
 const ASYNC: &str = "CHOPINFER_MAPPED_ASYNC_READ_AHEAD";
 const SYNC: &str = super::MAPPED_READ_AHEAD_ENV_V1;
-// Resident row caching stays enabled independently of page read-ahead.
-const DEFAULT_READ_AHEAD: bool = false;
+// Synchronous gathers read ahead by default; `SYNC=0` turns it off.
+// Asynchronous gathers read ahead only on request. Resident row caching
+// stays enabled independently of page read-ahead.
+const DEFAULT_READ_AHEAD: bool = true;
 
 #[derive(Default)]
 struct Counts {
@@ -104,8 +106,10 @@ fn mode(value: &str) -> Result<u8, String> {
 }
 
 fn configured(get: impl Fn(&str) -> Option<OsString>) -> u8 {
-    let sync = get(SYNC).map_or(DEFAULT_READ_AHEAD, |value| value == "1");
-    let asynchronous = get(ASYNC).map_or(sync, |value| value == "1");
+    let requested = get(SYNC).map(|value| value == "1");
+    let sync = requested.unwrap_or(DEFAULT_READ_AHEAD);
+    // An explicit SYNC=1 still selects both paths, as before the default.
+    let asynchronous = get(ASYNC).map_or(requested == Some(true), |value| value == "1");
     u8::from(sync) | (u8::from(asynchronous) << 1)
 }
 
@@ -231,14 +235,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_off_and_each_read_ahead_path_has_an_override() {
-        assert_eq!(configured(|_| None), 0);
-        assert_eq!(configured(|name| (name == SYNC).then(|| "1".into())), 3);
-        assert_eq!(
-            configured(|name| Some(if name == SYNC { "1" } else { "0" }.into())),
-            1
-        );
-        assert_eq!(configured(|name| (name == ASYNC).then(|| "1".into())), 2);
+    fn sync_read_ahead_is_the_default_and_each_path_has_an_override() {
+        let set = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        assert_eq!(configured(|_| None), 1);
+        assert_eq!(configured(set(&[(SYNC, "0")])), 0);
+        assert_eq!(configured(set(&[(SYNC, "1")])), 3);
+        assert_eq!(configured(set(&[(SYNC, "1"), (ASYNC, "0")])), 1);
+        assert_eq!(configured(set(&[(ASYNC, "1")])), 3);
+        assert_eq!(configured(set(&[(SYNC, "0"), (ASYNC, "1")])), 2);
+        assert_eq!(configured(set(&[(ASYNC, "0")])), 1);
         for (name, expected) in [("off", 0), ("sync", 1), ("async", 2), ("both", 3)] {
             assert_eq!(mode(name).unwrap(), expected);
         }

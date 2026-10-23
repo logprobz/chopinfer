@@ -139,7 +139,8 @@ serve --model DIR [--tensor-parallel-size N] [--model-cache-dir DIR] [--activati
   [--modalities auto|all|text[,image][,video][,audio]] [--load-threads N]
 verify --model DIR [--manifest FILE[#ENTRY]] [--allow-unrecorded] [--jobs N]
 eval list|run|verify-references --model DIR ... (eval --help lists the options)
-serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NAME]
+serve --bundle DIR [--checkpoint DIR [--load-threads N]
+  [--weight-keeper DIR [--weight-keeper-policy prefer|require]]] [--profile NAME|FILE#NAME]
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
   [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
@@ -164,6 +165,8 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--allowed-origins JSON] [--allowed-methods JSON] [--allowed-headers JSON]
   [--allow-credentials] [--api-key KEY] [--enable-request-id-headers]
   [--fake-host-services]
+weights keep --keeper-dir DIR [--read-write] SERVE-OPTIONS (loads what serve would, and lends it)
+weights status|stop --keeper-dir DIR
 conformance-run --bundle DIR [--checkpoint DIR] --fixture-request LABEL
   [--topology ID] [--fixture-tokens COUNT] [--scenario commit|cancel|drop]
   [--gpu-memory-utilization F]
@@ -799,6 +802,18 @@ pub enum HostCommandV1 {
     CheckpointVerify {
         options: crate::checkpoint_verify::VerifyOptionsV1,
     },
+    /// `weights keep`: load the rank images `serve` with the same options
+    /// would load, and lend them to servers ([`crate::weight_keeper`]).
+    WeightsKeep {
+        keep: crate::weight_keeper::KeepRequestV1,
+        serve: Box<HostCommandV1>,
+    },
+    /// `weights status` and `weights stop`: ask the keeper in a directory
+    /// for its registry, or to stop.
+    WeightsKeeper {
+        directory: PathBuf,
+        stop: bool,
+    },
     Serve {
         model_options: std::collections::BTreeMap<String, String>,
         list_model_options: bool,
@@ -812,7 +827,7 @@ pub enum HostCommandV1 {
         http_options: Box<runtime_server::HttpOptions>,
         devices: Option<Box<crate::DeviceSelectionV1>>,
         selection: ServeSelection,
-        host: BundleHostCompatibilityV1,
+        host: Box<BundleHostCompatibilityV1>,
         topology: Option<String>,
         device: DeviceServicesV1,
         listen: SocketAddr,
@@ -832,6 +847,9 @@ pub enum HostCommandV1 {
         direct_checkpoint: Option<PathBuf>,
         /// `--load-threads`: packing workers per rank of a direct load.
         load_threads: Option<std::num::NonZeroU16>,
+        /// `--weight-keeper DIR` and its policy: map the rank images the
+        /// keeper there lends instead of loading them.
+        weight_keeper: Option<(PathBuf, crate::weight_keeper::KeeperPolicyV1)>,
     },
     ConformanceRun {
         selection: BundleSelectionV1,
@@ -1002,11 +1020,77 @@ fn parse_named_command_v1(
         "kernel" => parse_kernel_command_v1(&arguments[1..]),
         "serve" => parse_serve_command_v1(&arguments[1..]),
         "verify" => parse_checkpoint_verify_command_v1(&arguments[1..]),
+        "weights" => parse_weights_command_v1(&arguments[1..]),
         "conformance-run" => parse_conformance_run_command_v1(&arguments[1..]),
         _ if command.starts_with('-') && bare_flags_are_conformance_run => {
             parse_conformance_run_command_v1(arguments)
         }
         _ => Err(usage_error(format!("unsupported command '{command}'"))),
+    }
+}
+
+/// Parses the `weights` commands. `weights keep --keeper-dir DIR
+/// [--read-write] SERVE-OPTIONS` takes `serve`'s options, so it plans,
+/// verifies and loads exactly what that `serve` would.
+fn parse_weights_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCommandErrorV1> {
+    let command = arguments
+        .first()
+        .ok_or_else(|| usage_error("weights requires keep, status or stop"))?;
+    let mut directory = None;
+    let mut read_only = true;
+    let mut rest = Vec::new();
+    let mut words = arguments[1..].iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--keeper-dir" => {
+                let value = words
+                    .next()
+                    .ok_or_else(|| usage_error("--keeper-dir requires a directory"))?;
+                set_once_v1(&mut directory, PathBuf::from(value), "--keeper-dir")?;
+            }
+            "--read-write" if command == "keep" && read_only => read_only = false,
+            _ => rest.push(word.clone()),
+        }
+    }
+    let directory = directory.ok_or_else(|| usage_error("weights requires --keeper-dir DIR"))?;
+    match command.as_str() {
+        "keep" => {
+            let serve = parse_serve_command_v1(&rest)?;
+            let HostCommandV1::Serve {
+                direct_checkpoint,
+                selection,
+                weight_keeper,
+                ..
+            } = &serve
+            else {
+                return Err(usage_error("weights keep takes serve's options"));
+            };
+            if weight_keeper.is_some() {
+                return Err(usage_error("weights keep does not borrow from a keeper"));
+            }
+            if direct_checkpoint.is_none() && !matches!(selection, ServeSelection::Model(_)) {
+                return Err(usage_error(
+                    "weights keep loads a checkpoint: name --model or --checkpoint",
+                ));
+            }
+            Ok(HostCommandV1::WeightsKeep {
+                keep: crate::weight_keeper::KeepRequestV1 {
+                    directory,
+                    read_only,
+                },
+                serve: Box::new(serve),
+            })
+        }
+        "status" | "stop" if rest.is_empty() => Ok(HostCommandV1::WeightsKeeper {
+            directory,
+            stop: command == "stop",
+        }),
+        "status" | "stop" => Err(usage_error(format!(
+            "weights {command} takes only --keeper-dir"
+        ))),
+        _ => Err(usage_error(format!(
+            "unsupported weights command '{command}'"
+        ))),
     }
 }
 
@@ -1280,6 +1364,8 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--debug-reference-tokens",
             "--checkpoint",
             "--load-threads",
+            "--weight-keeper",
+            "--weight-keeper-policy",
             "--fake-host-services",
         ],
     )?;
@@ -1307,6 +1393,25 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
                 .ok_or_else(|| usage_error("--load-threads takes a count from 1 to 65535"))?,
         ),
         None => None,
+    };
+    // A keeper lends rank images a checkpoint's plans produce, so only a
+    // direct load can borrow them.
+    let weight_keeper = match (&parsed.weight_keeper, parsed.weight_keeper_policy) {
+        (None, None) => None,
+        (None, Some(_)) => {
+            return Err(usage_error(
+                "--weight-keeper-policy requires --weight-keeper",
+            ));
+        }
+        (Some(_), _) if direct_checkpoint.is_none() && parsed.model.is_none() => {
+            return Err(usage_error(
+                "--weight-keeper requires --model or --checkpoint",
+            ));
+        }
+        (Some(directory), policy) => Some((
+            directory.clone(),
+            policy.unwrap_or(crate::weight_keeper::KeeperPolicyV1::Prefer),
+        )),
     };
     let listen = match &parsed.listen {
         Some(listen) => listen.clone(),
@@ -1463,7 +1568,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             .devices
             .clone()
             .map(|ordinals| Box::new(crate::DeviceSelectionV1(ordinals))),
-        host: parsed.host_compatibility()?,
+        host: Box::new(parsed.host_compatibility()?),
         topology: parsed.topology.clone(),
         device: parsed.device_services(),
         listen,
@@ -1524,6 +1629,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         debug_reference_tokens: parsed.debug_reference_tokens.clone(),
         direct_checkpoint,
         load_threads,
+        weight_keeper,
         selection: match parsed.serve_selection()? {
             ServeSelection::Model(model) => ServeSelection::Model(Box::new(LocalModel {
                 serve_arguments: crate::profiles::serving_options(&resolved.arguments),
@@ -1773,6 +1879,19 @@ fn run_host_command_from_v1(
             None => kernel::inspect(manifest),
         }
         .map_err(run_error),
+        HostCommandV1::WeightsKeep { keep, serve } => {
+            crate::weight_keeper::select_keep_v1(keep.clone()).map_err(run_error)?;
+            run_host_command_from_v1(serve, surface, started)
+        }
+        HostCommandV1::WeightsKeeper { directory, stop } => {
+            if *stop {
+                crate::weight_keeper::stop_v1(directory).map_err(run_error)?;
+                Ok("weight keeper stopped".to_owned())
+            } else {
+                let registry = crate::weight_keeper::status_v1(directory).map_err(run_error)?;
+                serde_json::to_string_pretty(&registry).map_err(|e| run_error(e.to_string()))
+            }
+        }
         HostCommandV1::CheckpointVerify { options } => {
             let started = std::time::Instant::now();
             let report =
@@ -1817,8 +1936,18 @@ fn run_host_command_from_v1(
             debug_reference_tokens,
             direct_checkpoint,
             load_threads,
+            weight_keeper,
         } => {
             let started = serve_started_v1(started);
+            if let Some((directory, policy)) = weight_keeper {
+                crate::weight_keeper::select_arena_source_v1(
+                    crate::weight_keeper::ArenaSourceV1::Borrow {
+                        directory: directory.clone(),
+                        policy: *policy,
+                    },
+                )
+                .map_err(run_error)?;
+            }
             if let Some(threads) = load_threads {
                 crate::direct::select_threads_per_rank_v1(usize::from(threads.get()))
                     .map_err(run_error)?;
@@ -2388,6 +2517,13 @@ fn serve_v1(
         open_served_deployment_v1(&package, host, server_config)?;
     let topology = ServedTopologyV1::new(package.manifest(), topology, devices, device)?
         .with_context_parallel(package.manifest(), serving.context_parallel_size)?;
+    if let Some(keep) = crate::weight_keeper::keep_request_v1() {
+        let loaded = load_verified_process_bundle_v1(selection, host, package, Some(library))
+            .map_err(|error| run_error(format!("the selected bundle did not load: {error}")))?
+            .with_model_options(model_options)
+            .map_err(|error| run_error(error.to_string()))?;
+        return keep_weights_v1(loaded, &topology, device, direct_package, keep);
+    }
     let mut identity = serving_identity_v1(
         package.manifest(),
         (profile_name, direct_package),
@@ -2609,6 +2745,7 @@ fn serve_v1(
     // What the metrics endpoint answers with is this worker's own engine, KV
     // and lifecycle state, taken before the backend is handed to the transport.
     let metrics = Arc::new(backend.runtime_metrics(&http_options.served_model_names));
+    let warmup_steps = backend.startup_step_log();
     let backend = Arc::new(backend);
     let result = serve_transport_v1(
         readiness_started,
@@ -2624,6 +2761,7 @@ fn serve_v1(
         http_options,
         warmup_sequences,
         verify_warmup,
+        Some(warmup_steps),
     );
     if backend.is_stalled() {
         // The watchdog has set an exit deadline. Exit now without waiting on
@@ -2668,6 +2806,7 @@ fn serve_transport_v1(
     http_options: runtime_server::HttpOptions,
     warmup_sequences: usize,
     verify_warmup: Option<runtime_engine::warmup::VerifyWarmup>,
+    warmup_steps: Option<Arc<crate::startup::StartupStepLog>>,
 ) -> Result<String, HostCommandErrorV1> {
     let skip_warmup = crate::startup::development_skip_warmup(
         std::env::var_os("CHOPINFER_DEV_SKIP_WARMUP").as_deref(),
@@ -2696,6 +2835,7 @@ fn serve_transport_v1(
                 warmup_sequences,
                 skip_warmup,
                 verify_warmup,
+                warmup_steps.as_deref(),
             ) => {
                 result.map_err(|error| run_error(format!("startup warmup failed: {error}")))?;
             }
@@ -3389,6 +3529,112 @@ type OpenServedInstanceV1 = (
 /// package that requires `chop.served-items.v1` receives the count in its
 /// create record. A bundle may still size its slots and graph buckets for its
 /// package maximum until it adopts the count (BUNDLE_ARCHITECTURE.md#ownership-boundary).
+/// Runs this process as a weight keeper: loads the rank images the selected
+/// package plans for `topology` into memory other processes can map, and
+/// lends them until released or stopped.
+fn keep_weights_v1(
+    loaded: &'static InstalledBundleHostV1,
+    topology: &ServedTopologyV1,
+    device: DeviceServicesV1,
+    direct_package: Option<&DirectPackageIdentityV1>,
+    keep: &crate::weight_keeper::KeepRequestV1,
+) -> Result<String, HostCommandErrorV1> {
+    let config = loaded
+        .instance_config(&topology.id, topology.device_ordinals.clone())
+        .map_err(|error| run_error(error.to_string()))?;
+    let checkpoint = crate::direct::selected_checkpoint_v1()
+        .map_err(run_error)?
+        .ok_or_else(|| {
+            usage_error("weights keep loads a checkpoint: name --model or --checkpoint")
+        })?;
+    let mut about = serde_json::Map::new();
+    about.insert("bundle_id".into(), loaded.manifest().id().as_str().into());
+    about.insert("topology".into(), topology.id.clone().into());
+    if let Some(package) = direct_package {
+        about.insert(
+            "package_identity".into(),
+            package.package_identity.clone().into(),
+        );
+        about.insert(
+            "metadata_identity".into(),
+            package.metadata_identity.clone().into(),
+        );
+    }
+    match device {
+        #[cfg(feature = "fake-host-services")]
+        DeviceServicesV1::HostMemory => keep_on_device_v1(
+            crate::fake::FakeHostDeviceV1::new(),
+            config,
+            topology,
+            checkpoint,
+            keep,
+            about,
+        ),
+        #[cfg(not(feature = "fake-host-services"))]
+        DeviceServicesV1::HostMemory => Err(run_error(NO_HOST_MEMORY_SERVICES_V1)),
+        #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
+        DeviceServicesV1::Compiled => keep_on_device_v1(
+            crate::cuda::CudaHostDeviceV1::new()
+                .map_err(|error| run_error(format!("cannot open the device driver: {error}")))?,
+            config,
+            topology,
+            checkpoint,
+            keep,
+            about,
+        ),
+        #[cfg(not(all(target_os = "linux", feature = "linux-cuda-host")))]
+        DeviceServicesV1::Compiled => Err(run_error(
+            "weights keep needs the CUDA host on Linux, or --fake-host-services",
+        )),
+    }
+}
+
+fn keep_on_device_v1<D: crate::HostDeviceBackendV1>(
+    device: D,
+    config: crate::HostInstanceConfigV1,
+    topology: &ServedTopologyV1,
+    checkpoint: std::sync::Arc<crate::direct::DirectCheckpointV1>,
+    keep: &crate::weight_keeper::KeepRequestV1,
+    about: serde_json::Map<String, serde_json::Value>,
+) -> Result<String, HostCommandErrorV1> {
+    crate::weight_keeper::prepare_directory_v1(&keep.directory).map_err(run_error)?;
+    let started = std::time::Instant::now();
+    let backend = crate::HostServicesV1Backend::new(device, config);
+    let images = crate::weight_keeper::load::load_v1(&backend, &topology.device_ordinals)
+        .map_err(run_error)?;
+    // The images hold their memory without a context, so every context goes
+    // with the backend and the keeper is no compute process while it lends.
+    drop(backend);
+    eprintln!(
+        "weight keeper: loaded {} rank images, {} bytes, in {:.3}s; device contexts released",
+        images.len(),
+        images
+            .iter()
+            .map(|kept| kept.image.byte_length)
+            .sum::<u64>(),
+        started.elapsed().as_secs_f64()
+    );
+    let stamps = std::sync::Arc::clone(&checkpoint);
+    let exited = crate::weight_keeper::serve_v1(crate::weight_keeper::KeeperV1 {
+        directory: keep.directory.clone(),
+        checkpoint_identity: checkpoint.identity_hex(),
+        stamps: Box::new(move || {
+            stamps.verify_unchanged()?;
+            stamps.stamps()
+        }),
+        images,
+        read_only: keep.read_only,
+        about,
+    })
+    .map_err(run_error)?;
+    // `serve_v1` dropped the images, and their memory, first.
+    drop(exited.waiting);
+    Ok(match exited.exit {
+        crate::weight_keeper::KeeperExitV1::Released => "weight keeper released".to_owned(),
+        crate::weight_keeper::KeeperExitV1::Stopped => "weight keeper stopped".to_owned(),
+    })
+}
+
 fn open_instance_v1(
     loaded: &'static InstalledBundleHostV1,
     topology: &ServedTopologyV1,
@@ -4614,6 +4860,8 @@ struct ArgumentsV1 {
     debug_reference_tokens: Option<PathBuf>,
     direct_checkpoint: Option<PathBuf>,
     load_threads: Option<usize>,
+    weight_keeper: Option<PathBuf>,
+    weight_keeper_policy: Option<crate::weight_keeper::KeeperPolicyV1>,
     fixture_request: Option<String>,
     fixture_tokens: Option<usize>,
     scenario: Option<FixtureScenarioV1>,
@@ -5103,6 +5351,14 @@ impl ArgumentsV1 {
                 "--load-threads" => {
                     set_once_v1(&mut parsed.load_threads, count_v1(flag, value)?, flag)?
                 }
+                "--weight-keeper" => {
+                    set_once_v1(&mut parsed.weight_keeper, PathBuf::from(value), flag)?
+                }
+                "--weight-keeper-policy" => set_once_v1(
+                    &mut parsed.weight_keeper_policy,
+                    crate::weight_keeper::KeeperPolicyV1::parse(value).map_err(usage_error)?,
+                    flag,
+                )?,
                 "--fixture-request" => {
                     set_once_v1(&mut parsed.fixture_request, value.clone(), flag)?;
                 }
@@ -5234,6 +5490,11 @@ impl ArgumentsV1 {
             ),
             ("--checkpoint", self.direct_checkpoint.is_some()),
             ("--load-threads", self.load_threads.is_some()),
+            ("--weight-keeper", self.weight_keeper.is_some()),
+            (
+                "--weight-keeper-policy",
+                self.weight_keeper_policy.is_some(),
+            ),
             ("--fixture-request", self.fixture_request.is_some()),
             ("--fixture-tokens", self.fixture_tokens.is_some()),
             ("--scenario", self.scenario.is_some()),
@@ -5819,6 +6080,52 @@ mod tests {
         assert!(
             refusal.contains("--activation-policy applies to --model"),
             "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_model_serve_selects_its_keeper_and_hands_the_package_no_keeper_flag() {
+        let words = arguments(&[
+            "serve",
+            "--model",
+            "checkpoint",
+            "--weight-keeper",
+            "keeper",
+            "--weight-keeper-policy",
+            "require",
+            "--max-sequences",
+            "3",
+        ]);
+        let HostCommandV1::Serve {
+            selection: super::ServeSelection::Model(model),
+            weight_keeper,
+            ..
+        } = parse_host_command_v1(&words).unwrap()
+        else {
+            panic!("expected a model");
+        };
+        assert_eq!(
+            weight_keeper,
+            Some((
+                PathBuf::from("keeper"),
+                crate::weight_keeper::KeeperPolicyV1::Require
+            ))
+        );
+        // The keeper is selected before the package serves; the package's
+        // own parse, which names no checkpoint, gets no keeper flag.
+        assert_eq!(model.serve_arguments, ["--max-sequences", "3"]);
+        let mut package = arguments(&["serve", "--bundle", "package"]);
+        package.extend(model.serve_arguments);
+        parse_host_command_v1(&package).unwrap();
+        assert!(
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "package",
+                "--weight-keeper",
+                "keeper",
+            ]))
+            .is_err()
         );
     }
 

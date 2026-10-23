@@ -116,6 +116,10 @@ impl Program for Work<'_> {
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String> {
         self.instance.dspark_commit_features(plan)
     }
+
+    fn defer_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<bool, String> {
+        self.instance.defer_dspark_engram(hashed)
+    }
 }
 
 fn inputs(phase: &PhaseInputs, drafts: &[u32]) -> Result<Vec<Input>, String> {

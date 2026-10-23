@@ -19,6 +19,7 @@ pub fn cached() -> rmsnorm_quantize_cached::Entry {
     rmsnorm_quantize_cached::Entry {
         reference: served(),
         prefix: format!("chop_norm_quantize_{}_query", FLASH.kernel_tag),
+        early_release: false,
     }
 }
 pub fn specs() -> Vec<CubinSpec> {

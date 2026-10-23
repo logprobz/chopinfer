@@ -16,9 +16,17 @@ fn prefill_norm_fuses_only_qualified_row_counts() {
         let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
         let qualified = rows != 65;
         let calls = 2 * FLASH.layers() as usize * shape.ranks() as usize;
+        // At 8192 rows each MoE-input norm also certifies its router rows
+        // (`sm120::router_norm`); the attention input norms do not.
+        let certifying = if rows == 8192 { calls / 2 } else { 0 };
         assert_eq!(
             count("chop_prefill_norm_ceil_deepseek41_cached_v1"),
-            if qualified { calls } else { 0 },
+            if qualified { calls - certifying } else { 0 },
+            "rows={rows}"
+        );
+        assert_eq!(
+            count("chop_prefill_norm_ceil_deepseek41_cached_certified_v1"),
+            certifying,
             "rows={rows}"
         );
         assert_eq!(count("chop_prefill_norm_ceil_deepseek41_recompute_v1"), 0);
@@ -32,7 +40,7 @@ fn prefill_norm_fuses_only_qualified_row_counts() {
         );
         for launch in launches
             .iter()
-            .filter(|l| l.contains("chop_prefill_norm_ceil_deepseek41_cached_v1"))
+            .filter(|l| l.contains("chop_prefill_norm_ceil_deepseek41_cached_"))
         {
             assert!(launch.contains(&format!("grid_x: {rows},")), "{launch}");
             assert!(launch.contains("block_x: 256,"), "{launch}");

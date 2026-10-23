@@ -28,17 +28,26 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 
 /// The qualified pair, joined into one launch at the measured Flash
-/// buckets (`COMPLETION_BUCKETS`).
+/// buckets (`COMPLETION_BUCKETS`), with its tail on two CTAs per row at
+/// `TWIN_BUCKETS`, and both launches replaced by the column-block producer
+/// and split finish at `hc_cols::BUCKETS`.
 pub fn register(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
 ) -> kernels_sm120::backend::Sm120 {
     let backend = register_pair(backend, g);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
-        backend.with_sinkhorn_finish_norm_completion(
-            super::hc_completion::served(),
-            COMPLETION_BUCKETS.to_vec(),
-        )
+        backend
+            .with_sinkhorn_finish_norm_completion(
+                super::hc_completion::served(),
+                COMPLETION_BUCKETS.to_vec(),
+            )
+            .with_sinkhorn_finish_norm_twin(super::hc_finish_twin::served(), TWIN_BUCKETS.to_vec())
+            .with_sinkhorn_finish_norm_cols(
+                super::hc_cols::producer(),
+                super::hc_cols::finish(),
+                super::hc_cols::BUCKETS.to_vec(),
+            )
     } else {
         backend
     }
@@ -47,6 +56,10 @@ pub fn register(
 /// Measured (row bucket, warp count) pairs of the one-launch boundary: the
 /// split layout with sixteen warps per chain CTA at C1 and eight at C8.
 pub const COMPLETION_BUCKETS: [(u32, u32); 2] = [(1, 16), (8, 8)];
+
+/// Measured (row bucket, warp count) pairs of the two-CTA tail: DSpark's
+/// Verify-6 bucket (five drafts and the root).
+pub const TWIN_BUCKETS: [(u32, u32); 1] = [(6, 32)];
 
 /// Only measured Flash decode and verify buckets use the 1024-thread tail.
 /// The lab compares one-launch boundaries against exactly this pair.

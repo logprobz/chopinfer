@@ -450,3 +450,179 @@ fn realized_drafting_averages_its_first_steps_evenly() {
     let weights = [1, 2, 4, 32].map(Realized::draft_weight);
     assert_eq!(weights, [1.0 / 32.0, 1.0 / 16.0, 1.0 / 8.0, 1.0 / 8.0]);
 }
+
+// C16 as one DSpark process, B1, served it in a C16 priming phase:
+// 16 items, a 28.0 ms AR step, and drafting by the four requests the
+// estimates chose, four drafts each in a 32-row step.
+const C16_AR: u64 = 28_000;
+/// B1's probes before it drafted: (drafting items, drafts each, accepted,
+/// micros). Probes that ran 14 drafts are rounded up to three of five.
+const C16_PROBES: [(usize, usize, usize, u64); 7] = [
+    (4, 4, 7, 41_961),
+    (4, 4, 13, 40_115),
+    (4, 4, 3, 40_849),
+    (3, 5, 9, 51_405),
+    (3, 5, 10, 50_541),
+    (3, 5, 12, 50_666),
+    (3, 5, 9, 49_352),
+];
+/// B1's steady drafting steps that followed: (accepted of 16, micros). They
+/// realized 593 tok/s against AR's 571.
+const C16_STEADY: [(usize, u64); 4] = [(12, 45_044), (10, 43_395), (12, 43_534), (8, 47_224)];
+
+fn c16_drafts(drafting: usize, each: usize) -> [usize; 16] {
+    let mut drafts = [0; 16];
+    drafts[..drafting].fill(each);
+    drafts
+}
+
+/// A C16 policy with B1's AR baseline and both probe shapes warmed, as
+/// serving's warmup runs every verify graph before requests arrive.
+fn c16_policy() -> SpeculationPolicy {
+    let mut policy = SpeculationPolicy::new(
+        SpeculationConfig::new(5, 32, SpeculationMode::Adaptive, DraftSource::Bundle)
+            .unwrap()
+            .with_draft_cost_model(DraftCostModel::PerBlock),
+    )
+    .with_step_rows(|rows| rows)
+    .with_diagnostics(true);
+    for _ in 0..3 {
+        policy.observe_step(&[0; 16], 0, C16_AR);
+    }
+    policy.observe_step(&c16_drafts(4, 4), 0, 41_000);
+    policy.observe_step(&c16_drafts(3, 5), 0, 50_000);
+    policy
+}
+
+/// Plans `plans` C16 steps. Four requests may draft, and their estimates
+/// stay at 0.85 per position, which prices four drafts each above AR. A
+/// probe step is charged `probe`, a steady drafting step the next of
+/// `steady`, an AR step B1's AR time. Returns the reasons and drafting
+/// steps.
+fn serve_c16(
+    policy: &mut SpeculationPolicy,
+    plans: usize,
+    probe: (usize, u64),
+    mut steady: impl Iterator<Item = (usize, u64)>,
+) -> (Vec<String>, usize) {
+    let good = AcceptanceEstimate {
+        unverified: false,
+        positions: [0.85; MAX_DRAFT_TOKENS],
+    };
+    let candidates: Vec<_> = (0..16)
+        .map(|item| PlanCandidate {
+            maximum_draft_tokens: if item < 4 { 5 } else { 0 },
+            acceptance: &good,
+            fresh: false,
+            remaining_tokens: usize::MAX,
+        })
+        .collect();
+    let mut reasons = Vec::new();
+    let mut drafting = 0;
+    for _ in 0..plans {
+        let drafts = policy.plan(&candidates, DraftBudget::new(16, 16));
+        let reason = policy.decision().unwrap().record()["reason"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let count = drafts.iter().sum::<usize>();
+        let micros = if count == 0 {
+            C16_AR
+        } else {
+            drafting += 1;
+            let (accepted, micros) = if reason == "probe" {
+                probe
+            } else {
+                steady.next().unwrap()
+            };
+            policy.step_accepted = accepted.min(count);
+            micros
+        };
+        policy.observe_step(&drafts, 0, micros);
+        reasons.push(reason);
+    }
+    (reasons, drafting)
+}
+
+/// B1 started drafting at C16 once its estimate cleared the resume margin,
+/// and its steady steps beat AR, but its seven earlier probes, which lost,
+/// outvoted them: `realized_slower` stopped drafting after four steady
+/// steps, and C16 stayed at AR. Probes no longer count as steps, and the
+/// drafting run clears an average of probes alone, so the steady steps
+/// decide and drafting holds.
+#[test]
+fn probe_losses_followed_by_profitable_steady_steps_keep_drafting() {
+    let ar = 16.0 * 1e6 / C16_AR as f64;
+    let steady = rate(
+        C16_STEADY
+            .iter()
+            .map(|&(accepted, micros)| (micros, 16 + accepted)),
+    );
+    let probes = rate(
+        C16_PROBES
+            .iter()
+            .map(|&(_, _, accepted, micros)| (micros, 16 + accepted)),
+    );
+    assert!(probes < ar && ar < steady, "{probes} {ar} {steady}");
+
+    let mut policy = c16_policy();
+    for (drafting, each, accepted, micros) in C16_PROBES {
+        policy.probing = Some(16);
+        policy.step_accepted = accepted;
+        policy.observe_step(&c16_drafts(drafting, each), 0, micros);
+    }
+    let (reasons, drafting) =
+        serve_c16(&mut policy, 64, (0, 0), C16_STEADY.iter().copied().cycle());
+    println!("C16_PROBE_LOSSES drafting={drafting} {reasons:?}");
+    assert!(
+        !reasons.iter().any(|r| r == "realized_slower"),
+        "{reasons:?}"
+    );
+    assert_eq!(drafting, reasons.len(), "{reasons:?}");
+    assert!(policy.realized[&16].holding(), "{:?}", policy.realized[&16]);
+}
+
+/// Steady drafting that realizes 460 tok/s against AR's 571 stops at its
+/// first realized verdict, at most eight steady steps. Probes that measure
+/// the same steps keep it off. Probes lucky enough to clear the resume
+/// margin every time reopen the verdict, but each reopening that loses
+/// again doubles the probe interval: drafting cannot lock on, and it takes
+/// a small share of plans.
+#[test]
+fn a_slower_steady_phase_still_stops_drafting() {
+    let losing = (4, 43_500);
+    for (name, probe) in [("lucky", (14, 41_000)), ("honest", losing)] {
+        let mut policy = c16_policy();
+        let (reasons, drafting) = serve_c16(&mut policy, 2_000, probe, std::iter::repeat(losing));
+        // The drafting run that the first verdict ended.
+        let first_off = reasons.iter().position(|r| r == "realized_slower");
+        let steady = reasons[..first_off.unwrap_or(reasons.len())]
+            .iter()
+            .rev()
+            .take_while(|r| *r == "drafting")
+            .count();
+        let mut runs: Vec<(&str, usize)> = Vec::new();
+        for reason in &reasons[..300] {
+            match runs.last_mut() {
+                Some((last, count)) if *last == reason.as_str() => *count += 1,
+                _ => runs.push((reason, 1)),
+            }
+        }
+        println!(
+            "C16_LOSING {name} drafting={drafting} first_off={first_off:?} steady={steady} \
+             probes={} {runs:?}",
+            reasons.iter().filter(|r| *r == "probe").count()
+        );
+        // Earlier steady steps may already have voted.
+        assert!(
+            first_off.is_some() && (1..=REALIZED_STEPS as usize).contains(&steady),
+            "{name}: {reasons:?}"
+        );
+        assert!(
+            drafting * 100 <= 4 * reasons.len(),
+            "{name}: {drafting} drafting steps of {}",
+            reasons.len()
+        );
+        assert!(!policy.realized[&16].holding(), "{name}");
+    }
+}

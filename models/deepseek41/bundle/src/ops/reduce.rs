@@ -208,9 +208,145 @@ fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
 #[cfg(test)]
 thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
+/// `Skip` is the unset default: ordered DMA for the negotiated upper-skip
+/// executor only, with the BF16 gather it was measured with. Full-schedule
+/// and two-part executions keep the SM transport unless `1` selects
+/// `Explicit`.
+/// The element format a prefill DMA reduction copies between ranks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DmaPayload {
+    F32,
+    Bf16,
+}
+
+impl DmaPayload {
+    pub(crate) fn bytes(self) -> u64 {
+        match self {
+            Self::F32 => 4,
+            Self::Bf16 => 2,
+        }
+    }
+}
+
+/// A row-local launch that may run on part of a DMA call's interval: which
+/// arguments hold rows and how many bytes each row takes there. Every other
+/// argument is the same for every row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RowLocal {
+    pub(crate) kind: RowLocalKind,
+    pub(crate) rows: Vec<(usize, u64)>,
+    /// The argument bound to the call's own rows, if any: the reduced rows a
+    /// consumer reads, or the partial rows a producer writes.
+    pub(crate) call_rows: Option<usize>,
+    /// The device cell holding the live row count.
+    pub(crate) live: usize,
+    /// A U64 argument that addresses rows from an explicit first row.
+    pub(crate) row_offset: Option<usize>,
+    /// Row arguments that may instead be null.
+    pub(crate) optional: Vec<(usize, u64)>,
+    /// Whether row views other than the call's rows may be longer than the
+    /// launch's rows: capacity views the launch reads from their first row.
+    pub(crate) capacity_views: bool,
+    /// The grid dimension counting rows, and the rows each step covers.
+    pub(crate) grid: (usize, u32),
+}
+
+/// The consumers that follow a hidden reduction, in their served order, and
+/// the producer of its partial rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RowLocalKind {
+    Expand,
+    Mix,
+    Norm,
+    /// The MoE route-row sum that writes the call's F32 partial rows.
+    Produce,
+}
+
+/// Whether DMA runs the row-local consumers of each gathered owner
+/// interval as it lands. Unset selects it; `0` keeps them after the call.
+pub(crate) fn dma_consume_requested() -> bool {
+    #[cfg(test)]
+    return CONSUME_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static CONSUME_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_consume<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CONSUME_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(CONSUME_IN_TESTS.replace(enabled));
+    run()
+}
+
+/// Whether DMA runs the producer of each interval a rank sends as its own
+/// launch, so each destination pulls that interval as soon as it is
+/// produced and rounded. Unset selects it; `0` keeps one producer launch
+/// before the call.
+pub(crate) fn dma_produce_requested() -> bool {
+    #[cfg(test)]
+    return PRODUCE_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static PRODUCE_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_produce<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PRODUCE_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(PRODUCE_IN_TESTS.replace(enabled));
+    run()
+}
+
+/// Whether DMA issues each peer copy on its source's stream, where the
+/// host allows it (`execute::dma::pushes`). Unset selects it; `0` keeps
+/// every copy on its destination's stream.
+pub(crate) fn dma_push_requested() -> bool {
+    #[cfg(test)]
+    return PUSH_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH").as_deref() != Ok("0")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static PUSH_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma_push<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PUSH_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(PUSH_IN_TESTS.replace(enabled));
+    run()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,
+    Skip,
     Explicit,
 }
 
@@ -218,11 +354,31 @@ impl PrefillDma {
     fn read(setting: Option<&str>) -> Self {
         match setting {
             Some("1") => Self::Explicit,
+            None => Self::Skip,
             _ => Self::Off,
         }
     }
 
+    /// The policy an instance keeps: `Skip` holds only for a create record
+    /// whose prefill profile negotiates upper-skip chunks and whose BF16
+    /// gather is prepared; otherwise it allocates nothing.
+    pub(crate) fn admit(
+        self,
+        prefill: model_deepseek41_contract::prefill_profile::Profile,
+        bf16_gather: bool,
+    ) -> Self {
+        match self {
+            Self::Skip if !(prefill.skip && prefill.chunk > 0 && bf16_gather) => Self::Off,
+            policy => policy,
+        }
+    }
+
     pub(crate) fn enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Full-schedule and two-part executions require explicit selection.
+    pub(crate) fn serves_full_schedule(self) -> bool {
         self == Self::Explicit
     }
 }
@@ -262,14 +418,35 @@ pub(crate) fn with_dma_setting<T>(setting: Option<&str>, run: impl FnOnce() -> T
 
 #[cfg(test)]
 #[test]
-fn dma_requires_explicit_selection() {
+fn dma_defaults_to_upper_skip_and_keeps_explicit_controls() {
+    use model_deepseek41_contract::prefill_profile::Profile;
+    let skip = Profile {
+        chunk: 8192,
+        skip: true,
+    };
+    let full = Profile::default();
+    let chunked = Profile {
+        chunk: 8192,
+        skip: false,
+    };
     let explicit = PrefillDma::read(Some("1"));
     assert_eq!(explicit, PrefillDma::Explicit);
-    assert!(explicit.enabled());
+    for (prefill, bf16) in [(skip, true), (skip, false), (full, true), (chunked, true)] {
+        assert_eq!(explicit.admit(prefill, bf16), PrefillDma::Explicit);
+    }
+    assert!(explicit.enabled() && explicit.serves_full_schedule());
+    let unset = PrefillDma::read(None);
+    assert_eq!(unset, PrefillDma::Skip);
+    assert_eq!(unset.admit(skip, true), PrefillDma::Skip);
+    assert!(unset.enabled() && !unset.serves_full_schedule());
+    for (prefill, bf16) in [(skip, false), (full, true), (chunked, true)] {
+        assert_eq!(unset.admit(prefill, bf16), PrefillDma::Off);
+    }
     for setting in [Some("0"), Some(""), Some("invalid")] {
         let off = PrefillDma::read(setting);
         assert_eq!(off, PrefillDma::Off);
-        assert!(!off.enabled());
+        assert_eq!(off.admit(skip, true), PrefillDma::Off);
+        assert!(!off.enabled() && !off.serves_full_schedule());
     }
 }
 

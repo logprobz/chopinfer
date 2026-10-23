@@ -40,6 +40,9 @@ pub use crate::device::COLLECTIVE_SUM_BF16_V1 as FAKE_COLLECTIVE_SUM_BF16_V1;
 pub const DEFAULT_FAKE_ALLOCATION_ALIGNMENT_V1: u64 = 4096;
 /// The device memory a fake device reports unless set otherwise.
 pub const DEFAULT_FAKE_DEVICE_MEMORY_BYTES_V1: u64 = 1024 * 1024 * 1024 + 16 * 1024 * 1024;
+/// The step a fake lendable mapping's length is rounded up to, as a device
+/// rounds it to its allocation granularity.
+pub const FAKE_LENDABLE_GRANULARITY_V1: u64 = 64 * 1024;
 
 /// One operation this backend can be told to refuse.
 ///
@@ -203,6 +206,25 @@ pub struct FakeHostDeviceV1 {
     disabled_context_peer_access: Vec<(u64, u64)>,
     /// Live mapped host allocations and their bytes, outside the ledger.
     mapped_host: BTreeMap<u64, u64>,
+    /// Each context's device ordinal.
+    context_devices: BTreeMap<u64, i32>,
+    /// The mapping length of each live lendable allocation.
+    lendable: BTreeMap<u64, u64>,
+    /// Each live imported allocation's reader devices and whether it is
+    /// read-only.
+    imported: BTreeMap<u64, (Vec<i32>, bool)>,
+    /// How many held lendable allocations ([`HostDeviceBackendV1::hold_device_buffer`])
+    /// are not yet dropped, wherever they went; made by the first hold.
+    held: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+/// A fake held allocation: it only counts itself.
+struct FakeHeldV1(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for FakeHeldV1 {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// One host transfer this backend accepted without performing.
@@ -266,7 +288,31 @@ impl FakeHostDeviceV1 {
             enabled_context_peer_access: Vec::new(),
             disabled_context_peer_access: Vec::new(),
             mapped_host: BTreeMap::new(),
+            context_devices: BTreeMap::new(),
+            lendable: BTreeMap::new(),
+            imported: BTreeMap::new(),
+            held: None,
         }
+    }
+
+    /// The readers and read-only flag one imported allocation was mapped
+    /// with, if `buffer` is a live import.
+    #[must_use]
+    pub fn imported_access(&self, buffer: DeviceObjectV1) -> Option<(Vec<i32>, bool)> {
+        self.imported.get(&buffer.get()).cloned()
+    }
+
+    /// How many lendable and imported allocations are live.
+    #[must_use]
+    pub fn lent_allocation_counts(&self) -> (usize, usize) {
+        (self.lendable.len(), self.imported.len())
+    }
+
+    /// The count of held allocations not yet dropped, which outlives this
+    /// backend as the allocations do; zero and unshared before any hold.
+    #[must_use]
+    pub fn held_allocations(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        self.held.clone().unwrap_or_default()
     }
 
     /// Every live context this backend issued, in the order it issued them.
@@ -988,6 +1034,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         // names, so this backend remembers it instead of inferring one later.
         self.ledger
             .attach_context(context.get(), rank, device_ordinal);
+        self.context_devices.insert(context.get(), device_ordinal);
         Ok(context)
     }
 
@@ -1151,7 +1198,112 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         let plan = self.ledger.plan_release(buffer.get(), byte_length)?;
         self.destroy(buffer, FakeObjectKindV1::Buffer)?;
         self.ledger.commit_release(buffer.get(), plan);
+        self.lendable.remove(&buffer.get());
+        self.imported.remove(&buffer.get());
         Ok(())
+    }
+
+    fn allocate_lendable_device_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        byte_length: u64,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::AllocateDeviceBuffer)?;
+        self.require(context, FakeObjectKindV1::Context)?;
+        self.require(stream, FakeObjectKindV1::Stream)?;
+        if byte_length == 0 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let mapped = byte_length
+            .checked_next_multiple_of(FAKE_LENDABLE_GRANULARITY_V1)
+            .ok_or(BundleStatusV1::ResourceExhausted)?;
+        let plan = self
+            .ledger
+            .plan_allocation(Some(context.get()), byte_length)?;
+        let length = usize::try_from(byte_length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let buffer = self.create(FakeObjectKindV1::Buffer, vec![0; length])?;
+        self.context_of.insert(buffer.get(), context.get());
+        self.ledger.commit_allocation(buffer.get(), plan);
+        self.lendable.insert(buffer.get(), mapped);
+        Ok(buffer)
+    }
+
+    /// Host memory cannot be shared live, so the descriptor holds a copy of
+    /// the allocation's bytes as they are now, padded to the mapping length.
+    fn export_device_buffer(
+        &mut self,
+        buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<(std::os::fd::OwnedFd, u64)> {
+        let mapped = *self
+            .lendable
+            .get(&buffer.get())
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        let bytes = &self.require(buffer, FakeObjectKindV1::Buffer)?.bytes;
+        let fd = crate::weight_keeper::fds::anonymous_file(bytes, mapped)
+            .map_err(|_| BundleStatusV1::HostError)?;
+        Ok((fd, mapped))
+    }
+
+    fn hold_device_buffer(
+        &mut self,
+        buffer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<crate::device::HeldDeviceMemoryV1> {
+        self.check(FakeRefusalV1::ReleaseDeviceBuffer)?;
+        if !self.lendable.contains_key(&buffer.get()) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let byte_length = self
+            .objects
+            .get(&buffer.get())
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .logical_byte_length;
+        let plan = self.ledger.plan_release(buffer.get(), byte_length)?;
+        self.destroy(buffer, FakeObjectKindV1::Buffer)?;
+        self.ledger.commit_release(buffer.get(), plan);
+        self.lendable.remove(&buffer.get());
+        let held = self.held.get_or_insert_with(std::sync::Arc::default);
+        held.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Box::new(FakeHeldV1(std::sync::Arc::clone(held))))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn import_device_buffer(
+        &mut self,
+        context: DeviceObjectV1,
+        stream: DeviceObjectV1,
+        fd: std::os::fd::BorrowedFd<'_>,
+        mapped_bytes: u64,
+        byte_length: u64,
+        readers: &[i32],
+        read_only: bool,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::AllocateDeviceBuffer)?;
+        self.require(context, FakeObjectKindV1::Context)?;
+        self.require(stream, FakeObjectKindV1::Stream)?;
+        if byte_length == 0 || byte_length > mapped_bytes {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let bytes = crate::weight_keeper::fds::read_anonymous_file(fd, mapped_bytes, byte_length)
+            .map_err(|_| BundleStatusV1::HostError)?;
+        let plan = self
+            .ledger
+            .plan_allocation(Some(context.get()), byte_length)?;
+        let buffer = self.create(FakeObjectKindV1::Buffer, bytes)?;
+        self.context_of.insert(buffer.get(), context.get());
+        self.ledger.commit_allocation(buffer.get(), plan);
+        self.imported
+            .insert(buffer.get(), (readers.to_vec(), read_only));
+        Ok(buffer)
+    }
+
+    fn device_identity(&self, context: DeviceObjectV1) -> HostDeviceResultV1<String> {
+        self.require(context, FakeObjectKindV1::Context)?;
+        let ordinal = self
+            .context_devices
+            .get(&context.get())
+            .ok_or(BundleStatusV1::StaleHandle)?;
+        Ok(format!("fake-device-{ordinal}"))
     }
 
     fn allocation_satisfies_alignment(

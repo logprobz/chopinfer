@@ -42,5 +42,10 @@ name = "dspark_lifecycle"
 path = "tests/dspark_lifecycle.rs"
 required-features = ["gpu-tests"]
 
+[[test]]
+name = "prefill_state"
+path = "tests/prefill_state.rs"
+required-features = ["gpu-tests"]
+
 [lints]
 workspace = true

@@ -405,8 +405,8 @@ fn cached(size: u32) -> Cached {
 fn striped_prefix_reuse_offload_and_preemption_match_size_one() {
     let single = cached(1);
     let pinned = [
-        (2, (11388, 0x41d19fe355bbc780)),
-        (4, (11652, 0xf99ce9d0ced45b9a)),
+        (2, (11388, 0xd3b2cb1c17e4a430)),
+        (4, (11652, 0x1b6268c1341d4de6)),
     ];
     let mut failures = Vec::new();
     for (size, expected) in pinned {
@@ -577,33 +577,33 @@ fn served_groups_capture_and_replay_every_bucket() {
         (
             2,
             [
-                (4708, 0xc21af6f25f9cf6c0),
-                (4708, 0xc29eab8fdaacc863),
-                (4708, 0x9be4604cb59d5627),
-                (4708, 0x83263bc209a75a29),
-                (4708, 0x6ac9cb7605ad2d0c),
-                (4708, 0x622c73491717fcc9),
-                (4708, 0xbc756a5b9f376d5d),
-                (4708, 0x26fa8e54f9a1e925),
-                (4708, 0x2cea7cd5a346e52d),
-                (4708, 0xfcb374935010ac12),
-                (4708, 0x0544e9cd5fba218d),
+                (4708, 0xa0509b596528bd70),
+                (4708, 0xab7307aff4b24df7),
+                (4708, 0x88dacfa878c7bbc5),
+                (4708, 0xb6290f7f9dda0d49),
+                (4708, 0xdf41bca14746c474),
+                (4708, 0x0725e6d4a1a20517),
+                (4708, 0x058e51a8428f2f35),
+                (4708, 0xfee7485470ff48ef),
+                (4708, 0x8170f5280aa06765),
+                (4708, 0x85fec9749447d256),
+                (4708, 0x586fc88220a80d53),
             ],
         ),
         (
             4,
             [
-                (4884, 0xc144163f05dd9c5e),
-                (4884, 0xb977d396321b65c5),
-                (4884, 0xf4ea08fd5c72c203),
-                (4884, 0x27f20be816ff078d),
-                (4884, 0xe35e8e0bca91117c),
-                (4884, 0x60a737ed598a1261),
-                (4884, 0xb390a992fc9417ab),
-                (4884, 0x07ef7ac947515015),
-                (4884, 0x03b310dfae9e1aa3),
-                (4884, 0x5d6fbec94d92006c),
-                (4884, 0x7753f1b7cf31d8e9),
+                (4884, 0xe8d803671b36cd1a),
+                (4884, 0x2b76817fbb507c3d),
+                (4884, 0xb367e922372a3891),
+                (4884, 0xc8fa6d403f8bab95),
+                (4884, 0x5a7f4489ea500332),
+                (4884, 0x1bdaf29262a71463),
+                (4884, 0x9ee9758182e079c7),
+                (4884, 0xa5c1080167f3abff),
+                (4884, 0x51ad7ce1fc2bbd73),
+                (4884, 0x20512e56c303a91a),
+                (4884, 0xab085d18524d4197),
             ],
         ),
     ];

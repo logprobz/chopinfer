@@ -56,6 +56,7 @@ use kernel_core::gated_mlp::{
 use kernel_core::properties::{Invariance, Ties};
 use std::path::PathBuf;
 
+pub mod absorb;
 pub mod bandwidth;
 pub mod floor;
 pub mod formats;
@@ -66,6 +67,7 @@ pub mod row_bias;
 pub mod split;
 pub mod streamed;
 pub mod streamed_resident;
+pub mod strip2;
 
 /// Threads of a projection CTA: four warps of 16 output columns.
 pub const THREADS: u32 = 128;

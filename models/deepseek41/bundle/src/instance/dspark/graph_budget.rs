@@ -5,7 +5,13 @@ use crate::indexer_workloads::Route;
 use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
-const HANDLES_PER_RANK: usize = 384;
+/// Graph handles per rank. A TP4 startup warms 131 target keys of three
+/// pieces per rank, 24 catch-up and 6 draft widths: 423 handles per rank,
+/// which 384 could not hold, so the widest 16-item verify keys ran eagerly.
+/// The rest leaves room for completion tails that serving adds lazily.
+/// Workloads at 546 handles per rank held about 1.19 GiB of capture
+/// allocations with at least 3.10 GiB free on each GPU.
+const HANDLES_PER_RANK: usize = 512;
 const ENV: &str = "CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK";
 
 impl Instance {
@@ -47,8 +53,9 @@ impl Instance {
                 self.indexer_graph_missing(route, key)
             })
             .sum();
-        // Completion tails can reach hundreds of exact keys. Keep the
-        // warmed keys when full and lower every rank of a new shape eagerly.
+        // Target keys are the verify rows and decode buckets of each route
+        // bank. Keep the warmed keys when full and lower every rank of a
+        // new key eagerly.
         let admission = self.graphs.reserve_retaining(missing);
         if admission.is_none() {
             self.graphs.trace(

@@ -2475,7 +2475,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "a588db2fb5b404eae8981ae1733418827be7bbe2a150bf40f8dd53d7a5bada56",
+    "cubin_sha256": "13f8b5948bd89d0b1ea2eadd2d3822c16736a05a012c3ec8b36f26049d6e7a62",
     "resources": [
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n1024_k4096_g2_f32_v3_initialize_v3",
@@ -2542,7 +2542,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n1152_k5120_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 20097,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2560,7 +2560,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n1152_k5120_g1_pair_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 20097,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2578,7 +2578,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n1280_k5120_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 20097,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2596,7 +2596,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n16384_k1280_g1_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2614,7 +2614,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n2304_k5120_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2632,7 +2632,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n2304_k5120_g1_pair_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2650,7 +2650,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n25600_k6144_g1_f32_v3",
-        "registers": 72,
+        "registers": 86,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2668,7 +2668,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n32768_k1280_g1_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2686,7 +2686,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2704,7 +2704,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k1152_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2722,7 +2722,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k15360_g1_f32_v3",
-        "registers": 82,
+        "registers": 86,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2740,7 +2740,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k2048_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2758,7 +2758,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k2304_g1_f32_v3",
-        "registers": 70,
+        "registers": 86,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2776,7 +2776,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k4096_g1_f32_v3",
-        "registers": 70,
+        "registers": 86,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2794,7 +2794,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n5120_k576_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2848,7 +2848,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_f32_v3",
-        "registers": 72,
+        "registers": 88,
         "shared_static_bytes": 20097,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2866,7 +2866,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 20097,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2884,7 +2884,7 @@
       },
       {
         "symbol": "chop_deepseek41_mxfp8_prefetch_n8192_k1280_g1_f32_v3",
-        "registers": 78,
+        "registers": 94,
         "shared_static_bytes": 32769,
         "local_bytes": 0,
         "stack_bytes": 0,

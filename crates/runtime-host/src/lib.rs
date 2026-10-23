@@ -68,6 +68,7 @@ mod startup;
 mod topology;
 pub mod video;
 mod watchdog;
+pub mod weight_keeper;
 
 pub use topology::DeviceSelectionV1;
 
@@ -97,11 +98,11 @@ pub use device::{
     COLLECTIVE_SUM_BF16_V1, COLLECTIVE_SUM_F32_V1, CollectiveBindingV1,
     DEVICE_POINTER_TABLE_ENTRY_BYTES_V1, DeviceArgumentV1, DeviceCustomOperandV1, DeviceObjectV1,
     DeviceRangeV1, DeviceTensorMapV1, GENERIC_COLLECTIVE_CONTRACTS_V1, GenericCollectivePlanV1,
-    GenericCollectiveV1, GraphCaptureErrorV1, HostDeviceBackendV1, HostDeviceResultV1,
-    LaunchDispatchV1, PeerAccessAcquisitionV1, assert_collective_ordering_contract_v1,
-    assert_generic_collective_ordering_contract_v1, assert_host_transfer_contract_v1,
-    bf16_bits_from_f32_v1, f32_from_bf16_bits_v1, launch_cluster_v1, launch_dispatch_v1,
-    plan_generic_collective_v1,
+    GenericCollectiveV1, GraphCaptureErrorV1, HeldDeviceMemoryV1, HostDeviceBackendV1,
+    HostDeviceResultV1, LaunchDispatchV1, PeerAccessAcquisitionV1,
+    assert_collective_ordering_contract_v1, assert_generic_collective_ordering_contract_v1,
+    assert_host_transfer_contract_v1, bf16_bits_from_f32_v1, f32_from_bf16_bits_v1,
+    launch_cluster_v1, launch_dispatch_v1, plan_generic_collective_v1,
 };
 pub use device_memory::{DeviceMemoryReportV1, RankDeviceMemoryV1, WARMUP_HEADROOM_BYTES_V1};
 pub use executor::{

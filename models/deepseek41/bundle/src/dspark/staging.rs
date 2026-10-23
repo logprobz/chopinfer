@@ -1,6 +1,8 @@
 //! The lifecycle's synchronous draft readback and Engram staging adapter.
 //! The mapped-gather host call owns CPU gathering and enqueues its H2D
-//! copy before returning. It runs outside captured target graphs.
+//! copy before returning. It runs outside captured target graphs. A target
+//! of undrafted decode rows may hand its ids to the program instead, which
+//! uploads them per layer during the target launch (`Program::defer_engram`).
 
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::own_ops::engram::HashTables;
@@ -43,6 +45,13 @@ pub trait Program {
     }
 
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String>;
+
+    /// Takes the ids of a target whose rows are all undrafted decode rows,
+    /// to upload them per layer during the target launch. False keeps the
+    /// synchronous gather.
+    fn defer_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 pub struct Rank {
@@ -87,6 +96,18 @@ pub struct Staging {
 
 pub struct Gathered {
     phases: Vec<GatheredPhase>,
+    /// Every target row is a decode row without drafts.
+    undrafted: bool,
+}
+
+impl Gathered {
+    /// The decode phase's ids when every target row is undrafted decode.
+    fn undrafted(&self) -> Option<&Hashed> {
+        self.phases
+            .last()
+            .filter(|_| self.undrafted)
+            .map(|phase| &phase.hashed)
+    }
 }
 
 struct GatheredPhase {
@@ -190,7 +211,11 @@ impl Staging {
             })
             .collect::<Result<Vec<_>, _>>()?;
         self.pending = pending;
-        Ok(Gathered { phases })
+        let undrafted = !rows.is_empty()
+            && rows
+                .iter()
+                .all(|row| matches!(row.rows.kind, Kind::Decode { drafts: 0 }));
+        Ok(Gathered { phases, undrafted })
     }
 
     fn hash_phase(
@@ -527,7 +552,15 @@ impl<P: Program> Host for Adapter<'_, P> {
     }
     fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
         let started = self.times.is_some().then(std::time::Instant::now);
-        let result = self.upload(gathered);
+        let deferred = match gathered.undrafted() {
+            Some(hashed) => self.program.defer_engram(hashed),
+            None => Ok(false),
+        };
+        let result = match deferred {
+            Ok(true) => Ok(()),
+            Ok(false) => self.upload(gathered),
+            Err(error) => Err(error),
+        };
         if let (Some(times), Some(started)) = (self.times.as_mut(), started) {
             times.upload_us += started.elapsed().as_micros() as u64;
         }

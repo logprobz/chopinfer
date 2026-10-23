@@ -16,6 +16,7 @@
 //! request is the host's (`engram`): a commit adds the kept tokens, and a
 //! freed slot or a retire forgets it.
 
+pub(crate) mod ar_engram;
 mod dspark;
 mod engram;
 pub(crate) mod execute;
@@ -118,9 +119,17 @@ pub struct Instance {
     image_flags: std::cell::Cell<bool>,
     overlap: Vec<execute::overlap::Rank>,
     dma: Vec<execute::dma::Rank>,
+    /// DMA issues each peer copy on its source's stream.
+    dma_push: bool,
     layer_overlap: bool,
     prefill_reduce_runs: u64,
     prefill_engram: Option<prefill_engram::Gathers>,
+    /// AR decode's per-layer Engram uploads, when switched on.
+    ar_engram: Option<ar_engram::State>,
+    /// AR steps' one status readback, when switched on.
+    ar_status: Option<execute::ar_status::Packet>,
+    /// Kept upper-skip plans of short prompts.
+    plans: execute::plan_cache::Cache,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -199,6 +208,14 @@ impl Instance {
         let _ = self.services.log(format!("{NAME}: {message}").as_bytes());
     }
 
+    /// Names the one-row decode twins the instance serves, so a served run
+    /// shows what it measured.
+    fn log_one_row_twins(&self) {
+        for line in crate::Kernels::one_row_twin_lines(&self.config.shape) {
+            self.log(&line);
+        }
+    }
+
     fn acquire(&mut self) -> Result<(), BundleAbiError> {
         let services = &self.services;
         let held = &mut self.held;
@@ -271,9 +288,17 @@ impl Instance {
             views.push(acquire::spans(placed));
         }
         acquire::grant_peers(services, &ranks, held)?;
-        if self.ops.prefill_dma.enabled() && self.dspark.is_none() {
+        if self.ops.prefill_dma.enabled() {
             self.dma =
                 execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
+            self.dma_push = crate::ops::dma_push_requested()
+                && execute::dma::pushes(services, &ranks, &self.dma)?;
+            let copies = if self.dma_push {
+                "pushed by each source"
+            } else {
+                "pulled by each destination"
+            };
+            let _ = services.log(format!("{NAME}: prefill DMA copies: {copies}").as_bytes());
         }
         let limits = model_limits(&self.config);
         let layouts = [
@@ -536,6 +561,16 @@ impl Instance {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
                 })
                 .filter(|cubin| {
+                    // BF16-partial prefills send rounded partials over DMA.
+                    cubin.name != "comm_dma_bf16_deepseek41_sm120"
+                        || !self.dma.is_empty()
+                            && self
+                                .ops
+                                .reduce
+                                .as_ref()
+                                .is_some_and(|ops| ops.bf16_partials())
+                })
+                .filter(|cubin| {
                     !cubin.name.starts_with("comm_bf16_partials_")
                         || self
                             .ops
@@ -789,7 +824,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::Unsupported
     })?;
-    let ops = Ops::prepare(&kernels, &shape, config.kv.storage);
+    let ops = Ops::prepare(&kernels, &shape, config.kv.storage, config.prefill);
     let dspark = if has_drafter {
         Some(
             crate::dspark::device::Device::new(
@@ -814,6 +849,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     let engram = engram::Engram::new(shape.geometry, media).map_err(|error| {
         log(&error);
         BundleStatusV1::InternalError
+    })?;
+    let plans = execute::plan_cache::Cache::from_env().map_err(|error| {
+        log(&error);
+        BundleStatusV1::InvalidArgument
     })?;
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
@@ -872,9 +911,13 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         image_flags: std::cell::Cell::new(false),
         overlap: Vec::new(),
         dma: Vec::new(),
+        dma_push: false,
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         prefill_engram: None,
+        ar_engram: None,
+        ar_status: None,
+        plans,
         partial,
         taps,
         engram,
@@ -903,6 +946,17 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!("create failed preparing prefill Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
     }
+    if let Err(error) = instance.prepare_ar_engram() {
+        instance.log(&format!("create failed preparing AR Engram: {error}"));
+        return Err(Failed::releasing(instance, status(error)));
+    }
+    if let Err(error) = instance.prepare_ar_status() {
+        instance.log(&format!(
+            "create failed preparing the AR status packet: {error}"
+        ));
+        return Err(Failed::releasing(instance, status(error)));
+    }
+    instance.log_one_row_twins();
     if let Err(error) = instance.configure_dspark_graphs() {
         instance.log(&format!("create failed configuring DSpark graphs: {error}"));
         return Err(Failed::releasing(instance, status(error)));
@@ -933,6 +987,8 @@ impl Bundle for Instance {
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
         execute::dma::drain(self)?;
         self.graphs.release_all(&self.services)?;
+        // AR's gathers are the newest: the host releases newest first.
+        self.release_ar_engram()?;
         if let Some(gathers) = &mut self.prefill_engram {
             gathers.release(&self.services)?;
         }
@@ -1121,6 +1177,18 @@ pub(crate) fn dspark_context(
     })
 }
 
+/// The DSpark device hash's ids and their rows per layer.
+#[cfg(test)]
+pub(crate) fn dspark_hash_ids(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Option<(runtime_bundle_abi::DeviceBufferSpanV1, u32)> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let cycle = &table.get_mut(handle)?.dspark.as_ref()?.cycle;
+        Some((cycle.memory?.ids, cycle.hash.shape.stride))
+    })
+}
+
 #[cfg(test)]
 pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 #[cfg(test)]
@@ -1220,5 +1288,16 @@ pub(crate) fn dspark_graphs_for_test(
             instance.graphs.set_capacity(capacity).unwrap();
         }
         instance.graphs.stats()
+    })
+}
+
+/// Releases every graph in the instance's ledger, so its next steps
+/// capture afresh.
+#[cfg(test)]
+pub(crate) fn release_graphs_for_test(handle: runtime_bundle_abi::BundleHandleV1) {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        instance.graphs.release_all(&instance.services).unwrap();
     })
 }

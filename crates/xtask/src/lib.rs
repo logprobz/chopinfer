@@ -25,6 +25,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-host/src/direct/plan_cache/files.rs",
     "crates/runtime-host/src/signals.rs",
     "crates/runtime-host/src/host_rows.rs",
+    "crates/runtime-host/src/weight_keeper/fds.rs",
     // SAFETY-REVIEWED: private anonymous mappings owned by mutex-protected shards.
     "crates/runtime-host/src/host_rows/resident/storage.rs",
     "crates/runtime-host/tests/host_mapped_rows_cost.rs",

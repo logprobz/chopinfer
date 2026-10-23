@@ -8,6 +8,10 @@
     "source_closure_sha256": "3f653fc4555ac1c833b05c5ad244651129bea21e414c29028005071593ab336b"
   },
   {
+    "name": "strip_chains_n2048_k128_sm120",
+    "source_closure_sha256": "92491596a214ce562aeb8e6c11639c9de82888c2e6c122597a36c53bed17914d"
+  },
+  {
     "name": "strip_chains_n2048_k4096_sm120",
     "source_closure_sha256": "00f62a2f65e85d51011657e01a9edb9421daa5ce483e80aa3ece5b0ba4a22b9f"
   },
@@ -18,6 +22,10 @@
   {
     "name": "strip_chains_n38720_k4096_f32_sm120",
     "source_closure_sha256": "9257b1b0774ab864ac7d5dd42de27a8037ac9ffded1e25992c55b71d29cd6004"
+  },
+  {
+    "name": "strip_chains_n4096_k1536_sm120",
+    "source_closure_sha256": "b34f9389116f917476b52f00920fbfb4e68a5dda72d34bb8a74f787bbb1127e3"
   },
   {
     "name": "strip_chains_n4096_k2048_sm120",

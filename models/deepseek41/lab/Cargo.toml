@@ -105,6 +105,14 @@ name = "ceil_cached"
 path = "tests/sm120/ceil_cached/main.rs"
 
 [[test]]
+name = "ceil_split"
+path = "tests/sm120/ceil_split/main.rs"
+
+[[test]]
+name = "query_window"
+path = "tests/sm120/query_window/main.rs"
+
+[[test]]
 name = "norm_query_cached"
 path = "tests/sm120/norm_query_cached/main.rs"
 
@@ -188,6 +196,10 @@ path = "examples/sm120/build_indexer_score_study.rs"
 name = "build_native_moe_prefill"
 path = "examples/sm120/build_native_moe_prefill.rs"
 
+[[example]]
+name = "build_native_tune"
+path = "examples/sm120/build_native_tune.rs"
+
 [[test]]
 name = "native_moe_prefill"
 path = "tests/sm120/native_moe_prefill/main.rs"
@@ -215,3 +227,35 @@ path = "examples/sm120/build_indexer_prefill_tile.rs"
 [[test]]
 name = "hc_completion"
 path = "tests/sm120/hc_completion/main.rs"
+
+[[test]]
+name = "hc_tail16"
+path = "tests/sm120/hc_tail16/main.rs"
+
+[[test]]
+name = "hc_cols"
+path = "tests/sm120/hc_cols/main.rs"
+
+[[example]]
+name = "build_router_norm"
+path = "examples/sm120/build_router_norm.rs"
+
+[[test]]
+name = "router_norm"
+path = "tests/sm120/router_norm/main.rs"
+
+[[example]]
+name = "build_fold_local_rows"
+path = "examples/sm120/build_fold_local_rows.rs"
+
+[[example]]
+name = "build_fold_deep"
+path = "examples/sm120/build_fold_deep.rs"
+
+[[example]]
+name = "build_fold_cluster"
+path = "examples/sm120/build_fold_cluster.rs"
+
+[[example]]
+name = "build_fold_plain"
+path = "examples/sm120/build_fold_plain.rs"

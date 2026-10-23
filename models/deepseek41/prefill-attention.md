@@ -301,12 +301,12 @@ producer and consumer stays on its rank's main stream; side streams never
 receive its buffers. The arena is reused only after the preceding ordered
 consumer. Capacity-32 served equality and timing require separate GPU evidence.
 
-`lab/audit_prefill_arena.py` compares all eight geometry and media lifecycle
-journals before accepting updated pins. Native TP4 adds eight allocations
-and eight releases across four ranks. Every retained operation must match
-after a bijective handle mapping; the six other journals must match exactly.
-The audit rejects altered allocations, ownership, launch arguments and release
-counts.
+Before the updated pins were accepted, a one-off audit compared all eight
+geometry and media lifecycle journals. Native TP4 adds eight allocations
+and eight releases across four ranks. Every retained operation matched
+after a bijective handle mapping; the six other journals matched exactly.
+The audit rejected altered allocations, ownership, launch arguments and
+release counts.
 
 The rebased table is uploaded once before the eager chunk. Every layer
 clears marks, marks selected physical pages, decodes the window and marked

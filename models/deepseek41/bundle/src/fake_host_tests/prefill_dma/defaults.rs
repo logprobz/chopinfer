@@ -45,7 +45,32 @@ fn capture(
     prefill: &BTreeMap<String, serde_json::Value>,
     rows: u32,
 ) -> Vec<String> {
+    capture_with(setting, bf16, prefill, rows, false)
+}
+
+/// `dspark` creates a drafter instance through the mapped Engram host.
+fn capture_with(
+    setting: Option<&str>,
+    bf16: bool,
+    prefill: &BTreeMap<String, serde_json::Value>,
+    rows: u32,
+    dspark: bool,
+) -> Vec<String> {
     let host = host();
+    if dspark {
+        host.drafter.set(true);
+        host.speculation.set(Some((5, 32)));
+    }
+    // Report residency as the served host does, so the BF16 gather's phased
+    // reductions are admitted and the upper-skip executor can replace them.
+    host.device.residency.set(Some(BundleRawClusterResidencyV1 {
+        multiprocessor_count: 188,
+        usable_multiprocessors: 188,
+        max_active_clusters: 188,
+        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+        ..BundleRawClusterResidencyV1::unreported()
+    }));
     let record = record(&host, prefill);
     let profile = Profile::read(prefill).unwrap();
     let mut instance = with_bf16_gather(bf16, || {
@@ -54,7 +79,18 @@ fn capture(
                 api()
                     .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                     .unwrap()
-                    .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+                    .create(
+                        if dspark {
+                            HostServicesTableV1::new(Rc::new(
+                                super::super::dspark::host::MappedHost::with_peer_copies(
+                                    Rc::clone(&host),
+                                ),
+                            ))
+                        } else {
+                            HostServicesTableV1::new(Rc::clone(&host))
+                        },
+                        &record,
+                    )
             })
         })
     })
@@ -123,7 +159,7 @@ fn unset_dma_legacy_create_record_matches_disabled_journals() {
 }
 
 #[test]
-fn package_defaults_do_not_allocate_or_execute_dma() {
+fn package_defaults_select_dma_for_upper_skip_only() {
     let defaults = resolved(None);
     assert_eq!(
         Profile::read(&defaults).unwrap(),
@@ -135,9 +171,38 @@ fn package_defaults_do_not_allocate_or_execute_dma() {
     for name in ["tp4-ar", "tp4-dspark"] {
         assert_eq!(resolved(Some(name)), defaults, "{name}");
     }
+    // The unset default is the explicit transport on the upper-skip
+    // executor: the same streams, events, inbox, copies and sums.
+    let unset = capture(None, true, &defaults, 8192);
+    let explicit = capture(Some("1"), true, &defaults, 8192);
+    assert_eq!(unset, explicit);
+    assert_eq!(
+        unset
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .count(),
+        73 * 24
+    );
+    assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_ne!(unset, capture(Some("0"), true, &defaults, 8192));
+    // A DSpark target prefill under the tp4-dspark defaults takes the same
+    // transport and allocates the same inbox, streams and events.
+    let dspark = capture_with(None, true, &defaults, 8192, true);
+    assert_eq!(dspark, capture_with(Some("1"), true, &defaults, 8192, true));
+    assert_eq!(
+        dspark
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .count(),
+        73 * 24
+    );
+    assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_ne!(dspark, capture_with(Some("0"), true, &defaults, 8192, true));
+    // Without the BF16 gather it was measured with, the default keeps
+    // the SM transport.
     assert_disabled_journal(
-        &capture(None, true, &defaults, 8192),
-        &capture(Some("0"), true, &defaults, 8192),
+        &capture(None, false, &defaults, 8192),
+        &capture(Some("0"), false, &defaults, 8192),
     );
 }
 
@@ -171,5 +236,41 @@ fn explicit_dma_keeps_the_existing_transport_controls() {
                 .count(),
             81 * 24
         );
+    }
+}
+
+#[test]
+fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
+    use crate::ops::with_partial_setting;
+    let defaults = resolved(None);
+    let launches = |journal: &[String], symbol: &str| {
+        journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(&format!(" {symbol} ")))
+            .count()
+    };
+    for dspark in [false, true] {
+        // The unset partial setting is the served BF16 prefill default.
+        let (unset, explicit, off) = with_partial_setting(None, || {
+            (
+                capture_with(None, true, &defaults, 8192, dspark),
+                capture_with(Some("1"), true, &defaults, 8192, dspark),
+                capture_with(Some("0"), true, &defaults, 8192, dspark),
+            )
+        });
+        assert_eq!(unset, explicit, "dspark={dspark}");
+        assert_eq!(launches(&unset, BF16_SUM), 73 * 4);
+        assert_eq!(launches(&unset, BF16_ROUND), 73 * 6);
+        assert_eq!(launches(&unset, SUM), 0);
+        assert_eq!(
+            unset
+                .iter()
+                .filter(|line| line.starts_with("peer-copy "))
+                .count(),
+            73 * 24
+        );
+        assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+        assert!(!off.iter().any(|line| line.starts_with("peer-copy ")));
+        assert!(launches(&off, BF16_SUM) == 0 && launches(&off, BF16_ROUND) == 0);
     }
 }

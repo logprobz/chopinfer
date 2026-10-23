@@ -4,6 +4,8 @@ use super::*;
 // launches and retain all original operands (the eight-warp chain at four
 // rows, the four-warp chain at six, 12 and 16, the two-row producer at 32).
 // Eight rows take the qualified one-launch C8 boundary with a zeroed ticket.
+// Six rows run each tail on two CTAs per row (fold and Sinkhorn beside the
+// collapse and norm) with the tail's own operands.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
 // verify rows (four ranks, 40 layers); all other journal lines stay identical.
 // Resources the prefill query fusion, grouped down and router bindings load
@@ -37,16 +39,55 @@ use super::*;
 // Loading the one-launch boundary module shifts their resource ids only.
 // Loading the one-launch boundary and cached query norm modules shifts their
 // resource ids only.
-// Serving the round 9 router finish again at 32 rows returns the 160 finish
-// launches to the served finish and each sublayer's join to before the
-// routed sum; no other line changes.
+// Combined C1 query/KV adds private storage before capture. All six verify
+// bodies remain identical after typed handle mapping; no verify uses it.
+// At 4 and 32 rows the routed gate after each r2 join launches without
+// programmatic serialization: 160 gate launches change flags 1 to 0.
+// The absorbing small queues at 32 rows rename the 160 gate and down small
+// launches and drop the 320 wide launches; the absorb module renumbers
+// handles only at the other rows.
+// The local C32 query module shifts resource identities only. These verify
+// launches and their operands retain the reference path at every row count.
+// Verify-6 serves the same C1 stack: per stream the same launches with the
+// same arguments, 160 router finishes renamed to r2v7 and 160 gate
+// finishers to the all-loads entry (same configuration), 160 gate small
+// launches to resident8 (same grid, flags 1 to 0); the gate launches move
+// after each join. Verify-16 also fuses the router: each layer's five
+// unfused router launches become the fused prepare, the same producer launch
+// and the r2v7 finish (160 groups, 320 fewer captured nodes); the routed
+// launches bind the same workspace spans 983552 bytes later (the fused
+// router's partials precede the route metadata); plus the Verify-6 renames.
+// Loading the two-CTA HC finish module shifts their resource ids only.
+// At 6 rows its 308 tails (77 per rank) change symbol to the 32-warp twin and
+// grid_x 1 to 2 with identical operands; no other line changes.
+// Loading the two-strip routed down module shifts their resource ids only;
+// verify keeps its down queues at every row count.
+// Each layer's window KV projection binds the shared expert's workspace and
+// row status and runs on the side stream beside its query chain: its
+// launches change stream and those spans, and its fork and join add four
+// event lines per layer and rank (640 lines).
+// The row-local rings add eight resolves per rank, which precede the side
+// streams and events and shift their ids by 32. At 16 rows each WQ_b fold's admit,
+// partials and final launch become the ring's admit and ring (160 fewer
+// lines) and WO_b's pair becomes the ring's; at 32 rows WQ_b's ticket pair
+// becomes the pair loop's and WO_b's reuse pair the ring's (audited by
+// `fold_local_rows::local_rows_change_only_measured_decode_and_verify_projections`).
+// Loading the column-block HC pair modules shifts their resource ids only.
+// At 16 and 32 rows each of the 308 producer and tail launches (77 per rank)
+// becomes the column-block producer (grid 40 x rows/4, 256 threads) and the
+// split finish (grid_x 1 to 2) with identical operands; no other line
+// changes.
+// The cluster folds' sixteen resolves shift ids only. At 16 and 32 rows the
+// WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
+// WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
+// audited by `fold_cluster::cluster_folds_change_only_measured_decode_and_verify_projections`).
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xf9aacf33eacbfd14)),
-    (6, (8040, 0x2cb68ef90c9ccc65)),
-    (8, (7572, 0x98021a8896a42b94)),
-    (12, (9496, 0x36ae17ee47c848ea)),
-    (16, (8852, 0xce004c3207df2b4d)),
-    (32, (8384, 0xaee19d46d48f1853)),
+    (4, (8520, 0x60ef41c3fb19c69f)),
+    (6, (8680, 0x9c8cd5dcc4b8692f)),
+    (8, (8212, 0x139d478f453b8ce2)),
+    (12, (10136, 0xf5073975e2eff8da)),
+    (16, (9012, 0xd9f2fb496f5cea08)),
+    (32, (8704, 0x184a80f73ebdd8ef)),
 ];
 
 #[test]
@@ -113,8 +154,26 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
             let qualified = matches!(rows, 4 | 6 | 8 | 12 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
-            // Eight rows take the one-launch boundary of the C8 decode bucket.
-            let boundaries = count("hc_finish_norm_w32_v1") + count("hc_completion_split_w8_v1 ");
+            // Eight rows take the one-launch boundary of the C8 decode bucket;
+            // six rows run the tail on two CTAs per row.
+            let twin = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+                .iter()
+                .find(|(bucket, _)| *bucket == rows)
+                .map(|&(_, warps)| warps);
+            let twin_warps = twin.unwrap_or(32);
+            let twin_symbol = format!(
+                "{} ",
+                crate::sm120::hc_finish_twin::served().symbol(twin_warps)
+            );
+            // Sixteen and 32 rows run the column-block producer and split
+            // finish.
+            let wide = crate::sm120::hc_cols::BUCKETS
+                .iter()
+                .find(|b| b.rows == rows);
+            let tails = count("hc_finish_norm_w32_v1")
+                + count("_hc_finish_twin_")
+                + count("_hc_finish_split_");
+            let boundaries = tails + count("hc_completion_split_w8_v1 ");
             if boundaries != pairs {
                 missing.push((rows, kv.storage, boundaries, pairs));
             }
@@ -132,8 +191,49 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 );
                 assert_eq!(
                     count("hc_finish_norm_w32_v1"),
-                    if rows == 8 { 0 } else { pairs }
+                    if rows == 8 || twin.is_some() || wide.is_some() {
+                        0
+                    } else {
+                        pairs
+                    }
                 );
+                let producer = crate::sm120::hc_cols::producer();
+                let finish = crate::sm120::hc_cols::finish();
+                assert_eq!(wide.is_some(), matches!(rows, 16 | 32));
+                if let Some(b) = wide {
+                    let first = format!("{} ", producer.symbol(b.tile, b.transposed));
+                    let second = format!("{} ", finish.symbol(b.warps));
+                    assert_eq!(count(&first), pairs);
+                    assert_eq!(count(&second), pairs);
+                    for line in launches.iter().filter(|l| l.contains(&first)) {
+                        assert!(line.contains(&format!(
+                            "grid_x: 40, grid_y: {}, grid_z: 1",
+                            rows.div_ceil(b.tile)
+                        )));
+                    }
+                    for line in launches.iter().filter(|l| l.contains(&second)) {
+                        assert!(line.contains(&format!("grid_x: 2, grid_y: {rows}, grid_z: 1")));
+                        assert!(line.contains(&format!(
+                            "block_x: {}, block_y: 1, block_z: 1",
+                            b.warps * 32
+                        )));
+                    }
+                }
+                assert_eq!(
+                    count("_hc_round_cols_"),
+                    if wide.is_some() { pairs } else { 0 }
+                );
+                assert_eq!(count("_hc_finish_split_"), count("_hc_round_cols_"));
+                assert_eq!(twin.is_some(), rows == 6);
+                assert_eq!(count(&twin_symbol), if rows == 6 { pairs } else { 0 });
+                assert_eq!(count("_hc_finish_twin_"), count(&twin_symbol));
+                for line in launches.iter().filter(|l| l.contains(&twin_symbol)) {
+                    assert!(line.contains(&format!("grid_x: 2, grid_y: {rows}, grid_z: 1")));
+                    assert!(line.contains(&format!(
+                        "block_x: {}, block_y: 1, block_z: 1",
+                        twin_warps * 32
+                    )));
+                }
                 for line in launches
                     .iter()
                     .filter(|l| l.contains("hc_completion_split_w8_v1 "))
@@ -143,16 +243,9 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 }
                 assert_eq!(
                     count("hc_round_chain_w4_v1"),
-                    if matches!(rows, 6 | 12 | 16) {
-                        pairs
-                    } else {
-                        0
-                    }
+                    if matches!(rows, 6 | 12) { pairs } else { 0 }
                 );
-                assert_eq!(
-                    count("hc_round_rows_r2_v1"),
-                    if rows == 32 { pairs } else { 0 }
-                );
+                assert_eq!(count("hc_round_rows_r2_v1"), 0);
                 assert_eq!(
                     count("hc_round_chain_w8_v1"),
                     if rows == 4 { pairs } else { 0 }

@@ -11,6 +11,9 @@
 // expressions and RMS tree, and publish the stored row to shared memory as
 // well; every warp then quantizes its groups once from shared memory. The
 // norm and ceil status commits keep their order and atomic OR protocol.
+// EarlyRelease signals dependents once the producer wait returns, so a
+// dependent can load its immutable operands while this row runs; every
+// dependent still waits for this grid before reading its outputs.
 namespace chop::row::rmsnorm_quantize_cached_f32 {
 template<int Width, int Warps> struct Arena {
   float sums[8];
@@ -18,7 +21,7 @@ template<int Width, int Warps> struct Arena {
   alignas(16) float normed[Width];
 };
 
-template<int Width, int Warps, uint32_t FloorBits>
+template<int Width, int Warps, uint32_t FloorBits, bool EarlyRelease = false>
 __device__ void run(const float* input, const uint16_t* weight, float* normed, uint8_t* codes,
                     uint8_t* scales, const uint32_t* live_rows, uint32_t* status,
                     uint64_t status_row_offset, float eps, unsigned char* arena) {
@@ -37,8 +40,12 @@ __device__ void run(const float* input, const uint16_t* weight, float* normed, u
   const uint4 weights = owner ? *reinterpret_cast<const uint4*>(weight + c) : uint4{};
   const uint16_t* w = reinterpret_cast<const uint16_t*>(&weights);
   ptx::griddep_wait();
+  if constexpr (EarlyRelease) ptx::griddep_launch_dependents();
   const uint32_t row = blockIdx.y;
-  if (row >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  if (row >= *live_rows) {
+    if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
+    return;
+  }
   const uint64_t base = uint64_t(row) * Width;
   float values[8];
   float square = 0.f;
@@ -123,6 +130,6 @@ __device__ void run(const float* input, const uint16_t* weight, float* normed, u
       }
     }
   }
-  ptx::griddep_launch_dependents();
+  if constexpr (!EarlyRelease) ptx::griddep_launch_dependents();
 }
 } // namespace chop::row::rmsnorm_quantize_cached_f32

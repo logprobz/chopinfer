@@ -16,8 +16,13 @@ use std::ops::Range;
 
 type Copy = (Span, Span);
 
+mod dma;
+#[cfg(test)]
+pub(crate) use dma::with_enabled as with_dma;
+
 pub(super) struct Plan {
     body: Programs,
+    dma: Option<dma::Plan>,
     head: Programs,
     copies: Vec<Vec<Copy>>,
 }
@@ -346,11 +351,30 @@ impl Plan {
             .map_err(|e| format!("prefill body collectives: {e:?}"))?;
         bundle_runtime::pipeline::check_collectives(&head.0, &head.1)
             .map_err(|e| format!("prefill head collectives: {e:?}"))?;
-        Ok(Self { body, head, copies })
+        let dma = dma::Plan::prepare(instance, run, &body)?;
+        Ok(Self {
+            body,
+            dma,
+            head,
+            copies,
+        })
+    }
+
+    /// Whether `other` issues the same launches, copies and head.
+    pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
+        Ok(self.dma.is_none()
+            && other.dma.is_none()
+            && self.copies == other.copies
+            && super::plan_cache::same_programs(&self.body, &other.body)?
+            && super::plan_cache::same_programs(&self.head, &other.head)?)
     }
 
     pub(super) fn body(&self) -> &Programs {
         &self.body
+    }
+
+    pub(super) fn uses_dma(&self) -> bool {
+        self.dma.is_some()
     }
 
     pub(super) fn execute(
@@ -359,12 +383,21 @@ impl Plan {
         gathers: Option<&crate::instance::prefill_engram::Plan>,
     ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
-        if let Some(gathers) = gathers {
-            gathers.execute(instance, &self.body.0, &self.body.1)
+        if let Some(dma) = &self.dma {
+            if gathers.is_some() {
+                return Err(BundleAbiError::Status(
+                    runtime_bundle_abi::BundleStatusV1::InvalidState,
+                ));
+            }
+            dma.execute(instance, &self.body)?;
         } else {
-            instance.launch_eager(&streams, &self.body.0, &self.body.1)
+            if let Some(gathers) = gathers {
+                gathers.execute(instance, &self.body.0, &self.body.1)
+            } else {
+                instance.launch_eager(&streams, &self.body.0, &self.body.1)
+            }
+            .map_err(|e| instance.dispatch_failed(e))?;
         }
-        .map_err(|e| instance.dispatch_failed(e))?;
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
                 instance

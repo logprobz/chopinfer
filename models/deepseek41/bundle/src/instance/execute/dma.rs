@@ -1,4 +1,7 @@
-//! Ordered DMA transport with an owner-local rank sum and BF16 gather.
+//! Ordered DMA transport with an owner-local rank sum and BF16 gather. The
+//! scatter carries the payload of the collective it replaces: F32 partials,
+//! or each rank's partial rounded once to BF16 as the BF16-partial
+//! contract's entries send it.
 use super::{Run, Stage};
 use crate::instance::Instance;
 use bundle_runtime::acquire::RankHandles;
@@ -7,15 +10,25 @@ use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch};
 use bundle_runtime::resources::{Held, allocate_span};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
-    BundleAbiError, BundleEventHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, HostServicesV1,
+    BundleAbiError, BundleEventHandleV1, BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1,
+    HostServicesV1,
 };
 
 pub(crate) struct Rank {
     /// Allocation/free and the host's automatic peer-copy joins only. Keeping
     /// this off both active lanes avoids serializing disjoint row parts.
     pub(crate) owner: BundleStreamHandleV1,
+    /// Gather copies when the rank's main stream consumes each gathered
+    /// interval as it lands, and scatter copies when it produces each sent
+    /// interval before its copy; idle otherwise.
+    lane: BundleStreamHandleV1,
     inbox: DeviceBufferSpanV1,
+    /// 0, 4 and 7 join the call's phases across ranks; 1 to 3, 5 and 6 order
+    /// the per-interval producer form (`Call::produce`).
     events: [BundleEventHandleV1; 8],
+    /// One per copy phase, recorded on the lane after the copies this rank
+    /// issued in that phase.
+    copied: [BundleEventHandleV1; 3],
 }
 
 pub(crate) fn acquire(
@@ -29,6 +42,8 @@ pub(crate) fn acquire(
         .map(|&(context, pool, _)| {
             let owner = services.create_stream(context, 1)?;
             held.push(Held::Stream(owner));
+            let lane = services.create_stream(context, 1)?;
+            held.push(Held::Stream(lane));
             let inbox = allocate_span(
                 services,
                 pool,
@@ -37,18 +52,61 @@ pub(crate) fn acquire(
                 held,
             )?;
             let mut events = Vec::new();
-            for _ in 0..8 {
+            for _ in 0..11 {
                 let event = services.create_event(context)?;
                 held.push(Held::Event(event));
                 events.push(event);
             }
+            let copied = events.split_off(8);
             Ok(Rank {
                 owner,
+                lane,
                 inbox,
                 events: events.try_into().expect("eight DMA events"),
+                copied: copied.try_into().expect("three copy events"),
             })
         })
         .collect()
+}
+
+/// Whether the host copies on a source's stream. One 16-byte push per
+/// ordered pair of ranks, between their inboxes, before either holds data.
+/// A host from before pushes refuses the first with `InvalidArgument`
+/// before submitting anything, and the instance then pulls; any later
+/// refusal fails creation, never a step.
+pub(crate) fn pushes(
+    services: &HostServicesV1,
+    ranks: &[RankHandles],
+    dma: &[Rank],
+) -> Result<bool, BundleAbiError> {
+    let probe = |span| subspan(span, 0, 16).map_err(|_| BundleAbiError::InvalidRange("DMA inbox"));
+    for (source, from) in dma.iter().enumerate() {
+        for (destination, to) in dma.iter().enumerate() {
+            if source == destination {
+                continue;
+            }
+            // The destination's inbox exists once its owner stream has
+            // allocated it.
+            services.record_event(to.events[0], to.owner)?;
+            services.wait_event(from.owner, to.events[0])?;
+            match services.copy_peer_to_peer(
+                from.owner,
+                ranks[destination].0,
+                probe(to.inbox)?,
+                ranks[source].0,
+                probe(from.inbox)?,
+            ) {
+                Ok(()) => {}
+                Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+                    if (source, destination) == (0, 1) =>
+                {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) fn drain(instance: &Instance) -> Result<(), BundleAbiError> {
@@ -67,6 +125,7 @@ pub(crate) fn drain_streams(instance: &Instance) -> Result<(), BundleAbiError> {
         .ranks
         .iter()
         .map(|rank| rank.2)
+        .chain(instance.dma.iter().map(|rank| rank.lane))
         .chain(instance.overlap.iter().map(|rank| rank.lane.stream))
         .chain(instance.side_lanes.iter().map(|lanes| lanes.side))
     {
@@ -102,7 +161,27 @@ struct Transfer {
     output: DeviceBufferSpanV1,
 }
 
+impl Transfer {
+    /// The rank whose stream issues the copy.
+    fn issuer(&self, push: bool) -> usize {
+        if push { self.source } else { self.destination }
+    }
+}
+
+/// The rank that copies into `rank` in copy phase `phase`.
+fn sender(rank: usize, phase: usize) -> usize {
+    (rank + 3 - phase) % 4
+}
+
 pub(super) struct Call {
+    first: u32,
+    rows: u32,
+    embedding: bool,
+    /// Each rank's rounding of the partial rows it sends (BF16 payload).
+    rounds: Vec<Vec<PreparedLaunch>>,
+    /// `[rank][owner]`: the same rounding of one owner's interval, for a
+    /// call whose producer runs per interval (BF16 payload; empty for F32).
+    sends: Vec<Vec<Option<PreparedLaunch>>>,
     scatter: [Vec<Transfer>; 3],
     sums: Vec<PreparedLaunch>,
     gather: [Vec<Transfer>; 3],
@@ -110,21 +189,41 @@ pub(super) struct Call {
 }
 
 impl Call {
+    /// The reduction of rows `first..first + rows` that replaces the four
+    /// ranks' `collectives`, carrying the payload they send. `None` where
+    /// the rows or the collectives are outside the transport; `composed`
+    /// admits the composed form (`Kernels::prefill_dma_payload`).
     pub(super) fn prepare(
         instance: &Instance,
         first: u32,
         rows: u32,
         embedding: bool,
+        collectives: &[&str],
+        composed: bool,
     ) -> Result<Option<Self>, String> {
         if instance.dma.len() != 4 || !(512..=PREFILL_TOKENS).contains(&rows) {
             return Ok(None);
         }
+        let payloads = collectives
+            .iter()
+            .map(|symbol| crate::Kernels::prefill_dma_payload(symbol, composed))
+            .collect::<Vec<_>>();
+        let Some(Some(payload)) = payloads.first().copied() else {
+            return Ok(None);
+        };
+        if payloads.len() != 4 || payloads.iter().any(|p| *p != Some(payload)) {
+            return Ok(None);
+        }
+        let bytes = payload.bytes();
         let width = u64::from(instance.config.shape.dims().hidden);
         let owner_rows = rows.div_ceil(4);
         let slot = u64::from(owner_rows) * width;
         let mut inputs = Vec::new();
+        let mut sent = Vec::new();
         let mut outputs = Vec::new();
         let mut inboxes = Vec::new();
+        let mut rounds = Vec::new();
+        let mut sends = Vec::new();
         let mut sums = Vec::new();
         let mut footprint = Vec::new();
         for (rank, buffers) in instance.buffers.iter().enumerate() {
@@ -138,27 +237,69 @@ impl Call {
                 first,
                 rows,
             )?;
-            let inbox = subspan(instance.dma[rank].inbox, 0, slot * 16)?;
+            let inbox = subspan(instance.dma[rank].inbox, 0, slot * 4 * bytes)?;
             let begin = (rank as u32 * owner_rows).min(rows);
             let count = owner_rows.min(rows - begin);
+            let own = |span: DeviceBufferSpanV1, bytes: u64| {
+                subspan(
+                    span,
+                    u64::from(begin) * width * bytes,
+                    u64::from(count) * width * bytes,
+                )
+            };
+            // A BF16 payload's rounded rows follow the inbox in the same
+            // allocation; the owner's own rows are rounded inside its sum.
+            let outbox = match payload {
+                crate::ops::DmaPayload::F32 => input,
+                crate::ops::DmaPayload::Bf16 => subspan(
+                    instance.dma[rank].inbox,
+                    inbox.length,
+                    u64::from(rows) * width * 2,
+                )?,
+            };
+            let mut round = Vec::new();
+            if payload == crate::ops::DmaPayload::Bf16 {
+                for (from, to) in [(0, begin), (begin + count, rows)] {
+                    if from < to {
+                        let length = u64::from(to - from) * width;
+                        round.push(crate::Kernels::prefill_dma_round(
+                            subspan(input, u64::from(from) * width * 4, length * 4)?,
+                            subspan(outbox, u64::from(from) * width * 2, length * 2)?,
+                            to - from,
+                        )?);
+                    }
+                }
+                footprint.push(outbox);
+                let mut by_owner = Vec::new();
+                for owner in 0..4 {
+                    let from = (owner * owner_rows).min(rows);
+                    let to = (from + owner_rows).min(rows);
+                    by_owner.push(if owner == rank as u32 || from == to {
+                        None
+                    } else {
+                        let length = u64::from(to - from) * width;
+                        Some(crate::Kernels::prefill_dma_round(
+                            subspan(input, u64::from(from) * width * 4, length * 4)?,
+                            subspan(outbox, u64::from(from) * width * 2, length * 2)?,
+                            to - from,
+                        )?)
+                    });
+                }
+                sends.push(by_owner);
+            }
+            rounds.push(round);
             sums.push(crate::Kernels::prefill_dma_sum(
-                subspan(
-                    input,
-                    u64::from(begin) * width * 4,
-                    u64::from(count) * width * 4,
-                )?,
+                payload,
+                own(input, 4)?,
                 inbox,
-                subspan(
-                    output,
-                    u64::from(begin) * width * 2,
-                    u64::from(count) * width * 2,
-                )?,
+                own(output, 2)?,
                 slot,
                 rank as u32,
                 count,
             )?);
             footprint.extend([input, output, inbox]);
             inputs.push(input);
+            sent.push(outbox);
             outputs.push(output);
             inboxes.push(inbox);
         }
@@ -173,14 +314,14 @@ impl Call {
                     source,
                     destination,
                     input: subspan(
-                        inputs[source],
-                        u64::from(first) * width * 4,
-                        u64::from(count) * width * 4,
+                        sent[source],
+                        u64::from(first) * width * bytes,
+                        u64::from(count) * width * bytes,
                     )?,
                     output: subspan(
                         inboxes[destination],
-                        source as u64 * slot * 4,
-                        u64::from(count) * width * 4,
+                        source as u64 * slot * bytes,
+                        u64::from(count) * width * bytes,
                     )?,
                 });
                 let first = (source as u32 * owner_rows).min(rows);
@@ -202,6 +343,11 @@ impl Call {
             }
         }
         Ok(Some(Self {
+            first,
+            rows,
+            embedding,
+            rounds,
+            sends,
             scatter,
             sums,
             gather,
@@ -213,28 +359,47 @@ impl Call {
         crate::shared_overlap::disjoint_copy_spans(&self.footprint, compute)
     }
 
+    /// Run the call. With `producers`, each rank's main stream produces and
+    /// rounds the interval it sends in each scatter phase in phase order,
+    /// then its own, and each copy of that interval runs on a lane once that
+    /// source has rounded it. With `consumers`, the gather copies move to
+    /// the lanes and each rank's main stream runs the consumers of its own
+    /// interval after its sum and of every other interval after that
+    /// interval's copy. With `instance.dma_push`, every copy runs on its
+    /// source's stream or lane instead of its destination's, in the same
+    /// permutation order, and each destination waits for its source's copy
+    /// in that phase.
     pub(super) fn execute(
         &self,
         instance: &Instance,
         streams: &[BundleStreamHandleV1],
+        consumers: Option<&Consumers>,
+        producers: Option<&Producers>,
     ) -> Result<(), DispatchError> {
         if streams.len() != 4 || instance.dma.len() != 4 {
             return Err(DispatchError::InvalidPlan);
         }
         let services = &instance.services;
+        let resolve = |rank: usize, launch: &PreparedLaunch| {
+            dispatch::resolve(
+                &instance.symbols[rank],
+                &launch.symbol,
+                launch.plan,
+                &launch.arguments,
+                &launch.bindings,
+            )
+        };
+        let rounds = self
+            .rounds
+            .iter()
+            .enumerate()
+            .map(|(rank, rounds)| rounds.iter().map(|r| resolve(rank, r)).collect())
+            .collect::<Result<Vec<Vec<_>>, _>>()?;
         let sums = self
             .sums
             .iter()
             .enumerate()
-            .map(|(rank, sum)| {
-                dispatch::resolve(
-                    &instance.symbols[rank],
-                    &sum.symbol,
-                    sum.plan,
-                    &sum.arguments,
-                    &sum.bindings,
-                )
-            })
+            .map(|(rank, sum)| resolve(rank, sum))
             .collect::<Result<Vec<_>, _>>()?;
         let record = |stage: usize| -> Result<(), BundleAbiError> {
             for (rank, &stream) in streams.iter().enumerate() {
@@ -250,10 +415,13 @@ impl Call {
             }
             Ok(())
         };
-        let copies = |transfers: &[Transfer]| -> Result<(), BundleAbiError> {
+        let push = instance.dma_push;
+        let copies = |transfers: &[Transfer],
+                      streams: &[BundleStreamHandleV1]|
+         -> Result<(), BundleAbiError> {
             for transfer in transfers {
                 services.copy_peer_to_peer(
-                    streams[transfer.destination],
+                    streams[transfer.issuer(push)],
                     instance.ranks[transfer.destination].0,
                     transfer.output,
                     instance.ranks[transfer.source].0,
@@ -262,24 +430,201 @@ impl Call {
             }
             Ok(())
         };
-        record(0)?;
-        for phase in 0..3 {
-            wait(phase)?;
-            copies(&self.scatter[phase])?;
-            record(phase + 1)?;
+        let lanes = instance
+            .dma
+            .iter()
+            .map(|rank| rank.lane)
+            .collect::<Vec<_>>();
+        if let Some(producers) = producers {
+            self.produce(instance, streams, &lanes, producers)?;
+        } else {
+            // Every rank's rounded rows exist before any peer copies them.
+            for (rank, rounds) in rounds.iter().enumerate() {
+                for round in rounds {
+                    round.submit(services, streams[rank])?;
+                }
+            }
+            // Every partial is complete before any rank reads a peer's.
+            record(0)?;
+            wait(0)?;
+            // A rank's three scatter pulls all land in its own inbox from
+            // its own stream, so its sum follows them without a cross-rank
+            // barrier between permutations; the permutation order is
+            // unchanged. Pushes keep that order on each source's stream, and
+            // each destination waits for the source that sent it each phase.
+            for phase in 0..3 {
+                copies(&self.scatter[phase], streams)?;
+                if push {
+                    for (rank, dma) in instance.dma.iter().enumerate() {
+                        services.record_event(dma.copied[phase], streams[rank])?;
+                    }
+                }
+            }
+            if push {
+                self.receive(instance, streams)?;
+            }
         }
         for (rank, sum) in sums.iter().enumerate() {
             sum.submit(services, streams[rank])?;
         }
+        // Every owner interval is summed before any rank gathers it.
         record(4)?;
-        for phase in 0..3 {
-            wait(phase + 4)?;
-            copies(&self.gather[phase])?;
-            record(phase + 5)?;
+        let Some(consumers) = consumers else {
+            wait(4)?;
+            for phase in 0..3 {
+                copies(&self.gather[phase], streams)?;
+            }
+            // All peer reads have completed before any rank can reuse
+            // partials, rounded rows, outputs, inboxes, or this call's
+            // event records.
+            record(7)?;
+            wait(7)?;
+            return Ok(());
+        };
+        let resolved = consumers.resolve(instance)?;
+        for &lane in &lanes {
+            for rank in &instance.dma {
+                services.wait_event(lane, rank.events[4])?;
+            }
         }
-        // All peer reads have completed before any rank can reuse partials,
-        // outputs, inboxes, or this call's event records.
+        // A rank's own rows are final once its sum is, in its stream order.
+        for (rank, &stream) in streams.iter().enumerate() {
+            for launch in &resolved[rank][rank] {
+                launch.submit(services, stream)?;
+            }
+        }
+        for phase in 0..3 {
+            copies(&self.gather[phase], &lanes)?;
+            for (rank, dma) in instance.dma.iter().enumerate() {
+                services.record_event(dma.copied[phase], lanes[rank])?;
+            }
+        }
+        for phase in 0..3 {
+            for (rank, &stream) in streams.iter().enumerate() {
+                let issuer = if push { sender(rank, phase) } else { rank };
+                services.wait_event(stream, instance.dma[issuer].copied[phase])?;
+                for launch in &resolved[rank][(rank + 3 - phase) % 4] {
+                    launch.submit(services, stream)?;
+                }
+            }
+        }
+        // As above, with the copies' completion recorded on the lanes.
+        for (rank, &lane) in lanes.iter().enumerate() {
+            services.record_event(instance.dma[rank].events[7], lane)?;
+        }
         wait(7)?;
+        Ok(())
+    }
+
+    /// Each rank's interval producers and roundings on its main stream, and
+    /// the scatter copies on the lanes: each destination's pulls on its own,
+    /// or each source's pushes on its own. Event 5 marks a rank's main
+    /// stream at the call, events 1 to 3 its interval for each scatter
+    /// phase, event 6 a destination's three pulls. Ends with every rank's
+    /// main stream after its own interval's producer and the copies into
+    /// its inbox.
+    fn produce(
+        &self,
+        instance: &Instance,
+        streams: &[BundleStreamHandleV1],
+        lanes: &[BundleStreamHandleV1],
+        producers: &Producers,
+    ) -> Result<(), DispatchError> {
+        let services = &instance.services;
+        let produced = producers.resolve(instance)?;
+        let sends = self
+            .sends
+            .iter()
+            .enumerate()
+            .map(|(rank, owners)| {
+                owners
+                    .iter()
+                    .map(|round| {
+                        round
+                            .as_ref()
+                            .map(|round| {
+                                dispatch::resolve(
+                                    &instance.symbols[rank],
+                                    &round.symbol,
+                                    round.plan,
+                                    &round.arguments,
+                                    &round.bindings,
+                                )
+                            })
+                            .transpose()
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if produced.len() != 4 || sends.len() != 4 {
+            return Err(DispatchError::InvalidPlan);
+        }
+        let push = instance.dma_push;
+        for (rank, &stream) in streams.iter().enumerate() {
+            let dma = &instance.dma[rank];
+            // A lane writes this rank's inbox only after the rank's main
+            // stream has reached the call: its previous sums have read it.
+            services.record_event(dma.events[5], stream)?;
+            if !push {
+                services.wait_event(lanes[rank], dma.events[5])?;
+            }
+            for phase in 0..3 {
+                let to = (rank + 1 + phase) % 4;
+                let round = sends[rank][to].as_ref().ok_or(DispatchError::InvalidPlan)?;
+                produced[rank][phase].submit(services, stream)?;
+                round.submit(services, stream)?;
+                services.record_event(dma.events[1 + phase], stream)?;
+            }
+            produced[rank][3].submit(services, stream)?;
+        }
+        // Each copy waits only for its own source's interval; a lane keeps
+        // its copies in permutation order. A push also waits for its
+        // destination to reach the call.
+        for phase in 0..3 {
+            for transfer in &self.scatter[phase] {
+                let lane = lanes[transfer.issuer(push)];
+                services.wait_event(lane, instance.dma[transfer.source].events[1 + phase])?;
+                if push {
+                    services.wait_event(lane, instance.dma[transfer.destination].events[5])?;
+                }
+                services.copy_peer_to_peer(
+                    lane,
+                    instance.ranks[transfer.destination].0,
+                    transfer.output,
+                    instance.ranks[transfer.source].0,
+                    transfer.input,
+                )?;
+                if push {
+                    services.record_event(instance.dma[transfer.source].copied[phase], lane)?;
+                }
+            }
+        }
+        if push {
+            self.receive(instance, streams)?;
+            return Ok(());
+        }
+        for (rank, &stream) in streams.iter().enumerate() {
+            let dma = &instance.dma[rank];
+            services.record_event(dma.events[6], lanes[rank])?;
+            services.wait_event(stream, dma.events[6])?;
+        }
+        Ok(())
+    }
+
+    /// Each rank's main stream waits for the push into its inbox in every
+    /// scatter phase, recorded as that phase's copy event of its sender.
+    fn receive(
+        &self,
+        instance: &Instance,
+        streams: &[BundleStreamHandleV1],
+    ) -> Result<(), BundleAbiError> {
+        for phase in 0..3 {
+            for (rank, &stream) in streams.iter().enumerate() {
+                instance
+                    .services
+                    .wait_event(stream, instance.dma[sender(rank, phase)].copied[phase])?;
+            }
+        }
         Ok(())
     }
 }
@@ -319,14 +664,25 @@ pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
     run.phase.prefill()
         && instance.dma.len() == 4
         && instance.ops.prefill_dma.enabled()
-        && instance.dspark.is_none()
         && run.media.is_none()
         && run.inputs.request_ids.len() == 1
 }
 
+/// The full-schedule and two-part executors take DMA only when it was
+/// selected explicitly, and never for a DSpark target; the default serves
+/// the upper-skip executor alone.
+pub(super) fn eligible_full_schedule(instance: &Instance, run: &Run) -> bool {
+    eligible(instance, run)
+        && instance.ops.prefill_dma.serves_full_schedule()
+        && instance.dspark.is_none()
+}
+
 impl Plan {
     pub(super) fn prepare(instance: &Instance, run: &Run) -> Result<Option<Self>, String> {
-        if !eligible(instance, run) || !instance.overlap.is_empty() || run.phase.rows() < 512 {
+        if !eligible_full_schedule(instance, run)
+            || !instance.overlap.is_empty()
+            || run.phase.rows() < 512
+        {
             return Ok(None);
         }
         let stages = crate::program::stages(instance.config.shape.geometry, run.phase);
@@ -337,6 +693,7 @@ impl Plan {
             .filter(|s| matches!(s, Stage::EmbeddingReduce | Stage::Reduce(..)))
         {
             let mut compute = Vec::new();
+            let mut collectives = Vec::new();
             for (rank, cursor) in cursors.iter_mut().enumerate() {
                 let begin = run.stages[rank]
                     .iter()
@@ -354,15 +711,22 @@ impl Plan {
                     return Err("DMA reduction stage order changed".into());
                 }
                 compute.push(copied(run, rank, *cursor..collective));
+                collectives.push(run.programs[rank][collective].symbol.as_str());
                 *cursor = end;
             }
-            let call = Call::prepare(
+            // A collective the transport does not replace keeps the whole
+            // step on the collectives.
+            let Some(call) = Call::prepare(
                 instance,
                 0,
                 run.phase.rows(),
                 stage == Stage::EmbeddingReduce,
+                &collectives,
+                true,
             )?
-            .ok_or("DMA call was not prepared")?;
+            else {
+                return Ok(None);
+            };
             blocks.push((compute, call));
         }
         let tail = cursors
@@ -389,7 +753,7 @@ impl Plan {
         let result = (|| {
             for (compute, reduction) in &self.blocks {
                 issue(compute)?;
-                reduction.execute(instance, &streams)?;
+                reduction.execute(instance, &streams, None, None)?;
             }
             issue(&self.tail)
         })();
@@ -399,6 +763,11 @@ impl Plan {
         result
     }
 }
+
+mod consume;
+mod produce;
+pub(super) use consume::Consumers;
+pub(super) use produce::Producers;
 
 #[cfg(test)]
 mod ownership_tests;

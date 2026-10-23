@@ -281,6 +281,19 @@ pub(crate) fn widens(g: &Geometry, layer: u32, sublayer: Sublayer) -> bool {
 
 /// The dense F32 projections of an instance and the widening of the
 /// normed rows they read.
+/// The views of the router's certified projection, which reads the
+/// MoE-input norm's rows and certificate (router-in-norm, launched through
+/// `crate::Kernels::router_in_norm_router`).
+pub(crate) struct CertifiedRouterViews {
+    /// The norm's BF16 rows, which the SIMT path widens itself.
+    pub(crate) normed: View,
+    pub(crate) certified: View,
+    pub(crate) weight: View,
+    pub(crate) output: View,
+    pub(crate) live_rows: View,
+    pub(crate) weight_domain: View,
+}
+
 pub(crate) struct ExactF32Ops {
     widen: Prepared<WidenRowsBuffers<View>>,
     projections: Vec<(F32Dense, Prepared<ProjectionBuffers<View>>)>,

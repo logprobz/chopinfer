@@ -7,7 +7,10 @@
 pub mod ceil_cached;
 pub mod ceil_parallel;
 pub mod ceil_prefill;
+pub mod ceil_split;
 pub mod confidence_parallel;
+pub mod dense_dual;
+mod dense_dual_serving;
 pub mod dspark;
 pub mod dspark_argmax;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
@@ -17,9 +20,14 @@ pub mod dspark_peer_embedding;
 pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
+pub mod fold_cluster;
+pub mod fold_local_rows;
+mod fold_local_rows_serving;
+pub mod hc_cols;
 pub mod hc_completion;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;
+pub mod hc_finish_twin;
 pub mod hc_mixer_probe;
 #[allow(dead_code, reason = "the build compiles the measured prefill module")]
 mod hc_prefill;
@@ -64,6 +72,8 @@ pub mod prefill_tma_matrix;
 pub mod prefill_tma_scales;
 pub mod projection_reuse;
 pub mod query_prefill;
+pub mod query_window;
+mod query_window_serving;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -163,6 +173,8 @@ pub mod ring_gather;
 pub mod ring_gather_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod routed_sum;
+pub mod router_norm;
+pub mod router_norm_entries;
 pub(crate) mod router_prefill;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
@@ -245,6 +257,32 @@ pub fn register_f32_projections(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    /// Whether a prefill step of `rows` rows runs the router in the
+    /// MoE-input norm (`router_norm`).
+    pub(crate) fn router_in_norm(
+        g: &model_deepseek41_contract::geometry::Geometry,
+        ranks: u32,
+        rows: u32,
+    ) -> bool {
+        router_norm::applies(g, ranks, rows)
+    }
+
+    /// The certifying MoE-input norm's launch from the served norm's
+    /// (`router_norm::norm_launch`).
+    pub(crate) fn router_in_norm_norm(
+        served: Vec<kernel_core::backend::Launch>,
+        certified: kernel_core::backend::View,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        router_norm::norm_launch(served, certified)
+    }
+
+    /// The router's certified projection launch (`router_norm::router_launch`).
+    pub(crate) fn router_in_norm_router(
+        views: &crate::ops::exact_f32::CertifiedRouterViews,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        router_norm::router_launch(views)
+    }
+
     pub(crate) fn prefill_router(
         shape: &crate::shape::Shape,
         experts: u32,
@@ -447,6 +485,40 @@ impl crate::Kernels {
         mxfp8_fold::SMALL_CAPACITY
     }
 
+    /// Whether `shape` quantizes one dense row of `width` columns of
+    /// `input` with its own one-row op (`ceil_split::serves_width`).
+    pub(crate) fn dense_quantize_one_row(
+        shape: &crate::shape::Shape,
+        width: u32,
+        input: kernel_core::contract::DType,
+    ) -> bool {
+        ceil_split::serves_width(shape.geometry, shape.ranks(), width, input)
+    }
+
+    /// The startup lines naming the one-row decode twins `shape` serves,
+    /// so a served run shows what it measured.
+    pub(crate) fn one_row_twin_lines(shape: &crate::shape::Shape) -> Vec<String> {
+        let mut lines = Vec::new();
+        if query_window::serves(shape.geometry, shape.ranks()) {
+            lines.push(format!(
+                "{}: one-row decode runs each layer's query RoPE and window write as one launch",
+                query_window::SWITCH
+            ));
+        }
+        if ceil_split::serves(shape.geometry, shape.ranks()) {
+            let widths = ceil_split::SERVED
+                .iter()
+                .map(|(width, input, parts)| format!("w{width} {input:?} over {parts} CTAs"))
+                .collect::<Vec<_>>();
+            lines.push(format!(
+                "{}: one-row dense quantizers split: {}",
+                ceil_split::SWITCH,
+                widths.join(", ")
+            ));
+        }
+        lines
+    }
+
     /// Select the qualified dense fold query for an exact decode row count.
     pub(crate) fn dense_decode_query(
         query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
@@ -491,13 +563,18 @@ impl crate::Kernels {
             prefill_matrix::CUBIN,
             prefill_tma_matrix::CUBIN,
             prefill_tma_scales::CUBIN,
+            fold_local_rows::CUBIN,
+            fold_cluster::CUBIN,
         ]
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            && (cubin != dense_dual::CUBIN || dense_dual::enabled(shape.geometry, shape.ranks()))
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))
             && cubin != kernels_sm120::probes::CUBIN
+            && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
+            && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
@@ -516,6 +593,7 @@ impl crate::Kernels {
                 moe_native::CUBIN,
                 moe_native::CEIL_CUBIN,
                 moe_native::WIDE_CUBIN,
+                moe_native::LEAN_CUBIN,
             ]
             .contains(&cubin)
                 || (moe_native::requested() && moe_native::eligible(shape.geometry, shape.ranks())))
@@ -536,6 +614,8 @@ impl crate::Kernels {
             && (!cubin.starts_with("position_select_cached_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && (cubin != router_norm::CUBIN
+                || router_norm::applies(shape.geometry, shape.ranks(), router_norm::ROWS))
     }
 
     /// Model-qualified preparation ranges, in increasing capacity within
@@ -586,9 +666,8 @@ impl crate::Kernels {
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = if crate::ops::bf16_partials_requested(shape, storage) {
-            if crate::ops::dma_requested().enabled() {
-                return Err("BF16 partials require CHOPINFER_DEEPSEEK41_PREFILL_DMA=0".into());
-            }
+            // Prefill DMA carries the rounded BF16 partials of the
+            // collectives it replaces (`prefill_dma_payload`).
             // Create admits every resident grid before preparing or running
             // any graph. A failed admission refuses the selected instance.
             sm120.with_phased_bf16_all_reduce()
@@ -630,6 +709,7 @@ impl crate::Kernels {
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());
         let sm120 = ceil_cached::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = ceil_split::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_bf16::register(sm120);
@@ -687,15 +767,201 @@ impl crate::Kernels {
         kernels_sm120::backend::bf16_phased_admission_plans().map_err(|error| error.to_string())
     }
 
-    pub(crate) fn prefill_dma_sum_info() -> kernel_core::backend::OpInfo {
+    /// The payload of the copy-engine reduction that replaces a prefill
+    /// collective, or `None` for a collective it does not replace. The
+    /// F32-partial contract sends F32 partials; the BF16-partial contract's
+    /// two-shot and turns entries send each rank's partial rounded once to
+    /// BF16, as they do. With `composed`, the composed form's F32
+    /// reduce-scatter (unadmitted phased entries) is replaced with F32
+    /// partials: under the BF16-partial contract its preceding launches
+    /// have already rounded the partials in place, so the sum is the same.
+    pub(crate) fn prefill_dma_payload(
+        symbol: &str,
+        composed: bool,
+    ) -> Option<crate::ops::DmaPayload> {
+        use crate::ops::DmaPayload;
+        use kernels_sm120::comm::{phased_bf16, phased_f32, phased_turns_bf16};
+        if symbol == phased_f32::ROUND_SYMBOL || composed && symbol == COMPOSED_SCATTER {
+            Some(DmaPayload::F32)
+        } else if symbol == phased_bf16::SYMBOL || symbol == phased_turns_bf16::SYMBOL {
+            Some(DmaPayload::Bf16)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn prefill_dma_sum_info(
+        payload: crate::ops::DmaPayload,
+    ) -> kernel_core::backend::OpInfo {
+        use crate::ops::DmaPayload;
+        use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
         kernel_core::backend::OpInfo::new(
             "local-rank-ordered-bf16-owner-sum",
             kernel_core::properties::Invariance::any_rows(8192),
-            vec![(kernels_sm120::comm::owned_sum_f32::SYMBOL.into(), 0)],
+            match payload {
+                DmaPayload::F32 => vec![(owned_sum_f32::SYMBOL.into(), 0)],
+                DmaPayload::Bf16 => vec![
+                    (owned_sum_bf16::ROUND_SYMBOL.into(), 0),
+                    (owned_sum_bf16::SUM_SYMBOL.into(), 0),
+                ],
+            },
         )
     }
 
+    /// The row layout of a launch that may consume part of a reduced
+    /// interval: the HC expand that reads the reduced rows, the r8 c4
+    /// prefill mix and the cached norm-ceil of the next sublayer. These are
+    /// the entries the 2026-10-21 consumer probe ran per owner interval; the
+    /// MoE-input norm-ceil may also certify each row's router operands.
+    pub(crate) fn prefill_dma_consumer(
+        symbol: &str,
+        hidden: u64,
+        streams: u64,
+    ) -> Option<crate::ops::RowLocal> {
+        use crate::ops::{RowLocal, RowLocalKind};
+        let flat = streams * hidden * 2;
+        Some(match symbol {
+            // x, y, post, comb, out, live rows; grid (columns, rows).
+            "chop_sinkhorn_hc_deepseek41_expand_f32_v1" => RowLocal {
+                kind: RowLocalKind::Expand,
+                rows: vec![
+                    (0, flat),
+                    (1, hidden * 2),
+                    (2, streams * 4),
+                    (3, streams * streams * 4),
+                    (4, flat),
+                ],
+                call_rows: Some(1),
+                live: 5,
+                row_offset: None,
+                optional: vec![],
+                capacity_views: false,
+                grid: (1, 1),
+            },
+            // x, fn, base, scale, pre_in, collapsed, pre, post, comb, live
+            // rows; grid (row tiles of eight).
+            "chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c4_v1" => RowLocal {
+                kind: RowLocalKind::Mix,
+                rows: vec![
+                    (0, flat),
+                    (4, streams * 4),
+                    (5, hidden * 2),
+                    (6, streams * 4),
+                    (7, streams * 4),
+                    (8, streams * streams * 4),
+                ],
+                call_rows: None,
+                live: 9,
+                row_offset: None,
+                optional: vec![],
+                capacity_views: false,
+                grid: (0, 8),
+            },
+            // input, weight, normed, widened (F32 copy of normed, or null),
+            // codes, scales, live rows, status, its first row, eps, and in
+            // the certifying form one flag per row (`certified[row]`, the
+            // router's exact-operand flag); one CTA per row.
+            "chop_prefill_norm_ceil_deepseek41_cached_v1"
+            | "chop_prefill_norm_ceil_deepseek41_cached_certified_v1" => RowLocal {
+                kind: RowLocalKind::Norm,
+                rows: if symbol.ends_with("_certified_v1") {
+                    vec![
+                        (0, hidden * 2),
+                        (2, hidden * 2),
+                        (4, hidden),
+                        (5, hidden / 32),
+                        (10, 4),
+                    ]
+                } else {
+                    vec![
+                        (0, hidden * 2),
+                        (2, hidden * 2),
+                        (4, hidden),
+                        (5, hidden / 32),
+                    ]
+                },
+                call_rows: None,
+                live: 6,
+                row_offset: Some(8),
+                optional: vec![(3, hidden * 4)],
+                capacity_views: false,
+                grid: (0, 1),
+            },
+            _ => return None,
+        })
+    }
+
+    /// The row layout of `g`'s MoE route-row sum with its shared expert
+    /// addend (routed_sum_add.cuh, one CTA per token), the launch that
+    /// writes a MoE reduction's F32 partial rows: routed rows, route ids,
+    /// live tokens, rank, addend, output; grid one block per token.
+    pub(crate) fn prefill_dma_producer(
+        symbol: &str,
+        g: &model_deepseek41_contract::geometry::Geometry,
+    ) -> Option<crate::ops::RowLocal> {
+        use crate::ops::{RowLocal, RowLocalKind};
+        let sum = routed_sum::sum(g);
+        if symbol != sum.add_symbol(&routed_sum::prefix(g)) {
+            return None;
+        }
+        let (top_k, width) = (u64::from(sum.top_k), u64::from(sum.width));
+        Some(RowLocal {
+            kind: RowLocalKind::Produce,
+            rows: vec![
+                (0, top_k * width * 4),
+                (1, top_k * 4),
+                (4, width * 4),
+                (5, width * 4),
+            ],
+            call_rows: Some(5),
+            live: 2,
+            row_offset: None,
+            optional: vec![],
+            // The upper cone's sums read compact routed rows, route ids and
+            // addends from the start of their capacity buffers and write the
+            // cone's partial rows.
+            capacity_views: true,
+            grid: (0, 1),
+        })
+    }
+
+    /// Round `input`'s F32 partial rows once to BF16 into `output`.
+    pub(crate) fn prefill_dma_round(
+        input: runtime_bundle_abi::DeviceBufferSpanV1,
+        output: runtime_bundle_abi::DeviceBufferSpanV1,
+        rows: u32,
+    ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
+        use bundle_runtime::dispatch::BufferBindings;
+        use kernel_core::contract::{Argument, ArgumentList};
+        use kernels_sm120::comm::owned_sum_bf16;
+        let elements = output.length / 2;
+        if input.length != elements * 4
+            || output.length != elements * 2
+            || [input, output].iter().any(|s| s.offset % 16 != 0)
+        {
+            return Err("DMA rounding has inconsistent byte views".into());
+        }
+        let plan = owned_sum_bf16::round_plan(elements).map_err(|e| e.to_string())?;
+        let mut bindings = BufferBindings::default();
+        let arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(bindings.bind(input)),
+            Argument::DeviceBuffer(bindings.bind(output)),
+            Argument::U64(elements),
+        ]);
+        Ok(bundle_runtime::pipeline::PreparedLaunch {
+            symbol: owned_sum_bf16::ROUND_SYMBOL.into(),
+            rows,
+            plan,
+            arguments,
+            bindings,
+        })
+    }
+
+    /// The owner's rank-ordered sums. `inbox` holds four rank slots of
+    /// `slot` elements in the payload's format.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prefill_dma_sum(
+        payload: crate::ops::DmaPayload,
         input: runtime_bundle_abi::DeviceBufferSpanV1,
         inbox: runtime_bundle_abi::DeviceBufferSpanV1,
         output: runtime_bundle_abi::DeviceBufferSpanV1,
@@ -703,18 +969,32 @@ impl crate::Kernels {
         rank: u32,
         rows: u32,
     ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
+        use crate::ops::DmaPayload;
         use bundle_runtime::dispatch::BufferBindings;
         use kernel_core::contract::{Argument, ArgumentList};
-        use kernels_sm120::comm::owned_sum_f32;
+        use kernels_sm120::comm::{owned_sum_bf16, owned_sum_f32};
         let elements = output.length / 2;
         if input.length != elements * 4
             || output.length != elements * 2
-            || inbox.length != slot.checked_mul(16).ok_or("DMA inbox overflow")?
+            || inbox.length
+                != slot
+                    .checked_mul(4 * payload.bytes())
+                    .ok_or("DMA inbox overflow")?
             || [input, inbox, output].iter().any(|s| s.offset % 16 != 0)
         {
             return Err("DMA owner sum has inconsistent byte views".into());
         }
-        let plan = owned_sum_f32::plan(elements, slot, rank, 4).map_err(|e| e.to_string())?;
+        let (symbol, plan) = match payload {
+            DmaPayload::F32 => (
+                owned_sum_f32::SYMBOL,
+                owned_sum_f32::plan(elements, slot, rank, 4),
+            ),
+            DmaPayload::Bf16 => (
+                owned_sum_bf16::SUM_SYMBOL,
+                owned_sum_bf16::sum_plan(elements, slot, rank, 4),
+            ),
+        };
+        let plan = plan.map_err(|e| e.to_string())?;
         let mut bindings = BufferBindings::default();
         let arguments = ArgumentList(vec![
             Argument::DeviceBuffer(bindings.bind(input)),
@@ -726,7 +1006,7 @@ impl crate::Kernels {
             Argument::U32(4),
         ]);
         Ok(bundle_runtime::pipeline::PreparedLaunch {
-            symbol: owned_sum_f32::SYMBOL.into(),
+            symbol: symbol.into(),
             rows,
             plan,
             arguments,
@@ -734,6 +1014,9 @@ impl crate::Kernels {
         })
     }
 }
+
+/// The first collective of the all-reduces' composed form.
+const COMPOSED_SCATTER: &str = "chop_comm_reduce_scatter_f32_v1";
 
 // The build script includes the registration files, and so does the
 // projection assembly test; a test that reads the bundle's own modules
@@ -944,5 +1227,37 @@ mod window_bf16_tests {
                     .unwrap();
             assert!(b.latent_window_stage(&stage, Need::rows(32)).is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+mod one_row_twin_lines {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+
+    use crate::shape::Shape;
+
+    fn lines(ranks: Ranks, served: bool) -> Vec<String> {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        super::query_window::with_served(served, || {
+            super::ceil_split::with_served(served, || crate::Kernels::one_row_twin_lines(&shape))
+        })
+    }
+
+    /// A served run names each twin it serves with these lines, which the
+    /// served pair's job looks for.
+    #[test]
+    fn served_twins_name_themselves_at_startup() {
+        assert_eq!(
+            lines(Ranks::TP4, true),
+            [
+                "CHOPINFER_DEEPSEEK41_QUERY_WINDOW_TWIN: one-row decode runs each layer's query RoPE \
+                 and window write as one launch",
+                "CHOPINFER_DEEPSEEK41_CEIL_SPLIT: one-row dense quantizers split: w8192 Bf16 over 8 \
+                 CTAs, w2048 F32 over 8 CTAs",
+            ]
+        );
+        assert!(lines(Ranks::TP4, false).is_empty());
+        assert!(lines(Ranks::TP2, true).is_empty());
     }
 }

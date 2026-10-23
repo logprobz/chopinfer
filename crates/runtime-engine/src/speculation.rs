@@ -19,6 +19,10 @@ mod low_concurrency_tests;
 mod realized_tests;
 #[cfg(test)]
 mod refresh_tests;
+#[cfg(test)]
+mod shape_tests;
+#[cfg(test)]
+mod trial_tests;
 pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
@@ -66,9 +70,25 @@ const FIRST_PROBE: u16 = 16;
 /// history, so a plan charges each step this share of it: a drafting run of
 /// this many steps.
 const FRESH_RUN_STEPS: f64 = 16.0;
-/// Drafting steps a concurrency must realize before its measured throughput
-/// can switch drafting off.
+/// Steady drafting steps a concurrency must realize before its measured
+/// throughput can switch drafting off or keep it on. Probes vote in that
+/// throughput but do not count toward these steps: at DSpark C16 a probe
+/// weighed four steady steps, and seven losing probes with four steady steps
+/// that beat AR made a verdict against drafting.
 const REALIZED_STEPS: u32 = 8;
+/// A concurrency whose drafting is off runs its best drafting plan as a
+/// trial when that plan is estimated at this share of AR or more, though
+/// below the resume margin. Estimates can miss by more than the margin:
+/// a request that never verified is priced at the shared prior, and a probe
+/// times its drafters fresh. At DSpark C8 one process priced
+/// drafting at 0.91 to 0.94 of AR and kept AR, while another, whose
+/// estimate happened to clear the margin, realized 1.25 times AR.
+const TRIAL_BAND: f64 = 0.9;
+/// Plans without drafting before the next trial, after a trial whose
+/// realized throughput lost to AR. The wait doubles after every lost trial,
+/// up to `MAX_PROBE_INTERVAL`, and a trial that holds resets it, so trials
+/// where drafting loses take a small and shrinking share of plans.
+const TRIAL_INTERVAL: u16 = 128;
 /// Caught-up measurements after a fresh probe of an already measured block.
 const BLOCK_RECHECKS: u8 = 2;
 /// Exponential weight of one AR step in a concurrency's realized throughput.
@@ -86,6 +106,10 @@ const REALIZED_DRAFT_SPAN: f64 = 32.0;
 /// and a caught-up sequence adds about 0.12 ms of catch-up, together about
 /// 1/20 of a 4 ms AR step per sequence.
 const PRIOR_SEQUENCE_COST: f64 = 1.0 / 16.0;
+/// Weight of `PRIOR_SEQUENCE_COST` in a bucket's fitted cost per drafting
+/// sequence, in squared sequences of spread: steady steps at two counts four
+/// sequences apart outweigh it two to one, counts one apart do not.
+const SEQUENCE_PRIOR_WEIGHT: f64 = 4.0;
 /// A row bucket not measured at a concurrency is priced from its measured
 /// neighbours there: a wider one at this factor per doubling of rows over
 /// the nearest narrower one, a narrower one at the nearest wider one divided
@@ -114,11 +138,27 @@ struct ZeroDraftState {
     rechecks: u8,
     /// Total time of that refresh, charged to the next probe interval.
     recheck_micros: u64,
+    /// Steady steps left in a trial: a drafting run that started while
+    /// drafting was off keeps drafting for `REALIZED_STEPS` steady steps of
+    /// its own, then its realized verdict decides whether drafting holds.
+    trial: u32,
+    /// The trial started where an earlier drafting run had decided the
+    /// realized verdict, which then cannot stop it before its own steps.
+    after_verdict: bool,
+    /// Plans without drafting before a trial may start.
+    trial_wait: u16,
+    /// The wait that the next lost trial sets.
+    trial_interval: u16,
+    /// The probe interval when a probe that cleared the resume margin
+    /// voted a verdict that drafting loses back to holding. If the drafting
+    /// it revived loses again, the interval doubles from this one, so lucky
+    /// probes cannot keep reviving drafting that loses.
+    reopened: Option<u16>,
 }
 
 impl Default for ZeroDraftState {
     /// A concurrency starts as if drafting had lost: its first drafting plan
-    /// must clear the resume margin.
+    /// must clear the resume margin or run as a trial.
     fn default() -> Self {
         Self {
             disabled: true,
@@ -129,6 +169,37 @@ impl Default for ZeroDraftState {
             again: false,
             rechecks: 0,
             recheck_micros: 0,
+            trial: 0,
+            after_verdict: false,
+            trial_wait: 0,
+            trial_interval: TRIAL_INTERVAL,
+            reopened: None,
+        }
+    }
+}
+
+impl ZeroDraftState {
+    /// Ends a trial whose realized drafting held.
+    fn trial_held(&mut self) {
+        self.trial = 0;
+        self.after_verdict = false;
+        self.trial_wait = 0;
+        self.trial_interval = TRIAL_INTERVAL;
+        self.reopened = None;
+    }
+
+    /// Ends a trial without a verdict that drafting holds: the next trial
+    /// waits, by twice as long as after the previous loss.
+    fn trial_lost(&mut self) {
+        self.trial = 0;
+        self.after_verdict = false;
+        self.trial_wait = self.trial_interval;
+        self.trial_interval = self
+            .trial_interval
+            .saturating_mul(2)
+            .min(MAX_PROBE_INTERVAL);
+        if let Some(interval) = self.reopened.take() {
+            self.probe_interval = interval.saturating_mul(2).min(MAX_PROBE_INTERVAL);
         }
     }
 }
@@ -142,6 +213,7 @@ struct Realized {
     /// The total weight of the drafting average's samples, so its first
     /// steps average evenly instead of starting from the first one.
     drafting_weight: f64,
+    /// Steady drafting steps in the average; probes are not counted.
     drafting_steps: u32,
 }
 
@@ -151,24 +223,34 @@ impl Realized {
     }
 
     fn record_drafting(&mut self, rate: f64, weight: f64) {
+        self.record_probe(rate, weight);
+        self.drafting_steps = self.drafting_steps.saturating_add(1);
+    }
+
+    /// A probe votes in the drafting average without counting as a step.
+    fn record_probe(&mut self, rate: f64, weight: f64) {
         let kept = self.drafting_weight * (1.0 - weight);
         let total = kept + weight;
         self.drafting = Some((self.drafting.unwrap_or(0.0) * kept + weight * rate) / total);
         self.drafting_weight = total;
-        self.drafting_steps = self.drafting_steps.saturating_add(1);
+    }
+
+    /// Enough steady steps to trust the drafting average either way.
+    const fn decided(&self) -> bool {
+        self.drafting_steps >= REALIZED_STEPS
     }
 
     /// Drafting at this concurrency emitted fewer tokens per unit of time
     /// than AR did, over enough steps to trust it.
     fn losing(&self) -> bool {
-        self.drafting_steps >= REALIZED_STEPS
+        self.decided()
             && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting < ar)
     }
 
     /// Drafting at this concurrency emitted at least as many tokens per
     /// unit of time as AR did, over enough steps to trust it.
     fn holding(&self) -> bool {
-        self.drafting_steps >= REALIZED_STEPS
+        self.decided()
             && matches!((self.drafting, self.ar), (Some(drafting), Some(ar)) if drafting >= ar)
     }
 
@@ -587,6 +669,13 @@ impl DraftCostTable {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct BlockStepTable {
     steps: BTreeMap<(usize, usize), BlockStep>,
+    /// Steady steps by drafting sequences as well: steps whose drafters all
+    /// caught up, outside probes, which can carry catch-up or a stale level.
+    counts: BTreeMap<(usize, usize, usize), BlockStep>,
+    /// For each items and row bucket measured at two or more sequence
+    /// counts, the spread of those counts and its covariance with their
+    /// times: the least-squares fit of the cost of a drafting sequence.
+    fits: BTreeMap<(usize, usize), (f64, f64)>,
 }
 
 impl BlockStepTable {
@@ -594,11 +683,97 @@ impl BlockStepTable {
         if self.steps.len() >= MAX_COST_ROWS && !self.steps.contains_key(&key) {
             self.steps.pop_first();
         }
-        let sequences = sequences as f64;
         self.steps
             .entry(key)
-            .and_modify(|step| step.record(micros, sequences, weight))
-            .or_insert_with(|| BlockStep::new(micros, sequences));
+            .and_modify(|step| step.record(micros, sequences as f64, weight))
+            .or_insert_with(|| BlockStep::new(micros, sequences as f64));
+    }
+
+    /// Records a steady step, whose drafters all caught up, outside a probe:
+    /// it prices its bucket and the cost of a drafting sequence there.
+    fn record_steady(&mut self, key: (usize, usize), micros: f64, sequences: usize, weight: f64) {
+        self.record(key, micros, sequences, weight);
+        let count = (key.0, key.1, sequences);
+        if self.counts.len() >= MAX_COST_ROWS
+            && !self.counts.contains_key(&count)
+            && let Some(((items, bucket, _), _)) = self.counts.pop_first()
+        {
+            self.fit(items, bucket);
+        }
+        self.counts
+            .entry(count)
+            .and_modify(|step| step.record(micros, sequences as f64, weight))
+            .or_insert_with(|| BlockStep::new(micros, sequences as f64));
+        self.fit(key.0, key.1);
+    }
+
+    /// Refits the cost of a drafting sequence at these items and bucket
+    /// from the times of its sequence counts, each once its median of
+    /// three samples rejects outliers.
+    fn fit(&mut self, items: usize, bucket: usize) {
+        let points = self
+            .counts
+            .range((items, bucket, 0)..(items, bucket + 1, 0))
+            .filter(|(_, step)| step.filtered())
+            .map(|(&(_, _, sequences), step)| (sequences as f64, step.micros))
+            .collect::<Vec<_>>();
+        if points.len() < 2 {
+            self.fits.remove(&(items, bucket));
+            return;
+        }
+        let n = points.len() as f64;
+        let mean = |value: fn(&(f64, f64)) -> f64| points.iter().map(value).sum::<f64>() / n;
+        let (sequences, micros) = (mean(|point| point.0), mean(|point| point.1));
+        let spread = points.iter().map(|p| (p.0 - sequences).powi(2)).sum();
+        let covariance = points
+            .iter()
+            .map(|p| (p.0 - sequences) * (p.1 - micros))
+            .sum();
+        self.fits.insert((items, bucket), (spread, covariance));
+    }
+
+    /// The measured cost of one more drafting sequence for a step of these
+    /// items in this bucket: the fit of this bucket, else of the nearest
+    /// bucket at these items, else of the nearest item count, each pulled
+    /// toward `prior` by `SEQUENCE_PRIOR_WEIGHT` and never negative. None
+    /// where no bucket was measured at two sequence counts.
+    fn sequence_cost(&self, items: usize, bucket: usize, prior: f64) -> Option<f64> {
+        let nearest = |items: usize| {
+            let below = self.fits.range((items, 0)..=(items, bucket)).next_back();
+            let above = self.fits.range((items, bucket + 1)..(items + 1, 0)).next();
+            match (below, above) {
+                (Some(below), Some(above)) => Some(
+                    if doublings(below.0.1, bucket) <= doublings(bucket, above.0.1) {
+                        below
+                    } else {
+                        above
+                    },
+                ),
+                (below, above) => below.or(above),
+            }
+        };
+        let fit = nearest(items).or_else(|| {
+            let below = self
+                .fits
+                .range(..(items, 0))
+                .next_back()
+                .map(|(key, _)| key.0);
+            let above = self
+                .fits
+                .range((items + 1, 0)..)
+                .next()
+                .map(|(key, _)| key.0);
+            [below, above]
+                .into_iter()
+                .flatten()
+                .min_by_key(|known| known.abs_diff(items))
+                .and_then(nearest)
+        })?;
+        let &(spread, covariance) = fit.1;
+        Some(
+            ((covariance + SEQUENCE_PRIOR_WEIGHT * prior) / (spread + SEQUENCE_PRIOR_WEIGHT))
+                .max(0.0),
+        )
     }
 
     fn measured(&self, items: usize, bucket: usize) -> bool {
@@ -613,18 +788,18 @@ impl BlockStepTable {
         items: usize,
         bucket: usize,
         (wider, narrower): (f64, f64),
-        value: impl Fn(&BlockStep) -> f64,
+        value: impl Fn((usize, usize), &BlockStep) -> f64,
     ) -> Option<f64> {
         let from_narrower = self
             .steps
             .range((items, 0)..(items, bucket))
             .next_back()
-            .map(|(&(_, known), step)| value(step) * wider.powf(doublings(known, bucket)));
+            .map(|(&key, step)| value(key, step) * wider.powf(doublings(key.1, bucket)));
         let from_wider = self
             .steps
             .range((items, bucket + 1)..(items + 1, 0))
             .next()
-            .map(|(&(_, known), step)| value(step) / narrower.powf(doublings(bucket, known)));
+            .map(|(&key, step)| value(key, step) / narrower.powf(doublings(bucket, key.1)));
         match (from_narrower, from_wider) {
             (Some(narrower), Some(wider)) => Some(narrower.min(wider)),
             (narrower, wider) => narrower.or(wider),
@@ -636,7 +811,7 @@ impl BlockStepTable {
     /// without any, the AR step `ar` in `ar_bucket` scaled up.
     fn optimistic(&self, items: usize, bucket: usize, ar: f64, ar_bucket: usize) -> f64 {
         let ratios = (OPTIMISTIC_WIDER_RATIO, OPTIMISTIC_NARROWER_RATIO);
-        self.scaled(items, bucket, ratios, |step| step.micros)
+        self.scaled(items, bucket, ratios, |_, step| step.micros)
             .unwrap_or_else(|| {
                 ar * OPTIMISTIC_WIDER_RATIO.powf(doublings(ar_bucket, bucket).max(0.0))
             })
@@ -646,9 +821,14 @@ impl BlockStepTable {
     /// Estimated time of a step of `items` items whose `sequences` drafting
     /// sequences bring it to row bucket `bucket`.
     ///
-    /// A measured bucket uses its average, plus `sequence_cost` for each
-    /// drafting sequence above the ones it averaged; fewer sequences cost
-    /// no less, as the bucket's rows still run. Otherwise the same bucket
+    /// A measured bucket uses its average, plus the cost of a drafting
+    /// sequence for each sequence more, or minus it for each fewer, than it
+    /// averaged. That cost is fitted where steady steps of a bucket ran at
+    /// two or more sequence counts (`sequence_cost`): at DSpark C16, 32
+    /// rows took 37 ms with four drafting sequences and 40 ms with eight;
+    /// priced alike, plans kept the eight. Without any fit, sequences
+    /// above the average add `prior_sequence_cost` each, and fewer cost no
+    /// less, as the bucket's rows still run. Otherwise the same bucket
     /// measured at the nearest other item count lends its time: the bucket
     /// fixes the target graph, and at TP4 a 128-row verify step took 37 ms
     /// at 16 and at 32 items. Without one, the nearest measured buckets at
@@ -665,22 +845,25 @@ impl BlockStepTable {
         bucket: usize,
         sequences: usize,
         ar: &StepCostTable,
-        sequence_cost: f64,
+        prior_sequence_cost: f64,
     ) -> f64 {
-        let more = |step: &BlockStep| {
-            step.micros + (sequences as f64 - step.sequences).max(0.0) * sequence_cost
+        let more = |(known_items, known_bucket): (usize, usize), step: &BlockStep| {
+            let extra = sequences as f64 - step.sequences;
+            match self.sequence_cost(known_items, known_bucket, prior_sequence_cost) {
+                Some(cost) => step.micros + extra * cost,
+                None => step.micros + extra.max(0.0) * prior_sequence_cost,
+            }
         };
         if let Some(step) = self.steps.get(&(items, bucket)) {
-            return more(step);
+            return more((items, bucket), step);
         }
-        if let Some(step) = self
+        if let Some((&key, step)) = self
             .steps
             .iter()
             .filter(|&(&(_, known), _)| known == bucket)
             .min_by_key(|&(&(known, _), _)| known.abs_diff(items))
-            .map(|(_, step)| step)
         {
-            return more(step);
+            return more(key, step);
         }
         let ratios = (WIDER_BUCKET_RATIO, NARROWER_BUCKET_RATIO);
         if let Some(estimate) = self.scaled(items, bucket, ratios, more) {
@@ -692,8 +875,8 @@ impl BlockStepTable {
             .min_by_key(|&(&(known_items, known_bucket), _)| {
                 (known_items.abs_diff(items), known_bucket.abs_diff(bucket))
             })
-            .map_or(0.0, |(&(_, known_bucket), step)| {
-                (more(step) - ar.estimate(known_bucket)).max(0.0)
+            .map_or(0.0, |(&key, step)| {
+                (more(key, step) - ar.estimate(key.1)).max(0.0)
             });
         ar.estimate(bucket) + borrowed
     }
@@ -861,6 +1044,19 @@ impl SpeculationPolicy {
         });
     }
 
+    /// Ends a step whose time trains nothing because it also prefilled:
+    /// the drafts its items accepted are not credited to the next timed
+    /// step's realized throughput.
+    pub(crate) fn untimed_step(&mut self) {
+        self.step_accepted = 0;
+    }
+
+    /// Accepted drafts waiting for the next timed step.
+    #[cfg(test)]
+    pub(crate) fn pending_accepted(&self) -> usize {
+        self.step_accepted
+    }
+
     /// Records the time of a step whose items were all decode or verify
     /// items, `fresh` of whose drafting items were fresh.
     ///
@@ -961,21 +1157,35 @@ impl SpeculationPolicy {
         let realized = self.realized.entry(items).or_default();
         if shape.work() == 0 {
             Realized::record(&mut realized.ar, rate, REALIZED_WEIGHT);
+        } else if !probe {
+            realized.record_drafting(rate, Realized::draft_weight(items));
+            // A trial ends at its verdict. One that lost delays the next
+            // trial, by longer after every loss.
+            if let Some(state) = self.zero_draft.get_mut(items)
+                && state.trial > 0
+            {
+                state.trial -= 1;
+                if state.trial == 0 {
+                    if realized.holding() {
+                        state.trial_held();
+                    } else {
+                        state.trial_lost();
+                    }
+                }
+            }
         } else {
             // A probe carries more weight: the drafting average it corrects
             // is stale.
-            let weight = if probe {
-                0.5
-            } else {
-                Realized::draft_weight(items)
-            };
-            realized.record_drafting(rate, weight);
+            let losing = realized.losing();
+            realized.record_probe(rate, 0.5);
             // Only a probe that clears the resume margin resets spacing.
             // Marginal gains keep backing off while drafting stays disabled.
-            if probe
-                && realized.ar.is_some_and(|ar| rate > ar * RESUME_GAIN)
+            if realized.ar.is_some_and(|ar| rate > ar * RESUME_GAIN)
                 && let Some(state) = self.zero_draft.get_mut(items)
             {
+                if losing && realized.holding() {
+                    state.reopened = Some(state.probe_interval);
+                }
                 state.probe_interval = spaced;
             }
         }
@@ -1052,9 +1262,13 @@ impl SpeculationPolicy {
                 let excess = micros - self.costs.estimate(bucket);
                 self.draft_costs.record(key, excess, weight);
             }
-            (_, DraftCostModel::PerBlock) => {
+            (_, DraftCostModel::PerBlock) if probe => {
                 self.block_steps
                     .record((items, bucket), micros, shape.0[0], weight);
+            }
+            (_, DraftCostModel::PerBlock) => {
+                self.block_steps
+                    .record_steady((items, bucket), micros, shape.0[0], weight);
             }
         }
     }
@@ -1320,6 +1534,7 @@ impl SpeculationPolicy {
             && state.disabled
         {
             state.remaining = 0;
+            state.reopened = None;
             if let Some(realized) = self.realized.get_mut(&items) {
                 *realized = Realized {
                     ar: realized.ar,
@@ -1358,6 +1573,7 @@ impl SpeculationPolicy {
         let resume_gain = if let Some(state) = self.zero_draft.get_mut(items) {
             if state.disabled {
                 state.idle = state.idle.saturating_add(1);
+                state.trial_wait = state.trial_wait.saturating_sub(1);
                 let first = state.idle == FIRST_PROBE
                     && (token_probe.is_some()
                         || (self.config.draft_cost_model == DraftCostModel::PerBlock
@@ -1374,7 +1590,7 @@ impl SpeculationPolicy {
                 probe = may_probe
                     && (rechecking || state.idle >= state.probe_interval || first || slower_ar);
             }
-            if state.remaining > 0 && !probe {
+            if state.remaining > 0 && !probe && state.trial == 0 {
                 state.remaining -= 1;
                 self.trace_reason("cooldown");
                 return vec![0; items];
@@ -1383,12 +1599,39 @@ impl SpeculationPolicy {
         } else {
             1.0
         };
+        let trial = self
+            .zero_draft
+            .get(items)
+            .is_some_and(|state| state.trial > 0);
+        let after_verdict = self
+            .zero_draft
+            .get(items)
+            .is_some_and(|state| state.trial > 0 && state.after_verdict);
+        // Drafting off, no trial pending and none waiting: a plan priced
+        // within the trial band of AR may start one.
+        let band_trial = may_probe
+            && !probe
+            && self
+                .zero_draft
+                .get(items)
+                .is_some_and(|state| state.disabled && state.trial == 0 && state.trial_wait == 0);
         // Whatever the estimates say, drafting stays off where its realized
-        // throughput is below AR's; only probes measure it again.
-        if !probe && self.realized.get(&items).is_some_and(Realized::losing) {
+        // throughput is below AR's; only probes measure it again. A trial
+        // after an earlier run's verdict runs its own steps first: one slow
+        // first step can tip a verdict near AR below it. At DSpark C8
+        // under replacement load it tipped a 139-step average just above AR
+        // (485.5 against 480 tok/s), and drafting stayed off for the window
+        // though the trial's next steps beat AR. Its steps then move the
+        // same average, so a verdict that still holds keeps carrying it
+        // through dips in the estimates; dropping that verdict at the start
+        // would end a C1 trial at its first dip.
+        if !probe && !after_verdict && self.realized.get(&items).is_some_and(Realized::losing) {
             if let Some(state) = self.zero_draft.get_mut(items) {
                 state.disabled = true;
                 state.remaining = ZERO_DRAFT_RECHECK;
+                if state.trial > 0 {
+                    state.trial_lost();
+                }
             }
             self.trace_reason("realized_slower");
             return vec![0; items];
@@ -1412,6 +1655,7 @@ impl SpeculationPolicy {
         let baseline = empty.rate();
         let margin = if probe { 0.0 } else { resume_gain };
         let mut best = self.extend(candidates, &shares, empty, remaining, margin);
+        let mut band = None;
         if let Some(joint) = self.joint(candidates, &shares, remaining, false) {
             self.trace_candidate(&joint);
             if joint.rate() > margin * baseline {
@@ -1419,18 +1663,40 @@ impl SpeculationPolicy {
                 if joint.rate() > best.rate() {
                     best = joint;
                 }
+            } else if trial || band_trial {
+                // The plan a trial drafts, if it is priced within the band.
+                let plan = self.extend(candidates, &shares, joint, remaining, 1.0);
+                let priced = plan.rate() >= TRIAL_BAND * baseline;
+                // A trial starts only where the price rests on the shared
+                // prior, and on a step cost measured at these items: a plan
+                // of requests priced by their own verifications needs none,
+                // and an unmeasured bucket gets a probe first.
+                let prior = || {
+                    plan.drafts
+                        .iter()
+                        .zip(candidates)
+                        .any(|(&count, candidate)| count > 0 && candidate.acceptance.unverified)
+                };
+                band = (priced && (trial || (prior() && self.measured_step(items, &plan.drafts))))
+                    .then_some(plan);
             }
         }
         // A request's estimate follows its last few verifications, so a run
         // of rejected drafts can price drafting below AR while the realized
         // drafting at these items still beats it. That evidence keeps the
-        // best drafting plan; only realized throughput below AR stops it.
-        if !probe
-            && best.drafts.iter().all(|&count| count == 0)
-            && self.realized.get(&items).is_some_and(Realized::holding)
-            && let Some(joint) = self.joint(candidates, &shares, remaining, false)
-        {
-            best = joint;
+        // best drafting plan; only realized throughput below AR stops it. A
+        // trial drafts its best plan while that stays within the trial band
+        // until its own verdict; measurements that price it lower end it.
+        let mut trial_plan = false;
+        if !probe && best.drafts.iter().all(|&count| count == 0) {
+            if self.realized.get(&items).is_some_and(Realized::holding)
+                && let Some(joint) = self.joint(candidates, &shares, remaining, false)
+            {
+                best = joint;
+            } else if let Some(band) = band {
+                best = band;
+                trial_plan = true;
+            }
         }
         self.trace_candidate(&best);
         self.trace_reason("estimated_slower");
@@ -1465,7 +1731,12 @@ impl SpeculationPolicy {
         }
         let drafting = drafts.iter().any(|&draft| draft > 0);
         if drafting {
-            self.trace_reason(if probe { "probe" } else { "drafting" });
+            self.trace_reason(match (probe, trial_plan) {
+                (true, _) => "probe",
+                // Only a trial, pending or starting, made this plan draft.
+                (false, true) => "trial",
+                (false, false) => "drafting",
+            });
         }
         if drafting && !measurement_probe {
             if probe {
@@ -1519,15 +1790,65 @@ impl SpeculationPolicy {
                 // mostly as requests finish, often cohorts later with other
                 // requests, so skipping its next plans there would repeat
                 // a stale choice.
+                //
+                // Drafting that starts while it is off is a trial: it drafts
+                // until steady steps decide whether drafting holds, so a dip
+                // in the estimates cannot stop it short of `REALIZED_STEPS`
+                // steps; only estimates below the trial band can. A batch
+                // that also prefills times nothing, so it ends no trial.
+                let starts = drafting && state.disabled && state.trial == 0;
+                if state.trial > 0 && !drafting && may_probe {
+                    state.trial_lost();
+                }
+                if starts {
+                    state.trial = REALIZED_STEPS;
+                    state.after_verdict = self.realized.get(&items).is_some_and(Realized::decided);
+                }
+                // An average of probes alone would outweigh the trial's
+                // steps: at DSpark C16 seven losing probes outvoted eight
+                // steady steps that beat AR. The trial's own steps decide.
+                if starts
+                    && let Some(realized) = self.realized.get_mut(&items)
+                    && realized.drafting_steps == 0
+                {
+                    *realized = Realized {
+                        ar: realized.ar,
+                        ..Realized::default()
+                    };
+                }
                 state.disabled = !drafting;
                 state.remaining = 0;
                 if drafting {
                     state.idle = 0;
-                    state.probe_interval = PROBE_INTERVAL;
+                    // Drafting that holds resets probe spacing; a trial has
+                    // not held yet, so probes that keep losing back off.
+                    if state.trial == 0 {
+                        state.probe_interval = PROBE_INTERVAL;
+                    }
                 }
             }
         }
         drafts
+    }
+
+    /// A step of these draft counts is priced from a measurement of its row
+    /// bucket at these items, not borrowed from other items or buckets.
+    fn measured_step(&self, items: usize, drafts: &[usize]) -> bool {
+        let bucket = self.bucket(items + drafts.iter().sum::<usize>());
+        match self.config.draft_cost_model {
+            DraftCostModel::PerBlock => self.block_steps.measured(items, bucket),
+            DraftCostModel::PerToken => self
+                .draft_costs
+                .micros
+                .range(
+                    DraftKey {
+                        items,
+                        shape: DraftShape::default(),
+                    }..,
+                )
+                .take_while(|(known, _)| known.items == items)
+                .any(|(known, _)| self.bucket(items + known.shape.work()) == bucket),
+        }
     }
 
     /// The widest row bucket above `above` rows that a block step at these
@@ -2319,6 +2640,9 @@ mod tests {
                 fresh: false,
                 remaining_tokens: usize::MAX,
             }];
+            // A lost trial still waits, so only the estimates decide whether
+            // drafting resumes.
+            policy.zero_draft[1].trial_wait = u16::MAX;
             set_draft_cost(&mut policy, &[1], 700.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [0]);
             // A marginal positive estimate must not flap back into drafting.
@@ -2332,7 +2656,12 @@ mod tests {
             // Once active, a smaller positive gain can keep drafting enabled.
             set_draft_cost(&mut policy, &[1], 550.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [1]);
+            // The resumed run is a trial: priced below AR but within the
+            // trial band it drafts on to its verdict, and below the band it
+            // stops.
             set_draft_cost(&mut policy, &[1], 700.0);
+            assert_eq!(policy.plan(&candidates, budget(1, 1)), [1]);
+            set_draft_cost(&mut policy, &[1], 1_000.0);
             assert_eq!(policy.plan(&candidates, budget(1, 1)), [0]);
             set_draft_cost(&mut policy, &[1], 200.0);
             let other = [
@@ -4099,7 +4428,13 @@ mod tests {
             policy.step_cost(16, DraftShape::from_counts(&small), 0.0),
             16_000.0
         );
+        // While a lost trial waits, the estimates keep AR.
+        policy.zero_draft[16].trial_wait = u16::MAX;
         assert_eq!(policy.plan(&candidates, budget(16, 16)), [0; 16]);
+        // A trial runs the measured small shape, priced near AR, never the
+        // full K1 its borrowed price makes lose.
+        policy.zero_draft[16].trial_wait = 0;
+        assert_eq!(policy.plan(&candidates, budget(16, 16)), small);
         // Once this exact shape is measured, use its own time without scaling.
         for _ in 0..2 {
             policy.observe_step(&[1; 16], 0, 24_000);

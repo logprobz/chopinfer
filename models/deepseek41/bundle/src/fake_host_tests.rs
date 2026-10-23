@@ -17,13 +17,19 @@ use runtime_bundle_abi::*;
 
 use crate::config::{KV_LAYOUTS, KvLayout};
 
+mod ar_engram;
+mod ar_status;
 mod batch_limits;
 mod bf16_decode;
 mod bf16_partials;
+mod ceil_split;
 mod conformance;
 mod decode_attention;
+mod decode_join;
 mod device_results;
 mod dspark;
+mod fold_cluster;
+mod fold_local_rows;
 mod fold_stream;
 mod head_last;
 mod index_mma;
@@ -41,6 +47,7 @@ mod prefill_gate_journal;
 mod prefill_matrix;
 mod prefill_micro;
 mod prefill_overlap;
+mod prefill_plan_cache;
 mod prefill_reduce;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
@@ -50,11 +57,13 @@ mod prefill_tma_matrix;
 mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
+mod query_window;
 mod router_prefill;
 mod selected_cache;
 mod shared_overlap;
 mod short_prefill;
 mod verify_hc;
+mod wide_hc;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
 
@@ -195,7 +204,16 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
             .iter()
             .any(|&r| u64::from(r) == rows);
         assert_eq!(certified, !measured.is_empty(), "rows={rows}");
-        let suffix = if certified { "_zero_m32_v1" } else { "" };
+        // At 8192 rows the router runs in the MoE-input norm instead
+        // (`sm120::router_norm`), with no prepare.
+        let in_norm = rows == 8192;
+        let suffix = if in_norm {
+            "_certified_m32_f64_normed_v1"
+        } else if certified {
+            "_zero_m32_v1"
+        } else {
+            ""
+        };
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 1);
@@ -228,7 +246,7 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         assert!(calls.iter().all(|line| !line.contains("_wide_m")));
         assert_eq!(
             calls.iter().any(|line| line.contains("_zero_prepare_v1")),
-            certified,
+            certified && !in_norm,
             "rows={rows}"
         );
         drop(journal);
@@ -370,6 +388,9 @@ pub(crate) struct FakeHost {
     memory: RefCell<Memory>,
     /// Layout IDs that replace a view's own in every rank index.
     layouts: RefCell<BTreeMap<String, String>>,
+    /// Refuse a peer copy on the source's stream, as a host from before
+    /// pushes does.
+    pub pull_only: Cell<bool>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -540,15 +561,45 @@ impl FakeHost {
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(BTreeMap::new()),
+            pull_only: Cell::new(false),
         }))
     }
 
+    /// The rank's index bytes and image size, built once per test process
+    /// for each shape, rank, layout override set and drafter. Create reads
+    /// each index several times, and rebuilding it took a third of an
+    /// allocation sweep's CPU time (2026-10-21).
     fn rank_index(&self, rank: u32) -> (Vec<u8>, u64) {
-        if self.drafter.get() {
-            dspark::index(&self.shape, rank, &self.layouts.borrow())
-        } else {
-            index(&self.shape, rank, &self.layouts.borrow())
-        }
+        type Key = (Shape, u32, BTreeMap<String, String>, bool);
+        type Built = std::sync::Arc<std::sync::OnceLock<(Vec<u8>, u64)>>;
+        static INDEXES: std::sync::Mutex<Vec<(Key, Built)>> = std::sync::Mutex::new(Vec::new());
+        let key = (
+            self.shape,
+            rank,
+            self.layouts.borrow().clone(),
+            self.drafter.get(),
+        );
+        let built = {
+            let mut indexes = INDEXES.lock().unwrap();
+            let at = match indexes.iter().position(|(k, _)| *k == key) {
+                Some(at) => at,
+                None => {
+                    indexes.push((key.clone(), Built::default()));
+                    indexes.len() - 1
+                }
+            };
+            std::sync::Arc::clone(&indexes[at].1)
+        };
+        built
+            .get_or_init(|| {
+                let (shape, rank, layouts, drafter) = &key;
+                if *drafter {
+                    dspark::index(shape, *rank, layouts)
+                } else {
+                    index(shape, *rank, layouts)
+                }
+            })
+            .clone()
     }
 
     fn page_bytes(&self) -> u64 {
@@ -573,6 +624,17 @@ impl FakePackage for FakeHost {
                 config.flags, 0,
                 "operand preparation must serialize normally"
             );
+        } else if config.flags == 0
+            && symbol.contains("gate")
+            && self
+                .device
+                .journal
+                .borrow()
+                .last()
+                .is_some_and(|line| line.starts_with("wait "))
+        {
+            // The routed gate directly after an r2 shared-expert join
+            // waits for the shared expert in full.
         } else {
             self.device.check_launch_for(symbol, config);
         }
@@ -644,6 +706,16 @@ impl FakePackage for FakeHost {
         source_context: BundleContextHandleV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        // The destination's stream pulls, the source's pushes.
+        let issuer = self.device.stream_ranks.borrow()[&stream.slot()];
+        let (to, from) = (destination_context.slot() - 1, source_context.slot() - 1);
+        assert!(
+            issuer == to || issuer == from,
+            "a peer copy on a third rank's stream"
+        );
+        if issuer != to && self.pull_only.get() {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
         if self.device.fail_copy.fails() {
             return Err(BundleStatusV1::HostError);
         }
@@ -1026,38 +1098,81 @@ fn journal_steps(host: &Rc<Host>) {
 /// per rank; these fixtures launch no C1 or C8 boundary.
 /// The cached query norm module adds three resolves and four releases per
 /// rank; these two-row decodes keep the served query norm.
+/// operation is identical after handle mapping. The router certificate
+/// (`router_certified`) adds one allocation and its release per rank; at
+/// four ranks the router-in-norm module (`sm120::router_norm`) adds two
+/// resolves and three releases per rank. No launch changes: only 8192-row
+/// steps run the router in the norm.
+/// Combined C1 query/KV adds one module, two resolves and 120 private
+/// allocations per TP4 rank (108175360 bytes), with 40 weight initializers.
+/// Full lifecycle audits retain every other operation after handle mapping;
+/// each C1 query plus KV triple becomes one launch with identical operands.
+/// Full-row Engram staged scales add one 68608-byte shared-memory configure
+/// per TP4 rank. These short-row lifecycles retain every other line exactly.
+/// The lean native module (`moe_native_entries::LEAN_CUBIN`) adds three
+/// resolves and four releases per TP4 rank, and the unfused native MoE
+/// steps of these lifecycles run its tiles. The scanned loop gives the
+/// module's two tile resolves the scanned names and adds the two admission
+/// scans' resolves and releases per rank.
+/// The local C32 query module adds eight resolves and nine releases per
+/// TP4 rank. These short-row lifecycles retain every launch and allocation;
+/// the complete histories were compared under typed handle mapping.
+/// The router's 64-expert certified projection renames the module's router
+/// resolve on each TP4 rank (four lines), audited against the journals
+/// before it: no other line changes. Its narrow form (no widened rows)
+/// renames the same four resolves again, nothing else.
+/// The two-CTA HC finish module adds six resolves and seven releases per
+/// rank; these fixtures launch no Verify-6 tail.
+/// The two-strip routed down module adds two resolves and three releases
+/// per TP4 rank. With its resolves removed, every other line is identical
+/// after typed handle mapping; these two-row decodes launch no two-strip
+/// queue.
+/// Each decode capture's window KV projection binds the shared expert's
+/// workspace and row status and runs on the side stream beside its query
+/// chain: per layer and rank, its launches change stream and those two
+/// spans, and its fork and join add four event lines (audited by
+/// `shared_overlap::the_window_kv_overlap_changes_only_its_projection`).
+/// These lifecycles capture one Decode-2 graph: 160 lines more per rank.
+/// The row-local rings (`fold_local_rows::SERVED`) add eight resolves and
+/// eight releases per TP4 rank; these lifecycles launch no 16- or 32-row
+/// bucket.
+/// The column-block HC pair's two modules add fourteen resolves and sixteen
+/// releases per rank; every other line is retained after handle mapping.
+/// The cluster folds (`fold_cluster::SERVED`) add sixteen resolves, one
+/// configure (WQ_a's 32-row ring) and seventeen releases per TP4 rank and
+/// shift ids only.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (17334, 0x2c4703c01b067391),
+        (17539, 0xfddf8f76c9219c1a),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (17188, 0x29d36b589357fe9f),
+        (17393, 0x07476fb530563948),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (34855, 0xef55d75b91ade728),
+        (35265, 0x9b53da873b588885),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (34563, 0xa81717bf01943457),
+        (34973, 0xf0fb28de6a6fea5d),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (84227, 0x261973f8097e376a),
+        (86579, 0xf1f2afb28e468214),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (81871, 0x6c6f4898051ca34c),
+        (84223, 0x5700f38efaddbd72),
     ),
 ];
 
@@ -1206,6 +1321,14 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 /// Opting out retains the audited exact expert path and its resources.
 /// The HC boundary, cached ceil, prefill expand-mix and cached query norm
 /// modules change it exactly as they change the default-era TP4 lifecycle.
+/// router certificate and the router-in-norm module add one allocation, two
+/// resolves and four releases per rank there too, and no launch. The
+/// 64-expert router renames its resolve there too. The two-CTA HC finish
+/// module adds six resolves and seven releases per rank, the column-block
+/// HC pair's modules fourteen resolves and sixteen releases. The two-strip
+/// routed down module adds two resolves and three releases per rank. The
+/// window KV projection beside the query chain, the row-local rings and the
+/// cluster folds change it as in `FLASH_JOURNALS`.
 #[test]
 fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1213,7 +1336,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(82551, 0x12997513e4f8bf32), (80195, 0xa97c049f7a800e3f)])
+            .zip([(84859, 0x87b9a5c01ed8b731), (82503, 0x34b41030529a82bb)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

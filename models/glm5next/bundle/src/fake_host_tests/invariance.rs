@@ -592,7 +592,7 @@ fn the_launches_keep_the_declared_invariance() {
     // at create (their launches take the asks, no longer undeclared).
     check_journal(
         &lines,
-        (362, 0x91f31a9178b5b90b),
+        (362, 0x34ea77fc90503573),
         "glm5next-invariance-launches.txt",
     )
     .unwrap();

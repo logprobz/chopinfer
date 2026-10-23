@@ -927,6 +927,13 @@ class ModelTests(unittest.TestCase):
                 facts = model.facts(directory.name)
                 self.assertTrue(facts['bundle_id'] and facts['drafters'] is not None)
 
+    def test_typed_health_options_match_their_profile_text(self):
+        model.check_options({'prefill_chunk_tokens': '8192', 'prefill_upper_skip': 'true'},
+                            {'prefill_chunk_tokens': 8192, 'prefill_upper_skip': True, 'other': 1})
+        for live in [{'prefill_chunk_tokens': 4096}, {'prefill_chunk_tokens': '4096'}, {}, None]:
+            with self.subTest(live=live), self.assertRaisesRegex(Refusal, r'health\.model_options\.prefill_chunk_tokens'):
+                model.check_options({'prefill_chunk_tokens': '8192'}, live)
+
     def test_two_bundle_ids_refused(self):
         with tempfile.TemporaryDirectory() as name:
             root = models(Path(name)); path = root / 'stub/profiles.json'

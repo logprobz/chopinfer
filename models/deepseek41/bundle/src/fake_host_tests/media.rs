@@ -67,6 +67,7 @@ impl MediaHost {
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(std::collections::BTreeMap::new()),
+            pull_only: Cell::new(false),
         };
         Rc::new(Backend::new(MediaHost {
             host,
@@ -387,9 +388,36 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The cached query norm adds three resolves and four releases per rank, and
 /// its one-row decode runs the 16-warp entry (grid 1 x 1, block 512) with the
 /// served operands.
+/// after handle mapping. The router certificate adds one allocation and its
+/// release per rank, and at four ranks the router-in-norm module two
+/// resolves and three releases per rank; no launch changes.
+/// The combined C1 query/KV adds the same private resources as the text
+/// lifecycle and replaces 40 projection triples per rank with one launch
+/// each. Every other operation is retained after typed handle mapping.
+/// Full-row Engram staged scales add one 68608-byte shared-memory configure
+/// per TP4 rank. These short-row lifecycles retain every other line exactly.
+/// The routed gate after each r2 shared-expert join launches without
+/// programmatic serialization: 160 TP4 Decode-1 gate launches change flags
+/// 1 to 0, nothing else. The two-CTA HC finish module adds six resolves and
+/// seven releases per rank and shifts ids only.
+/// At four ranks the lean native module adds three resolves and four
+/// releases per rank and no launch, five and six with the scanned loop's
+/// admission scans.
+/// The local C32 query module adds eight resolves and nine releases per
+/// TP4 rank; the full media history retains every launch and allocation.
+/// The 64-expert router renames the router-in-norm module's router resolve
+/// on each TP4 rank, nothing else, and so does its narrow form.
+/// The two-strip routed down module adds two resolves and three releases
+/// per TP4 rank and shifts ids only.
+/// The window KV projection beside the query chain changes the TP2 history
+/// as in `FLASH_JOURNALS`; at TP4 the C1 dual fold computes KV, unchanged.
+/// The row-local rings add eight resolves and eight releases per TP4 rank,
+/// and the cluster folds sixteen resolves, one configure and seventeen
+/// releases. The column-block HC pair's modules add fourteen resolves and
+/// sixteen releases per rank and shift ids only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (22933, 0xf3b017b44088e4d5)),
-    (Ranks::TP4, (56379, 0x0e9e8d56f95ae995)),
+    (Ranks::TP2, (23343, 0x3cc290637430e206)),
+    (Ranks::TP4, (57771, 0xff32688003b68ba1)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

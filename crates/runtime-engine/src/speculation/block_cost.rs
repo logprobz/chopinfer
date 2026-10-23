@@ -22,6 +22,11 @@ impl BlockStep {
         }
     }
 
+    /// Three samples back the average, so its median rejects an outlier.
+    pub(super) const fn filtered(&self) -> bool {
+        self.count == self.samples.len()
+    }
+
     pub(super) fn record(&mut self, micros: f64, sequences: f64, weight: f64) {
         self.samples[self.next] = (micros, sequences);
         self.next = (self.next + 1) % self.samples.len();

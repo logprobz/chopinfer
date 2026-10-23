@@ -182,9 +182,11 @@ exit 0
                        if not key.startswith('CHOPINFER_')}
                 env.update(PATH=str(stubs) + os.pathsep + env['PATH'], TMPDIR=str(scratch),
                            CARGO_TARGET_DIR=str(root / 'target'),
-                           SMOKE_STATUS=smoke_status, REPORT_STATUS=report_status)
+                           SMOKE_STATUS=smoke_status, REPORT_STATUS=report_status,
+                           # The stubbed cargo runs the workspace tests the reader's reports need.
+                           CHOPINFER_RUST_TEST_RUNNER='cargo')
                 result = subprocess.run(['bash', str(root / 'ci/cpu.sh'), '--only', 'external-model-smoke',
-                                         '--only', 'kernel-report-integration'], env=env,
+                                         '--only', 'kernel-report-integration', '--with-producers'], env=env,
                                         capture_output=True, text=True, timeout=30)
                 passed = smoke_status == report_status == '0'
                 self.assertEqual(result.returncode == 0, passed, result.stderr)

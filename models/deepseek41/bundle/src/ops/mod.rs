@@ -9,6 +9,7 @@
 
 pub(crate) mod compressor;
 pub(crate) mod dense;
+pub(crate) mod dense_dual;
 pub(crate) mod engram;
 pub(crate) mod engram_hash;
 pub(crate) mod exact;
@@ -31,14 +32,19 @@ pub(crate) mod shared;
 pub(crate) use compressor::{PlaneViews, PoolingViews, WriteViews};
 pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
+pub(crate) use reduce::bf16_partials_requested;
 #[cfg(test)]
 pub(crate) use reduce::with_bf16_gather;
-pub(crate) use reduce::{PeerViews, PrefillDma, ReduceViews, WidenViews};
-pub(crate) use reduce::{bf16_partials_requested, dma_requested};
+pub(crate) use reduce::{
+    DmaPayload, PeerViews, PrefillDma, ReduceViews, RowLocal, RowLocalKind, WidenViews,
+    dma_consume_requested, dma_produce_requested, dma_push_requested,
+};
 #[cfg(test)]
 pub(crate) use reduce::{with_bf16_partials, with_partial_setting};
 #[cfg(test)]
-pub(crate) use reduce::{with_dma, with_dma_setting};
+pub(crate) use reduce::{
+    with_dma, with_dma_consume, with_dma_produce, with_dma_push, with_dma_setting,
+};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
 
 use std::cell::RefCell;
@@ -95,7 +101,9 @@ pub struct Ops {
 
 impl Ops {
     /// The largest prepared shared projection or activation workspace,
-    /// including paired gate/up and every decode bucket the backend offers.
+    /// including paired gate/up and every decode bucket the backend offers,
+    /// and the window KV projection's decode buckets and their measured
+    /// local folds, which bind it too (`shared_overlap::kv_relocated`).
     pub(crate) fn shared_workspace(&self) -> u64 {
         self.asked
             .iter()
@@ -103,6 +111,8 @@ impl Ops {
                 asked.what.starts_with("dense.moe.shared-")
                     || asked.what.starts_with("dense.shared-pair")
                     || asked.what.starts_with("shared.")
+                    || asked.what.starts_with("dense.attention.kv decode ")
+                    || asked.what.starts_with("dense.attention.kv local ")
             })
             .map(|asked| asked.workspace)
             .max()
@@ -110,8 +120,14 @@ impl Ops {
     }
 
     /// Prepares every op of an instance of `shape` on `kernels` over KV
-    /// pages in `storage`, recording each family they refuse.
-    pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
+    /// pages in `storage`, recording each family they refuse. `prefill` is
+    /// the create record's prefill profile, which admits the default DMA.
+    pub(crate) fn prepare(
+        kernels: &Kernels,
+        shape: &Shape,
+        storage: KvStorage,
+        prefill: model_deepseek41_contract::prefill_profile::Profile,
+    ) -> Ops {
         let mut ops = Self::prepare_set(
             kernels,
             shape,
@@ -145,7 +161,11 @@ impl Ops {
             }
             ops.asked.extend(asks.asked());
         }
-        let dma = reduce::dma_requested();
+        let gather = ops
+            .reduce
+            .as_ref()
+            .is_some_and(reduce::ReduceOps::prefill_prepared);
+        let dma = reduce::dma_requested().admit(prefill, gather);
         if dma.enabled()
             && shape.ranks() == 4
             && shape.geometry == &model_deepseek41_contract::geometry::FLASH
@@ -154,8 +174,15 @@ impl Ops {
             asks.record(
                 "reduce.prefill_dma_owner",
                 Need::rows(8192),
-                &Kernels::prefill_dma_sum_info(),
+                &Kernels::prefill_dma_sum_info(DmaPayload::F32),
             );
+            if reduce::bf16_partials_requested(shape, storage) {
+                asks.record(
+                    "reduce.prefill_dma_bf16_owner",
+                    Need::rows(8192),
+                    &Kernels::prefill_dma_sum_info(DmaPayload::Bf16),
+                );
+            }
             ops.asked.extend(asks.asked());
             ops.prefill_dma = dma;
         }
@@ -463,7 +490,7 @@ mod tests {
             own: Box::new(Nothing),
             gather_state: [0; 2],
         };
-        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
         assert!(ops.rows.is_none() && ops.reduce.is_none() && ops.hc.is_none());
         assert!(ops.moe.is_none() && ops.compressor.is_none() && ops.dense.is_none());
         assert!(ops.asked.is_empty());
@@ -674,6 +701,15 @@ impl Bind {
             .into_iter()
             .map(|launch| self.lowered(launch))
             .collect())
+    }
+
+    /// Launches built over this binding's views by model code that
+    /// replaces an op's launches (`sm120::router_norm`).
+    pub(crate) fn lowered_launches(self, launches: Vec<Launch>) -> Vec<Lowered> {
+        launches
+            .into_iter()
+            .map(|launch| self.lowered(launch))
+            .collect()
     }
 
     fn lowered(&self, launch: Launch) -> Lowered {

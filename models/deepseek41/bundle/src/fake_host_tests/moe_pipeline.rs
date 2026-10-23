@@ -132,7 +132,9 @@ fn check_exact_prefill_routes() {
 
 /// Native MoE prefill runs gate/up through the fused ceil's r2w4s3 tiles in
 /// steps of at most `FUSED_CEIL_ROWS` rows and through the wide r2w6s3
-/// tiles above, never the other in either.
+/// tiles' lean loop above, never the other in either; down runs the served
+/// r2w4s3 tiles up to `FUSED_CEIL_ROWS` rows and the two-CTA r1w4s2 lean
+/// tiles above.
 #[test]
 fn native_prefill_runs_wide_gate_up_tiles_above_the_fused_rows() {
     crate::sm120::moe_native::with_native(true, check_native_gate_up_tiles);
@@ -166,10 +168,23 @@ fn check_native_gate_up_tiles() {
                 ("r2w6s3", "r2w4s3")
             };
             assert_eq!(launches(&format!("{gate_up}{tile}_pack_v1 ")), 4 * 40);
-            let tiles = if fused { "_tiles_ceil" } else { "_tiles_v1 " };
+            let tiles = if fused {
+                "_tiles_ceil"
+            } else {
+                "_tiles_scanned_v1 "
+            };
             assert_eq!(launches(&format!("{gate_up}{tile}{tiles}")), 4 * 40);
             assert_eq!(launches(&format!("{gate_up}{tile}_tiles_")), 4 * 40);
             assert_eq!(launches(&format!("{gate_up}{other}_")), 0);
+            let down = "chop_moe_native_down_e384k6_n5120_k576_t8192_";
+            let (tile, tiles, other) = if fused {
+                ("r2w4s3", "_tiles_v1 ", "r1w4s2")
+            } else {
+                ("r1w4s2", "_tiles_scanned_v1 ", "r2w4s3")
+            };
+            assert_eq!(launches(&format!("{down}{tile}_pack_v1 ")), 4 * 40);
+            assert_eq!(launches(&format!("{down}{tile}{tiles}")), 4 * 40);
+            assert_eq!(launches(&format!("{down}{other}_")), 0);
             drop(journal);
             instance.commit().unwrap();
             instance.retire_request(7).unwrap();

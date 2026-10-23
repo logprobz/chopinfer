@@ -58,6 +58,16 @@ def option_text(value):
     return value if type(value) is str else json.dumps(value, separators=(',', ':'))
 
 
+def check_options(expected, live):
+    """Refuses unless /health reports every expected model option. /health
+    types each value as its package declares it ("8192" serves as 8192), and
+    a profile may write it as text, so the two compare by option_text."""
+    live = live if type(live) is dict else {}
+    for option, value in sorted(expected.items()):
+        need(option in live and option_text(live[option]) == option_text(value),
+             f'health.model_options.{option}: got {live.get(option)!r}, expected {value!r}')
+
+
 def serving(name, profile):
     """(serve arguments, /health `serving` subset) of a serve profile. The
     expectation holds what /health reports: the tensor-parallel size, the

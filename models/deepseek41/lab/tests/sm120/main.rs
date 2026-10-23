@@ -110,3 +110,5 @@ fn declared(names: &[&str], specs: Vec<kernel_build::CubinSpec>) -> Vec<kernel_b
     );
     specs
 }
+
+mod packed_serving;

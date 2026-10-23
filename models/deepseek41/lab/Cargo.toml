@@ -263,3 +263,7 @@ path = "examples/sm120/build_fold_fused.rs"
 [[example]]
 name = "build_fold_plain"
 path = "examples/sm120/build_fold_plain.rs"
+
+[[example]]
+name = "build_packed_serving"
+path = "examples/sm120/build_packed_serving.rs"

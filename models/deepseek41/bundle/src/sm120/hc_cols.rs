@@ -1,5 +1,5 @@
-//! The column-block HC producer and its split finish for DeepSeek's wide
-//! decode buckets: one CTA per 128-column block of the four streams and a
+//! The column-block HC producer and its split finish for DeepSeek's decode
+//! buckets: one CTA per 128-column block of the four streams and a
 //! tile of rows produces the boundary's expansion and chain sums, then the
 //! two-CTA finish sums the RMS lanes from the expanded streams before the
 //! served fold, Sinkhorn, collapse and norm. A matched pair: both launches
@@ -8,13 +8,32 @@ use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::{finish_split, round_cols};
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "sinkhorn_hc_cols";
-/// Measured decode buckets of the pair: four rows per producer CTA with the
-/// transposed butterfly and a 32-warp finish at 16 and 32 rows. On 385
-/// boundaries of real captured rows (TP4 GPUs at 300 W, 2026-10-22) every
-/// output, chain sum and control matched the served pair bit for bit; per
-/// boundary, cold, it took 18.0 us against 32.0 at 16 rows and 19.2 to 20.1
-/// us against 36.5 to 38.2 at 32 rows, the fastest of the 18 forms at both.
+/// Measured decode buckets of the pair, each with the transposed butterfly
+/// and a 32-warp finish: two rows per producer CTA at one row, four at 8, 16
+/// and 32 rows. On 385 boundaries of real captured rows (TP4 GPUs at 300 W,
+/// 2026-10-22) every output, chain sum and control matched the served pair
+/// bit for bit; per boundary, cold, it took 18.0 us against 32.0 at 16 rows
+/// and 19.2 to 20.1 us against 36.5 to 38.2 at 32 rows, the fastest of the
+/// 18 forms at both. On 154 captured C1 and 154 C8 decode boundaries
+/// (2026-10-23) it also matched the one-launch boundary it replaces there,
+/// bit for bit. Per boundary it took 16.0 us hot and 20.1 cold, against
+/// 18.1 to 18.4 and 20.5 at one row and 28.7 and 32.0 to 32.2 at eight. A
+/// whole step's 77 boundaries replayed at 1.05 ms and 0.10 J against 1.20 ms
+/// and 0.12 J at one row, and 1.11 ms and 0.13 J against 2.06 ms and 0.28 J
+/// at eight (one board, means of two).
 pub const BUCKETS: &[finish_split::Bucket] = &[
+    finish_split::Bucket {
+        rows: 1,
+        tile: 2,
+        transposed: true,
+        warps: 32,
+    },
+    finish_split::Bucket {
+        rows: 8,
+        tile: 4,
+        transposed: true,
+        warps: 32,
+    },
     finish_split::Bucket {
         rows: 16,
         tile: 4,
@@ -119,8 +138,14 @@ mod tests {
             assert!(symbols.insert(e.symbol.clone()), "{}", e.symbol);
             assert_eq!(e.params, tail_params);
         }
-        for rows in [16, 32] {
-            let served = chain.plan(rows, rows, 4).unwrap();
+        assert_eq!(
+            BUCKETS.iter().map(|b| b.rows).collect::<Vec<_>>(),
+            [1, 8, 16, 32]
+        );
+        for rows in [1, 8, 16, 32] {
+            let served = chain
+                .plan(rows, rows, if rows == 1 { 8 } else { 4 })
+                .unwrap();
             for (tile, tx) in round_cols::TILES {
                 let p = producer().plan(rows, rows, tile, tx).unwrap();
                 assert_eq!(

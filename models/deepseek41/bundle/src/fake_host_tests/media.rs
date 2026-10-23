@@ -424,6 +424,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases per rank, as in `FLASH_JOURNALS` (at TP4 the C1 dual fold binds
 /// its two projections' shared storage); every other line is equal once ids
 /// are mapped.
+/// The column-block pair at one row turns each of the C1 decode's 77
+/// one-launch boundaries per rank into the column producer (grid 40 x 1)
+/// and the split finish (grid 2 x 1, 1024 threads) over the same operands,
+/// without the ticket; graph pieces keep their count and gain those nodes,
+/// and no other line changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (21367, 0xdc729a9318532df4)),
     (Ranks::TP4, (53919, 0xaf07dffefb7f79c9)),

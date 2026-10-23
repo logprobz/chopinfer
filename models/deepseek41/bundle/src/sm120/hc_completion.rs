@@ -14,7 +14,9 @@ pub fn entry(layout: Layout) -> Entry {
         mutation: Mutation::None,
     }
 }
-/// The served layout at `hc_finish_norm::COMPLETION_BUCKETS`.
+/// The layout served at C1 (sixteen warps per chain CTA) and C8 (eight)
+/// until the column-block pair (`hc_cols::BUCKETS`) replaced it there; the
+/// labs compare against it.
 pub fn served() -> Entry {
     entry(Layout::Split)
 }

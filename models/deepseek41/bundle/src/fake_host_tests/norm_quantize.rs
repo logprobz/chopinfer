@@ -131,12 +131,12 @@ fn decode_journal(reference: bool) {
             count("chop_norm_quantize_deepseek41_input_cached32_v1"),
             3 * ranks
         );
-        // The C1 one-launch boundary carries every finish/norm tail.
+        // The C1 column-block pair's split finish carries every finish/norm
+        // tail.
         assert_eq!(count("chop_deepseek41_hc_finish_norm_w32_v1"), 0);
-        assert_eq!(
-            count("chop_deepseek41_hc_completion_split_w16_v1 "),
-            77 * ranks
-        );
+        assert_eq!(count("_hc_completion_"), 0);
+        assert_eq!(count("chop_deepseek41_hc_round_cols_r2_tx_v1 "), 77 * ranks);
+        assert_eq!(count("chop_deepseek41_hc_finish_split_w32_v1 "), 77 * ranks);
         // One decode row serves the measured cached query norm (16 warps).
         assert_eq!(
             count("chop_norm_quantize_deepseek41_query_cached16_v1 "),

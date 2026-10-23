@@ -120,7 +120,8 @@ mod tests {
             },
         };
         use kernels_sm120::backend::Sm120;
-        // The served registration without its two-CTA buckets.
+        // The pair with the one-launch boundary at its measured C1 and C8
+        // buckets, which a twin bucket must not overlap.
         let base = || {
             let backend = norm_quantize::register(Sm120::new(), &FLASH).unwrap();
             let backend = norm_quantize_cached::register(backend, &FLASH);
@@ -128,7 +129,7 @@ mod tests {
             let backend = hc_round_chain::register(backend, &FLASH);
             hc_finish_norm::register_pair(backend, &FLASH).with_sinkhorn_finish_norm_completion(
                 hc_completion::served(),
-                hc_finish_norm::COMPLETION_BUCKETS.to_vec(),
+                vec![(1, 16), (8, 8)],
             )
         };
         let entry = hc_finish_norm::entry(&FLASH);

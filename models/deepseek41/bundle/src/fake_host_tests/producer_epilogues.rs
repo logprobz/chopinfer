@@ -18,7 +18,6 @@ fn decode_fuses_77_hc_boundaries() {
                     );
                 }
                 let start = host.device.journal.borrow().len();
-                let created = host.device.journal.borrow()[..start].to_vec();
                 let items = (0..u64::from(rows))
                     .map(|slot| (7 + slot, slot, 3, 9))
                     .collect::<Vec<_>>();
@@ -26,22 +25,17 @@ fn decode_fuses_77_hc_boundaries() {
                 let lines = host.device.journal.borrow()[start..].to_vec();
                 let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
                 let count = |part: &str| launches.iter().filter(|l| l.contains(part)).count();
-                // Measured C1 and C8 buckets join the chain producer and the
-                // finish/norm tail in one launch with a zeroed per-row ticket.
-                let fused = crate::sm120::hc_finish_norm::COMPLETION_BUCKETS
-                    .iter()
-                    .find(|(bucket, _)| *bucket == rows)
-                    .map(|&(_, warps)| warps);
-                assert_eq!(fused.is_some(), rows != 32);
-                assert_eq!(count("hc_round_expand_mix_partials_v1"), 0);
-                assert_eq!(count("hc_round_chain_w8_v1"), 0);
-                assert_eq!(count("hc_round_chain_w4_v1"), 0);
-                assert_eq!(count("_hc_completion_"), usize::from(rows != 32) * 77 * nr);
-                // Measured wide buckets replace both launches with the
-                // column-block producer and split finish (`wide_hc`).
+                // Every measured decode bucket replaces the chain producer and
+                // the finish/norm tail with the column-block producer and
+                // split finish (`wide_hc`); no one-launch boundary remains.
                 let wide = crate::sm120::hc_cols::BUCKETS
                     .iter()
                     .any(|b| b.rows == rows);
+                assert!(wide);
+                assert_eq!(count("hc_round_expand_mix_partials_v1"), 0);
+                assert_eq!(count("hc_round_chain_w8_v1"), 0);
+                assert_eq!(count("hc_round_chain_w4_v1"), 0);
+                assert_eq!(count("_hc_completion_"), 0);
                 assert_eq!(
                     count("hc_round_rows_r2_v1"),
                     usize::from(rows == 32 && !wide) * 77 * nr
@@ -97,47 +91,6 @@ fn decode_fuses_77_hc_boundaries() {
                     assert!(
                         line.contains(&format!("block_x: {}, block_y: 1, block_z: 1", query * 32))
                     );
-                }
-                if let Some(warps) = fused {
-                    let entry = crate::sm120::hc_completion::served();
-                    let symbol = format!("{} ", entry.symbol(warps));
-                    let mut tickets = std::collections::BTreeSet::new();
-                    for line in launches.iter().filter(|l| l.contains("_hc_completion_")) {
-                        assert!(line.contains(&symbol), "{line}");
-                        assert!(line.contains(&format!("grid_x: 161, grid_y: {rows}, grid_z: 1")));
-                        assert!(
-                            line.contains(&format!(
-                                "block_x: {}, block_y: 1, block_z: 1",
-                                warps * 32
-                            ))
-                        );
-                        let spans = shared_overlap::journal_spans(line);
-                        // Twenty-three spans, or 22 where the norm does not widen.
-                        assert!(matches!(spans.len(), 22 | 23));
-                        tickets.insert(*spans.last().unwrap());
-                    }
-                    // One ticket array per rank, a word per row, zeroed once
-                    // when the instance was created and never bound elsewhere.
-                    assert_eq!(tickets.len(), nr);
-                    for &(buffer, offset, length) in &tickets {
-                        assert!(length >= u64::from(rows) * 4);
-                        assert!(created.iter().any(|l| {
-                            l.starts_with("zero ")
-                                && shared_overlap::journal_spans(l).iter().any(|z| {
-                                    z.0 == buffer && z.1 <= offset && offset + length <= z.1 + z.2
-                                })
-                        }));
-                        let other = launches
-                            .iter()
-                            .filter(|l| {
-                                !l.contains("_hc_completion_")
-                                    && !l.contains("lagged_mix")
-                                    && !l.contains("hc_mixer_probe")
-                            })
-                            .flat_map(|l| shared_overlap::journal_spans(l))
-                            .any(|s| s.0 == buffer && s.1 < offset + length && offset < s.1 + s.2);
-                        assert!(!other, "tickets bound outside the HC mixers and boundaries");
-                    }
                 }
                 for line in launches.iter().filter(|l| l.contains("hc_round_rows_")) {
                     assert!(line.contains("grid_x: 160, grid_y: 16, grid_z: 1"));

@@ -1,15 +1,16 @@
 use super::*;
 
-/// Each of the 77 HC boundaries per rank of a 16- or 32-row decode runs
-/// the column-block producer and split finish at their measured buckets
-/// (`hc_cols::BUCKETS`), and the served producer and fused tail elsewhere: one
-/// pair per boundary, the finish next on the producer's stream.
+/// Each of the 77 HC boundaries per rank of a 1-, 8-, 16- or 32-row decode
+/// runs the column-block producer and split finish at their measured
+/// buckets (`hc_cols::BUCKETS`), and the served producer and fused tail
+/// elsewhere: one pair per boundary, the finish next on the producer's
+/// stream.
 #[test]
 fn decode_serves_measured_wide_hc_pairs() {
     let producer = crate::sm120::hc_cols::producer();
     let finish = crate::sm120::hc_cols::finish();
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-        for rows in [16u32, 32] {
+        for rows in [1u32, 8, 16, 32] {
             for kv in KV_LAYOUTS {
                 let shape = Shape::new(&FLASH, ranks).unwrap();
                 let host = FakeHost::new(shape, kv);
@@ -30,10 +31,10 @@ fn decode_serves_measured_wide_hc_pairs() {
                 let lines = host.device.journal.borrow()[start..].to_vec();
                 let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
                 let count = |part: &str| launches.iter().filter(|l| l.contains(part)).count();
-                let served = if rows == 32 {
-                    "_hc_round_rows_r2_v1 "
-                } else {
-                    "_hc_round_chain_w4_v1 "
+                let served = match rows {
+                    1 => "_hc_round_chain_w8_v1 ",
+                    32 => "_hc_round_rows_r2_v1 ",
+                    _ => "_hc_round_chain_w4_v1 ",
                 };
                 let bucket = crate::sm120::hc_cols::BUCKETS
                     .iter()

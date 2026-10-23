@@ -652,8 +652,18 @@ mod tests {
                 }),
             ]
             .into_iter()
-            .flat_map(|w| [(w, None), (w, Some(v(TICKETS)))])
-            {
+            .flat_map(|w| {
+                [
+                    (w, None),
+                    (
+                        w,
+                        Some(View {
+                            handle: 102,
+                            bytes: 32 * 4,
+                        }),
+                    ),
+                ]
+            }) {
                 let buffers = SinkhornRoundNormBuffers {
                     hc,
                     norm: RmsNormQuantizeBuffers {
@@ -669,30 +679,10 @@ mod tests {
                     },
                     tickets,
                 };
-                let chain = tail.launches(&buffers, workspace, Counts::rows(rows));
-                // Measured C1 and C8 buckets are one launch and need zeroed tickets.
-                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::COMPLETION_BUCKETS
-                    .iter()
-                    .find(|(bucket, _)| *bucket == rows)
-                {
-                    let Some(tickets) = tickets else {
-                        assert!(chain.is_err());
-                        continue;
-                    };
-                    let chain = chain.unwrap();
-                    let completion = crate::sm120::hc_completion::served();
-                    assert_eq!(chain.len(), 1);
-                    assert_eq!(chain[0].symbol, completion.symbol(warps));
-                    assert_eq!(chain[0].plan, completion.plan(rows, rows, warps).unwrap());
-                    assert_eq!(
-                        chain[0].arguments.0.last(),
-                        Some(&kernel_core::contract::Argument::DeviceBuffer(
-                            tickets.handle
-                        ))
-                    );
-                    continue;
-                }
-                let chain = chain.unwrap();
+                // No bucket needs the tickets (the one-launch boundary's).
+                let chain = tail
+                    .launches(&buffers, workspace, Counts::rows(rows))
+                    .unwrap();
                 // Measured verify buckets keep the producer and run the tail
                 // on two CTAs per row with the tail's own arguments.
                 if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::TWIN_BUCKETS
@@ -707,8 +697,8 @@ mod tests {
                     assert_eq!(chain[1].arguments.0.len(), 18);
                     continue;
                 }
-                // Measured wide buckets run the column-block producer and
-                // split finish over both launches' own arguments.
+                // The column pair's measured buckets run the column-block
+                // producer and split finish over both launches' own arguments.
                 if let Some(b) = crate::sm120::hc_cols::BUCKETS
                     .iter()
                     .find(|b| b.rows == rows)

@@ -3,7 +3,8 @@ use super::*;
 // Four, six, 12, 16 and 32 rows replace 77 five/six-launch chains with two
 // launches and retain all original operands (the eight-warp chain at four
 // rows, the four-warp chain at six, 12 and 16, the two-row producer at 32).
-// Eight rows take the qualified one-launch C8 boundary with a zeroed ticket.
+// Eight rows took the one-launch C8 boundary with a zeroed ticket, and now
+// share the C8 decode bucket's column-block pair.
 // Six rows run each tail on two CTAs per row (fold and Sinkhorn beside the
 // collapse and norm) with the tail's own operands.
 // The measured MoE grid changes only 160 small-gate grid_x fields at 32
@@ -76,6 +77,12 @@ use super::*;
 // becomes the column-block producer (grid 40 x rows/4, 256 threads) and the
 // split finish (grid_x 1 to 2) with identical operands; no other line
 // changes.
+// At 8 rows each of the 308 one-launch boundaries (77 per rank) becomes the
+// column-block producer (grid 40 x 2, 256 threads) and the split finish
+// (grid 2 x 8, 1024 threads): the producer over the boundary's first seven
+// operands and its workspace and live count, the finish over the tail's own;
+// the ticket is no longer bound. Graph pieces keep their count and gain those
+// nodes; no other line changes.
 // The cluster folds' sixteen resolves shift ids only. At 16 and 32 rows the
 // WQ_a and WKV initialize/fold pairs, WO_a's pair (reuse at 32 rows) and
 // WO_b's ring pair become their cluster admit/fold pairs (1280 launches,
@@ -169,8 +176,7 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             let count = |symbol: &str| launches.iter().filter(|l| l.contains(symbol)).count();
             let qualified = matches!(rows, 4 | 6 | 8 | 12 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
-            // Eight rows take the one-launch boundary of the C8 decode bucket;
-            // six rows run the tail on two CTAs per row.
+            // Six rows run the tail on two CTAs per row.
             let twin = crate::sm120::hc_finish_norm::TWIN_BUCKETS
                 .iter()
                 .find(|(bucket, _)| *bucket == rows)
@@ -180,15 +186,15 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 "{} ",
                 crate::sm120::hc_finish_twin::served().symbol(twin_warps)
             );
-            // Sixteen and 32 rows run the column-block producer and split
-            // finish.
+            // Eight, 16 and 32 rows run the column-block producer and split
+            // finish (eight rows share the C8 decode bucket).
             let wide = crate::sm120::hc_cols::BUCKETS
                 .iter()
                 .find(|b| b.rows == rows);
             let tails = count("hc_finish_norm_w32_v1")
                 + count("_hc_finish_twin_")
                 + count("_hc_finish_split_");
-            let boundaries = tails + count("hc_completion_split_w8_v1 ");
+            let boundaries = tails + count("_hc_completion_");
             if boundaries != pairs {
                 missing.push((rows, kv.storage, boundaries, pairs));
             }
@@ -200,13 +206,10 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 count("hc_round_chain_w4_v1") / 4
             );
             if boundaries == pairs {
-                assert_eq!(
-                    count("hc_completion_split_w8_v1 "),
-                    if rows == 8 { pairs } else { 0 }
-                );
+                assert_eq!(count("_hc_completion_"), 0);
                 assert_eq!(
                     count("hc_finish_norm_w32_v1"),
-                    if rows == 8 || twin.is_some() || wide.is_some() {
+                    if twin.is_some() || wide.is_some() {
                         0
                     } else {
                         pairs
@@ -214,7 +217,7 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                 );
                 let producer = crate::sm120::hc_cols::producer();
                 let finish = crate::sm120::hc_cols::finish();
-                assert_eq!(wide.is_some(), matches!(rows, 16 | 32));
+                assert_eq!(wide.is_some(), matches!(rows, 8 | 16 | 32));
                 if let Some(b) = wide {
                     let first = format!("{} ", producer.symbol(b.tile, b.transposed));
                     let second = format!("{} ", finish.symbol(b.warps));
@@ -248,13 +251,6 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
                         "block_x: {}, block_y: 1, block_z: 1",
                         twin_warps * 32
                     )));
-                }
-                for line in launches
-                    .iter()
-                    .filter(|l| l.contains("hc_completion_split_w8_v1 "))
-                {
-                    assert!(line.contains("grid_x: 161, grid_y: 8, grid_z: 1"));
-                    assert!(line.contains("block_x: 256, block_y: 1, block_z: 1"));
                 }
                 assert_eq!(
                     count("hc_round_chain_w4_v1"),

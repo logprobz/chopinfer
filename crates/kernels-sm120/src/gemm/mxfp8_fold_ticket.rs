@@ -146,6 +146,16 @@ impl Entry {
         }
         Ok(plans)
     }
+    /// The weight reader on packed codes. Admission keeps its original symbol.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        self.validate()?;
+        super::mxfp8_fold_packed::check(self.query.groups, self.query.n, self.query.k)?;
+        let mut spec = self.specs().remove(1);
+        spec.symbol = super::mxfp8_fold_packed::symbol(&spec.symbol);
+        spec.body = spec.body.replace(">(activations", ",true>(activations");
+        Ok(spec)
+    }
+
     pub fn specs(&self) -> Vec<EntrySpec> {
         let q = self.query;
         let namespace = if self.prefetch_weights {

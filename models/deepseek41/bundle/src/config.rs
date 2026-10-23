@@ -44,6 +44,9 @@ pub struct Configuration {
     /// Drafting items per drafter forward
     /// (`model_deepseek41_contract::dspark_options`).
     pub dspark_draft_chunk_items: u32,
+    /// Whether sampled requests draft from the target sampler's noise
+    /// (`model_deepseek41_contract::dspark_coupling`).
+    pub dspark_coupled_drafts: bool,
     pub shape: Shape,
     pub create: CreateConfig,
     pub kv: KvLayout,
@@ -150,6 +153,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let dspark_coupled_drafts =
+        model_deepseek41_contract::dspark_coupling::coupled_drafts(&options).map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -224,6 +232,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
     Ok(Configuration {
         prefill,
         dspark_draft_chunk_items,
+        dspark_coupled_drafts,
         shape,
         create,
         kv,
@@ -330,6 +339,25 @@ pub(crate) mod tests {
             .expect("the record carries model options");
         record.truncate(at);
         append_options(&mut record, &serde_json::to_value(options).unwrap());
+        record
+    }
+
+    /// `record` with its `dspark_coupled_drafts` model option set to
+    /// `coupled`, its other options kept.
+    pub(crate) fn with_coupled_drafts(mut record: Vec<u8>, coupled: bool) -> Vec<u8> {
+        let at = record
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|window| window == MODEL_OPTIONS_TAG_V1)
+            .expect("the record carries model options");
+        let start = at + MODEL_OPTIONS_TAG_V1.len() + 4;
+        let length = u32::from_le_bytes(record[start - 4..start].try_into().unwrap()) as usize;
+        let mut options: serde_json::Value =
+            serde_json::from_slice(&record[start..start + length]).unwrap();
+        options[model_deepseek41_contract::dspark_coupling::COUPLED_DRAFTS] = coupled.into();
+        let tail = record.split_off(start + length);
+        record.truncate(at);
+        append_options(&mut record, &options);
+        record.extend_from_slice(&tail);
         record
     }
 

@@ -2,7 +2,8 @@
 //! drafter as each drafting item's noise record, in item order, at the
 //! generated index of the item's first verify row; greedy items, and
 //! every item of a batch without records, upload zero records, and the
-//! greedy mode launches no noise at all.
+//! greedy mode launches no noise at all. The create record's
+//! `dspark_coupled_drafts` model option selects the mode.
 use super::*;
 use crate::lower::dspark::DraftMode;
 use kernel_core::draft_noise::{NOISE_BYTES, NoiseRecord};
@@ -83,6 +84,25 @@ fn noise(generated: u64) -> NoiseRecord {
     }
 }
 
+/// A drafter instance of four items whose create record couples sampled
+/// drafts when `mode` is sampled.
+fn create_in(shape: Shape, mode: DraftMode) -> (Rc<Host>, BundleInstanceV1) {
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, 32)));
+    let record = crate::config::tests::with_coupled_drafts(
+        crate::config::tests::record(&shape, host.kv, 4, false),
+        mode == DraftMode::Sampled,
+    );
+    let instance = api()
+        .create(
+            HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+            &record,
+        )
+        .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
+    (host, instance)
+}
+
 fn noise_launches(host: &Host, from: usize) -> usize {
     noise_launches_in(&host.journal.borrow()[from..])
 }
@@ -91,8 +111,7 @@ fn noise_launches(host: &Host, from: usize) -> usize {
 fn sampled_items_draft_from_the_noise_of_their_first_verify_row() {
     for ranks in [Ranks::TP1, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
-        let (host, mut instance) =
-            crate::dspark::device::with_mode(DraftMode::Sampled, || create(shape));
+        let (host, mut instance) = create_in(shape, DraftMode::Sampled);
         for (request, slot) in [(7, 0), (9, 1)] {
             execute(
                 &mut instance,
@@ -156,7 +175,7 @@ fn sampled_items_draft_from_the_noise_of_their_first_verify_row() {
 /// The journal from create through two drafted steps of `items`.
 fn drafted_journal(mode: DraftMode, items: [DraftSamplingV1; 2]) -> (Vec<String>, Vec<Sink>) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let (host, mut instance) = crate::dspark::device::with_mode(mode, || create(shape));
+    let (host, mut instance) = create_in(shape, mode);
     for (request, slot) in [(7, 0), (9, 1)] {
         execute(
             &mut instance,
@@ -259,4 +278,60 @@ fn without_noise(journal: &[String]) -> Vec<String> {
         .filter(|line| !is_noise_launch(line))
         .cloned()
         .collect()
+}
+
+/// The package's declared default reaches the drafter as the sampled mode
+/// through the host's resolution, a profile or flag override of
+/// `dspark_coupled_drafts` turns it off, and a create record without the
+/// option keeps the greedy drafter.
+#[test]
+fn the_declared_option_selects_the_draft_mode() {
+    use model_deepseek41_contract::dspark_coupling::COUPLED_DRAFTS;
+    use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
+
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let declared = ModelOptionsV1 {
+        schema: CAPABILITY.into(),
+        options: shape
+            .geometry
+            .model_options(shape.geometry.runtime_defaults()),
+    };
+    for (overrides, expected) in [
+        (vec![], Some(DraftMode::Sampled)),
+        (
+            vec![(COUPLED_DRAFTS.to_owned(), "false".to_owned())],
+            Some(DraftMode::Greedy),
+        ),
+        (
+            vec![(COUPLED_DRAFTS.to_owned(), "true".to_owned())],
+            Some(DraftMode::Sampled),
+        ),
+        (vec![], None),
+    ] {
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        host.drafter.set(true);
+        host.speculation.set(Some((5, 32)));
+        let record = crate::config::tests::record(&shape, host.kv, 4, false);
+        let record = match expected {
+            // The test record names no DSpark option, as an older host's.
+            None => record,
+            Some(_) => {
+                let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
+                crate::config::tests::with_coupled_drafts(
+                    record,
+                    resolved[COUPLED_DRAFTS].as_bool().unwrap(),
+                )
+            }
+        };
+        let mut instance = api()
+            .create(
+                HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+                &record,
+            )
+            .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
+        let (_, mode) = crate::instance::dspark_noise(instance.handle()).unwrap();
+        assert_eq!(mode, expected.unwrap_or(DraftMode::Greedy));
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
 }

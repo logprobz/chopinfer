@@ -44,7 +44,9 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Device {
     pub shape: Shape,
     pub config: Config,
-    /// Sampled unless `CHOPINFER_DSPARK_COUPLED=0` at create.
+    /// From the create record's `dspark_coupled_drafts` model option:
+    /// sampled requests draft from the target sampler's noise, or every
+    /// request drafts greedily, as the drafter did before coupling.
     pub mode: DraftMode,
     pub cycle: super::cycle::Cycle,
     pub prefetch: super::prefetch::Cache,
@@ -109,40 +111,6 @@ pub(crate) struct Rank {
     pub engram_early: Option<Span>,
 }
 
-/// Sampled requests draft from the target sampler's noise
-/// (`DraftMode::Sampled`) unless `CHOPINFER_DSPARK_COUPLED=0`, which drafts
-/// every request greedily, as the drafter did before coupling.
-fn draft_mode() -> Result<DraftMode, String> {
-    #[cfg(test)]
-    if let Some(mode) = TEST_MODE.with(std::cell::Cell::get) {
-        return Ok(mode);
-    }
-    match std::env::var("CHOPINFER_DSPARK_COUPLED") {
-        Err(std::env::VarError::NotPresent) => Ok(DraftMode::Sampled),
-        Ok(value) if value == "1" => Ok(DraftMode::Sampled),
-        Ok(value) if value == "0" => Ok(DraftMode::Greedy),
-        _ => Err("CHOPINFER_DSPARK_COUPLED must be 0 or 1".into()),
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_MODE: std::cell::Cell<Option<DraftMode>> = const { std::cell::Cell::new(None) };
-}
-
-/// Creates instances in `mode` while `f` runs on this thread.
-#[cfg(test)]
-pub(crate) fn with_mode<T>(mode: DraftMode, f: impl FnOnce() -> T) -> T {
-    struct Restore(Option<DraftMode>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TEST_MODE.with(|cell| cell.set(self.0));
-        }
-    }
-    let _restore = Restore(TEST_MODE.with(|cell| cell.replace(Some(mode))));
-    f()
-}
-
 pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
     if offset
         .checked_add(bytes)
@@ -164,6 +132,7 @@ impl Device {
         items: Items,
         context_tokens: u64,
         draft_chunk_items: usize,
+        mode: DraftMode,
     ) -> Result<Self, String> {
         let g = shape.geometry;
         if !(1..=DECODE_BATCH as usize).contains(&draft_chunk_items) {
@@ -200,7 +169,6 @@ impl Device {
         }
         let prepared = Prepared::prepare(kernels.backend.as_ref(), shape)
             .map_err(|e| format!("DSpark operations: {e:?}"))?;
-        let mode = draft_mode()?;
         let heads = Heads::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, mode)
             .map_err(|e| format!("DSpark heads: {e:?}"))?;
         let ring_gathers = [1, 32]

@@ -875,6 +875,11 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                     .context_tokens
                     .unwrap_or(shape.geometry.context_tokens()),
                 config.dspark_draft_chunk_items as usize,
+                if config.dspark_coupled_drafts {
+                    crate::lower::dspark::DraftMode::Sampled
+                } else {
+                    crate::lower::dspark::DraftMode::Greedy
+                },
             )
             .map_err(|error| {
                 log(&error);

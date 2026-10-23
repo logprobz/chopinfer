@@ -19,8 +19,9 @@ sampled item's Markov logits first take the target sampler's noise
 (`kernel_core::draft_noise`): `x / T + g` with the request's seed and the
 generated index of the draft position, from the host's V6 draft sampling
 records (`chop.draft-sampling.v1`). Greedy items' logits keep their bits,
-so their drafts equal `DraftMode::Greedy`'s. `CHOPINFER_DSPARK_COUPLED=0`
-drafts every item greedily.
+so their drafts equal `DraftMode::Greedy`'s. The model option
+`dspark_coupled_drafts` (default true) selects the mode at create; `false`,
+or a create record without the option, drafts every item greedily.
 
 The caller uses these operations in order:
 

@@ -324,7 +324,11 @@ chunk ends.
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms
 and exact greedy equality. DSpark computes all five proposals per block;
-scheduler budgets select the emitted prefix. Its profiles plan balanced
+scheduler budgets select the emitted prefix. For a sampled request the
+drafter proposes from the target sampler's own noise at each draft
+position's generated index (model option `dspark_coupled_drafts`, default
+true; `false` drafts every request greedily); emitted tokens do not depend
+on it. Its profiles plan balanced
 drafts at native KV and TP4: every stream drafts the deepest common depth
 that fits the 32 verify rows, at most five from C1, three from C8 and none
 from C16 (`depths` `1:5,8:3,16:0`), and no plan reads a step time, so

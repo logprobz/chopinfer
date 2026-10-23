@@ -247,12 +247,13 @@ fn official_routed_scale_banks_round_trip() {
     eprintln!("census of four ranks: {census_seconds:.2} s");
 }
 
-/// The backbone's routed gate/up bank in row tiles takes the row-major
-/// plan's census, so one measurement serves either layout. Its scale banks
-/// are encoded from rows and stored untiled: each decodes to the row-major
-/// plan's bank, which tiles into the row-tiled plan's raw bank, the bytes
-/// the tiled expansion writes. Every other view is the row-tiled raw
-/// plan's. Runs when a synthetic geometry is compiled.
+/// The backbone's routed gate/up bank in row tiles, or in quad-lane row
+/// tiles, takes the row-major plan's census, so one measurement serves
+/// every layout. The row-tiled plan's scale banks are encoded from rows
+/// and stored untiled: each decodes to the row-major plan's bank, which
+/// tiles into the row-tiled plan's raw bank, the bytes the tiled expansion
+/// writes. Every other view is the row-tiled raw plan's. Runs when a
+/// synthetic geometry is compiled.
 #[test]
 fn row_tiled_banks_encode_their_scales_from_rows() {
     use kernel_core::transform::RowTileLayout;
@@ -274,7 +275,7 @@ fn row_tiled_banks_encode_their_scales_from_rows() {
         let checkpoint = Arc::new(DirectCheckpointV1::open(&root).unwrap());
         let (requests, censuses) = measured_requests(&checkpoint, ranks);
         for (request, measured) in requests.iter().zip(&censuses) {
-            for routed in [RoutedLayout::Rows, RoutedLayout::Tiles] {
+            for routed in [RoutedLayout::Rows, RoutedLayout::Tiles, RoutedLayout::Lanes] {
                 assert_eq!(
                     census_with(request, routed).unwrap().as_ref(),
                     Some(measured)

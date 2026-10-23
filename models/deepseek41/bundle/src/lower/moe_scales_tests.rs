@@ -184,7 +184,7 @@ fn encoded_scale_banks_expand_before_their_experts() {
         // The gate/up bank expands in the layout its consumers read.
         let pair_symbol = match moe_ops.gate_up_layout() {
             RoutedLayout::Rows => scale_expand_pair_symbol(false),
-            RoutedLayout::Tiles => scale_expand_pair_symbol(true),
+            RoutedLayout::Tiles | RoutedLayout::Lanes => scale_expand_pair_symbol(true),
         };
         let mut direct = 0;
         for rank in [0, ranks.get() - 1] {
@@ -481,7 +481,7 @@ fn the_expansion_writes_the_gate_up_bank_as_its_consumers_read_it() {
         let layout = ops.moe.as_ref().unwrap().gate_up_layout();
         let other = match layout {
             RoutedLayout::Rows => RoutedLayout::Tiles,
-            RoutedLayout::Tiles => RoutedLayout::Rows,
+            RoutedLayout::Tiles | RoutedLayout::Lanes => RoutedLayout::Rows,
         };
         let [codes, scales] = layout.view_layouts().unwrap();
         let view = |layout_id: &str| IndexView {

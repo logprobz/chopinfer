@@ -14,8 +14,8 @@
 //!   groups one after another) and its UE8M0 scales, one per row and 32 K,
 //!   as one packed operand piece per matrix; a BF16 dense projection is its
 //!   rows, an expert bank expert-major packed pieces (the backbone's
-//!   gate/up bank in rows or row tiles, [`RoutedLayout`]), a lookup table
-//!   its rows;
+//!   gate/up bank in rows, row tiles or quad-lane row tiles,
+//!   [`RoutedLayout`]), a lookup table its rows;
 //! - every side tensor's rank copy (norms, the mixers, the router biases,
 //!   and the attention sinks of the rank's heads).
 //!
@@ -43,7 +43,10 @@ use std::sync::Arc;
 
 use kernel_core::contract::WeightFormat;
 use kernel_core::precision::format::{KernelFamily, registry};
-use kernel_core::precision::layout::{ROW_TILE_CODES_VIEW, ROW_TILE_SCALES_VIEW, ROW_TILES_64X128};
+use kernel_core::precision::layout::{
+    ROW_TILE_CODES_VIEW, ROW_TILE_LANE_CODES_VIEW, ROW_TILE_SCALES_VIEW, ROW_TILES_64X128,
+    ROW_TILES_64X128_LANES,
+};
 use kernel_core::weight_transform::{PackedSection, WeightTransform};
 use model_compiler_sdk::quantization::declared::{self, Admitted};
 use model_compiler_sdk::quantization::import::ImportedOperand;
@@ -80,7 +83,8 @@ const INDEX: &str = "model.safetensors.index.json";
 /// instead of the image: their views are mapped.
 const HOST_GATHERED: [&str; 2] = ["engram.table_0", "engram.table_1"];
 
-/// The backbone's routed gate/up bank, which [`RoutedLayout::Tiles`] tiles.
+/// The backbone's routed gate/up bank, which [`RoutedLayout::Tiles`] and
+/// [`RoutedLayout::Lanes`] tile.
 const BACKBONE_GATE_UP: &str = "layer.experts.gate-up";
 
 /// How a rank image stores the backbone's routed gate/up bank. The
@@ -96,6 +100,12 @@ pub enum RoutedLayout {
     /// contiguous tile. The rank index names the tiled layouts
     /// ([`ROW_TILE_CODES_VIEW`], [`ROW_TILE_SCALES_VIEW`]).
     Tiles,
+    /// Those tiles with each 64-byte row block of the codes in quad-lane
+    /// order ([`ROW_TILES_64X128_LANES`]), so each lane of a quad loads the
+    /// bytes it converts for its MMA fragments together. The scales are the
+    /// row tiles'. The rank index names [`ROW_TILE_LANE_CODES_VIEW`] and
+    /// [`ROW_TILE_SCALES_VIEW`].
+    Lanes,
 }
 
 impl RoutedLayout {
@@ -125,13 +135,40 @@ impl RoutedLayout {
                 ]
             }
             Self::Tiles => [ROW_TILE_CODES_VIEW, ROW_TILE_SCALES_VIEW],
+            Self::Lanes => [ROW_TILE_LANE_CODES_VIEW, ROW_TILE_SCALES_VIEW],
         })
     }
 
-    /// Whether `projection`'s records are tiled.
-    fn tiles(self, projection: &str) -> bool {
-        self == Self::Tiles && projection == BACKBONE_GATE_UP
+    /// Whether the bank's 64-row blocks are tiles: [`Self::Tiles`] and
+    /// [`Self::Lanes`].
+    #[must_use]
+    pub fn tiled(self) -> bool {
+        self != Self::Rows
     }
+
+    /// The tiled layout `projection`'s records take, if any.
+    fn tiles(self, projection: &str) -> Option<Tiled> {
+        let tiled = match self {
+            Self::Rows => return None,
+            Self::Tiles => Tiled {
+                layout: ROW_TILES_64X128,
+                codes: ROW_TILE_CODES_VIEW,
+            },
+            Self::Lanes => Tiled {
+                layout: ROW_TILES_64X128_LANES,
+                codes: ROW_TILE_LANE_CODES_VIEW,
+            },
+        };
+        (projection == BACKBONE_GATE_UP).then_some(tiled)
+    }
+}
+
+/// A tiled expert bank's packing layout and codes view layout; its scales
+/// are [`ROW_TILE_SCALES_VIEW`] either way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Tiled {
+    pub layout: &'static str,
+    pub codes: &'static str,
 }
 
 /// The declaration registers no variants.
@@ -197,17 +234,18 @@ pub fn policy(family: KernelFamily, operands: u32, format: WeightFormat) -> Opti
 
 /// Bind the records to this model's consumers. Chained experts decode
 /// row-major codes and scales, or with `tiles` the same rows in 64-row by
-/// 128-K tiles; the standard grouped format instead tiles scales for
-/// block-scaled MMA. Keep packed pieces so code/scale admission and the
-/// source K slice remain checked together. A BF16 dense projection read as
-/// rows is sized as rows too, not padded to the fragment packing's row
-/// tiles.
+/// 128-K tiles (the codes in quad-lane order for
+/// [`ROW_TILES_64X128_LANES`]); the standard grouped format instead tiles
+/// scales for block-scaled MMA. Keep packed pieces so code/scale admission
+/// and the source K slice remain checked together. A BF16 dense projection
+/// read as rows is sized as rows too, not padded to the fragment packing's
+/// row tiles.
 pub fn bind_policy(
     mut operation: DerivedOperation,
     operands: u32,
-    tiles: bool,
+    tiles: Option<Tiled>,
 ) -> Result<DerivedOperation, String> {
-    if tiles && operation.family != KernelFamily::GroupedExpert {
+    if tiles.is_some() && operation.family != KernelFamily::GroupedExpert {
         return Err("only an expert bank is stored in row tiles".into());
     }
     let rows = match operation.family {
@@ -223,12 +261,9 @@ pub fn bind_policy(
         operation.packing.layout = layout.weight;
         if operation.family == KernelFamily::GroupedExpert {
             // One row-major matrix per expert and operand, placed by PackedPieces.
-            operation.packing.layout.id = if tiles {
-                ROW_TILES_64X128
-            } else {
-                "row-major-groups"
-            }
-            .into();
+            operation.packing.layout.id = tiles
+                .map_or("row-major-groups", |tiles| tiles.layout)
+                .into();
         } else {
             // The live matrix the slices fill, without the MMA tile padding
             // the dense derivation added to its destination.
@@ -249,8 +284,8 @@ pub fn bind_policy(
                 continue;
             };
             let (bytes, id) = match section {
-                PackedSection::Codes if tiles => (sizes.codes, Some(ROW_TILE_CODES_VIEW)),
-                PackedSection::LocalScales if tiles => {
+                PackedSection::Codes if tiles.is_some() => (sizes.codes, tiles.map(|t| t.codes)),
+                PackedSection::LocalScales if tiles.is_some() => {
                     (sizes.local_scales, Some(ROW_TILE_SCALES_VIEW))
                 }
                 PackedSection::Codes => (sizes.codes, Some(layout.codes)),
@@ -820,15 +855,16 @@ fn encodable(view: &View) -> bool {
         })
 }
 
-/// `operand` as a census measures it: a matrix of a row-tiled bank as the
-/// row-major matrix it tiles (`bind_policy`), since an encoded section is
+/// `operand` as a census measures it: a matrix of a row-tiled bank, in
+/// either code order, as the row-major matrix it tiles (`bind_policy`),
+/// since an encoded section is
 /// encoded from rows and stored untiled; only a raw section is tiled
 /// (`PackedOperand::stored`).
 fn measured(
     operand: &kernel_core::weight_transform::PackedOperand,
 ) -> kernel_core::weight_transform::PackedOperand {
     let mut operand = operand.clone();
-    if operand.plan.layout.id == ROW_TILES_64X128 {
+    if [ROW_TILES_64X128, ROW_TILES_64X128_LANES].contains(&operand.plan.layout.id.as_str()) {
         operand.plan.layout.id = "row-major-groups".into();
     }
     operand

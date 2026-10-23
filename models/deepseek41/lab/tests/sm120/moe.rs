@@ -81,6 +81,25 @@ fn served_backend(g: &'static Geometry, ranks: u32, entry: Projection) -> Box<dy
     })
 }
 
+/// The one-token case the GPU test conforms for `entry` through
+/// `served_backend`, and the symbol that case launches. The kit finds the
+/// compute stage and guards its output by the projection's symbol, so an
+/// entry the bundle serves as a row-tiled build is checked under that
+/// build's symbol; its query, and so the op the backend prepares, is the
+/// entry's.
+fn served_case(mut entry: Projection) -> (String, Required<'static>) {
+    if let Some(build) = row_tiled_bank::symbols().get(&entry.symbol) {
+        entry.symbol = build.clone();
+    }
+    let symbol = entry.symbol.clone();
+    let case = if entry.gate_up() {
+        kit::cases::moe_chained_quantized::gate_up(entry, 1)
+    } else {
+        kit::cases::moe_chained_quantized::down(entry, 1)
+    };
+    (symbol, case)
+}
+
 struct Served {
     backend: Sm120,
     g: &'static Geometry,
@@ -355,6 +374,43 @@ fn model_moe_native_cases_launch_staged_entries() {
     );
 }
 
+/// Each entry the bundle serves as a row-tiled build forms the GPU test's
+/// case on the host: the kit finds that build's compute stage and stores
+/// the bank in the tiles it declares (harness-r1 refused the column
+/// gate/up's case, whose stages hold the build, not the row-major entry).
+#[test]
+fn model_moe_row_tiled_cases_form_on_the_host() {
+    let modules = ModelModules {
+        directory: PathBuf::new(),
+    };
+    let mut formed = 0;
+    for g in GEOMETRIES {
+        for &ranks in SUPPORTED_RANKS {
+            for entry in registration::projections(g, ranks).unwrap() {
+                let Some(build) = row_tiled_bank::symbols().get(&entry.symbol).cloned() else {
+                    continue;
+                };
+                let backend = served_backend(g, ranks, entry.clone());
+                let (symbol, case) = served_case(entry);
+                assert_eq!(symbol, build);
+                let report = kit::conform(backend.as_ref(), &modules, None, &[case]).unwrap();
+                assert!(
+                    report
+                        .ops
+                        .iter()
+                        .all(|op| matches!(op.result, OpResult::Prepared { .. })),
+                    "{symbol}: {}",
+                    report.json()
+                );
+                check(&report, 1, false);
+                formed += 1;
+            }
+        }
+    }
+    // The column 8192-token gate/up of the Flash TP4 backbone bank.
+    assert_eq!(formed, 1);
+}
+
 #[test]
 fn model_moe_native_cases_pass_on_gpu() {
     let result = kernel_harness::gpu_test(8 << 30, |session| {
@@ -373,16 +429,8 @@ fn model_moe_native_cases_pass_on_gpu() {
                 for entry in registration::projections(g, ranks)? {
                     let backend = served_backend(g, ranks, entry.clone());
                     // The receipt names the entry the case launches.
-                    let symbol = row_tiled_bank::symbols()
-                        .get(&entry.symbol)
-                        .cloned()
-                        .unwrap_or_else(|| entry.symbol.clone());
-                    row_tiled += usize::from(symbol != entry.symbol);
-                    let case = if entry.gate_up() {
-                        kit::cases::moe_chained_quantized::gate_up(entry, 1)
-                    } else {
-                        kit::cases::moe_chained_quantized::down(entry, 1)
-                    };
+                    row_tiled += usize::from(row_tiled_bank::symbols().contains_key(&entry.symbol));
+                    let (symbol, case) = served_case(entry);
                     let report = kit::conform(backend.as_ref(), &modules, Some(session), &[case])?;
                     session.receipt(
                         &format!("model-moe-{symbol}"),

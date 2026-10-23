@@ -230,7 +230,12 @@ fn served(a: &mut Arena<'_>, shape: &Shape, b: &Banks, rows: u32, route: &str) -
             reference(a, &shape.base, &b.first, rows)
         };
     }
-    let second = b.second.ok_or("pair without a second bank")?;
+    let first = packed_views(a, &shape.base, &b.first)?;
+    let second = packed_views(
+        a,
+        &shape.base,
+        &b.second.ok_or("pair without a second bank")?,
+    )?;
     let backend = backend();
     let q = sm120::mxfp8_fold::routed_query(shape.base.query, rows);
     if let Ok(op) = backend.mxfp8_fold_gemm_stream(&q, true, Need::rows(rows)) {
@@ -240,19 +245,16 @@ fn served(a: &mut Arena<'_>, shape: &Shape, b: &Banks, rows: u32, route: &str) -
                 .ok_or("missing paired stream state")?,
             0,
         )?;
-        let packed = [
-            a.filled(b.first.weights.bytes, 0)?,
-            a.filled(second.weights.bytes, 0)?,
-        ];
+        let packed = [a.alias(first.weights), a.alias(second.weights)];
         let views = Mxfp8FoldStreamBuffers {
-            first: b.first,
+            first,
             second: Some(second),
             packed_weights: packed,
             state,
         };
         let work = a.filled(op.info().workspace.max(4), 0)?;
         return Ok(Calls {
-            init: op.initialize(&views).map_err(|e| e.to_string())?,
+            init: vec![],
             run: op
                 .launches(&views, work, Counts::rows(rows))
                 .map_err(|e| e.to_string())?,
@@ -266,7 +268,7 @@ fn served(a: &mut Arena<'_>, shape: &Shape, b: &Banks, rows: u32, route: &str) -
     Ok(Calls {
         init: vec![],
         run: op
-            .launches(&[b.first, second], work, Counts::rows(rows))
+            .launches(&[first, second], work, Counts::rows(rows))
             .map_err(|e| e.to_string())?,
         state: None,
     })
@@ -288,8 +290,9 @@ const SERVED: usize = 2;
 /// The served module of `symbol` and whether this change swizzled it (the
 /// plain family rebuilds it).
 pub fn modules(symbol: &str) -> LabResult<(&'static str, bool)> {
-    let (name, _) =
-        fold_cubin_for_symbol(symbol).ok_or_else(|| format!("missing served {symbol}"))?;
+    let (name, _) = fold_cubin_for_symbol(symbol)
+        .or_else(|| fold_cubin_for_symbol(&kernels_sm120::gemm::mxfp8_fold_packed::symbol(symbol)))
+        .ok_or_else(|| format!("missing served {symbol}"))?;
     let plain = format!("{}{name}", plain_family::PREFIX);
     Ok((name, plain_names().contains(&plain)))
 }
@@ -410,6 +413,53 @@ fn symbols(calls: &Calls) -> Vec<String> {
         .collect()
 }
 
+/// Restore only a historical main/plain arm's weight reader and its
+/// row-major code bindings. Current bundle arms retain packed launches.
+fn historical(calls: &mut Calls, b: &Banks, arm: usize) -> LabResult<()> {
+    let specs: BTreeMap<_, _> = plain_family::served()
+        .into_iter()
+        .flat_map(|(_, spec)| spec.entries)
+        .map(|spec| (spec.symbol.clone(), spec))
+        .collect();
+    for call in &mut calls.run {
+        let name = arm_module(&call.symbol, arm)?;
+        if !name.starts_with("main_") && !name.starts_with(plain_family::PREFIX) {
+            continue;
+        }
+        let symbol = call
+            .symbol
+            .strip_suffix("_packed_v1")
+            .unwrap_or(&call.symbol)
+            .to_owned();
+        let spec = specs
+            .get(&symbol)
+            .ok_or_else(|| format!("missing historical spec {symbol}"))?;
+        if spec.params.len() != call.arguments.0.len() {
+            return Err(format!("historical ABI differs for {symbol}"));
+        }
+        for (param, arg) in spec.params.iter().zip(&mut call.arguments.0) {
+            if let kernel_build::EntryParam::DevicePointer { name, .. } = param {
+                if name == "weights" {
+                    *arg = kernel_core::contract::Argument::DeviceBuffer(b.first.weights.handle);
+                }
+                if name == "weights2"
+                    && let Some(second) = b.second
+                {
+                    *arg = kernel_core::contract::Argument::DeviceBuffer(second.weights.handle);
+                }
+            }
+        }
+        call.symbol = symbol;
+    }
+    Ok(())
+}
+fn logical_symbols(calls: &Calls) -> Vec<String> {
+    symbols(calls)
+        .into_iter()
+        .map(|s| s.strip_suffix("_packed_v1").unwrap_or(&s).to_owned())
+        .collect()
+}
+
 fn case(s: &Session, shape: &Shape, rows: u32, route: &str, mode: Mode) -> LabResult<Value> {
     let input = inputs(shape, rows)?;
     let mut a = Arena::new(Some(s));
@@ -419,13 +469,19 @@ fn case(s: &Session, shape: &Shape, rows: u32, route: &str, mode: Mode) -> LabRe
         banks(&mut a, shape, rows, &input, Some(&first))?,
         banks(&mut a, shape, rows, &input, Some(&first))?,
     ];
-    let calls = [
+    let mut calls = [
         served(&mut a, shape, &b[0], rows, route)?,
         served(&mut a, shape, &b[1], rows, route)?,
         served(&mut a, shape, &b[2], rows, route)?,
     ];
+    for arm in [0, 1] {
+        historical(&mut calls[arm], &b[arm], arm)?;
+    }
     let names = symbols(&calls[SERVED]);
-    if calls.iter().any(|c| symbols(c) != names) {
+    if calls
+        .iter()
+        .any(|c| logical_symbols(c) != logical_symbols(&calls[SERVED]))
+    {
         return Err("arms selected different calls".into());
     }
     let all: Vec<Launch> = calls[SERVED]
@@ -443,7 +499,19 @@ fn case(s: &Session, shape: &Shape, rows: u32, route: &str, mode: Mode) -> LabRe
         return Ok(record);
     }
     record["same_modules"] = json!(false);
-    let f = [load(s, &all, 0)?, load(s, &all, 1)?, load(s, &all, 2)?];
+    let arm_calls = |arm: usize| {
+        calls[arm]
+            .init
+            .iter()
+            .chain(&calls[arm].run)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let f = [
+        load(s, &arm_calls(0), 0)?,
+        load(s, &arm_calls(1), 1)?,
+        load(s, &arm_calls(2), 2)?,
+    ];
     // The launch order a launch-filtered profiler sees, by arm.
     let mut order = Vec::new();
     for arm in 0..3 {
@@ -627,6 +695,69 @@ pub fn gpu(s: &Session) -> LabResult<()> {
         json!({"mode":std::env::var("CHOPINFER_FOLD_PLAIN_MODE").unwrap_or_default(),"rows":kept,"cases":cases,"changed":changed})
     );
     Ok(())
+}
+
+#[test]
+fn historical_arms_keep_row_major_bindings_and_compute_plans() {
+    for shape in shapes() {
+        for rows in [1, 16, 32] {
+            for route in routes(&shape, rows) {
+                let mut arena = Arena::new(None);
+                let input = Inputs {
+                    first: data::empty(&shape.base, rows),
+                    second: shape.paired.then(|| data::empty(&shape.base, rows)),
+                };
+                let b = banks(&mut arena, &shape, rows, &input, None).unwrap();
+                for arm in [MAIN, 1] {
+                    let mut calls = served(&mut arena, &shape, &b, rows, route).unwrap();
+                    let before = calls.run.clone();
+                    historical(&mut calls, &b, arm).unwrap();
+                    for (packed, old) in before.iter().zip(&calls.run) {
+                        assert_eq!(packed.plan, old.plan);
+                        assert_eq!(packed.rows, old.rows);
+                        if packed.symbol != old.symbol {
+                            assert_eq!(packed.symbol, format!("{}_packed_v1", old.symbol));
+                            let spec = plain_family::served()
+                                .into_iter()
+                                .flat_map(|(_, spec)| spec.entries)
+                                .find(|spec| spec.symbol == old.symbol)
+                                .unwrap();
+                            for ((param, a), b_arg) in spec
+                                .params
+                                .iter()
+                                .zip(&packed.arguments.0)
+                                .zip(&old.arguments.0)
+                            {
+                                let name = match param {
+                                    kernel_build::EntryParam::DevicePointer { name, .. } => {
+                                        name.as_str()
+                                    }
+                                    _ => "",
+                                };
+                                match name {
+                                    "weights" => assert_eq!(
+                                        *b_arg,
+                                        kernel_core::contract::Argument::DeviceBuffer(
+                                            b.first.weights.handle
+                                        )
+                                    ),
+                                    "weights2" if b.second.is_some() => assert_eq!(
+                                        *b_arg,
+                                        kernel_core::contract::Argument::DeviceBuffer(
+                                            b.second.unwrap().weights.handle
+                                        )
+                                    ),
+                                    _ => assert_eq!(a, b_arg),
+                                }
+                            }
+                        } else {
+                            assert_eq!(packed.arguments, old.arguments);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Every case's calls, modules and plans without opening CUDA: the plan the

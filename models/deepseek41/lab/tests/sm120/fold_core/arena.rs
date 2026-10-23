@@ -28,6 +28,19 @@ impl<'a> Arena<'a> {
         }
         Ok(v)
     }
+    /// A distinct checked role handle over the same allocation.
+    pub fn alias(&mut self, source: View) -> View {
+        self.next += 1;
+        let view = View {
+            handle: self.next,
+            bytes: source.bytes,
+        };
+        if self.session.is_some() {
+            self.buffers
+                .insert(view.handle, self.buffers[&source.handle].clone());
+        }
+        view
+    }
     pub fn bytes(&mut self, bytes: &[u8]) -> LabResult<View> {
         let v = self.filled(bytes.len() as u64, 0)?;
         self.write(v, bytes)?;

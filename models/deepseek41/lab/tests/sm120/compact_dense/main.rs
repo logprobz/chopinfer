@@ -118,12 +118,39 @@ fn buffers(
         status_row_offset: 3,
     })
 }
-fn prepare(e: &Entry, rows: u32, b: &Buffers<View>, candidate: bool) -> LabResult<Vec<Launch>> {
+fn prepare(
+    a: &mut Arena<'_>,
+    e: &Entry,
+    rows: u32,
+    b: &Buffers<View>,
+    candidate: bool,
+) -> LabResult<Vec<Launch>> {
+    let mut b = *b;
+    if !candidate {
+        b.weights = if a.session.is_some() {
+            let q = e.base.query;
+            let codes = a.read(b.weights)?;
+            let packed = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+                groups: q.groups as usize,
+                n: q.n as usize,
+                k: q.k as usize,
+            }
+            .pack(&codes[..b.weights.bytes as usize])
+            .map_err(|e| e.to_string())?;
+            a.bytes(&packed)?
+        } else {
+            a.filled(b.weights.bytes, 0)?
+        };
+    }
     let op = if candidate {
         e.prepare(rows).map_err(|e| e.to_string())?
     } else {
         let rank = topology(e)[0];
         let backend = registration::register(Sm120::new(), &FLASH, rank)?;
+        let backend = bundle_deepseek41::sm120::prefill_matrix::register(backend, &FLASH, rank)?;
+        let backend =
+            bundle_deepseek41::sm120::prefill_tma_scales::register(backend, &FLASH, rank)?
+                .with_packed_fold_weights();
         if rows >= 128 {
             backend.mxfp8_prefill_gemm(&e.base.query, Need::rows(rows))
         } else {
@@ -131,7 +158,7 @@ fn prepare(e: &Entry, rows: u32, b: &Buffers<View>, candidate: bool) -> LabResul
         }
         .map_err(|e| e.to_string())?
     };
-    op.launches(b, View::EMPTY, Counts::rows(rows))
+    op.launches(&b, View::EMPTY, Counts::rows(rows))
         .map_err(|e| e.to_string())
 }
 fn functions(s: &Session, ops: &[Launch]) -> LabResult<BTreeMap<String, Function>> {
@@ -141,7 +168,7 @@ fn functions(s: &Session, ops: &[Launch]) -> LabResult<BTreeMap<String, Function
         if out.contains_key(&op.symbol) {
             continue;
         }
-        let name = if op.symbol.contains("_compact_") {
+        let name = if op.symbol.contains("_compact_") && !op.symbol.ends_with("_packed_v1") {
             family::CUBIN
         } else {
             fold_cubin_for_symbol(&op.symbol)
@@ -284,12 +311,12 @@ fn cpu_matrix() {
         ];
         for &rows in ROWS {
             let b = buffers(&mut a, &e, rows, weights).unwrap();
-            let old = prepare(&e, rows, &b, false).unwrap();
-            let new = prepare(&e, rows, &b, true).unwrap();
+            let old = prepare(&mut a, &e, rows, &b, false).unwrap();
+            let new = prepare(&mut a, &e, rows, &b, true).unwrap();
             for op in old.iter().chain(&new) {
                 op.plan.validate_geometry().unwrap();
                 assert_eq!(op.plan.workspace_bytes, 0);
-                if op.symbol.contains("_compact_") {
+                if op.symbol.contains("_compact_") && !op.symbol.ends_with("_packed_v1") {
                     assert!(symbols.contains(&op.symbol));
                     assert!(op.plan.dynamic_shared_bytes <= 101376);
                 } else {

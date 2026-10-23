@@ -51,7 +51,11 @@ fn backend() -> &'static Sm120 {
         let b = sm120::mxfp8_fold::register(Sm120::new(), &FLASH, 4).unwrap();
         let b = sm120::mxfp8_fold_stream::register(b, &FLASH, 4).unwrap();
         let b = sm120::mxfp8_fold_direct::register(b, &FLASH, 4).unwrap();
-        sm120::projection_reuse::register(b, &FLASH, 4).unwrap()
+        let b = sm120::projection_reuse::register(b, &FLASH, 4).unwrap();
+        let b = sm120::prefill_matrix::register(b, &FLASH, 4).unwrap();
+        sm120::prefill_tma_scales::register(b, &FLASH, 4)
+            .unwrap()
+            .with_packed_fold_weights()
     })
 }
 #[derive(Clone)]
@@ -163,6 +167,29 @@ fn common(
         status_row_offset: 3,
     })
 }
+/// Only a bundle arm receives this packed view. Lab references keep `b`.
+fn packed_views(
+    a: &mut Arena<'_>,
+    base: &mxfp8_fold::Entry,
+    b: &Buffers<View>,
+) -> LabResult<Buffers<View>> {
+    let q = base.query;
+    let weights = if a.session.is_some() {
+        let codes = a.read(b.weights)?;
+        let packed = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+            groups: q.groups as usize,
+            n: q.n as usize,
+            k: q.k as usize,
+        }
+        .pack(&codes[..b.weights.bytes as usize])
+        .map_err(|e| e.to_string())?;
+        a.bytes(&packed)?
+    } else {
+        a.filled(b.weights.bytes, 0)?
+    };
+    Ok(Buffers { weights, ..*b })
+}
+
 struct Calls {
     init: Vec<Launch>,
     run: Vec<Launch>,
@@ -176,6 +203,7 @@ fn reference(
 ) -> LabResult<Calls> {
     let backend = backend();
     if is_decode() {
+        let b = &packed_views(a, base, b)?;
         let q = sm120::mxfp8_fold::routed_query(base.query, rows);
         if let Ok(op) = backend.mxfp8_fold_gemm_stream(&q, false, Need::rows(rows)) {
             let state = a.filled(
@@ -184,7 +212,7 @@ fn reference(
                     .ok_or("missing baseline state")?,
                 0,
             )?;
-            let packed = a.filled(b.weights.bytes, 0)?;
+            let packed = a.alias(b.weights);
             let views = Mxfp8FoldStreamBuffers {
                 first: *b,
                 second: None,
@@ -193,7 +221,7 @@ fn reference(
             };
             let work = a.filled(op.info().workspace.max(4), 0)?;
             return Ok(Calls {
-                init: op.initialize(&views).map_err(|e| e.to_string())?,
+                init: vec![],
                 run: op
                     .launches(&views, work, Counts::rows(rows))
                     .map_err(|e| e.to_string())?,
@@ -221,6 +249,7 @@ fn prefill_reference(
     rows: u32,
 ) -> LabResult<Calls> {
     let backend = backend();
+    let b = &packed_views(a, base, b)?;
     let mut q = base.query;
     q.m_capacity = 8192;
     // DenseOps::project keeps the general fold below 128 prefill rows.
@@ -296,7 +325,7 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
             Some(cluster_family::CUBIN)
         } else if call.symbol.starts_with("chop_fold_core_") {
             Some(family::DECODE)
-        } else if call.symbol.contains("_matrix_") {
+        } else if call.symbol.contains("_matrix_") && !call.symbol.ends_with("_packed_v1") {
             Some(family::PREFILL)
         } else {
             None
@@ -678,7 +707,9 @@ fn prefill_reference_keeps_small_rows_on_the_served_fold() {
                     .run
                     .iter()
                     .any(|call| call.symbol.contains("_prefill_")
-                        || call.symbol.contains("_compact_")),
+                        || call.symbol.contains("_compact_")
+                        || call.symbol.contains("_matrix_")
+                        || call.symbol.contains("_tma_scales_")),
                 rows >= 128
             );
         }

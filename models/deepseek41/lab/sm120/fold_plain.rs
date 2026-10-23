@@ -11,17 +11,42 @@ pub const DEFINE: &str = "CHOP_FOLD_PLAIN_ROWS";
 /// The bundle's lock family and spec of every served cubin this family
 /// rebuilds (of the row-local cubin, the pair-loop entries only).
 pub fn served() -> Vec<(&'static str, CubinSpec)> {
-    let g = [FLASH];
-    let mut specs = Vec::new();
-    specs.extend(mxfp8_fold::ticket_cubins(&g).unwrap());
-    specs.extend(mxfp8_fold::prefetch_cubins(&g).unwrap());
-    specs.extend(mxfp8_fold::decode_cubins(&g).unwrap());
-    specs.extend(
-        projection_reuse::cubins(&g)
-            .unwrap()
-            .into_iter()
-            .filter(|(family, _)| *family == projection_reuse::FOLD_FAMILY),
-    );
+    // Pin the historical row-major recipes even after the bundle constructors
+    // replace their readers with packed twins. Existing lab locks stay put.
+    let mut specs = vec![
+        (
+            mxfp8_fold::TICKET_FAMILY,
+            kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                &mxfp8_fold::ticket_cubin_name(&FLASH),
+                &mxfp8_fold::ticket_catalog(&FLASH).unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            mxfp8_fold::PREFETCH_FAMILY,
+            kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                &mxfp8_fold::prefetch_cubin_name(&FLASH),
+                &mxfp8_fold::prefetch_catalog(&FLASH).unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            mxfp8_fold::DECODE_FAMILY,
+            kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
+                &mxfp8_fold::decode_cubin_name(&FLASH),
+                &mxfp8_fold::decode_catalog(&FLASH).unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            projection_reuse::FOLD_FAMILY,
+            kernels_sm120::gemm::mxfp8_fold_reuse::cubin_spec(
+                projection_reuse::FOLD_CUBIN,
+                &projection_reuse::entries().unwrap(),
+            )
+            .unwrap(),
+        ),
+    ];
     // The deep rings place rows by their own swizzle flag, so the family
     // rebuilds only the pair loops.
     let pair_loops: Vec<_> = fold_local_rows::entries()

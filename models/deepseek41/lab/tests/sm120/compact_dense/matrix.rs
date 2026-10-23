@@ -54,8 +54,8 @@ fn chunks(
             };
             let b = [old, new];
             let ops = [
-                prepare(e, rows, &b[0], false)?,
-                prepare(e, rows, &b[1], true)?,
+                prepare(a, e, rows, &b[0], false)?,
+                prepare(a, e, rows, &b[1], true)?,
             ];
             let f = functions(s, &ops.concat())?;
             let got = compare(s, a, &f, &ops, &b, rows, rows, false)?;
@@ -137,8 +137,8 @@ pub fn run(s: &Session, timed: bool) -> LabResult<()> {
             };
             let b = [old, new];
             let ops = [
-                prepare(&e, rows, &b[0], false)?,
-                prepare(&e, rows, &b[1], true)?,
+                prepare(&mut a, &e, rows, &b[0], false)?,
+                prepare(&mut a, &e, rows, &b[1], true)?,
             ];
             let mut all = ops.concat();
             let mut control = ops[1].clone();

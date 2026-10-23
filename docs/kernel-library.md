@@ -313,6 +313,32 @@ in this layout, compiles only packed fold readers into its fold cubins and
 refuses at create a rank index that stores a dense codes view in another
 layout than its ops read.
 
+Measured on Flash SM120 at 300 W on 2026-10-23:
+
+- Parity: every packed compute symbol DeepSeek serves (367 across TP1,
+  TP2 and TP4, in 506 production-shape comparisons) wrote the same bytes
+  as its row-major twin, and moving one eight-row strip failed each
+  family's comparison.
+- Prefill, paired lab timings of packed against row-major entries at 448
+  to 8192 rows:
+  - compact 0.83 to 0.92;
+  - TMA 0.85 to 0.89;
+  - split 0.86 to 0.97;
+  - matrix-load 0.88 to 1.00;
+  - staged-scale 0.98 to 1.00.
+- Decode: at the decode routes DeepSeek serves, the split, ticket,
+  prefetch and reuse folds measured 0.96 to 1.02. Each sample was at
+  least 1 ms of cold repetitions.
+- Serving, against the previous layout with its create-time packed
+  copies:
+  - outputs were bitwise equal in tp4-ar and tp4-dspark;
+  - greedy throughput was within the A/A spread or faster: tp4-ar 0.9997,
+    1.0028 and 1.0103 at C1, C8 and C32, and tp4-dspark 1.0020, 1.0067
+    and 1.0039;
+  - each rank had 1922 MiB more free memory at the first graph capture
+    (2116 MiB with the drafter), about 35,400 more KV pages of 56,960
+    bytes.
+
 ## Ownership and source changes
 
 `kernel-build-report.json` beside the cubins records the transitive

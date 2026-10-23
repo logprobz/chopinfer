@@ -12,6 +12,7 @@ use runtime_scheduler::{DraftBudget, DraftLimits};
 mod balanced;
 mod block_cost;
 use block_cost::BlockStep;
+mod depths;
 mod diagnostics;
 #[cfg(test)]
 mod low_concurrency_tests;
@@ -27,6 +28,7 @@ pub(crate) use diagnostics::PlanTrace;
 pub mod confidence;
 pub mod table;
 
+pub use depths::{DraftDepths, DraftDepthsError, MAX_DRAFT_DEPTHS};
 pub use table::{StepCost, StepCosts, StepCostsError};
 
 /// The most drafts one item may verify in a step.
@@ -314,8 +316,9 @@ pub enum SpeculationMode {
     Fixed,
     /// Give eligible items a common executable depth, then spend spare
     /// rows on the next prefixes with the highest expected acceptance.
-    /// Batch and request limits determine depth; elapsed time does not.
-    Balanced,
+    /// Batch and request limits and this schedule's depth for the batch's
+    /// items determine depth; elapsed time does not.
+    Balanced(DraftDepths),
     /// Drafts are added where they are expected to raise tokens per unit of
     /// step time, from per-request acceptance and measured step costs.
     Adaptive,
@@ -1073,7 +1076,7 @@ impl SpeculationPolicy {
     pub(crate) fn observe_step(&mut self, drafts: &[usize], fresh: usize, micros: u64) {
         if matches!(
             self.config.mode,
-            SpeculationMode::Table(_) | SpeculationMode::Balanced
+            SpeculationMode::Table(_) | SpeculationMode::Balanced(_)
         ) {
             // These plans never read step times.
             self.step_accepted = 0;
@@ -1361,9 +1364,9 @@ impl SpeculationPolicy {
                     remaining -= *draft;
                 }
             }
-            SpeculationMode::Balanced => {
+            SpeculationMode::Balanced(depths) => {
                 self.trace_reason("balanced");
-                drafts = self.plan_balanced(candidates, remaining);
+                drafts = self.plan_balanced(candidates, remaining, depths.at(candidates.len()));
             }
             SpeculationMode::Adaptive if budget.prefill() => {
                 self.trace_reason("prefill_fresh");

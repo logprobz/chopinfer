@@ -36,7 +36,7 @@ use runtime_bundle_abi::{
     ResultSinkLimitsV1,
 };
 use runtime_engine::{
-    DraftCostModel, DraftSource, Engine, EngineConfig, EngineMetrics, ExecutorError,
+    DraftCostModel, DraftDepths, DraftSource, Engine, EngineConfig, EngineMetrics, ExecutorError,
     ModelBatchItem, ModelExecutor, ModelTransaction, PromptLookupConfig, RequestId,
     SpeculationConfig, SpeculationMode, StepCosts,
 };
@@ -2241,7 +2241,7 @@ fn serving_identity_v1(
                 mode: match speculation.map(SpeculationConfig::mode) {
                     None => "off",
                     Some(SpeculationMode::Fixed) => "fixed",
-                    Some(SpeculationMode::Balanced) => "balanced",
+                    Some(SpeculationMode::Balanced(_)) => "balanced",
                     Some(SpeculationMode::Adaptive) => "adaptive",
                     Some(SpeculationMode::Table(_)) => "table",
                 }
@@ -5195,7 +5195,7 @@ impl ArgumentsV1 {
                 "--speculation" => {
                     let mode = match value.as_str() {
                         "fixed" => SpeculationMode::Fixed,
-                        "balanced" => SpeculationMode::Balanced,
+                        "balanced" => SpeculationMode::Balanced(DraftDepths::default()),
                         "adaptive" => SpeculationMode::Adaptive,
                         // The costs arrive with --speculation-costs.
                         "table" => SpeculationMode::Table(StepCosts::default()),

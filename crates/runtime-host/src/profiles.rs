@@ -925,7 +925,10 @@ mod tests {
         );
         assert_eq!(
             mode(&["--speculation", "balanced"]),
-            (3, runtime_engine::SpeculationMode::Balanced)
+            (
+                3,
+                runtime_engine::SpeculationMode::Balanced(Default::default())
+            )
         );
         assert_eq!(mode(&["--speculative-tokens", "0"]).0, 0);
         // Costs belong to table mode only.
@@ -962,7 +965,10 @@ mod tests {
             profile: entry,
         };
         for (args, expected) in [
-            (Vec::new(), runtime_engine::SpeculationMode::Balanced),
+            (
+                Vec::new(),
+                runtime_engine::SpeculationMode::Balanced(Default::default()),
+            ),
             (
                 vec!["--speculation".into(), "fixed".into()],
                 runtime_engine::SpeculationMode::Fixed,

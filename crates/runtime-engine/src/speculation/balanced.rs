@@ -1,15 +1,19 @@
-//! Common draft depths within a batch, with acceptance-ranked spare rows.
+//! Common draft depths within a batch, with acceptance-ranked spare rows,
+//! up to the depth a schedule gives the batch's concurrency.
 
 use super::{MAX_DRAFT_TOKENS, PlanCandidate, SpeculationPolicy};
 
 impl SpeculationPolicy {
+    /// No item verifies more than `limit` drafts; `None` leaves the request
+    /// and batch limits alone, and `Some(0)` plans no drafts.
     pub(super) fn plan_balanced(
         &self,
         candidates: &[PlanCandidate<'_>],
         mut remaining: usize,
+        limit: Option<usize>,
     ) -> Vec<usize> {
         let mut drafts = vec![0; candidates.len()];
-        for depth in 1..=MAX_DRAFT_TOKENS {
+        for depth in 1..=limit.unwrap_or(MAX_DRAFT_TOKENS).min(MAX_DRAFT_TOKENS) {
             if !self.executable[depth] {
                 continue;
             }
@@ -57,14 +61,26 @@ impl SpeculationPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{AcceptanceEstimate, DraftSource, SpeculationConfig, SpeculationMode};
+    use super::super::{
+        AcceptanceEstimate, DraftDepths, DraftSource, SpeculationConfig, SpeculationMode,
+    };
     use super::*;
     use runtime_scheduler::DraftBudget;
 
-    fn policy() -> SpeculationPolicy {
+    fn scheduled(depths: DraftDepths) -> SpeculationPolicy {
         SpeculationPolicy::new(
-            SpeculationConfig::new(5, 32, SpeculationMode::Balanced, DraftSource::Bundle).unwrap(),
+            SpeculationConfig::new(
+                5,
+                32,
+                SpeculationMode::Balanced(depths),
+                DraftSource::Bundle,
+            )
+            .unwrap(),
         )
+    }
+
+    fn policy() -> SpeculationPolicy {
+        scheduled(DraftDepths::default())
     }
 
     fn candidate(acceptance: &AcceptanceEstimate, maximum: usize) -> PlanCandidate<'_> {
@@ -83,6 +99,90 @@ mod tests {
             let candidates = vec![candidate(&estimate, 5); items];
             let drafts = policy().plan(&candidates, DraftBudget::new(32 - items, 32 - items));
             assert_eq!(drafts, vec![depth; items]);
+        }
+    }
+
+    /// A schedule caps each concurrency's depth from its entry on: depth 0
+    /// serves C16 without drafts, depth 2 keeps C8 shallower than its rows
+    /// allow, and spare rows still fill only up to the cap.
+    #[test]
+    fn a_depth_schedule_caps_each_concurrency_and_zero_drafts_nothing() {
+        let estimate = AcceptanceEstimate::initial();
+        let depths = DraftDepths::parse("1:3,8:2,16:0").unwrap();
+        for (items, expected) in [
+            (1, vec![3]),
+            (8, vec![2; 8]),
+            (16, vec![0; 16]),
+            (32, vec![0; 32]),
+        ] {
+            let candidates = vec![candidate(&estimate, 5); items];
+            let drafts =
+                scheduled(depths).plan(&candidates, DraftBudget::new(32 - items, 32 - items));
+            assert_eq!(drafts, expected, "{items}");
+        }
+        // Seven items under the C1 entry: three each fill 21 of 25 spare
+        // rows, and no item goes deeper than three.
+        let candidates = vec![candidate(&estimate, 5); 7];
+        assert_eq!(
+            scheduled(depths).plan(&candidates, DraftBudget::new(25, 25)),
+            vec![3; 7]
+        );
+        // The full schedule is the unscheduled plan wherever rows bind first.
+        let full = DraftDepths::parse("1:5,8:3,16:1").unwrap();
+        for items in [1, 4, 8, 12, 16, 24] {
+            let candidates = vec![candidate(&estimate, 5); items];
+            let budget = DraftBudget::new(32 - items, 32 - items);
+            assert_eq!(
+                scheduled(full).plan(&candidates, budget),
+                policy().plan(&candidates, budget),
+                "{items}"
+            );
+        }
+    }
+
+    /// Two engines that verify the same drafts but time their steps
+    /// differently, one about 20 ms a step and the other anywhere from 30
+    /// to 120 ms, plan the same drafts at every step and concurrency, and
+    /// neither trains a step-cost or realized table.
+    #[test]
+    fn balanced_plans_never_read_step_times() {
+        let depths = DraftDepths::parse("1:5,8:3,16:1").unwrap();
+        let mut engines = [scheduled(depths), scheduled(depths)];
+        let mut estimates: [Vec<AcceptanceEstimate>; 2] =
+            std::array::from_fn(|_| vec![AcceptanceEstimate::initial(); 32]);
+        for step in 0..400_usize {
+            let items = [1, 8, 16, 7, 12, 32, 3][step / 40 % 7];
+            let mut plans = Vec::new();
+            for (engine, estimates) in engines.iter_mut().zip(&estimates) {
+                let candidates = estimates[..items]
+                    .iter()
+                    .map(|estimate| candidate(estimate, 5))
+                    .collect::<Vec<_>>();
+                let spare = 32 - items;
+                plans.push(engine.plan(&candidates, DraftBudget::new(spare, spare)));
+            }
+            assert_eq!(plans[0], plans[1], "step {step} at {items} items");
+            let drafts = &plans[0];
+            for (index, (engine, estimates)) in engines.iter_mut().zip(&mut estimates).enumerate() {
+                for (item, &count) in drafts.iter().enumerate() {
+                    if count > 0 {
+                        let accepted = (step * 31 + item * 17) % (count + 1);
+                        engine.observe(&mut estimates[item], count, accepted);
+                    }
+                }
+                let micros = if index == 0 {
+                    20_000 + (step % 7) as u64 * 100
+                } else {
+                    30_000 + (step * 7919 % 90_000) as u64
+                };
+                engine.observe_step(drafts, step % 3, micros);
+            }
+        }
+        for engine in &engines {
+            assert!(engine.costs.micros.is_empty());
+            assert!(engine.block_steps.steps.is_empty());
+            assert!(engine.realized.is_empty());
+            assert!(engine.fresh_costs.is_empty());
         }
     }
 

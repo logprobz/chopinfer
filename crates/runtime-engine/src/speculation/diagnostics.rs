@@ -83,7 +83,7 @@ impl SpeculationPolicy {
         self.decision = Some(PlanTrace {
             mode: match self.config.mode {
                 SpeculationMode::Fixed => "fixed",
-                SpeculationMode::Balanced => "balanced",
+                SpeculationMode::Balanced(_) => "balanced",
                 SpeculationMode::Adaptive => "adaptive",
                 SpeculationMode::Table(_) => "table",
             },

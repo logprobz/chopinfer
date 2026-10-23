@@ -28,8 +28,9 @@ pub use positions::{PositionAxesError, PositionAxesV1, PositionSpanV1};
 pub use prompt_lookup::{PromptLookupConfig, PromptLookupConfigError, PromptLookupExecutor};
 pub use speculation::confidence;
 pub use speculation::{
-    DraftCostModel, DraftSource, MAX_DRAFT_TOKENS, SpeculationConfig, SpeculationConfigError,
-    SpeculationMode, StepCost, StepCosts, StepCostsError,
+    DraftCostModel, DraftDepths, DraftDepthsError, DraftSource, MAX_DRAFT_DEPTHS, MAX_DRAFT_TOKENS,
+    SpeculationConfig, SpeculationConfigError, SpeculationMode, StepCost, StepCosts,
+    StepCostsError,
 };
 
 use media::{inject_runs, validate_media};

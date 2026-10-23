@@ -516,7 +516,7 @@ fn every_drafter_policy_and_row_path_emits_exactly_the_reference_output() {
         ] {
             for mode in [
                 SpeculationMode::Fixed,
-                SpeculationMode::Balanced,
+                SpeculationMode::Balanced(Default::default()),
                 SpeculationMode::Adaptive,
             ] {
                 for source in [DraftSource::Bundle, DraftSource::Host] {
@@ -597,7 +597,7 @@ fn balanced_sampled_batches_preserve_target_draws_and_logprob_bits() {
                             base.with_speculation(speculation(
                                 5,
                                 32,
-                                SpeculationMode::Balanced,
+                                SpeculationMode::Balanced(Default::default()),
                                 source,
                             )),
                             Model::new(drafter, rows),

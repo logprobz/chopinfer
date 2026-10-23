@@ -350,25 +350,9 @@ impl SamplingState {
 }
 
 /// Philox4x32-10. The counter words are token ID, generated index low and
-/// high words, and zero. The key is the low and high words of the request seed.
-#[must_use]
-pub fn philox4x32_10(seed: u64, generated: u64, token_id: u32) -> [u32; 4] {
-    let mut x = [token_id, generated as u32, (generated >> 32) as u32, 0];
-    let mut k = [seed as u32, (seed >> 32) as u32];
-    for _ in 0..10 {
-        let a = 0xd251_1f53_u64 * u64::from(x[0]);
-        let b = 0xcd9e_8d57_u64 * u64::from(x[2]);
-        x = [
-            (b >> 32) as u32 ^ x[1] ^ k[0],
-            b as u32,
-            (a >> 32) as u32 ^ x[3] ^ k[1],
-            a as u32,
-        ];
-        k[0] = k[0].wrapping_add(0x9e37_79b9);
-        k[1] = k[1].wrapping_add(0xbb67_ae85);
-    }
-    x
-}
+/// high words, and zero. The key is the low and high words of the request
+/// seed. Coupled drafts derive their noise from the same function.
+pub use kernel_core::sampling::philox4x32_10;
 
 fn philox_unit(seed: u64, generated: u64, token_id: u32) -> f64 {
     let words = philox4x32_10(seed, generated, token_id);

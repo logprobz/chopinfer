@@ -34,6 +34,7 @@ use crate::contract::{
     ArgumentList, CommQuery, DType, GemmQuery, LaunchPlan, MoeQuery, MultimodalQuery, NgramQuery,
     RecurrentQuery, Refusal, RowQuery, SigmoidMeanHyperConnectionQuery, SparseAttentionQuery,
 };
+use crate::draft_noise::{DraftNoise, DraftNoiseBuffers};
 use crate::gated_mlp::GatedMlpProjectionQuery;
 use crate::gated_pooling::{GatedPoolingBuffers, GatedPoolingQuery};
 use crate::gated_sparse::{
@@ -514,6 +515,21 @@ pub trait Backend: Send + Sync {
         need: Need,
     ) -> Result<Prepared<ArgmaxFinalBuffers<View>>, Refused> {
         let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// The target sampler's Gumbel noise on rank `rank`'s shard of F32
+    /// drafter logits, in place (`draft_noise::DraftNoise`), so a sharded
+    /// argmax over them proposes each sampled row's coupled draft.
+    ///
+    /// Launches read `Counts::rows` alone.
+    fn draft_noise(
+        &self,
+        op: &DraftNoise,
+        rank: u32,
+        need: Need,
+    ) -> Result<Prepared<DraftNoiseBuffers<View>>, Refused> {
+        let _ = (op, rank, need);
         Err(Refused::Unsupported)
     }
 
@@ -2387,6 +2403,11 @@ mod tests {
                 ranks: 2,
                 pairs: ArgmaxLayout::RankMajor { stride: 4 },
             },
+            Need::rows(4),
+        );
+        draft_noise: Empty.draft_noise(
+            &DraftNoise { vocab_per_rank: 64, ranks: 2 },
+            1,
             Need::rows(4),
         );
         hc_grouped_norm: Empty.hc_grouped_norm(&hc(), DType::Bf16, Need::rows(4));

@@ -11,6 +11,7 @@ pub mod compressed_kv;
 pub mod context_parallel;
 pub mod context_parallel_oracle;
 pub mod contract;
+pub mod draft_noise;
 pub mod encoder_oracle;
 pub mod gated_attention_oracle;
 pub mod gated_mlp;

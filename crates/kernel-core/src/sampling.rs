@@ -171,6 +171,40 @@ impl Validate for SamplingRequirement {
     }
 }
 
+/// Philox4x32-10 of step 7: counter words (token ID, generated low word,
+/// generated high word, 0), key words (seed low word, seed high word), ten
+/// rounds with the standard multipliers, key increments and word
+/// permutation. The host's CPU sampler and every coupled draft use this one
+/// function.
+#[must_use]
+pub fn philox4x32_10(seed: u64, generated: u64, token_id: u32) -> [u32; 4] {
+    let mut x = [token_id, generated as u32, (generated >> 32) as u32, 0];
+    let mut k = [seed as u32, (seed >> 32) as u32];
+    for _ in 0..10 {
+        let a = 0xd251_1f53_u64 * u64::from(x[0]);
+        let b = 0xcd9e_8d57_u64 * u64::from(x[2]);
+        x = [
+            (b >> 32) as u32 ^ x[1] ^ k[0],
+            b as u32,
+            (a >> 32) as u32 ^ x[3] ^ k[1],
+            a as u32,
+        ];
+        k[0] = k[0].wrapping_add(0x9e37_79b9);
+        k[1] = k[1].wrapping_add(0xbb67_ae85);
+    }
+    x
+}
+
+/// The Gumbel noise `g(t) = -ln(-ln(u))` of step 7 in f64, with
+/// `u = (bits + 0.5) * 2^-53` from the first 53 Philox output bits.
+#[must_use]
+pub fn gumbel(seed: u64, generated: u64, token_id: u32) -> f64 {
+    let x = philox4x32_10(seed, generated, token_id);
+    let bits = (u64::from(x[0]) << 21) | (u64::from(x[1]) >> 11);
+    let unit = (bits as f64 + 0.5) * (1.0 / 9_007_199_254_740_992.0);
+    -(-unit.ln()).ln()
+}
+
 /// A row's settings, as its metadata record carries them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RowSettings {

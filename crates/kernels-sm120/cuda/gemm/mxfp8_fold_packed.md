@@ -45,6 +45,17 @@ is the reference port.
 - Row-major entries and cubins are not edited. Packed entries go in new
   cubins with new lock families, beside row-major twins at the same shapes.
 
+## Serving packed codes
+
+A model whose weight plan stores packed codes builds each serving fold
+cubin with its weight readers replaced by their packed twins
+(`gemm::mxfp8_fold_packed::replace`) and serves them through
+`Sm120::with_packed_fold_weights`, which renames each registered entry's
+weight-reading launches and declares the packed layout for its weight
+roles. An op the model prepares itself takes `backend::packed_op`. A
+registered entry with no packed form is refused, never run on packed
+codes.
+
 ## Lab evidence
 
 Each ported family adds a kernel-lab family `<family>_packed`, whose cubin

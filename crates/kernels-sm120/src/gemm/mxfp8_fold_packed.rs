@@ -8,6 +8,7 @@
 //! packed codes by renaming its launches ([`launches`]) and binding the
 //! packed view where it bound the row-major one.
 
+use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::backend::Launch;
 use kernel_core::contract::Refusal;
 use kernel_core::precision::WeightLayout;
@@ -37,6 +38,28 @@ pub fn check(groups: u32, n: u32, k: u32) -> Result<(), Refusal> {
         .packed_bytes()
         .map(|_| ())
         .map_err(|_| Refusal("packed fold codes need N divisible by 8 and K by 64"))
+}
+
+/// `spec` with each row-major entry that `twins` names (by its packed symbol)
+/// replaced by that packed twin: a cubin of a fold family whose weights are
+/// stored packed. Each twin must replace exactly one entry; entries that read
+/// no weight codes stay.
+pub fn replace(
+    mut spec: CubinSpec,
+    twins: impl IntoIterator<Item = EntrySpec>,
+) -> Result<CubinSpec, Refusal> {
+    for twin in twins {
+        let row_major = twin
+            .symbol
+            .strip_suffix(SUFFIX)
+            .ok_or(Refusal("a packed twin is not named by the packed suffix"))?;
+        let mut found = spec.entries.iter_mut().filter(|e| e.symbol == row_major);
+        let (Some(entry), None) = (found.next(), found.next()) else {
+            return Err(Refusal("a packed twin replaces no single row-major entry"));
+        };
+        *entry = twin;
+    }
+    Ok(spec)
 }
 
 /// `launches` with every symbol that `packed` accepts renamed to its packed
@@ -81,5 +104,23 @@ mod tests {
         let renamed = launches(vec![launch("fold"), launch("finish")], |s| s == "fold");
         assert_eq!(renamed[0].symbol, "fold_packed_v1");
         assert_eq!(renamed[1].symbol, "finish");
+    }
+
+    #[test]
+    fn a_packed_cubin_replaces_each_weight_reader_once() {
+        let entry = |symbol: &str| EntrySpec::new(symbol.into(), vec![], "".into(), 32, 1);
+        let spec = CubinSpec {
+            name: "c".into(),
+            sources_root: std::path::PathBuf::new(),
+            include_dirs: vec![],
+            headers: vec![],
+            defines: vec![],
+            entries: vec![entry("admit_v1"), entry("fold_v1")],
+        };
+        let packed = replace(spec.clone(), [entry("fold_v1_packed_v1")]).unwrap();
+        let symbols: Vec<_> = packed.entries.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(symbols, ["admit_v1", "fold_v1_packed_v1"]);
+        assert!(replace(spec.clone(), [entry("other_v1_packed_v1")]).is_err());
+        assert!(replace(spec, [entry("fold_v1")]).is_err());
     }
 }

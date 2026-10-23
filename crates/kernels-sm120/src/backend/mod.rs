@@ -120,6 +120,8 @@ mod mxfp8_prefill_matrix;
 mod mxfp8_prefill_tma_matrix;
 mod mxfp8_prefill_tma_scales;
 mod mxfp8_rows;
+mod packed_fold;
+pub use packed_fold::packed_op;
 pub mod own;
 mod pooled_indexer;
 mod position_blocks;
@@ -271,6 +273,7 @@ pub struct Sm120 {
     mxfp8_fold_streams: Vec<crate::gemm::mxfp8_fold_stream::Entry>,
     mxfp8_fold_directs: Vec<crate::gemm::mxfp8_fold_direct::Entry>,
     mxfp8_fold_reuse: Vec<(crate::gemm::mxfp8_fold_reuse::Entry, u32)>,
+    packed_fold_weights: bool,
 }
 
 impl Sm120 {
@@ -372,6 +375,25 @@ impl Sm120 {
     pub fn with_mxfp8_fold(mut self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
         self.mxfp8_folds.push(entry);
         self
+    }
+
+    /// Every MXFP8 fold op reads weight codes stored as
+    /// `mxfp8-fold-packed-8x128-v1` (`packed_fold`): its weight-reading
+    /// launches take the registered entries' packed twins, and stream and
+    /// direct folds bind the planned view as their packed bank.
+    pub fn with_packed_fold_weights(mut self) -> Self {
+        self.packed_fold_weights = true;
+        self
+    }
+
+    /// `op` as this backend serves it: reading packed fold weights when
+    /// [`Sm120::with_packed_fold_weights`] is set.
+    fn fold_weights<B: 'static>(&self, op: Prepared<B>) -> Result<Prepared<B>, Refused> {
+        if !self.packed_fold_weights {
+            return Ok(op);
+        }
+        let conversions = packed_fold::Conversions::of(self, op.info());
+        Ok(packed_fold::wrap(op, &conversions)?)
     }
 
     /// Register authenticated exact F32 projection entries.
@@ -1436,28 +1458,28 @@ impl Backend for Sm120 {
         op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: Need,
     ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
-        if self
+        let prepared = if self
             .mxfp8_fold_reuse
             .iter()
             .any(|(e, _)| e.ticket.query == *op)
         {
-            return mxfp8_fold_reuse::prepare(&self.mxfp8_fold_reuse, op, need);
-        }
-        if self
+            mxfp8_fold_reuse::prepare(&self.mxfp8_fold_reuse, op, need)
+        } else if self
             .mxfp8_fold_tickets
             .iter()
             .any(|e| e.query == *op && !e.paired)
         {
-            return mxfp8_fold_ticket::prepare(&self.mxfp8_fold_tickets, op, need);
-        }
-        if self
+            mxfp8_fold_ticket::prepare(&self.mxfp8_fold_tickets, op, need)
+        } else if self
             .mxfp8_fold_decodes
             .iter()
             .any(|e| e.query == *op && !e.paired)
         {
-            return mxfp8_fold_decode::prepare(&self.mxfp8_fold_decodes, op, need);
-        }
-        mxfp8_fold::prepare(&self.mxfp8_folds, op, need)
+            mxfp8_fold_decode::prepare(&self.mxfp8_fold_decodes, op, need)
+        } else {
+            mxfp8_fold::prepare(&self.mxfp8_folds, op, need)
+        };
+        self.fold_weights(prepared?)
     }
 
     fn mxfp8_prefill_gemm(
@@ -1490,12 +1512,12 @@ impl Backend for Sm120 {
                 op,
                 need,
             )?;
-            return mxfp8_prefill_tma_scales::prepare(
+            return self.fold_weights(mxfp8_prefill_tma_scales::prepare(
                 fallback,
                 &self.mxfp8_prefill_tma_scales,
                 op,
                 need,
-            );
+            )?);
         }
         let fallback = mxfp8_prefill::prepare(&self.mxfp8_prefills, op, need)?;
         let fallback =
@@ -1508,7 +1530,12 @@ impl Backend for Sm120 {
             op,
             need,
         )?;
-        mxfp8_prefill_tma_scales::prepare(fallback, &self.mxfp8_prefill_tma_scales, op, need)
+        self.fold_weights(mxfp8_prefill_tma_scales::prepare(
+            fallback,
+            &self.mxfp8_prefill_tma_scales,
+            op,
+            need,
+        )?)
     }
 
     fn mxfp8_fold_gemm_pair(
@@ -1521,9 +1548,17 @@ impl Backend for Sm120 {
             .iter()
             .any(|e| e.query == *op && e.paired)
         {
-            return mxfp8_fold_ticket::prepare_pair(&self.mxfp8_fold_tickets, op, need);
+            return self.fold_weights(mxfp8_fold_ticket::prepare_pair(
+                &self.mxfp8_fold_tickets,
+                op,
+                need,
+            )?);
         }
-        mxfp8_fold_decode::prepare_pair(&self.mxfp8_fold_decodes, op, need)
+        self.fold_weights(mxfp8_fold_decode::prepare_pair(
+            &self.mxfp8_fold_decodes,
+            op,
+            need,
+        )?)
     }
 
     fn mxfp8_fold_gemm_stream(
@@ -1537,9 +1572,19 @@ impl Backend for Sm120 {
             .iter()
             .any(|e| e.packed.ticket.query == *op && e.packed.ticket.paired == paired)
         {
-            return mxfp8_fold_direct::prepare(&self.mxfp8_fold_directs, op, paired, need);
+            return self.fold_weights(mxfp8_fold_direct::prepare(
+                &self.mxfp8_fold_directs,
+                op,
+                paired,
+                need,
+            )?);
         }
-        mxfp8_fold_stream::prepare(&self.mxfp8_fold_streams, op, paired, need)
+        self.fold_weights(mxfp8_fold_stream::prepare(
+            &self.mxfp8_fold_streams,
+            op,
+            paired,
+            need,
+        )?)
     }
 
     fn block_quantize(

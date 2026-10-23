@@ -40,6 +40,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-cuda/src/ffi.rs",
     "crates/runtime-cuda/src/nvdec.rs",
     "crates/runtime-grammar/tests/retained_bytes.rs",
+    "crates/runtime-media/tests/decode_bounds.rs",
 ];
 
 fn check_portable() -> TaskResult {
@@ -158,6 +159,15 @@ fn audit_unsafe_source(path: &Path, source: &str) -> TaskResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_counting_allocator_has_reviewed_contracts() {
+        audit_unsafe_source(
+            Path::new("crates/runtime-media/tests/decode_bounds.rs"),
+            include_str!("../../runtime-media/tests/decode_bounds.rs"),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn optional_abi_callbacks_have_reviewed_contracts() {

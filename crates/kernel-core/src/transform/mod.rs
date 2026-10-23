@@ -24,6 +24,7 @@ pub enum Layout {
     Mxfp4MoeFragmentScales(Mxfp4MoeFragmentLayout),
     FragmentMajor(fragment::FragmentWeightLayout),
     RowTiles(RowTileLayout),
+    QuadLanes(QuadLaneLayout),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -417,6 +418,94 @@ impl Transform for RowTileLayout {
     }
 }
 
+/// Packed MXFP4 code bytes in 64-byte blocks (one row's 128-K block, as row
+/// tiles store it), each block reordered so the bytes one lane of a quad
+/// converts for its m16n8k16 A fragments are adjacent. Byte
+/// `16 * g + 4 * q + t` (32-K group `g`, word `q` of the group, lane `t`) is
+/// stored at `16 * t + 4 * g + q`. Lane `t`'s 16-byte load at `16 * t` then
+/// holds group `g`'s four bytes in word `g`, byte `q` of the word. The
+/// permutation stays inside each block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QuadLaneLayout {
+    pub bytes: usize,
+}
+
+impl QuadLaneLayout {
+    /// Bytes per block: 128 MXFP4 codes.
+    pub const BLOCK: usize = 64;
+    /// Where byte `within` of a block is stored in it.
+    const ORDER: [u8; 64] = {
+        let mut order = [0; 64];
+        let mut at = 0;
+        while at < 64 {
+            order[at] = Self::offset(at) as u8;
+            at += 1;
+        }
+        order
+    };
+
+    /// Where source byte `at` is stored.
+    #[must_use]
+    pub const fn offset(at: usize) -> usize {
+        let within = at % Self::BLOCK;
+        at - within + (within % 4) * 16 + (within / 16) * 4 + (within / 4) % 4
+    }
+
+    fn check(self, bytes: &[u8]) -> Result<(), Refusal> {
+        if self.bytes == 0 || !self.bytes.is_multiple_of(Self::BLOCK) {
+            return Err(Refusal("quad lane order needs whole 64-byte blocks"));
+        }
+        if bytes.len() != self.bytes {
+            return Err(Refusal("quad lane order size mismatch"));
+        }
+        Ok(())
+    }
+
+    /// Reorders source-order `bytes` in place.
+    pub fn pack_in_place(self, bytes: &mut [u8]) -> Result<(), Refusal> {
+        self.check(bytes)?;
+        for block in bytes.chunks_exact_mut(Self::BLOCK) {
+            let source: [u8; Self::BLOCK] = block.try_into().unwrap();
+            for (byte, &to) in source.iter().zip(&Self::ORDER) {
+                block[usize::from(to)] = *byte;
+            }
+        }
+        Ok(())
+    }
+
+    /// Restores the source order of packed `bytes` in place.
+    pub fn unpack_in_place(self, bytes: &mut [u8]) -> Result<(), Refusal> {
+        self.check(bytes)?;
+        for block in bytes.chunks_exact_mut(Self::BLOCK) {
+            let packed: [u8; Self::BLOCK] = block.try_into().unwrap();
+            for (byte, &from) in block.iter_mut().zip(&Self::ORDER) {
+                *byte = packed[usize::from(from)];
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Transform for QuadLaneLayout {
+    fn pack(&self, source: &[u8]) -> Result<Packed, Refusal> {
+        let mut bytes = source.to_vec();
+        self.pack_in_place(&mut bytes)?;
+        Ok(Packed {
+            bytes,
+            layout: Layout::QuadLanes(*self),
+        })
+    }
+
+    fn unpack(&self, packed: &Packed) -> Result<Vec<u8>, Refusal> {
+        if packed.layout != Layout::QuadLanes(*self) {
+            return Err(Refusal("quad lane packed layout mismatch"));
+        }
+        let mut source = packed.bytes.clone();
+        self.unpack_in_place(&mut source)?;
+        Ok(source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +684,40 @@ mod tests {
             ..layout
         };
         assert!(other.unpack(&packed).is_err());
+    }
+
+    /// Lane `t`'s word `g` holds bytes `16 * g + 4 * q + t` of each block, `q`
+    /// in byte order, and the inverse restores every block.
+    #[test]
+    fn quad_lanes_give_each_lane_its_fragment_bytes_and_invert() {
+        let layout = QuadLaneLayout { bytes: 3 * 64 };
+        let source = (0..3 * 64).map(|i| (i * 89 + 7) as u8).collect::<Vec<_>>();
+        let packed = layout.pack(&source).unwrap();
+        for block in 0..3 {
+            for lane in 0..4 {
+                for group in 0..4 {
+                    for word_byte in 0..4 {
+                        assert_eq!(
+                            packed.bytes[block * 64 + lane * 16 + group * 4 + word_byte],
+                            source[block * 64 + group * 16 + word_byte * 4 + lane]
+                        );
+                    }
+                }
+            }
+        }
+        let mut order = (0..64).map(QuadLaneLayout::offset).collect::<Vec<_>>();
+        order.sort_unstable();
+        assert_eq!(order, (0..64).collect::<Vec<_>>());
+        assert_eq!(layout.unpack(&packed).unwrap(), source);
+        let mut bytes = packed.bytes.clone();
+        layout.unpack_in_place(&mut bytes).unwrap();
+        assert_eq!(bytes, source);
+        assert_ne!(packed.bytes, source);
+        for bad in [0, 65] {
+            assert!(QuadLaneLayout { bytes: bad }.pack(&vec![0; bad]).is_err());
+        }
+        assert!(layout.pack(&source[..128]).is_err());
+        assert!(QuadLaneLayout { bytes: 128 }.unpack(&packed).is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Single row-major MXFP4 matrices use their final section storage directly;
 //! a row-tiled plan tiles that storage in place afterwards.
 use super::*;
-use crate::precision::layout::ROW_TILES_64X128;
+use crate::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use crate::precision::packed::{MatrixSlice, MatrixView, ScaleBytes};
 
 impl PackedOperand {
@@ -12,7 +12,7 @@ impl PackedOperand {
         self.plan.format == WeightFormat::Mxfp4
             && matches!(
                 self.plan.layout.id.as_str(),
-                "row-major" | "row-major-groups" | ROW_TILES_64X128
+                "row-major" | "row-major-groups" | ROW_TILES_64X128 | ROW_TILES_64X128_LANES
             )
             && self.plan.experts == 1
             && self.plan.projections == 1

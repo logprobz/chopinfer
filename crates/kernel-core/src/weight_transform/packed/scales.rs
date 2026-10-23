@@ -1,7 +1,7 @@
 //! A single row-major MXFP4 scale section without materializing its codes,
 //! in the plan's row tiles when it stores them so.
 use super::*;
-use crate::precision::layout::ROW_TILES_64X128;
+use crate::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use crate::precision::packed::ScaleBytes;
 
 impl PackedOperand {
@@ -15,7 +15,7 @@ impl PackedOperand {
             || self.plan.format != WeightFormat::Mxfp4
             || !matches!(
                 self.plan.layout.id.as_str(),
-                "row-major" | "row-major-groups" | ROW_TILES_64X128
+                "row-major" | "row-major-groups" | ROW_TILES_64X128 | ROW_TILES_64X128_LANES
             )
             || self.plan.experts != 1
             || self.plan.projections != 1

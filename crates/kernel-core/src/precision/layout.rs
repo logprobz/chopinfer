@@ -2,8 +2,8 @@
 //! Size validation does not allocate or impose a materializer's working-set limit.
 use super::{PrecisionError, WeightLayout};
 use crate::contract::{DType, SwigluColumns, WeightFormat};
-use crate::transform::RowTileLayout;
 use crate::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
+use crate::transform::{QuadLaneLayout, RowTileLayout};
 
 /// Independent MXFP4 matrices one after another, as `row-major-groups`
 /// places them, each stored in tiles of 64 rows by 128 K
@@ -15,6 +15,13 @@ pub const ROW_TILES_64X128: &str = "row-tiles-64x128-groups";
 pub const ROW_TILE_CODES_VIEW: &str = "mxfp4_e2m1_row_tiles_64x128_v1";
 /// The rank index layout of a [`ROW_TILES_64X128`] local-scale section.
 pub const ROW_TILE_SCALES_VIEW: &str = "mxfp4_ue8m0_scale_row_tiles_64x128_v1";
+/// [`ROW_TILES_64X128`] with every 64-byte row block of the codes in quad
+/// lane order ([`PackingPlan::quad_lanes`]): each quad lane's m16n8k16 A
+/// fragment bytes of the block are one 16-byte word group. The scales are
+/// the row tiles' ([`ROW_TILE_SCALES_VIEW`]).
+pub const ROW_TILES_64X128_LANES: &str = "row-tiles-64x128-lanes";
+/// The rank index layout of a [`ROW_TILES_64X128_LANES`] codes section.
+pub const ROW_TILE_LANE_CODES_VIEW: &str = "mxfp4_e2m1_row_tiles_64x128_lanes_v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -75,8 +82,9 @@ impl PackingPlan {
             _ => None,
         }
     }
-    /// The tiles of a [`ROW_TILES_64X128`] plan's codes and local-scale
-    /// sections, which the row-major materializers fill first.
+    /// The tiles of a [`ROW_TILES_64X128`] or [`ROW_TILES_64X128_LANES`]
+    /// plan's codes and local-scale sections, which the row-major
+    /// materializers fill first.
     pub fn row_tiles(&self) -> Option<[RowTileLayout; 2]> {
         let rows = self.total_rows() as usize;
         let tiles = |row_bytes: u32, tile_bytes| RowTileLayout {
@@ -85,7 +93,18 @@ impl PackingPlan {
             tile_rows: 64,
             tile_bytes,
         };
-        (self.layout.id == ROW_TILES_64X128).then(|| [tiles(self.k / 2, 64), tiles(self.k / 32, 4)])
+        matches!(
+            self.layout.id.as_str(),
+            ROW_TILES_64X128 | ROW_TILES_64X128_LANES
+        )
+        .then(|| [tiles(self.k / 2, 64), tiles(self.k / 32, 4)])
+    }
+    /// The quad lane order of a [`ROW_TILES_64X128_LANES`] plan's tiled
+    /// codes section.
+    pub fn quad_lanes(&self) -> Option<QuadLaneLayout> {
+        (self.layout.id == ROW_TILES_64X128_LANES).then(|| QuadLaneLayout {
+            bytes: (self.total_rows() * u64::from(self.k / 2)) as usize,
+        })
     }
     pub fn code_bytes(&self) -> u64 {
         match self.format {
@@ -154,7 +173,7 @@ impl PackingPlan {
             // its own scale grid: the `[groups, rows, k]` operand of a
             // grouped dense projection.
             "row-major-groups" => true,
-            ROW_TILES_64X128 => self.format == WeightFormat::Mxfp4,
+            ROW_TILES_64X128 | ROW_TILES_64X128_LANES => self.format == WeightFormat::Mxfp4,
             "bf16-fragment" => self.format == WeightFormat::Bf16,
             "fp8-fragment" => matches!(
                 self.format,

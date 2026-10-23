@@ -588,10 +588,12 @@ impl PackedOperand {
     }
 
     /// The produced row-major sections as the plan stores them: in its row
-    /// tiles, when it has them ([`PackingPlan::row_tiles`]), and then the
-    /// local scales encoded ([`Self::encode_local`]). An encoded section is
-    /// encoded from its row-major bytes and left untiled: the expansion of
-    /// its encoding writes the tiles. A section left out stays empty.
+    /// tiles, when it has them ([`PackingPlan::row_tiles`]), the tiled codes
+    /// in quad lane order when the plan has it ([`PackingPlan::quad_lanes`]),
+    /// and then the local scales encoded ([`Self::encode_local`]). An
+    /// encoded section is encoded from its row-major bytes and left untiled:
+    /// the expansion of its encoding writes the tiles. A section left out
+    /// stays empty.
     fn stored(&self, mut sections: [Vec<u8>; 3]) -> Result<[Vec<u8>; 3], WeightTransformError> {
         if let Some(tiles) = self.plan.row_tiles() {
             let mut scratch = Vec::new();
@@ -604,6 +606,12 @@ impl PackedOperand {
                         .map_err(super::refusal)?;
                 }
             }
+        }
+        let codes = &mut sections[PackedSection::Codes.index()];
+        if let Some(lanes) = self.plan.quad_lanes()
+            && !codes.is_empty()
+        {
+            lanes.pack_in_place(codes).map_err(super::refusal)?;
         }
         self.encode_local(&mut sections)?;
         Ok(sections)

@@ -72,27 +72,32 @@ fn exact_row_bounds_keep_compiled_fold_entries_unchanged() {
                 cubin.entries.len(),
                 registration::ticket_catalog(g).unwrap().len() * 2
             );
+            let mut symbols = entry.symbols();
+            symbols[1] = entry.packed_spec().unwrap().symbol;
             assert!(
-                entry
-                    .symbols()
+                symbols
                     .iter()
                     .all(|symbol| cubin.entries.iter().any(|s| s.symbol == *symbol))
             );
             let specs = format!("{:?}", entry.specs());
+            let packed = format!("{:?}", entry.packed_spec().unwrap());
             for rows in 1..=64 {
                 let mut bounded = entry.clone();
                 bounded.query = registration::routed_query(entry.query, rows);
                 bounded.validate().unwrap();
                 assert_eq!(format!("{:?}", bounded.specs()), specs);
+                assert_eq!(format!("{:?}", bounded.packed_spec().unwrap()), packed);
             }
         }
         for entry in registration::decode_catalog(g).unwrap() {
             let specs = format!("{:?}", entry.specs());
+            let packed = format!("{:?}", entry.packed_spec().unwrap());
             for rows in 1..=32 {
                 let mut bounded = entry.clone();
                 bounded.query = registration::routed_query(entry.query, rows);
                 bounded.validate().unwrap();
                 assert_eq!(format!("{:?}", bounded.specs()), specs);
+                assert_eq!(format!("{:?}", bounded.packed_spec().unwrap()), packed);
             }
         }
     }
@@ -247,7 +252,8 @@ fn decode_uses_bind_every_bucket_and_pair_only_the_shared_operands() {
             let backend = registration::decode_entries(g, ranks)
                 .unwrap()
                 .into_iter()
-                .fold(Sm120::new(), Sm120::with_mxfp8_fold_decode);
+                .fold(Sm120::new(), Sm120::with_mxfp8_fold_decode)
+                .with_packed_fold_weights();
             for r in registration::decode_registrations(g, ranks, 0).unwrap() {
                 assert_eq!(r.usage.phase, ExecutionPhase::Decode);
                 assert!(registration::DECODE_BUCKETS.contains(&r.usage.capacity));

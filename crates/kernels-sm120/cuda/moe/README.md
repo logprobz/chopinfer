@@ -579,6 +579,36 @@ shared-memory `atomicOr`), and checks the audits and SASS (BF16 HMMA with
 F32 accumulation, no float atomics). The
 f64 oracle is `kernel_core::gated_mlp_oracle`.
 
+### Quad-lane gate queues
+
+The direct gate small and wide queues, the resident8 gate and the
+absorbing gate small queue have builds reading their bank in quad-lane row
+tiles (`row-tiles-64x128-lanes`, `chained_lanes.cuh`,
+`chained::lanes`). The bank is `row-tiles-64x128-groups` with each row's
+64-byte K block reordered (`kernel_core::transform::QuadLaneLayout`):
+byte `16 * g + 4 * q + t` moves to `16 * t + 4 * g + q`.
+
+- Lane t of a quad then loads exactly the bytes it converts. Word g of its
+  16-byte load holds group g's bytes, and one 4-byte load holds the row's
+  four group scales.
+- The row-tiled queues give each lane one 32-K group, shuffle every word to
+  the quad and shift out the lane's byte. That operand movement is about
+  40% of their executed instructions.
+- Here each byte converts in place: `F2FP.BF16.E2M1.UNPACK_B` reads it with
+  a byte selector.
+- The A operands, MMAs, chains, K order and partial addresses are the
+  row-tiled queues', so the partials are theirs bit for bit. Each build
+  keeps its row-tiled twin's parameters, launch and residency.
+
+The staging warp also checks four E4M3 codes per instruction and each
+group's activation scale once, and the weight check tests four scales per
+instruction (`chained_lanes_checks.h`). They trap on exactly the codes and
+scales the row-tiled queues trap on: `tests/chained_lanes_checks.cpp`
+compares them with the per-code rules and the lane bytes with the shuffled
+ones on the host. `tests/chained_lanes.rs` builds the Flash backbone's four
+queues beside their row-tiled twins: no spills, no more registers, as many
+BF16 MMAs and no shuffles.
+
 ## Native block-scaled prefill tiles
 
 `native_grouped.cuh` (`kernels_sm120::moe::native_grouped`) runs MXFP4

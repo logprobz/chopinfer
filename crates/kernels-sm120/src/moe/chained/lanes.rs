@@ -1,0 +1,114 @@
+//! The direct gate small and wide queues, the resident8 gate and the
+//! absorbing gate small queue reading their bank in quad-lane row tiles
+//! ([`ROW_TILES_64X128_LANES`], `chained_lanes.cuh`). Each lane loads the
+//! bytes it converts and one word of its row's four group scales, so no
+//! shuffle or byte shift forms the MMA operands. The A operands, MMAs,
+//! chains and partials are the row-tiled queues', so the partials are
+//! theirs bit for bit; each build keeps its row-tiled twin's parameters,
+//! launch and residency.
+//!
+//! [`ROW_TILES_64X128_LANES`]: kernel_core::precision::layout::ROW_TILES_64X128_LANES
+use super::{
+    absorb, bandwidth,
+    floor::{Entry, Stage},
+    quantized::Projection,
+    streamed_resident,
+};
+use kernel_build::{CubinSpec, EntrySpec};
+use kernel_core::contract::Refusal;
+
+/// The header of every quad-lane gate queue.
+pub const HEADER: &str = "chained_lanes.cuh";
+
+/// The direct gate small or wide queue reading its bank in quad-lane row
+/// tiles.
+pub fn direct_symbol(e: &Entry, s: Stage) -> String {
+    bandwidth::tiled_symbol(e, s).replace("_bandwidth_tiles_", "_bandwidth_lanes_")
+}
+
+/// The row-tiled direct gate queue's ABI and launch over the quad-lane
+/// bank.
+pub fn direct_entry(e: &Entry, s: Stage) -> Result<EntrySpec, Refusal> {
+    let rows = match s {
+        Stage::GateSmall => 8,
+        Stage::GateWide => 64,
+        _ => return Err(Refusal("only the gate queues read a quad-lane bank")),
+    };
+    let mut spec = bandwidth::tiled_entry(e, s)?;
+    let call = format!(",{rows},true>(input,");
+    assert_eq!(
+        spec.body.matches("chop::moe::streamed::compute<").count(),
+        1
+    );
+    assert_eq!(spec.body.matches(&call).count(), 1);
+    spec.symbol = direct_symbol(e, s);
+    spec.body = spec
+        .body
+        .replace(
+            "chop::moe::streamed::compute<",
+            "chop::moe::lanes::compute<",
+        )
+        .replace(&call, &format!(",{rows}>(input,"));
+    Ok(spec)
+}
+
+/// The resident8 gate reading its bank in quad-lane row tiles.
+pub fn resident_symbol(p: &Projection) -> String {
+    format!(
+        "{}_lanes_v1",
+        streamed_resident::symbol(p).trim_end_matches("_v1")
+    )
+}
+
+/// The row-tiled resident8 gate's ABI and launch over the quad-lane bank.
+pub fn resident_entry(p: &Projection) -> Result<EntrySpec, Refusal> {
+    let mut spec = streamed_resident::tiled_entry(p)?;
+    assert_eq!(
+        spec.body.matches("chop::moe::streamed::compute<").count(),
+        1
+    );
+    assert_eq!(spec.body.matches(",8,true>(input,").count(), 1);
+    spec.symbol = resident_symbol(p);
+    spec.body = spec
+        .body
+        .replace(
+            "chop::moe::streamed::compute<",
+            "chop::moe::lanes::compute<",
+        )
+        .replace(",8,true>(input,", ",8>(input,");
+    Ok(spec)
+}
+
+/// The absorbing gate small queue reading its bank in quad-lane row tiles.
+pub fn absorb_symbol(e: &Entry) -> String {
+    absorb::tiled_symbol(e).replace("_absorb_tiles_", "_absorb_lanes_")
+}
+
+/// The row-tiled absorbing gate's ABI and launch over the quad-lane bank.
+pub fn absorb_entry(e: &Entry) -> Result<EntrySpec, Refusal> {
+    let mut spec = absorb::tiled_entry(e)?;
+    assert_eq!(spec.body.matches("chop::moe::absorb::compute<").count(), 1);
+    assert_eq!(spec.body.matches(",true>(input,").count(), 1);
+    spec.symbol = absorb_symbol(e);
+    spec.body = spec
+        .body
+        .replace(
+            "chop::moe::absorb::compute<",
+            "chop::moe::lanes::absorbing<",
+        )
+        .replace(",true>(input,", ">(input,");
+    Ok(spec)
+}
+
+/// Every quad-lane gate queue of each bank in `entries`: direct small and
+/// wide, resident8, absorbing.
+pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
+    let mut specs = Vec::new();
+    for e in entries {
+        specs.push(direct_entry(e, Stage::GateSmall)?);
+        specs.push(direct_entry(e, Stage::GateWide)?);
+        specs.push(resident_entry(&e.gate)?);
+        specs.push(absorb_entry(e)?);
+    }
+    Ok(super::spec(name.into(), HEADER, specs))
+}

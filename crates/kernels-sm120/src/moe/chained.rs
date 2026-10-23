@@ -60,6 +60,7 @@ pub mod absorb;
 pub mod bandwidth;
 pub mod floor;
 pub mod formats;
+pub mod lanes;
 pub mod prefill;
 pub mod quantized;
 pub mod router_finish;

@@ -6,7 +6,10 @@ use kernel_core::gated_mlp::SwigluClamp;
 use kernel_core::moe_chained_oracle::{
     before_down_f64, fold_f32_chains, partial_chains, quantize_before_down,
 };
+use kernel_core::precision::WeightLayout;
+use kernel_core::precision::layout::ROW_TILES_64X128;
 use kernel_core::quantize::Scales;
+use kernel_core::transform::RowTileLayout;
 
 fn decoded(codes: &[u8], scales: &[u8], row: usize, k: usize, packed: bool) -> Vec<f64> {
     (0..k)
@@ -113,6 +116,44 @@ fn weight_payload(experts: usize, n: usize, k: usize) -> (Vec<u8>, Vec<u8>) {
     (codes, scales)
 }
 
+/// The tiles of the bank of `rows` MXFP4 rows of `k` elements the op reads
+/// (`OpInfo::weight_layouts`, role `weights`): none for rows, or 64-row by
+/// 128-K tiles of its codes and its scales ([`ROW_TILES_64X128`]).
+fn bank_tiles(info: &OpInfo, rows: usize, k: usize) -> LabResult<Option<[RowTileLayout; 2]>> {
+    match info.layout_of("weights") {
+        None => Ok(None),
+        Some(layout) if *layout == WeightLayout::row_major() => Ok(None),
+        Some(layout) if layout.id == ROW_TILES_64X128 && layout.version == 1 => {
+            let tiles = |row_bytes, tile_bytes| RowTileLayout {
+                rows,
+                row_bytes,
+                tile_rows: 64,
+                tile_bytes,
+            };
+            Ok(Some([tiles(k / 2, 64), tiles(k / 32, 4)]))
+        }
+        Some(layout) => Err(format!(
+            "gate/up case cannot store its bank in {} v{}",
+            layout.id, layout.version
+        )),
+    }
+}
+
+/// Row-major bytes of a section stored in `tiles`.
+fn tile_rows(tiles: RowTileLayout, stored: &[u8]) -> LabResult<Vec<u8>> {
+    if stored.len() != tiles.rows * tiles.row_bytes {
+        return Err("row-tiled bank section size differs".into());
+    }
+    let mut rows = vec![0; stored.len()];
+    for (row, out) in rows.chunks_exact_mut(tiles.row_bytes).enumerate() {
+        for (tile, chunk) in out.chunks_exact_mut(tiles.tile_bytes).enumerate() {
+            let at = tiles.offset(row, tile * tiles.tile_bytes);
+            chunk.copy_from_slice(&stored[at..at + tiles.tile_bytes]);
+        }
+    }
+    Ok(rows)
+}
+
 fn activation_payload(tokens: usize, k: usize) -> (Vec<u8>, Vec<u8>) {
     let codes = (0..tokens)
         .flat_map(|token| {
@@ -199,7 +240,18 @@ pub fn gate_up_case<'a>(
             }
         })
         .collect::<Vec<_>>();
-    let (codes, scales) = weight_payload(e, n, k);
+    let (mut codes, mut scales) = weight_payload(e, n, k);
+    // A bank the op reads in row tiles is stored tiled; the oracle reads
+    // its rows back from the stored images.
+    let tiles = bank_tiles(prepared.info(), e * 2 * n, k)?;
+    if let Some(tiles) = tiles {
+        let mut scratch = Vec::new();
+        for (bytes, tiles) in [&mut codes, &mut scales].into_iter().zip(tiles) {
+            tiles
+                .pack_in_place(bytes, &mut scratch)
+                .map_err(|e| e.to_string())?;
+        }
+    }
     let (input, input_scales) = activation_payload(tokens, k);
     let unit_weights = prepared.info().bytes_of("unit_weights").map(|_| {
         Spec::input(
@@ -302,15 +354,21 @@ pub fn gate_up_case<'a>(
         if !cache.borrow().as_ref().is_some_and(|(held, prior, _)| {
             prior == &ids && held.iter().zip(operands).all(|(a, b)| a.as_slice() == b)
         }) {
+            let bank = match tiles {
+                Some([codes, scales]) => [
+                    tile_rows(codes, operands[2])?,
+                    tile_rows(scales, operands[3])?,
+                ],
+                None => [operands[2].to_vec(), operands[3].to_vec()],
+            };
             let mut pairs = Vec::with_capacity(tokens * top * n);
             for (token, selection) in selected.iter().enumerate() {
                 let x = decoded(operands[0], operands[1], token, k, false);
                 for &expert in &selection.expert_ids {
                     for col in 0..n {
                         let row = expert * 2 * n + col;
-                        let gate = exact_dot(&x, &decoded(operands[2], operands[3], row, k, true))?;
-                        let up =
-                            exact_dot(&x, &decoded(operands[2], operands[3], row + n, k, true))?;
+                        let gate = exact_dot(&x, &decoded(&bank[0], &bank[1], row, k, true))?;
+                        let up = exact_dot(&x, &decoded(&bank[0], &bank[1], row + n, k, true))?;
                         pairs.push((gate, up));
                     }
                 }
@@ -520,6 +578,37 @@ fn required<'a>(projection: Projection, capacity: u32, unit_weights: bool) -> Re
 mod tests {
     use super::*;
     use kernel_core::codec::f64_to_bf16;
+
+    /// A bank the op declares in row tiles is stored in them and its rows
+    /// read back exactly; rows stay rows and any other layout refuses.
+    #[test]
+    fn gate_up_bank_is_stored_in_the_layout_the_op_reads() {
+        let (experts, n, k) = (2, 96, 256);
+        let rows = experts * 2 * n;
+        let mut info = OpInfo::new(
+            "kit.test",
+            kernel_core::properties::Invariance::any_rows(1),
+            Vec::new(),
+        );
+        assert_eq!(bank_tiles(&info, rows, k).unwrap(), None);
+        info.weight_layouts
+            .push(("weights".into(), WeightLayout::row_major()));
+        assert_eq!(bank_tiles(&info, rows, k).unwrap(), None);
+        info.weight_layouts[0].1 = WeightLayout {
+            id: ROW_TILES_64X128.into(),
+            version: 1,
+        };
+        let tiles = bank_tiles(&info, rows, k).unwrap().unwrap();
+        let (codes, scales) = weight_payload(experts, n, k);
+        for (bytes, tiles) in [codes, scales].into_iter().zip(tiles) {
+            let mut stored = bytes.clone();
+            tiles.pack_in_place(&mut stored, &mut Vec::new()).unwrap();
+            assert_ne!(stored, bytes);
+            assert_eq!(tile_rows(tiles, &stored).unwrap(), bytes);
+        }
+        info.weight_layouts[0].1.id = "bf16-fragment".into();
+        assert!(bank_tiles(&info, rows, k).is_err());
+    }
     #[derive(Clone, Copy, Debug)]
     enum OperandFault {
         TokenZero,

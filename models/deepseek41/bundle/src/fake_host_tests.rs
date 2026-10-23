@@ -1168,34 +1168,34 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (16707, 0xaea5318cc51ac9d0),
+        (16686, 0x1e87e23c497829b8),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (16561, 0x8206ed028dae8dc7),
+        (16540, 0x6267cbe8e11d387a),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (33289, 0x9bc89232aa772f4d),
+        (33247, 0x2bb607060f58e966),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (32997, 0xd5ebdea6cc6e03a9),
+        (32955, 0x5bf46618515973d2),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (82727, 0xfe9bec05c75ef011),
+        (82643, 0xf37909bc5249441c),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (80371, 0x6cfa539f982519bf),
+        (80287, 0xff0ea35eef266853),
     ),
 ];
 
@@ -1364,7 +1364,7 @@ fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
         let mut mismatches = Vec::new();
         for (kv, expected) in KV_LAYOUTS
             .into_iter()
-            .zip([(81007, 0xfba742f79f5f9a98), (78651, 0xeb7edac4bd7f5a9a)])
+            .zip([(80923, 0x83a90f8b214cb1f7), (78567, 0x88c2cef601e2ac7c)])
         {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);

@@ -431,8 +431,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// and no other line changes. No instance then loads the one-launch module:
 /// ten resolves and eleven releases per rank fewer, ids shifted only.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (21367, 0xdc729a9318532df4)),
-    (Ranks::TP4, (53919, 0xaf07dffefb7f79c9)),
+    (Ranks::TP2, (21479, 0x80c97fd5edcadc0e)),
+    (Ranks::TP4, (54143, 0x9655dfc4c3a6c7fe)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

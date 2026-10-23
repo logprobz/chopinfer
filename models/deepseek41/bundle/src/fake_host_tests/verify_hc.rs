@@ -112,12 +112,12 @@ use super::*;
 // layer's weights (1760 launches to 960, same audit). No other line
 // changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (8520, 0x10872a93b8f0eabf)),
-    (6, (8680, 0xd748b3377111a4da)),
-    (8, (8212, 0x254a32266cf596b0)),
-    (12, (10136, 0xdb4539f3beb229d6)),
-    (16, (7892, 0x9c3825ad4f09b4e8)),
-    (32, (7744, 0x01d822eee876a091)),
+    (4, (8520, 0x6c6f6dd803c83066)),
+    (6, (8680, 0x0d301da4436fb2be)),
+    (8, (7720, 0xd86f7d3c00ff0fb8)),
+    (12, (10136, 0xaa37703e0fb8e128)),
+    (16, (7892, 0x3efa8989474cfb2e)),
+    (32, (7744, 0xc8a55c2efbd10747)),
 ];
 
 #[test]

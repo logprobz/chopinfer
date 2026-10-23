@@ -10,9 +10,10 @@ use kernels_sm120::row::draft_noise;
 
 pub const FAMILY: &str = "dspark_noise";
 pub const CUBIN: &str = "dspark_noise_sm120";
+pub use draft_noise::SYMBOL;
 
 pub fn entry() -> draft_noise::Entry {
-    draft_noise::Entry::new(draft_noise::SYMBOL)
+    draft_noise::Entry::new(SYMBOL)
 }
 
 pub fn cubin_spec() -> CubinSpec {

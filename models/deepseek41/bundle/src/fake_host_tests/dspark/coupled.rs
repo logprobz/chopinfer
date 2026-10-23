@@ -9,7 +9,7 @@ use kernel_core::draft_noise::{NOISE_BYTES, NoiseRecord};
 use runtime_bundle_sdk::DraftSamplingV1;
 
 const SEED: u64 = 0x1234_5678_9abc_def0;
-const NOISE: &str = kernels_sm120::row::draft_noise::SYMBOL;
+const NOISE: &str = crate::sm120::dspark_noise::SYMBOL;
 
 /// One verify step drafting `drafts` for every (request, slot, start,
 /// record) item, with the records as V6 draft sampling when `v6`.

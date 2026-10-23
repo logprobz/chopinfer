@@ -20,7 +20,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
     }
 }
 
-const NOISE: &str = kernels_sm120::row::draft_noise::SYMBOL;
+const NOISE: &str = crate::sm120::dspark_noise::SYMBOL;
 
 fn dispatch_positions(shape: Shape, mode: DraftMode) {
     {

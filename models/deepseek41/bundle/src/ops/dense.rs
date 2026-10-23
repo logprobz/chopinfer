@@ -407,11 +407,23 @@ impl DenseOps {
         })
     }
 
-    /// Row buckets share packed weights and zero-reset state in stream order.
-    /// Size each region independently; a smaller bucket can need more state.
+    /// Every row bucket's ops for `weight` ([`Self::stream_weight_ops_within`]).
+    #[cfg(test)]
     pub(crate) fn stream_weight_ops(
         &self,
         weight: &str,
+    ) -> Vec<(bool, &fold_stream::Op, [u64; 4])> {
+        self.stream_weight_ops_within(weight, |_| true)
+    }
+
+    /// Row buckets share packed weights and zero-reset state in stream order.
+    /// Size each region independently; a smaller bucket can need more state.
+    /// Only buckets `launched` accepts count: a caller that never lowers a
+    /// bucket holds no storage for it.
+    pub(crate) fn stream_weight_ops_within(
+        &self,
+        weight: &str,
+        launched: impl Fn(u32) -> bool,
     ) -> Vec<(bool, &fold_stream::Op, [u64; 4])> {
         let Some((id, _)) = self
             .tensors
@@ -431,12 +443,13 @@ impl DenseOps {
                 }
                 self.stream_pair
                     .iter()
+                    .filter(|(rows, _)| launched(*rows))
                     .map(|(rows, op)| (*rows, op))
                     .collect()
             } else {
                 self.stream
                     .iter()
-                    .filter(|(of, _, _)| of == id)
+                    .filter(|(of, rows, _)| of == id && launched(*rows))
                     .map(|(_, rows, op)| (*rows, op))
                     .collect()
             };

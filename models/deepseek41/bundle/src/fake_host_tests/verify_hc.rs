@@ -115,13 +115,16 @@ use super::*;
 // (the WKV and WQ_a prefetch initialize/fold pairs, WQ_b's stream fold,
 // WO_a's input quantizer and prefetch pair, WO_b's input quantizer and
 // stream fold) become six the same way (1600 launches to 960, same audit).
+// The drafter no longer holds stream fold storage for its five-row blocks,
+// which no stream bucket serves: create drops 15 packed copies and their
+// prepare launches per rank, and the step journals only renumber handles.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xfa3dc886c0b5f00b)),
-    (6, (8680, 0x056a3c504842360a)),
-    (8, (7720, 0x4b6262fee29e7bf4)),
-    (12, (10136, 0x2a759d909bde0914)),
-    (16, (7892, 0x34ed3ee79199fa90)),
-    (32, (7744, 0xb5449053e469e0d7)),
+    (4, (7880, 0x4db8b7a58e93c470)),
+    (6, (8680, 0xbeeba458db0230d5)),
+    (8, (7720, 0xf2019e0f883abc13)),
+    (12, (10136, 0x21a0f577b1fd0575)),
+    (16, (7892, 0x831286b40e02777d)),
+    (32, (7744, 0x9dda015153147e96)),
 ];
 
 #[test]

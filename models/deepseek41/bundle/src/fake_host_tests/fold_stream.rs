@@ -201,8 +201,8 @@ pub(super) fn audit_allocations(host: &Rc<Host>, instance: &BundleInstanceV1, dr
         if host.shape.ranks() == 4 {
             let (expected_before, expected_after) = if drafter {
                 (
-                    [2_211_119_104, 317_184, 360_526_336],
-                    [2_211_119_104, 27_904, 92_817_664],
+                    [2_094_530_560, 298_752, 347_011_840],
+                    [2_094_530_560, 21_760, 88_312_832],
                 )
             } else {
                 (

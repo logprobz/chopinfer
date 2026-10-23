@@ -25,6 +25,16 @@ type Sink = RecordingSink<super::conformance::Limits>;
 fn fold_scratch_keeps_target_and_drafter_allocations_disjoint() {
     let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
     super::fold_stream::audit_allocations(&host, &instance, true);
+    // Drafter blocks lower whole five-row blocks, which no stream bucket
+    // serves; only catch-up projections hold drafter fold storage.
+    for views in crate::instance::fold_views_for_test(instance.handle()) {
+        for (name, _) in views.iter().filter(|(name, _)| name.starts_with("mtp.")) {
+            assert!(
+                name.starts_with("mtp.0.main_proj.") || name.contains(".attn.wkv."),
+                "{name}"
+            );
+        }
+    }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }

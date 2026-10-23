@@ -68,6 +68,16 @@ fn scratch_key(weight: &str, paired: bool, implementation: &str) -> Option<Scrat
     })
 }
 
+/// Whether weight `name` can lower a decode or verify bucket of `rows`.
+/// The drafter's blocks always lower whole five-row blocks
+/// (`lower::dspark::block_stages`); only its catch-up KV projection runs
+/// other decode counts. Target weights lower every bucket.
+fn lowers_bucket(name: &str, rows: u32) -> bool {
+    !name.starts_with("mtp.")
+        || name.ends_with(".attn.wkv.weight")
+        || rows.is_multiple_of(crate::dspark::state::BLOCK_ROWS)
+}
+
 /// The bytes one rank's folds allocated: their packed weight copies, their
 /// state and their workspace.
 #[derive(Clone, Copy, Debug, Default)]
@@ -114,7 +124,7 @@ pub(super) fn initialize(
         };
         let mut selected = ops
             .and_then(|ops| ops.dense.as_ref())
-            .map(|dense| dense.stream_weight_ops(&name))
+            .map(|dense| dense.stream_weight_ops_within(&name, |rows| lowers_bucket(&name, rows)))
             .unwrap_or_default();
         if name == "mtp.0.main_proj.weight"
             && let Some(op) = drafter.and_then(|d| d.prepared.main_stream_initializer())
@@ -215,6 +225,15 @@ pub(super) fn initialize(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drafter_fold_storage_covers_only_the_buckets_it_lowers() {
+        assert!(lowers_bucket("layers.3.attn.wq_a.weight", 1));
+        assert!(lowers_bucket("mtp.1.attn.wq_a.weight", 10));
+        assert!(!lowers_bucket("mtp.1.attn.wq_a.weight", 8));
+        assert!(!lowers_bucket("mtp.2.ffn.shared_experts.w2.weight", 1));
+        assert!(lowers_bucket("mtp.1.attn.wkv.weight", 3));
+    }
 
     #[test]
     fn fold_scratch_keys_keep_images_lanes_pairs_and_ops_separate() {

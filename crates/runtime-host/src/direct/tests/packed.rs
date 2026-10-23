@@ -578,3 +578,152 @@ fn failed_upload_releases_retained_bytes(replicated: bool) {
     host.release_context(context).unwrap();
     assert_eq!(backend.live_resource_count(), 0);
 }
+
+/// `plans` with every expert's local scales encoded at `width`: both section
+/// records of each expert carry the encoding, each scale record stores its
+/// encoded bytes, and the arenas are what the load must produce.
+fn encoded(
+    plans: &[WeightPlanV1],
+    expected: &[Vec<u8>],
+    width: u32,
+) -> (Vec<WeightPlanV1>, Vec<Vec<u8>>) {
+    use kernel_core::precision::scale_offset::{self, ScaleCode, WIDTHS};
+    use kernel_core::weight_transform::ScaleEncoding;
+    let slot = WIDTHS.iter().position(|w| *w == width).unwrap();
+    let mut plans = plans.to_vec();
+    let mut arenas = Vec::new();
+    for (plan, raw) in plans.iter_mut().zip(expected) {
+        // One encoding per expert, keyed by the scale record's sources.
+        let mut encodings = BTreeMap::new();
+        for record in &plan.records {
+            let WeightTransform::PackedOperand(operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!("the fixture packs every record");
+            };
+            if operand.section == PackedSection::LocalScales {
+                let (rows, groups) = operand.plan.scale_shape();
+                let bytes = &raw[record.arena_offset as usize..][..record.byte_length as usize];
+                let counts = scale_offset::census(bytes, rows as u64, groups as u64).unwrap();
+                let stored =
+                    scale_offset::encode(bytes, rows as u64, groups as u64, width).unwrap();
+                let encoding = ScaleEncoding {
+                    code: ScaleCode::Ue8m0,
+                    width,
+                    exceptions: counts[slot],
+                };
+                encodings.insert(format!("{:?}", record.sources), (encoding, stored));
+            }
+        }
+        let mut arena = Vec::new();
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!("the fixture packs every record");
+            };
+            let (encoding, stored) = &encodings[&format!("{:?}", record.sources)];
+            operand.local_encoding = Some(*encoding);
+            let bytes = if operand.section == PackedSection::LocalScales {
+                stored.clone()
+            } else {
+                raw[record.arena_offset as usize..][..record.byte_length as usize].to_vec()
+            };
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+            record.arena_offset = arena.len() as u64;
+            record.byte_length = bytes.len() as u64;
+            arena.extend(bytes);
+        }
+        let padded = (arena.len() as u64).next_multiple_of(plan.alignment);
+        arena.resize(padded as usize, 0);
+        plan.arena_bytes = padded;
+        arenas.push(arena);
+    }
+    (plans, arenas)
+}
+
+/// Encoded scale records load their encoding through the shared packing,
+/// whichever section record produces it first, and decode to the raw arena.
+#[test]
+fn encoded_scale_records_load_as_their_encoding() {
+    use kernel_core::precision::scale_offset;
+    let (root, plans, expected, _) = fixture(6);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for width in scale_offset::WIDTHS {
+        let (encoded_plans, arenas) = encoded(&plans, &expected, width);
+        for (threads, shared) in [(1, 0), (2, 128 << 10)] {
+            let image = sharing_image(&checkpoint, &encoded_plans, threads, shared);
+            assert_eq!(waves(&image, 4096), arenas, "width {width}");
+        }
+    }
+}
+
+/// A census item measures the raw scale section the load would produce,
+/// reading only the scale tensor, and a stale count fails the load.
+#[test]
+fn census_items_measure_raw_scale_sections() {
+    use kernel_core::precision::scale_offset;
+    use runtime_bundle_abi::weight_plan::{CENSUS_SCALE_ROW_OFFSET_V1, CensusItemV1};
+    let (root, plans, expected, _) = fixture(3);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for (plan, raw) in plans.iter().zip(&expected) {
+        for record in &plan.records {
+            let WeightTransform::PackedOperand(operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!("the fixture packs every record");
+            };
+            if operand.section != PackedSection::LocalScales {
+                continue;
+            }
+            let (rows, groups) = operand.plan.scale_shape();
+            let item = CensusItemV1 {
+                kind: CENSUS_SCALE_ROW_OFFSET_V1,
+                rows: rows as u64,
+                groups: groups as u64,
+                record: WeightRecordV1 {
+                    arena_offset: 0,
+                    ..record.clone()
+                },
+            };
+            let (counts, read) = measure_census_item_v1(&checkpoint, &item).unwrap();
+            let bytes = &raw[record.arena_offset as usize..][..record.byte_length as usize];
+            assert_eq!(
+                counts,
+                scale_offset::census(bytes, rows as u64, groups as u64).unwrap()
+            );
+            // The scale tensor alone: 256 rows of 8 one-byte groups.
+            assert_eq!(read, 256 * 8);
+        }
+    }
+    let (mut stale, _) = encoded(&plans, &expected, 1);
+    for plan in &mut stale {
+        for record in &mut plan.records {
+            let WeightTransform::PackedOperand(mut operand) =
+                WeightTransform::decode(record.transform, &record.params).unwrap()
+            else {
+                unreachable!("the fixture packs every record");
+            };
+            operand.local_encoding.as_mut().unwrap().exceptions += 1;
+            if operand.section == PackedSection::LocalScales {
+                record.byte_length += 4;
+            }
+            record.params = WeightTransform::PackedOperand(operand)
+                .encode_params()
+                .unwrap();
+        }
+        // Re-place the records after the size change.
+        let mut end = 0;
+        for record in &mut plan.records {
+            record.arena_offset = end;
+            end += record.byte_length;
+        }
+        plan.arena_bytes = end.next_multiple_of(plan.alignment);
+    }
+    let image = sharing_image(&checkpoint, &stale, 1, 0);
+    let mut output = vec![0; image.arena_bytes(0) as usize];
+    let error = image.read(0, &mut output).unwrap_err();
+    assert!(error.contains("the plan counted"), "{error}");
+}

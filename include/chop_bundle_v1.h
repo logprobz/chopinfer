@@ -1686,7 +1686,11 @@ const chop_bundle_api_v1 *chop_bundle_get_api_v1(void);
  *     list documents {str name, bytes} (the JSON files and other small
  *     files in the same places, not covered by the identity); list
  *     components {str role, bytes} (the package's chop.bundle-metadata.
- *     components); list host_views {str id}.
+ *     components); list host_views {str id}; then, only when the host
+ *     measured a census (below), list census {u32 rank, 32-byte SHA-256 of
+ *     that rank's census document as the bundle emitted it, list counts
+ *     {u64, u64, u64}} sorted by rank without duplicates. A request without
+ *     a census ends after host_views.
  *
  *   plan "CHOPWPLN": u32 ranks, u32 rank, str image_role, u64 alignment,
  *     u64 arena_bytes; list views {str id, u64 alignment, u32 placement
@@ -1752,6 +1756,37 @@ typedef chop_bundle_status_v1 (*chop_bundle_weight_transform_fn_v1)(
 
 chop_bundle_status_v1 chop_bundle_weight_transform_v1(
     const chop_bundle_weight_transform_call_v1 *call);
+
+/*
+ * Weight census (optional export under chop.weight-plan.v1).
+ *
+ * A bundle whose plan sizes records from tensor payloads (compressed scale
+ * planes, for example) exports chop_bundle_weight_census_v1, with the plan
+ * export's signature. Before planning an image, the host calls it once per
+ * rank with that rank's request (without a census) and the same sink
+ * contract; the bundle answers with a census document, or an empty document
+ * to measure nothing. The host produces each item's record on the CPU as it
+ * would a plan record's, stores it nowhere, and measures it. It then asks for
+ * every rank's plan with every rank's counts in the request's census list,
+ * each with the SHA-256 of the census document it answers; a bundle refuses
+ * counts whose digest is not its own census's. A host that skips the census
+ * sends requests without one, and the bundle plans without it.
+ *
+ *   census "CHOPWCEN" (layout 3): u32 ranks, u32 rank; list items {u32 kind,
+ *     u64 rows, u64 groups, then a plan record's fields after its
+ *     arena_offset: u64 byte_length, u32 transform, bytes params, list
+ *     sources {u32 file, str tensor}, u32 axis, list ranges {u64 start,
+ *     u64 end}, list stored_shape {u64}}. byte_length is rows * groups.
+ *
+ * Kind 1 (scale-row-offset-v1) reads the record's bytes as a [rows, groups]
+ * matrix of 1-byte scales and counts, for offset widths 1, 2 and 4 in that
+ * order, the scales outside each row's best window (kernel-core's
+ * precision::scale_offset::census): the request's counts entry for the item.
+ */
+#define CHOP_WEIGHT_CENSUS_SCALE_ROW_OFFSET_V1 1u
+
+chop_bundle_status_v1 chop_bundle_weight_census_v1(
+    chop_bundle_byte_view_v1 request, chop_bundle_weight_plan_sink_v1 sink);
 
 /*
  * Chat frontend (capability chop.frontend.v1).

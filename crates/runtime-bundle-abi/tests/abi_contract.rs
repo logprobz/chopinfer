@@ -620,7 +620,7 @@ fn c_header_and_rust_layouts_match() {
         &c_layouts,
         "weight-plan-codes",
         abi::weight_plan::WEIGHT_PLAN_LAYOUT_V1 as usize,
-        &[],
+        &[abi::weight_plan::CENSUS_SCALE_ROW_OFFSET_V1 as usize],
     );
     assert_layout(
         &c_layouts,
@@ -3908,7 +3908,7 @@ int main(void) {
   printf("frontend-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_frontend_sink_v1), P(chop_bundle_frontend_sink_v1, struct_size), P(chop_bundle_frontend_sink_v1, layout), P(chop_bundle_frontend_sink_v1, context), P(chop_bundle_frontend_sink_v1, emit), P(chop_bundle_frontend_sink_v1, emit_error));
   printf("frontend-table %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_frontend_table_v1), P(chop_bundle_frontend_table_v1, struct_size), P(chop_bundle_frontend_table_v1, layout), P(chop_bundle_frontend_table_v1, open), P(chop_bundle_frontend_table_v1, close), P(chop_bundle_frontend_table_v1, render), P(chop_bundle_frontend_table_v1, constraint), P(chop_bundle_frontend_table_v1, parser_open), P(chop_bundle_frontend_table_v1, parser_push), P(chop_bundle_frontend_table_v1, parser_close));
   printf("frontend-codes %u %u %u\n", CHOP_FRONTEND_LAYOUT_V1, CHOP_FRONTEND_PUSH_FLAG_V1_FINAL, CHOP_FRONTEND_PUSH_FLAGS_V1_KNOWN);
-  printf("weight-plan-codes %u\n", CHOP_WEIGHT_PLAN_LAYOUT_V1);
+  printf("weight-plan-codes %u %u\n", CHOP_WEIGHT_PLAN_LAYOUT_V1, CHOP_WEIGHT_CENSUS_SCALE_ROW_OFFSET_V1);
   printf("frontend-refusal-limit %llu\n", (unsigned long long)CHOP_FRONTEND_REFUSAL_BYTES_MAX_V1);
   printf("frontend-opened-limit %llu\n", (unsigned long long)CHOP_FRONTEND_OPENED_BYTES_MAX_V1);
   printf("sink-draft-tail %zu %zu\n", sizeof(chop_bundle_execute_result_sink_v1), P(chop_bundle_execute_result_sink_v1, emit_draft_tokens));

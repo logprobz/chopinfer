@@ -518,6 +518,7 @@ mod tests {
             precision: None,
         };
         let request = WeightPlanRequestV1 {
+            census: Vec::new(),
             image_role: std::str::from_utf8(encoder_views::IMAGE_ROLE)
                 .unwrap()
                 .into(),

@@ -2147,6 +2147,7 @@ fn non_packed_baseline(
         packing: None,
     };
     let request = WeightPlanRequestV1 {
+        census: Vec::new(),
         image_role: String::new(),
         ranks: catalog.ranks as u32,
         rank: piece.rank as u32,

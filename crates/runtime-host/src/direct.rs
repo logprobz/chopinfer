@@ -44,8 +44,9 @@ use kernel_core::weight_transform::{
     PreparedRecord, SourceTensor, WeightRecord, WeightTransform, WeightTransformError,
 };
 use runtime_bundle_abi::weight_plan::{
-    BundleWeightTransformFnV1, CheckpointFileV1, NamedBytesV1, PlannedViewV1, ViewPlacementV1,
-    WeightPlanImplementationV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
+    BundleWeightTransformFnV1, CENSUS_SCALE_ROW_OFFSET_V1, CensusItemV1, CensusRankV1,
+    CheckpointFileV1, NamedBytesV1, PlannedViewV1, ViewPlacementV1, WeightPlanImplementationV1,
+    WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
 };
 use runtime_weights::checkpoint::{CheckpointFile, header_identity};
 
@@ -372,6 +373,7 @@ impl DirectCheckpointV1 {
         host_views: Vec<String>,
     ) -> WeightPlanRequestV1 {
         WeightPlanRequestV1 {
+            census: Vec::new(),
             image_role: image_role.into(),
             ranks,
             rank,
@@ -2597,20 +2599,31 @@ pub fn plan_image_v1(
 ) -> Result<Option<PlannedImageV1>, String> {
     let started = Instant::now();
     let implementation = implementation_v1(bundle_module);
+    let census = census_v1(
+        library,
+        &checkpoint,
+        image_role,
+        ranks,
+        implementation,
+        &components,
+        &host_views,
+    )?;
     let cache = plan_cache::Cache::selected();
     let mut validation_seconds = 0.0;
     let result = plan_cache::prepare(
         cache.as_ref(),
         ranks as usize,
         |rank| {
-            checkpoint.request(
+            let mut request = checkpoint.request(
                 image_role,
                 ranks,
                 rank as u32,
                 implementation,
                 components.clone(),
                 host_views.clone(),
-            )
+            );
+            request.census.clone_from(&census);
+            request
         },
         |request| {
             library
@@ -2652,6 +2665,224 @@ pub fn plan_image_v1(
         })
     );
     Ok(Some(image))
+}
+
+/// `CHOPINFER_WEIGHT_CENSUS=0` skips the census, so a bundle plans without
+/// one (raw scale planes, for example): the A/B control of encoded planes.
+fn census_enabled_v1() -> bool {
+    std::env::var_os("CHOPINFER_WEIGHT_CENSUS").is_none_or(|value| value != "0")
+}
+
+/// Asks the bundle what to measure for every rank of `image_role`, measures
+/// each distinct item once on the CPU and answers with every rank's counts,
+/// empty when the bundle exports no census, measures nothing, or the census
+/// is turned off.
+fn census_v1(
+    library: &runtime_bundle_abi::BundleLibraryV1,
+    checkpoint: &DirectCheckpointV1,
+    image_role: &str,
+    ranks: u32,
+    implementation: WeightPlanImplementationV1,
+    components: &[NamedBytesV1],
+    host_views: &[String],
+) -> Result<Vec<CensusRankV1>, String> {
+    if !library.has_weight_census() || !census_enabled_v1() {
+        return Ok(Vec::new());
+    }
+    let started = Instant::now();
+    let mut documents = Vec::new();
+    for rank in 0..ranks {
+        let request = checkpoint.request(
+            image_role,
+            ranks,
+            rank,
+            implementation,
+            components.to_vec(),
+            host_views.to_vec(),
+        );
+        if let Some((census, bytes)) = library
+            .weight_census(&request)
+            .map_err(|error| format!("{image_role} rank {rank} weight census: {error}"))?
+        {
+            documents.push((rank, census, bytes));
+        }
+    }
+    // Ranks that read the same bytes the same way share one measurement.
+    let mut unique: Vec<&CensusItemV1> = Vec::new();
+    let mut slots = BTreeMap::new();
+    let mut indices = Vec::with_capacity(documents.len());
+    for (_, census, _) in &documents {
+        let mut slot_of = Vec::with_capacity(census.items.len());
+        for item in &census.items {
+            let slot = *slots.entry(format!("{item:?}")).or_insert_with(|| {
+                unique.push(item);
+                unique.len() - 1
+            });
+            slot_of.push(slot);
+        }
+        indices.push(slot_of);
+    }
+    let measured = measure_census_v1(checkpoint, &unique)?;
+    let bytes_read: u64 = measured.iter().map(|(_, bytes)| bytes).sum();
+    let answer = documents
+        .iter()
+        .zip(indices)
+        .map(|((rank, _, bytes), slot_of)| CensusRankV1 {
+            rank: *rank,
+            document_sha256: digest_v1(bytes),
+            counts: slot_of.into_iter().map(|slot| measured[slot].0).collect(),
+        })
+        .collect();
+    eprintln!(
+        "startup weight_census: {}",
+        serde_json::json!({
+            "image_role": image_role,
+            "ranks": ranks,
+            "items": documents.iter().map(|(_, census, _)| census.items.len()).sum::<usize>(),
+            "unique_items": unique.len(),
+            "bytes_read": bytes_read,
+            "seconds": started.elapsed().as_secs_f64(),
+            "checkpoint_identity": checkpoint.identity_hex(),
+        })
+    );
+    Ok(answer)
+}
+
+fn digest_v1(bytes: &[u8]) -> [u8; 32] {
+    let hex = runtime_weights::sha256_bytes(bytes);
+    let mut digest = [0; 32];
+    for (byte, pair) in digest.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let pair = std::str::from_utf8(pair).expect("hex digits");
+        *byte = u8::from_str_radix(pair, 16).expect("hex digits");
+    }
+    digest
+}
+
+/// One census item's counts per width and the source bytes it read.
+type CensusMeasureV1 = ([u64; 3], u64);
+
+/// Measures `items` on worker threads: each one's counts and the source
+/// bytes it read.
+fn measure_census_v1(
+    checkpoint: &DirectCheckpointV1,
+    items: &[&CensusItemV1],
+) -> Result<Vec<CensusMeasureV1>, String> {
+    let next = AtomicUsize::new(0);
+    let threads = process_cpus_v1().clamp(1, items.len().max(1));
+    let results: Vec<Result<Vec<(usize, CensusMeasureV1)>, String>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            return Ok(done);
+                        };
+                        done.push((index, measure_census_item_v1(checkpoint, item)?));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| Err("a census worker panicked".into()))
+            })
+            .collect()
+    });
+    let mut measured = vec![([0; 3], 0); items.len()];
+    for result in results {
+        for (index, value) in result? {
+            measured[index] = value;
+        }
+    }
+    Ok(measured)
+}
+
+/// One item's counts: its record produced as the load would produce it
+/// (only the scale tensor read when the record's scales stand alone) and
+/// measured as its kind says.
+fn measure_census_item_v1(
+    checkpoint: &DirectCheckpointV1,
+    item: &CensusItemV1,
+) -> Result<CensusMeasureV1, String> {
+    let error = |reason: String| format!("census item over {:?}: {reason}", item.record.sources);
+    if item.kind != CENSUS_SCALE_ROW_OFFSET_V1 {
+        return Err(error(format!("unknown census kind {}", item.kind)));
+    }
+    let mut sources = Vec::with_capacity(item.record.sources.len());
+    let mut described = Vec::with_capacity(item.record.sources.len());
+    for source in &item.record.sources {
+        let shard = checkpoint
+            .shards
+            .get(source.file as usize)
+            .ok_or_else(|| error(format!("names file {}", source.file)))?;
+        let (tensor, begin) = shard
+            .tensors
+            .get(&source.tensor)
+            .ok_or_else(|| error(format!("tensor {} is not in {}", source.tensor, shard.name)))?;
+        sources.push((shard, *begin, tensor.byte_length));
+        described.push(tensor.clone());
+    }
+    let transform = WeightTransform::decode(item.record.transform, &item.record.params)
+        .map_err(|e| error(e.0))?;
+    if matches!(transform, WeightTransform::Bundle(_)) {
+        return Err(error("a census measures shared transforms only".into()));
+    }
+    let prepared = WeightRecord {
+        transform,
+        sources: described,
+        axis: item.record.axis,
+        ranges: item.record.ranges.clone(),
+        stored_shape: item.record.stored_shape.clone(),
+    }
+    .prepare(item.record.byte_length)
+    .map_err(|e| error(e.0))?;
+    let bytes_read = AtomicU64::new(0);
+    let mut read = |index: usize, offset: u64, buffer: &mut [u8]| {
+        let (shard, begin, length) = sources[index];
+        if offset
+            .checked_add(buffer.len() as u64)
+            .is_none_or(|end| end > length)
+        {
+            return Err(WeightTransformError(
+                "census read outside its tensor".into(),
+            ));
+        }
+        shard
+            .file
+            .read_exact_at(buffer, begin + offset)
+            .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
+        bytes_read.fetch_add(buffer.len() as u64, Ordering::Relaxed);
+        Ok(())
+    };
+    let record = prepared.record();
+    let independent = match &record.transform {
+        WeightTransform::PackedOperand(operand) => operand
+            .independent_scale_source(record)
+            .map(|index| (operand, index)),
+        _ => None,
+    };
+    let bytes = match independent {
+        Some((operand, index)) => {
+            let mut scales = vec![0; sources[index].2 as usize];
+            read(index, 0, &mut scales).map_err(|e| error(e.0))?;
+            match operand
+                .independent_scales(record, &scales, Vec::new())
+                .map_err(|e| error(e.0))?
+            {
+                Some(bytes) => bytes,
+                None => prepared.produce_whole(&mut read).map_err(|e| error(e.0))?,
+            }
+        }
+        None => prepared.produce_whole(&mut read).map_err(|e| error(e.0))?,
+    };
+    let counts = kernel_core::precision::scale_offset::census(&bytes, item.rows, item.groups)
+        .map_err(|e| error(e.to_string()))?;
+    Ok((counts, bytes_read.into_inner()))
 }
 
 /// The checkpoint this process loads (`serve --model` or `--checkpoint`),

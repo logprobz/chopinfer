@@ -52,6 +52,7 @@ fn request(geometry: &Geometry, ranks: u32, rank: u32) -> WeightPlanRequestV1 {
     identity.update(synthetic::FILE);
     identity.update(&header);
     WeightPlanRequestV1 {
+        census: Vec::new(),
         image_role: RANK_IMAGE_ROLE.into(),
         ranks,
         rank,

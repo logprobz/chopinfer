@@ -5262,6 +5262,46 @@ pub unsafe fn dispatch_weight_plan_v1(
         &crate::weight_plan::WeightPlanRequestV1,
     ) -> Result<Option<crate::weight_plan::WeightPlanV1>, String>,
 ) -> BundleStatusV1 {
+    // SAFETY-REVIEWED: the caller's contract is this function's.
+    unsafe {
+        dispatch_weight_document_v1(request, sink, |request| {
+            plan(request).map(|plan| plan.map(|plan| plan.encode()))
+        })
+    }
+}
+
+/// The bundle side of `chop_bundle_weight_census_v1`: decodes the request,
+/// runs `census` and emits the encoded census, an empty document when the
+/// bundle measures nothing, or the refusal text.
+///
+/// # Safety
+/// The native caller owns `request` and `sink` for the call, as the V1 header
+/// states.
+// SAFETY-REVIEWED: this is the reviewed pointer boundary for the census export.
+pub unsafe fn dispatch_weight_census_v1(
+    request: BundleByteViewV1,
+    sink: crate::weight_plan::BundleWeightPlanSinkV1,
+    census: impl FnOnce(
+        &crate::weight_plan::WeightPlanRequestV1,
+    ) -> Result<Option<crate::weight_plan::WeightCensusV1>, String>,
+) -> BundleStatusV1 {
+    // SAFETY-REVIEWED: the caller's contract is this function's.
+    unsafe {
+        dispatch_weight_document_v1(request, sink, |request| {
+            census(request).map(|census| census.map(|census| census.encode()))
+        })
+    }
+}
+
+/// The shared bundle side of the plan and census exports.
+///
+/// # Safety
+/// As [`dispatch_weight_plan_v1`].
+unsafe fn dispatch_weight_document_v1(
+    request: BundleByteViewV1,
+    sink: crate::weight_plan::BundleWeightPlanSinkV1,
+    answer: impl FnOnce(&crate::weight_plan::WeightPlanRequestV1) -> Result<Option<Vec<u8>>, String>,
+) -> BundleStatusV1 {
     catch_panic_callback_status_v1(|| {
         if sink.struct_size != struct_size_v1::<crate::weight_plan::BundleWeightPlanSinkV1>() {
             return Err(BundleAbiError::StructSizeExact {
@@ -5294,8 +5334,8 @@ pub unsafe fn dispatch_weight_plan_v1(
             Ok(request) => request,
             Err(error) => return Ok(refuse(error.to_string())),
         };
-        let encoded = match plan(&request) {
-            Ok(Some(plan)) => plan.encode(),
+        let encoded = match answer(&request) {
+            Ok(Some(document)) => document,
             Ok(None) => Vec::new(),
             Err(message) => return Ok(refuse(message)),
         };
@@ -5401,6 +5441,34 @@ pub(crate) fn call_weight_plan_v1(
     plan: crate::weight_plan::BundleWeightPlanFnV1,
     request: &crate::weight_plan::WeightPlanRequestV1,
 ) -> Result<Option<crate::weight_plan::WeightPlanV1>, String> {
+    call_weight_document_v1(plan, request, "weight plan")?
+        .map(|bytes| crate::weight_plan::WeightPlanV1::decode(&bytes))
+        .transpose()
+        .map_err(|error| error.to_string())
+}
+
+/// The host side of `chop_bundle_weight_census_v1`: the census, or `None`
+/// when the bundle measures nothing for the request.
+pub(crate) fn call_weight_census_v1(
+    census: crate::weight_plan::BundleWeightPlanFnV1,
+    request: &crate::weight_plan::WeightPlanRequestV1,
+) -> Result<Option<(crate::weight_plan::WeightCensusV1, Vec<u8>)>, String> {
+    call_weight_document_v1(census, request, "weight census")?
+        .map(|bytes| {
+            crate::weight_plan::WeightCensusV1::decode(&bytes).map(|census| (census, bytes))
+        })
+        .transpose()
+        .map_err(|error| error.to_string())
+}
+
+/// The shared host side of the plan and census exports: the document's
+/// bytes, or `None` for an empty answer.
+fn call_weight_document_v1(
+    export: crate::weight_plan::BundleWeightPlanFnV1,
+    request: &crate::weight_plan::WeightPlanRequestV1,
+    what: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let plan = export;
     let encoded = request.encode();
     let mut collector = WeightPlanCollectorV1 {
         plan: None,
@@ -5418,13 +5486,11 @@ pub(crate) fn call_weight_plan_v1(
     let status = unsafe { plan(BundleByteViewV1::from_bytes(&encoded), sink) };
     match (status.is_success(), collector.plan) {
         (true, Some(bytes)) if bytes.is_empty() => Ok(None),
-        (true, Some(bytes)) => crate::weight_plan::WeightPlanV1::decode(&bytes)
-            .map(Some)
-            .map_err(|error| error.to_string()),
-        (true, None) => Err("the bundle returned no weight plan".into()),
+        (true, Some(bytes)) => Ok(Some(bytes)),
+        (true, None) => Err(format!("the bundle returned no {what}")),
         (false, _) => Err(collector.error.unwrap_or_else(|| {
             format!(
-                "the bundle refused the weight plan: {}",
+                "the bundle refused the {what}: {}",
                 status.name().unwrap_or("unknown status")
             )
         })),
@@ -5487,6 +5553,27 @@ macro_rules! export_weight_plan_v1 {
         ) -> $crate::BundleStatusV1 {
             // SAFETY-REVIEWED: the native caller lends both for this call.
             unsafe { $crate::dispatch_weight_plan_v1(request, sink, $plan) }
+        }
+    };
+}
+
+/// Exports `chop_bundle_weight_census_v1` from a bundle over a safe census
+/// `fn(&WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, String>`,
+/// where `None` measures nothing.
+#[macro_export]
+macro_rules! export_weight_census_v1 {
+    ($census:expr $(,)?) => {
+        /// # Safety
+        /// The host lends the request and sink for the call.
+        // SAFETY-REVIEWED: the export hands its views to the reviewed decoder.
+        #[allow(unsafe_code)]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn chop_bundle_weight_census_v1(
+            request: $crate::BundleByteViewV1,
+            sink: $crate::weight_plan::BundleWeightPlanSinkV1,
+        ) -> $crate::BundleStatusV1 {
+            // SAFETY-REVIEWED: the native caller lends both for this call.
+            unsafe { $crate::dispatch_weight_census_v1(request, sink, $census) }
         }
     };
 }

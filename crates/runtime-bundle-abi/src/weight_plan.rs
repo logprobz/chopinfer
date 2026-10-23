@@ -25,6 +25,16 @@
 //! host's shared transforms, and the bundle module when a record uses a
 //! bundle-owned transform), and the plan without its components.
 //!
+//! A bundle may also export `chop_bundle_weight_census_v1`, with the plan
+//! export's signature, to size records whose bytes depend on tensor
+//! payloads, such as compressed scale planes. Given the same request, it
+//! answers with a census document ([`WeightCensusV1`]): records the host
+//! produces on the CPU and measures without storing. The host then asks for
+//! every rank's plan with every rank's measured counts and the SHA-256 of
+//! each census document in the request's optional census tail
+//! ([`CensusRankV1`]), so a bundle that plans all ranks at once has them
+//! all and can refuse counts measured for another census.
+//!
 //! A record whose transform identifier is at least
 //! `kernel_core::weight_transform::BUNDLE_TRANSFORM_FIRST` is executed by the
 //! bundle's optional `chop_bundle_weight_transform_v1` export instead.
@@ -48,9 +58,16 @@ pub const WEIGHT_PLAN_CAPABILITY_V1: &str = "chop.weight-plan.v1";
 pub const WEIGHT_PLAN_SYMBOL_V1: &[u8] = b"chop_bundle_weight_plan_v1\0";
 /// The optional bundle transform export, NUL-terminated for `dlsym`.
 pub const WEIGHT_TRANSFORM_SYMBOL_V1: &[u8] = b"chop_bundle_weight_transform_v1\0";
+/// The optional census export, NUL-terminated for `dlsym`. It has the plan
+/// export's signature and answers with a census document.
+pub const WEIGHT_CENSUS_SYMBOL_V1: &[u8] = b"chop_bundle_weight_census_v1\0";
+/// A census item that counts `scale-row-offset-v1` exceptions at offset
+/// widths 1, 2 and 4 (`kernel_core::precision::scale_offset::census`).
+pub const CENSUS_SCALE_ROW_OFFSET_V1: u32 = 1;
 
 const REQUEST_MAGIC: &[u8; 8] = b"CHOPWREQ";
 const PLAN_MAGIC: &[u8; 8] = b"CHOPWPLN";
+const CENSUS_MAGIC: &[u8; 8] = b"CHOPWCEN";
 /// The layout of both documents, which the host also states in the sink.
 /// Earlier layouts are refused: 1 before requests named an image role, 2
 /// before they stated the implementation. The export and capability keep
@@ -161,6 +178,43 @@ pub struct WeightPlanRequestV1 {
     /// View identifiers the package places in host memory for this
     /// topology. A bundle may follow or override them in its plan.
     pub host_views: Vec<String>,
+    /// The census the host measured for every rank of the load, when the
+    /// bundle exports `chop_bundle_weight_census_v1`; empty otherwise, and
+    /// then the request encodes without it.
+    pub census: Vec<CensusRankV1>,
+}
+
+/// One item of a bundle's census: bytes the host produces as it would a
+/// plan record's, stores nowhere and measures as `kind` says.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CensusItemV1 {
+    /// [`CENSUS_SCALE_ROW_OFFSET_V1`].
+    pub kind: u32,
+    /// The record's bytes read as a `[rows, groups]` matrix.
+    pub rows: u64,
+    pub groups: u64,
+    /// The record, whose `arena_offset` is zero: it is placed nowhere.
+    pub record: WeightRecordV1,
+}
+
+/// What a bundle asks the host to measure for one rank before it plans.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WeightCensusV1 {
+    pub ranks: u32,
+    pub rank: u32,
+    pub items: Vec<CensusItemV1>,
+}
+
+/// One rank's measured census in a plan request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CensusRankV1 {
+    pub rank: u32,
+    /// SHA-256 of the rank's census document as the bundle emitted it, which
+    /// the bundle compares with its own before trusting `counts`.
+    pub document_sha256: [u8; 32],
+    /// One entry per item, in item order: for a scale-row-offset item, its
+    /// exceptions at widths 1, 2 and 4.
+    pub counts: Vec<[u64; 3]>,
 }
 
 /// Where a planned view lives.
@@ -288,6 +342,27 @@ impl Writer {
             self.bytes(&entry.bytes);
         }
     }
+    /// A record after its arena offset.
+    fn record_body(&mut self, record: &WeightRecordV1) {
+        self.u64(record.byte_length);
+        self.u32(record.transform);
+        self.bytes(&record.params);
+        self.count(record.sources.len());
+        for source in &record.sources {
+            self.u32(source.file);
+            self.name(&source.tensor);
+        }
+        self.u32(record.axis.unwrap_or(u32::MAX));
+        self.count(record.ranges.len());
+        for range in &record.ranges {
+            self.u64(range.start);
+            self.u64(range.end);
+        }
+        self.count(record.stored_shape.len());
+        for dim in &record.stored_shape {
+            self.u64(*dim);
+        }
+    }
 }
 
 struct Reader<'a> {
@@ -358,6 +433,40 @@ impl<'a> Reader<'a> {
         }
         Ok(())
     }
+    /// A record after its arena offset.
+    fn record_body(&mut self, arena_offset: u64) -> Result<WeightRecordV1, WeightPlanCodecError> {
+        let byte_length = self.u64()?;
+        let transform = self.u32()?;
+        let params = self.bytes()?.to_vec();
+        let sources = (0..self.count(64)?)
+            .map(|_| {
+                Ok(RecordSourceV1 {
+                    file: self.u32()?,
+                    tensor: self.name()?,
+                })
+            })
+            .collect::<Result<Vec<_>, WeightPlanCodecError>>()?;
+        let axis = match self.u32()? {
+            u32::MAX => None,
+            axis => Some(axis),
+        };
+        let ranges = (0..self.count(WEIGHT_PLAN_ENTRIES_MAX_V1)?)
+            .map(|_| Ok(self.u64()?..self.u64()?))
+            .collect::<Result<Vec<_>, WeightPlanCodecError>>()?;
+        let stored_shape = (0..self.count(WEIGHT_PLAN_DIMENSIONS_MAX_V1)?)
+            .map(|_| self.u64())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(WeightRecordV1 {
+            arena_offset,
+            byte_length,
+            transform,
+            params,
+            sources,
+            axis,
+            ranges,
+            stored_shape,
+        })
+    }
     fn finish(self) -> Result<(), WeightPlanCodecError> {
         if !self.bytes.is_empty() {
             return fail("trailing bytes");
@@ -409,6 +518,21 @@ impl WeightPlanRequestV1 {
         for view in &self.host_views {
             writer.name(view);
         }
+        // The census is an optional tail: a request without one encodes as
+        // before, so bundles without the census export read it unchanged.
+        if !self.census.is_empty() {
+            writer.count(self.census.len());
+            for rank in &self.census {
+                writer.u32(rank.rank);
+                writer.0.extend_from_slice(&rank.document_sha256);
+                writer.count(rank.counts.len());
+                for counts in &rank.counts {
+                    for count in counts {
+                        writer.u64(*count);
+                    }
+                }
+            }
+        }
         writer.0
     }
 
@@ -454,6 +578,32 @@ impl WeightPlanRequestV1 {
         let host_views = (0..count)
             .map(|_| reader.name())
             .collect::<Result<Vec<_>, _>>()?;
+        let mut census = Vec::new();
+        if !reader.bytes.is_empty() {
+            let count = reader.count(WEIGHT_PLAN_ENTRIES_MAX_V1)?;
+            if count == 0 {
+                return fail("an empty census is not encoded");
+            }
+            for _ in 0..count {
+                let rank = reader.u32()?;
+                let document_sha256 = reader.take(32)?.try_into().expect("32 bytes");
+                let items = reader.count(WEIGHT_PLAN_ENTRIES_MAX_V1)?;
+                let mut counts = Vec::with_capacity(items.min(1 << 16));
+                for _ in 0..items {
+                    counts.push([reader.u64()?, reader.u64()?, reader.u64()?]);
+                }
+                census.push(CensusRankV1 {
+                    rank,
+                    document_sha256,
+                    counts,
+                });
+            }
+            if census.windows(2).any(|pair| pair[0].rank >= pair[1].rank)
+                || census.iter().any(|entry| entry.rank >= ranks)
+            {
+                return fail("census ranks are not unique, sorted and inside the rank count");
+            }
+        }
         reader.finish()?;
         Ok(Self {
             image_role,
@@ -465,7 +615,14 @@ impl WeightPlanRequestV1 {
             documents,
             components,
             host_views,
+            census,
         })
+    }
+
+    /// The measured census of `rank`, when the request carries one.
+    #[must_use]
+    pub fn census_of(&self, rank: u32) -> Option<&CensusRankV1> {
+        self.census.iter().find(|entry| entry.rank == rank)
     }
 
     /// A document by name.
@@ -549,24 +706,7 @@ impl WeightPlanV1 {
         writer.count(self.records.len());
         for record in &self.records {
             writer.u64(record.arena_offset);
-            writer.u64(record.byte_length);
-            writer.u32(record.transform);
-            writer.bytes(&record.params);
-            writer.count(record.sources.len());
-            for source in &record.sources {
-                writer.u32(source.file);
-                writer.name(&source.tensor);
-            }
-            writer.u32(record.axis.unwrap_or(u32::MAX));
-            writer.count(record.ranges.len());
-            for range in &record.ranges {
-                writer.u64(range.start);
-                writer.u64(range.end);
-            }
-            writer.count(record.stored_shape.len());
-            for dim in &record.stored_shape {
-                writer.u64(*dim);
-            }
+            writer.record_body(record);
         }
         writer.0
     }
@@ -634,50 +774,21 @@ impl WeightPlanV1 {
         let mut end = 0_u64;
         for _ in 0..count {
             let arena_offset = reader.u64()?;
-            let byte_length = reader.u64()?;
-            let transform = reader.u32()?;
-            let params = reader.bytes()?.to_vec();
-            let sources = (0..reader.count(64)?)
-                .map(|_| {
-                    Ok(RecordSourceV1 {
-                        file: reader.u32()?,
-                        tensor: reader.name()?,
-                    })
-                })
-                .collect::<Result<Vec<_>, WeightPlanCodecError>>()?;
-            let axis = match reader.u32()? {
-                u32::MAX => None,
-                axis => Some(axis),
-            };
-            let ranges = (0..reader.count(WEIGHT_PLAN_ENTRIES_MAX_V1)?)
-                .map(|_| Ok(reader.u64()?..reader.u64()?))
-                .collect::<Result<Vec<_>, WeightPlanCodecError>>()?;
-            let stored_shape = (0..reader.count(WEIGHT_PLAN_DIMENSIONS_MAX_V1)?)
-                .map(|_| reader.u64())
-                .collect::<Result<Vec<_>, _>>()?;
+            let record = reader.record_body(arena_offset)?;
             // Whether a record's transform reads what it names (inline bytes
             // read nothing) is the executor's check.
-            if byte_length == 0
+            if record.byte_length == 0
                 || arena_offset < end
                 || arena_offset
-                    .checked_add(byte_length)
+                    .checked_add(record.byte_length)
                     .is_none_or(|last| last > arena_bytes)
             {
                 return fail(format!(
                     "record at {arena_offset} overlaps or leaves the arena"
                 ));
             }
-            end = arena_offset + byte_length;
-            records.push(WeightRecordV1 {
-                arena_offset,
-                byte_length,
-                transform,
-                params,
-                sources,
-                axis,
-                ranges,
-                stored_shape,
-            });
+            end = arena_offset + record.byte_length;
+            records.push(record);
         }
         reader.finish()?;
         Ok(Self {
@@ -690,6 +801,57 @@ impl WeightPlanV1 {
             components,
             records,
         })
+    }
+}
+
+impl WeightCensusV1 {
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut writer = Writer::default();
+        writer.0.extend_from_slice(CENSUS_MAGIC);
+        writer.u32(WEIGHT_PLAN_LAYOUT_V1);
+        writer.u32(self.ranks);
+        writer.u32(self.rank);
+        writer.count(self.items.len());
+        for item in &self.items {
+            writer.u32(item.kind);
+            writer.u64(item.rows);
+            writer.u64(item.groups);
+            writer.record_body(&item.record);
+        }
+        writer.0
+    }
+
+    /// Decodes a census and checks each item: a known kind, a nonzero
+    /// matrix whose bytes the record states, and a record placed nowhere.
+    pub fn decode(bytes: &[u8]) -> Result<Self, WeightPlanCodecError> {
+        let mut reader = Reader { bytes };
+        reader.magic(CENSUS_MAGIC, "census")?;
+        let ranks = reader.u32()?;
+        let rank = reader.u32()?;
+        check_rank(ranks, rank)?;
+        let count = reader.count(WEIGHT_PLAN_ENTRIES_MAX_V1)?;
+        let mut items = Vec::with_capacity(count.min(1 << 16));
+        for _ in 0..count {
+            let kind = reader.u32()?;
+            let rows = reader.u64()?;
+            let groups = reader.u64()?;
+            let record = reader.record_body(0)?;
+            if kind != CENSUS_SCALE_ROW_OFFSET_V1 {
+                return fail(format!("unknown census kind {kind}"));
+            }
+            if rows == 0 || groups == 0 || rows.checked_mul(groups) != Some(record.byte_length) {
+                return fail("a census item's matrix differs from its record's bytes");
+            }
+            items.push(CensusItemV1 {
+                kind,
+                rows,
+                groups,
+                record,
+            });
+        }
+        reader.finish()?;
+        Ok(Self { ranks, rank, items })
     }
 }
 
@@ -719,6 +881,7 @@ mod tests {
             }],
             components: vec![],
             host_views: vec!["ngram".into()],
+            census: vec![],
         }
     }
 
@@ -952,5 +1115,76 @@ mod tests {
         let mut inline = plan;
         inline.records[1].sources.clear();
         assert_eq!(WeightPlanV1::decode(&inline.encode()).unwrap(), inline);
+    }
+
+    fn census() -> WeightCensusV1 {
+        WeightCensusV1 {
+            ranks: 4,
+            rank: 2,
+            items: vec![CensusItemV1 {
+                kind: CENSUS_SCALE_ROW_OFFSET_V1,
+                rows: 8,
+                groups: 8,
+                record: plan().records[0].clone(),
+            }],
+        }
+    }
+
+    #[test]
+    fn census_documents_round_trip_and_refuse_malformed_items() {
+        let census = census();
+        let bytes = census.encode();
+        assert!(bytes.starts_with(CENSUS_MAGIC));
+        assert_eq!(WeightCensusV1::decode(&bytes).unwrap(), census);
+        let mut unknown = census.clone();
+        unknown.items[0].kind = 2;
+        let error = WeightCensusV1::decode(&unknown.encode()).unwrap_err();
+        assert!(
+            error.to_string().contains("unknown census kind 2"),
+            "{error}"
+        );
+        let mut shape = census.clone();
+        shape.items[0].groups = 7;
+        assert!(WeightCensusV1::decode(&shape.encode()).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(WeightCensusV1::decode(&trailing).is_err());
+        assert!(WeightCensusV1::decode(&plan().encode()).is_err());
+    }
+
+    /// A request without a census encodes exactly as before the census
+    /// existed; one with a census appends it and round-trips.
+    #[test]
+    fn requests_carry_an_optional_census_tail() {
+        let plain = request();
+        let bytes = plain.encode();
+        let mut measured = plain.clone();
+        measured.census = vec![
+            CensusRankV1 {
+                rank: 0,
+                document_sha256: [9; 32],
+                counts: vec![[3, 1, 0], [0, 0, 0]],
+            },
+            CensusRankV1 {
+                rank: 3,
+                document_sha256: [8; 32],
+                counts: vec![],
+            },
+        ];
+        let tailed = measured.encode();
+        assert!(tailed.starts_with(&bytes) && tailed.len() > bytes.len());
+        let decoded = WeightPlanRequestV1::decode(&tailed).unwrap();
+        assert_eq!(decoded, measured);
+        assert_eq!(decoded.census_of(3).unwrap().document_sha256, [8; 32]);
+        assert!(decoded.census_of(1).is_none());
+        let mut unsorted = measured.clone();
+        unsorted.census.swap(0, 1);
+        assert!(WeightPlanRequestV1::decode(&unsorted.encode()).is_err());
+        let mut outside = measured;
+        outside.census[1].rank = 4;
+        assert!(WeightPlanRequestV1::decode(&outside.encode()).is_err());
+        let mut empty = bytes;
+        empty.extend_from_slice(&0_u32.to_le_bytes());
+        assert!(WeightPlanRequestV1::decode(&empty).is_err());
     }
 }

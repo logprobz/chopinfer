@@ -246,6 +246,7 @@ pub struct BundleLibraryV1 {
     /// The optional direct-loading exports (`weight_plan`).
     weight_plan: Option<crate::weight_plan::BundleWeightPlanFnV1>,
     weight_transform: Option<crate::weight_plan::BundleWeightTransformFnV1>,
+    weight_census: Option<crate::weight_plan::BundleWeightPlanFnV1>,
     /// The optional chat frontend export.
     frontend: Option<crate::BundleFrontendApiFnV1>,
     device_results: Option<crate::device_results::BundleGetDeviceResultsApiFnV1>,
@@ -340,6 +341,12 @@ impl BundleLibraryV1 {
                     symbol,
                 )
             });
+        // SAFETY-REVIEWED: as above, for the census export, which has the plan
+        // export's signature.
+        let weight_census =
+            optional(crate::weight_plan::WEIGHT_CENSUS_SYMBOL_V1).map(|symbol| unsafe {
+                std::mem::transmute::<*mut c_void, crate::weight_plan::BundleWeightPlanFnV1>(symbol)
+            });
         // SAFETY-REVIEWED: as above, for the frontend table export.
         let frontend = optional(crate::frontend::FRONTEND_API_SYMBOL_V1).map(|symbol| unsafe {
             std::mem::transmute::<*mut c_void, crate::BundleFrontendApiFnV1>(symbol)
@@ -361,10 +368,36 @@ impl BundleLibraryV1 {
             library,
             weight_plan,
             weight_transform,
+            weight_census,
             frontend,
             device_results,
             prefill,
         })
+    }
+
+    /// Whether the bundle exports `chop_bundle_weight_census_v1`.
+    #[must_use]
+    pub const fn has_weight_census(&self) -> bool {
+        self.weight_census.is_some()
+    }
+
+    /// Asks the bundle what to measure before it plans `request`'s image and
+    /// rank: the census and its encoded bytes, whose SHA-256 the plan request
+    /// then states, or `None` when it measures nothing.
+    pub fn weight_census(
+        &self,
+        request: &crate::weight_plan::WeightPlanRequestV1,
+    ) -> Result<Option<(crate::weight_plan::WeightCensusV1, Vec<u8>)>, String> {
+        let census = self
+            .weight_census
+            .ok_or("the bundle does not export chop_bundle_weight_census_v1")?;
+        let answer = crate::trampoline::call_weight_census_v1(census, request)?;
+        if let Some((census, _)) = &answer
+            && (census.ranks, census.rank) != (request.ranks, request.rank)
+        {
+            return Err("the bundle measured another rank".into());
+        }
+        Ok(answer)
     }
 
     /// Asks the bundle for one image's and rank's weight plan, `None` when it

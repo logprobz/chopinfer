@@ -31,7 +31,8 @@ pub use trampoline::{
     catch_panic_callback_status_v1, catch_panic_create_result_v1, catch_panic_prefix_state_info_v1,
     catch_panic_status_v1, checked_u64_to_usize_v1, dispatch_bundle_commit_accepted_v1,
     dispatch_bundle_create_v1, dispatch_bundle_execute_v1, dispatch_bundle_prefix_state_v1,
-    dispatch_custom_operation_v1, dispatch_weight_plan_v1, dispatch_weight_transform_v1,
+    dispatch_custom_operation_v1, dispatch_weight_census_v1, dispatch_weight_plan_v1,
+    dispatch_weight_transform_v1,
 };
 pub use trampoline::{call_weight_transform_v1, dispatch_bundle_execute_device_results_v1};
 

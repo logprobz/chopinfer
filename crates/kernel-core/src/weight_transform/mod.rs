@@ -68,7 +68,7 @@ use std::ops::Range;
 
 pub use execute::{PreparedRecord, SourceRead};
 pub use mxfp4::{Mxfp4Section, Mxfp4Strips};
-pub use packed::{PackedMatrixSource, PackedOperand, PackedSection};
+pub use packed::{PackedMatrixSource, PackedOperand, PackedSection, ScaleEncoding};
 
 /// Gather, zero pad, store unchanged. Parameters: none, or one
 /// little-endian `u32` payload, [`COPY_SCALES`].

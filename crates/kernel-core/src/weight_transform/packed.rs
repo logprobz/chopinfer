@@ -10,6 +10,7 @@
 use super::{WeightRecord, WeightTransformError, refuse};
 use crate::contract::{DType, WeightFormat};
 use crate::precision::layout::PackingPlan;
+use crate::precision::scale_offset::{self, ScaleCode};
 use crate::precision::{DecodeOrder, NibbleOrder};
 use std::ops::Range;
 
@@ -73,6 +74,24 @@ pub struct PackedMatrixSource {
     pub k_kept: Range<u64>,
 }
 
+/// A local-scale section stored as `scale-row-offset-v1`
+/// ([`crate::precision::scale_offset`]) instead of its raw bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "precision-serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(feature = "precision-serde", serde(deny_unknown_fields))]
+pub struct ScaleEncoding {
+    pub code: ScaleCode,
+    /// Offset bits per scale: 1, 2 or 4.
+    pub width: u32,
+    /// The exceptions a census of the raw section counted at `width`; the
+    /// encoder refuses another count, so a stale census cannot misplace
+    /// bytes.
+    pub exceptions: u64,
+}
+
 /// The parameters of a `PACKED_OPERAND` record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -86,6 +105,14 @@ pub struct PackedOperand {
     /// Checked before packing for every declared BF16 weight operand.
     pub decode_order: DecodeOrder,
     pub matrices: Vec<PackedMatrixSource>,
+    /// The local-scale section's resident encoding; `None` stores it raw.
+    /// Every section record of one operand carries the same value, so they
+    /// still share one packing.
+    #[cfg_attr(
+        feature = "precision-serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub local_encoding: Option<ScaleEncoding>,
 }
 
 impl PackedOperand {
@@ -151,8 +178,77 @@ impl PackedOperand {
     }
 
     /// The stored section's bytes, after checking the bank is complete and
-    /// every matrix names sources the record has.
+    /// every matrix names sources the record has. An encoded local-scale
+    /// section stores [`scale_offset::encoded_bytes`].
     pub fn output_bytes(&self, record: &WeightRecord) -> Result<u64, WeightTransformError> {
+        let raw = self.raw_output_bytes(record)?;
+        let Some(encoding) = self.local_encoding else {
+            return Ok(raw);
+        };
+        let (rows, groups) = self.encoded_shape(encoding)?;
+        if self.section != PackedSection::LocalScales {
+            return Ok(raw);
+        }
+        scale_offset::encoded_bytes(rows, groups, encoding.width, encoding.exceptions)
+            .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+    }
+
+    /// The `[rows, groups]` of the raw local-scale section an encoding
+    /// compresses: one matrix's untiled 1-byte scales of the encoding's code.
+    fn encoded_shape(&self, encoding: ScaleEncoding) -> Result<(u64, u64), WeightTransformError> {
+        let plan = &self.plan;
+        let code_matches = match encoding.code {
+            ScaleCode::Ue8m0 => plan.local_scale_dtype == Some(DType::Ue8M0),
+            ScaleCode::E4m3 => {
+                matches!(plan.local_scale_dtype, Some(DType::Fp8E4M3 | DType::Ue4M3))
+            }
+        };
+        if !code_matches
+            || plan.experts != 1
+            || plan.projections != 1
+            || plan.scale_width() != 1
+            || plan.tiled_scales()
+            || plan.format == WeightFormat::Fp8PerTensor
+        {
+            return refuse(
+                "an encoded local-scale section is one matrix's untiled 1-byte scales of its code",
+            );
+        }
+        let (rows, groups) = plan.scale_shape();
+        Ok((rows as u64, groups as u64))
+    }
+
+    /// Replaces a produced raw local-scale section with its encoding.
+    fn encode_local(&self, sections: &mut [Vec<u8>; 3]) -> Result<(), WeightTransformError> {
+        let Some(encoding) = self.local_encoding else {
+            return Ok(());
+        };
+        let raw = &sections[PackedSection::LocalScales.index()];
+        if raw.is_empty() {
+            return Ok(());
+        }
+        let (rows, groups) = self.encoded_shape(encoding)?;
+        let error = |e: scale_offset::ScaleOffsetError| {
+            WeightTransformError(format!("packed operand local scales: {e}"))
+        };
+        let mut out = Vec::new();
+        let exceptions = scale_offset::encode_into(raw, rows, groups, encoding.width, &mut out)
+            .map_err(error)?;
+        if exceptions != encoding.exceptions {
+            return refuse(format!(
+                "local scales hold {exceptions} exceptions at width {}, the plan counted {}",
+                encoding.width, encoding.exceptions
+            ));
+        }
+        sections[PackedSection::LocalScales.index()] = out;
+        Ok(())
+    }
+
+    /// The raw section's bytes; see [`Self::output_bytes`].
+    pub(super) fn raw_output_bytes(
+        &self,
+        record: &WeightRecord,
+    ) -> Result<u64, WeightTransformError> {
         let error = |e: crate::precision::PrecisionError| {
             WeightTransformError(format!("packed operand {}: {}", e.field, e.reason))
         };
@@ -255,13 +351,17 @@ impl PackedOperand {
         use crate::transform::fragment::FragmentWeightLayout;
         use crate::transform::{ScaleTileLayout, Transform};
 
-        let expected = self.output_bytes(record)?;
+        self.output_bytes(record)?;
+        let expected = self.raw_output_bytes(record)?;
         wanted[self.section.index()] = true;
         if sources.len() != record.sources.len() {
             return refuse("packed operand source count differs from its record");
         }
         if self.reuses_row_major_sections() {
-            return self.execute_row_major_reusing(record, sources, buffers, expected, wanted);
+            let mut sections =
+                self.execute_row_major_reusing(record, sources, buffers, expected, wanted)?;
+            self.encode_local(&mut sections)?;
+            return Ok(sections);
         }
         let plan = &self.plan;
         let (scale_rows, scale_columns) = plan.scale_shape();
@@ -480,10 +580,11 @@ impl PackedOperand {
         } else {
             scales
         };
-        let sections = [codes, scales, globals];
+        let mut sections = [codes, scales, globals];
         if sections[self.section.index()].len() as u64 != expected {
             return refuse("packed section differs from the prepared contract");
         }
+        self.encode_local(&mut sections)?;
         Ok(sections)
     }
 }

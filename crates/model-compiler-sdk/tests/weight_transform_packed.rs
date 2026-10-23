@@ -129,6 +129,7 @@ fn check(plan: PackingPlan, order: DecodeOrder, matrices: &[Matrix]) {
         (PackedSection::GlobalScales, &expected.global_scales),
     ] {
         let operand = PackedOperand {
+            local_encoding: None,
             plan: plan.clone(),
             section,
             decode_order: order,

@@ -40,6 +40,7 @@ fn fixture(experts: usize) -> (Temp, Vec<WeightPlanV1>, Vec<Vec<u8>>, u64) {
         for section in [PackedSection::LocalScales, PackedSection::Codes] {
             for expert in 0..experts {
                 let operand = PackedOperand {
+                    local_encoding: None,
                     plan: PackingPlan {
                         layout: WeightLayout {
                             id: "row-major".into(),

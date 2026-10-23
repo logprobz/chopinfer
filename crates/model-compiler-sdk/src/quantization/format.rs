@@ -51,6 +51,7 @@ pub fn packed_records(
         }
         let record = WeightRecord {
             transform: WeightTransform::PackedOperand(Box::new(PackedOperand {
+                local_encoding: None,
                 plan: plan.clone(),
                 section,
                 decode_order,

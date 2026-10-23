@@ -768,6 +768,7 @@ mod tests {
             });
         }
         let operand = PackedOperand {
+            local_encoding: None,
             plan: PackingPlan {
                 layout: WeightLayout::row_major(),
                 format,
@@ -1617,6 +1618,7 @@ mod tests {
         };
         assert!(plan("row-major").validate().is_err());
         let operand = |section| PackedOperand {
+            local_encoding: None,
             plan: plan("row-major-groups"),
             section,
             decode_order: DecodeOrder::ExactScaledOperand,

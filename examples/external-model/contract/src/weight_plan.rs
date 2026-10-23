@@ -120,6 +120,7 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
             (PackedSection::GlobalScales, &weights.global_scales),
         ] {
             let transform = WeightTransform::PackedOperand(Box::new(PackedOperand {
+                local_encoding: None,
                 plan: packing.plan.clone(),
                 section,
                 decode_order: packing.decode_order,

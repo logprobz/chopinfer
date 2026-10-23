@@ -212,6 +212,7 @@ fn packed_records_preserve_fields_and_payloads_for_padded_fragments_and_scales()
         };
         let expected = WeightRecord {
             transform: WeightTransform::PackedOperand(Box::new(PackedOperand {
+                local_encoding: None,
                 plan: operation.packing.clone(),
                 section: PackedSection::Codes,
                 decode_order: DecodeOrder::ScaleThenCode,

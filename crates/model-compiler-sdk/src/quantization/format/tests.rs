@@ -301,6 +301,7 @@ fn every_plugin_reproduces_packed_records_and_builder_bytes() {
                     panic!("expected packed operand")
                 };
                 let captured = PackedOperand {
+                    local_encoding: None,
                     plan: plan.clone(),
                     section: operand.section,
                     decode_order: order,

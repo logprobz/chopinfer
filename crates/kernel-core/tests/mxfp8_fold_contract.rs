@@ -399,6 +399,7 @@ fn native_fold_payloads_are_admitted_before_whole_or_streamed_production() {
             ];
             for section in [PackedSection::Codes, PackedSection::LocalScales] {
                 let packed = PackedOperand {
+                    local_encoding: None,
                     plan: plan(WeightFormat::Mxfp8, "row-major", 2, 32, Some(DType::Ue8M0)),
                     section,
                     decode_order: order,

@@ -81,7 +81,8 @@ impl PackedOperand {
         let Some(source) = self.independent_scale_source(record) else {
             return Ok(None);
         };
-        let expected = self.output_bytes(record)?;
+        self.output_bytes(record)?;
+        let expected = self.raw_output_bytes(record)?;
         ScaleBytes {
             dtype: DType::Ue8M0,
             bytes,
@@ -104,6 +105,8 @@ impl PackedOperand {
             out[output_row * columns..output_row * columns + live]
                 .copy_from_slice(&bytes[start..start + live]);
         }
-        Ok(Some(out))
+        let mut sections = [Vec::new(), out, Vec::new()];
+        self.encode_local(&mut sections)?;
+        Ok(Some(std::mem::take(&mut sections[1])))
     }
 }

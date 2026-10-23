@@ -224,6 +224,7 @@ fn assert_ordinary_alias(
         };
         let expected = WeightRecord {
             transform: WeightTransform::PackedOperand(Box::new(PackedOperand {
+                local_encoding: None,
                 plan: plan.clone(),
                 section: record.section,
                 decode_order: source.operation.arithmetic.decode_order,

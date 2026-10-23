@@ -3,11 +3,13 @@ use kernel_core::contract::{DType, SwigluColumns, WeightFormat};
 use kernel_core::precision::layout::PackingPlan;
 use kernel_core::precision::{DecodeOrder, NibbleOrder, WeightLayout};
 use kernel_core::weight_transform::{
-    PackedMatrixSource, PackedOperand, PackedSection, SourceTensor, WeightRecord, WeightTransform,
+    PackedMatrixSource, PackedOperand, PackedSection, ScaleEncoding, SourceTensor, WeightRecord,
+    WeightTransform,
 };
 
 fn record(order: DecodeOrder) -> (PackedOperand, WeightRecord, Vec<u8>, Vec<u8>) {
     let operand = PackedOperand {
+        local_encoding: None,
         plan: PackingPlan {
             layout: WeightLayout {
                 id: "row-major".into(),
@@ -647,4 +649,139 @@ fn independent_mxfp4_scales_cannot_hide_an_incompatible_exact_order() {
             .execute_sections(&record, &[&codes, &scales])
             .is_err()
     );
+}
+
+/// `operand` with its local scales encoded at `width`, the exception count
+/// taken from a census of `raw`, its stored local-scale section.
+fn encoded(operand: &PackedOperand, raw: &[u8], width: u32) -> PackedOperand {
+    use kernel_core::precision::scale_offset::{ScaleCode, WIDTHS, census};
+    let (rows, groups) = operand.plan.scale_shape();
+    let counts = census(raw, rows as u64, groups as u64).unwrap();
+    let slot = WIDTHS.iter().position(|w| *w == width).unwrap();
+    let mut operand = operand.clone();
+    operand.local_encoding = Some(ScaleEncoding {
+        code: ScaleCode::Ue8m0,
+        width,
+        exceptions: counts[slot],
+    });
+    operand
+}
+
+#[test]
+fn encoded_local_scales_store_the_encoding_of_the_raw_section() {
+    use kernel_core::precision::scale_offset::{WIDTHS, decode, encode};
+    for (operand, mut record, codes, scales) in seeded_cases().into_iter().take(32) {
+        let raw = reference(&operand, &codes, &scales);
+        let (rows, groups) = operand.plan.scale_shape();
+        let (rows, groups) = (rows as u64, groups as u64);
+        for width in WIDTHS {
+            let mut encoded = encoded(&operand, &raw[1], width);
+            let stored = encode(&raw[1], rows, groups, width).unwrap();
+            assert_eq!(decode(&stored, rows, groups, width).unwrap(), raw[1]);
+            for section in [PackedSection::Codes, PackedSection::LocalScales] {
+                encoded.section = section;
+                record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+                let expected = if section == PackedSection::LocalScales {
+                    stored.len() as u64
+                } else {
+                    raw[0].len() as u64
+                };
+                assert_eq!(encoded.output_bytes(&record).unwrap(), expected);
+                let sections = encoded
+                    .execute_sections(&record, &[&codes, &scales])
+                    .unwrap();
+                // The codes section is unchanged; the scales are encoded
+                // whichever section record produces them.
+                assert_eq!(sections[0], raw[0]);
+                assert_eq!(sections[1], stored);
+                let reused = encoded
+                    .execute_sections_reusing(
+                        &record,
+                        &[&codes, &scales],
+                        std::array::from_fn(|_| vec![255; 8192]),
+                    )
+                    .unwrap();
+                assert_eq!(reused[1], stored);
+            }
+            encoded.section = PackedSection::LocalScales;
+            record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+            assert_eq!(
+                encoded
+                    .independent_scales(&record, &scales, vec![255; 8192])
+                    .unwrap()
+                    .unwrap(),
+                stored
+            );
+        }
+    }
+}
+
+#[test]
+fn an_encoding_refuses_a_stale_exception_count() {
+    let (operand, mut record, codes, mut scales) = record(DecodeOrder::ExactScaledOperand);
+    // Spread one row so width 1 leaves exceptions.
+    for (i, scale) in scales.iter_mut().enumerate() {
+        *scale = 100 + (i % 5) as u8 * 3;
+    }
+    let raw = reference(&operand, &codes, &scales);
+    let mut encoded = encoded(&operand, &raw[1], 1);
+    let counted = encoded.local_encoding.unwrap().exceptions;
+    assert!(counted > 0);
+    encoded.local_encoding.as_mut().unwrap().exceptions = counted - 1;
+    record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+    let error = encoded
+        .execute_sections(&record, &[&codes, &scales])
+        .unwrap_err();
+    assert!(error.0.contains("the plan counted"), "{error:?}");
+}
+
+#[test]
+fn encoding_keeps_the_raw_admission_of_boundary_scales() {
+    // The same codes and scales are admitted, or refused, with encoding on.
+    for (code, scale) in [
+        (0x00, 254),
+        (0x44, 254),
+        (0x55, 253),
+        (0x66, 253),
+        (0x77, 252),
+    ] {
+        for layout in ["row-major", "row-major-groups"] {
+            let (mut operand, mut record, mut codes, mut scales) =
+                record(DecodeOrder::ExactScaledOperand);
+            operand.plan.layout.id = layout.into();
+            codes.fill(code);
+            scales.fill(scale);
+            record.transform = WeightTransform::PackedOperand(Box::new(operand.clone()));
+            let raw = operand.execute_sections(&record, &[&codes, &scales]);
+            let census_input = reference(&operand, &codes, &scales);
+            let encoded = encoded(&operand, &census_input[1], 2);
+            record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+            let stored = encoded.execute_sections(&record, &[&codes, &scales]);
+            assert_eq!(raw.is_ok(), stored.is_ok(), "{layout} {code} {scale}");
+            if let (Ok(raw), Ok(stored)) = (raw, stored) {
+                let (rows, groups) = operand.plan.scale_shape();
+                assert_eq!(
+                    kernel_core::precision::scale_offset::decode(
+                        &stored[1],
+                        rows as u64,
+                        groups as u64,
+                        2
+                    )
+                    .unwrap(),
+                    raw[1]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn encodings_need_one_untiled_matrix_of_their_code() {
+    let (operand, mut record, codes, scales) = record(DecodeOrder::ExactScaledOperand);
+    let raw = reference(&operand, &codes, &scales);
+    let mut encoded = encoded(&operand, &raw[1], 1);
+    encoded.local_encoding.as_mut().unwrap().code =
+        kernel_core::precision::scale_offset::ScaleCode::E4m3;
+    record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+    assert!(encoded.output_bytes(&record).is_err());
 }

@@ -4000,6 +4000,7 @@ mod tests {
         ]);
         let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
         let mut operand = PackedOperand {
+            local_encoding: None,
             plan: PackingPlan {
                 layout: WeightLayout::row_major(),
                 format: WeightFormat::Fp8PerTensor,

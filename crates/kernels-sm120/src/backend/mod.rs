@@ -91,6 +91,7 @@ mod attention;
 mod bf16_all_reduce;
 mod block_quantize;
 mod context_parallel;
+mod draft_noise;
 mod f32_projection;
 mod fp4_key_write;
 mod fused_all_reduce;
@@ -235,6 +236,7 @@ pub struct Sm120 {
     context_parallel: context_parallel::Selection,
     row_copies: Vec<crate::row::copy::Entry>,
     row_gathers: Vec<String>,
+    draft_noise: Vec<crate::row::draft_noise::Entry>,
     mxfp8_row_decoders: Vec<String>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
@@ -1402,6 +1404,12 @@ impl Sm120 {
         self
     }
 
+    /// Register a compiled draft noise entry (`row::draft_noise`).
+    pub fn with_draft_noise(mut self, entry: crate::row::draft_noise::Entry) -> Self {
+        self.draft_noise.push(entry);
+        self
+    }
+
     /// Register a compiled MXFP8 row decoder (`row::mxfp8_decode`).
     pub fn with_mxfp8_rows(mut self, symbol: impl Into<String>) -> Self {
         self.mxfp8_row_decoders.push(symbol.into());
@@ -1626,6 +1634,15 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<ArgmaxFinalBuffers<View>>, Refused> {
         rows::argmax_final(&self.rows, op, need)
+    }
+
+    fn draft_noise(
+        &self,
+        op: &kernel_core::draft_noise::DraftNoise,
+        rank: u32,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::draft_noise::DraftNoiseBuffers<View>>, Refused> {
+        draft_noise::draft_noise(&self.draft_noise, op, rank, need)
     }
 
     fn hc_grouped_norm(

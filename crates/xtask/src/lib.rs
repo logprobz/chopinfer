@@ -161,6 +161,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn weight_document_dispatch_has_reviewed_contracts() {
+        audit_unsafe_source(
+            Path::new("crates/runtime-bundle-abi/src/trampoline.rs"),
+            include_str!("../../runtime-bundle-abi/src/trampoline.rs"),
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn media_counting_allocator_has_reviewed_contracts() {
         audit_unsafe_source(
             Path::new("crates/runtime-media/tests/decode_bounds.rs"),

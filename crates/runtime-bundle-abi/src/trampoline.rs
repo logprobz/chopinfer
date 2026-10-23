@@ -5297,6 +5297,8 @@ pub unsafe fn dispatch_weight_census_v1(
 ///
 /// # Safety
 /// As [`dispatch_weight_plan_v1`].
+// SAFETY-REVIEWED: the caller lends the request, sink callbacks and context
+// for this call, under the public dispatch functions' contracts.
 unsafe fn dispatch_weight_document_v1(
     request: BundleByteViewV1,
     sink: crate::weight_plan::BundleWeightPlanSinkV1,

@@ -1709,10 +1709,14 @@ const chop_bundle_api_v1 *chop_bundle_get_api_v1(void);
  * rows, u32 K blocks per tile), 5 a prepared precision operand section (JSON
  * parameters), 6 MXFP4 MoE fragments of one expert matrix (u32 section:
  * 1 codes, 2 scales), 7 F32 to BF16 narrowing (nearest, ties to even),
- * 8 inline bytes (the parameters, 1 byte to 64 KiB, with no sources). The
+ * 8 inline bytes (the parameters, 1 byte to 64 KiB, with no sources),
+ * 9 swap the last two axes (no parameters), 10 packed E4M3 folds in layout
+ * mxfp8-fold-packed-8x128-v1 (no parameters, stored N divisible by 8 and K
+ * divisible by 64, leading dimensions are groups). The
  * host refuses an E4M3 NaN code in the gathering transforms (1 to 4) when
  * the source is F8_E4M3 or the fragments are FP8, and in a prepared operand's
- * FP8 codes (5), and an MXFP4 MoE scale above 252 (6). Swapped axes, inline
+ * FP8 codes (5), packed fold codes (10), and an MXFP4 MoE scale above 252
+ * (6). Swapped axes, inline
  * and bundle transforms store their bytes unchecked. Identifiers from
  * 0x80000000 belong to the bundle: the host calls chop_bundle_weight_transform_v1
  * with the record's whole source tensors and a part of its output. A bundle

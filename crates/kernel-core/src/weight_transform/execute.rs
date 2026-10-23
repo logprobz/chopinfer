@@ -14,6 +14,7 @@
 use super::fragment::{pack_strips, strip_bytes};
 use super::gather::{Gather, Piece};
 use super::mxfp4::{Mxfp4Section, Mxfp4Strips};
+use super::mxfp8_fold::Mxfp8FoldLayout;
 use super::payload::{Payload, scale_bytes};
 use super::{WeightRecord, WeightTransform, WeightTransformError, f32_to_bf16, refuse};
 use crate::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
@@ -23,11 +24,12 @@ use std::ops::Range;
 /// Reads `buffer.len()` bytes at `offset` within source tensor `source`.
 pub type SourceRead<'a> = dyn FnMut(usize, u64, &mut [u8]) -> Result<(), WeightTransformError> + 'a;
 
-/// How whole 16-row strips of a stored matrix pack.
+/// How whole row strips of a stored matrix pack.
 #[derive(Clone, Copy, Debug)]
 enum Strips {
     Mma(FragmentWeightLayout),
     Mxfp4(Mxfp4Strips),
+    Mxfp8Fold(Mxfp8FoldLayout),
 }
 
 impl Strips {
@@ -35,6 +37,7 @@ impl Strips {
         match self {
             Self::Mma(layout) => layout.rows,
             Self::Mxfp4(strips) => strips.rows,
+            Self::Mxfp8Fold(layout) => layout.groups * layout.n,
         }
     }
 
@@ -42,6 +45,14 @@ impl Strips {
         match self {
             Self::Mma(layout) => layout.k * layout.element_bytes(),
             Self::Mxfp4(strips) => strips.row_bytes,
+            Self::Mxfp8Fold(layout) => layout.k,
+        }
+    }
+
+    fn strip_rows(self) -> u64 {
+        match self {
+            Self::Mxfp8Fold(_) => 8,
+            Self::Mma(_) | Self::Mxfp4(_) => 16,
         }
     }
 
@@ -49,6 +60,7 @@ impl Strips {
         match self {
             Self::Mma(layout) => pack_strips(layout, rows, first, out),
             Self::Mxfp4(strips) => strips.pack_strips(rows, first, out),
+            Self::Mxfp8Fold(layout) => layout.pack_strips(rows, first, out),
         }
     }
 }
@@ -104,6 +116,14 @@ impl WeightRecord {
                     layout: Strips::Mxfp4(strips),
                 }
             }
+            WeightTransform::Mxfp8FoldPacked => {
+                let layout = self.mxfp8_fold_layout()?;
+                Kind::Fragment {
+                    gather: self.gather()?,
+                    strip: layout.strip_bytes()? as u64,
+                    layout: Strips::Mxfp8Fold(layout),
+                }
+            }
             WeightTransform::PackedOperand(operand) => match operand.code_rows() {
                 Some(row) => Kind::PackedRows { row },
                 None => Kind::Whole,
@@ -147,6 +167,7 @@ impl WeightRecord {
             }
             WeightTransform::Mxfp4Moe(Mxfp4Section::Scales) => Payload::Mxfp4Scales,
             WeightTransform::Fragment(FragmentWeightFormat::Fp8E4M3) => Payload::E4m3,
+            WeightTransform::Mxfp8FoldPacked => Payload::E4m3,
             _ if dtype == "F8_E4M3" => Payload::E4m3,
             _ => Payload::Unchecked,
         }
@@ -317,8 +338,9 @@ impl PreparedRecord {
                 strip,
             } => {
                 let row_bytes = layout.row_bytes() as u64;
-                let begin = range.start / strip * 16;
-                let end = (range.end.div_ceil(*strip) * 16).min(layout.rows() as u64);
+                let begin = range.start / strip * layout.strip_rows();
+                let end =
+                    (range.end.div_ceil(*strip) * layout.strip_rows()).min(layout.rows() as u64);
                 pieces(gather, begin * row_bytes..end * row_bytes)
             }
         }
@@ -426,8 +448,8 @@ impl PreparedRecord {
                                    count: u64,
                                    scratch: &mut Vec<u8>|
                  -> Result<(), WeightTransformError> {
-                    let begin = first * 16;
-                    let end = ((first + count) * 16).min(layout.rows() as u64);
+                    let begin = first * layout.strip_rows();
+                    let end = ((first + count) * layout.strip_rows()).min(layout.rows() as u64);
                     scratch.resize(((end - begin) * row_bytes) as usize, 0);
                     gathered(gather, begin * row_bytes..end * row_bytes, scratch, read)?;
                     self.payload.check(scratch, begin * row_bytes)

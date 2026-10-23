@@ -24,6 +24,10 @@
 //! [`WeightTransform::NarrowF32Bf16`] rounds each F32 element to the nearest
 //! BF16, ties to even.
 //!
+//! [`WeightTransform::Mxfp8FoldPacked`] permutes row-major E4M3 codes into
+//! `mxfp8-fold-packed-8x128-v1`, including grouped matrices and 64-K tails.
+//! It reads and packs eight-row strips without changing code bits or scales.
+//!
 //! [`WeightTransform::SwapInnerAxes`] stores one whole tensor with its last
 //! two axes swapped, `[..., a, b]` as `[..., b, a]`: a convolution weight's
 //! `(out, channel, tap)` in the `(out, tap, channel)` order im2col columns
@@ -58,6 +62,7 @@ pub mod execute;
 pub mod fragment;
 pub mod gather;
 pub mod mxfp4;
+pub mod mxfp8_fold;
 pub mod packed;
 pub mod payload;
 
@@ -94,6 +99,9 @@ pub const NARROW_F32_BF16: u32 = 7;
 pub const INLINE: u32 = 8;
 /// Store one whole tensor with its last two axes swapped. No parameters.
 pub const SWAP_INNER_AXES: u32 = 9;
+/// Gather row-major E4M3 codes into `mxfp8-fold-packed-8x128-v1`.
+/// No parameters; the stored shape supplies groups, N and K.
+pub const MXFP8_FOLD_PACKED: u32 = 10;
 /// The `COPY` payload of quantization scales: F32, BF16 or E4M3 elements,
 /// each finite with a clear sign bit.
 pub const COPY_SCALES: u32 = 1;
@@ -142,6 +150,8 @@ pub enum WeightTransform {
     NarrowF32Bf16,
     Inline(Vec<u8>),
     SwapInnerAxes,
+    /// Eight-row packed folds, N divisible by 8 and K divisible by 64.
+    Mxfp8FoldPacked,
     /// A bundle-defined transform, executed by the bundle's callback.
     Bundle(u32),
 }
@@ -159,6 +169,7 @@ impl WeightTransform {
             Self::NarrowF32Bf16 => NARROW_F32_BF16,
             Self::Inline(_) => INLINE,
             Self::SwapInnerAxes => SWAP_INNER_AXES,
+            Self::Mxfp8FoldPacked => MXFP8_FOLD_PACKED,
             Self::Bundle(id) => *id,
         }
     }
@@ -171,6 +182,7 @@ impl WeightTransform {
             | Self::WidenBf16F32
             | Self::NarrowF32Bf16
             | Self::SwapInnerAxes
+            | Self::Mxfp8FoldPacked
             | Self::Bundle(_) => Vec::new(),
             Self::CopyScales => COPY_SCALES.to_le_bytes().to_vec(),
             Self::Mxfp4Moe(section) => match section {
@@ -249,6 +261,10 @@ impl WeightTransform {
                 words(0)?;
                 Self::SwapInnerAxes
             }
+            MXFP8_FOLD_PACKED => {
+                words(0)?;
+                Self::Mxfp8FoldPacked
+            }
             id if id >= BUNDLE_TRANSFORM_FIRST => Self::Bundle(id),
             other => return refuse(format!("unknown weight transform {other}")),
         })
@@ -266,6 +282,7 @@ impl WeightTransform {
                 | Self::ScaleTile { .. }
                 | Self::Mxfp4Moe(_)
                 | Self::NarrowF32Bf16
+                | Self::Mxfp8FoldPacked
         )
     }
 }
@@ -363,6 +380,9 @@ impl WeightRecord {
                     WeightTransform::Mxfp4Moe(section) => {
                         Ok(self.mxfp4_strips(*section)?.packed_bytes()? as u64)
                     }
+                    WeightTransform::Mxfp8FoldPacked => {
+                        Ok(self.mxfp8_fold_layout()?.packed_bytes()? as u64)
+                    }
                     WeightTransform::Fragment(format) => Ok(self
                         .fragment_layout(*format)?
                         .packed_bytes()
@@ -388,6 +408,20 @@ impl WeightRecord {
         let [source] = &self.sources[..] else {
             return refuse("a gathering transform reads exactly one tensor");
         };
+        if self.transform == WeightTransform::Mxfp8FoldPacked {
+            self.mxfp8_fold_layout()?;
+            let elements = source.shape.iter().try_fold(1_u64, |total, &dim| {
+                (dim != 0).then(|| total.checked_mul(dim)).flatten()
+            });
+            if !["F8_E4M3", "U8", "I8"].contains(&source.dtype.as_str())
+                || elements != Some(source.byte_length)
+                || source.byte_length > isize::MAX as u64
+            {
+                return refuse(
+                    "packed folds read one-byte E4M3 codes with a bounded nonzero shape",
+                );
+            }
+        }
         let widen = self.transform == WeightTransform::WidenBf16F32;
         if widen && source.dtype != "BF16" {
             return refuse("only BF16 widens to F32");

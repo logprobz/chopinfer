@@ -1,5 +1,6 @@
 //! Qualification of one-launch folds against the round 3 selection.
 mod ahead;
+mod packed_layout;
 mod sublayer;
 mod worker;
 use super::mxfp8_fold_decode::{self as previous, modules};

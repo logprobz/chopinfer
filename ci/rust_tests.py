@@ -49,12 +49,16 @@ def one_process_libraries(selection, packages=None):
     return declared if selection == ["--workspace"] else [name for name in declared if name in selection[1::2]]
 
 
-def commands(selection, runner, threads, profile="ci", one_process=()):
+def commands(selection, runner, threads, profile="ci", one_process=(), binaries_metadata=None):
     """The commands that run `selection` (["--workspace"] or -p pairs).
     Library tests of the `one_process` packages are left out of nextest."""
     if runner == "cargo":
         return [["cargo", "test", *selection, *LOCKED]]
-    run = ["cargo", "nextest", "run", *selection, "--profile", profile, "--no-tests", "warn", *LOCKED]
+    # The metadata already names the built selection; nextest refuses Cargo
+    # build options when reusing it. Doctests still use the original selection.
+    build_selection = [] if binaries_metadata else selection
+    build_options = ["--binaries-metadata", binaries_metadata] if binaries_metadata else LOCKED
+    run = ["cargo", "nextest", "run", *build_selection, "--profile", profile, "--no-tests", "warn", *build_options]
     if threads:
         run[3:3] = ["--test-threads", str(threads)]
     if one_process:
@@ -124,7 +128,8 @@ def run_nextest(selection, threads):
                 # Reuse the listed build so Cargo cannot replace a running test's executable.
                 metadata = os.path.join(logs, "binaries.json")
                 binaries = library_binaries(selection, one_process, packages, metadata)
-                run += ["--binaries-metadata", metadata]
+                run = commands(selection, "nextest", threads, one_process=one_process,
+                               binaries_metadata=metadata)[0]
                 for name, (binary, cwd, env) in binaries.items():
                     log = open(os.path.join(logs, name + ".log"), "w+b")
                     print(f"rust tests: {name} library tests in one process beside nextest", file=sys.stderr, flush=True)

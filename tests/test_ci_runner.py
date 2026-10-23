@@ -680,6 +680,7 @@ class RustTests(unittest.TestCase):
                             self.fail("the library test did not start")
                         time.sleep(0.01)
                     if "--binaries-metadata" in command:
+                        self.assertFalse({"--workspace", "-p", *rust_tests.LOCKED} & set(command))
                         metadata = pathlib.Path(command[command.index("--binaries-metadata") + 1])
                         self.assertEqual(json.loads(metadata.read_text()), listed)
                     else:
@@ -703,6 +704,18 @@ class RustTests(unittest.TestCase):
                 "cargo", "nextest", "list", "--workspace", "--list-type", "binaries-only",
                 "--message-format", "json", *rust_tests.LOCKED])
             self.assertEqual(len(calls), 2)
+
+    def test_metadata_reuse_keeps_build_options_out_and_doctest_selection_intact(self):
+        for selection in (["--workspace"], ["-p", "heavy", "-p", "light"]):
+            with self.subTest(selection=selection), \
+                    patch.object(rust_tests, "library_packages", return_value=["heavy", "light"]):
+                run, doc = rust_tests.commands(selection, "nextest", 4, one_process=["heavy"],
+                                               binaries_metadata="binaries.json")
+                self.assertEqual(run, [
+                    "cargo", "nextest", "run", "--test-threads", "4", "--profile", "ci",
+                    "--no-tests", "warn", "--binaries-metadata", "binaries.json",
+                    "-E", "not (binary_id(=heavy))"])
+                self.assertEqual(doc, ["cargo", "test", *selection, "--doc", *rust_tests.LOCKED])
 
     def test_nextest_runs_the_selection_then_its_doctests(self):
         self.assertEqual(rust_tests.commands(["--workspace"], "nextest", 12), [

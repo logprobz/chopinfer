@@ -1,5 +1,5 @@
-//! Drafted DSpark steps may gather each item's first Engram rows before the
-//! drafter (`CHOPINFER_DSPARK_ENGRAM_EARLY=1`). Every stream launches the
+//! Drafted DSpark steps gather each item's first Engram rows before the
+//! drafter unless `CHOPINFER_DSPARK_ENGRAM_EARLY=0`. Every stream launches the
 //! same kernels in the same order, the late gathers keep the device hash,
 //! the early gathers' ids are the host's hashes of each item's first row,
 //! every rank joins both gathers of a layer before its consumer, both

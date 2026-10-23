@@ -68,32 +68,50 @@ pub(crate) struct Early {
     pub rows: Option<u32>,
 }
 
-/// `CHOPINFER_DSPARK_ENGRAM_EARLY=1` gathers each drafted item's first
-/// Engram rows before the drafter. Off until a served pair measures it.
+/// Whether drafted steps gather each item's first Engram rows before the
+/// drafter: on unless `CHOPINFER_DSPARK_ENGRAM_EARLY` holds something other
+/// than `1`, so `0` keeps every row behind the drafter.
 pub(crate) fn early_enabled() -> bool {
     #[cfg(test)]
-    if let Some(value) = EARLY_IN_TESTS.with(std::cell::Cell::get) {
-        return value;
-    }
-    std::env::var_os("CHOPINFER_DSPARK_ENGRAM_EARLY").is_some_and(|value| value == "1")
+    return EARLY_IN_TESTS.get();
+    #[cfg(not(test))]
+    early_decision(std::env::var_os("CHOPINFER_DSPARK_ENGRAM_EARLY").as_deref())
+}
+
+/// The switch's decision for its raw value, `None` being unset.
+fn early_decision(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_none_or(|value| value == "1")
 }
 
 #[cfg(test)]
 thread_local! {
-    static EARLY_IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// The switch in tests. Tests gather every row behind the drafter unless
+    /// they set it, so their pinned journals stay that route's.
+    static EARLY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `run` as if the early switch held `value`.
 #[cfg(test)]
 pub(crate) fn with_early<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
+    struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
-            EARLY_IN_TESTS.with(|cell| cell.set(self.0));
+            EARLY_IN_TESTS.set(self.0);
         }
     }
-    let _restore = Restore(EARLY_IN_TESTS.with(|cell| cell.replace(Some(value))));
+    let _restore = Restore(EARLY_IN_TESTS.replace(value));
     run()
+}
+
+#[cfg(test)]
+#[test]
+fn early_rows_default_on_and_keep_the_control() {
+    use std::ffi::OsStr;
+    assert!(early_decision(None));
+    assert!(early_decision(Some(OsStr::new("1"))));
+    for value in ["0", "", "invalid"] {
+        assert!(!early_decision(Some(OsStr::new(value))));
+    }
 }
 
 /// A layer owns its pinned gather slot and the target piece consuming it.

@@ -12,6 +12,7 @@ pub mod mxfp8_fold_direct;
 pub mod mxfp8_fold_dual;
 pub mod mxfp8_fold_local_rows;
 pub mod mxfp8_fold_local_wide;
+pub mod mxfp8_fold_packed;
 pub mod mxfp8_fold_resident;
 pub mod mxfp8_fold_reuse;
 pub mod mxfp8_fold_stream;

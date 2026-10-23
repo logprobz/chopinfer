@@ -288,6 +288,17 @@ test pin it to the prepare kernels. No weight plan uses it yet: a
 projection can store only the packed layout once every reader of its codes
 reads that layout.
 
+Row-major readers move to it one family at a time.
+`kernels-sm120/cuda/gemm/mxfp8_fold_packed.cuh` holds the device addressing
+(`Mxfp8FoldLayout::word_offset` is its host twin), and a packed entry is
+its row-major entry with only the code address changed: the same
+parameters, plan, shared memory and arithmetic, named by the row-major
+symbol plus `_packed_v1` (`kernels_sm120::gemm::mxfp8_fold_packed`). The
+v2 fold is the first. Packed entries live in their own cubins and lock
+families, and `kernel_harness::packed_fold` requires every byte they write
+to equal the row-major entry's on codes whose words are all distinct; see
+[the porting notes](../crates/kernels-sm120/cuda/gemm/mxfp8_fold_packed.md).
+
 ## Ownership and source changes
 
 `kernel-build-report.json` beside the cubins records the transitive

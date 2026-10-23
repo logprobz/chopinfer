@@ -111,7 +111,7 @@ pub fn builds_for(
 
 /// [`builds_for`] the layout the served plan stores at TP4.
 pub fn builds(g: &Geometry) -> Result<BTreeMap<String, EntrySpec>, String> {
-    builds_for(g, RoutedLayout::served(RANKS))
+    builds_for(g, RoutedLayout::served(g, RANKS))
 }
 
 /// Each row-major symbol of [`builds`] with its tiled build's symbol.

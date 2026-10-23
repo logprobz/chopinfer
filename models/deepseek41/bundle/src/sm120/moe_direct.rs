@@ -495,6 +495,16 @@ mod tests {
                             set.count == 384 && matches!(rows, 16 | 32) && point == Point::Down;
                         assert!(!(absorbed && call.launch.symbol.contains("_wide_")));
                         assert!(!(strips && call.launch.symbol.contains("_wide_")));
+                        // TP4 stores the backbone gate/up bank in row tiles:
+                        // its gate queues launch their row-tiled builds.
+                        let queue = call.launch.symbol.contains("_small_")
+                            || call.launch.symbol.contains("_wide_");
+                        assert_eq!(
+                            queue && call.launch.symbol.contains("_tiles"),
+                            queue && set.count == 384 && point == Point::Gate,
+                            "{}",
+                            call.launch.symbol
+                        );
                         if call.launch.symbol.contains("_small_") {
                             assert_eq!(
                                 call.launch.symbol.contains("_moe_absorb_"),
@@ -516,7 +526,7 @@ mod tests {
                                 8
                             };
                             assert_eq!(
-                                call.launch.symbol.ends_with("_small_resident8_v1"),
+                                call.launch.symbol.contains("_small_resident8_"),
                                 set.count == 384
                                     && (rows == 16
                                         || (rows == 32 && !absorbed)

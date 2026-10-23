@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_deepseek41_moe_bandwidth_direct_e384_k6_gate_small_v1",
+        "symbol": "chop_deepseek41_moe_bandwidth_tiles_e384_k6_gate_small_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -67,7 +67,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_moe_bandwidth_direct_e384_k6_gate_wide_v1",
+        "symbol": "chop_deepseek41_moe_bandwidth_tiles_e384_k6_gate_wide_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1054,10 +1054,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "ab185f1ed5085f54b6bb5ba5bd55f02a1a72169abecf5c886cb08284db5e7274",
+    "cubin_sha256": "b237134ca5e3392d21bc3422ebfa3668eec26b53a93ae867eb51d730585828d4",
     "resources": [
       {
-        "symbol": "chop_deepseek41_moe_bandwidth_direct_e384_k6_gate_small_v1",
+        "symbol": "chop_deepseek41_moe_bandwidth_tiles_e384_k6_gate_small_v1",
         "registers": 80,
         "shared_static_bytes": 3232,
         "local_bytes": 0,
@@ -1066,8 +1066,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_deepseek41_moe_bandwidth_direct_e384_k6_gate_wide_v1",
-        "registers": 164,
+        "symbol": "chop_deepseek41_moe_bandwidth_tiles_e384_k6_gate_wide_v1",
+        "registers": 166,
         "shared_static_bytes": 18688,
         "local_bytes": 0,
         "stack_bytes": 0,

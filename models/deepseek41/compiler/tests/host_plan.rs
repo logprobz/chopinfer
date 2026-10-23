@@ -102,8 +102,9 @@ fn every_rank_prepares_from_the_headers() {
 /// own records' parameters (the packing layout), its views' index layouts
 /// and so every rank's identity: the arena, every view's place and size and
 /// every other record stay as the row-major plan's. The served plan stores
-/// rows until every routed consumer reads tiles. The host prepares the
-/// tiled plan from the headers at every supported rank count.
+/// tiles at TP4, where every routed consumer reads them, and rows at TP1
+/// and TP2. The host prepares either plan from the headers at every
+/// supported rank count.
 #[test]
 fn row_tiles_change_only_the_backbone_gate_up_records_and_identity() {
     use kernel_core::precision::layout::ROW_TILES_64X128;
@@ -112,14 +113,27 @@ fn row_tiles_change_only_the_backbone_gate_up_records_and_identity() {
     let root = sparse(geometry);
     let [codes, scales] = RoutedLayout::Tiles.view_layouts().unwrap();
     for &ranks in SUPPORTED_RANKS {
-        assert_eq!(RoutedLayout::served(ranks), RoutedLayout::Rows);
+        let layout = if ranks == 4 {
+            RoutedLayout::Tiles
+        } else {
+            RoutedLayout::Rows
+        };
+        assert_eq!(RoutedLayout::served(geometry, ranks), layout);
         let (served, served_plans) = prepare(&root, ranks).unwrap();
         let (rows, rows_plans) = prepare_with(&root, ranks, Some(RoutedLayout::Rows)).unwrap();
         let (tiles, tiles_plans) = prepare_with(&root, ranks, Some(RoutedLayout::Tiles)).unwrap();
-        assert_eq!(served_plans, rows_plans);
+        let (layout_prepared, layout_plans) = match layout {
+            RoutedLayout::Rows => (&rows, &rows_plans),
+            RoutedLayout::Tiles => (&tiles, &tiles_plans),
+        };
+        assert_eq!(&served_plans, layout_plans);
         for (rank, (row, tile)) in rows_plans.iter().zip(&tiles_plans).enumerate() {
             let at = format!("tp{ranks} rank {rank}");
-            assert_eq!(served.identity(rank), rows.identity(rank), "{at}");
+            assert_eq!(
+                served.identity(rank),
+                layout_prepared.identity(rank),
+                "{at}"
+            );
             assert_ne!(rows.identity(rank), tiles.identity(rank), "{at}");
             assert_eq!(
                 (row.arena_bytes, &row.views, row.records.len()),
@@ -538,7 +552,8 @@ fn every_planned_view_is_the_checkpoint_s() {
                             || view.layout_id.starts_with("mxfp4_ue8m0_scale_row_tiles");
                         assert_eq!(
                             tiled,
-                            routed.is_some()
+                            routed.unwrap_or(RoutedLayout::served(geometry, ranks))
+                                == RoutedLayout::Tiles
                                 && name.starts_with("layers.")
                                 && name.contains(".experts.gate_up."),
                             "{at}"

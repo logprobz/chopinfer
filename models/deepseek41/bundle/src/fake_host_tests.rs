@@ -523,9 +523,11 @@ fn views(shape: &Shape) -> Vec<(String, u64, &'static str)> {
     views
 }
 
-/// The layout the weight plan stores view `name` of `dtype` in: a dense
-/// projection's E4M3 codes (target, DSpark and main_proj) as packed fold
-/// codes, an expert bank's MXFP4 rows, every other view row-major.
+/// The layout the weight plan stores view `name` of `dtype` in at
+/// `shape`'s rank count: a dense projection's E4M3 codes (target, DSpark and
+/// main_proj) as packed fold codes, an expert bank's MXFP4 rows, or the
+/// backbone gate/up bank in the served layout ([`RoutedLayout::served`]),
+/// every other view row-major.
 pub(super) fn plan_layout(shape: &Shape, name: &str, dtype: &str) -> (u64, &'static str) {
     let dense = || {
         name == "mtp.0.main_proj.weight"
@@ -541,8 +543,13 @@ pub(super) fn plan_layout(shape: &Shape, name: &str, dtype: &str) -> (u64, &'sta
         "F32" => (4, "f32_row_major_v1"),
         "U8" if dense() => (1, kernel_core::weight_transform::mxfp8_fold::LAYOUT_ID),
         "U8" if name.contains(".ffn.experts.") => {
-            let rows = RoutedLayout::Rows.view_layouts().unwrap();
-            (1, rows[usize::from(name.ends_with(".scale"))])
+            let layout = if name.starts_with("layers.") && name.contains(".ffn.experts.gate_up.") {
+                RoutedLayout::served(shape.geometry, shape.ranks())
+            } else {
+                RoutedLayout::Rows
+            };
+            let layouts = layout.view_layouts().unwrap();
+            (1, layouts[usize::from(name.ends_with(".scale"))])
         }
         "U8" => (1, "row-major"),
         _ => (2, "bf16_row_major_v1"),
@@ -1205,38 +1212,42 @@ fn journal_steps(host: &Rc<Host>) {
 /// mapped from its private copy to a view of the same length: every other
 /// line is identical once handle, symbol, stream, event and graph ids are
 /// mapped.
+/// Flash TP4 stores the backbone gate/up bank in row tiles: the row-tiled
+/// builds of its gate/up entries replace the row-major ones in place, so
+/// every rank count's resolves of the column module and the TP4 launches
+/// of those entries name the tiled builds. No other line changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15864, 0x11a0b8a44ef7d956),
+        (15864, 0xd6f761a0d2d1c1c5),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15718, 0xdc77d4bb510824f2),
+        (15718, 0xdff8b5aaaf4755cd),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (31603, 0x3e53739abaad7e93),
+        (31603, 0x263c2153e345793b),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (31311, 0x5392a20a1fc5d452),
+        (31311, 0xa8e2922e2e11527a),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78523, 0x93376fb89c9db539),
+        (78523, 0xf5c923e08bff7e43),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (76167, 0x0c4eb76889f74f22),
+        (76167, 0x4ba0022bb34b76ec),
     ),
 ];
 
@@ -1377,63 +1388,28 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-/// Opting out retains the audited exact expert path and its resources. The
-/// resident small gate and the r2 router finish modules add only their
-/// resolves and releases here (one module each; 2 and 14 resolves per rank).
-/// The native early-stop selectors add one module and six resolves per rank
-/// and rename the prefill selectors, as in the native default. The gate
-/// finisher loads module adds only its resolves and releases here (one
-/// module, 2 resolves per rank).
-/// Opting out retains the audited exact expert path and its resources.
-/// The HC boundary, cached ceil, prefill expand-mix and cached query norm
-/// modules change it exactly as they change the default-era TP4 lifecycle.
-/// router certificate and the router-in-norm module add one allocation, two
-/// resolves and four releases per rank there too, and no launch. The
-/// 64-expert router renames its resolve there too. The two-CTA HC finish
-/// module adds six resolves and seven releases per rank, the column-block
-/// HC pair's modules fourteen resolves and sixteen releases. The two-strip
-/// routed down module adds two resolves and three releases per rank. The
-/// window KV projection beside the query chain, the row-local rings, the
-/// cluster folds and the status folds change it as in `FLASH_JOURNALS`, and
-/// so do the shared fold storage, the scratch regions, the retired
-/// one-launch module, the 1-, 2- and 4-row status folds and the packed
-/// fold codes.
+/// Opting out of native MoE prefill refuses a Flash TP4 instance, and says
+/// why: its exact prefill kernels read the backbone gate/up bank as rows,
+/// which TP4 stores in row tiles (`sm120::moe_row_tiles_op`). Nothing stays
+/// held.
 #[test]
-fn native_moe_prefill_opt_out_keeps_the_exact_tp4_journal() {
+fn native_moe_prefill_opt_out_refuses_the_row_tiled_tp4_bank() {
     crate::sm120::moe_native::with_native(false, || {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let mut mismatches = Vec::new();
-        for (kv, expected) in KV_LAYOUTS
-            .into_iter()
-            .zip([(76803, 0xd87702695fb78346), (74447, 0x08d093d353103c6d)])
-        {
+        for kv in KV_LAYOUTS {
             let host = FakeHost::new(shape, kv);
-            journal_steps(&host);
-            assert_eq!(host.acquired.get(), host.released.get());
+            let record = crate::config::tests::record(&shape, kv, 4, false);
+            let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
+            assert!(created.is_err(), "{:?}", kv.storage);
+            let reason = crate::sm120::moe_row_tiles_op::NATIVE_OFF;
             assert!(
-                !host
-                    .device
-                    .module_cubins
-                    .borrow()
-                    .values()
-                    .any(|c| *c == crate::sm120::moe_native::CUBIN)
+                host.logs.borrow().iter().any(|line| line.contains(reason)),
+                "{:?}: {:?}",
+                kv.storage,
+                host.logs.borrow()
             );
-            let lines = host.device.journal.borrow();
-            if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR") {
-                let dir = std::path::PathBuf::from(dir);
-                std::fs::create_dir_all(&dir).unwrap();
-                let layout = format!("{:?}", kv.storage).to_lowercase();
-                let name = format!("deepseek41-flash-tp4.{layout}.exact-experts.journal");
-                std::fs::write(dir.join(&name), lines.join("\n")).unwrap();
-                decode_attention::export_handles(&host.device, &dir, &name);
-            }
-            if let Err(observed) =
-                bundle_runtime::fake_host::check_journal(&lines, expected, "exact-tp4-journal")
-            {
-                mismatches.push(format!("{:?}: {observed}", kv.storage));
-            }
+            assert_eq!(host.acquired.get(), host.released.get());
         }
-        assert!(mismatches.is_empty(), "{mismatches:#?}");
     });
 }
 
@@ -1529,36 +1505,62 @@ fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
 }
 
 /// Create refuses a rank index that stores a backbone expert bank in
-/// another layout than its routed ops read: row tiles while every routed
-/// consumer reads rows (the drafter's bank: `dspark`).
+/// another layout than its routed ops read: at TP4 the gate/up consumers
+/// read row tiles and the down consumers rows, at TP2 both read rows (the
+/// drafter's bank: `dspark`).
 #[test]
 fn create_refuses_an_expert_bank_its_routed_ops_read_in_another_layout() {
-    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    assert_eq!(RoutedLayout::served(shape.ranks()), RoutedLayout::Rows);
     let rows = RoutedLayout::Rows.view_layouts().unwrap();
     let tiles = RoutedLayout::Tiles.view_layouts().unwrap();
-    for (view, part) in [
-        ("layers.0.ffn.experts.gate_up.weight", 0),
-        ("layers.7.ffn.experts.gate_up.scale", 1),
-        ("layers.0.ffn.experts.down.weight", 0),
+    assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Tiles);
+    for (ranks, view, part, stored, read) in [
+        (
+            Ranks::TP4,
+            "layers.0.ffn.experts.gate_up.weight",
+            0,
+            rows,
+            tiles,
+        ),
+        (
+            Ranks::TP4,
+            "layers.7.ffn.experts.gate_up.scale",
+            1,
+            rows,
+            tiles,
+        ),
+        (
+            Ranks::TP4,
+            "layers.0.ffn.experts.down.weight",
+            0,
+            tiles,
+            rows,
+        ),
+        (
+            Ranks::TP2,
+            "layers.0.ffn.experts.gate_up.weight",
+            0,
+            tiles,
+            rows,
+        ),
     ] {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         host.layouts
             .borrow_mut()
-            .insert(view.into(), tiles[part].into());
+            .insert(view.into(), stored[part].into());
         let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
         let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
-        assert!(created.is_err(), "{view}");
+        assert!(created.is_err(), "{ranks:?} {view}");
         let expected = format!(
             "{view} is stored as {}, but its op reads {}",
-            tiles[part], rows[part]
+            stored[part], read[part]
         );
         assert!(
             host.logs
                 .borrow()
                 .iter()
                 .any(|line| line.contains(&expected)),
-            "{view}: {:?}",
+            "{ranks:?} {view}: {:?}",
             host.logs.borrow()
         );
         assert_eq!(host.acquired.get(), host.released.get(), "{view}");

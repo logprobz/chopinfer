@@ -618,13 +618,28 @@ mod tests {
     }
 
     // Opting out retains the measured exact expert buckets at every phase.
+    // A row-tiled bank refuses the opt-out, whose exact prefill kernels
+    // read rows (`sm120::moe_row_tiles_op`); its decode and verify buckets,
+    // which native prefill leaves as they are, keep the same selection and
+    // read the bank in tiles.
     fn check_exact_crossover() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
             for set in moe::expert_sets(&FLASH) {
                 let asks = Asks::default();
-                let ops = MoeOps::prepare(kernels.backend.as_ref(), &shape, &asks, set).unwrap();
+                let prepare = || MoeOps::prepare(kernels.backend.as_ref(), &shape, &asks, set);
+                let layout = crate::Kernels::moe_gate_up_layout(&shape, set);
+                let tiled = layout == RoutedLayout::Tiles;
+                let ops = if tiled {
+                    let native_off = crate::sm120::moe_row_tiles_op::NATIVE_OFF;
+                    assert_eq!(prepare().err(), Some(Refused::Rule(native_off.into())));
+                    crate::sm120::moe_native::with_native(true, prepare).unwrap()
+                } else {
+                    prepare().unwrap()
+                };
+                assert_eq!(ops.gate_up_layout(), layout);
+                assert_eq!(tiled, ranks == Ranks::TP4 && set.count == 384);
                 let most = asks.asked().iter().map(|a| a.workspace).max().unwrap();
                 for phase in [
                     Phase::Decode(1),
@@ -663,11 +678,16 @@ mod tests {
                     Phase::Prefill { rows: 8191 },
                     Phase::Prefill { rows: 8192 },
                 ] {
+                    if tiled && phase.prefill() {
+                        continue;
+                    }
                     assert_eq!(
                         ops.floor(phase).is_some(),
                         shape.ranks() == 4 && set.count == 128 && matches!(phase, Phase::Decode(1))
                     );
                     let kind = ops.kind(phase);
+                    assert_eq!(reads(kind.gate_up.info()), layout);
+                    assert_eq!(reads(kind.down.info()), RoutedLayout::Rows);
                     let compact = shape.ranks() == 4
                         && phase == Phase::Decode(1)
                         && set.count == 128

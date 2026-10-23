@@ -424,7 +424,7 @@ impl Ops {
         let gate_up_layout = self
             .moe
             .as_ref()
-            .map_or(RoutedLayout::served(shape.ranks()), |moe| {
+            .map_or(RoutedLayout::served(shape.geometry, shape.ranks()), |moe| {
                 moe.gate_up_layout()
             });
         let gate_up = gate_up_layout.view_layouts()?;

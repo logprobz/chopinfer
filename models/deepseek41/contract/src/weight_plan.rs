@@ -99,12 +99,17 @@ pub enum RoutedLayout {
 }
 
 impl RoutedLayout {
-    /// The layout [`plan`] stores at `ranks`: rows at every rank count until
-    /// every routed consumer of the backbone gate/up bank reads tiles.
+    /// The layout [`plan`] stores for geometry `g` at `ranks`: tiles for
+    /// Flash at TP4, where every routed consumer of the backbone gate/up
+    /// bank reads them (the bundle's `sm120::moe_row_tiles`), rows for
+    /// every other geometry and rank count.
     #[must_use]
-    pub const fn served(ranks: u32) -> Self {
-        let _ = ranks;
-        Self::Rows
+    pub fn served(g: &Geometry, ranks: u32) -> Self {
+        if g.id == crate::geometry::FLASH.id && ranks == 4 {
+            Self::Tiles
+        } else {
+            Self::Rows
+        }
     }
 
     /// The rank index layouts of the bank's codes and scales.
@@ -645,7 +650,7 @@ impl Preparation {
                             &self.imported,
                             ranks,
                             rank,
-                            RoutedLayout::served(ranks),
+                            RoutedLayout::served(self.checkpoint.geometry, ranks),
                         )?;
                         check_sources(&views, &self.checkpoint.files)?;
                         let (positions, arena) = offsets(&views);
@@ -689,15 +694,20 @@ fn check_sources(views: &[View], files: &BTreeMap<String, String>) -> Result<(),
     Ok(())
 }
 
-fn planned(request: &WeightPlanRequestV1, routed: RoutedLayout) -> Result<Arc<Planned>, String> {
+fn planned(
+    request: &WeightPlanRequestV1,
+    routed: Option<RoutedLayout>,
+) -> Result<Arc<Planned>, String> {
     let mut key = RequestKey::new(b"deepseek41.weight-plan.v1", request);
     key.optional(request.document(CONFIG));
     key.optional(request.document(INDEX));
     key.bytes(&request.ranks.to_le_bytes());
-    key.bytes(&[routed as u8]);
+    key.bytes(&[routed.map_or(u8::MAX, |routed| routed as u8)]);
     PLANS.get_or_build(key.finish(), || {
         let checkpoint = Checkpoint::read(request)?;
         admission::check_ranks(checkpoint.geometry, request.ranks)?;
+        let routed =
+            routed.unwrap_or_else(|| RoutedLayout::served(checkpoint.geometry, request.ranks));
         let admitted = checkpoint.admitted();
         let imported = declared::imported(
             &checkpoint.declaration,
@@ -835,7 +845,7 @@ fn packed(piece: &Piece) -> &kernel_core::weight_transform::PackedOperand {
 /// matrix of each [`encodable`] bank, banks in view order and matrices in
 /// piece order, or `None` for another image role or when there is none.
 pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, String> {
-    census_with(request, RoutedLayout::served(request.ranks))
+    census_routed(request, None)
 }
 
 /// [`census`] with the backbone's routed gate/up bank stored in `routed`:
@@ -844,6 +854,15 @@ pub fn census(request: &WeightPlanRequestV1) -> Result<Option<WeightCensusV1>, S
 pub fn census_with(
     request: &WeightPlanRequestV1,
     routed: RoutedLayout,
+) -> Result<Option<WeightCensusV1>, String> {
+    census_routed(request, Some(routed))
+}
+
+/// [`census`] with the backbone's routed gate/up bank stored in `routed`, or
+/// in the served layout of the checkpoint's geometry.
+fn census_routed(
+    request: &WeightPlanRequestV1,
+    routed: Option<RoutedLayout>,
 ) -> Result<Option<WeightCensusV1>, String> {
     if !(request.image_role.is_empty() || request.image_role == RANK_IMAGE_ROLE) {
         return Ok(None);
@@ -1040,13 +1059,22 @@ fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String
 /// ([`encode_banks`]); the cached derivation stays census-free, so a census
 /// changes only this rank's last step.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
-    plan_with(request, RoutedLayout::served(request.ranks))
+    plan_routed(request, None)
 }
 
 /// [`plan`] with the backbone's routed gate/up bank stored in `routed`.
 pub fn plan_with(
     request: &WeightPlanRequestV1,
     routed: RoutedLayout,
+) -> Result<Option<WeightPlanV1>, String> {
+    plan_routed(request, Some(routed))
+}
+
+/// [`plan`] with the backbone's routed gate/up bank stored in `routed`, or
+/// in the served layout of the checkpoint's geometry.
+fn plan_routed(
+    request: &WeightPlanRequestV1,
+    routed: Option<RoutedLayout>,
 ) -> Result<Option<WeightPlanV1>, String> {
     if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
         return encoder_plan::plan(request).map(Some);

@@ -372,9 +372,12 @@ fn checkpoint_routed_down_records_round_trip_through_chained_addresses() {
 }
 
 /// Flash is always compiled, so this checks the fused gate/up bank even
-/// when no optional geometry enables the full checkpoint-view test.
+/// when no optional geometry enables the full checkpoint-view test. TP4
+/// stores the bank in 64-row by 128-K row tiles; each expert's rows are
+/// whole strips, so its bytes read back as rows through the tile offsets.
 #[test]
 fn flash_gate_up_records_round_trip_through_chained_addresses() {
+    use kernel_core::transform::RowTileLayout;
     let geometry = &model_deepseek41_contract::geometry::FLASH;
     let root = fixture(geometry, &["w1", "w3"]);
     let (header, data) = header(&root);
@@ -382,6 +385,19 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
     let (image, plans) = prepare(&root, ranks).unwrap();
     let n = geometry.shape.moe.intermediate as usize / ranks as usize;
     let k = geometry.shape.hidden as usize;
+    assert_eq!(RoutedLayout::served(geometry, ranks), RoutedLayout::Tiles);
+    // An expert's tiled bytes as rows of `row_bytes`.
+    let rows = |bytes: &[u8], row_bytes: usize, tile_bytes: usize| -> Vec<u8> {
+        let layout = RowTileLayout {
+            rows: 2 * n,
+            row_bytes,
+            tile_rows: 64,
+            tile_bytes,
+        };
+        (0..2 * n * row_bytes)
+            .map(|i| bytes[layout.offset(i / row_bytes, i % row_bytes)])
+            .collect()
+    };
     let mut base = 0;
     for (rank, plan) in plans.iter().enumerate() {
         let index =
@@ -407,6 +423,8 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
                     &mut actual_scales,
                 )
                 .unwrap();
+            let actual_codes = rows(&actual_codes, k / 2, 64);
+            let actual_scales = rows(&actual_scales, k / 32, 4);
             for (half, operand) in ["w1", "w3"].into_iter().enumerate() {
                 let stem = format!("layers.0.ffn.experts.{expert}.{operand}");
                 let source_codes = source(&root, &header, data, &format!("{stem}.weight"));
@@ -450,8 +468,9 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
                 }
             }
         }
-        assert_eq!(codes.layout_id, "mxfp4_e2m1_rows_v1");
-        assert_eq!(scales.layout_id, "mxfp4_ue8m0_scale_rows_v1");
+        let [code_layout, scale_layout] = RoutedLayout::Tiles.view_layouts().unwrap();
+        assert_eq!(codes.layout_id, code_layout);
+        assert_eq!(scales.layout_id, scale_layout);
         assert_eq!(
             codes.bytes,
             u64::from(geometry.shape.moe.experts) * (2 * n * k / 2) as u64
@@ -461,7 +480,7 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
             u64::from(geometry.shape.moe.experts) * (2 * n * k / 32) as u64
         );
         eprintln!(
-            "Flash TP{ranks} rank{rank}: w1/w3 row-addressed records and every decoded weight passed for three experts"
+            "Flash TP{ranks} rank{rank}: w1/w3 row-tiled records and every decoded weight passed for three experts"
         );
         base += plan.arena_bytes;
     }

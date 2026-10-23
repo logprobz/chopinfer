@@ -29,7 +29,7 @@ pub fn layout(g: &Geometry, ranks: u32, set: Experts) -> RoutedLayout {
         && set.count == moe_row_tiles::EXPERTS
         && super::moe::streamed_qualified(g, ranks)
     {
-        RoutedLayout::served(ranks)
+        RoutedLayout::served(g, ranks)
     } else {
         RoutedLayout::Rows
     }
@@ -303,7 +303,8 @@ mod tests {
     fn only_the_tp4_backbone_bank_reads_the_served_layout() {
         let [target, drafter] = [(384, 6), (128, 3)].map(|(count, top_k)| Experts { count, top_k });
         assert!(moe::expert_sets(&FLASH).contains(&target));
-        assert_eq!(layout(&FLASH, 4, target), RoutedLayout::served(4));
+        assert_eq!(layout(&FLASH, 4, target), RoutedLayout::served(&FLASH, 4));
+        assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Tiles);
         for (ranks, set) in [(4, drafter), (2, target), (1, target)] {
             assert_eq!(layout(&FLASH, ranks, set), RoutedLayout::Rows);
         }

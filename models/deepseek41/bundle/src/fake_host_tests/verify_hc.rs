@@ -124,13 +124,15 @@ use super::*;
 // weight's view as its packed bank. The cluster, row-local and TMA matrix
 // modules no longer load. Audited against the previous full histories, as
 // in `FLASH_JOURNALS`: every other line is equal once ids are mapped.
+// The row-tiled gate/up builds rename their resolves and launches, as in
+// `FLASH_JOURNALS`.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xae24172ca882acba)),
-    (6, (8680, 0xb322deb6deb118a2)),
-    (8, (7720, 0x1a3ca91280c65b17)),
-    (12, (10136, 0x845efd5f8b49636d)),
-    (16, (7892, 0x1ae761cb6d90f8d9)),
-    (32, (7744, 0x001a7245e54e50a6)),
+    (4, (7880, 0xa23f247aab9630a6)),
+    (6, (8680, 0xbbbeddadd370ac26)),
+    (8, (7720, 0x4817d3afa61575ed)),
+    (12, (10136, 0x635b452e0a9ad6c5)),
+    (16, (7892, 0xf8974a6a9bd03c73)),
+    (32, (7744, 0x26a5ba8e6b798456)),
 ];
 
 #[test]

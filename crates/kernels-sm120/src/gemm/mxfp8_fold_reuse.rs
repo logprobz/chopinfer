@@ -74,6 +74,17 @@ impl Entry {
         ])
     }
 
+    /// The weight reader on packed codes. Admission keeps its original symbol.
+    pub fn packed_spec(&self) -> Result<EntrySpec, Refusal> {
+        self.validate()?;
+        let q = self.ticket.query;
+        super::mxfp8_fold_packed::check(q.groups, q.n, q.k)?;
+        let mut spec = self.specs().remove(1);
+        spec.symbol = super::mxfp8_fold_packed::symbol(&spec.symbol);
+        spec.body = spec.body.replace(">(task,arena", ",true>(task,arena");
+        Ok(spec)
+    }
+
     pub fn specs(&self) -> Vec<EntrySpec> {
         let q = self.ticket.query;
         let mut specs = self.ticket.specs();

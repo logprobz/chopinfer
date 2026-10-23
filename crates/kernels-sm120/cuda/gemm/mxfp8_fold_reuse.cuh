@@ -33,7 +33,7 @@ __device__ void admit_task(uint32_t cta, uint32_t ctas, const uint8_t* codes,
 // A weight stage serves two independent sixteen-row MMA groups. Each
 // 128-K fold and the final ascending fold merge keep their original order.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         int TileN, bool F32Output, bool Paired>
+         int TileN, bool F32Output, bool Paired, bool PackedWeights = false>
 __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations, const uint8_t* activation_scales,
                    const uint8_t* weights, const uint8_t* weight_scales,
                    const uint8_t* weights2, const uint8_t* weight_scales2,
@@ -74,6 +74,13 @@ __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations
       const bool valid = fold < end && col < K && row < (a ? live : N) && (!a || !row_failed[r]);
       const uint64_t at = a ? uint64_t(row) * RowStride + uint64_t(g) * GroupStride + col
                             : (uint64_t(g) * N + row) * K + col;
+      if constexpr (PackedWeights) {
+        if (!a) {
+          mxfp8_fold_ticket::copy_packed_chunk<N, K>(codes[stage] + 32 * 128,
+              weights, g, column_base, chunk - 32 * 8, fold, end);
+          continue;
+        }
+      }
       copy16(codes[stage] + fold_row_chunk(r, chunk % 8), (a ? activations : weights) + (valid ? at : 0), valid);
     }
     for (uint32_t r = threadIdx.x; r < 32 + TileN; r += Threads) {
@@ -106,6 +113,7 @@ __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations
     asm volatile("cp.async.wait_group 1;" ::: "memory");
     __syncthreads();
     ptx::D4 raw[2][2]{};
+    uint4 packed_b[2];
 #pragma unroll
     for (int step = 0; step < 4; ++step) {
 #pragma unroll
@@ -120,10 +128,19 @@ __device__ void task(Task task, Arena<TileN>& shared, const uint8_t* activations
         for (int i = 0; i < 4; ++i)
           af.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
               fold_row_chunk(group * 16 + quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
+        if constexpr (PackedWeights) {
+          if ((step & 1) == 0 && group == 0)
+            packed_b[pair] = mxfp8_fold_ticket::packed_fragment<K>(codes[slot] + 32 * 128,
+                warp, quad, lane4, step, base + pair);
+          const uint4 w = packed_b[pair];
+          bf.v[0] = (step & 1) ? w.z : w.x;
+          bf.v[1] = (step & 1) ? w.w : w.y;
+        } else {
 #pragma unroll
         for (int i = 0; i < 2; ++i)
           bf.v[i] = *reinterpret_cast<const uint32_t*>(codes[slot] +
               fold_row_chunk(32 + warp * 8 + quad, step * 2 + i) + lane4 * 4);
+        }
         const uint32_t sa = scales[slot][(group * 16 + quad + (lane4 & 1) * 8) * 4 + step];
         const uint32_t sb = scales[slot][(32 + warp * 8 + quad) * 4 + step];
         ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(raw[pair][group], af, bf, sa, sb);

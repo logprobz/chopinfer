@@ -275,3 +275,7 @@ path = "examples/sm120/build_f32_verify.rs"
 [[example]]
 name = "build_fold_verify"
 path = "examples/sm120/build_fold_verify.rs"
+
+[[example]]
+name = "build_fold_verify_local"
+path = "examples/sm120/build_fold_verify_local.rs"

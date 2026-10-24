@@ -898,7 +898,7 @@ fn status_build(
     input: &data::Input,
 ) -> LabResult<StatusCase> {
     let err = |e: Refusal| e.to_string();
-    let arms = if id == "attention.q-b" {
+    let arms = if id == "attention.q-b" && tile != 64 {
         2 + fused_family::WIDE.len()
     } else {
         2
@@ -909,6 +909,22 @@ fn status_build(
     let (served, candidates, control) = if tile == 64 {
         let base = base_of(input.n, input.k, input.groups);
         let served = wide_reference(a, &base, &b[0], rows)?;
+        if id == "attention.q-b" {
+            let candidate = sm120::fold_verify_local::entry().map_err(err)?;
+            let packed = packed_views(a, &base, &b[1])?;
+            let mut run = candidate.launch(&packed, rows).map_err(err)?;
+            run.symbol = candidate.packed_symbol();
+            let zeros = a.filled(64 * 4, 0)?;
+            let mut control = run.clone();
+            control.arguments.0[8] = Argument::DeviceBuffer(zeros.handle);
+            return Ok(StatusCase {
+                id,
+                served,
+                candidates: vec![("tiled32".into(), vec![run])],
+                control: vec![control],
+                b,
+            });
+        }
         let f = sm120::fold_verify::entry(id).ok_or("wide status candidate absent")?;
         let work = a.filled(f.workspace(), 0)?;
         let packed = packed_views(a, &base, &b[1])?;
@@ -1406,4 +1422,70 @@ fn gpu_fused() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn local64_catalog_keeps_the_full_row_reference() {
+    for rows in WIDE_ROWS {
+        let mut a = Arena::new(None);
+        let input = data::empty(&base_of(8192, 1280, 1), rows);
+        let case = status_build(&mut a, "attention.q-b", 64, rows, &input).unwrap();
+        assert_eq!(case.b.len(), 2);
+        assert!(case.served.len() >= 2);
+        assert_eq!(case.candidates[0].1[0].plan.grid, [171, 2, 1]);
+        assert_eq!(
+            case.candidates[0].1[0].symbol,
+            sm120::fold_verify_local::entry().unwrap().packed_symbol()
+        );
+        assert_ne!(
+            case.control[0].arguments.0[8],
+            case.candidates[0].1[0].arguments.0[8]
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires frozen wide local fold inputs and assigned GPUs"]
+fn gpu_local64() {
+    let bytes = Box::leak(
+        std::fs::read(root().join("cubins/probe_sm120.cubin"))
+            .unwrap()
+            .into_boxed_slice(),
+    );
+    let cubins = kernel_harness::Cubins::new(
+        Box::leak(Box::new([("probe_sm120", &bytes[..])])),
+        &[(
+            "probe_sm120",
+            &["chop_probe_read_v1", "chop_probe_flush_v1"],
+        )],
+    );
+    let ran = kernel_harness::gpu_test_with(cubins, 6 << 30, |s| {
+        let mode = mode()?;
+        let mut count = 0;
+        let base = base_of(8192, 1280, 1);
+        for rows in row_counts(64, mode) {
+            let mut inputs = vec![data::synthetic(&base, rows)];
+            if matches!(mode, Mode::Check | Mode::Time) {
+                inputs.extend(data::captured_wide(&base, rows)?);
+            }
+            for input in inputs {
+                let record = status_case(s, "attention.q-b", 64, &input, mode)?;
+                println!("FOLD_LOCAL64_CASE {record}");
+                count += 1;
+            }
+        }
+        let expected = if matches!(mode, Mode::Memcheck | Mode::Racecheck) {
+            2
+        } else {
+            18
+        };
+        assert_eq!(count, expected);
+        println!(
+            "FOLD_LOCAL64_DONE {}",
+            json!({"cases":count,"mode":std::env::var("CHOPINFER_FOLD_FUSED_MODE").unwrap()})
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(ran.is_some(), "an idle GPU is required");
 }

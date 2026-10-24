@@ -87,17 +87,21 @@ pub enum CheckpointItems {
     Bucket,
 }
 
-/// Checkpoint entries each checkpointing item takes.
+/// How checkpoints reserve rows across a step.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CheckpointRows {
     /// The instance's verify rows per item.
     Verify,
     /// A fixed stride, at least the instance's verify rows.
     Fixed(u32),
+    /// A compact pool bounded by the total rows a step may verify. The
+    /// caller passes an item's first row offset to `checkpoint`, rather
+    /// than its item index, and keeps that assignment through commit.
+    Packed(u32),
 }
 
-/// Per-row checkpoints of a verify step: entry `item * rows + row` of the
-/// checkpoints holds the state after row `row` of checkpointing item `item`.
+/// Per-row checkpoints of a verify step. Fixed and verify strides use
+/// `item * rows + row`; a packed pool uses an assigned row offset plus row.
 /// A step has them when the instance verifies (two or more rows per item).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Checkpoints {
@@ -301,7 +305,7 @@ impl StateBuffer {
             CheckpointItems::Bucket => u64::from(extent.bucket),
         };
         let rows = match checkpoints.rows {
-            CheckpointRows::Verify => extent.verify_rows,
+            CheckpointRows::Verify | CheckpointRows::Packed(_) => extent.verify_rows,
             CheckpointRows::Fixed(rows) => rows,
         };
         Some((items, u64::from(rows)))
@@ -309,13 +313,19 @@ impl StateBuffer {
 
     /// Checkpoint entries of one step, pooled or separate.
     pub fn checkpoint_entries(&self, extent: Extent) -> u64 {
-        self.checkpoint_shape(extent)
-            .map_or(0, |(items, rows)| items * rows)
+        let maximum = self
+            .checkpoint_shape(extent)
+            .map_or(0, |(items, rows)| items * rows);
+        match self.checkpoints().map(|c| c.rows) {
+            Some(CheckpointRows::Packed(rows)) => maximum.min(u64::from(rows)),
+            _ => maximum,
+        }
     }
 
     /// The entry that holds the state after row `row` of checkpointing item
     /// `item`: in this buffer when the checkpoints are pooled, otherwise in
-    /// the separate checkpoint buffer.
+    /// the separate checkpoint buffer. For packed checkpoints, `item` is
+    /// the item's first row offset in the pool, assigned before execution.
     pub fn checkpoint(&self, extent: Extent, item: u32, row: u32) -> Option<u64> {
         let (items, rows) = self.checkpoint_shape(extent)?;
         let base = if self.checkpoints()?.pooled {
@@ -323,8 +333,13 @@ impl StateBuffer {
         } else {
             0
         };
-        (u64::from(item) < items && u64::from(row) < rows)
-            .then(|| base + u64::from(item) * rows + u64::from(row))
+        if matches!(self.checkpoints()?.rows, CheckpointRows::Packed(_)) {
+            let at = u64::from(item) + u64::from(row);
+            (u64::from(row) < rows && at < self.checkpoint_entries(extent)).then_some(base + at)
+        } else {
+            (u64::from(item) < items && u64::from(row) < rows)
+                .then(|| base + u64::from(item) * rows + u64::from(row))
+        }
     }
 
     /// Bytes of the separate checkpoint buffer, if the checkpoints have one.
@@ -823,7 +838,7 @@ fn check(buffer: &StateBuffer) -> Result<(), Invalid> {
         Rollback::Checkpoint(Checkpoints { items, rows, .. })
             if buffer.scope != Scope::Slot
                 || items == CheckpointItems::Drafting(0)
-                || rows == CheckpointRows::Fixed(0) =>
+                || matches!(rows, CheckpointRows::Fixed(0) | CheckpointRows::Packed(0)) =>
         {
             return fail("checkpoints hold a slot's state for at least one item");
         }
@@ -1008,6 +1023,45 @@ mod tests {
         bucket: 64,
         verify_rows: 6,
     };
+
+    #[test]
+    fn packed_checkpoints_bound_rows_without_changing_snapshots() {
+        let mut state = synthetic();
+        let snapshot = state.snapshot_bytes();
+        let buffer = &mut state.buffers[1];
+        buffer.rollback = Rollback::Checkpoint(Checkpoints {
+            items: CheckpointItems::Drafting(2),
+            rows: CheckpointRows::Packed(6),
+            pooled: true,
+        });
+        let extent = Extent {
+            served: 3,
+            bucket: 4,
+            verify_rows: 4,
+        };
+        assert_eq!(buffer.checkpoint_entries(extent), 6);
+        assert_eq!(buffer.checkpoint(extent, 0, 3), Some(6));
+        assert_eq!(buffer.checkpoint(extent, 4, 1), Some(8));
+        assert_eq!(buffer.checkpoint(extent, 4, 2), None);
+        assert_eq!(buffer.checkpoint(extent, 0, 4), None);
+        assert_eq!(buffer.checkpoint(extent, u32::MAX, 0), None);
+        assert_eq!(
+            buffer.checkpoint_entries(Extent {
+                verify_rows: 0,
+                ..extent
+            }),
+            0
+        );
+        assert_eq!(state.snapshot_bytes(), snapshot);
+        assert_eq!(state.validate(), Ok(()));
+        assert_eq!(state.validate_extent(extent), Ok(()));
+        state.buffers[1].rollback = Rollback::Checkpoint(Checkpoints {
+            items: CheckpointItems::Drafting(2),
+            rows: CheckpointRows::Packed(0),
+            pooled: true,
+        });
+        assert!(state.validate().is_err());
+    }
 
     #[test]
     fn a_compressed_attention_declaration_validates_without_a_special_case() {

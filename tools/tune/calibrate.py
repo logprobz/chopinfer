@@ -8,28 +8,35 @@ Usage: python3 -B tools/tune/calibrate.py --sampled RUN_OR_LOG... \
 Each RUN_OR_LOG is a server log or a tuner run directory (every
 */server/server.log under it; its config.json must measure only the kind it
 is passed as). Servers log one `*.drafter-confidence.v1` record per drafted
-block: the package's confidence contract, each position's raw confidence
-`s` as f32 bits, and outcomes. Leading `accepted` outcomes are certain; the
-first `unknown` after them is the draft verification stopped on (rarely an
-accepted stop token or a length limit instead); later positions were never
-judged. So position j's samples are the committed records whose drafts
-before j were accepted and whose draft j was emitted, labelled 1 when it
-was accepted and 0 at the first unknown: the chance a draft is accepted
-when every earlier one was, which the calibration's
-`sigmoid(scale * s + offset)` models. Cancelled blocks and non-finite
-scores are left out. Fit on runs served without a calibration: an
-allocated step verifies fewer drafts than it emitted, which these records
-cannot tell from a rejection.
+block: the package's confidence contract, the request and its committed
+rows, each position's raw confidence `s` as f32 bits, and outcomes. Leading
+`accepted` outcomes are certain. The first `unknown` after them is where
+verification stopped, but on its own it is not a rejection: an accepted stop
+token or a token limit also stops it and ends the request. So it counts as a
+rejection only when the same request drafts again from more committed rows
+(a later record of the same server, instance and request), which proves the
+request went on; otherwise it is left out. Position j's samples are thus the
+committed records whose drafts before j were accepted and whose draft j was
+emitted, labelled 1 when it was accepted and 0 when it was proven rejected:
+the chance a draft is accepted when every earlier one was, which the
+calibration's `sigmoid(scale * s + offset)` models. Cancelled blocks,
+un-emitted positions and non-finite scores are left out, and a repeated
+(instance, step, request) is refused. Dropped log lines lose whole records
+without biasing labels; the report counts them and marks the capture
+incomplete. Fit on runs served without a calibration: an allocated step
+verifies fewer drafts than it emitted.
 
 Each position gets a logistic fit (Newton's method with a small ridge). The
 greedy pairs repeat the sampled ones unless greedy runs are given. FILE
 receives the calibration as `speculation.confidence` and
 `--speculation-confidence` take it; FILE with `.report.json` in place of its
-suffix receives per-position counts, accepted/drafted (the share of emitted
-drafts accepted, unconditional), the conditional rate, the fit, and log loss
-in sample, held out (two folds by request) and for a constant rate.
+suffix receives the sources' SHA256 digests and run settings, per-position
+counts, accepted/drafted (the share of emitted drafts accepted,
+unconditional), the conditional rate, the fit, and log loss in sample, held
+out (two folds by request) and for a constant rate.
 """
 import argparse
+import hashlib
 import json
 import math
 import struct
@@ -48,13 +55,15 @@ def f32(value):
     return struct.unpack('<f', struct.pack('<f', value))[0]
 
 
-def server_logs(source, kind):
+def server_logs(source, kind, settings):
     """The server logs of one source: a log file, or a tuner run measuring
-    only `kind`."""
+    only `kind`, whose settings are added to `settings`."""
     path = Path(source)
     if path.is_file():
         return [path]
     config = json.loads((path / 'config.json').read_text())
+    settings.append({'run': str(path), **{key: config.get(key) for key in (
+        'job', 'model', 'kinds', 'sampling', 'serve_arguments', 'speculation_mode', 'arms')}})
     kinds = sorted(config.get('kinds', {'greedy': 1, 'sampled': 1}))
     if kinds != [kind]:
         raise SystemExit(f'{path} measures {kinds}, not only {kind}')
@@ -64,9 +73,9 @@ def server_logs(source, kind):
     return logs
 
 
-def records(log):
-    """The drafter confidence records of one server log and the lines its
-    writer dropped."""
+def records(log, index=0):
+    """The drafter confidence records of one server log, each tagged with
+    `index`, and the lines its writer dropped."""
     rows, dropped = [], 0
     for line in log.read_text(errors='replace').splitlines():
         if line.startswith(DROPPED):
@@ -79,20 +88,31 @@ def records(log):
         except ValueError:
             continue
         if isinstance(row, dict) and str(row.get('schema', '')).endswith(SCHEMA_SUFFIX):
+            row['log'] = index
             rows.append(row)
     return rows, dropped
 
 
 def samples(rows):
-    """Per position, `(score, label, fold)` samples, and the emitted and
-    accepted drafts per position."""
-    by_position, emitted, accepted = {}, {}, {}
+    """Per position, `(score, label, fold)` samples, the emitted and
+    accepted drafts per position, and the stops left unlabelled."""
+    seen, later = set(), {}
+    for row in rows:
+        step = (row['log'], row['instance_id'], row['step_id'], row['request_id'])
+        if step in seen:
+            raise SystemExit(f'record {step} repeats')
+        seen.add(step)
+        request = (row['log'], row['instance_id'], row['request_id'])
+        later[request] = max(later.get(request, -1), int(row['main_rows']))
+    by_position, emitted, accepted, unproven = {}, {}, {}, 0
     for row in rows:
         if row.get('completion') != 'committed':
             continue
+        request = (row['log'], row['instance_id'], row['request_id'])
+        continued = later[request] > int(row['main_rows'])
         scores = [struct.unpack('<f', struct.pack('<I', bits))[0]
                   for bits in row['confidence_f32_bits']]
-        fold = zlib.crc32(f"{row['instance_id']}/{row['request_id']}".encode()) & 1
+        fold = zlib.crc32(f"{row['log']}/{row['instance_id']}/{row['request_id']}".encode()) & 1
         for position, outcome in enumerate(row['outcomes']):
             if outcome not in ('accepted', 'unknown'):
                 continue
@@ -101,13 +121,16 @@ def samples(rows):
         for position, outcome in enumerate(row['outcomes']):
             if outcome not in ('accepted', 'unknown'):
                 break
+            if outcome == 'unknown' and not continued:
+                unproven += 1
+                break
             score = scores[position]
             if math.isfinite(score):
                 by_position.setdefault(position, []).append(
                     (score, 1 if outcome == 'accepted' else 0, fold))
             if outcome == 'unknown':
                 break
-    return by_position, emitted, accepted
+    return by_position, emitted, accepted, unproven
 
 
 def sigmoid(z):
@@ -160,16 +183,17 @@ def constant(points):
 
 def calibrate(sources, positions, min_samples):
     """One kind's pairs and report, from `sources` of that kind."""
-    rows, dropped, logs = [], 0, 0
-    for log in sources:
-        found, lost = records(log)
+    rows, dropped, digests = [], 0, []
+    for index, log in enumerate(sources):
+        found, lost = records(log, index)
         rows.extend(found)
         dropped += lost
-        logs += 1
+        digests.append({'log': str(log), 'sha256': hashlib.sha256(log.read_bytes()).hexdigest(),
+                        'records': len(found), 'dropped_lines': lost})
     contracts = sorted({row.get('confidence_contract') for row in rows})
     if len(contracts) != 1 or not contracts[0]:
         raise SystemExit(f'records name confidence contracts {contracts}; fit one at a time')
-    by_position, emitted, accepted = samples(rows)
+    by_position, emitted, accepted, unproven = samples(rows)
     deepest = max(by_position, default=-1) + 1
     positions = positions or deepest
     if not 1 <= positions <= MAX_POSITIONS:
@@ -203,7 +227,8 @@ def calibrate(sources, positions, min_samples):
             'log_loss_constant': constant(points),
         })
     return contracts[0], pairs, {
-        'logs': logs, 'records': len(rows), 'dropped_log_lines': dropped, 'positions': table}
+        'logs': digests, 'records': len(rows), 'dropped_log_lines': dropped,
+        'complete': dropped == 0, 'unproven_stops': unproven, 'positions': table}
 
 
 def main(argv=None):
@@ -218,13 +243,14 @@ def main(argv=None):
     out = Path(args.out)
     if out.exists():
         raise SystemExit(f'{out} exists')
-    sampled = [log for source in args.sampled for log in server_logs(source, 'sampled')]
+    settings = []
+    sampled = [log for source in args.sampled for log in server_logs(source, 'sampled', settings)]
     contract, sampled_pairs, sampled_report = calibrate(sampled, args.positions, args.min_samples)
     positions = len(sampled_pairs)
-    report = {'sampled': sampled_report}
+    report = {'runs': settings, 'sampled': sampled_report}
     greedy_pairs = sampled_pairs
     if args.greedy:
-        greedy = [log for source in args.greedy for log in server_logs(source, 'greedy')]
+        greedy = [log for source in args.greedy for log in server_logs(source, 'greedy', settings)]
         greedy_contract, greedy_pairs, report['greedy'] = calibrate(
             greedy, positions, args.min_samples)
         if greedy_contract != contract:
@@ -238,6 +264,9 @@ def main(argv=None):
     out.write_text(json.dumps(calibration) + '\n')
     out.with_suffix('.report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(calibration))
+    print(f"{sampled_report['records']} records, {sampled_report['unproven_stops']} stops left "
+          f"unlabelled, {sampled_report['dropped_log_lines']} log lines dropped"
+          + ('' if sampled_report['complete'] else ' (INCOMPLETE capture)'))
     for row in sampled_report['positions']:
         print(f"position {row['position']}: {row['samples']} samples, accepted given earlier "
               f"{row['accepted_given_earlier']:.3f}, accepted/drafted "

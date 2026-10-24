@@ -149,7 +149,12 @@ python3 -B tools/tune/calibrate.py --sampled "$RUN" \
 the costs job above, or server logs. Position j's samples are the
 committed blocks whose drafts before j were accepted and whose draft j was
 verified, labelled by whether it was accepted, so the fit is the chance a
-draft is accepted when every earlier one was. Each position needs
+draft is accepted when every earlier one was. A record proves only its
+accepted drafts; the draft verification stopped on counts as rejected only
+when the same request drafts again later (an accepted stop token or a token
+limit also stops verification, and ends the request), and is otherwise left
+out. Repeated records are refused, and dropped log lines mark the capture
+incomplete in the report. Each position needs
 `--min-samples` (200) of them, so record arms that draft as deep as the
 speculative tokens. Fit on runs served without a calibration. The report
 beside the output lists per position the samples, accepted given earlier,

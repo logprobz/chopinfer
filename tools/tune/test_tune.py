@@ -246,39 +246,56 @@ class Tuner(unittest.TestCase):
 
 
 
-def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confidence.v1'):
+def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confidence.v1', requests=97):
     """A server log of drafter records drawn from `truth`, per position
-    `(scale, offset)`, and the samples each position should yield."""
+    `(scale, offset)`, over `requests` requests drafting in turn, with the
+    samples each position should yield and the stops left unlabelled: a
+    request's last record cannot prove its first unknown a rejection."""
     import math
     import random
     import struct
     rng = random.Random(seed)
-    expected = {}
-    lines = ['startup readiness: 1.0s']
+    committed = [1] * requests
+    blocks = []
     for index in range(records):
+        request = index % requests
         emitted = rng.choice((3, 4, 5))
         scores = [struct.unpack('<f', struct.pack('<f', rng.uniform(-3, 3)))[0] for _ in range(6)]
         outcomes = ['not_emitted'] * 6
         for position in range(emitted):
             outcomes[position] = 'unknown'
         for position in range(emitted):
-            expected[position] = expected.get(position, 0) + 1
             scale, offset = truth[position]
             if rng.random() >= 1 / (1 + math.exp(-(scale * scores[position] + offset))):
                 break
             outcomes[position] = 'accepted'
         record = {'schema': 'chopinfer.fixture.drafter-confidence.v1', 'confidence_contract': contract,
-                  'instance_id': '1', 'step_id': str(index), 'request_id': str(index % 97),
-                  'emitted_positions': emitted, 'completion': 'committed', 'draft_ids': [1] * 6,
+                  'instance_id': '1', 'step_id': str(index), 'request_id': str(request),
+                  'main_rows': committed[request], 'emitted_positions': emitted,
+                  'completion': 'committed', 'draft_ids': [1] * 6,
                   'confidence_f32_bits': [struct.unpack('<I', struct.pack('<f', x))[0] for x in scores],
                   'outcomes': outcomes}
-        lines.append('bundle: ' + json.dumps(record))
-    cancelled = dict(record, completion='cancelled', outcomes=['cancelled'] * 3 + ['not_emitted'] * 3)
+        committed[request] += outcomes.count('accepted') + 1
+        blocks.append(record)
+    last = {record['request_id']: record['step_id'] for record in blocks}
+    expected, unproven = {}, 0
+    for record in blocks:
+        for position, outcome in enumerate(record['outcomes']):
+            if outcome == 'unknown' and last[record['request_id']] == record['step_id']:
+                unproven += 1
+                break
+            if outcome in ('accepted', 'unknown'):
+                expected[position] = expected.get(position, 0) + 1
+            if outcome != 'accepted':
+                break
+    lines = ['startup readiness: 1.0s', *('bundle: ' + json.dumps(record) for record in blocks)]
+    cancelled = dict(blocks[-1], step_id=str(records), completion='cancelled',
+                     outcomes=['cancelled'] * 3 + ['not_emitted'] * 3)
     lines.append('bundle: ' + json.dumps(cancelled))
     lines.append('diagnostic writer: dropped 3 lines (total 3)')
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('\n'.join(lines) + '\n')
-    return expected
+    return expected, unproven
 
 
 class Calibration(unittest.TestCase):
@@ -287,7 +304,7 @@ class Calibration(unittest.TestCase):
     def test_records_fit_each_positions_acceptance_given_earlier_ones(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'server.log'
-            expected = confidence_log(log, self.TRUTH, 6000)
+            expected, unproven = confidence_log(log, self.TRUTH, 6000)
             out = Path(directory) / 'out' / 'calibration.json'
             self.assertEqual(calibrate.main(['--sampled', str(log), '--positions', '3',
                                              '--out', str(out)]), 0)
@@ -298,11 +315,16 @@ class Calibration(unittest.TestCase):
         self.assertEqual(calibration['greedy'], calibration['sampled'])
         self.assertEqual(len(calibration['sampled']), 3)
         report = table['sampled']
-        self.assertEqual((report['records'], report['dropped_log_lines']), (6001, 3))
+        self.assertEqual((report['records'], report['dropped_log_lines'], report['complete']),
+                         (6001, 3, False))
+        self.assertEqual(report['unproven_stops'], unproven)
+        self.assertGreater(unproven, 0)
+        self.assertEqual(len(report['logs'][0]['sha256']), 64)
         for row, (scale, offset) in zip(report['positions'], self.TRUTH):
             position = row['position'] - 1
             # A position's samples are the records that reached it: the
-            # cancelled block and positions after the first unknown are out.
+            # cancelled block, positions after the first unknown, and an
+            # unknown no later record of its request proves rejected are out.
             self.assertEqual(row['samples'], expected[position])
             self.assertAlmostEqual(row['scale'], scale, delta=0.2)
             self.assertAlmostEqual(row['offset'], offset, delta=0.2)
@@ -320,13 +342,19 @@ class Calibration(unittest.TestCase):
             confidence_log(log, self.TRUTH, 400)
             with self.assertRaises(SystemExit) as thin:
                 calibrate.main(['--sampled', str(log), '--positions', '5', '--out', str(root / 'a.json')])
-            self.assertIn('position 3 has', str(thin.exception))
+            self.assertRegex(str(thin.exception), r'position [2-5] has \d+ samples, fewer than 200')
             other = root / 'other.log'
             confidence_log(other, self.TRUTH, 10, contract='other.drafter-confidence.v1')
             with self.assertRaises(SystemExit) as mixed:
                 calibrate.main(['--sampled', str(log), str(other), '--min-samples', '1',
                                 '--out', str(root / 'b.json')])
             self.assertIn('fit one at a time', str(mixed.exception))
+            repeated = root / 'repeated.log'
+            text = log.read_text().splitlines()
+            repeated.write_text('\n'.join(text + [text[1]]) + '\n')
+            with self.assertRaises(SystemExit) as repeats:
+                calibrate.main(['--sampled', str(repeated), '--min-samples', '1', '--out', str(root / 'e.json')])
+            self.assertIn('repeats', str(repeats.exception))
             (root / 'run' / 'config.json').write_text(json.dumps({'kinds': {'greedy': 1, 'sampled': 1}}))
             with self.assertRaises(SystemExit) as kinds:
                 calibrate.main(['--sampled', str(root / 'run'), '--out', str(root / 'c.json')])

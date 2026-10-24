@@ -81,7 +81,6 @@ impl<'a> Graphs<'a> {
                                 // Match launch_after_join: a full dependency
                                 // on the shared producer precedes this range.
                                 calls[0].plan.pdl = false;
-                                joined = false;
                             }
                             programs.issue(p, &calls, main)?;
                         }

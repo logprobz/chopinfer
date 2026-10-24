@@ -10,6 +10,7 @@ use std::path::PathBuf;
 pub struct Options {
     worker: u32,
     checked: bool,
+    compact: bool,
     widths: Vec<u32>,
     reference: PathBuf,
     candidate: PathBuf,
@@ -36,6 +37,7 @@ impl Options {
         }
         Ok(Self {
             worker,
+            compact: std::env::var("CHOPINFER_MOE_WIDE_COMPACT").as_deref() == Ok("1"),
             checked: env("CHOPINFER_MOE_WIDE_MEMCHECK")? == "1",
             widths,
             reference: env("CHOPINFER_MOE_WIDE_REFERENCE")?.into(),
@@ -264,12 +266,12 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     None
                 };
                 for pattern in 0..3 {
-                    let poisons: &[u8] = if options.checked {
+                    let poisons: &[u8] = if options.checked || options.compact {
                         &[0xa5]
                     } else {
                         &[0xa5, 0x5a]
                     };
-                    let lives = if options.checked {
+                    let lives = if options.checked || options.compact {
                         vec![rows, rows / 2, 0, rows]
                     } else {
                         vec![rows, rows / 2, 1, 0, rows]
@@ -366,15 +368,23 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     }
     let expected = options.widths.len() * if options.checked { 1 } else { 2 } * 4 * 3;
     if cases != expected
-        || replays != cases * if options.checked { 4 } else { 30 }
+        || replays
+            != cases
+                * if options.checked {
+                    4
+                } else if options.compact {
+                    12
+                } else {
+                    30
+                }
         || negatives != if options.checked { 0 } else { cases }
         || (!dry && !options.checked && destroyed != cases / 3 * 5)
     {
         return Err("full MoE executed inventory differs".into());
     }
     println!(
-        "MOE_FULL_COMPLETE worker={} checked={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} allocated_peak={peak} PASS",
-        options.worker, options.checked
+        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} allocated_peak={peak} PASS",
+        options.worker, options.checked, options.compact
     );
     Ok(())
 }

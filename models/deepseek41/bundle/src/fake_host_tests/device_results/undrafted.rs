@@ -1,12 +1,22 @@
 use super::*;
 use crate::fake_host_tests::dspark::host::MappedHost;
 
+#[cfg(feature = "state-capture")]
+mod capture;
+
 fn create(count: u32, enabled: bool) -> (Rc<Host>, BundleInstanceV1) {
+    create_with_sampling(count, enabled, false)
+}
+
+fn create_with_sampling(count: u32, enabled: bool, sampled: bool) -> (Rc<Host>, BundleInstanceV1) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
     host.speculation.set(Some((5, 32)));
-    let record = crate::config::tests::record(&shape, host.kv, count, false);
+    let record = crate::config::tests::with_coupled_drafts(
+        crate::config::tests::record(&shape, host.kv, count, false),
+        sampled,
+    );
     let instance = crate::dspark::cycle::with_undrafted_status(enabled, || {
         crate::device_results::with_override(None, || {
             crate::instance::ar_engram::with_enabled(true, || {

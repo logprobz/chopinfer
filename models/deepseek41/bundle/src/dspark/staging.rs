@@ -31,6 +31,15 @@ pub trait Program {
     fn project_committed(&mut self, pass: Projection) -> Result<(), String>;
     fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String>;
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String>;
+    #[cfg(feature = "state-capture")]
+    fn observe_before_draft(
+        &mut self,
+        _state: &super::state::State,
+        _staging: &Staging,
+        _inputs: &[Input],
+    ) -> Result<(), String> {
+        Ok(())
+    }
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String>;
     /// Detail of the most recent target callback, when its implementation records it.
     fn target_times(&self) -> super::timing::TargetTimes {
@@ -147,6 +156,22 @@ fn prefix(span: Span, bytes: u64) -> Result<Span, String> {
 }
 
 impl Staging {
+    /// Passive host bookkeeping, including non-text Engram lookback.
+    #[cfg(feature = "state-capture")]
+    pub(crate) fn capture_metadata(&self, requests: &[u64]) -> serde_json::Value {
+        serde_json::json!({
+            "lookback": self.lookback,
+            "histories": requests.iter().map(|&request| {
+                serde_json::json!({"request": request, "history": self.rows.history(request)})
+            }).collect::<Vec<_>>(),
+            "pending": self.pending.iter().map(|pending| {
+                serde_json::json!({"rows": format!("{:?}", pending.rows.rows),
+                    "tokens": pending.rows.tokens, "text": pending.text})
+            }).collect::<Vec<_>>(),
+            "confidence": self.confidence,
+        })
+    }
+
     pub fn new(g: &Geometry) -> Result<Self, String> {
         let hash = HashTables::of(g)?;
         Ok(Self {
@@ -454,6 +479,16 @@ impl<P> Adapter<'_, P> {
 impl<P: Program> Host for Adapter<'_, P> {
     type Error = String;
     type Gathered = Gathered;
+
+    #[cfg(feature = "state-capture")]
+    fn observe_before_draft(
+        &mut self,
+        state: &super::state::State,
+        inputs: &[Input],
+    ) -> Result<(), String> {
+        self.program
+            .observe_before_draft(state, self.staging, inputs)
+    }
 
     fn project_committed(&mut self, pass: Projection) -> Result<(), String> {
         if let Some(times) = &mut self.times {

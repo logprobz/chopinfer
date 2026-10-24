@@ -384,6 +384,24 @@ completes every Engram gather before returning success. Prefill, mixed and
 drafted steps keep their existing boundaries. This switch is experimental
 until the full-state transition and served bitwise gates pass.
 
+For untimed transition diagnostics, build the bundle with `state-capture`.
+This feature keeps native launches and ready logits enabled. Set
+`CHOPINFER_DSPARK_STATE_DIR` to a private external directory, create its
+`enabled` file, and supply `transitions.json`, for example:
+
+```json
+{"version":1,"before_draft":[4,5],"after_commit":[3,4,5],"requests":[1],"max_bytes":1073741824}
+```
+
+The step numbers count bundle executions, including prefill. Each selected
+boundary captures the full physical state and target KV, plus committed
+Engram lookback, lifecycle bookkeeping and resumed sampling inputs. A
+`before_draft` capture follows ordinary catch-up and precedes provisional
+draft writes; an `after_commit` capture does no catch-up. The plan allows
+at most eight points of each kind and 32 requests, within its byte budget.
+These readbacks synchronize device work. Run separate uncaptured native
+exactness and timing windows to check execution ordering and performance.
+
 ### DSpark qualification
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms

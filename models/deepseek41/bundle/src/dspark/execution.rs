@@ -151,6 +151,16 @@ pub trait Host {
     fn prefetch_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
         Ok(())
     }
+    /// Observe completed catch-up before a draft can change provisional rings.
+    /// This diagnostic must not advance state or request another catch-up.
+    #[cfg(feature = "state-capture")]
+    fn observe_before_draft(
+        &mut self,
+        _state: &State,
+        _inputs: &[Input],
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
     /// Compute all five positions, sequential Markov sampling and the
     /// confidence head, regardless of each block's emitted prefix length.
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error>;
@@ -317,6 +327,11 @@ impl Runtime {
             .map(|(request, _)| request)
             .collect::<Vec<_>>();
         self.catch_up_all(host, &catching_up)?;
+        #[cfg(feature = "state-capture")]
+        if inputs.iter().any(|input| input.rows.kind.drafts() > 0) {
+            let observed = host.observe_before_draft(&self.state, inputs);
+            self.host_result(observed)?;
+        }
         let blocks = self.state.begin_execution().map_err(Error::State)?;
         let drafting = inputs
             .iter()

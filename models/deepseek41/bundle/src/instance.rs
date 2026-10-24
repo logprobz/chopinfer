@@ -141,10 +141,12 @@ pub struct Instance {
     side_lanes: Vec<crate::shared_overlap::Lanes>,
     /// A full draft program for each exact item count, sharing graph ownership.
     draft_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
-    #[cfg(feature = "diagnostic-taps")]
+    #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
     state_capture_pages: BTreeMap<u64, Vec<i32>>,
-    #[cfg(feature = "diagnostic-taps")]
+    #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
     state_capture_root: Option<std::path::PathBuf>,
+    #[cfg(feature = "state-capture")]
+    transition_capture_bytes: std::cell::Cell<u64>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -979,10 +981,12 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         shared_overlap: crate::shared_overlap::Settings::from_env(),
         side_lanes: Vec::new(),
         draft_graphs: BTreeMap::new(),
-        #[cfg(feature = "diagnostic-taps")]
+        #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
         state_capture_pages: BTreeMap::new(),
-        #[cfg(feature = "diagnostic-taps")]
+        #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
         state_capture_root: std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").map(Into::into),
+        #[cfg(feature = "state-capture")]
+        transition_capture_bytes: std::cell::Cell::new(0),
         config,
         prefill_counts: Vec::new(),
         prefill_boundaries: Vec::new(),
@@ -1205,12 +1209,21 @@ impl Steps for Instance {
             self.log(&error);
             BundleStatusV1::InternalError
         })?;
+        #[cfg(all(feature = "state-capture", not(feature = "diagnostic-taps")))]
+        self.state_capture_pages.remove(&request);
         Ok(())
     }
 
     /// The Engram history takes the rows a commit kept, and forgets a
     /// request whose slot a cancel freed.
     fn ended(&mut self, ended: Ended<'_>) -> Result<(), BundleStatusV1> {
+        #[cfg(feature = "state-capture")]
+        if let Ended::Committed(committed) = ended {
+            self.capture_transition_commit(committed).map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::HostError
+            })?;
+        }
         #[cfg(feature = "diagnostic-taps")]
         if matches!(ended, Ended::Committed(_)) {
             self.capture_profile_chunks().map_err(|error| {
@@ -1221,7 +1234,7 @@ impl Steps for Instance {
         if self.dspark.is_some() {
             if let Ended::Cancelled(step) = ended {
                 for item in &step.items {
-                    #[cfg(feature = "diagnostic-taps")]
+                    #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
                     self.state_capture_pages.remove(&item.request);
                     self.dspark_forget(item.request);
                 }
@@ -1424,7 +1437,7 @@ pub(crate) fn set_image_flags_for_test(handle: runtime_bundle_abi::BundleHandleV
     });
 }
 
-#[cfg(all(test, feature = "diagnostic-taps"))]
+#[cfg(all(test, any(feature = "diagnostic-taps", feature = "state-capture")))]
 pub(crate) fn capture_dspark_state_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
     request: u64,
@@ -1439,7 +1452,7 @@ pub(crate) fn capture_dspark_state_for_test(
     })
 }
 
-#[cfg(all(test, feature = "diagnostic-taps"))]
+#[cfg(all(test, any(feature = "diagnostic-taps", feature = "state-capture")))]
 pub(crate) fn set_dspark_state_capture_root_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
     root: Option<std::path::PathBuf>,
@@ -1453,7 +1466,7 @@ pub(crate) fn set_dspark_state_capture_root_for_test(
     });
 }
 
-#[cfg(all(test, feature = "diagnostic-taps"))]
+#[cfg(all(test, any(feature = "diagnostic-taps", feature = "state-capture")))]
 pub(crate) fn dspark_state_capture_requests_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
 ) -> Vec<u64> {

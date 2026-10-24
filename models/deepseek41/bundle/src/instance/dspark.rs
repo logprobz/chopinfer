@@ -17,8 +17,10 @@ pub(crate) use graphs::drafter_launches_for_test;
 mod launch;
 pub(crate) mod prefetch;
 mod results;
-#[cfg(feature = "diagnostic-taps")]
+#[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
 mod state_capture;
+#[cfg(feature = "state-capture")]
+mod transition_capture;
 
 use std::collections::BTreeMap;
 
@@ -46,6 +48,15 @@ struct Work<'a> {
 }
 
 impl Program for Work<'_> {
+    #[cfg(feature = "state-capture")]
+    fn observe_before_draft(
+        &mut self,
+        state: &crate::dspark::state::State,
+        staging: &crate::dspark::staging::Staging,
+        inputs: &[Input],
+    ) -> Result<(), String> {
+        self.instance.capture_before_draft(state, staging, inputs)
+    }
     fn project_committed(&mut self, pass: Projection) -> Result<(), String> {
         self.instance.dspark_project(pass)
     }
@@ -396,7 +407,7 @@ impl Instance {
             self.log("DSpark allocated verify steps need device results");
             return BundleStatusV1::Unsupported;
         }
-        #[cfg(feature = "diagnostic-taps")]
+        #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
         if self.active_dspark_state_capture().is_some() {
             for phase in [&step.prefill, &step.decode] {
                 for (&request, pages) in phase.request_ids.iter().zip(&phase.block_tables) {

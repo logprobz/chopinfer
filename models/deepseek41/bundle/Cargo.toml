@@ -14,6 +14,8 @@ crate-type = ["rlib", "cdylib"]
 [features]
 # Per-layer taps of prefills (`src/taps.rs`); never in a serving build.
 diagnostic-taps = ["dep:serde_json"]
+# Passive state snapshots, with native launches and result readiness unchanged.
+state-capture = ["dep:serde_json"]
 
 [dependencies]
 serde_json = { workspace = true, optional = true }

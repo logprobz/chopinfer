@@ -6,6 +6,10 @@ const VOCAB: usize = 16;
 
 #[derive(Default)]
 struct FakeHost {
+    #[cfg(feature = "state-capture")]
+    observe: bool,
+    #[cfg(feature = "state-capture")]
+    observations: Vec<(State, Vec<Input>)>,
     journal: Vec<String>,
     ids: Vec<[u32; WIDTH]>,
     scores: Vec<[f32; WIDTH]>,
@@ -36,6 +40,15 @@ impl FakeHost {
 impl Host for FakeHost {
     type Error = &'static str;
     type Gathered = Vec<TargetRows>;
+
+    #[cfg(feature = "state-capture")]
+    fn observe_before_draft(&mut self, state: &State, inputs: &[Input]) -> Result<(), Self::Error> {
+        if self.observe {
+            self.observations.push((state.clone(), inputs.to_vec()));
+            self.event("observe", inputs.len().to_string())?;
+        }
+        Ok(())
+    }
 
     fn project_committed(&mut self, pass: Projection) -> Result<(), Self::Error> {
         self.event(
@@ -283,6 +296,89 @@ fn input(budget: u32) -> Input {
         tokens: vec![4],
         noise: crate::dspark::execution::Noise::GREEDY,
     }
+}
+
+#[cfg(feature = "state-capture")]
+#[test]
+fn passive_observers_follow_catch_up_across_two_raw_wraps_without_advancing_state() {
+    let run = |observe| {
+        let state = State::new(Config {
+            slots: 1,
+            stages: 3,
+            window: 128,
+            max_prefill_rows: 512,
+            context_tokens: 512,
+            position_capacity: 512,
+        })
+        .unwrap();
+        let mut runtime = Runtime::new(state, VOCAB as u32, 2).unwrap();
+        let mut host = FakeHost {
+            observe,
+            ..Default::default()
+        };
+        let prompt = Input {
+            rows: Rows {
+                request: 41,
+                slot: 0,
+                start: 0,
+                kind: Kind::Prefill { rows: 3 },
+            },
+            tokens: vec![1, 2, 3],
+            noise: Noise::GREEDY,
+        };
+        runtime.execute(&mut host, &[prompt]).unwrap();
+        runtime.commit(&mut host, &[]).unwrap();
+        for start in 3..273 {
+            let mut item = input(0);
+            item.rows.start = start;
+            runtime.execute(&mut host, &[item]).unwrap();
+            runtime.commit(&mut host, &[]).unwrap();
+        }
+        assert!(host.observations.is_empty());
+        assert_eq!(runtime.state().context(41).unwrap().projected(), [0; 3]);
+        for (depth, kept) in [(1, 1), (1, 2), (3, 4), (1, 1)] {
+            let start = runtime.state().context(41).unwrap().end;
+            let mut item = input(depth);
+            item.rows.start = start;
+            item.noise = Noise::sampled(91, start - 2, 1.0);
+            let from = host.journal.len();
+            runtime.execute(&mut host, &[item.clone()]).unwrap();
+            if observe {
+                let (state, inputs) = host.observations.last().unwrap();
+                assert_eq!(state.context(41).unwrap().projected(), [start; 3]);
+                assert_eq!(inputs, &[item]);
+                let lines = &host.journal[from..];
+                let projected = lines
+                    .iter()
+                    .rposition(|line| line.starts_with("project_rows "))
+                    .unwrap();
+                let observed = lines
+                    .iter()
+                    .position(|line| line.starts_with("observe "))
+                    .unwrap();
+                let drafted = lines
+                    .iter()
+                    .position(|line| line.starts_with("draft "))
+                    .unwrap();
+                assert!(projected < observed && observed < drafted);
+            }
+            runtime.commit(&mut host, &[(41, kept)]).unwrap();
+        }
+        (runtime.state.clone(), host.committed)
+    };
+    assert_eq!(run(false), run(true));
+}
+
+#[cfg(feature = "state-capture")]
+#[test]
+fn a_failed_passive_observer_poisoned_the_step_before_drafting() {
+    let (mut runtime, mut host) = setup();
+    host.observe = true;
+    host.fail = Some("observe");
+    assert!(runtime.execute(&mut host, &[input(1)]).is_err());
+    assert!(runtime.state().is_poisoned());
+    assert!(!host.journal.iter().any(|line| line.starts_with("draft ")));
+    assert!(runtime.commit(&mut host, &[(41, 1)]).is_err());
 }
 
 #[test]

@@ -8,6 +8,7 @@ use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 use std::path::Path;
 
 impl Instance {
+    #[cfg(feature = "diagnostic-taps")]
     pub(crate) fn capture_dspark_state(&mut self, request: u64) -> Result<(), String> {
         let result = match self.active_dspark_state_capture() {
             Some(root) => self.capture_dspark_state_to(request, root),
@@ -23,6 +24,7 @@ impl Instance {
             .filter(|root| root.join("enabled").is_file())
     }
 
+    #[cfg(any(feature = "diagnostic-taps", test))]
     pub(crate) fn capture_dspark_state_to(&self, request: u64, root: &Path) -> Result<(), String> {
         let Some(context) = self
             .dspark
@@ -35,21 +37,33 @@ impl Instance {
         self.capture_complete_state_to(request, context.end, root)
     }
 
+    #[cfg(any(feature = "diagnostic-taps", test))]
     pub(crate) fn capture_complete_state_to(
         &self,
         request: u64,
         end: u64,
         root: &Path,
     ) -> Result<(), String> {
-        let slot = self
-            .ledger
-            .committed(request, end)
-            .map_err(|e| format!("state capture ledger: {e:?}"))?;
         let context = self
             .dspark
             .as_ref()
             .and_then(|d| d.runtime.as_ref())
             .and_then(|r| r.state().context(request));
+        self.capture_complete_state_with_context(request, end, context, root, None)
+    }
+
+    pub(super) fn capture_complete_state_with_context(
+        &self,
+        request: u64,
+        end: u64,
+        context: Option<&crate::dspark::state::Context>,
+        root: &Path,
+        budget: Option<(&std::cell::Cell<u64>, u64)>,
+    ) -> Result<(), String> {
+        let slot = self
+            .ledger
+            .committed(request, end)
+            .map_err(|error| format!("state capture ledger: {error:?}"))?;
         let retained_start = context.map_or(
             end.saturating_sub(u64::from(self.config.shape.geometry.shape.attention.window)),
             |c| c.retained_start,
@@ -83,13 +97,12 @@ impl Instance {
             }
         }
         let directory = root.join(format!("request-{request}"));
-        std::fs::create_dir(&directory)
-            .map_err(|e| format!("DSpark state capture directory: {e}"))?;
         let page_ids = self
             .state_capture_pages
             .get(&request)
             .ok_or("DSpark state capture has no current block table")?;
         let mut paged_pieces = Vec::new();
+        let mut copies = Vec::new();
         for (rank, buffers) in self.buffers.iter().enumerate() {
             let spans = table
                 .descriptors
@@ -105,9 +118,6 @@ impl Instance {
                     )
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let bytes = self.read_capture_spans(rank, &spans)?;
-            std::fs::write(directory.join(format!("rank-{rank}.bin")), bytes)
-                .map_err(|e| format!("DSpark state capture write: {e}"))?;
             let mut paged = Vec::new();
             let mut metadata = Vec::new();
             let mut at = 0;
@@ -145,9 +155,7 @@ impl Instance {
                     }
                 }
             }
-            let bytes = self.read_capture_spans(rank, &paged)?;
-            std::fs::write(directory.join(format!("kv-rank-{rank}.bin")), bytes)
-                .map_err(|e| format!("DSpark paged state capture write: {e}"))?;
+            copies.push((spans, paged));
             if rank == 0 {
                 paged_pieces = metadata;
             } else if metadata != paged_pieces {
@@ -162,13 +170,39 @@ impl Instance {
             "end":end, "retained_start":retained_start,
             "projected":projected, "ranks":self.ranks.len(), "pieces":pieces, "paged_pieces":paged_pieces,
         });
-        std::fs::write(
-            directory.join("state.json"),
-            serde_json::to_vec_pretty(&metadata).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| format!("DSpark state capture metadata: {e}"))?;
+        let metadata = serde_json::to_vec_pretty(&metadata).map_err(|e| e.to_string())?;
+        let bytes = copies
+            .iter()
+            .flat_map(|(state, kv)| state.iter().chain(kv))
+            .try_fold(metadata.len() as u64, |sum, span| {
+                sum.checked_add(span.length)
+            })
+            .ok_or("DSpark state capture extent overflow")?;
+        if let Some((used, limit)) = budget {
+            let next = used
+                .get()
+                .checked_add(bytes)
+                .filter(|&next| next <= limit)
+                .ok_or("DSpark transition capture exceeds its byte budget")?;
+            used.set(next);
+        }
+        std::fs::create_dir(&directory)
+            .map_err(|e| format!("DSpark state capture directory: {e}"))?;
+        for (rank, (state, kv)) in copies.iter().enumerate() {
+            for (name, spans) in [
+                (format!("rank-{rank}.bin"), state),
+                (format!("kv-rank-{rank}.bin"), kv),
+            ] {
+                let bytes = self.read_capture_spans(rank, spans)?;
+                std::fs::write(directory.join(name), bytes)
+                    .map_err(|e| format!("DSpark state capture write: {e}"))?;
+            }
+        }
+        std::fs::write(directory.join("state.json"), metadata)
+            .map_err(|e| format!("DSpark state capture metadata: {e}"))?;
         Ok(())
     }
+    #[cfg(feature = "diagnostic-taps")]
     pub(crate) fn capture_profile_boundary(
         &self,
         request: u64,
@@ -186,6 +220,7 @@ impl Instance {
         self.capture_complete_state_to(request, end, &directory)
     }
 
+    #[cfg(feature = "diagnostic-taps")]
     pub(crate) fn capture_profile_chunks(&self) -> Result<(), String> {
         for boundary in &self.prefill_boundaries {
             self.capture_profile_boundary(boundary.request_id, boundary.chunk_end, "chunk")?;
@@ -193,6 +228,7 @@ impl Instance {
         Ok(())
     }
 
+    #[cfg(feature = "diagnostic-taps")]
     pub(crate) fn capture_profile_logits(
         &self,
         views: &[runtime_bundle_abi::BundleLogitsViewV1],

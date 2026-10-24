@@ -94,7 +94,7 @@ fn target_graphs_capture_each_exact_verify_width() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-#[cfg(feature = "diagnostic-taps")]
+#[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
 #[test]
 fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -179,7 +179,7 @@ fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(feature = "diagnostic-taps")]
+#[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
 #[test]
 fn disabled_state_capture_does_not_retain_block_tables() {
     let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())

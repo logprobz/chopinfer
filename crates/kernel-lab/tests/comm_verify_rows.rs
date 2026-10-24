@@ -6,6 +6,9 @@ use kernels_sm120::comm;
 use runtime_cuda::{DeviceBuffer, GraphExec};
 use std::collections::BTreeMap;
 
+#[path = "comm_verify_rows/scatter_blocks.rs"]
+mod scatter_blocks;
+
 const WIDTH: usize = 5120;
 const ROWS: [u32; 7] = [32, 33, 40, 48, 56, 63, 64];
 const GUARD: usize = 256;

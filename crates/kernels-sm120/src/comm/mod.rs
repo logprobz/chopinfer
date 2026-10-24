@@ -13,6 +13,7 @@ pub mod owned_sum_f32;
 pub mod phased_bf16;
 pub mod phased_f32;
 pub mod phased_turns_bf16;
+pub mod scatter_blocks;
 pub mod sinkhorn_epilogue;
 pub mod sinkhorn_split;
 pub mod sinkhorn_split_tree;

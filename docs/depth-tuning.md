@@ -132,3 +132,29 @@ samples. With the KV pool fixed, the free memory of an arm with a wider
 graph budget less the default arm's is what the wider graphs and buffers
 cost. DeepSeek's costs job measures 16 to 48 rows at C8 and 32 to 96 rows
 at C16 (96 runs without a graph).
+
+## Confidence calibration
+
+`--speculation-confidence` (profile `speculation.confidence`, see
+[serving profiles](serving-profiles.md#drafter-confidence)) needs a
+calibration of the drafter's raw confidence, fitted on CPU from the
+drafter records a sampled run's servers log (`*.drafter-confidence.v1`):
+
+```sh
+python3 -B tools/tune/calibrate.py --sampled "$RUN" \
+    --out "$CHOPINFER_DATA/calibration/<model>/calibration.json"
+```
+
+`$RUN` is a tuner run whose config measures only sampled windows, such as
+the costs job above, or server logs. Position j's samples are the
+committed blocks whose drafts before j were accepted and whose draft j was
+verified, labelled by whether it was accepted, so the fit is the chance a
+draft is accepted when every earlier one was. Each position needs
+`--min-samples` (200) of them, so record arms that draft as deep as the
+speculative tokens. Fit on runs served without a calibration. The report
+beside the output lists per position the samples, accepted given earlier,
+accepted/drafted (the share of drafted tokens accepted), the fit, and log
+loss in sample, held out over two folds by request, and for a constant
+rate; a fit that does not beat the constant held out carries no
+information. Greedy pairs repeat the sampled fit unless `--greedy` runs are
+given.

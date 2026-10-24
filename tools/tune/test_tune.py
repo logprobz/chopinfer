@@ -7,6 +7,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import calibrate  # noqa: E402
 import prompts  # noqa: E402
 import recorded  # noqa: E402
 import report  # noqa: E402
@@ -242,6 +243,97 @@ class Tuner(unittest.TestCase):
             out = report.evaluate(run)
         self.assertEqual(out['selection']['1']['depth'], 1)
         self.assertFalse(out['selection']['1']['depths'][2]['stable'])
+
+
+
+def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confidence.v1'):
+    """A server log of drafter records drawn from `truth`, per position
+    `(scale, offset)`, and the samples each position should yield."""
+    import math
+    import random
+    import struct
+    rng = random.Random(seed)
+    expected = {}
+    lines = ['startup readiness: 1.0s']
+    for index in range(records):
+        emitted = rng.choice((3, 4, 5))
+        scores = [struct.unpack('<f', struct.pack('<f', rng.uniform(-3, 3)))[0] for _ in range(6)]
+        outcomes = ['not_emitted'] * 6
+        for position in range(emitted):
+            outcomes[position] = 'unknown'
+        for position in range(emitted):
+            expected[position] = expected.get(position, 0) + 1
+            scale, offset = truth[position]
+            if rng.random() >= 1 / (1 + math.exp(-(scale * scores[position] + offset))):
+                break
+            outcomes[position] = 'accepted'
+        record = {'schema': 'chopinfer.fixture.drafter-confidence.v1', 'confidence_contract': contract,
+                  'instance_id': '1', 'step_id': str(index), 'request_id': str(index % 97),
+                  'emitted_positions': emitted, 'completion': 'committed', 'draft_ids': [1] * 6,
+                  'confidence_f32_bits': [struct.unpack('<I', struct.pack('<f', x))[0] for x in scores],
+                  'outcomes': outcomes}
+        lines.append('bundle: ' + json.dumps(record))
+    cancelled = dict(record, completion='cancelled', outcomes=['cancelled'] * 3 + ['not_emitted'] * 3)
+    lines.append('bundle: ' + json.dumps(cancelled))
+    lines.append('diagnostic writer: dropped 3 lines (total 3)')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(lines) + '\n')
+    return expected
+
+
+class Calibration(unittest.TestCase):
+    TRUTH = [(1.5, 0.5), (1.2, 0.2), (1.0, 0.0), (0.8, -0.2), (0.6, -0.4)]
+
+    def test_records_fit_each_positions_acceptance_given_earlier_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'server.log'
+            expected = confidence_log(log, self.TRUTH, 6000)
+            out = Path(directory) / 'out' / 'calibration.json'
+            self.assertEqual(calibrate.main(['--sampled', str(log), '--positions', '3',
+                                             '--out', str(out)]), 0)
+            calibration = json.loads(out.read_text())
+            table = json.loads(out.with_suffix('.report.json').read_text())
+        self.assertEqual(calibration['contract'], 'fixture.drafter-confidence.v1')
+        self.assertEqual(calibration['floor'], 1)
+        self.assertEqual(calibration['greedy'], calibration['sampled'])
+        self.assertEqual(len(calibration['sampled']), 3)
+        report = table['sampled']
+        self.assertEqual((report['records'], report['dropped_log_lines']), (6001, 3))
+        for row, (scale, offset) in zip(report['positions'], self.TRUTH):
+            position = row['position'] - 1
+            # A position's samples are the records that reached it: the
+            # cancelled block and positions after the first unknown are out.
+            self.assertEqual(row['samples'], expected[position])
+            self.assertAlmostEqual(row['scale'], scale, delta=0.2)
+            self.assertAlmostEqual(row['offset'], offset, delta=0.2)
+            self.assertLess(row['log_loss_held_out'], row['log_loss_constant'])
+            self.assertAlmostEqual(row['mean_predicted'], row['accepted_given_earlier'], delta=0.01)
+            self.assertLessEqual(row['accepted_over_drafted'], 1.0)
+        for pair in calibration['sampled']:
+            for value in pair:
+                self.assertEqual(value, calibrate.f32(value))
+
+    def test_thin_positions_mixed_contracts_and_other_kinds_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'run' / 'd5' / 'server' / 'server.log'
+            confidence_log(log, self.TRUTH, 400)
+            with self.assertRaises(SystemExit) as thin:
+                calibrate.main(['--sampled', str(log), '--positions', '5', '--out', str(root / 'a.json')])
+            self.assertIn('position 3 has', str(thin.exception))
+            other = root / 'other.log'
+            confidence_log(other, self.TRUTH, 10, contract='other.drafter-confidence.v1')
+            with self.assertRaises(SystemExit) as mixed:
+                calibrate.main(['--sampled', str(log), str(other), '--min-samples', '1',
+                                '--out', str(root / 'b.json')])
+            self.assertIn('fit one at a time', str(mixed.exception))
+            (root / 'run' / 'config.json').write_text(json.dumps({'kinds': {'greedy': 1, 'sampled': 1}}))
+            with self.assertRaises(SystemExit) as kinds:
+                calibrate.main(['--sampled', str(root / 'run'), '--out', str(root / 'c.json')])
+            self.assertIn("not only sampled", str(kinds.exception))
+            (root / 'run' / 'config.json').write_text(json.dumps({'kinds': {'sampled': 1.0}}))
+            self.assertEqual(calibrate.main(['--sampled', str(root / 'run'), '--positions', '2',
+                                             '--min-samples', '50', '--out', str(root / 'd.json')]), 0)
 
 
 if __name__ == '__main__':

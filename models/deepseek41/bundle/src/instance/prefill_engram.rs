@@ -1,10 +1,10 @@
-//! Prepared, per-layer Engram uploads for eager AR text prefills.
+//! Prepared, per-layer Engram uploads for eager text prefills.
 //! Enqueue before compute, then join each transfer at its first consumer.
 mod plan;
 pub(super) use plan::Plan;
 
 use super::Instance;
-use crate::engram_rows::Hashed;
+use crate::engram_rows::{Destination, Hashed};
 use bundle_runtime::resources::{allocate_span, upload_bytes};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
@@ -201,11 +201,51 @@ impl Gathers {
 }
 
 impl Instance {
+    /// The exact row domain read by the target, for both prepared gathers
+    /// and their synchronous fallback. DSpark separates prefill and decode.
+    pub(super) fn engram_destinations(
+        &self,
+        scratch: &crate::buffers::Scratch<Span>,
+        rows: u32,
+    ) -> Result<Vec<Destination>, BundleAbiError> {
+        let shape = &self.config.shape;
+        if let Some(device) = &self.dspark {
+            let bytes = u64::from(rows) * u64::from(crate::ops::dense::engram_k(shape.geometry));
+            device
+                .engram_destinations(scratch)
+                .and_then(|destinations| {
+                    destinations
+                        .into_iter()
+                        .map(|destination| {
+                            Ok(Destination {
+                                codes: crate::dspark::device::slice(destination.codes, 0, bytes)?,
+                                scales: crate::dspark::device::slice(
+                                    destination.scales,
+                                    0,
+                                    bytes / 32,
+                                )?,
+                            })
+                        })
+                        .collect()
+                })
+                .map_err(|_| BundleAbiError::InvalidRange("DSpark prefill Engram destinations"))
+        } else {
+            Ok((0..shape.geometry.engram_layers() as usize)
+                .map(|layer| Destination {
+                    codes: crate::buffers::engram_staged(scratch.engram_codes, shape, layer, rows),
+                    scales: crate::buffers::engram_staged(
+                        scratch.engram_scales,
+                        shape,
+                        layer,
+                        rows,
+                    ),
+                })
+                .collect())
+        }
+    }
+
     pub(super) fn prepare_prefill_engram(&mut self) -> Result<(), BundleAbiError> {
-        if !enabled().map_err(BundleAbiError::Status)?
-            || self.dspark.is_some()
-            || !self.services.has_async_mapped_gather()
-        {
+        if !enabled().map_err(BundleAbiError::Status)? || !self.services.has_async_mapped_gather() {
             return Ok(());
         }
         let Some(tables) = self
@@ -228,13 +268,12 @@ impl Instance {
         let bytes = u64::from(PREFILL_TOKENS) * columns as u64 * 4;
         let mut planes = vec![Vec::new(); tables.len()];
         for (rank, buffers) in self.buffers.iter().enumerate() {
+            let destinations = self.engram_destinations(&buffers.scratch, PREFILL_TOKENS)?;
             for (layer, table) in tables.iter().enumerate() {
-                for (plane, staged) in [
-                    (&table.codes, buffers.scratch.engram_codes),
-                    (&table.scales, buffers.scratch.engram_scales),
+                for (plane, destination) in [
+                    (&table.codes, destinations[layer].codes),
+                    (&table.scales, destinations[layer].scales),
                 ] {
-                    let destination =
-                        crate::buffers::engram_staged(staged, shape, layer, PREFILL_TOKENS);
                     if destination.length
                         != u64::from(PREFILL_TOKENS) * columns as u64 * plane.row_bytes
                     {

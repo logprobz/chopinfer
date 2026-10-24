@@ -491,6 +491,7 @@ impl Instance {
         &self,
         inputs: PhaseInputs,
         media: Option<PrefillMedia>,
+        staged_engram: Option<Hashed>,
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
         // An allocated step's items verify device-chosen counts, so it
@@ -587,12 +588,19 @@ impl Instance {
             self.log(&error);
             BundleStatusV1::InvalidArgument
         })?;
+        if let Some(hashed) = &staged_engram
+            && (self.dspark.is_none()
+                || arena != PREFILL
+                || hashed.rows() != inputs.token_ids.len())
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
         let engram = match self.engram.as_ref().filter(|_| self.dspark.is_none()) {
             Some(engram) => Some(engram.hash(&inputs).map_err(|error| {
                 self.log(&format!("Engram rows: {error}"));
                 BundleStatusV1::InvalidArgument
             })?),
-            None => None,
+            None => staged_engram,
         };
         let live = if allocated.is_some() {
             phase.rows()
@@ -813,8 +821,7 @@ impl Instance {
                             stream,
                             image,
                             rank as u32,
-                            &self.config.shape,
-                            scratch,
+                            &self.engram_destinations(scratch, hashed.rows() as u32)?,
                             hashed,
                         )
                         .map_err(|error| match error {
@@ -1354,7 +1361,7 @@ impl Instance {
         sink: &mut ExecuteResultSinkV1,
         step: PackedStep,
     ) -> BundleStatusV1 {
-        self.execute_packed_timed(request, sink, step, None)
+        self.execute_packed_timed(request, sink, step, None, None)
     }
 
     pub(super) fn execute_packed_timed(
@@ -1362,6 +1369,7 @@ impl Instance {
         request: &[u8],
         sink: &mut ExecuteResultSinkV1,
         step: PackedStep,
+        prefill_engram: Option<Hashed>,
         mut times: Option<&mut crate::dspark::timing::TargetTimes>,
     ) -> BundleStatusV1 {
         let mut items = items(&step.prefill);
@@ -1393,13 +1401,16 @@ impl Instance {
             return BundleStatusV1::InternalError;
         }
         let mut runs = Vec::new();
-        for (inputs, media) in [(step.prefill, media), (step.decode, None)] {
+        for (inputs, media, hashed) in [
+            (step.prefill, media, prefill_engram),
+            (step.decode, None, None),
+        ] {
             if inputs.request_ids.is_empty() {
                 continue;
             }
             match crate::dspark::timing::measure(
                 times.as_deref_mut().map(|t| &mut t.lower_us),
-                || self.plan_run(inputs, media),
+                || self.plan_run(inputs, media, hashed),
             ) {
                 Ok(run) => runs.push(run),
                 Err(error) => return error,
@@ -1510,7 +1521,7 @@ impl Instance {
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
-                if run.prefill_engram.is_some() {
+                if run.prefill_engram.is_some() && self.dspark.is_none() {
                     self.prefill_engram
                         .as_ref()
                         .expect("prepared prefill gather")
@@ -1533,6 +1544,14 @@ impl Instance {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)
         })?;
+        // DSpark's per-phase status checks only save device rows. The
+        // consolidated boundary above completes every consumer stream.
+        if self.dspark.is_some() && runs.iter().any(|run| run.prefill_engram.is_some()) {
+            self.prefill_engram
+                .as_ref()
+                .expect("prepared prefill gather")
+                .finish(&self.services, self.ranks.len())?;
+        }
         self.finish_dspark_cycle(sink).map_err(|error| {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)

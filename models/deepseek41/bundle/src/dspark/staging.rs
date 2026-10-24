@@ -58,6 +58,12 @@ pub trait Program {
         Ok(false)
     }
 
+    /// Retain prefill IDs for target planning. This must not enqueue IO:
+    /// the target first validates its consumer boundaries and fallback.
+    fn stage_prefill_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
+        Ok(false)
+    }
+
     /// Whether drafted steps read each item's first Engram rows while the
     /// drafter runs (`prefetch_engram`).
     fn prefetches_engram(&self) -> bool {
@@ -128,6 +134,7 @@ impl Gathered {
 }
 
 struct GatheredPhase {
+    prefill: bool,
     hashed: Hashed,
     destinations: Vec<Vec<Destination>>,
 }
@@ -297,6 +304,7 @@ impl Staging {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(GatheredPhase {
+            prefill,
             hashed,
             destinations,
         })
@@ -596,7 +604,7 @@ impl<P: Program> Host for Adapter<'_, P> {
             || staging.hash(rows, text, ranks),
         )
     }
-    fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
+    fn upload_engram(&mut self, mut gathered: Gathered) -> Result<(), String> {
         let started = self.times.is_some().then(std::time::Instant::now);
         let deferred = match gathered.undrafted() {
             Some(hashed) => self.program.defer_engram(hashed),
@@ -604,7 +612,20 @@ impl<P: Program> Host for Adapter<'_, P> {
         };
         let result = match deferred {
             Ok(true) => Ok(()),
-            Ok(false) => self.upload(gathered),
+            Ok(false) => {
+                let mut phases = Vec::new();
+                for phase in gathered.phases {
+                    if phase.prefill
+                        && phase.hashed.rows() > 0
+                        && self.program.stage_prefill_engram(&phase.hashed)?
+                    {
+                        continue;
+                    }
+                    phases.push(phase);
+                }
+                gathered.phases = phases;
+                self.upload(gathered)
+            }
             Err(error) => Err(error),
         };
         if let (Some(times), Some(started)) = (self.times.as_mut(), started) {

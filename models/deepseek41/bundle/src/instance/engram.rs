@@ -23,14 +23,10 @@ use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::ledger::{Committed, Ledger};
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::own_ops::engram::HashTables;
-use runtime_bundle_abi::{
-    BundleCompiledImageHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, HostServicesV1,
-};
+use runtime_bundle_abi::{BundleCompiledImageHandleV1, BundleStreamHandleV1, HostServicesV1};
 use runtime_bundle_sdk::rank_index::RankIndex;
 
-use crate::buffers::{Scratch, engram_staged};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Plane, Step, Table};
-use crate::shape::Shape;
 
 /// Engram layer `layer`'s table views: its codes, then its scales.
 fn table_views(layer: u32) -> [String; 2] {
@@ -161,35 +157,25 @@ impl Engram {
     /// Has the host gather `hashed`'s table rows of every Engram layer into
     /// rank `rank`'s staging buffers on `stream`; nothing when the image
     /// maps no table or the phase has no rows.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn gather(
         &self,
         services: &HostServicesV1,
         stream: BundleStreamHandleV1,
         image: BundleCompiledImageHandleV1,
         rank: u32,
-        shape: &Shape,
-        scratch: &Scratch<DeviceBufferSpanV1>,
+        destinations: &[Destination],
         hashed: &Hashed,
     ) -> Result<(), engram_rows::Error> {
         let Some(tables) = &self.tables else {
             return Ok(());
         };
-        let rows = u32::try_from(hashed.rows())
-            .map_err(|_| engram_rows::Error::Refused("Engram rows overflow"))?;
-        let destinations: Vec<Destination> = (0..tables.len())
-            .map(|layer| Destination {
-                codes: engram_staged(scratch.engram_codes, shape, layer, rows),
-                scales: engram_staged(scratch.engram_scales, shape, layer, rows),
-            })
-            .collect();
         let mapped = Mapped {
             image,
             rank,
             tables,
         };
         self.rows
-            .gather(services, stream, mapped, &destinations, hashed)
+            .gather(services, stream, mapped, destinations, hashed)
     }
 
     /// Holds the step's tokens of every phase until the step ends.

@@ -40,6 +40,7 @@ struct Work<'a> {
     step: Option<PackedStep>,
     sink: Option<&'a mut ExecuteResultSinkV1>,
     target_times: Option<crate::dspark::timing::TargetTimes>,
+    prefill_hashes: Option<crate::engram_rows::Hashed>,
 }
 
 impl Program for Work<'_> {
@@ -87,6 +88,7 @@ impl Program for Work<'_> {
             self.request,
             sink,
             step,
+            self.prefill_hashes.take(),
             self.target_times.as_mut(),
         );
         if status != BundleStatusV1::Success {
@@ -132,6 +134,20 @@ impl Program for Work<'_> {
 
     fn defer_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<bool, String> {
         self.instance.defer_dspark_engram(hashed)
+    }
+
+    fn stage_prefill_engram(
+        &mut self,
+        hashed: &crate::engram_rows::Hashed,
+    ) -> Result<bool, String> {
+        if self.instance.prefill_engram.is_none() {
+            return Ok(false);
+        }
+        if self.prefill_hashes.is_some() {
+            return Err("DSpark prefill hashes already staged".into());
+        }
+        self.prefill_hashes = Some(hashed.clone());
+        Ok(true)
     }
 
     fn prefetches_engram(&self) -> bool {
@@ -285,6 +301,7 @@ impl Instance {
             target_times: times
                 .as_ref()
                 .map(|_| crate::dspark::timing::TargetTimes::default()),
+            prefill_hashes: None,
         };
         let mut host = Adapter {
             program: &mut program,

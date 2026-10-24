@@ -14,8 +14,31 @@ fn try_create_mapped(
     on: bool,
     skip: bool,
 ) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_backend(
+        host,
+        on,
+        skip,
+        dspark::host::MappedHost::with_delayed_completion(Rc::clone(host)),
+    )
+}
+
+fn create_backend(
+    host: &Rc<Host>,
+    on: bool,
+    skip: bool,
+    backend: dspark::host::MappedHost,
+) -> Result<BundleInstanceV1, BundleAbiError> {
     host.drafter.set(true);
-    let mut record = crate::config::tests::record(&host.shape, host.kv, 1, false);
+    let mut record = crate::config::tests::record(
+        &host.shape,
+        host.kv,
+        if host.speculation.get().is_some() {
+            16
+        } else {
+            1
+        },
+        false,
+    );
     let tag = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
         .position(|x| x == MODEL_OPTIONS_TAG_V1)
@@ -32,11 +55,55 @@ fn try_create_mapped(
         api()
             .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
             .unwrap()
-            .create(
-                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
-                &record,
-            )
+            .create(HostServicesTableV1::new(Rc::new(backend)), &record)
     })
+}
+
+#[test]
+fn dspark_prefill_gather_failures_are_terminal_before_publication() {
+    for (failure, after) in [("enqueue", 1), ("wait", 1), ("complete", 0)] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.speculation.set(Some((5, 32)));
+        let backend =
+            dspark::host::MappedHost::with_gather_failure(Rc::clone(&host), failure, after);
+        let mut instance = create_backend(&host, true, true, backend).unwrap();
+        let request = encode(
+            &prompt(7, 0, 0, 193, true),
+            &[Boundary {
+                request_id: 7,
+                prompt_tokens: 193,
+                chunk_end: 193,
+                chunk_tokens: 8192,
+            }],
+        )
+        .unwrap();
+        let mut sink = Views::default();
+        assert!(instance.execute_prefill(&request, &mut sink).is_err());
+        assert_eq!(sink.rows(), 0, "{failure} published logits");
+        assert!(crate::instance::dspark_context(instance.handle(), 7).is_none());
+        assert!(
+            host.journal
+                .borrow()
+                .iter()
+                .any(|line| line == &format!("async mapped failure {failure}"))
+        );
+        let _ = instance.cancel();
+        let begin = host.journal.borrow().len();
+        assert!(
+            instance
+                .execute_prefill(&request, &mut Views::default())
+                .is_err()
+        );
+        assert!(
+            host.journal.borrow()[begin..]
+                .iter()
+                .all(|line| !line.starts_with("launch ") && !line.starts_with("async mapped ids "))
+        );
+        match instance.destroy() {
+            Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
+            Err(_) => assert!(instance.is_poisoned()),
+        }
+    }
 }
 
 fn launches(host: &Host) -> BTreeMap<String, Vec<String>> {
@@ -263,20 +330,193 @@ fn private_id_allocation_failures_release_prior_resources() {
 }
 
 #[test]
-fn enabled_prefill_flag_preserves_dspark_resources() {
-    let mut reference = None;
-    for on in [false, true] {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        host.speculation.set(Some((5, 32)));
-        let mut instance = create_mapped(&host, on, true);
-        assert!(indices(instance.handle()).is_empty());
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-        let journal = host.journal.borrow().clone();
-        if let Some(reference) = &reference {
-            assert_eq!(&journal, reference);
-        } else {
-            reference = Some(journal);
+fn dspark_prefill_joins_after_submission_and_finishes_after_status() {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    for skip in [false, true] {
+        let mut reference = None;
+        for on in [false, true] {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            host.speculation.set(Some((5, 32)));
+            let mut instance = create_mapped(&host, on, skip);
+            let spans = indices(instance.handle());
+            assert_eq!(spans.len(), if on { 2 } else { 0 });
+            let mut oracle = EngramRows::new(HashTables::of(&FLASH).unwrap());
+            let mut starts = [0_u64; 4];
+            let slots = [3, 7, 0, 15];
+            let mut contexts = Vec::new();
+            for (lengths, cancel) in [
+                ([192, 193, 255, 256], false),
+                ([64, 65, 127, 128], false),
+                ([17, 19, 23, 29], true),
+                ([17, 19, 23, 29], false),
+            ] {
+                let tokens: Vec<Vec<u32>> = lengths
+                    .iter()
+                    .zip(starts)
+                    .enumerate()
+                    .map(|(i, (&rows, start))| {
+                        (0..rows)
+                            .map(|row| ((start + u64::from(row) + i as u64 * 7) % 500) as u32)
+                            .collect()
+                    })
+                    .collect();
+                let steps: Vec<_> = tokens
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tokens)| Step {
+                        request: i as u64 + 1,
+                        tokens,
+                        text: None,
+                    })
+                    .collect();
+                let hashed = oracle.hash(&steps).unwrap();
+                let batch = BatchRequestV1::new(
+                    BatchWireVersionV1::V3,
+                    tokens
+                        .iter()
+                        .enumerate()
+                        .map(|(i, tokens)| {
+                            BatchItemV1::new(i as u64 + 1, false, lengths[i], true, tokens.clone())
+                        })
+                        .collect(),
+                    lengths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &rows)| {
+                            let end = starts[i] + u64::from(rows);
+                            BatchAppendV1::new(
+                                starts[i],
+                                u64::from(rows),
+                                end,
+                                (0..end.div_ceil(64)).map(|p| i as u64 * 32 + p).collect(),
+                                None,
+                            )
+                        })
+                        .collect(),
+                )
+                .with_state_slots(slots.to_vec())
+                .encode()
+                .unwrap();
+                let request = encode(
+                    &batch,
+                    &lengths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &rows)| Boundary {
+                            request_id: i as u64 + 1,
+                            prompt_tokens: starts[i] + u64::from(rows),
+                            chunk_end: starts[i] + u64::from(rows),
+                            chunk_tokens: 8192,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+                let begin = host.journal.borrow().len();
+                instance
+                    .execute_prefill(&request, &mut Views::default())
+                    .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+                if on {
+                    let columns = HashTables::of(&FLASH).unwrap().columns();
+                    for (layer, (_, span)) in spans.iter().enumerate() {
+                        let expected: Vec<_> = hashed
+                            .ids()
+                            .chunks_exact(columns * 2)
+                            .flat_map(|row| &row[layer * columns..(layer + 1) * columns])
+                            .flat_map(|id| id.to_le_bytes())
+                            .collect();
+                        assert_eq!(
+                            host.uploads.borrow()[&(span.buffer.raw, span.offset)],
+                            expected
+                        );
+                    }
+                    let journal = host.journal.borrow();
+                    let lines = &journal[begin..];
+                    let enqueues: Vec<_> = lines
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(at, s)| s.starts_with("async mapped ids ").then_some(at))
+                        .collect();
+                    assert_eq!(enqueues.len(), 2);
+                    assert!(
+                        lines[enqueues[0]..enqueues[1]]
+                            .iter()
+                            .all(|s| !s.starts_with("launch "))
+                    );
+                    let wait = lines
+                        .iter()
+                        .position(|s| s.starts_with("async mapped wait "))
+                        .unwrap();
+                    let complete = lines
+                        .iter()
+                        .position(|s| s.starts_with("async mapped complete"))
+                        .unwrap();
+                    assert!(
+                        lines[enqueues[1]..wait]
+                            .iter()
+                            .any(|s| s.starts_with("launch ")),
+                        "target compute must overlap the gather"
+                    );
+                    let last_wait = lines
+                        .iter()
+                        .rposition(|s| s.starts_with("async mapped wait "))
+                        .unwrap();
+                    assert!(
+                        lines[last_wait..complete]
+                            .iter()
+                            .any(|s| s.starts_with("download ")),
+                        "finish must follow the consolidated status readback"
+                    );
+                    assert_eq!(
+                        lines
+                            .iter()
+                            .filter(|s| s.starts_with("async mapped wait "))
+                            .count(),
+                        8
+                    );
+                    assert_eq!(
+                        lines
+                            .iter()
+                            .filter(|s| s.starts_with("async mapped complete"))
+                            .count(),
+                        2
+                    );
+                }
+                if cancel {
+                    instance.cancel().unwrap();
+                    starts.fill(0);
+                    for id in 1..=4 {
+                        oracle.forget(id);
+                    }
+                } else {
+                    instance.commit().unwrap();
+                    for (i, step) in steps.iter().enumerate() {
+                        oracle.commit(step, lengths[i] as usize).unwrap();
+                        starts[i] += u64::from(lengths[i]);
+                    }
+                }
+                for id in 1..=4 {
+                    let context = crate::instance::dspark_context(instance.handle(), id);
+                    assert_eq!(context.is_none(), cancel);
+                    contexts.push(context.map(|context| {
+                        (
+                            context.end,
+                            context.retained_start,
+                            context.projected().to_vec(),
+                        )
+                    }));
+                }
+            }
+            let observed = (launches(&host), contexts);
+            if let Some(reference) = &reference {
+                assert_eq!(&observed, reference);
+            } else {
+                reference = Some(observed);
+            }
+            for id in 1..=4 {
+                instance.retire_request(id).unwrap();
+            }
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
         }
     }
 }

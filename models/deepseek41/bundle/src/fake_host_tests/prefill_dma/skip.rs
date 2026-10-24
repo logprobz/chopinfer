@@ -291,6 +291,61 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
 }
 
 #[test]
+fn dspark_sparse_dma_keeps_the_synchronous_engram_destinations() {
+    let capture = |enabled| {
+        crate::instance::prefill_engram::with_enabled(enabled, || {
+            capture_with(8192, Some(true), true)
+        })
+    };
+    let before = capture(false);
+    let after = capture(true);
+    assert!(
+        !after
+            .iter()
+            .any(|line| line.starts_with("async mapped ids "))
+    );
+    for kind in ["launch ", "upload "] {
+        let select = |journal: &[String]| {
+            let mut lines: Vec<_> = journal
+                .iter()
+                .filter(|line| line.starts_with(kind))
+                .cloned()
+                .collect();
+            // Fallback uploads move into the target's upload scope. They
+            // retain their bytes and destinations before the first consumer.
+            if kind == "upload " {
+                lines.sort();
+            }
+            lines
+        };
+        let expected = select(&before);
+        let actual = select(&after);
+        assert_eq!(expected.len(), actual.len(), "{kind}");
+        for (at, (expected, actual)) in expected.iter().zip(&actual).enumerate() {
+            assert_eq!(expected, actual, "{kind} at {at}");
+        }
+    }
+    let first = after
+        .iter()
+        .position(|line| line.starts_with("launch "))
+        .unwrap();
+    assert_eq!(
+        after[..first]
+            .iter()
+            .filter(|line| line.starts_with("mapped gather "))
+            .count(),
+        16
+    );
+    assert_eq!(
+        after
+            .iter()
+            .filter(|line| line.starts_with("mapped gather "))
+            .count(),
+        16
+    );
+}
+
+#[test]
 fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
     use crate::ops::with_partial_setting;
     let phased = |journal: &[String]| {

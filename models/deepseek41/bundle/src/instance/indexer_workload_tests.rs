@@ -55,7 +55,9 @@ fn indexer_context_routes_capture_once_and_replay_the_matching_schedule() {
             let mut seen = std::collections::BTreeMap::new();
             for context in [8192, 32768, 131072, 262144, 32768, 8192, 131072, 262145] {
                 let start = host.device.journal.borrow().len();
-                let mut run = live.plan_run(inputs(rows, per, context), None).unwrap();
+                let mut run = live
+                    .plan_run(inputs(rows, per, context), None, None)
+                    .unwrap();
                 let route = run.bank.route;
                 let expected = if (131072..=262144).contains(&context) {
                     IndexerRoute::Combined

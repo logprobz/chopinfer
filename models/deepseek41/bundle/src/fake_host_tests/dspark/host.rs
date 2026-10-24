@@ -9,11 +9,15 @@ struct Gather {
     planes: Vec<MappedGatherPlaneV1>,
     pending: Option<u64>,
     waited: std::collections::BTreeSet<u64>,
+    waited_at: usize,
 }
 pub(in crate::fake_host_tests) struct MappedHost {
     host: Rc<Host>,
     gathers: std::cell::RefCell<std::collections::BTreeMap<u64, Gather>>,
     peer_copies: bool,
+    delayed_completion: bool,
+    completed_at: std::cell::Cell<usize>,
+    fail_gather: std::cell::Cell<Option<(&'static str, usize)>>,
 }
 impl MappedHost {
     pub(in crate::fake_host_tests) fn new(host: Rc<Host>) -> Self {
@@ -21,7 +25,44 @@ impl MappedHost {
             host,
             gathers: Default::default(),
             peer_copies: false,
+            delayed_completion: false,
+            completed_at: Default::default(),
+            fail_gather: Default::default(),
         }
+    }
+
+    /// A stream wait queues a dependency. Completion becomes observable
+    /// only after a later host readback, as at the consolidated status boundary.
+    pub(in crate::fake_host_tests) fn with_delayed_completion(host: Rc<Host>) -> Self {
+        Self {
+            delayed_completion: true,
+            ..Self::new(host)
+        }
+    }
+
+    pub(in crate::fake_host_tests) fn with_gather_failure(
+        host: Rc<Host>,
+        stage: &'static str,
+        after: usize,
+    ) -> Self {
+        Self {
+            fail_gather: std::cell::Cell::new(Some((stage, after))),
+            ..Self::with_delayed_completion(host)
+        }
+    }
+
+    fn gather_failure(&self, stage: &str) -> HostServiceResultV1<()> {
+        if let Some((selected, after)) = self.fail_gather.get()
+            && selected == stage
+        {
+            if after == 0 {
+                self.fail_gather.set(None);
+                self.host.note(format!("async mapped failure {stage}"));
+                return Err(BundleStatusV1::HostError);
+            }
+            self.fail_gather.set(Some((selected, after - 1)));
+        }
+        Ok(())
     }
 
     /// Journal peer copies as the ordinary fake host does (`peer-copy`
@@ -70,7 +111,16 @@ impl HostServicesBackendV1 for MappedHost {
     forward!(synchronize_event(event: BundleEventHandleV1) -> ());
     forward!(release_event(event: BundleEventHandleV1) -> ());
     forward!(copy_host_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: &[u8]) -> ());
-    forward!(copy_device_to_host(stream: BundleStreamHandleV1, destination: &mut [u8], source: DeviceBufferSpanV1) -> ());
+    fn copy_device_to_host(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: &mut [u8],
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.host.copy_device_to_host(stream, destination, source)?;
+        self.completed_at.set(self.host.journal.borrow().len());
+        Ok(())
+    }
     forward!(copy_device_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: DeviceBufferSpanV1) -> ());
     fn copy_peer_to_peer(
         &self,
@@ -176,6 +226,7 @@ impl HostServicesBackendV1 for MappedHost {
                 planes: planes.to_vec(),
                 pending: None,
                 waited: Default::default(),
+                waited_at: 0,
             },
         );
         self.host
@@ -187,6 +238,7 @@ impl HostServicesBackendV1 for MappedHost {
         handle: BundleMappedGatherHandleV1,
         rows: u64,
     ) -> HostServiceResultV1<()> {
+        self.gather_failure("enqueue")?;
         let mut gathers = self.gathers.borrow_mut();
         let gather = gathers
             .get_mut(&handle.raw)
@@ -215,6 +267,7 @@ impl HostServicesBackendV1 for MappedHost {
         handle: BundleMappedGatherHandleV1,
         stream: BundleStreamHandleV1,
     ) -> HostServiceResultV1<()> {
+        self.gather_failure("wait")?;
         let (rows, planes) = {
             let mut gathers = self.gathers.borrow_mut();
             let gather = gathers
@@ -256,12 +309,18 @@ impl HostServicesBackendV1 for MappedHost {
                 },
             )?;
         }
+        self.gathers
+            .borrow_mut()
+            .get_mut(&handle.raw)
+            .expect("live gather")
+            .waited_at = self.host.journal.borrow().len();
         Ok(())
     }
     fn complete_mapped_gather(
         &self,
         handle: BundleMappedGatherHandleV1,
     ) -> HostServiceResultV1<Option<MappedGatherStatsV1>> {
+        self.gather_failure("complete")?;
         let mut gathers = self.gathers.borrow_mut();
         let gather = gathers
             .get_mut(&handle.raw)
@@ -269,10 +328,11 @@ impl HostServicesBackendV1 for MappedHost {
         if gather.pending.is_none() {
             return Err(BundleStatusV1::InvalidState);
         }
-        if gather
-            .planes
-            .iter()
-            .any(|plane| !gather.waited.contains(&plane.stream.raw))
+        if (self.delayed_completion && self.completed_at.get() <= gather.waited_at)
+            || gather
+                .planes
+                .iter()
+                .any(|plane| !gather.waited.contains(&plane.stream.raw))
         {
             return Ok(None);
         }

@@ -303,7 +303,7 @@ fn sweep(
         assert_eq!(live.items().get(), served);
         let mut plans: BTreeMap<Key, (Case, Planned)> = BTreeMap::new();
         for case in cases {
-            let mut run = live.plan_run(phase_inputs(case), None).unwrap();
+            let mut run = live.plan_run(phase_inputs(case), None, None).unwrap();
             let rows = case.split.iter().sum();
             let items = case.split.len() as u32;
             assert_eq!(run.phase, Phase::Verify { rows, items });
@@ -461,7 +461,7 @@ fn route_banks_plan_different_launches_at_the_same_rows_and_items() {
         let live = table.get_mut(instance.handle()).unwrap();
         let plan = |split: Vec<u32>, end| {
             let run = live
-                .plan_run(phase_inputs(&placed(split, vec![end; 8])), None)
+                .plan_run(phase_inputs(&placed(split, vec![end; 8])), None, None)
                 .unwrap();
             assert_eq!(run.phase, Phase::Verify { rows: 32, items: 8 });
             (run.bank.route, planned(&run))

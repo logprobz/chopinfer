@@ -14,7 +14,9 @@ use kernel_core::backend::Counts;
 use kernel_core::row_copy::GatherByIndexBuffers;
 use model_deepseek41_contract::own_ops::acceptance::allocated::AllocatedAcceptanceBuffers;
 use model_deepseek41_contract::own_ops::allocation::VerifyAllocateBuffers;
+use model_deepseek41_contract::own_ops::allocation::{BLOCK, Item, RULE_WORDS};
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
+use runtime_bundle_sdk::SamplingKindV1;
 
 impl Instance {
     /// The pending device target's allocation, when its step is allocated.
@@ -137,6 +139,51 @@ impl Instance {
                 &step.width.to_le_bytes(),
             )
             .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Launches the allocation once on every rank, as a step does, over an
+    /// item that reserves more drafts than a block, which the kernel
+    /// refuses by its status without writing anything else, and waits for
+    /// every rank: a launch the host refuses or a kernel that faults fails
+    /// create instead of the first allocated step. Without the allocation
+    /// it does nothing.
+    pub(crate) fn check_dspark_allocation(&self) -> Result<(), String> {
+        let Some(device) = self
+            .dspark
+            .as_ref()
+            .filter(|device| device.allocation.is_some())
+        else {
+            return Ok(());
+        };
+        let text = device
+            .cycle
+            .memory
+            .ok_or("DSpark hash memory is absent")?
+            .text;
+        let step = Step {
+            width: 1,
+            reserved_rows: 1,
+            items: vec![Item {
+                reserved: BLOCK as u32 + 1,
+                kind: SamplingKindV1::Greedy,
+                score_row: 0,
+                first_row: 0,
+            }],
+            rule: [0; RULE_WORDS],
+        };
+        let layout = super::super::verify_layout(&self.config.shape, self.items());
+        let targets: Vec<_> = (0..self.ranks.len())
+            .map(|rank| {
+                DeviceInputs::within(self.arenas[super::super::execute::VERIFY][rank], &layout)
+            })
+            .collect();
+        self.allocate_dspark_step(&step, &targets, text)?;
+        for &(_, _, stream) in &self.ranks {
+            self.services
+                .synchronize_stream(stream)
+                .map_err(|e| format!("DSpark verify allocation check: {e}"))?;
         }
         Ok(())
     }

@@ -50,7 +50,7 @@ pub(crate) mod skip;
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
-const VERIFY: usize = 2;
+pub(super) const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
 struct Run {

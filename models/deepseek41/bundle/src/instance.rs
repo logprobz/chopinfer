@@ -1040,6 +1040,12 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, status(error)));
     }
     instance.memory.take("dspark_graphs");
+    if let Err(error) = instance.check_dspark_allocation() {
+        instance.log(&format!(
+            "create failed checking the verify allocation: {error}"
+        ));
+        return Err(Failed::releasing(instance, BundleStatusV1::BundleError));
+    }
     for line in instance.memory.lines() {
         let _ = instance
             .services

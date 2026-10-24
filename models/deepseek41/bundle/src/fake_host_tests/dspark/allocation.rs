@@ -387,6 +387,23 @@ fn an_allocating_host_gets_the_allocation_ops_and_storage() {
             crate::instance::dspark_allocation_ranks(instance.handle()),
             allocates.then_some(4)
         );
+        // Create launches the allocation once on every rank, then waits.
+        let streams = host.rank_streams.borrow().clone();
+        for rank in 0..4 {
+            let launches = host
+                .journal
+                .borrow()
+                .iter()
+                .filter(|line| {
+                    line.starts_with(&format!(
+                        "launch {} {} ",
+                        streams[&rank],
+                        crate::sm120::allocate_entries::SYMBOL
+                    ))
+                })
+                .count();
+            assert_eq!(launches, usize::from(allocates), "rank {rank}");
+        }
         for symbol in symbols {
             let resolved = host
                 .symbol_names

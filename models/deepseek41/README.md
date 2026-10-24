@@ -58,11 +58,13 @@ shared memory, which costs it up to 3.3% of its MoE time against row tiles
 numerical contract and fixed gates.
 
 The routed expert scale banks of the main layers are stored encoded
-(`scale-row-offset-v1`, [encoded expert scale banks](../../docs/kernel-library.md#encoded-expert-scale-banks)).
+([encoded expert scale banks](../../docs/kernel-library.md#encoded-expert-scale-banks)).
+Flash TP4 uses `scale-row-tiles-offset-v1`; other topologies use
+`scale-row-offset-v1`.
 The bundle exports `chop_bundle_weight_census_v1`, the host measures the
-banks on the CPU before planning, and each bank takes the offset width that
-stores it smallest. At the end of each layer's routes stage, one launch
-expands both banks for the experts with routes into raw banks in scratch
+banks on the CPU before planning, and the census chooses an offset width
+or keeps the bank raw. With the row-offset format, one launch at the end
+of each layer's routes stage expands both banks for the experts with routes into raw banks in scratch
 (106.2 MB at TP4), on the routed branch beside the shared expert. The
 experts read those banks unchanged. DSpark's banks stay raw: the one-row floor kernel loads
 scales before its PDL wait. On the official checkpoint at TP4, each rank's
@@ -77,6 +79,16 @@ pages at utilization 1.0), the census took 6 to 7 s at startup, and greedy
 decode ran at 0.974, 0.975 and 0.960 of raw tokens per second at 1, 8 and
 32 sequences. Those ratios are with the paired expansion's warp exception
 search; they were 0.973, 0.974 and 0.961 with one-thread searches.
+
+The tile-scale format keeps the same census and width-or-raw decisions.
+Its declared decode and verify consumers read encoded scales in place,
+keeping their raw counterpart's arithmetic and launch geometry. A
+projection retains expansion if any of its selected queues lacks an
+encoded variant. This includes wide gate and column queues and native
+prefill. The one-row width-4 gate also retains expansion. The raw scratch
+banks remain allocated for these paths; DSpark's drafter banks remain raw.
+On the official checkpoint, the tile format takes 673.39 to 673.46 MB per
+rank and decodes bitwise to the raw banks (2026-10-24, CPU).
 
 Every MXFP8 dense projection stores its E4M3 codes in
 `mxfp8-fold-packed-8x128-v1` ([packed FP8 fold layout](../../docs/kernel-library.md#packed-fp8-fold-layout)),

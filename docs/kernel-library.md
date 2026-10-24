@@ -278,6 +278,25 @@ weight scales before its own `griddepcontrol.wait` must keep binding raw
 banks: in DeepSeek, that is the one-row floor kernel, which serves only the
 drafter's banks.
 
+`scale-row-tiles-offset-v1.w{width}` is a separate, lossless scale format.
+It uses the same row bases and exception decisions, but groups packed
+offsets and exceptions by 64-row by 4-group tiles. Strip starts are `u32`,
+tile starts are strip-relative `u16`, and each exception is a `u16`
+`(local << 8) | value` record. The matrix bank table remains unchanged.
+`kernel_core::precision::scale_tiles` holds the codec and CPU oracle;
+`kernels_sm120::moe::scale_tiles` holds the device readers. Consumers must
+declare this exact format and width before binding an encoded view. The
+host checks the format's own minimum size, including partial final tiles,
+and preserves the format in packed transforms and weight-keeper identity.
+
+`kernels_sm120::moe::scale_tiles_expand` expands tile-encoded banks for
+consumers that still read raw scales, including native prefill. Its paired
+entries retain the row-offset pair's pointer ABI and PDL ordering. A model
+may omit expansion only when every scale reader in the selected projection
+has a compatible in-place entry; other arguments and launch geometry stay
+those of the prepared schedule. DeepSeek's one-row drafter floor continues
+to bind raw banks.
+
 ### Packed FP8 fold layout
 
 The MXFP8 fold kernels read E4M3 codes in `mxfp8-fold-packed-8x128-v1`:

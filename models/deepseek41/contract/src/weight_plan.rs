@@ -642,6 +642,7 @@ fn element_bytes(dtype: &str) -> Result<u64, String> {
 /// Every rank's views of one checkpoint and rank count, built once for all
 /// ranks of a request, and the safetensors file holding each tensor.
 struct Planned {
+    geometry: &'static crate::geometry::Geometry,
     ranks: Vec<Vec<View>>,
     files: BTreeMap<String, String>,
 }
@@ -768,7 +769,11 @@ fn planned(
         for views in &ranks {
             check_sources(views, &files)?;
         }
-        Ok(Planned { ranks, files })
+        Ok(Planned {
+            geometry: checkpoint.geometry,
+            ranks,
+            files,
+        })
     })
 }
 
@@ -1120,7 +1125,7 @@ fn encode_banks(
 /// ([`encode_banks`]); the cached derivation stays census-free, so a census
 /// changes only this rank's last step.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
-    plan_routed(request, None, ScaleFormat::RowOffsetV1)
+    plan_routed(request, None, None)
 }
 
 /// [`plan`] with the backbone's routed gate/up bank stored in `routed`.
@@ -1128,18 +1133,28 @@ pub fn plan_with(
     request: &WeightPlanRequestV1,
     routed: RoutedLayout,
 ) -> Result<Option<WeightPlanV1>, String> {
-    plan_routed(request, Some(routed), ScaleFormat::RowOffsetV1)
+    plan_routed(request, Some(routed), None)
 }
 
 /// Explicit scale-format planning for qualification. The census, the v1
 /// width-or-raw decision and the code layout are independent of the format.
-/// Serving uses [`plan`], which retains the row-offset encoding.
+/// Serving uses tile scales for Flash TP4 and row offsets elsewhere.
 pub fn plan_with_scale_format(
     request: &WeightPlanRequestV1,
     routed: Option<RoutedLayout>,
     format: ScaleFormat,
 ) -> Result<Option<WeightPlanV1>, String> {
-    plan_routed(request, routed, format)
+    plan_routed(request, routed, Some(format))
+}
+
+/// The tile codec serves Flash TP4; other geometries and rank counts keep
+/// their row-offset bank format. Missing census data still selects raw banks.
+fn served_scale_format(geometry: &crate::geometry::Geometry, ranks: u32) -> ScaleFormat {
+    if geometry == &crate::geometry::FLASH && ranks == 4 {
+        ScaleFormat::RowTilesOffsetV1
+    } else {
+        ScaleFormat::RowOffsetV1
+    }
 }
 
 /// [`plan`] with explicit code and scale layouts, applied after the cached
@@ -1147,7 +1162,7 @@ pub fn plan_with_scale_format(
 fn plan_routed(
     request: &WeightPlanRequestV1,
     routed: Option<RoutedLayout>,
-    format: ScaleFormat,
+    format: Option<ScaleFormat>,
 ) -> Result<Option<WeightPlanV1>, String> {
     if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
         return encoder_plan::plan(request).map(Some);
@@ -1162,6 +1177,7 @@ fn plan_routed(
         ));
     }
     let planned = planned(request, routed)?;
+    let format = format.unwrap_or_else(|| served_scale_format(planned.geometry, request.ranks));
     let raw = &planned.ranks[request.rank as usize];
     let encoded = if request.census.is_empty() {
         None
@@ -1234,6 +1250,19 @@ fn plan_routed(
 #[cfg(test)]
 mod scale_layout_tests {
     use super::*;
+    #[test]
+    fn only_flash_tp4_serves_tile_encoded_scales() {
+        for geometry in crate::geometry::GEOMETRIES {
+            for ranks in [1, 2, 4] {
+                let expected = if geometry == &crate::geometry::FLASH && ranks == 4 {
+                    ScaleFormat::RowTilesOffsetV1
+                } else {
+                    ScaleFormat::RowOffsetV1
+                };
+                assert_eq!(served_scale_format(geometry, ranks), expected);
+            }
+        }
+    }
     #[test]
     fn scale_layouts_keep_format_and_width_distinct() {
         for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {

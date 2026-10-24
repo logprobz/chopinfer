@@ -257,6 +257,11 @@ fn official_routed_scale_banks_round_trip() {
                     .unwrap()
             })
             .collect();
+        if format == ScaleFormat::RowTilesOffsetV1 {
+            for (request, expected) in requests.iter().zip(&plans) {
+                assert_eq!(plan(request).unwrap().unwrap().encode(), expected.encode());
+            }
+        }
         let encoded_image = image(checkpoint.clone(), plans.clone());
         let totals = check_banks(
             &FLASH,

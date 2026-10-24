@@ -68,9 +68,22 @@ struct Weights {
   uint32_t scales[H][2];
 };
 
+struct RawScales {
+  template<class C>
+  __device__ __forceinline__ static const uint8_t* prepare(const uint8_t* bank,
+      int expert, int column, int block) {
+    return bank;
+  }
+  template<class C>
+  __device__ __forceinline__ static uint32_t load(const uint8_t* scales,
+      int expert, int half, int column, int block, int row, uint64_t tile) {
+    return *reinterpret_cast<const uint32_t*>(scales + tile * 256 + row * 4);
+  }
+};
+
 // Loads the lane's bytes of the item's tile: the row-tiled queues' tile,
 // row and K block, at the lane's quad-lane offset.
-template<class C, int H>
+template<class C, int H, class Scales = RawScales>
 __device__ __forceinline__ Weights<H> load(const uint8_t* weight, const uint8_t* weight_scales,
     int expert, int column, int block, int warp, int g, int t) {
   using L = Layout<C>;
@@ -82,7 +95,7 @@ __device__ __forceinline__ Weights<H> load(const uint8_t* weight, const uint8_t*
       const uint64_t tile = (uint64_t(expert) * C::weight_rows + h * C::n + column) / 64 * L::blocks + block;
       const int row = warp * 16 + g + r * 8;
       w.codes[h][r] = load16(weight + tile * 4096 + row * 64 + t * 16);
-      w.scales[h][r] = *reinterpret_cast<const uint32_t*>(weight_scales + tile * 256 + row * 4);
+      w.scales[h][r] = Scales::template load<C>(weight_scales, expert, h, column, block, row, tile);
       const uint32_t words[4] = {w.codes[h][r].x, w.codes[h][r].y, w.codes[h][r].z, w.codes[h][r].w};
       if (!checks::weights_valid(words, w.scales[h][r])) __trap();
     }
@@ -163,7 +176,7 @@ __device__ __forceinline__ void multiply(const Weights<H>& w, uint16_t (*activat
 }
 
 // streamed::compute<C, Rows, true> over the quad-lane bank.
-template<class C, int Rows>
+template<class C, int Rows, class Scales = RawScales>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -203,8 +216,9 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
       if (r < count && (route < 0 || route >= live * C::top_k)) __trap();
       rows[r] = route;
     }
+    const uint8_t* item_scales = Scales::template prepare<C>(weight_scales, expert, column, block);
     __syncthreads();
-    const Weights<H> w = load<C, H>(weight, weight_scales, expert, column, block, warp, g, t);
+    const Weights<H> w = load<C, H, Scales>(weight, item_scales, expert, column, block, warp, g, t);
     stage<C, Rows>(input, activation_scales, rows, block, activations);
     __syncthreads();
     ptx::D4 chain[H][Fragments];

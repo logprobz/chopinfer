@@ -52,6 +52,40 @@ pub fn direct_entry(e: &Entry, s: Stage) -> Result<EntrySpec, Refusal> {
     Ok(spec)
 }
 
+/// A direct small gate queue reading a validated tile-order encoded scale
+/// bank. The code bank and every launch argument keep the raw entry's ABI;
+/// the scale pointer names the encoded bank table instead of raw tiles.
+/// This entry is unqualified and is not selected by a serving catalog.
+pub fn direct_scale_tiles_entry(e: &Entry, width: u32) -> Result<EntrySpec, Refusal> {
+    if !matches!(width, 1 | 2 | 4) {
+        return Err(Refusal("tile scale offset width must be 1, 2 or 4"));
+    }
+    let mut spec = direct_entry(e, Stage::GateSmall)?;
+    assert_eq!(spec.body.matches(",8>(input,").count(), 1);
+    spec.symbol = format!(
+        "{}_scale_tiles_w{width}_v1",
+        spec.symbol.trim_end_matches("_v1")
+    );
+    spec.body = spec.body.replace(
+        ",8>(input,",
+        &format!(",8,chop::moe::lanes::EncodedScales<{width}>>(input,"),
+    );
+    Ok(spec)
+}
+
+/// The raw direct-small entry beside its three encoded-scale lab variants.
+pub fn scale_tiles_cubin_spec(name: &str, e: &Entry) -> Result<CubinSpec, Refusal> {
+    let mut entries = vec![direct_entry(e, Stage::GateSmall)?];
+    for width in [1, 2, 4] {
+        entries.push(direct_scale_tiles_entry(e, width)?);
+    }
+    Ok(super::spec(
+        name.into(),
+        "chained_lanes_scale_tiles.cuh",
+        entries,
+    ))
+}
+
 /// The resident8 gate reading its bank in quad-lane row tiles.
 pub fn resident_symbol(p: &Projection) -> String {
     format!(

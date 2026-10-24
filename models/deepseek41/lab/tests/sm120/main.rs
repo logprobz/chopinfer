@@ -53,6 +53,7 @@ use bundle_deepseek41::sm120::markov_row;
 use bundle_deepseek41::sm120::markov_tiled;
 mod dspark_argmax;
 mod dspark_catch_up_kv;
+mod dspark_commit;
 mod dspark_heads;
 mod dspark_markov_row;
 mod dspark_noise;

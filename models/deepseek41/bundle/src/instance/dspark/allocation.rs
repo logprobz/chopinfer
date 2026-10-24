@@ -209,7 +209,8 @@ impl Instance {
         else {
             return Ok(None);
         };
-        let Some(head) = base.lm_head_over(memory.head, base.head_rows, memory.reserved)? else {
+        let Some(head) = base.lm_head_over(phase, memory.head, base.head_rows, memory.reserved)?
+        else {
             return Ok(None);
         };
         launches.extend(head);

@@ -67,9 +67,15 @@ impl Lowering<'_> {
             if self.head_rows == 0 {
                 return Ok(self.ops.head.as_ref().map(|_| Vec::new()));
             }
-            self.lm_head_over(scratch.head_input, self.head_rows, self.inputs.logit_rows)
+            self.lm_head_over(
+                phase,
+                scratch.head_input,
+                self.head_rows,
+                self.inputs.logit_rows,
+            )
         } else {
             self.lm_head_over(
+                phase,
                 rows(scratch.normed_wide, phase.rows()),
                 phase.rows(),
                 self.inputs.live_tokens,
@@ -80,6 +86,7 @@ impl Lowering<'_> {
     /// The head over `rows` rows of `input`, `live_rows` of them live.
     pub(crate) fn lm_head_over(
         &self,
+        phase: Phase,
         input: Span,
         rows: u32,
         live_rows: Span,
@@ -94,6 +101,12 @@ impl Lowering<'_> {
             logits: scratch.head,
             live_rows,
             state: crate::ops::exact_f32::state(self.buffers, "head.weight"),
+        };
+        // An allocated head scores reserved rows, which can exceed the
+        // target's computed width. Select its route from those scored rows.
+        let phase = match phase {
+            Phase::Verify { items, .. } => Phase::Verify { rows, items },
+            phase => phase,
         };
         ops.head(phase, rows, &views)
             .map(Some)

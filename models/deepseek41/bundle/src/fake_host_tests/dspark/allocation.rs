@@ -322,6 +322,56 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
 }
 
 #[test]
+fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let wide = crate::sm120::f32_verify::entries()
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.entry().query().n == shape.vocab_rows())
+        .unwrap()
+        .symbols();
+    for (items, drafts, width, reserved) in [(8, 3, 16, 32), (8, 5, 16, 48), (16, 3, 32, 64)] {
+        let (host, mut instance) = create_allocating(shape, items, reserved);
+        for slot in 0..items {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(u64::from(slot + 1), u64::from(slot), 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        let request = allocated(items, 3, drafts, width).encode().unwrap();
+        let (step, hash, accepted) = device_step(
+            &host,
+            &mut instance,
+            &request,
+            (items, drafts, 1),
+            crate::sm120::allocated_acceptance_entries::SYMBOL,
+        );
+        let target = &step[hash..accepted];
+        for stream in host.rank_streams.borrow().values() {
+            for symbol in &wide {
+                assert_eq!(
+                    launch_of(target, *stream, symbol).is_some(),
+                    reserved > 32,
+                    "width {width}, reserved {reserved}, stream {stream}, symbol {symbol}"
+                );
+            }
+            let old_head = target
+                .iter()
+                .any(|line| line.starts_with(&format!("launch {stream} chop_deepseek41_head_f32")));
+            assert_eq!(
+                old_head,
+                reserved <= 32,
+                "width {width}, reserved {reserved}"
+            );
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
 fn allocated_verify_steps_are_refused_without_the_hosts_option() {
     let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
     let prefill = BatchRequestV1::new(

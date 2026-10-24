@@ -149,7 +149,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
-  [--speculation-widths ROWS,...] [--speculation-graph-rows N]
+  [--speculation-widths ROWS,...] [--speculation-graph-rows N] [--speculation-confidence JSON|off]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -841,6 +841,9 @@ pub enum HostCommandV1 {
         draft_cost_model: DraftCostModel,
         /// `--speculation-widths`: the verify widths balanced plans land on.
         verify_widths: VerifyWidths,
+        /// `--speculation-confidence`: the calibration balanced plans leave
+        /// draft verification to, when the package takes it.
+        verify_confidence: Option<crate::confidence::VerifyConfidence>,
         allowed_local_media_path: Option<PathBuf>,
         remote_media: Box<runtime_media::remote::RemoteMediaPolicy>,
         /// Qualification-only teacher forcing; see `reference_forcing`.
@@ -1331,6 +1334,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation-depths",
             "--speculation-widths",
             "--speculation-graph-rows",
+            "--speculation-confidence",
             "--draft-cost",
             "--prefix-cache",
             "--verify-warmup",
@@ -1549,6 +1553,23 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation-widths requires --speculation balanced, which only it uses",
         ));
     }
+    let verify_confidence = parsed.speculation_confidence.clone().flatten();
+    if let Some(confidence) = &verify_confidence {
+        let tokens = parsed.speculative_tokens.unwrap_or(0);
+        if tokens == 0 || !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_))) {
+            return Err(usage_error(
+                "--speculation-confidence requires --speculation balanced and speculative \
+                 tokens, which only it uses",
+            ));
+        }
+        if confidence.positions() < tokens {
+            return Err(usage_error(format!(
+                "--speculation-confidence calibrates {} draft positions, fewer than the {tokens} \
+                 speculative tokens",
+                confidence.positions()
+            )));
+        }
+    }
     let mut http_options = parsed.http_options.clone();
     http_options.api_key = resolve_api_key_v1(
         http_options.api_key,
@@ -1674,6 +1695,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         },
         draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
         verify_widths: parsed.speculation_widths.unwrap_or_default(),
+        verify_confidence,
         allowed_local_media_path: parsed.allowed_local_media_path.clone(),
         remote_media: Box::new(parsed.remote_media.clone()),
         debug_reference_tokens: parsed.debug_reference_tokens.clone(),
@@ -1991,6 +2013,7 @@ fn run_host_command_from_v1(
             speculation_mode,
             draft_cost_model,
             verify_widths,
+            verify_confidence,
             allowed_local_media_path,
             remote_media,
             debug_reference_tokens,
@@ -2155,7 +2178,11 @@ fn run_host_command_from_v1(
                 **serving,
                 (*speculative_tokens, speculative_rows.map(usize::from)),
                 *speculation_mode,
-                (*draft_cost_model, *verify_widths),
+                (
+                    *draft_cost_model,
+                    *verify_widths,
+                    verify_confidence.as_ref(),
+                ),
                 surface,
                 None,
                 allowed_local_media_path.as_deref(),
@@ -2603,7 +2630,11 @@ fn serve_v1(
     serving: ServingOptionsV1,
     speculative: (usize, Option<usize>),
     speculation_mode: SpeculationMode,
-    (draft_cost_model, verify_widths): (DraftCostModel, VerifyWidths),
+    (draft_cost_model, verify_widths, verify_confidence): (
+        DraftCostModel,
+        VerifyWidths,
+        Option<&crate::confidence::VerifyConfidence>,
+    ),
     surface: RequestSurfaceV1,
     envelope: Option<DeveloperServingEnvelopeV1>,
     allowed_local_media_path: Option<&Path>,
@@ -2649,7 +2680,24 @@ fn serve_v1(
         speculation_mode,
         draft_cost_model,
     )?
-    .map(|config| config.with_verify_widths(verify_widths));
+    .map(|config| config.with_verify_widths(verify_widths))
+    .map(|config| {
+        match verify_confidence.map(|confidence| confidence.resolve(package.manifest())) {
+            Some(Ok(allocation)) => {
+                eprintln!(
+                    "startup speculation_confidence: on, floor {}, {} positions",
+                    allocation.floor(),
+                    allocation.positions()
+                );
+                config.with_verify_allocation(Some(allocation))
+            }
+            Some(Err(reason)) => {
+                eprintln!("startup speculation_confidence: off, {reason}");
+                config
+            }
+            None => config,
+        }
+    });
     if list_model_options {
         return serde_json::to_string_pretty(&package.manifest().model_options())
             .map_err(|e| run_error(e.to_string()));
@@ -5036,6 +5084,9 @@ struct ArgumentsV1 {
     speculation_depths: Option<DraftDepths>,
     /// `--speculation-widths`; balanced mode lands on these widths.
     speculation_widths: Option<VerifyWidths>,
+    /// `--speculation-confidence`; balanced mode leaves draft verification
+    /// to the package's calibrated confidence. `Some(None)` is `off`.
+    speculation_confidence: Option<Option<crate::confidence::VerifyConfidence>>,
     /// `--speculation-graph-rows`: the widest verify step captured in a
     /// graph, passed to the package as its `verify_graph_rows` option.
     speculation_graph_rows: Option<usize>,
@@ -5439,6 +5490,12 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.speculation_widths, widths, flag)?;
                 }
+                "--speculation-confidence" => {
+                    let confidence = crate::confidence::parse(value).map_err(|error| {
+                        usage_error(format!("invalid --speculation-confidence: {error}"))
+                    })?;
+                    set_once_v1(&mut parsed.speculation_confidence, confidence, flag)?;
+                }
                 "--speculation-graph-rows" => {
                     let rows = count_v1(flag, value)?;
                     if rows == 0 {
@@ -5655,6 +5712,10 @@ impl ArgumentsV1 {
             ("--speculation-costs", self.speculation_costs.is_some()),
             ("--speculation-depths", self.speculation_depths.is_some()),
             ("--speculation-widths", self.speculation_widths.is_some()),
+            (
+                "--speculation-confidence",
+                self.speculation_confidence.is_some(),
+            ),
             (
                 "--speculation-graph-rows",
                 self.speculation_graph_rows.is_some(),
@@ -7787,6 +7848,66 @@ mod tests {
             panic!("serve expected");
         };
         assert_eq!(verify_widths.widths(), [6, 8, 16, 32]);
+        // Only balanced mode with speculative tokens takes a confidence
+        // calibration, which covers every draft position; `off` takes none.
+        let calibration = concat!(
+            r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"#,
+            r#""greedy":[[1.5,-0.25],[1,0]],"sampled":[[0.75,0.5],[2,-1]]}"#
+        );
+        let confident = |tokens: &str, mode: &str, confidence: &str| {
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--speculative-tokens",
+                tokens,
+                "--speculation",
+                mode,
+                "--speculation-confidence",
+                confidence,
+            ]))
+        };
+        let HostCommandV1::Serve {
+            verify_confidence, ..
+        } = confident("2", "balanced", calibration).unwrap()
+        else {
+            panic!("serve expected");
+        };
+        assert_eq!(
+            verify_confidence,
+            crate::confidence::parse(calibration).unwrap()
+        );
+        assert!(verify_confidence.is_some());
+        for (tokens, mode, expected) in [
+            (
+                "2",
+                "adaptive",
+                "requires --speculation balanced and speculative tokens",
+            ),
+            (
+                "3",
+                "balanced",
+                "calibrates 2 draft positions, fewer than the 3",
+            ),
+        ] {
+            let Err(error) = confident(tokens, mode, calibration) else {
+                panic!("{tokens} {mode} accepted");
+            };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        assert!(
+            confident("2", "balanced", r#"{"contract":"a"}"#)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid --speculation-confidence")
+        );
+        let HostCommandV1::Serve {
+            verify_confidence, ..
+        } = confident("2", "adaptive", "off").unwrap()
+        else {
+            panic!("serve expected");
+        };
+        assert_eq!(verify_confidence, None);
         let fixed = parse_host_command_v1(&arguments(&[
             "serve",
             "--bundle",
@@ -8122,6 +8243,67 @@ mod tests {
         assert_eq!(decoded.speculation().unwrap().drafter_kind(), None);
         let plain = manifest(vec![topology("tp1", 1)], 8);
         assert!(super::validate_profile_drafter_v1(&plain, Some("first"), 3).is_err());
+    }
+
+    /// A calibration reaches balanced plans only when the package allocates
+    /// verify drafts and its drafter follows the calibration's contract;
+    /// otherwise serving says why it runs without one.
+    #[test]
+    fn confidence_needs_the_allocation_capability_and_its_contract() {
+        let calibration = crate::confidence::parse(concat!(
+            r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"#,
+            r#""greedy":[[1,0]],"sampled":[[1,0]]}"#
+        ))
+        .unwrap()
+        .unwrap();
+        let package = |capabilities: &[&str], contract: Option<&str>| {
+            manifest_requiring(
+                vec![topology("tp1", 1)],
+                8,
+                DECLARED_ROWS_V1,
+                &"0".repeat(64),
+                capabilities.iter().map(|name| id(name)).collect(),
+            )
+            .with_speculation(
+                runtime_bundle::BundleSpeculationV1::new(
+                    1,
+                    true,
+                    8,
+                    vec![4, 8],
+                    Some(id("weights")),
+                )
+                .unwrap()
+                .with_confidence_contract(contract.map(id))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let allocating = [
+            crate::executor::SPECULATIVE_CAPABILITY_V1,
+            runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
+        ];
+        let fitted = Some("fixture.drafter-confidence.v1");
+        let allocation = calibration.resolve(&package(&allocating, fitted)).unwrap();
+        assert_eq!((allocation.floor(), allocation.positions()), (1, 1));
+        for (capabilities, contract, reason) in [
+            (
+                &allocating[..1],
+                fitted,
+                "does not declare chop.verify-allocation.v1",
+            ),
+            (
+                &allocating[..],
+                Some("other.drafter-confidence.v1"),
+                "fitted for fixture.drafter-confidence.v1, the package's drafter follows \
+                 other.drafter-confidence.v1",
+            ),
+            (&allocating[..], None, "names no confidence contract"),
+        ] {
+            let refusal = calibration
+                .resolve(&package(capabilities, contract))
+                .unwrap_err();
+            assert!(refusal.contains(reason), "{refusal}");
+        }
     }
 
     #[test]

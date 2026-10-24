@@ -120,6 +120,10 @@ pub(crate) struct Speculation {
     /// `--speculation-graph-rows`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_rows: Option<usize>,
+    /// The confidence calibration `balanced` mode leaves draft verification
+    /// to, as `--speculation-confidence`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<crate::confidence::Calibration>,
 }
 
 fn error(message: impl Into<String>) -> HostCommandErrorV1 {
@@ -246,6 +250,20 @@ impl Profile {
                 "profile speculation widths must be valid, and only balanced mode takes them",
             ));
         }
+        if let Some(confidence) = &self.speculation.confidence {
+            let checked = confidence.check().map_err(|message| {
+                error(format!("invalid profile speculation confidence: {message}"))
+            })?;
+            if self.speculation.mode != "balanced"
+                || self.speculation.tokens == 0
+                || checked.positions() < self.speculation.tokens
+            {
+                return Err(error(
+                    "profile speculation confidence needs balanced mode, speculative tokens, \
+                     and a position for each token",
+                ));
+            }
+        }
         if (self.speculation.rows.is_some() || self.speculation.graph_rows.is_some())
             && self.speculation.tokens == 0
             || self
@@ -359,6 +377,12 @@ impl Profile {
             if let Some(rows) = self.speculation.graph_rows {
                 args.extend(["--speculation-graph-rows".into(), rows.to_string()]);
             }
+            if let Some(confidence) = &self.speculation.confidence {
+                args.extend([
+                    "--speculation-confidence".into(),
+                    serde_json::to_string(confidence).expect("a calibration serializes"),
+                ]);
+            }
         }
         args
     }
@@ -400,8 +424,9 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// flag replaces the default, `--speculative-tokens 0` also drops the
 /// default speculation mode, an explicit mode other than `table` or zero
 /// speculative tokens the default speculation costs, an explicit mode other
-/// than `balanced` or zero speculative tokens the default depth schedule and
-/// verify widths, zero speculative tokens the default speculative and graph
+/// than `balanced` or zero speculative tokens the default depth schedule,
+/// verify widths and confidence, zero speculative tokens the default
+/// speculative and graph
 /// rows, a non-TBT `--prefill-budget` the default TBT target. Duplicate
 /// explicit flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
@@ -443,7 +468,9 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             || (disable_speculation && flag == "--speculation")
             || (replace_costs && flag == "--speculation-costs")
             || (replace_balanced
-                && (flag == "--speculation-depths" || flag == "--speculation-widths"))
+                && (flag == "--speculation-depths"
+                    || flag == "--speculation-widths"
+                    || flag == "--speculation-confidence"))
             || (disable_speculation
                 && (flag == "--speculative-rows" || flag == "--speculation-graph-rows"))
             || (disable_tbt && flag == "--decode-tbt-target-ms")
@@ -1125,6 +1152,78 @@ mod tests {
             let refusal = refusal.to_string();
             assert!(
                 refusal.contains("only balanced mode takes them"),
+                "{refusal}"
+            );
+        }
+    }
+
+    /// A balanced profile passes its confidence calibration; an explicit
+    /// calibration or `off` replaces it, an explicit other mode or zero
+    /// speculative tokens drop it, and a calibration outside balanced mode,
+    /// short of the tokens or malformed is refused.
+    #[test]
+    fn balanced_profiles_pass_their_confidence_unless_the_mode_changes() {
+        let calibration = serde_json::json!({
+            "contract": "fixture.drafter-confidence.v1",
+            "floor": 1,
+            "greedy": [[1.5, -0.25], [1.0, 0.0], [1.0, 0.0]],
+            "sampled": [[0.75, 0.5], [2.0, -1.0], [0.1, 0.2]],
+        });
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "balanced".into();
+        entry["speculation"]["confidence"] = calibration.clone();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry.clone(),
+        };
+        let resolve = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
+            let resolved =
+                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                crate::HostCommandV1::Serve {
+                    verify_confidence, ..
+                } => verify_confidence,
+                _ => panic!("serve"),
+            }
+        };
+        let expected = crate::confidence::parse(&calibration.to_string()).unwrap();
+        assert!(expected.is_some());
+        assert_eq!(resolve(&[]), expected);
+        assert_eq!(resolve(&["--speculation", "balanced"]), expected);
+        assert_eq!(resolve(&["--speculation-confidence", "off"]), None);
+        let mut other = calibration.clone();
+        other["floor"] = 0.into();
+        assert_eq!(
+            resolve(&["--speculation-confidence", &other.to_string()]),
+            crate::confidence::parse(&other.to_string()).unwrap()
+        );
+        assert_eq!(resolve(&["--speculation", "adaptive"]), None);
+        assert_eq!(resolve(&["--speculative-tokens", "0"]), None);
+        let mut short = calibration.clone();
+        short["greedy"].as_array_mut().unwrap().pop();
+        short["sampled"].as_array_mut().unwrap().pop();
+        let mut malformed = calibration.clone();
+        malformed["floor"] = 4.into();
+        for (mode, confidence) in [
+            ("adaptive", calibration.clone()),
+            ("balanced", short),
+            ("balanced", malformed),
+        ] {
+            let mut bad = entry.clone();
+            bad["speculation"]["mode"] = mode.into();
+            bad["speculation"]["confidence"] = confidence.clone();
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: bad,
+            };
+            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+                panic!("{mode} {confidence} accepted");
+            };
+            assert!(
+                refusal
+                    .to_string()
+                    .contains("profile speculation confidence"),
                 "{refusal}"
             );
         }

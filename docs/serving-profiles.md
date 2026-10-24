@@ -56,6 +56,36 @@ default, held 302 to 304 MiB of graphs per GPU after warmup against 280 MiB
 at the defaults, and its buffers for 128 rows held 32 to 64 MiB more before
 the KV pool.
 
+## Drafter confidence
+
+`--speculation-confidence JSON|off` (`speculation.confidence`) lets a
+balanced plan leave the choice of which drafts to verify to the package. The
+plan still picks the step's verify width from its depth schedule and widths,
+but reserves every item's drafts up to its limits; a package that declares
+`chop.verify-allocation.v1` then verifies the drafts its drafter is most
+confident in within that width. Every emitted token is still verified:
+allocation changes which drafts reach the target, never what a verified
+draft emits. The calibration is an object:
+
+```json
+{"contract": "example.drafter-confidence.v1", "floor": 1,
+ "greedy": [[1.2, -0.4], [1.1, -0.6]], "sampled": [[1.0, -0.5], [0.9, -0.8]]}
+```
+
+`contract` names the package's `confidence_contract`, the meaning of its
+drafter's raw confidence; `floor` is the drafts every item verifies before
+any is ranked; `greedy` and `sampled` hold one `[scale, offset]` pair per
+draft position, from the first, and a raw confidence `s` at a position means
+`sigmoid(scale * s + offset)`, the chance its draft is accepted when every
+earlier one was. Both kinds cover the same positions, at least
+`--speculative-tokens` of them and at most 16. Fit calibrations on sampled
+serving data, which is the serving workload. The option needs
+`--speculation balanced` and speculative tokens; an explicit other mode or
+zero tokens drop a profile's calibration, and `off` replaces it. Startup logs
+`startup speculation_confidence:` with the result, and serves without
+confidence when the package does not declare the capability or names
+another contract.
+
 ## GPU memory
 
 `--gpu-memory-utilization F` (profile field `gpu_memory_utilization`, image

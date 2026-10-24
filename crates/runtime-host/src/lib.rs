@@ -26,6 +26,7 @@ mod allocator;
 mod catalog;
 pub mod checkpoint_verify;
 mod command;
+mod confidence;
 #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
 pub mod cuda;
 mod deployment;

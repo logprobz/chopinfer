@@ -12,6 +12,8 @@ pub(crate) mod cycle;
 pub(crate) mod device;
 pub mod execution;
 pub mod features;
+#[cfg(feature = "diagnostic-taps")]
+pub(crate) mod head_capture;
 pub(crate) mod prefetch;
 pub(crate) mod results;
 pub mod staging;

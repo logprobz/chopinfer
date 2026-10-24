@@ -77,6 +77,8 @@ pub(crate) struct Device {
     pub batch_commit: bool,
     #[cfg(feature = "diagnostic-taps")]
     pub draft_check: Option<std::path::PathBuf>,
+    #[cfg(feature = "diagnostic-taps")]
+    pub head_capture: Option<super::head_capture::HeadCapture>,
 }
 
 pub(crate) struct Rank {
@@ -297,6 +299,8 @@ impl Device {
             #[cfg(feature = "diagnostic-taps")]
             draft_check: std::env::var_os("CHOPINFER_DSPARK_DRAFT_CHECK")
                 .map(std::path::PathBuf::from),
+            #[cfg(feature = "diagnostic-taps")]
+            head_capture: super::head_capture::HeadCapture::from_env()?,
         })
     }
 

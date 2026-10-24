@@ -545,7 +545,10 @@ impl Instance {
                 .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
         }
         self.replay_drafter(items)?;
-        self.drafter_status(live)
+        self.drafter_status(live)?;
+        #[cfg(feature = "diagnostic-taps")]
+        self.capture_draft_head(inputs)?;
+        Ok(())
     }
 
     pub(super) fn drafter_programs(&self, items: u32) -> Result<Vec<Vec<Lowered>>, String> {

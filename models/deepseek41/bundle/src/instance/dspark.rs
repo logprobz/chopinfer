@@ -10,6 +10,8 @@ mod features;
 mod graph_budget;
 pub(crate) use features::PrefillFeatureRange;
 mod graphs;
+#[cfg(feature = "diagnostic-taps")]
+mod head_capture;
 #[cfg(test)]
 pub(crate) use graphs::drafter_launches_for_test;
 mod launch;

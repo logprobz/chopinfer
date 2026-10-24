@@ -225,7 +225,11 @@ impl Instance {
         Ok(())
     }
 
-    fn read_capture_spans(&self, rank: usize, spans: &[Span]) -> Result<Vec<u8>, String> {
+    pub(super) fn read_capture_spans(
+        &self,
+        rank: usize,
+        spans: &[Span],
+    ) -> Result<Vec<u8>, String> {
         let stream = self.ranks[rank].2;
         self.services
             .synchronize_stream(stream)

@@ -413,6 +413,12 @@ within that limit, with larger chunks first: 16 items use 8 + 8, 24 use
 The Flash TP4 DSpark profiles select this twelve-item limit on the bounded
 head/router, HC and quantizer paths. An override above twelve items can
 select the larger-row paths.
+Diagnostic builds can set `CHOPINFER_DSPARK_HEAD_CAPTURE` to a private
+external directory and create its `enabled` marker after startup. The
+drafter then captures normalized F32 head inputs, BF16 head weights and
+reference F32 outputs once at each of 40, 60, 80 and 160 rows. Readbacks
+run after drafter dispatch, outside graph capture. Files are private and
+never replaced; these untimed captures are for lab comparisons only.
 The package declares up to 192 verify rows a step, every item at its
 deepest block. The host serves 32 unless `--speculative-rows` (profile
 `speculation.rows`) asks for more, and the instance prepares every op for

@@ -2,7 +2,7 @@
 """Seal a depth tuner stage.
 
 Usage: python3 -I tools/tune/stage.py --model models/<model>/depth-tune.json
-           --install-dir ROUND_DIR [--install-name head] STAGE_DIR
+           --install-dir ROUND_DIR [--install-name head] [--job NAME] STAGE_DIR
        python3 -I tools/tune/stage.py --model ... --template STAGE_DIR
 
 ROUND_DIR holds a frozen install in the integration layout: install-NAME
@@ -17,6 +17,9 @@ staged.json (with an estimate of the job's minutes).
 
 --template seals without an install, prompts and tools/qual from this tree,
 for CPU dry runs only: the job refuses it outside --dry-run.
+--job NAME applies the model config's `jobs[NAME]` over its settings (for
+example a low- and a high-concurrency half of the sweep, each in its own
+budget).
 STAGE_DIR must be outside the repository (stage under $CHOPINFER_DATA).
 """
 import argparse
@@ -68,18 +71,23 @@ def frozen(directory, name):
 
 
 def estimate(config):
-    """Expected job seconds from the model config's planning rates."""
+    """Expected job seconds from the model config's planning figures: per
+    process a startup and fixed overhead, then every warm-up and window
+    request at the planned request tok/s plus its settling time."""
     sys.path.insert(0, str(HERE))
     import tune
     model, plan = config['model'], config['model']['planning']
     tokens = lambda c: config['tokens'].get(str(c), config['tokens']['default'])
+    deepest = max(model.get('depths') or [model['max_depth']])
     total = 0.0
     for label in ['W0', *tune.order(config)]:
-        depth = model['max_depth'] if label == 'W0' else int(label[1:].split('p')[0])
+        depth = deepest if label == 'W0' else int(label[1:].split('p')[0])
         rates = plan['ar_tokens_per_second'] if depth == 0 else plan['tokens_per_second']
         total += plan['startup_seconds'] + plan['process_overhead_seconds']
-        total += sum(c * config['warm_tokens'] / plan['tokens_per_second'][str(c)] for c in config['warm'])
-        total += sum(c * tokens(c) / rates[str(c)] for _, c in tune.windows_for(config, depth, label == 'W0'))
+        total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
+        for _, c in tune.windows_for(config, depth, label == 'W0'):
+            groups = model.get('groups', {}).get(str(c), 1)
+            total += groups * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])
     return total
 
 
@@ -91,6 +99,7 @@ def main():
     ap.add_argument('--install-name', default='head')
     ap.add_argument('--template', action='store_true', help='seal without an install, for dry runs only')
     ap.add_argument('--name', help='the job name (default: the model and install revision)')
+    ap.add_argument('--job', help="a job of the model config's `jobs`, applied over its settings")
     args = ap.parse_args()
     stage = Path(args.stage).resolve()
     if stage == ROOT or ROOT in stage.parents:
@@ -98,7 +107,13 @@ def main():
     if bool(args.template) == bool(args.install_dir):
         raise SystemExit('give exactly one of --install-dir and --template')
     model = json.loads(Path(args.model).read_text())
+    jobs = model.pop('jobs', {})
+    if args.job:
+        model = {**model, **jobs[args.job], 'job': args.job}
     workload = json.loads((ROOT / model['workload']).read_text())
+    for c in model['concurrencies']:
+        if c * model.get('groups', {}).get(str(c), 1) > workload['prompts']:
+            raise SystemExit(f"C{c}: its prompt groups need more than the workload's {workload['prompts']} prompts")
     if args.template:
         install, files = {'install': str(stage / 'install'), 'cache': str(stage / 'cache'), 'source': str(ROOT),
                           'revision': 'template', 'prepared': {'bundle': ''}}, set()
@@ -109,7 +124,7 @@ def main():
     sys.path.insert(0, str(source / 'tools/qual'))
     import bench
     built = builder.build(workload, source, lambda i: bench.stream_prompt('diverse', i).strip())
-    name = args.name or f"depth tune {model['model']} {install['revision'][:10]}"
+    name = args.name or f"depth tune {model['model']}{' ' + args.job if args.job else ''} {install['revision'][:10]}"
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'expected_power_w', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}

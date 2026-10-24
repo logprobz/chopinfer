@@ -15,8 +15,9 @@ changes drafting or verify cost.
   variable, tensor parallel size, test KV pages and the bundle's KV log line,
   serve options, speculation mode, deepest depth (the drafter's published
   block), verify row capacity, concurrencies, processes per depth, tokens per
-  window, sampling, selection rule, power limit and work budget, and planning
-  rates for the time estimate. See `models/deepseek41/depth-tune.json`.
+  window, prompt groups per concurrency, sampling, selection rule, power
+  limit and work budget, planning figures for the time estimate, and named
+  `jobs` that split the sweep. See `models/deepseek41/depth-tune.json`.
 - A workload under `tools/tune/workloads/`. `coding.json` weights code
   completion and code edits over a general chat share; prompts are built from
   the install's own source snapshot, so a revision always gives the same
@@ -27,8 +28,11 @@ changes drafting or verify cost.
 1. Seal a stage outside the tree, on a frozen integration install
    (install-NAME, cache-NAME, source-NAME, logs/):
    `python3 -I tools/tune/stage.py --model models/<model>/depth-tune.json
-   --install-dir ROUND_DIR $CHOPINFER_DATA/.../stages/NAME`. It prints the
-   job's SHA256 and estimated minutes.
+   --install-dir ROUND_DIR [--job NAME] $CHOPINFER_DATA/.../stages/NAME`. It
+   prints the job's SHA256 and estimated minutes. Keep each job under about
+   40 minutes: split by concurrency (a low job over every depth, a high job
+   over the depths that can still change its rows) and check the estimate
+   against the last run's timings.
 2. `python3 -I STAGE/harness/preflight.py STAGE` parses every depth's server
    options with the frozen executable, without CUDA.
 3. Dry run on the CPU stub (with `local.env` sourced):
@@ -45,8 +49,10 @@ An untimed warm-up process runs the deepest depth through every window and
 keeps the reference outputs. Then `processes_per_depth` fresh servers per
 depth, in alternating order, run one greedy and one fixed-seed sampled window
 at every concurrency the depth can change (C x (depth + 1) within the verify
-rows, every C at depth 0). Each window is one batched request, so all streams
-start in the same step. Every output must equal the warm-up's bit for bit:
+rows, every C at depth 0). Each window is one batched request per prompt
+group, so all streams start in the same step; low concurrencies serve
+several groups in turn so one prompt does not decide them. A process starts
+only while its reserve of the work budget remains. Every output must equal the warm-up's bit for bit:
 draft depth never changes an emitted token. Servers run the test KV mode with
 zero preemptions and evictions, report their speculation mode, record memory
 after warmup, and never draft past their depth. Power limits are recorded and
@@ -60,7 +66,7 @@ draft position and whether every process served the same shapes. A depth's
 score is its request tok/s over depth 0's, weighted over greedy and sampled.
 Among stable depths (identical shapes, spread within the limit) the
 shallowest within the margin of the best wins (the larger of 1.5% and the
-best depth's spread); a depth that serves the same plans as a shallower one
-counts as that one. The emitted schedule goes into the profile's `depths`
+best depth's spread). `python3 -I tools/tune/report.py RUN_LOW RUN_HIGH`
+merges split jobs into one schedule. The emitted schedule goes into the profile's `depths`
 with the run cited by date and numbers in the model README, and its landing
 batch passes the stability gate like any drafting change.

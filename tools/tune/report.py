@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Select a per-concurrency draft depth schedule from a depth tuner run.
 
-Usage: python3 -I report.py RUN_DIR
+Usage: python3 -I report.py RUN_DIR [RUN_DIR ...]
 
-Reads RUN_DIR/config.json and every timed process's window records (W0 is the
+Several runs (for example a low- and a high-concurrency job) merge into one
+schedule, each concurrency taken from the run that measured it. Each run
+reads RUN_DIR/config.json and every timed process's window records (W0 is the
 untimed warm-up and never counts) and writes RUN_DIR/tune.json and
 RUN_DIR/tune.md.
 
@@ -19,8 +21,8 @@ is stable when every kind served identical shapes and its request spread is at
 most config["selection"]["spread"]. Among stable depths, the shallowest whose
 score is within the margin of the best wins; the margin is the larger of
 config["selection"]["margin"] and the best depth's request spread. A depth
-that served the same shapes as a shallower one in every kind counts as that
-one. The schedule gives each measured C its depth, from that C up to the next
+whose full-concurrency shapes equal a shallower one's is noted; its tail
+steps can still differ, so the margin rule alone decides. The schedule gives each measured C its depth, from that C up to the next
 measured one, as a `depths` string (`items:depth,...`).
 """
 import json
@@ -99,7 +101,7 @@ def select(config, cells):
                        'stable': all(cells[(c, k, d)]['identical_shapes']
                                      and cells[(c, k, d)]['request_spread'] <= rule['spread'] for k in present),
                        'request_spread': max(cells[(c, k, d)]['request_spread'] for k in present)}
-        stable = [d for d, v in rows.items() if v['stable'] and v['equivalent_to'] is None]
+        stable = [d for d, v in rows.items() if v['stable']]
         if not stable:
             out[str(c)] = {'depth': 0, 'reason': 'no stable depth', 'depths': rows}
             continue
@@ -168,5 +170,13 @@ def markdown(config, cells, selection, depths):
     return '\n'.join(lines)
 
 
+def merged(runs):
+    """One schedule from several runs' selections."""
+    selection = {}
+    for run in runs:
+        selection.update(evaluate(run)['selection'])
+    return schedule(selection)
+
+
 if __name__ == '__main__':
-    print(json.dumps({'depths': evaluate(sys.argv[1])['depths']}))
+    print(json.dumps({'depths': merged(sys.argv[1:])}))

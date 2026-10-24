@@ -83,6 +83,43 @@ class Tuner(unittest.TestCase):
         self.assertEqual(out['selection']['4']['depths'][5]['equivalent_to'], 4)
         self.assertEqual(out['depths'], '1:4,8:3,16:0')
 
+    def test_prompt_groups_merge_into_one_window(self):
+        full = tune.merge_full([
+            {'steps': 10, 'tokens': 100, 'seconds': 0.5, 'histogram': {'i1-r6-v1': 10}, 'drafted_steps': 10},
+            {'steps': 30, 'tokens': 100, 'seconds': 1.5, 'histogram': {'i1-r6-v1': 28, 'i1-r1-v0': 2},
+             'drafted_steps': 28}])
+        self.assertEqual((full['steps'], full['tokens_per_second'], full['histogram']),
+                         (40, 100.0, {'i1-r1-v0': 2, 'i1-r6-v1': 38}))
+        accept = tune.merge_acceptance([
+            {'draft_tokens': 10, 'accepted_tokens': 6, 'verify_items': 2,
+             'per_position': [{'position': 1, 'drafted': 2, 'accepted': 2}]},
+            {'draft_tokens': 10, 'accepted_tokens': 4, 'verify_items': 2,
+             'per_position': [{'position': 1, 'drafted': 2, 'accepted': 1}]}])
+        self.assertEqual((accept['acceptance_rate'], accept['per_position'][0]['rate']), (0.5, 0.75))
+        energy = tune.merge_energy([
+            {'samples': 3, 'seconds': 1.0, 'mean_board_w': 600.0, 'sm_mhz_range': [[1700, 1790]], 'synthetic': False},
+            {'samples': 3, 'seconds': 3.0, 'mean_board_w': 800.0, 'sm_mhz_range': [[1690, 1792]], 'synthetic': False}],
+            tokens=1000)
+        self.assertEqual((energy['joules_per_token'], energy['sm_mhz_range']), (3.0, [[1690, 1792]]))
+
+    def test_a_job_runs_only_its_depths(self):
+        model = {**MODEL, 'depths': [5], 'processes_per_depth': 2}
+        self.assertEqual(tune.order({'model': model}), ['d5p1', 'd5p2'])
+
+    def test_runs_merge_into_one_schedule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            low, high = Path(directory) / 'low', Path(directory) / 'high'
+            for run, rates in ((low, {1: {0: 100, 5: 200}, 4: {0: 300, 3: 400}}),
+                               (high, {8: {0: 400, 3: 500}, 16: {0: 600, 1: 590}})):
+                run.mkdir()
+                (run / 'config.json').write_text(json.dumps(
+                    {**CONFIG, 'model': {**MODEL, 'concurrencies': sorted(rates)}}))
+                for c, row in rates.items():
+                    for depth, rate in row.items():
+                        for kind in ('greedy', 'sampled'):
+                            window(run, f'd{depth}p1', kind, c, depth, rate, {f'i{c}-r{c * (depth + 1)}': 10})
+            self.assertEqual(report.merged([low, high]), '1:5,4:3,16:0')
+
     def test_unstable_depths_are_not_chosen(self):
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)

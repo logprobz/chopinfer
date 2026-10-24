@@ -13,16 +13,19 @@ The job:
 2. runs an untimed warm-up process W0 at the deepest depth through every
    window, so every timed process finds the same warm page cache, and keeps
    W0's outputs as the reference;
-3. runs `processes_per_depth` fresh servers per depth d in 0..max_depth, in
-   alternating order, each with `--speculation MODE --speculation-depths 1:d`
-   (the profile's other settings, verify widths included, stay): test KV
+3. runs `processes_per_depth` fresh servers per depth d in 0..max_depth (or
+   the job's `depths`), in alternating order, each with `--speculation MODE
+   --speculation-depths 1:d` and the job's `extra_arguments` (the profile's
+   other settings, verify widths included, stay); a process starts only
+   while `planning.process_reserve_seconds` of the work budget remain: test KV
    mode, zero preemptions and prefix-cache evictions, speculation mode on
    /health, memory after warmup recorded, no step drafting past d;
 4. per server, for each concurrency C whose rows a depth d can still change
    (C x (d + 1) <= verify_rows, and every C at depth 0), one greedy and one
-   fixed-seed sampled window: one batched request of the workload's first C
-   prompts (token IDs from the server's /tokenize, chat prompts through its
-   template), `tokens` tokens each. Every greedy window must equal W0's bits
+   fixed-seed sampled window: one batched request per prompt group, the
+   window's `groups[C]` groups of C prompts in turn (token IDs from the
+   server's /tokenize, chat prompts through its template), `tokens` tokens
+   each. Every greedy window must equal W0's bits
    at once and every sampled window at the end: draft depth never changes an
    emitted token.
 Per window: request tok/s (C x tokens over send-to-last-token), the step
@@ -320,6 +323,46 @@ def window(server, name, kind, inputs, tokens, salt, sampling):
             'faults': faults.difference(counters, faults.snapshot(server))}
 
 
+def merge_full(parts):
+    """One window's full-concurrency steps over its prompt groups."""
+    histogram = Counter()
+    for x in parts:
+        histogram.update(x['histogram'])
+    steps, tokens, seconds = (sum(x[k] for x in parts) for k in ('steps', 'tokens', 'seconds'))
+    drafted = sum(x['drafted_steps'] for x in parts)
+    return {'steps': steps, 'tokens': tokens, 'seconds': seconds,
+            'tokens_per_second': tokens / seconds if seconds else 0.0,
+            'mean_step_ms': seconds * 1000 / steps if steps else None, 'histogram': dict(sorted(histogram.items())),
+            'drafted_steps': drafted, 'drafted_share': drafted / steps if steps else 0.0}
+
+
+def merge_acceptance(parts):
+    if any(x is None for x in parts):
+        return None
+    out = {k: sum(x[k] or 0 for x in parts) for k in ('draft_tokens', 'accepted_tokens', 'verify_items')}
+    positions = {}
+    for x in parts:
+        for row in x['per_position']:
+            cell = positions.setdefault(row['position'], [0, 0])
+            cell[0] += row['drafted']
+            cell[1] += row['accepted']
+    out['acceptance_rate'] = out['accepted_tokens'] / out['draft_tokens'] if out['draft_tokens'] else None
+    out['mean_acceptance_length'] = 1 + out['accepted_tokens'] / out['verify_items'] if out['verify_items'] else None
+    out['per_position'] = [{'position': j, 'drafted': d, 'accepted': a, 'rate': a / d if d else None}
+                           for j, (d, a) in sorted(positions.items())]
+    return out
+
+
+def merge_energy(parts, tokens):
+    """Energy of the groups' request spans only (not the pauses between)."""
+    joules = sum(x['mean_board_w'] * x['seconds'] for x in parts)
+    seconds = sum(x['seconds'] for x in parts)
+    ranges = [x['sm_mhz_range'] for x in parts]
+    return {'samples': sum(x['samples'] for x in parts), 'seconds': seconds, 'mean_board_w': joules / seconds,
+            'sm_mhz_range': [[min(r[i][0] for r in ranges), max(r[i][1] for r in ranges)] for i in range(len(ranges[0]))],
+            'joules_per_token': joules / tokens, 'synthetic': parts[0]['synthetic']}
+
+
 def first_difference(reference, exact):
     for i, (a, b) in enumerate(zip(reference, exact)):
         if a != b:
@@ -367,7 +410,8 @@ def run_process(run, label, depth, state, dry, every=False):
     model = config['model']
     install = SEAL['install']
     root = run / label
-    arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}']
+    arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}',
+                 *model.get('extra_arguments', [])]
     server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py')
     record = state['processes'][label] = {'depth': depth, 'args': arguments, 'windows': {}}
     power = Power(root, dry)
@@ -402,21 +446,32 @@ def run_process(run, label, depth, state, dry, every=False):
         for kind, c in windows_for(config, depth, every):
             name = f'{kind}-c{c}'
             tokens = config['tokens'].get(str(c), config['tokens']['default'])
-            w = window(server, name, kind, [list(x) for x in inputs[:c]], tokens, f'tune-{label}-{name}',
-                       config['sampling'])
-            check_depth(f'{label} {name}', w['steps'], depth)
-            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'tokens': tokens,
-                     'request_seconds': w['ended'] - w['started'],
-                     'request_tokens_per_second': c * tokens / (w['ended'] - w['started']),
-                     'full': full_concurrency(w['steps'], c), 'streams': streams(w['finishes'], tokens),
-                     'acceptance': w['acceptance'], 'energy': power.window(w['started'], w['ended'], c * tokens),
-                     'faults': w['faults'], 'prompts': [p['sha256'] for p in SEAL['prompts'][:c]]}
-            r.write(root / 'windows' / f'{name}.json', {**value, 'steps': w['steps'], 'exact': w['exact']})
+            # Low concurrencies serve several prompt groups in turn, so a
+            # window covers more than its first C prompts.
+            groups = model.get('groups', {}).get(str(c), 1)
+            parts = []
+            for g in range(groups):
+                w = window(server, f'{name}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
+                           f'tune-{label}-{name}-g{g}', config['sampling'])
+                check_depth(f'{label} {name} group {g}', w['steps'], depth)
+                w['energy'] = power.window(w['started'], w['ended'], c * tokens)
+                parts.append(w)
+            seconds = sum(w['ended'] - w['started'] for w in parts)
+            finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
+            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'tokens': tokens, 'groups': groups,
+                     'request_seconds': seconds, 'request_tokens_per_second': groups * c * tokens / seconds,
+                     'full': merge_full([full_concurrency(w['steps'], c) for w in parts]),
+                     'streams': streams(finishes, tokens), 'acceptance': merge_acceptance([w['acceptance'] for w in parts]),
+                     'energy': merge_energy([w['energy'] for w in parts], groups * c * tokens),
+                     'faults': [w['faults'] for w in parts],
+                     'prompts': [p['sha256'] for p in SEAL['prompts'][:groups * c]]}
+            exact = [stream for w in parts for stream in w['exact']]
+            r.write(root / 'windows' / f'{name}.json', {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
             record['windows'][name] = {k: value[k] for k in ('request_tokens_per_second', 'full')}
-            reference = state['reference'].setdefault(name, w['exact'])
-            if w['exact'] is not reference:
-                if w['exact'] != reference:
-                    where = first_difference(reference, w['exact'])
+            reference = state['reference'].setdefault(name, exact)
+            if exact is not reference:
+                if exact != reference:
+                    where = first_difference(reference, exact)
                     if kind == 'greedy':
                         raise RuntimeError(f'{label} {name}: greedy output differs from W0 at {where}')
                     state['sampled_differences'].append(f'{label} {name}: differs from W0 at {where}')
@@ -436,7 +491,7 @@ def run_process(run, label, depth, state, dry, every=False):
 def order(config):
     """Process labels: passes alternate ascending and descending depth, and
     later passes start from the middle."""
-    depths = list(range(config['model']['max_depth'] + 1))
+    depths = config['model'].get('depths') or list(range(config['model']['max_depth'] + 1))
     out = []
     for p in range(config['model']['processes_per_depth']):
         seq = depths if p % 2 == 0 else depths[::-1]
@@ -491,9 +546,14 @@ def main(args):
         before = state['telemetry']['before'] = r.telemetry(run, 'before', args.dry_run, since)
         reference = before['power_limits_w']
         state['power']['before'] = before['power']
-        deepest = config['model']['max_depth']
+        deepest = max(config['model'].get('depths') or [config['model']['max_depth']])
+        reserve = config['model']['planning']['process_reserve_seconds']
         for label in state['order']:
             depth = deepest if label == 'W0' else int(label[1:].split('p')[0])
+            left = r.WORK_DEADLINE - time.monotonic()
+            if left < reserve:
+                raise RuntimeError(f'work budget: {left:.0f} s left, under the {reserve} s a process needs; '
+                                   f'stopped before {label}')
             idle(run, f'before-{label}', args.dry_run)
             run_process(run, label, depth, state, args.dry_run, every=label == 'W0')
             state['power'][label] = r.power_check(run, f'after-{label}', args.dry_run, reference)

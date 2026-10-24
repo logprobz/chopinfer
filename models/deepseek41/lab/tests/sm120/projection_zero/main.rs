@@ -14,6 +14,7 @@ mod cpu;
 mod data;
 #[path = "../../../sm120/projection_zero.rs"]
 mod family;
+mod sweep;
 mod timing;
 fn n() -> usize {
     family::entry().query().n as usize
@@ -144,6 +145,7 @@ impl Functions {
     }
 }
 struct Buffers {
+    reference: Entry,
     x: DeviceBuffer,
     w: DeviceBuffer,
     domain: DeviceBuffer,
@@ -170,6 +172,7 @@ impl Buffers {
             poison::fill_all(s, b, &[0xa5])?;
         }
         Ok(Self {
+            reference: old(rows),
             x: s.upload_f32(x)?,
             w: s.upload_bf16(w)?,
             domain: s.allocate(n() / 16 * 4)?,
@@ -194,7 +197,7 @@ impl Buffers {
         prep_only: bool,
     ) -> LabResult<()> {
         let e = family::entry();
-        let old = old(rows);
+        let old = &self.reference;
         let mut prepared = stage([rows, 1, 1]);
         prepared.pdl = pdl;
         if rows <= 32 && mutation != Some("omit_chain") && mutation != Some("force_certificate") {
@@ -273,7 +276,7 @@ impl Buffers {
             return Ok(());
         }
         let (name, mut p) = if arm == 0 {
-            (old.symbol().to_string(), old_plan(&old, rows))
+            (old.symbol().to_string(), old_plan(old, rows))
         } else {
             (
                 if mutation == Some("omit_chain") {
@@ -338,7 +341,22 @@ fn compare(
     label: &str,
     timed: bool,
 ) -> LabResult<Vec<u8>> {
-    let b = Buffers::new(s, x, w, rows)?;
+    compare_with_reference(s, f, x, w, rows, m, label, timed, old(rows))
+}
+#[allow(clippy::too_many_arguments)]
+fn compare_with_reference(
+    s: &Session,
+    f: &Functions,
+    x: &[f32],
+    w: &[u16],
+    rows: u32,
+    m: u32,
+    label: &str,
+    timed: bool,
+    reference: Entry,
+) -> LabResult<Vec<u8>> {
+    let mut b = Buffers::new(s, x, w, rows)?;
+    b.reference = reference;
     b.classify(f, s)?;
     let graphs = [
         s.capture(|st| b.run(f, st, rows, m, 0, true, None, false))?,
@@ -387,7 +405,7 @@ fn compare(
         let cold = timing::pair(s, true, |arm, st| {
             graphs[arm].launch(st).map_err(|e| e.to_string())
         })?;
-        let prepare = if old(rows).uses_prefill_tiles() {
+        let prepare = if b.reference.uses_prefill_tiles() {
             Some(timing::pair(s, false, |arm, st| {
                 b.run(f, st, rows, m, arm, true, None, true)
             })?)
@@ -396,7 +414,7 @@ fn compare(
         };
         println!(
             "PROJECTION_ZERO_TIME {}",
-            json!({"rows":rows,"tile":m,"label":label,"arms":["base_prefill_dispatch","zero_components"],"reference":old(rows).symbol(),"includes_prepare":true,"timing":pair,"cold":cold,"prepare":prepare})
+            json!({"rows":rows,"tile":m,"label":label,"arms":["base_prefill_dispatch","zero_components"],"reference":b.reference.symbol(),"includes_prepare":true,"timing":pair,"cold":cold,"prepare":prepare})
         );
     }
     Ok(result)
@@ -522,6 +540,9 @@ fn run(s: &Session) -> LabResult<()> {
 #[test]
 #[ignore = "requires CHOPINFER_PROJECTION_ZERO_ROOT and an assigned idle GPU"]
 fn projection_gpu() {
+    gpu_run(run);
+}
+fn gpu_run(run: fn(&Session) -> LabResult<()>) {
     use std::sync::OnceLock;
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
     static TABLE: OnceLock<Vec<(&'static str, &'static [u8])>> = OnceLock::new();

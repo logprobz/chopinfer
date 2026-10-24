@@ -83,18 +83,26 @@ pub fn read(layer: u32, name: &str) -> LabResult<Vec<u8>> {
     }
     Ok(b)
 }
-pub fn captured(s: &Session, f: &Functions, layer: u32) -> LabResult<(Vec<f32>, Vec<u16>)> {
+pub fn normalized(
+    s: &Session,
+    f: &Functions,
+    input: &[u8],
+    weight: &[u8],
+    eps: u32,
+) -> LabResult<Vec<f32>> {
+    if input.len() != 8192 * K * 2 || weight.len() != K * 2 {
+        return Err("norm fixture extent differs".into());
+    }
     let x = s.allocate(8192 * K * 2)?;
-    x.copy_from_bytes(&read(layer, "norm-input.bf16")?, &s.stream)
+    x.copy_from_bytes(input, &s.stream)
         .map_err(|e| e.to_string())?;
     let w = s.allocate(K * 2)?;
-    w.copy_from_bytes(&read(layer, "norm-weight.bf16")?, &s.stream)
+    w.copy_from_bytes(weight, &s.stream)
         .map_err(|e| e.to_string())?;
     let y = s.allocate(8192 * K * 2)?;
     let live = s.allocate(4)?;
     live.copy_from_bytes(&8192u32.to_le_bytes(), &s.stream)
         .map_err(|e| e.to_string())?;
-    let eps = manifest()?["epsilon_bits"].as_u64().ok_or("epsilon bits")? as u32;
     f.call(
         "chop_projection_zero_replay_norm_v1",
         &s.stream,
@@ -113,6 +121,16 @@ pub fn captured(s: &Session, f: &Functions, layer: u32) -> LabResult<(Vec<f32>, 
         .chunks_exact(2)
         .map(|b| f32::from_bits(u32::from(u16::from_le_bytes(b.try_into().unwrap())) << 16))
         .collect();
+    Ok(x)
+}
+pub fn captured(s: &Session, f: &Functions, layer: u32) -> LabResult<(Vec<f32>, Vec<u16>)> {
+    let x = normalized(
+        s,
+        f,
+        &read(layer, "norm-input.bf16")?,
+        &read(layer, "norm-weight.bf16")?,
+        manifest()?["epsilon_bits"].as_u64().ok_or("epsilon bits")? as u32,
+    )?;
     let w = read(layer, &format!("weight-n{}.bf16", n()))?
         .chunks_exact(2)
         .map(|b| u16::from_le_bytes(b.try_into().unwrap()))

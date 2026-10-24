@@ -31,6 +31,24 @@ pub fn coalesced_cubin_spec(name: &str) -> CubinSpec {
     }
 }
 
+pub const LINEAR_SYMBOL: &str = "chop_moe_scale_tiles_expand_pair_linear_v1";
+
+/// A candidate with a parallel exception pass for tiled first outputs, with the same validated
+/// spans and launch plan as `PAIR_TILES_SYMBOL`.
+pub fn linear_cubin_spec(name: &str) -> CubinSpec {
+    CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: vec![],
+        headers: vec!["#include \"moe/scale_tiles_expand_linear.cuh\"".into()],
+        defines: vec![],
+        entries: vec![scale_expand::pair_entry(
+            LINEAR_SYMBOL,
+            "run_tiles_pair_linear",
+        )],
+    }
+}
+
 pub fn minimum_bank_bytes(bank: PairBank, experts: u32) -> Result<u64, Refusal> {
     ScaleTilesQuery {
         width: bank.width,

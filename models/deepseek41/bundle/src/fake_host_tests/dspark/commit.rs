@@ -98,6 +98,43 @@ fn batched_commit_preserves_continued_and_mixed_prompt_cursors() {
 }
 
 #[test]
+fn batched_commit_configures_large_kv_projection_before_launch() {
+    let (host, mut instance) = crate::dspark::device::with_batch_commit(true, || {
+        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32)
+    });
+    execute(
+        &mut instance,
+        &host,
+        &packed(&[0; 4], &[192, 193, 255, 256]),
+    );
+    let begin = host.journal.borrow().len();
+    instance.commit().unwrap();
+    let journal = host.journal.borrow();
+    super::super::assert_launches_fit_configured_shared(&journal, "batched drafter commit");
+    let mut launches = 0;
+    for line in &journal[begin..] {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        if words.first() != Some(&"launch")
+            || !words[2].contains("_n512_k5120_")
+            || !words[2].ends_with("_prefill_tma_v1_packed_v1")
+        {
+            continue;
+        }
+        let shared = kernels_sm120::gemm::mxfp8_prefill::SHARED;
+        assert!(shared > bundle_runtime::acquire::DEFAULT_SHARED_BYTES);
+        assert!(line.contains(&format!("shared_memory_bytes: {shared},")));
+        launches += 1;
+    }
+    assert_eq!(launches, 4 * FLASH.dspark_stages());
+    drop(journal);
+    for request in 1..=4 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn batched_commit_errors_cannot_publish_cursors_or_resume() {
     for failure in ["gather", "launch", "status"] {
         let (host, mut instance) = crate::dspark::device::with_batch_commit(true, || {

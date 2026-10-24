@@ -96,6 +96,9 @@ fn commit_projection_boundary_paths_prepare_on_cpu() {
             for rows in chunks.iter().copied().chain([chunks.iter().sum()]) {
                 let op = prepare(&backend, &entry, rows).unwrap();
                 assert!(!op.info().symbols.is_empty());
+                for (symbol, _) in &op.info().symbols {
+                    assert!(bundle_deepseek41::sm120::fold_cubin_for_symbol(symbol).is_some());
+                }
             }
         }
     }
@@ -180,7 +183,15 @@ fn compare(session: &Session, backend: &Sm120, entry: &Entry) -> LabResult<usize
                     .launches(&buffers, view(6), Counts::rows(n))
                     .map_err(|e| e.to_string())?;
                 let functions = fixture::functions(session, &calls)?;
-                fixture::run(session, &session.stream, &calls, &functions, &bindings)?;
+                for (call, function) in calls.iter().zip(&functions) {
+                    if call.plan.dynamic_shared_bytes > 0 {
+                        function
+                            .set_max_dynamic_shared_memory(call.plan.dynamic_shared_bytes)
+                            .map_err(|e| format!("configure {}: {e}", call.symbol))?;
+                    }
+                }
+                fixture::run(session, &session.stream, &calls, &functions, &bindings)
+                    .map_err(|e| format!("projection n={} k={} rows={n}: {e}", q.n, q.k))?;
                 let mut output = vec![0; storage[2].byte_len()];
                 let mut actual_status = vec![0; storage[4].byte_len()];
                 storage[2]

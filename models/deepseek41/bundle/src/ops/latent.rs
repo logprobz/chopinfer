@@ -69,6 +69,7 @@ pub(crate) struct GlueOps {
     query_norm: Prepared<RmsNormBuffers<View>>,
     query_rope: Prepared<LatentQueryRopeBuffers<View>>,
     query_rope_small: Prepared<LatentQueryRopeBuffers<View>>,
+    query_rope_wide: Option<Prepared<LatentQueryRopeBuffers<View>>>,
     /// The circular write into the ring and the circular key lists.
     window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
     decode_window_write: Prepared<LatentWindowWriteBuffers<View>>,
@@ -199,6 +200,16 @@ impl GlueOps {
             exact::need(small, exact::every_phase(small)),
             |need| backend.latent_query_rope(&query, need),
         )?;
+        let wide_rows = shape.verify_decode_rows();
+        let query_rope_wide = if wide_rows > small {
+            Some(asks.ask(
+                "glue.query_rope wide verify",
+                exact::need(wide_rows, exact::verify(wide_rows)),
+                |need| crate::Kernels::wide_query_rope(shape, &query, need),
+            )?)
+        } else {
+            None
+        };
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
         let window_write = RowBuckets::prepare(asks, "glue.window_write", every, shape, |need| {
@@ -254,6 +265,7 @@ impl GlueOps {
             query_norm,
             query_rope,
             query_rope_small,
+            query_rope_wide,
             window_write,
             decode_window_write,
             window_keys,
@@ -310,12 +322,19 @@ impl GlueOps {
     /// The tail RoPE of `rows` rows of queries into the BF16 query.
     pub(crate) fn query_rope(
         &self,
-        rows: u32,
+        phase: crate::program::Phase,
         views: &QueryRopeViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = query_rope_buffers(&mut bind, views);
-        bind.launch(self.query_rope_op(rows), &buffers, Counts::rows(rows))
+        let op = if matches!(phase, crate::program::Phase::Verify { rows: 49..=64, .. }) {
+            self.query_rope_wide.as_ref()
+        } else {
+            None
+        }
+        .unwrap_or_else(|| self.query_rope_op(rows));
+        bind.launch(op, &buffers, Counts::rows(rows))
     }
 
     fn query_rope_op(&self, rows: u32) -> &Prepared<LatentQueryRopeBuffers<View>> {

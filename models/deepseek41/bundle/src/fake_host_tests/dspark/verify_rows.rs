@@ -2,6 +2,31 @@
 use super::*;
 
 #[test]
+fn wide_query_keeps_short_prefill_on_its_original_entry() {
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 128);
+    crate::instance::dspark_graphs_for_test(instance.handle(), Some(0));
+    let from = host.journal.borrow().len();
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(1, 0, 0, 64, true),
+    );
+    let journal = host.journal.borrow();
+    let symbols: Vec<_> = journal[from..]
+        .iter()
+        .filter(|line| line.starts_with("launch "))
+        .filter_map(|line| line.split_whitespace().nth(2))
+        .collect();
+    assert!(symbols.contains(&"chop_deepseek41_latent_query_rope_v1"));
+    assert!(!symbols.contains(&"chop_deepseek41_latent_query_rope_heads_v1"));
+    drop(journal);
+    instance.commit().unwrap();
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+#[test]
 fn target_programs_lower_at_wide_verify_rows() {
     let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 128);
     // Eager execution exposes every launch, independent of the graph budget.
@@ -80,6 +105,10 @@ fn target_programs_lower_at_wide_verify_rows() {
                         .filter(|line| line.split_whitespace().nth(2) == Some(symbol))
                         .count()
                 };
+                assert_eq!(
+                    count_symbol("chop_deepseek41_latent_query_rope_heads_v1"),
+                    40 * 4
+                );
                 assert_eq!(
                     count_symbol(
                         "chop_deepseek41_verify_f32_n32320_k5120_v1_cached_decode_v1_spans_m64_compute_v1"

@@ -181,7 +181,7 @@ impl Lowering<'_> {
                     format!("query RoPE and window write of layer {layer}: {refusal}")
                 });
         }
-        glue.query_rope(phase.rows(), &views)
+        glue.query_rope(phase, &views)
             .map(Some)
             .map_err(|refusal| format!("query RoPE of layer {layer}: {refusal}"))
     }

@@ -53,6 +53,7 @@ pub(crate) mod latent_cache;
 )]
 pub(crate) mod latent_cache_groups;
 pub mod latent_decode;
+mod latent_query_serving;
 pub mod latent_scheduled;
 pub mod markov_row;
 pub mod markov_tiled;

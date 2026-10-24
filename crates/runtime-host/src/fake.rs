@@ -43,6 +43,9 @@ pub const DEFAULT_FAKE_DEVICE_MEMORY_BYTES_V1: u64 = 1024 * 1024 * 1024 + 16 * 1
 /// The step a fake lendable mapping's length is rounded up to, as a device
 /// rounds it to its allocation granularity.
 pub const FAKE_LENDABLE_GRANULARITY_V1: u64 = 64 * 1024;
+/// The entries of each history a serving fake device keeps, as the driver
+/// backend bounds its diagnostics: a server runs for as long as it serves.
+pub const FAKE_SERVED_HISTORY_ENTRIES_V1: usize = 4096;
 
 /// One operation this backend can be told to refuse.
 ///
@@ -144,6 +147,9 @@ pub struct FakeHostDeviceV1 {
     launch_arguments: Vec<Vec<DeviceArgumentV1>>,
     /// The identifier and lent ranges of every custom operation this ran.
     custom_operations: Vec<(Vec<u8>, Vec<LentRangeV1>)>,
+    /// The most entries each history above keeps, the oldest kept; `None`
+    /// keeps every entry, which is what a test reads back.
+    history_entries: Option<usize>,
     /// How many stream waits this backend has performed.
     synchronizations: usize,
     /// Largest host source slice passed to one device upload.
@@ -261,6 +267,7 @@ impl FakeHostDeviceV1 {
             launch_dispatches: Vec::new(),
             launch_arguments: Vec::new(),
             custom_operations: Vec::new(),
+            history_entries: None,
             synchronizations: 0,
             largest_host_to_device_copy_bytes: 0,
             host_to_device_copy_bytes: 0,
@@ -293,6 +300,22 @@ impl FakeHostDeviceV1 {
             imported: BTreeMap::new(),
             held: None,
         }
+    }
+
+    /// Keeps at most `entries` of each history (diagnostic lines, refused
+    /// launches with their dispatches and arguments, custom operations), the
+    /// oldest ones, so a device that serves indefinitely holds a bounded
+    /// record.
+    #[must_use]
+    pub const fn with_history_limit(mut self, entries: usize) -> Self {
+        self.history_entries = Some(entries);
+        self
+    }
+
+    /// Whether a history of `recorded` entries keeps one more.
+    fn records(&self, recorded: usize) -> bool {
+        self.history_entries
+            .is_none_or(|entries| recorded < entries)
     }
 
     /// The readers and read-only flag one imported allocation was mapped
@@ -1717,9 +1740,11 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
                 | DeviceArgumentV1::ScalarU64(_) => {}
             }
         }
-        self.launches.push(name);
-        self.launch_dispatches.push(dispatch);
-        self.launch_arguments.push(arguments.to_vec());
+        if self.records(self.launches.len()) {
+            self.launches.push(name);
+            self.launch_dispatches.push(dispatch);
+            self.launch_arguments.push(arguments.to_vec());
+        }
         self.check(FakeRefusalV1::LaunchSymbol)?;
         if self.accept_launches {
             // Nothing ran, and nothing claims to have. What is reported is only
@@ -1814,8 +1839,10 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
             let length = u64::try_from(end - start).map_err(|_| BundleStatusV1::InvalidArgument)?;
             ranges.push(LentRangeV1::new(address, length));
         }
-        self.custom_operations
-            .push((operation_id.to_vec(), ranges.clone()));
+        if self.records(self.custom_operations.len()) {
+            self.custom_operations
+                .push((operation_id.to_vec(), ranges.clone()));
+        }
         operation.invoke(LentLaunchV1 {
             address_space: CustomAddressSpaceV1::Host,
             stream: LentStreamV1::null(),
@@ -1824,7 +1851,9 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     }
 
     fn log(&mut self, message: &[u8]) -> HostDeviceResultV1<()> {
-        self.logs.push(message.to_vec());
+        if self.records(self.logs.len()) {
+            self.logs.push(message.to_vec());
+        }
         Ok(())
     }
 }

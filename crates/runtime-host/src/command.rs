@@ -3717,7 +3717,8 @@ fn open_host_memory_instance_v1(
 ) -> Result<OpenServedInstanceV1, String> {
     let (services, instance) = loaded
         .create_served_instance(
-            crate::fake::FakeHostDeviceV1::new(),
+            crate::fake::FakeHostDeviceV1::new()
+                .with_history_limit(crate::fake::FAKE_SERVED_HISTORY_ENTRIES_V1),
             &topology.id,
             topology.device_ordinals.clone(),
             kv.policy,

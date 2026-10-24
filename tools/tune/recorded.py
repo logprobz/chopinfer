@@ -69,7 +69,7 @@ def main(recorded, output):
                 raise SystemExit(f'{label} {path.name}: no full-concurrency steps')
             cells = tune.merge_cells([tune.cells(part) for part in parts])
             for key in full['histogram']:
-                shapes.add(key.rsplit('-v', 1)[0])
+                shapes.add(key if '-R' in key else key.rsplit('-v', 1)[0])
             processes[label]['depth'] = record['depth']
             value = {k: record[k] for k in ('name', 'kind', 'concurrency', 'depth', 'request_tokens_per_second')}
             value.update(repeat=windows, full=full, cells=cells, energy=record.get('energy'))

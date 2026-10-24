@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Speculative depth tuner job: measure draft depths (or other speculation
-settings) at every concurrency, with one server per arm, and pick a
-per-concurrency depth schedule or tabulate step costs per verify width.
+settings) at every concurrency, reusing each server across its windows.
+Select depths, tabulate width costs, check exactness, or compare A/B arms.
 
 Usage: python3 -B STAGE/harness/tune.py --output RUN --payload-sha SHA [--dry-run]
 
@@ -41,6 +41,9 @@ trace, full-concurrency steps (count, tok/s, shape histogram), step times by
 (/metrics), energy (100 ms board power of every GPU) and SM clocks. report.py
 then selects the schedule (`mode` sweep) or tabulates step costs per verify
 width (`mode` costs).
+`mode` exact runs both kinds without selecting a performance schedule.
+`mode` ab mirrors the arm visits for one ABBA block, sampled only; a
+declared single-repeat concurrency is a short control outside that block.
 """
 import argparse
 import hashlib
@@ -248,27 +251,39 @@ def settle(server, offset):
     return r.trace_rows(log, offset)
 
 
+def shape_key(step, histogram=False):
+    items = step['decode_rows'] + step['verify_items']
+    key = f"i{items}-r{step['decode_rows'] + step['verify_rows']}"
+    if histogram or 'reserved_rows' in step:
+        key += f"-v{step['verify_items']}"
+    if 'reserved_rows' in step:
+        key += f"-R{step['decode_rows'] + step['reserved_rows']}"
+    return key
+
+
 def full_concurrency(steps, c):
     """Steps with C live items and no prefill, each timed from the previous
     step's completion: count, emitted tokens per second, the step-shape
     histogram (items, rows, verify items) and the drafted share."""
     if any(b['batch'] != a['batch'] + 1 for a, b in zip(steps, steps[1:])):
         raise ValueError('incomplete engine trace')
-    rows, micros, tokens, drafted = Counter(), 0.0, 0, 0
+    rows, micros, tokens, drafted, allocated = Counter(), 0.0, 0, 0, 0
     for a, b in zip(steps, steps[1:]):
         items = b['decode_rows'] + b['verify_items']
         if b['prefill_items'] or a['prefill_items'] or items != c:
             continue
-        rows[f"i{items}-r{b['decode_rows'] + b['verify_rows']}-v{b['verify_items']}"] += 1
+        rows[shape_key(b, histogram=True)] += 1
         micros += (b['completed_unix_ns'] - a['completed_unix_ns']) / 1000
         tokens += b['decode_rows'] + b.get('verify_emitted_tokens', 0)
         drafted += bool(b['verify_items'])
+        allocated += 'reserved_rows' in b
     count = sum(rows.values())
     return {'steps': count, 'tokens': tokens, 'seconds': micros / 1e6,
             'tokens_per_second': tokens / micros * 1e6 if micros else 0.0,
             'mean_step_ms': micros / count / 1000 if count else None,
             'histogram': dict(sorted(rows.items())), 'drafted_steps': drafted,
-            'drafted_share': drafted / count if count else 0.0}
+            'drafted_share': drafted / count if count else 0.0,
+            'allocated_steps': allocated, 'allocated_share': allocated / count if count else 0.0}
 
 
 def cells(steps):
@@ -279,8 +294,7 @@ def cells(steps):
     for a, b in zip(steps, steps[1:]):
         if b['prefill_items'] or a['prefill_items'] or b['batch'] != a['batch'] + 1:
             continue
-        items, rows = b['decode_rows'] + b['verify_items'], b['decode_rows'] + b['verify_rows']
-        cell = out.setdefault(f'i{items}-r{rows}', {'cycle_ms': [], 'execution_ms': []})
+        cell = out.setdefault(shape_key(b), {'cycle_ms': [], 'execution_ms': []})
         cell['cycle_ms'].append((b['completed_unix_ns'] - a['completed_unix_ns']) / 1e6)
         if b.get('execution_us') is not None:
             cell['execution_ms'].append(b['execution_us'] / 1000)
@@ -328,6 +342,45 @@ def check_depth(name, steps, depth):
         if s['verify_rows'] > s['verify_items'] * (depth + 1):
             raise RuntimeError(f"{name}: batch {s['batch']} verified {s['verify_rows']} rows for "
                                f"{s['verify_items']} items above depth {depth}")
+
+
+def argument_value(arguments, flag, default=None):
+    values = [arguments[i + 1] for i, x in enumerate(arguments[:-1]) if x == flag]
+    return values[-1] if values else default
+
+
+def confidence_startup(log, arguments):
+    requested = argument_value(arguments, '--speculation-confidence', 'off') != 'off'
+    lines = re.findall(r'^startup speculation_confidence: (on|off)(?:, (.*))?$', log, re.M)
+    if len(lines) > 1:
+        raise RuntimeError('multiple confidence startup lines')
+    enabled = bool(lines and lines[0][0] == 'on')
+    if requested != enabled:
+        raise RuntimeError(f'confidence requested {requested}, server reported {lines or "no startup line"}')
+    return {'enabled': enabled, 'reason': lines[0][1] if lines else 'legacy server without confidence'}
+
+
+def allocation_possible(config, arm, items):
+    """A full cohort with executable drafts and output room can reserve
+    beyond its balanced width. Tail limits may reduce individual steps."""
+    model = config['model']
+    args = [*model.get('serve_arguments', []), *model.get('extra_arguments', []), *arm['arguments']]
+    capacity = int(argument_value(args, '--speculative-rows', model['verify_rows']))
+    rows = min(items * (arm['depth'] + 1), capacity)
+    widths = argument_value(args, '--speculation-widths')
+    widths = [int(x) for x in widths.split(',')] if widths else model.get('verify_widths', [])
+    width = max((w for w in widths if items <= w <= rows), default=rows)
+    reserved = items * (1 + min(model['max_depth'], max(0, capacity // items - 1)))
+    return items < width < reserved
+
+
+def check_allocations(name, steps, enabled, required):
+    count = sum('reserved_rows' in step for step in steps)
+    if count and not enabled:
+        raise RuntimeError(f'{name}: {count} allocated steps without confidence')
+    if enabled and required and not count:
+        raise RuntimeError(f'{name}: no allocated steps where reservations can exceed width')
+    return count
 
 
 def tokenize(server, prompts):
@@ -407,10 +460,12 @@ def merge_full(parts):
         histogram.update(x['histogram'])
     steps, tokens, seconds = (sum(x[k] for x in parts) for k in ('steps', 'tokens', 'seconds'))
     drafted = sum(x['drafted_steps'] for x in parts)
+    allocated = sum(x.get('allocated_steps', 0) for x in parts)
     return {'steps': steps, 'tokens': tokens, 'seconds': seconds,
             'tokens_per_second': tokens / seconds if seconds else 0.0,
             'mean_step_ms': seconds * 1000 / steps if steps else None, 'histogram': dict(sorted(histogram.items())),
-            'drafted_steps': drafted, 'drafted_share': drafted / steps if steps else 0.0}
+            'drafted_steps': drafted, 'drafted_share': drafted / steps if steps else 0.0,
+            'allocated_steps': allocated, 'allocated_share': allocated / steps if steps else 0.0}
 
 
 def merge_acceptance(parts):
@@ -479,7 +534,8 @@ def windows_for(config, depth, every=False):
     the reference pass), otherwise the C whose rows depth `depth` can still
     change. Kinds follow the config's `kinds`."""
     model = config['model']
-    cs = [c for c in model['concurrencies'] if every or depth == 0 or c * (depth + 1) <= model['verify_rows']]
+    cs = [c for c in model['concurrencies'] if every or model.get('mode') in ('ab', 'exact')
+          or depth == 0 or c * (depth + 1) <= model['verify_rows']]
     kinds = [kind for kind in ('greedy', 'sampled') if kind in config.get('kinds', {'greedy': 1, 'sampled': 1})]
     return [(kind, c) for kind in kinds for c in cs]
 
@@ -500,20 +556,48 @@ def arms(config):
 
 def planned_windows(config):
     """Timed windows the job runs: every arm's windows, `repeats` times."""
-    return sum(len(windows_for(config, arm['depth'])) for arm in arms(config)) * config['model']['repeats']
+    return sum(len(windows) for visit in visits(config) for _, windows in visit['passes'])
+
+
+def visits(config):
+    """For A/B, one mirrored block gives every declared baseline/treatment
+    pair chronological ABBA visits, sharing visits across overlapping pairs."""
+    model = config['model']
+    declared = arms(config)
+    if model.get('mode') != 'ab':
+        return [{**arm, 'arm': arm['label'], 'visit': i,
+                 'passes': [(p, windows_for(config, arm['depth'])[::1 if p % 2 == 0 else -1])
+                            for p in range(model['repeats'])]} for i, arm in enumerate(declared)]
+    if model['repeats'] != 2 or set(config['kinds']) != {'sampled'}:
+        raise ValueError('ab needs one ABBA block (two repeats per arm), sampled only')
+    labels = [arm['label'] for arm in declared]
+    if len(labels) != len(set(labels)) or not model.get('pairs'):
+        raise ValueError('ab needs unique arms and declared pairs')
+    for baseline, treatment in model['pairs']:
+        if baseline not in labels or treatment not in labels or labels.index(baseline) >= labels.index(treatment):
+            raise ValueError('declare every baseline before its treatments for ABBA')
+    out = []
+    for repeat, group in enumerate((declared, declared[::-1])):
+        for arm in group:
+            windows = [(kind, c) for kind, c in windows_for(config, arm['depth'])
+                       if repeat < model.get('concurrency_repeats', {}).get(str(c), 2)]
+            out.append({**arm, 'arm': arm['label'], 'label': f"{arm['label']}-r{repeat}",
+                        'visit': len(out), 'passes': [(repeat, windows[::1 if repeat == 0 else -1])]})
+    return out
 
 
 def order(config):
     """The arms' labels in run order."""
-    return [arm['label'] for arm in arms(config)]
+    return [visit['label'] for visit in visits(config)]
 
 
-def run_windows(server, label, depth, state, power, root, passes, reference):
+def run_windows(server, arm, state, power, root, passes, reference):
     """Every window of `passes` ((repeat, [(kind, C), ...]) each), compared
     with the reference; with `reference` set the first output of each window
     becomes it and nothing is recorded as timed."""
     config = SEAL['config']
     model = config['model']
+    label, depth = arm['label'], arm['depth']
     inputs = state['tokens']
     record = state['processes'][label]
     for repeat, windows in passes:
@@ -529,6 +613,9 @@ def run_windows(server, label, depth, state, power, root, passes, reference):
                 w = window(server, f'{name}-{tag}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
                            f'tune-{label}-{name}-{tag}-g{g}', config['sampling'])
                 check_depth(f'{label} {name} {tag} group {g}', w['steps'], depth)
+                w['allocated_steps'] = check_allocations(
+                    f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],
+                    allocation_possible(config, arm, c))
                 w['energy'] = power.window(w['started'], w['ended'], c * tokens)
                 parts.append(w)
             exact = [stream for w in parts for stream in w['exact']]
@@ -539,6 +626,8 @@ def run_windows(server, label, depth, state, power, root, passes, reference):
             seconds = sum(w['ended'] - w['started'] for w in parts)
             finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat, 'tokens': tokens,
+                     'arm': arm['arm'], 'visit': arm['visit'],
+                     'allocated_steps': sum(w['allocated_steps'] for w in parts),
                      'groups': groups, 'request_seconds': seconds,
                      'request_tokens_per_second': groups * c * tokens / seconds,
                      'full': merge_full([full_concurrency(w['steps'], c) for w in parts]),
@@ -547,6 +636,8 @@ def run_windows(server, label, depth, state, power, root, passes, reference):
                      'energy': merge_energy([w['energy'] for w in parts], groups * c * tokens),
                      'faults': [w['faults'] for w in parts],
                      'prompts': [p['sha256'] for p in SEAL['prompts'][:groups * c]]}
+            if not value['full']['steps']:
+                raise RuntimeError(f'{label} {name} {tag}: no full-concurrency steps')
             r.write(root / 'windows' / f'{name}-r{repeat}.json',
                     {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
             record['windows'][f'{name}-r{repeat}'] = {k: value[k] for k in ('request_tokens_per_second', 'full')}
@@ -591,6 +682,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
         if mode != model['speculation_mode']:
             raise RuntimeError(f"{label}: serves speculation {mode}, expected {model['speculation_mode']}")
         log = (server.directory / 'server.log').read_text(errors='replace')
+        record['confidence'] = confidence_startup(log, [*model['serve_arguments'], *arguments])
         record['weights'] = weight_source(log)
         wanted = 'borrowed' if keep else 'loaded'
         if not dry and record['weights']['source'] != wanted:
@@ -615,10 +707,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
         record['memory_after_warmup'] = memory_lines((server.directory / 'server.log').read_text(errors='replace'))
         record['metrics_after_warmup'] = counters(server, 'after-warmup')
         if reference_pass:
-            run_windows(server, label, depth, state, power, root, [(0, windows_for(config, depth, True))], True)
-        windows = windows_for(config, depth)
-        passes = [(p, windows if p % 2 == 0 else windows[::-1]) for p in range(model['repeats'])]
-        run_windows(server, label, depth, state, power, root, passes, False)
+            run_windows(server, arm, state, power, root, [(0, windows_for(config, depth, True))], True)
+        run_windows(server, arm, state, power, root, arm['passes'], False)
         memory('end')
         record['metrics'] = counters(server, 'final')
         if record['metrics']['preemptions'] or record['metrics']['prefix_cache_evictions']:
@@ -688,7 +778,7 @@ def main(args):
         reference = before['power_limits_w']
         state['power']['before'] = before['power']
         reserve = config['model']['planning']['process_reserve_seconds']
-        for index, arm in enumerate(arms(config)):
+        for index, arm in enumerate(visits(config)):
             left = r.WORK_DEADLINE - time.monotonic()
             if left < reserve:
                 raise RuntimeError(f'work budget: {left:.0f} s left, under the {reserve} s an arm needs; '
@@ -723,9 +813,14 @@ def main(args):
         try:
             if state['mode'] == 'costs':
                 state['costs'] = report.costs(run)['summary']
+            elif state['mode'] == 'ab':
+                state['ab'] = report.ab(run)['pairs']
+            elif state['mode'] == 'exact':
+                state['costs'] = report.costs(run)['summary']
             else:
                 state['depths'] = report.evaluate(run)['depths']
         except Exception as error:
+            state['status'] = 'failed'
             state['errors'].append(f'report: {type(error).__name__}: {error}')
         save(run, state)
     print(json.dumps({'output': str(run), 'status': state['status'], 'depths': state.get('depths'),

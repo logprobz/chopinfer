@@ -85,13 +85,13 @@ def estimate(config):
     model, plan = config['model'], config['model']['planning']
     tokens = lambda c: config['tokens'].get(str(c), config['tokens']['default'])
     total = 0.0
-    for index, arm in enumerate(tune.arms(config)):
+    for index, arm in enumerate(tune.visits(config)):
         depth = arm['depth']
         rates = plan['ar_tokens_per_second'] if depth == 0 else plan['tokens_per_second']
         total += plan['startup_seconds'] + plan['process_overhead_seconds']
         total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
         windows = (tune.windows_for(config, depth, True) if index == 0 else []) \
-            + tune.windows_for(config, depth) * model['repeats']
+            + [window for _, part in arm['passes'] for window in part]
         for _, c in windows:
             groups = model.get('groups', {}).get(str(c), 1)
             total += groups * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])

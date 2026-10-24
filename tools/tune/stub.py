@@ -22,6 +22,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tune import argument_value
 
 def options(arguments):
     mode, depth, rows = 'balanced', 5, 32
@@ -41,10 +42,16 @@ def stub(args):
     perturb = os.environ.get('TUNE_STUB_PERTURB') == label
     preempt = os.environ.get('TUNE_STUB_PREEMPT') == label
     ignore = os.environ.get('TUNE_STUB_IGNORE_DEPTHS') == label
+    ignore_confidence = os.environ.get('TUNE_STUB_IGNORE_CONFIDENCE') == label
+    claim_confidence = os.environ.get('TUNE_STUB_CLAIM_CONFIDENCE') == label
     mode, depth, verify_rows = options(args.serve)
+    confidence = argument_value(args.serve, '--speculation-confidence', 'off') != 'off'
+    widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
     lent = '--weight-keeper' in args.serve
     state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0}
     print(args.kv_line.replace('{pages}', str(args.kv_pages)), flush=True)
+    print('startup speculation_confidence: ' + ('on, stub' if confidence or claim_confidence else 'off, stub'),
+          flush=True)
     for rank in range(args.gpus):
         print(f'device memory after warmup rank {rank}: KV 3560 MiB, 294 MiB taken since sizing (graphs), '
               f'{6539 + rank} MiB free', flush=True)
@@ -65,29 +72,38 @@ def stub(args):
         k = 0 if prefill else min(depth, (verify_rows - items) // items)
         if ignore and not prefill and items >= 16:
             k = 1
+        rows = items * (k + 1)
+        rows = max((w for w in widths if items <= w <= rows), default=rows)
+        reserved = items * (1 + min(5, max(0, verify_rows // items - 1)))
+        allocated = confidence and not ignore_confidence and not prefill and items < rows < reserved
+        drafts = [0 if prefill else (rows - items) // items + (i < (rows - items) % items) for i in range(items)]
+        verify_items = items if allocated else sum(k > 0 for k in drafts)
         emitted = []
         with lock:
             state['batch'] += 1
-            for key, at in zip(keys, positions):
+            for key, at, k in zip(keys, positions, drafts):
                 accepted = 0
+                for j in range(1, k + 1):
+                    state['drafted'][j] = state['drafted'].get(j, 0) + 1
                 for j in range(1, k + 1):
                     survive = 0.8 * 0.85 ** (j - 1)
                     roll = int.from_bytes(hashlib.sha256(f'{key}/{at}/{j}'.encode()).digest()[:2], 'little') / 65536
-                    state['drafted'][j] = state['drafted'].get(j, 0) + 1
                     if roll >= survive:
                         break
                     accepted += 1
                     state['accepted'][j] = state['accepted'].get(j, 0) + 1
                 emitted.append(1 + accepted)
-            rows = items * (k + 1)
-            state['verify_items'] += items if k else 0
-            micros = 12_000 + 600 * rows + 4000 * bool(k)
+            state['verify_items'] += verify_items
+            micros = 12_000 + 600 * rows + 4000 * bool(verify_items)
             state['clock_ns'] += micros * 1000
             print(json.dumps({
                 'schema': 'chopinfer.step.v1', 'batch': state['batch'], 'prefill_tokens': prefill,
-                'prefill_items': items if prefill else 0, 'decode_rows': 0 if k else items,
-                'verify_items': items if k else 0, 'verify_rows': rows if k else 0, 'drafted_tokens': items * k,
-                'accepted_tokens': sum(emitted) - items, 'verify_emitted_tokens': sum(emitted) if k else 0,
+                'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else items - verify_items,
+                'verify_items': verify_items, 'verify_rows': sum(drafts) + verify_items,
+                'drafted_tokens': sum(drafts),
+                **({'reserved_rows': reserved} if allocated else {}),
+                'accepted_tokens': sum(emitted) - items,
+                'verify_emitted_tokens': sum(n for n, k in zip(emitted, drafts) if k or allocated),
                 'execution_us': micros, 'completed_unix_ns': state['clock_ns'],
                 'speculation': {'mode': mode, 'items': items, 'reason': 'balanced'}}), flush=True)
         time.sleep(.0005)

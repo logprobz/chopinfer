@@ -21,7 +21,9 @@ unset CHOPINFER_PERF_SIGNAL_BOOTSTRAP
 # SM clocks recorded, never asserted;
 # each rank's memory after warmup and GPU memory recorded. tune.md and
 # tune.json hold the measurements and the selected `depths` schedule, or
-# costs.md and costs.json the step costs per verify width.
+# costs.md and costs.json the step costs per verify width. A/B mode mirrors
+# the arm visits for one ABBA block and writes ab.md and ab.json; exactness
+# mode also checks greedy outputs.
 # The queue copies this file to running/, so every asset is addressed by
 # absolute path.
 readonly stage=@STAGE@
@@ -36,7 +38,7 @@ export TMPDIR="$CHOPINFER_DATA/tmp/depth-tune"
 export CUDA_VISIBLE_DEVICES=@DEVICES@
 # Every other CHOPINFER_ variable is cleared for each server (runner.py).
 unset OPENAI_API_KEY TUNE_STUB_PERTURB TUNE_STUB_PREEMPT TUNE_STUB_IGNORE_DEPTHS TUNE_DRY_POWER_W \
-    TUNE_DRY_POWER_CHANGE_LABEL
+    TUNE_DRY_POWER_CHANGE_LABEL TUNE_STUB_IGNORE_CONFIDENCE TUNE_STUB_CLAIM_CONFIDENCE
 export PATH="/usr/local/cuda/bin:$PATH"
 # The runner's working directory may not exist.
 cd "$stage"

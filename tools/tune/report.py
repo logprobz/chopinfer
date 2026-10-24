@@ -30,6 +30,7 @@ measured one, as a `depths` string (`items:depth,...`).
 """
 import json
 import math
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -207,11 +208,16 @@ def costs(run):
             into['arms'].add(row['label'])
     cells = {}
     for key, cell in table.items():
-        items, rows_ = (int(x[1:]) for x in key.split('-'))
+        shape = re.fullmatch(r'i(\d+)-r(\d+)(?:-v(\d+)-R(\d+))?', key)
+        if shape is None:
+            raise ValueError(f'invalid step shape {key}')
+        items, rows_ = map(int, shape.group(1, 2))
         cells[key] = {'items': items, 'rows': rows_, 'steps': len(cell['cycle_ms']),
                       'cycle_ms_median': median(cell['cycle_ms']), 'cycle_ms_p10': percentile(cell['cycle_ms'], .1),
                       'cycle_ms_p90': percentile(cell['cycle_ms'], .9),
                       'execution_ms_median': median(cell['execution_ms']), 'arms': sorted(cell['arms'])}
+        if shape[3] is not None:
+            cells[key].update(verify_items=int(shape[3]), reserved=int(shape[4]))
     groups = {}
     for row in rows:
         groups.setdefault((row['concurrency'], row['kind'], row['depth']), []).append(row)
@@ -235,7 +241,8 @@ def costs(run):
     out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1]['items'], kv[1]['rows']))),
            'windows': windows, 'gpu_memory_mib': memory, 'memory_after_warmup': warmed}
     full = {key: cell for key, cell in out['cells'].items()
-            if any(key == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
+            if ('reserved' in cell and cell['items'] in config['model']['concurrencies'])
+            or any(key == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
                    for d in range(config['model'].get('max_depth', 5) + 1))}
     out['summary'] = {key: round(cell['cycle_ms_median'], 2) for key, cell in full.items()
                       if cell['cycle_ms_median'] is not None}
@@ -246,7 +253,10 @@ def costs(run):
              '|---:|---:|---:|---:|---:|---:|---:|---|']
     for cell in out['cells'].values():
         form = lambda v: '-' if v is None else f'{v:.2f}'
-        lines.append(f"| {cell['items']} | {cell['rows']} | {cell['steps']} | {form(cell['cycle_ms_median'])} | "
+        shape = str(cell['rows'])
+        if 'reserved' in cell:
+            shape += f" (v{cell['verify_items']}, R{cell['reserved']})"
+        lines.append(f"| {cell['items']} | {shape} | {cell['steps']} | {form(cell['cycle_ms_median'])} | "
                      f"{form(cell['cycle_ms_p10'])} | {form(cell['cycle_ms_p90'])} | "
                      f"{form(cell['execution_ms_median'])} | {' '.join(cell['arms'])} |")
     lines += ['', '| window | repeats | request tok/s | spread | full tok/s | J/token |', '|---|---:|---:|---:|---:|---:|']
@@ -269,8 +279,83 @@ def costs(run):
     return out
 
 
+def ab(run):
+    """Report declared pairs, preserving chronological ABBA visits and
+    keeping short single-repeat controls distinct from decision windows."""
+    run = Path(run)
+    config, rows = load(run)
+    model = config['model']
+    if set(config['kinds']) != {'sampled'} or not model.get('pairs'):
+        raise ValueError('ab requires sampled windows and declared pairs')
+    pairs = {}
+    lines = [f"# {config['name']}: confidence A/B", '',
+             'One ABBA block per decision window. Short controls have one window per arm.', '',
+             '| Pair / C | Arm | Visit tok/s | Range | J/token | Tokens/step | Allocated share |',
+             '|---|---|---|---|---:|---:|---:|']
+    for baseline, treatment in model['pairs']:
+        pair = pairs[f'{baseline}/{treatment}'] = {}
+        for c in model['concurrencies']:
+            expected = model.get('concurrency_repeats', {}).get(str(c), model['repeats'])
+            selected = sorted((r for r in rows if r.get('arm', r['label']) in (baseline, treatment)
+                               and r['concurrency'] == c and r['kind'] == 'sampled'), key=lambda r: r['visit'])
+            order = [r['arm'] for r in selected]
+            wanted = [baseline, treatment, treatment, baseline] if expected == 2 else [baseline, treatment]
+            if expected not in (1, 2) or order != wanted:
+                raise ValueError(f'{baseline}/{treatment} C{c}: visit order {order}, expected {wanted}')
+            result = pair[str(c)] = {'order': order, 'abba': expected == 2, 'arms': {}}
+            for label in (baseline, treatment):
+                windows = [r for r in selected if r['arm'] == label]
+                if sorted(r['repeat'] for r in windows) != list(range(expected)):
+                    raise ValueError(f'{label} C{c}: missing or repeated repeat')
+                value = measure(windows)
+                rates = value['request']
+                steps = sum(r['full']['steps'] for r in windows)
+                if not steps:
+                    raise ValueError(f'{label} C{c}: no full-concurrency steps')
+                cells = {}
+                for row in windows:
+                    for key, cell in row['cells'].items():
+                        into = cells.setdefault(key, {'cycle_ms': [], 'execution_ms': []})
+                        for field in into:
+                            into[field] += cell[field]
+                value.update(range=[min(rates), max(rates)],
+                             tokens_per_step=sum(r['full']['tokens'] for r in windows) / steps,
+                             allocated_steps=sum(r['allocated_steps'] for r in windows),
+                             allocated_share=sum(r['full']['allocated_steps'] for r in windows) / steps,
+                             cells={k: {field + '_median': median(v) for field, v in cell.items()}
+                                    for k, cell in sorted(cells.items())})
+                result['arms'][label] = value
+                lines.append(f"| {baseline}/{treatment} C{c} | {label} | " +
+                             ', '.join(f'{x:.1f}' for x in rates) +
+                             f" | {min(rates):.1f}-{max(rates):.1f} | {value['joules_median']:.3f} | "
+                             f"{value['tokens_per_step']:.3f} | {value['allocated_share']:.1%} |")
+            base, head = (result['arms'][x] for x in (baseline, treatment))
+            result['throughput_ratio'] = head['request_median'] / base['request_median']
+            result['nonoverlapping_gain'] = min(head['request']) > max(base['request'])
+            result['energy_ratio'] = head['joules_median'] / base['joules_median']
+    lines += ['', 'Allocated share uses full-concurrency decode/verify steps; allocated_steps counts every '
+              'allocated step in the measured windows. Position counts below are accepted over verified.', '']
+    for pair, concurrencies in pairs.items():
+        for c, result in concurrencies.items():
+            for label, value in result['arms'].items():
+                lines += [f'## {pair}, C{c}, {label}', '',
+                          'Accepted/verified: ' + ', '.join(
+                              f"p{p} {a['accepted']}/{a['drafted']}" for p, a in value['acceptance'].items()
+                              if a['drafted']), '',
+                          '| Shape | Median cycle ms | Median execution ms |', '|---|---:|---:|']
+                for shape, cell in value['cells'].items():
+                    lines.append(f"| {shape} | {cell['cycle_ms_median']} | {cell['execution_ms_median']} |")
+                lines.append('')
+    out = {'pairs': pairs}
+    (run / 'ab.json').write_text(json.dumps(out, indent=2) + '\n')
+    (run / 'ab.md').write_text('\n'.join(lines) + '\n')
+    return out
+
+
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--costs']:
+    if sys.argv[1:2] == ['--ab']:
+        print(json.dumps(ab(sys.argv[2])))
+    elif sys.argv[1:2] == ['--costs']:
         print(json.dumps({'costs': costs(sys.argv[2])['summary']}))
     else:
         print(json.dumps({'depths': merged(sys.argv[1:])}))

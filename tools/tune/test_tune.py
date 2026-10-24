@@ -33,6 +33,89 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+    def test_confidence_startup_must_match_the_requested_arm(self):
+        flag = ['--speculation-confidence', '{"floor":0}']
+        on = 'startup speculation_confidence: on, floor 0, 5 positions\n'
+        off = 'startup speculation_confidence: off, the package returns host values\n'
+        self.assertTrue(tune.confidence_startup(on, flag)['enabled'])
+        self.assertFalse(tune.confidence_startup(off, [])['enabled'])
+        self.assertFalse(tune.confidence_startup('', [])['enabled'])
+        for log, args in [(off, flag), ('', flag), (on, []), (on, ['--speculation-confidence', 'off']),
+                          (on + off, flag)]:
+            with self.assertRaises(RuntimeError):
+                tune.confidence_startup(log, args)
+
+    def test_allocated_steps_keep_width_and_reserved_shape_and_assert_execution(self):
+        steps = [{'batch': i, 'completed_unix_ns': i * 1_000_000, 'prefill_items': 0,
+                  'decode_rows': 0, 'verify_items': 8, 'verify_rows': 32, 'reserved_rows': 48,
+                  'verify_emitted_tokens': 16, 'execution_us': 800} for i in range(3)]
+        self.assertEqual(tune.cells(steps),
+                         {'i8-r32-v8-R48': {'cycle_ms': [1.0, 1.0], 'execution_ms': [0.8, 0.8]}})
+        full = tune.full_concurrency(steps, 8)
+        self.assertEqual(full['histogram'], {'i8-r32-v8-R48': 2})
+        self.assertEqual((full['allocated_steps'], full['allocated_share']), (2, 1.0))
+        tune.check_depth('allocated', steps, 3)
+        self.assertEqual(tune.check_allocations('allocated', steps, True, True), 3)
+        with self.assertRaisesRegex(RuntimeError, 'no allocated steps'):
+            tune.check_allocations('ignored', [], True, True)
+        with self.assertRaisesRegex(RuntimeError, 'without confidence'):
+            tune.check_allocations('unrequested', steps, False, False)
+        self.assertEqual(tune.check_allocations('full width', [], True, False), 0)
+
+    def test_allocation_expectation_uses_capacity_width_and_common_reservation(self):
+        config = {'model': {**MODEL, 'verify_widths': [6, 8, 16, 32]}}
+        for c, capacity, depth, expected in [(8, 48, 3, True), (16, 64, 1, True),
+                                              (8, 32, 3, False), (32, 64, 3, False)]:
+            arm = {'depth': depth, 'arguments': ['--speculative-rows', str(capacity)]}
+            self.assertEqual(tune.allocation_possible(config, arm, c), expected)
+
+    def test_ab_visits_share_overlapping_pairs_and_keep_short_controls(self):
+        model = {**MODEL, 'mode': 'ab', 'concurrencies': [1, 8, 16, 32],
+                 'concurrency_repeats': {'1': 1, '32': 1},
+                 'arms': [{'label': label, 'depth': 3} for label in ('a', 'cap', 'b')],
+                 'pairs': [['a', 'b'], ['cap', 'b']]}
+        config = {'model': model, 'kinds': {'sampled': 1.0}}
+        visits = tune.visits(config)
+        self.assertEqual([v['arm'] for v in visits], ['a', 'cap', 'b', 'b', 'cap', 'a'])
+        self.assertEqual([len(v['passes'][0][1]) for v in visits], [4, 4, 4, 2, 2, 2])
+        self.assertEqual(tune.planned_windows(config), 18)
+        with self.assertRaisesRegex(ValueError, 'sampled only'):
+            tune.visits({**config, 'kinds': {'greedy': 1.0}})
+        with self.assertRaisesRegex(ValueError, 'baseline before'):
+            tune.visits({**config, 'model': {**model, 'pairs': [['b', 'a']]}})
+
+    def test_ab_report_keeps_arm_identity_order_and_refuses_missing_repeats(self):
+        model = {**MODEL, 'mode': 'ab', 'concurrencies': [8],
+                 'arms': [{'label': label, 'depth': 3} for label in ('a', 'b')], 'pairs': [['a', 'b']]}
+        config = {**CONFIG, 'model': model, 'kinds': {'sampled': 1.0}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'config.json').write_text(json.dumps(config))
+            for visit in tune.visits(config):
+                label, repeat = visit['arm'], visit['passes'][0][0]
+                window(root, visit['label'], 'sampled', 8, 3, (400 if label == 'a' else 440) + repeat,
+                       {'i8-r32-v8-R48' if label == 'b' else 'i8-r32-v8': 2})
+                path = root / visit['label'] / 'windows' / 'sampled-c8.json'
+                row = json.loads(path.read_text())
+                row.update(arm=label, visit=visit['visit'], repeat=repeat,
+                           allocated_steps=2 if label == 'b' else 0,
+                           cells={'i8-r32-v8-R48' if label == 'b' else 'i8-r32':
+                                  {'cycle_ms': [20, 22], 'execution_ms': [19, 21]}})
+                row['full'].update(steps=2, tokens=40, allocated_steps=row['allocated_steps'])
+                path.write_text(json.dumps(row))
+            out = report.ab(root)['pairs']['a/b']['8']
+            self.assertEqual(out['order'], ['a', 'b', 'b', 'a'])
+            self.assertEqual(out['arms']['b']['request'], [440, 441])
+            self.assertEqual(out['arms']['b']['allocated_share'], 1.0)
+            self.assertEqual(out['arms']['b']['tokens_per_step'], 20)
+            self.assertTrue(out['nonoverlapping_gain'])
+            costs = report.costs(root)['cells']
+            self.assertEqual(costs['i8-r32-v8-R48']['reserved'], 48)
+            self.assertIn('i8-r32', costs)
+            path.unlink()
+            with self.assertRaisesRegex(ValueError, 'visit order'):
+                report.ab(root)
+
     def test_every_prompt_prefix_keeps_the_mix(self):
         mix = [{'kind': 'completion', 'weight': 5}, {'kind': 'edit', 'weight': 3}, {'kind': 'chat', 'weight': 2}]
         kinds = prompts.order(mix, 32)
@@ -215,6 +298,9 @@ class Tuner(unittest.TestCase):
             model = json.loads(path.read_text())
             self.assertEqual(model['sampling']['temperature'], 1.0, path)
             for name, job in [('', model), *model.get('jobs', {}).items()]:
+                if job.get('mode') == 'exact':
+                    self.assertEqual(set(job['kinds']), {'greedy', 'sampled'}, (path, name))
+                    continue
                 self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
 
     def test_runs_merge_into_one_schedule(self):

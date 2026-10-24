@@ -18,6 +18,7 @@ pub const HEADER: &str = "gemm/exact_f32.cuh";
 pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 
 pub mod blocked;
+pub mod bounded_reuse;
 pub mod certified;
 mod decode;
 pub mod last;
@@ -43,6 +44,7 @@ pub struct Entry {
     wide_buckets: Vec<(u32, u32)>,
     reuse_rows: Vec<u32>,
     last_rows: Vec<u32>,
+    bounded_reuse_rows: Vec<u32>,
 }
 
 impl Entry {
@@ -83,6 +85,7 @@ impl Entry {
             wide_buckets: Vec::new(),
             reuse_rows: Vec::new(),
             last_rows: Vec::new(),
+            bounded_reuse_rows: Vec::new(),
         })
     }
     pub fn query(&self) -> GemmQuery {

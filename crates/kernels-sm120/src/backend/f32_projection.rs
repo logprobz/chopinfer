@@ -179,6 +179,56 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.live_rows.covers(4)?;
         if entry.uses_cached_weights() {
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            if self.entry.uses_bounded_reuse(rows) {
+                let candidate = self.entry.bounded_reuse_candidate().expect("selected rows");
+                let cached = &candidate.entry;
+                let plans = candidate.plans(rows)?;
+                let flags = self.weight_domain(b)?;
+                workspace.covers(candidate.workspace(rows))?;
+                let mut calls = vec![
+                    Self::stage(
+                        cached,
+                        "_rows",
+                        rows,
+                        plans[0],
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(workspace),
+                        ],
+                    ),
+                    Self::stage(
+                        cached,
+                        "_decode",
+                        rows,
+                        plans[1],
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.weights.codes),
+                            ptr(workspace),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(flags),
+                        ],
+                    ),
+                    Self::stage(
+                        cached,
+                        "_reduce",
+                        rows,
+                        plans[2],
+                        vec![
+                            ptr(workspace),
+                            ptr(b.output),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                        ],
+                    ),
+                ];
+                calls[1].symbol = candidate.symbol(false);
+                calls[2].symbol = candidate.symbol(true);
+                return Ok(calls);
+            }
             if let Some(candidate) = entry.decode_last(rows) {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(candidate.workspace(rows))?;

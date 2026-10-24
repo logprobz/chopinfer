@@ -55,6 +55,9 @@ impl Entry {
     /// the exports compiled by this entry's cubin specification.
     pub fn runtime_symbols(&self) -> Vec<String> {
         let mut symbols = self.base_runtime_symbols();
+        if let Some(candidate) = self.bounded_reuse_candidate() {
+            symbols.extend([candidate.symbol(false), candidate.symbol(true)]);
+        }
         if let Some(&rows) = self.reuse_rows.first() {
             symbols.push(super::reuse::symbol(&self.entry_for_rows(rows)));
         }

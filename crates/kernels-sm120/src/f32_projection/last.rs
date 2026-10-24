@@ -156,6 +156,9 @@ impl Entry {
 
     /// The partial-plane layout stays fixed; only selected buckets need counters.
     pub fn runtime_workspace_bytes(&self, capacity: u32) -> u64 {
+        let bounded = self.bounded_reuse_candidate().map_or(0, |candidate| {
+            candidate.workspace(capacity.min(candidate.capacity))
+        });
         self.last_rows
             .iter()
             .copied()
@@ -165,7 +168,7 @@ impl Entry {
                     .expect("selected bucket")
                     .workspace(rows)
             })
-            .fold(self.decode_workspace_bytes(capacity), u64::max)
+            .fold(self.decode_workspace_bytes(capacity).max(bounded), u64::max)
     }
 }
 

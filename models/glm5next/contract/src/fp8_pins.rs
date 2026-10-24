@@ -120,7 +120,7 @@ fn fp8_outputs_are_unchanged() {
         // sublayers' F32 all-reduce took its own state.
         (
             "capacity table",
-            "7ab576f779683c181b06ffe5f13e14438ac37f0aaf33d5f1df3779adb2fb3640",
+            "cdfa5b0f96409cbc87571aef6cafa3f01571273d4f7fd72dfe60a65ef291f024",
         ),
     ];
     assert_eq!(

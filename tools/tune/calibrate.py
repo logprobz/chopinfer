@@ -32,8 +32,9 @@ receives the calibration as `speculation.confidence` and
 `--speculation-confidence` take it; FILE with `.report.json` in place of its
 suffix receives the sources' SHA256 digests and run settings, per-position
 counts, accepted/drafted (the share of emitted drafts accepted,
-unconditional), the conditional rate, the fit, and log loss in sample, held
-out (two folds by request) and for a constant rate.
+unconditional), the conditional rate, the fit, log loss in sample, held out
+(two folds by request) and for a constant rate, AUC and the expected
+calibration error over ten bins.
 """
 import argparse
 import hashlib
@@ -181,6 +182,37 @@ def constant(points):
     return -(rate * math.log(rate) + (1 - rate) * math.log(1 - rate))
 
 
+def auc(points):
+    """The chance a random accepted sample scores above a random rejected
+    one (ties count half), or None without both."""
+    ranked = sorted(points, key=lambda point: point[0])
+    positives = sum(y for _, y, _ in ranked)
+    negatives = len(ranked) - positives
+    if not positives or not negatives:
+        return None
+    rank_sum, index = 0.0, 0
+    while index < len(ranked):
+        end = index
+        while end < len(ranked) and ranked[end][0] == ranked[index][0]:
+            end += 1
+        mean_rank = (index + 1 + end) / 2
+        rank_sum += mean_rank * sum(y for _, y, _ in ranked[index:end])
+        index = end
+    return (rank_sum - positives * (positives + 1) / 2) / (positives * negatives)
+
+
+def ece(points, scale, offset, bins=10):
+    """Expected calibration error over equal-width probability bins."""
+    totals = [[0, 0.0, 0] for _ in range(bins)]
+    for s, y, _ in points:
+        p = sigmoid(scale * s + offset)
+        cell = totals[min(int(p * bins), bins - 1)]
+        cell[0] += 1
+        cell[1] += p
+        cell[2] += y
+    return sum(abs(predicted - accepted) for _, predicted, accepted in totals) / len(points)
+
+
 def calibrate(sources, positions, min_samples):
     """One kind's pairs and report, from `sources` of that kind."""
     rows, dropped, digests = [], 0, []
@@ -225,6 +257,8 @@ def calibrate(sources, positions, min_samples):
             'log_loss': log_loss(points, scale, offset),
             'log_loss_held_out': held,
             'log_loss_constant': constant(points),
+            'auc': auc(points),
+            'ece': ece(points, scale, offset),
         })
     return contracts[0], pairs, {
         'logs': digests, 'records': len(rows), 'dropped_log_lines': dropped,
@@ -271,7 +305,8 @@ def main(argv=None):
         print(f"position {row['position']}: {row['samples']} samples, accepted given earlier "
               f"{row['accepted_given_earlier']:.3f}, accepted/drafted "
               f"{row['accepted_over_drafted']:.3f}, log loss {row['log_loss']:.4f} "
-              f"(held out {row['log_loss_held_out']}, constant {row['log_loss_constant']:.4f})")
+              f"(held out {row['log_loss_held_out']}, constant {row['log_loss_constant']:.4f}), "
+              f"AUC {row['auc']}, ECE {row['ece']:.4f}")
     return 0
 
 

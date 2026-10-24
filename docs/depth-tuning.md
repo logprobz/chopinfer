@@ -146,20 +146,20 @@ python3 -B tools/tune/calibrate.py --sampled "$RUN" \
 ```
 
 `$RUN` is a tuner run whose config measures only sampled windows, such as
-the costs job above, or server logs. Position j's samples are the
-committed blocks whose drafts before j were accepted and whose draft j was
-verified, labelled by whether it was accepted, so the fit is the chance a
-draft is accepted when every earlier one was. A record proves only its
-accepted drafts; the draft verification stopped on counts as rejected only
-when the same request drafts again later (an accepted stop token or a token
-limit also stops verification, and ends the request), and is otherwise left
-out. Repeated records are refused, and dropped log lines mark the capture
-incomplete in the report. Each position needs
-`--min-samples` (200) of them, so record arms that draft as deep as the
-speculative tokens. Fit on runs served without a calibration. The report
-beside the output lists per position the samples, accepted given earlier,
-accepted/drafted (the share of drafted tokens accepted), the fit, and log
-loss in sample, held out over two folds by request, and for a constant
-rate; a fit that does not beat the constant held out carries no
+the costs job above, or server logs. Position j's samples are the committed
+blocks whose drafts before j were accepted and whose draft j was verified,
+labelled by whether it was accepted, so the fit is the chance a draft is
+accepted when every earlier one was. A record proves only its accepted
+drafts; the draft verification stopped on counts as rejected only when the
+same request drafts again later (an accepted stop token or a token limit
+also stops verification, and ends the request), and is otherwise left out.
+Repeated records are refused, and dropped log lines mark the capture
+incomplete in the report. Each position needs `--min-samples` (200) of them,
+so record arms that draft as deep as the speculative tokens. Fit on runs
+served without a calibration. The report beside the output lists per
+position the samples, accepted given earlier, accepted/drafted (the share of
+drafted tokens accepted), the fit, and log loss in sample, held out over two
+folds by request, and for a constant rate, AUC and the expected calibration
+error; a fit that does not beat the constant held out carries no
 information. Greedy pairs repeat the sampled fit unless `--greedy` runs are
 given.

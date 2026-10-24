@@ -329,11 +329,19 @@ class Calibration(unittest.TestCase):
             self.assertAlmostEqual(row['scale'], scale, delta=0.2)
             self.assertAlmostEqual(row['offset'], offset, delta=0.2)
             self.assertLess(row['log_loss_held_out'], row['log_loss_constant'])
+            self.assertGreater(row['auc'], 0.7)
+            self.assertLess(row['ece'], 0.05)
             self.assertAlmostEqual(row['mean_predicted'], row['accepted_given_earlier'], delta=0.01)
             self.assertLessEqual(row['accepted_over_drafted'], 1.0)
         for pair in calibration['sampled']:
             for value in pair:
                 self.assertEqual(value, calibrate.f32(value))
+
+    def test_auc_ranks_accepted_samples_above_rejected_ones(self):
+        self.assertEqual(calibrate.auc([(0.0, 0, 0), (1.0, 1, 0)]), 1.0)
+        self.assertEqual(calibrate.auc([(1.0, 0, 0), (0.0, 1, 0)]), 0.0)
+        self.assertEqual(calibrate.auc([(0.5, 0, 0), (0.5, 1, 0)]), 0.5)
+        self.assertIsNone(calibrate.auc([(0.5, 1, 0)]))
 
     def test_thin_positions_mixed_contracts_and_other_kinds_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

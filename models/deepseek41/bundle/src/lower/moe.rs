@@ -20,6 +20,49 @@ fn scale_bank_name(layer: u32, gate_up: bool) -> String {
 }
 
 impl Lowering<'_> {
+    /// Select a placed tile-scale bank only through the schedule's closed
+    /// consumer catalog. A row-offset bank always follows its raw expansion.
+    fn inplace_scale_bank(
+        &self,
+        phase: Phase,
+        layer: u32,
+        gate_up: bool,
+    ) -> Option<(DeviceBufferSpanV1, u32)> {
+        let (span, encoding) = self
+            .buffers
+            .encoded_scale(&scale_bank_name(layer, gate_up))?;
+        (encoding.format == kernel_core::weight_transform::ScaleFormat::RowTilesOffsetV1
+            && self
+                .ops
+                .moe
+                .as_ref()?
+                .inplace_scales(phase, gate_up, encoding.width))
+        .then_some((span, encoding.width))
+    }
+
+    /// Replace only the declared scale pointer of each encoded consumer.
+    /// Other arguments and launch geometry retain the prepared schedule.
+    pub(super) fn bind_inplace_scales(
+        &self,
+        phase: Phase,
+        layer: u32,
+        gate_up: bool,
+        calls: &mut [Lowered],
+    ) -> Result<(), String> {
+        let Some((encoded, width)) = self.inplace_scale_bank(phase, layer, gate_up) else {
+            return Ok(());
+        };
+        let raw = self.expert_scales(layer, gate_up)?;
+        let bank = self.ops.moe.as_ref().unwrap().scale_bank(gate_up);
+        let minimum = crate::Kernels::encoded_scale_minimum(
+            bank,
+            width,
+            kernel_core::weight_transform::ScaleFormat::RowTilesOffsetV1,
+        )
+        .map_err(|e| e.to_string())?;
+        crate::ops::moe::scale_inplace::bind(calls, raw, encoded, width, minimum)
+    }
+
     /// The normed rows quantized to E4M3 per 32 with ceil UE8M0 scales.
     pub(super) fn quantize_input(&self, phase: Phase) -> Result<Option<Vec<Lowered>>, String> {
         let Some(ops) = &self.ops.moe else {
@@ -102,13 +145,24 @@ impl Lowering<'_> {
             .as_ref()
             .ok_or_else(|| format!("{name} is stored encoded without the routed MoE ops"))?;
         let mut expanded = [None, None];
+        let mut format = None;
         for (at, bank) in encoded.into_iter().enumerate() {
-            if let Some((encoded, width)) = bank {
-                expanded[at] = Some((width, encoded, self.expert_scales(layer, at == 0)?));
+            if let Some((encoded, encoding)) = bank {
+                if self.inplace_scale_bank(phase, layer, at == 0).is_some() {
+                    continue;
+                }
+                if format.is_some_and(|f| f != encoding.format) {
+                    return Err("paired scale banks have different encoding formats".into());
+                }
+                format = Some(encoding.format);
+                expanded[at] = Some((encoding.width, encoded, self.expert_scales(layer, at == 0)?));
             }
         }
+        let Some(format) = format else {
+            return Ok(None);
+        };
         let active = listed.then_some(self.buffers.scratch.active_experts);
-        ops.expand_scales(phase, expanded, active)
+        ops.expand_scales(phase, expanded, format, active)
             .map(Some)
             .map_err(|refusal| format!("{name}: {refusal}"))
     }
@@ -188,9 +242,11 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: self.carried(phase, scratch.row_status)?,
         };
-        ops.experts(phase, gate_up, &views)
-            .map(Some)
-            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))
+        let mut calls = ops
+            .experts(phase, gate_up, &views)
+            .map_err(|refusal| format!("experts {bank} of layer {layer}: {refusal}"))?;
+        self.bind_inplace_scales(phase, layer, gate_up, &mut calls)?;
+        Ok(Some(calls))
     }
 
     /// The rank's routed rows summed per token into the sublayer's F32

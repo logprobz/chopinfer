@@ -34,6 +34,29 @@ pub(crate) struct Prepared {
     ticket_offset: u64,
 }
 impl Prepared {
+    pub(crate) fn inplace_scales(&self, gate_up: bool, width: u32) -> bool {
+        let point = if gate_up { Point::Gate } else { Point::Down };
+        let role = if gate_up {
+            "gate_scales"
+        } else {
+            "down_scales"
+        };
+        let readers: Vec<_> = self
+            .calls
+            .iter()
+            .filter(|c| c.point == point)
+            .filter(|c| {
+                c.pointers
+                    .iter()
+                    .any(|p| matches!(&p.source, Source::View(r) if r == role))
+            })
+            .collect();
+        !readers.is_empty()
+            && readers
+                .iter()
+                .all(|c| crate::Kernels::moe_scale_variant(&c.launch.symbol, width).is_some())
+    }
+
     pub(crate) fn fuses_router(&self) -> bool {
         self.calls.iter().any(|c| c.point == Point::RouterPrepare)
     }

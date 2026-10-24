@@ -80,6 +80,9 @@ impl Lowering<'_> {
         if point == Point::Route {
             calls.extend(self.expand_scales(phase, layer, true)?);
         }
+        if matches!(point, Point::Gate | Point::Down) {
+            self.bind_inplace_scales(phase, layer, point == Point::Gate, &mut calls)?;
+        }
         calls.extend(partial);
         Ok(Some(calls))
     }

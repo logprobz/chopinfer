@@ -626,9 +626,9 @@ impl Instance {
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
                 .filter(|cubin| {
-                    crate::Kernels::loads_scale_expand(
+                    crate::Kernels::loads_scale_kernels(
                         cubin.name,
-                        !encoded_scales[rank].is_empty(),
+                        encoded_scales[rank].values().next().map(|e| e.format),
                         self.ops.moe.as_ref().map_or(
                             model_deepseek41_contract::weight_plan::RoutedLayout::Rows,
                             crate::ops::moe::MoeOps::gate_up_layout,

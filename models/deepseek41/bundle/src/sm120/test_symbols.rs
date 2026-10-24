@@ -15,3 +15,12 @@ pub(crate) fn scale_expand_pair_symbol(tiled: bool) -> &'static str {
         kernels_sm120::moe::scale_expand::PAIR_SYMBOL
     }
 }
+
+/// Paired fallback expansion for tile-encoded scale banks.
+pub(crate) fn scale_tiles_expand_pair_symbol(tiled: bool) -> &'static str {
+    if tiled {
+        kernels_sm120::moe::scale_tiles_expand::PAIR_TILES_SYMBOL
+    } else {
+        kernels_sm120::moe::scale_tiles_expand::PAIR_SYMBOL
+    }
+}

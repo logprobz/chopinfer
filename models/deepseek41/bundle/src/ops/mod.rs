@@ -56,7 +56,7 @@ use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, R
 use kernel_core::contract::Refusal;
 use kernel_core::properties::Invariance;
 use model_deepseek41_contract::state::KvStorage;
-use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_width};
+use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_format};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use crate::Kernels;
@@ -433,11 +433,10 @@ impl Ops {
                 moe.gate_up_layout()
             });
         let gate_up = gate_up_layout.view_layouts()?;
-        // An encoded scale bank (`buffers::encoded_scales`) is expanded
-        // before its consumers, which read the raw bank in the layout the
-        // expansion writes (`Kernels::expanded_scale_layout`): the
-        // backbone's gate/up bank in its consumers' layout, every other
-        // bank in rows.
+        // Encoded scale storage has independent format admission in
+        // `buffers::encoded_scales`. Check the code layout and the raw
+        // fallback layout here. A qualified in-place consumer replaces only
+        // its declared scale pointer after the prepared schedule binds it.
         let expanded_gate_up =
             Kernels::expanded_scale_layout(true, gate_up_layout).view_layouts()?[1];
         let mut expanded = BTreeMap::new();
@@ -457,7 +456,7 @@ impl Ops {
             let Some(view) = index.views.get(&name) else {
                 continue;
             };
-            let read = if encoded_scale_width(&view.layout_id).is_some() {
+            let read = if encoded_scale_format(&view.layout_id).is_some() {
                 expanded.get(&name).copied().unwrap_or(rows[1])
             } else {
                 view.layout_id.as_str()

@@ -97,8 +97,13 @@ fn encoded(shape: &Shape, raw: &RankBuffers, rank: u32) -> RankBuffers {
     let bytes = crate::buffers::expert_scale_bytes(shape).unwrap();
     b.scratch.expert_scales = Some(span(EXPANDED, rank, bytes));
     for (bank, width) in [("gate_up", 1), ("down", 4)] {
-        b.encoded_scales
-            .insert(layer_view(0, &format!("ffn.experts.{bank}.scale")), width);
+        b.encoded_scales.insert(
+            layer_view(0, &format!("ffn.experts.{bank}.scale")),
+            crate::buffers::ScaleBankEncoding {
+                format: kernel_core::weight_transform::ScaleFormat::RowOffsetV1,
+                width,
+            },
+        );
     }
     b
 }
@@ -571,4 +576,185 @@ fn an_encoded_bank_needs_its_expanded_bank() {
     .err()
     .expect("refused");
     assert!(error.contains("no raw bank is allocated"), "{error}");
+}
+
+/// Tile banks change only qualified scale readers and the banks expanded
+/// after routing. All other arguments and launch dimensions stay fixed.
+#[test]
+fn tile_scales_preserve_the_serving_schedule_and_raw_fallbacks() {
+    use crate::buffers::ScaleBankEncoding;
+    use crate::sm120::test_symbols::scale_tiles_expand_pair_symbol;
+    use kernel_core::weight_transform::ScaleFormat;
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let kernels = crate::Kernels::new(&shape).unwrap();
+    let ops = Ops::prepare_set(
+        &kernels,
+        &shape,
+        KvStorage::Native,
+        moe::expert_sets(&FLASH)[0],
+    );
+    let raw = rank_buffers(&shape, &ops, 0);
+    let old = encoded(&shape, &raw, 0);
+    let phases = [
+        (Phase::Decode(1), true, true),
+        (Phase::Decode(8), true, true),
+        (Phase::Decode(16), false, true),
+        (Phase::Decode(32), true, true),
+        (Phase::Verify { rows: 4, items: 1 }, true, true),
+        (Phase::Verify { rows: 6, items: 1 }, true, true),
+        (Phase::Verify { rows: 8, items: 2 }, true, true),
+        (Phase::Verify { rows: 16, items: 4 }, false, true),
+        (Phase::Verify { rows: 32, items: 8 }, true, true),
+        (
+            Phase::Verify {
+                rows: 48,
+                items: 12,
+            },
+            false,
+            true,
+        ),
+        (
+            Phase::Verify {
+                rows: 64,
+                items: 16,
+            },
+            false,
+            true,
+        ),
+        (
+            Phase::Verify {
+                rows: 192,
+                items: 32,
+            },
+            false,
+            false,
+        ),
+        (Phase::Prefill { rows: 1 }, false, false),
+        (Phase::Prefill { rows: 512 }, false, false),
+    ];
+    for width in [1, 2, 4] {
+        let mut tile = old.clone();
+        let mut encoded_banks = Vec::new();
+        for gate in [true, false] {
+            let bank = ops.moe.as_ref().unwrap().scale_bank(gate);
+            let name = super::scale_bank_name(0, gate);
+            tile.encoded_scales.insert(
+                name.clone(),
+                ScaleBankEncoding {
+                    format: ScaleFormat::RowTilesOffsetV1,
+                    width,
+                },
+            );
+            let placed = tile.views.get_mut(&name).unwrap();
+            placed.length =
+                crate::Kernels::encoded_scale_minimum(bank, width, ScaleFormat::RowTilesOffsetV1)
+                    .unwrap();
+            encoded_banks.push(*placed);
+        }
+        for (phase, gate, down) in phases {
+            let gate = gate && !(phase.rows() == 1 && width == 4);
+            let selected = [gate, down];
+            let stages = [
+                Stage::Route(0),
+                Stage::ExpertsGateUp(0),
+                Stage::ExpertsDown(0),
+            ];
+            let before = lower(&shape, &ops, &old, 0, phase, &stages).unwrap();
+            let after = lower(&shape, &ops, &tile, 0, phase, &stages).unwrap();
+            let at = format!("{phase:?} width {width}");
+            for (stage, ((_, old_calls), (_, new_calls))) in before.iter().zip(&after).enumerate() {
+                let old_calls = if stage == 0 {
+                    &old_calls[..old_calls.len() - 1]
+                } else {
+                    &old_calls[..]
+                };
+                let new_calls = if stage == 0 && selected != [true, true] {
+                    let expansion = &new_calls.last().unwrap().launch;
+                    assert_eq!(
+                        expansion.symbol,
+                        if gate {
+                            scale_tiles_expand_pair_symbol(false)
+                        } else {
+                            scale_tiles_expand_pair_symbol(true)
+                        },
+                        "{at}"
+                    );
+                    let spans = bound(expansion);
+                    for bank in 0..2 {
+                        assert_eq!(
+                            spans[bank],
+                            (!selected[bank]).then_some(encoded_banks[bank]),
+                            "{at}"
+                        );
+                        assert_eq!(spans[bank + 3].is_none(), selected[bank], "{at}");
+                    }
+                    &new_calls[..new_calls.len() - 1]
+                } else {
+                    &new_calls[..]
+                };
+                assert_eq!(old_calls.len(), new_calls.len(), "{at}");
+                let mut replaced = 0;
+                for (old, new) in old_calls.iter().zip(new_calls) {
+                    assert_eq!(old.launch.plan, new.launch.plan, "{at}");
+                    assert_eq!(old.launch.rows, new.launch.rows, "{at}");
+                    let replace = stage > 0
+                        && selected[stage - 1]
+                        && crate::Kernels::moe_scale_variant(&old.launch.symbol, width).is_some();
+                    let expected = if replace {
+                        crate::Kernels::moe_scale_variant(&old.launch.symbol, width).unwrap()
+                    } else {
+                        &old.launch.symbol
+                    };
+                    assert_eq!(new.launch.symbol, expected, "{at}");
+                    for (arg, (a, b)) in bound(&old.launch)
+                        .into_iter()
+                        .zip(bound(&new.launch))
+                        .enumerate()
+                    {
+                        if replace && arg == 2 {
+                            assert_eq!(b, Some(encoded_banks[stage - 1]), "{at}");
+                            replaced += 1;
+                        } else {
+                            assert_eq!(a, b, "{at} argument {arg}");
+                        }
+                    }
+                    for (arg, (a, b)) in old
+                        .launch
+                        .arguments
+                        .0
+                        .iter()
+                        .zip(&new.launch.arguments.0)
+                        .enumerate()
+                    {
+                        if !matches!(a, Argument::DeviceBuffer(_)) {
+                            assert_eq!(a, b, "{at} scalar {arg}");
+                        }
+                    }
+                }
+                if stage > 0 {
+                    assert_eq!(replaced > 0, selected[stage - 1], "{at}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_and_row_offset_images_do_not_load_tile_scale_modules() {
+    use crate::sm120::scale_inplace::{DOWN_CUBIN, EXPAND_CUBIN, GATE_CUBIN};
+    use kernel_core::weight_transform::ScaleFormat;
+    for format in [
+        None,
+        Some(ScaleFormat::RowOffsetV1),
+        Some(ScaleFormat::RowTilesOffsetV1),
+    ] {
+        for layout in [RoutedLayout::Rows, RoutedLayout::Tiles, RoutedLayout::Lanes] {
+            for cubin in [GATE_CUBIN, DOWN_CUBIN, EXPAND_CUBIN] {
+                assert_eq!(
+                    crate::Kernels::loads_scale_kernels(cubin, format, layout),
+                    format == Some(ScaleFormat::RowTilesOffsetV1)
+                );
+            }
+        }
+    }
 }

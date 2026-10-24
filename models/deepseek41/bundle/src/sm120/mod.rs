@@ -207,6 +207,7 @@ mod rows;
 mod scale_expand;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod scale_expand_tiles;
+pub(crate) mod scale_inplace;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod shared;
 mod widen;
@@ -424,15 +425,35 @@ impl crate::Kernels {
     /// scales are the same in either code order), for consumers that read
     /// the bank in `gate_up`
     /// ([`Self::expanded_scale_layout`]).
+    #[cfg(test)]
     pub(crate) fn loads_scale_expand(
         cubin: &str,
         encoded: bool,
         gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
     ) -> bool {
+        Self::loads_scale_kernels(
+            cubin,
+            encoded.then_some(kernel_core::weight_transform::ScaleFormat::RowOffsetV1),
+            gate_up,
+        )
+    }
+
+    /// Load only scale families whose input format the rank image stores.
+    /// Raw and row-offset images keep their original module journals.
+    pub(crate) fn loads_scale_kernels(
+        cubin: &str,
+        format: Option<kernel_core::weight_transform::ScaleFormat>,
+        gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
+    ) -> bool {
+        use kernel_core::weight_transform::ScaleFormat;
         match cubin {
-            scale_expand::CUBIN => encoded,
+            scale_expand::CUBIN => format == Some(ScaleFormat::RowOffsetV1),
             scale_expand_tiles::CUBIN => {
-                encoded && Self::expanded_scale_layout(true, gate_up).tiled()
+                format == Some(ScaleFormat::RowOffsetV1)
+                    && Self::expanded_scale_layout(true, gate_up).tiled()
+            }
+            scale_inplace::GATE_CUBIN | scale_inplace::DOWN_CUBIN | scale_inplace::EXPAND_CUBIN => {
+                format == Some(ScaleFormat::RowTilesOffsetV1)
             }
             _ => true,
         }
@@ -455,17 +476,47 @@ impl crate::Kernels {
         }
     }
 
-    /// The launch expanding a layer's encoded gate/up and down scale banks
-    /// (either may be absent) into their raw banks
-    /// (`kernels_sm120::moe::scale_expand`): each bank's shape, offset width
-    /// and `[encoded, output]` views. It expands the experts the `active`
-    /// list names, over its first `slots` positions, or every expert without
-    /// a list. Each CTA waits for its predecessor before it reads or writes,
-    /// so the expansion follows the routes and the raw banks' previous
-    /// readers; every consumer reads after its own wait. The first bank is
-    /// the backbone's gate/up bank, written in the layout its consumers read
-    /// it in, `gate_up` ([`Self::expanded_scale_layout`]); the second is
-    /// written in rows.
+    /// The exact encoded consumer for a raw symbol and offset width.
+    pub(crate) fn moe_scale_variant(raw: &str, width: u32) -> Option<&'static str> {
+        scale_inplace::variant(raw, width)
+    }
+
+    /// A known auxiliary stage that reads no weight scale bank.
+    pub(crate) fn moe_scale_auxiliary(symbol: &str) -> bool {
+        scale_inplace::auxiliary(symbol)
+    }
+
+    /// The minimum extent of one bank in its declared encoded scale format.
+    pub(crate) fn encoded_scale_minimum(
+        bank: model_deepseek41_contract::moe::ScaleBank,
+        width: u32,
+        format: kernel_core::weight_transform::ScaleFormat,
+    ) -> Result<u64, kernel_core::contract::Refusal> {
+        use kernel_core::weight_transform::ScaleFormat;
+        match format {
+            ScaleFormat::RowOffsetV1 => kernel_core::precision::scale_expand::ScaleExpandQuery {
+                width,
+                rows: bank.rows,
+                groups: bank.groups,
+                projections: bank.projections,
+                experts: bank.experts,
+            }
+            .minimum_bank_bytes(),
+            ScaleFormat::RowTilesOffsetV1 => {
+                kernels_sm120::moe::scale_tiles_expand::minimum_bank_bytes(
+                    kernels_sm120::moe::scale_tiles_expand::PairBank {
+                        width,
+                        rows: bank.rows,
+                        groups: bank.groups,
+                        projections: bank.projections,
+                    },
+                    bank.experts,
+                )
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn scale_expand(
         banks: [Option<(
             model_deepseek41_contract::moe::ScaleBank,
@@ -477,8 +528,42 @@ impl crate::Kernels {
         rows: u32,
         gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
     ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
+        Self::scale_expand_format(
+            banks,
+            slots,
+            active,
+            rows,
+            gate_up,
+            kernel_core::weight_transform::ScaleFormat::RowOffsetV1,
+        )
+    }
+
+    /// The launch expanding a layer's encoded gate/up and down scale banks
+    /// (either may be absent) into their raw banks
+    /// (`kernels_sm120::moe::scale_expand`): each bank's shape, offset width
+    /// and `[encoded, output]` views. It expands the experts the `active`
+    /// list names, over its first `slots` positions, or every expert without
+    /// a list. Each CTA waits for its predecessor before it reads or writes,
+    /// so the expansion follows the routes and the raw banks' previous
+    /// readers; every consumer reads after its own wait. The first bank is
+    /// the backbone's gate/up bank, written in the layout its consumers read
+    /// it in, `gate_up` ([`Self::expanded_scale_layout`]); the second is
+    /// written in rows.
+    pub(crate) fn scale_expand_format(
+        banks: [Option<(
+            model_deepseek41_contract::moe::ScaleBank,
+            u32,
+            [kernel_core::backend::View; 2],
+        )>; 2],
+        slots: u32,
+        active: Option<kernel_core::backend::View>,
+        rows: u32,
+        gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
+        format: kernel_core::weight_transform::ScaleFormat,
+    ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
         use kernel_core::contract::Refusal;
-        use kernels_sm120::moe::scale_expand as expand;
+        use kernel_core::weight_transform::ScaleFormat;
+        use kernels_sm120::moe::{scale_expand as expand, scale_tiles_expand as tiles};
         let mut experts = banks.iter().flatten().map(|(bank, _, _)| bank.experts);
         let first = experts
             .next()
@@ -504,7 +589,17 @@ impl crate::Kernels {
         });
         let shapes = banks.map(|b| b.map(|(bank, _, _)| bank));
         let tiled = banks[0].is_some() && Self::expanded_scale_layout(true, gate_up).tiled();
-        let (symbol, plan, arguments) = if tiled {
+        let (symbol, plan, arguments) = if format == ScaleFormat::RowTilesOffsetV1 {
+            (
+                if tiled {
+                    tiles::PAIR_TILES_SYMBOL
+                } else {
+                    tiles::PAIR_SYMBOL
+                },
+                tiles::plan(shapes, first, slots, tiled)?,
+                tiles::arguments(banks, active, first, tiled)?,
+            )
+        } else if tiled {
             (
                 expand::PAIR_TILES_SYMBOL,
                 expand::pair_tiles_plan(shapes, first, slots)?,

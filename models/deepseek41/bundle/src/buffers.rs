@@ -686,18 +686,24 @@ pub struct RankBuffers {
     /// position, filled at create.
     pub rope_compressed: DeviceBufferSpanV1,
     /// The routed scale banks the rank image stores encoded, by view name,
-    /// at their offset width ([`encoded_scales`]). Their consumers bind the
-    /// expanded bank (`Scratch::expert_scales`), never the view.
-    pub encoded_scales: BTreeMap<String, u32>,
+    /// in their declared format and offset width ([`encoded_scales`]).
+    pub encoded_scales: BTreeMap<String, ScaleBankEncoding>,
+}
+
+/// The storage format and offset width of one encoded scale bank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScaleBankEncoding {
+    pub format: kernel_core::weight_transform::ScaleFormat,
+    pub width: u32,
 }
 
 impl RankBuffers {
     /// The placed view `name`, or the error naming it. An encoded scale
-    /// bank is refused: no consumer reads it as placed.
+    /// bank requires an explicit format-aware binding through `encoded_scale`.
     pub fn view(&self, name: &str) -> Result<DeviceBufferSpanV1, String> {
         if self.encoded_scales.contains_key(name) {
             return Err(format!(
-                "{name} is stored encoded; its consumers read its expansion"
+                "{name} is stored encoded; it needs an explicit scale format binding"
             ));
         }
         self.views
@@ -706,9 +712,9 @@ impl RankBuffers {
             .ok_or_else(|| format!("the rank image has no view {name}"))
     }
 
-    /// The encoded scale bank `name` and its offset width, or `None` for a
-    /// view stored raw.
-    pub fn encoded_scale(&self, name: &str) -> Option<(DeviceBufferSpanV1, u32)> {
+    /// The encoded bank `name` and its declared format and offset width,
+    /// or `None` for a view stored raw.
+    pub fn encoded_scale(&self, name: &str) -> Option<(DeviceBufferSpanV1, ScaleBankEncoding)> {
         Some((*self.views.get(name)?, *self.encoded_scales.get(name)?))
     }
 }
@@ -723,13 +729,13 @@ impl RankBuffers {
 pub fn encoded_scales(
     shape: &Shape,
     index: &bundle_runtime::index::RankIndex,
-) -> Result<BTreeMap<String, u32>, String> {
+) -> Result<BTreeMap<String, ScaleBankEncoding>, String> {
     use kernel_core::gated_mlp::GatedMlpProjection;
-    use model_deepseek41_contract::{moe, weight_plan::encoded_scale_width};
+    use model_deepseek41_contract::{moe, weight_plan::encoded_scale_format};
     let g = shape.geometry;
     let mut encoded = BTreeMap::new();
     for (name, view) in &index.views {
-        let Some(width) = encoded_scale_width(&view.layout_id) else {
+        let Some((format, width)) = encoded_scale_format(&view.layout_id) else {
             continue;
         };
         let kind = (0..g.layers())
@@ -744,22 +750,21 @@ pub fn encoded_scales(
             .ok_or_else(|| format!("{name} is stored as {}", view.layout_id))?;
         let set = moe::expert_sets(g)[0];
         let bank = moe::scale_bank(g, shape.ranks(), set, kind)?;
-        let minimum = kernel_core::precision::scale_expand::ScaleExpandQuery {
-            width,
-            rows: bank.rows,
-            groups: bank.groups,
-            projections: bank.projections,
-            experts: bank.experts,
-        }
-        .minimum_bank_bytes()
-        .map_err(|refusal| format!("{name}: {refusal}"))?;
+        let minimum = crate::Kernels::encoded_scale_minimum(bank, width, format)
+            .map_err(|refusal| format!("{name}: {refusal}"))?;
         if view.dtype != "U8" || view.bytes < minimum || view.bytes > u64::from(u32::MAX) {
             return Err(format!(
                 "{name} is not an encoded bank of {} matrices",
                 bank.experts * bank.projections
             ));
         }
-        encoded.insert(name.clone(), width);
+        if encoded
+            .values()
+            .any(|e: &ScaleBankEncoding| e.format != format)
+        {
+            return Err("routed scale banks in one rank must use one encoding format".into());
+        }
+        encoded.insert(name.clone(), ScaleBankEncoding { format, width });
     }
     Ok(encoded)
 }
@@ -885,6 +890,102 @@ mod tests {
     use kernel_core::allocation::Traversal;
     use model_deepseek41_contract::geometry::FLASH;
 
+    #[test]
+    fn encoded_admission_checks_each_formats_extent_and_refuses_mixed_pairs() {
+        use kernel_core::gated_mlp::GatedMlpProjection;
+        use kernel_core::precision::{scale_offset, scale_tiles};
+        use kernel_core::weight_transform::ScaleFormat;
+        use model_deepseek41_contract::{moe, weight_plan::encoded_scale_layout_for};
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let mut index = bundle_runtime::index::RankIndex {
+            rank: 0,
+            image: "rank0.img".into(),
+            image_bytes: 1 << 40,
+            sha256: None,
+            direct_identity: None,
+            views: BTreeMap::new(),
+        };
+        for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+            for (name, kind) in [
+                ("gate_up", GatedMlpProjection::GateUp),
+                ("down", GatedMlpProjection::Down),
+            ] {
+                for width in [1, 2, 4] {
+                    let b = moe::scale_bank(&FLASH, 4, moe::expert_sets(&FLASH)[0], kind).unwrap();
+                    let bytes = match format {
+                        ScaleFormat::RowTilesOffsetV1 => {
+                            let fixed = scale_tiles::fixed_bytes(
+                                u64::from(b.rows),
+                                u64::from(b.groups),
+                                width,
+                            )
+                            .unwrap();
+                            scale_offset::bank_layout(&vec![
+                                fixed;
+                                (b.experts * b.projections) as usize
+                            ])
+                            .unwrap()
+                            .bytes
+                        }
+                        ScaleFormat::RowOffsetV1 => {
+                            kernel_core::precision::scale_expand::ScaleExpandQuery {
+                                width,
+                                rows: b.rows,
+                                groups: b.groups,
+                                projections: b.projections,
+                                experts: b.experts,
+                            }
+                            .minimum_bank_bytes()
+                            .unwrap()
+                        }
+                    };
+                    let name = format!("layers.0.ffn.experts.{name}.scale");
+                    index.views.clear();
+                    index.views.insert(
+                        name.clone(),
+                        runtime_bundle_sdk::rank_index::View {
+                            offset: 0,
+                            bytes,
+                            dtype: "U8".into(),
+                            shape: vec![bytes],
+                            layout_id: encoded_scale_layout_for(format, width),
+                        },
+                    );
+                    assert_eq!(
+                        encoded_scales(&shape, &index).unwrap()[&name],
+                        ScaleBankEncoding { format, width }
+                    );
+                    index.views.get_mut(&name).unwrap().bytes -= 1;
+                    assert!(
+                        encoded_scales(&shape, &index).is_err(),
+                        "{format:?} {name} w{width}"
+                    );
+                }
+            }
+        }
+        index.views.clear();
+        for (bank, format) in [
+            ("gate_up", ScaleFormat::RowOffsetV1),
+            ("down", ScaleFormat::RowTilesOffsetV1),
+        ] {
+            index.views.insert(
+                format!("layers.0.ffn.experts.{bank}.scale"),
+                runtime_bundle_sdk::rank_index::View {
+                    offset: 0,
+                    bytes: 1 << 30,
+                    dtype: "U8".into(),
+                    shape: vec![1 << 30],
+                    layout_id: encoded_scale_layout_for(format, 1),
+                },
+            );
+        }
+        assert!(
+            encoded_scales(&shape, &index)
+                .unwrap_err()
+                .contains("one encoding format")
+        );
+    }
+
     /// An index admits encoded banks only as main layers' routed scale
     /// banks of U8 bytes no shorter than their exception-free encoding.
     #[test]
@@ -938,7 +1039,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            admitted.into_iter().collect::<Vec<_>>(),
+            admitted
+                .into_iter()
+                .map(|(n, e)| {
+                    assert_eq!(
+                        e.format,
+                        kernel_core::weight_transform::ScaleFormat::RowOffsetV1
+                    );
+                    (n, e.width)
+                })
+                .collect::<Vec<_>>(),
             [
                 ("layers.0.ffn.experts.down.scale".into(), 4),
                 (last.clone(), 2)

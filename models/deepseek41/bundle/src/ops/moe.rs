@@ -14,6 +14,7 @@
 
 pub(crate) mod direct;
 pub(crate) mod floor;
+pub(crate) mod scale_inplace;
 
 use kernel_core::backend::{Backend, Counts, OpInfo, Prepared, Refused, View};
 use kernel_core::contract::{MoeQuery, Refusal};
@@ -389,6 +390,29 @@ impl MoeOps {
             .is_some_and(|op| op.info().bytes_of("route.routes.active_experts").is_some())
     }
 
+    /// Use an encoded bank only when every reader in the selected schedule
+    /// has an entry for its exact format and width. Unsupported projections
+    /// retain their paired expansion and raw consumer.
+    pub(crate) fn inplace_scales(&self, phase: Phase, gate_up: bool, width: u32) -> bool {
+        if phase.prefill()
+            || self.gate_up_layout != RoutedLayout::Lanes
+            || (gate_up && phase.rows() == 1 && width == 4)
+        {
+            return false;
+        }
+        if let Some(direct) = self.direct(phase) {
+            return direct.inplace_scales(gate_up, width);
+        }
+        let kind = self.kind(phase);
+        let op = if gate_up { &kind.gate_up } else { &kind.down };
+        let catalog = &op.info().symbols;
+        let mapped = |s: &str| crate::Kernels::moe_scale_variant(s, width).is_some();
+        catalog.iter().any(|(s, _)| mapped(s))
+            && catalog
+                .iter()
+                .all(|(s, _)| mapped(s) || crate::Kernels::moe_scale_auxiliary(s))
+    }
+
     /// The raw gate/up (`gate_up`) or down scale bank.
     pub(crate) fn scale_bank(&self, gate_up: bool) -> moe::ScaleBank {
         self.banks[usize::from(!gate_up)]
@@ -404,6 +428,7 @@ impl MoeOps {
         &self,
         phase: Phase,
         banks: [Option<(u32, DeviceBufferSpanV1, DeviceBufferSpanV1)>; 2],
+        format: kernel_core::weight_transform::ScaleFormat,
         active: Option<DeviceBufferSpanV1>,
     ) -> Result<Lowered, Refusal> {
         let experts = self.banks[0].experts;
@@ -427,12 +452,13 @@ impl MoeOps {
             });
         }
         let active = active.map(|span| bind.view(span));
-        let launch = crate::Kernels::scale_expand(
+        let launch = crate::Kernels::scale_expand_format(
             launch_banks,
             slots,
             active,
             phase.rows(),
             self.gate_up_layout,
+            format,
         )?;
         Ok(bind.lowered(launch))
     }

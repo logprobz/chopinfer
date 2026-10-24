@@ -231,6 +231,8 @@ mod rows;
 mod scale_expand;
 #[allow(dead_code)]
 mod scale_expand_tiles;
+#[allow(dead_code)]
+mod scale_inplace;
 #[path = "shared.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod shared;
@@ -683,6 +685,7 @@ pub fn selection(
     specs.extend(moe::floor_cubins(geometries).expect("fused decode MoE cubins"));
     specs.push((scale_expand::FAMILY, scale_expand::cubin()));
     specs.push((scale_expand_tiles::FAMILY, scale_expand_tiles::cubin()));
+    specs.extend(scale_inplace::cubins().expect("Flash encoded scale consumers"));
     specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));

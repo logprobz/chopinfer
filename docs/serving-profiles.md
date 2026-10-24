@@ -50,7 +50,11 @@ overrides it:
 device. A wider step pays only where it costs less than the tokens its
 drafts add, so measure the step cost of each width before raising either.
 Each graph captured above the default rows also takes memory from the
-graph memory reserve below.
+graph memory reserve below. On 2026-10-24 DeepSeek TP4 DSpark at 128 rows
+and a 64-row graph budget, with widths of 40, 48 and 64 rows above the
+default, held 302 to 304 MiB of graphs per GPU after warmup against 280 MiB
+at the defaults, and its buffers for 128 rows held 32 to 64 MiB more before
+the KV pool.
 
 ## GPU memory
 

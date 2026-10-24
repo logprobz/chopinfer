@@ -386,8 +386,17 @@ deepest block. The host serves 32 unless `--speculative-rows` (profile
 the rows it is asked for. The model option `verify_graph_rows`
 (`--speculation-graph-rows`, profile `speculation.graph_rows`, default 32)
 is the widest verify step captured in a graph; wider steps run without one.
-Verify steps of more than 32 rows have no measured cost yet, so no profile
-uses them.
+No profile asks for more than 32 rows or graphs: on 2026-10-24 (TP4,
+300 W, sampled at temperature 1.0, 128 rows, graphs up to 64 rows) the
+median step took 16.4 ms at 8 rows, 29.4 ms at 16, 47.1 ms at 24,
+37.8 ms at 32, 88.2 ms at 40 and 93.0 ms at 48 rows with 8 items, and
+24.0 ms at 16 rows, 43.9 ms at 32, 99.6 ms at 48, 103.8 ms at 64 and
+268.2 ms at 96 rows (no graph) with 16 items.
+Widths without specialized kernels (24, 40, 48 and 64 rows) cost more than
+32 rows or several AR steps, so full-concurrency C8 ran fastest at depth 3
+(32 rows, 596 tokens/s against 488 for AR) and C16 at depth 0 (668
+tokens/s; depth 1 at 32 rows 663, depths 2 and 3 at 48 and 64 rows 395 and
+451), which the `tp4-dspark` depths and widths already select.
 The DSpark paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 

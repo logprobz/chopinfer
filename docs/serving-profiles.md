@@ -72,6 +72,21 @@ and on 2026-10-23 cost 2 to 4 % of decode tokens per second at 1, 8 and 32
 sequences. Set `CHOPINFER_WEIGHT_CENSUS=0` in the server's environment to
 plan every section raw.
 
+## Host allocator memory
+
+On Linux with glibc, the generation worker returns unused allocator pages
+with `malloc_trim(0)` after requests, deferred events and KV transfers have
+drained and no command is waiting. It runs at most once per minute after
+activity. If the last burst ends during that cooldown, an idle timer performs
+the reclamation when the minute ends, without needing another request.
+The log reports whether pages were returned and the time spent trimming.
+
+Live allocations and their addresses remain intact. This does not evict
+prefixes, release GPU pages or cap live caches. A continuously busy worker
+has no drained boundary, so its allocator retention still needs separate
+soak evidence. Report anonymous memory, file-backed RSS and live heap bytes
+separately when judging stability.
+
 ## Qualification scope
 
 Qualification is tied to actual checkpoint tensors, package, host, topology,

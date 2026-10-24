@@ -145,6 +145,8 @@ mod f32_head;
 mod f32_prefill;
 #[allow(dead_code)]
 mod f32_split;
+#[allow(dead_code)]
+mod f32_verify;
 mod f32_wide;
 #[allow(dead_code)]
 mod f32_zero;
@@ -682,6 +684,7 @@ pub fn selection(
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));
     specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
     specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
+    specs.extend(f32_verify::cubins(geometries).expect("separate-span F32 cubins"));
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
     specs.extend(dspark_projection::cubins(geometries).expect("bounded drafter projection cubins"));
     specs.extend(prefill_matrix::cubins(geometries).expect("qualified prefill matrix cubin"));

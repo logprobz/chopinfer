@@ -134,6 +134,9 @@ mod f32_dense;
 pub mod f32_head;
 pub mod f32_prefill;
 pub mod f32_split;
+pub mod f32_verify;
+#[allow(dead_code, reason = "wide consumers follow paired qualification")]
+mod f32_verify_serving;
 pub mod f32_wide;
 #[allow(dead_code, reason = "the build script compiles the serving family")]
 pub mod f32_zero;

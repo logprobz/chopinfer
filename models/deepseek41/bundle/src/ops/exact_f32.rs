@@ -20,6 +20,9 @@
 //! All but `wk` read the sublayer's normed rows widened exactly to F32
 //! (`own_ops::widen`), which the sublayer's input norm writes once.
 
+#[allow(dead_code, reason = "wide consumers follow paired qualification")]
+pub(crate) mod cached;
+
 use kernel_core::backend::{Backend, Counts, OpInfo, Prepared, Refused, View};
 use kernel_core::contract::{
     ActivationFormat, DType, Epilogues, GemmQuery, NumericalContract, Refusal, Target, WeightFormat,

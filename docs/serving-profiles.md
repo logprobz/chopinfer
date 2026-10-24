@@ -56,6 +56,9 @@ default, held 302 to 304 MiB of graphs per GPU after warmup against 280 MiB
 at the defaults, and its buffers for 128 rows held 32 to 64 MiB more before
 the KV pool.
 
+For persistent weight images and cross-build content proofs, see
+[the weight keeper](weight-keeper.md).
+
 ## Drafter confidence
 
 `--speculation-confidence JSON|off` (`speculation.confidence`) lets a

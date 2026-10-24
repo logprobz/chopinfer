@@ -33,9 +33,13 @@ fn encoded_scale_banks_expand_in_every_step() {
     let mut views = Views::default();
     step(&mut instance, &prompt(7, 0, 0, 3, true), &mut views);
     // Each rank expands each layer's gate/up and down banks in one launch.
-    let pair = "chop_moe_scale_expand_pair_v1";
+    let pair = crate::sm120::test_symbols::scale_expand_pair_symbol(true);
     let expanded = launches(pair);
     assert_eq!(expanded, 4 * layers);
+    assert_eq!(
+        launches(crate::sm120::test_symbols::scale_expand_pair_symbol(false)),
+        0
+    );
     for width in [1, 2, 4] {
         assert_eq!(launches(&format!("chop_moe_scale_expand_w{width}_v1")), 0);
     }

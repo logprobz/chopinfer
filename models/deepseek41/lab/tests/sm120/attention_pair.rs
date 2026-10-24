@@ -27,6 +27,8 @@ mod grouped_cache;
 mod latent;
 #[path = "attention_pair/launch.rs"]
 mod launch;
+#[path = "attention_pair/query_wide.rs"]
+mod query_wide;
 #[path = "attention_pair/stages.rs"]
 mod stages;
 #[path = "attention_pair/probe.rs"]

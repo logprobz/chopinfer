@@ -145,9 +145,36 @@ impl Inputs {
         lengths: &[u32],
         adversarial: bool,
     ) -> LabResult<Self> {
+        Self::packed_at(
+            s,
+            page,
+            second,
+            seed,
+            lengths,
+            &vec![0; lengths.len()],
+            adversarial,
+        )
+    }
+
+    /// `packed` with each item's rows starting at absolute position
+    /// `origins[item]`: each row's RoPE pairs follow its position, and an
+    /// item that starts past position 0 continues a long context, so its
+    /// compressed keys come from the deepest half of the cache.
+    pub fn packed_at(
+        s: &Session,
+        page: u32,
+        second: bool,
+        seed: u32,
+        lengths: &[u32],
+        origins: &[u32],
+        adversarial: bool,
+    ) -> LabResult<Self> {
         let rows = lengths.iter().sum::<u32>();
         if lengths.is_empty() || lengths.contains(&0) || rows > ROWS {
             return Err("packed prompts must be nonempty and fit the chunk".into());
+        }
+        if origins.len() != lengths.len() {
+            return Err("packed prompts need one origin each".into());
         }
         let items = lengths.len() as u32;
         let pages = CONTEXT / page;
@@ -193,8 +220,30 @@ impl Inputs {
             (0..WINDOW).map(move |key| window_key(local, key, adversarial))
         }));
         let compressed_keys = integers(owners.iter().flat_map(|&(item, local)| {
-            (0..512).map(move |key| compressed_key(local, key, seed + 97 * item, adversarial))
+            let long = origins[item as usize] > 0;
+            (0..512).map(move |key| {
+                let key = compressed_key(local, key, seed + 97 * item, adversarial);
+                if long && key >= 0 && key < CONTEXT as i32 {
+                    (CONTEXT - 1) as i32 - key % (CONTEXT / 2) as i32
+                } else {
+                    key
+                }
+            })
         }));
+        // RoPE pairs at each row's absolute position, one frequency per pair.
+        let rope = owners
+            .iter()
+            .map(|&(item, local)| origins[item as usize] + local)
+            .chain(std::iter::once(0))
+            .chain(std::iter::once(0))
+            .take(rows.max(2) as usize)
+            .flat_map(|position| {
+                (0..32).flat_map(move |pair| {
+                    let angle = f64::from(position) * 10000f64.powf(-f64::from(pair) / 32.0);
+                    [angle.cos() as f32, angle.sin() as f32]
+                })
+            })
+            .collect::<Vec<_>>();
         // A distinct page order per item; adversarial tables add holes and
         // out-of-range pages.
         let tables = integers((0..items).flat_map(|item| {
@@ -219,8 +268,12 @@ impl Inputs {
             compressed_pool: upload(s, &compressed_pool)?,
             compressed_keys: upload(s, &compressed_keys)?,
             tables: upload(s, &tables)?,
-            sinks: s.upload_f32(&(0..HEADS).map(|i| i as f32 * 0.125).collect::<Vec<_>>())?,
-            cos_sin: s.upload_f32(&[0.6, 0.8].repeat(rows.max(2) as usize * 32))?,
+            sinks: s.upload_f32(
+                &(0..HEADS)
+                    .map(|h| [-8.0, 0.0, 8.0, 32.0][h % 4])
+                    .collect::<Vec<_>>(),
+            )?,
+            cos_sin: s.upload_f32(&rope)?,
             page,
             pages,
             compressed_budget: if second { 512 } else { 0 },

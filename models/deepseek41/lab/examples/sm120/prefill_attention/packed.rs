@@ -22,6 +22,18 @@ pub(super) const SHAPES: [&[u32]; 12] = [
     &[4096, 4095],
 ];
 
+/// Packed steps whose prompts continue long contexts, as (lengths, absolute
+/// first positions): full chunks past the prefill cache's offsets, a long
+/// continuation packed with short prompts, two long items with odd
+/// boundaries, and an unaligned continuation.
+pub(super) const LONG: [(&[u32], &[u32]); 5] = [
+    (&[8192], &[32768]),
+    (&[8192], &[57344]),
+    (&[3000, 568, 51, 554], &[36000, 0, 0, 0]),
+    (&[4095, 4097], &[40960, 32769]),
+    (&[789], &[33000]),
+];
+
 /// The shapes timed: the served steps and one unpacked full chunk.
 const TIMED: [&[u32]; 5] = [&[568; 8], &[554; 14], &[901, 902], &[789], &[ROWS]];
 
@@ -211,19 +223,41 @@ pub fn run_fused(sessions: &[Session], timing: bool) -> LabResult<()> {
             }
             let mut rig = Rig::scheduled(s, entry.clone(), rank as u32 + 5, Schedule::Pair)?;
             let fused = Fused::new(s, &entry)?;
-            let shapes: &[&[u32]] = if timing { &TIMED } else { &SHAPES };
-            for (index, &lengths) in shapes.iter().enumerate() {
+            let zero = [0; 16];
+            let shapes: Vec<(&[u32], &[u32])> = if timing {
+                TIMED.iter().map(|&l| (l, &zero[..l.len()])).collect()
+            } else {
+                SHAPES
+                    .iter()
+                    .map(|&l| (l, &zero[..l.len()]))
+                    .chain(LONG)
+                    .collect()
+            };
+            for (index, &(lengths, origins)) in shapes.iter().enumerate() {
                 for adversarial in [false, true] {
                     if timing && adversarial {
                         continue;
                     }
                     let seed = 600 + 40 * rank as u32 + index as u32;
-                    rig.inputs =
-                        Inputs::packed(s, page_size, second_fp4_keys, seed, lengths, adversarial)?;
+                    rig.inputs = Inputs::packed_at(
+                        s,
+                        page_size,
+                        second_fp4_keys,
+                        seed,
+                        lengths,
+                        origins,
+                        adversarial,
+                    )?;
                     let rows = lengths.iter().sum::<u32>();
                     rig.rows = rows;
+                    let at = if origins.iter().any(|&o| o > 0) {
+                        let origins = origins.iter().map(u32::to_string).collect::<Vec<_>>();
+                        format!(" origins={}", origins.join(","))
+                    } else {
+                        String::new()
+                    };
                     let label = format!(
-                        "rank={rank} variant={} {} adversarial={adversarial}",
+                        "rank={rank} variant={} {}{at} adversarial={adversarial}",
                         variant(&entry),
                         label(lengths)
                     );
@@ -275,9 +309,22 @@ mod tests {
 
     #[test]
     fn packed_shapes_fit_the_chunk_and_cross_paired_ctas() {
-        for lengths in SHAPES.iter().chain(&TIMED) {
+        for lengths in SHAPES
+            .iter()
+            .chain(&TIMED)
+            .chain(LONG.iter().map(|(l, _)| l))
+        {
             let rows = lengths.iter().sum::<u32>();
-            assert!(rows > 0 && rows <= ROWS, "{lengths:?}");
+            assert!(
+                rows > 0 && rows <= ROWS && lengths.len() <= 16,
+                "{lengths:?}"
+            );
+        }
+        // Long shapes continue past the cache's last offset, one origin per
+        // prompt.
+        for (lengths, origins) in LONG {
+            assert_eq!(lengths.len(), origins.len());
+            assert!(origins.iter().any(|&origin| origin >= 32768));
         }
         // Prompt boundaries fall on both rows of a paired CTA.
         let boundaries = SHAPES

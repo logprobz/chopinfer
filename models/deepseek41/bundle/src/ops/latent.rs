@@ -201,7 +201,7 @@ impl GlueOps {
         )?;
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
-        let window_write = RowBuckets::prepare(asks, "glue.window_write", every, |need| {
+        let window_write = RowBuckets::prepare(asks, "glue.window_write", every, shape, |need| {
             backend.latent_window_write(&write, need)
         })?;
         let decode_window_write = asks.ask(
@@ -372,7 +372,7 @@ impl GlueOps {
         let buffers = window_write_buffers(&mut bind, views, first, None);
         let op = match first {
             None if matches!(phase, crate::program::Phase::Decode(_)) => &self.decode_window_write,
-            None => self.window_write.at(rows),
+            None => self.window_write.at_phase(phase),
             Some(_) => &self.staged_write,
         };
         bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
@@ -640,7 +640,14 @@ impl AttentionOps {
             None
         };
         let mut selected = Vec::new();
-        if crate::Kernels::selected_cache_bytes(shape.geometry, shape.ranks(), storage).is_some() {
+        if crate::Kernels::selected_cache_bytes(
+            shape.geometry,
+            shape.ranks(),
+            storage,
+            shape.verify_decode_rows(),
+        )
+        .is_some()
+        {
             for (kind, phase) in [
                 (Kind::Decode, AttentionPhase::Decode),
                 (Kind::Verify, AttentionPhase::Verify),
@@ -653,7 +660,14 @@ impl AttentionOps {
                 let op = asks.ask(
                     format!("attention.selected r{ratio} {kind:?}"),
                     need,
-                    |need| kernels.prepare_selected_cache(shape.geometry, &query, need),
+                    |need| {
+                        kernels.prepare_selected_cache(
+                            shape.geometry,
+                            &query,
+                            need,
+                            shape.verify_decode_rows(),
+                        )
+                    },
                 )?;
                 selected.push((kind, op));
             }

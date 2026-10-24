@@ -14,6 +14,9 @@ pub const PREFILL_TOKENS: u32 = 8192;
 pub const PREFILL_GRANULE: u32 = PAGE_TOKENS as u32;
 /// The package maximum of served sequences and items per step.
 pub const DECODE_BATCH: u32 = 32;
+/// Rows covered by the bounded Flash TP4 verify paths. This is not a
+/// sequence limit or a default speculation budget.
+pub const VERIFY_DECODE_ROWS: u32 = 64;
 /// Graph row buckets shared by model preparation and target registration.
 pub const DECODE_BUCKETS: [u32; 6] = [1, 2, 4, 8, 16, 32];
 /// Verify rows one item may carry: the bonus token and a DSpark block's

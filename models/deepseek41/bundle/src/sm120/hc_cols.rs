@@ -50,6 +50,24 @@ pub const BUCKETS: &[finish_split::Bucket] = &[
 pub const PRODUCER_CUBIN: &str = "sinkhorn_hc_deepseek41_round_cols_sm120";
 pub const FINISH_CUBIN: &str = "sinkhorn_hc_deepseek41_finish_split_sm120";
 
+/// The same column tile and ordered finish at each bounded verify width.
+pub fn buckets() -> Vec<finish_split::Bucket> {
+    BUCKETS
+        .iter()
+        .copied()
+        .chain(
+            (33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS).map(|rows| {
+                finish_split::Bucket {
+                    rows,
+                    tile: 4,
+                    transposed: true,
+                    warps: 32,
+                }
+            }),
+        )
+        .collect()
+}
+
 pub fn producer() -> round_cols::Entry {
     round_cols::Entry {
         reference: super::hc_round_chain::entry(&FLASH),

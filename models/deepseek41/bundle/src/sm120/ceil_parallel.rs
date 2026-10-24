@@ -39,9 +39,9 @@ fn early_release(g: &Geometry, symbol: &str) -> bool {
         .any(|s| s == symbol)
 }
 
-/// The rows a parallel entry holds: every decode bucket and a drafter
-/// forward's rows. Capacity is not compiled; each row is quantized alone.
-pub const CAPACITY: u32 = SMALL_DRAFT_ROWS;
+/// Flash TP4's bounded verify rows. Capacity is not compiled; each row
+/// is quantized alone, including every drafter forward through 60 rows.
+pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
 
 /// The rows `entry`'s parallel form holds. The target's routed MoE chains
 /// pick their intermediate quantizer by their own rows, so its width keeps
@@ -54,8 +54,10 @@ fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
         && intermediate != draft
     {
         DECODE_BATCH
-    } else {
+    } else if g.id == FLASH.id && ranks == 4 {
         CAPACITY
+    } else {
+        SMALL_DRAFT_ROWS
     }
 }
 
@@ -81,7 +83,11 @@ pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<block_quantize::Entry>
 
 pub fn activation(g: &Geometry, ranks: u32) -> Result<silu_mul_quantize::Entry, String> {
     let mut entry = super::shared::activation(g, ranks)?;
-    entry.capacity = CAPACITY;
+    entry.capacity = if g.id == FLASH.id && ranks == 4 {
+        CAPACITY
+    } else {
+        SMALL_DRAFT_ROWS
+    };
     entry.symbol = format!("{}_parallel_v1", entry.symbol.strip_suffix("_v1").unwrap());
     entry.parallel().map_err(|e| e.to_string())
 }
@@ -121,6 +127,23 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_verify_keeps_the_target_intermediate_quantizer_separate() {
+        for entry in quantizers(&FLASH, 4).unwrap() {
+            let intermediate = entry.symbol == "chop_deepseek41_moe_ceil_w3456_parallel_v1";
+            assert_eq!(
+                entry.capacity,
+                if intermediate { DECODE_BATCH } else { CAPACITY }
+            );
+            assert_eq!(entry.plan(CAPACITY).is_ok(), !intermediate);
+            assert!(entry.plan(CAPACITY + 1).is_err());
+        }
+        let shared = activation(&FLASH, 4).unwrap();
+        assert_eq!(shared.capacity, CAPACITY);
+        assert!(shared.plan(CAPACITY).is_ok());
+        assert!(shared.plan(CAPACITY + 1).is_err());
+    }
 
     /// Only Flash's WO_a and WO_b input quantizers release dependents early,
     /// and their cached twins inherit it.

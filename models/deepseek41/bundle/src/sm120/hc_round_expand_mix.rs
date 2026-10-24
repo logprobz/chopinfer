@@ -13,7 +13,11 @@ pub fn cubin_name(g: &Geometry) -> String {
 pub fn entry(g: &Geometry) -> Entry {
     Entry {
         query: SinkhornExpandMixQuery { mix: hc::mix(g) },
-        capacity: DECODE_BATCH,
+        capacity: if g.id == model_deepseek41_contract::geometry::FLASH.id {
+            model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
+        } else {
+            DECODE_BATCH
+        },
         symbol: format!("chop_{}_hc_round_expand_mix", g.kernel_tag),
         probe: false,
     }

@@ -32,6 +32,8 @@ pub(crate) struct HcOps {
     /// Decode and verify rows above `DECODE_BATCH` up to a drafter
     /// forward's small-row limit (`SMALL_DRAFT_ROWS`), on the bounded split.
     draft_mix: Prepared<LaggedMixCollapseBuffers<View>>,
+    verify_mix: Option<Prepared<LaggedMixCollapseBuffers<View>>>,
+    finish_rows: u32,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
@@ -104,9 +106,11 @@ impl HcOps {
         // head's rows.
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let g = shape.geometry;
+        let finish_rows = shape.verify_decode_rows();
         Ok(HcOps {
+            finish_rows,
             finish_norm: {
-                let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
+                let capacity = finish_rows;
                 let need = exact::need(capacity, exact::every_phase(capacity));
                 let query = SinkhornRoundNormQuery {
                     mixer: SinkhornExpandMixQuery { mix: hc::mix(g) },
@@ -137,6 +141,14 @@ impl HcOps {
                 asks.ask("hc.draft_mix", need, |need| {
                     backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
                 })?
+            },
+            verify_mix: if finish_rows > DECODE_BATCH {
+                let need = exact::need(finish_rows, exact::every_phase(finish_rows));
+                Some(asks.ask("hc.verify_mix", need, |need| {
+                    backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
+                })?)
+            } else {
+                None
             },
             expand: asks.ask("hc.expand", need, |need| {
                 backend.sinkhorn_expand(&hc::expand(g, need.capacity), need)
@@ -312,14 +324,16 @@ impl HcOps {
     // rounded expansion mixer and input norm it replaces, memcheck clean,
     // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
-        matches!(
+        (matches!(
             phase,
             Phase::Decode(1 | 8 | 16 | 32)
                 | Phase::Verify {
                     rows: 4 | 6 | 8 | 12 | 16 | 32,
                     ..
                 }
-        ) && self.finish_norm.is_some()
+        ) || matches!(phase, Phase::Verify { rows: 33..=64, .. })
+            && phase.rows() <= self.finish_rows)
+            && self.finish_norm.is_some()
     }
 
     pub(crate) fn round_expand_mix_norm(
@@ -356,13 +370,17 @@ impl HcOps {
 
     /// The mixer scratch every rank allocates for the mix-collapse.
     pub(crate) fn scratch(&self) -> MixScratchBytes {
-        self.scratch_of(&[&self.mix])
+        let mut scratch = self.scratch_of(&[&self.mix]);
+        if let Some(op) = &self.verify_mix {
+            scratch = scratch.most(self.scratch_of(&[op]));
+        }
+        scratch
     }
 
     /// The mixer scratch a drafter's ops bind: [`Self::scratch`] or the
     /// draft-rows mixer's, whichever is more.
     pub(crate) fn draft_scratch(&self) -> MixScratchBytes {
-        self.scratch_of(&[&self.mix, &self.draft_mix])
+        self.scratch().most(self.scratch_of(&[&self.draft_mix]))
     }
 
     fn scratch_of(&self, mixers: &[&Prepared<LaggedMixCollapseBuffers<View>>]) -> MixScratchBytes {
@@ -393,6 +411,11 @@ impl HcOps {
     fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
         if phase.prefill() {
             &self.prefill_mix
+        } else if matches!(phase, Phase::Verify { rows: 33..=64, .. })
+            && phase.rows() <= self.finish_rows
+            && let Some(op) = &self.verify_mix
+        {
+            op
         } else if matches!(
             phase,
             Phase::Decode(1 | 8)

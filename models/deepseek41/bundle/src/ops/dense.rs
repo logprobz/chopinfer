@@ -332,7 +332,7 @@ impl DenseOps {
                     ..moe::quantizer(width)
                 };
                 let what = format!("dense.quantize {input:?} w{width}");
-                let mut op = RowBuckets::prepare(asks, &what, every, |need| {
+                let mut op = RowBuckets::prepare(asks, &what, every, shape, |need| {
                     backend.block_quantize(&query, need)
                 })?;
                 if crate::Kernels::dense_quantize_one_row(shape, width, input) {

@@ -17,7 +17,7 @@ fn target_programs_lower_at_wide_verify_rows() {
     let directory = std::env::var_os("CHOPINFER_VERIFY_ROW_JOURNALS").map(std::path::PathBuf::from);
     let mut cases = 0;
     for count in [8_u32, 16] {
-        for rows in [24_u32, 32, 40, 48, 56, 64] {
+        for rows in [24_u32, 32].into_iter().chain(33..=64) {
             // A five-position drafter cannot produce more than six rows per item.
             if rows > count * 6 {
                 continue;
@@ -73,6 +73,40 @@ fn target_programs_lower_at_wide_verify_rows() {
                 .collect();
             assert!(target.len() > 1000);
             assert!(!target.iter().any(|line| line.contains("dspark_markov")));
+            if rows > 32 {
+                let count_symbol = |symbol: &str| {
+                    target
+                        .iter()
+                        .filter(|line| line.split_whitespace().nth(2) == Some(symbol))
+                        .count()
+                };
+                assert_eq!(
+                    count_symbol("chop_deepseek41_hc_round_cols_r4_tx_v1"),
+                    77 * 4
+                );
+                assert_eq!(
+                    count_symbol("chop_deepseek41_hc_finish_split_w32_v1"),
+                    77 * 4
+                );
+                assert_eq!(
+                    count_symbol("chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1"),
+                    0
+                );
+                assert_eq!(count_symbol("chop_deepseek41_moe_ceil_w5120_v1"), 0);
+                assert_eq!(
+                    count_symbol("chop_deepseek41_shared_swiglu_w576_parallel_v1"),
+                    40 * 4
+                );
+                assert_eq!(
+                    target
+                        .iter()
+                        .filter(
+                            |line| line.contains("_verify") && line.contains("_cached_profile0_v1")
+                        )
+                        .count(),
+                    40 * 4
+                );
+            }
             if let Some(directory) = &directory {
                 std::fs::create_dir_all(directory).unwrap();
                 let stem = format!("items-{count}-rows-{rows}");
@@ -94,7 +128,7 @@ fn target_programs_lower_at_wide_verify_rows() {
             cases += 1;
         }
     }
-    assert_eq!(cases, 10);
+    assert_eq!(cases, 52);
     for request in 1..=16 {
         instance.retire_request(request).unwrap();
     }

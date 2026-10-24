@@ -197,7 +197,7 @@ impl MoeOps {
         let ranks = shape.ranks();
         let refused = |error: String| Refused::Rule(error);
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
-        let quantize = RowBuckets::prepare(asks, "moe.quantize", every, |need| {
+        let quantize = RowBuckets::prepare(asks, "moe.quantize", every, shape, |need| {
             backend.block_quantize(&moe::quantizer(g.shape.hidden), need)
         })?;
         let kind = |usage: OperationUse, exact_bucket: bool| -> Result<Kind, Refused> {

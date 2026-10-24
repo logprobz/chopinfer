@@ -87,6 +87,18 @@ pub fn draft_split_entry(g: &Geometry) -> lagged_split::Entry {
     )
 }
 
+/// The unchanged split symbol with a separate bound for wide verify ops.
+pub fn verify_split_entry(g: &Geometry) -> lagged_split::Entry {
+    lagged_split::entry(
+        super::rows::profile(g),
+        Mixer {
+            capacity: model_deepseek41_contract::serving::VERIFY_DECODE_ROWS,
+            ..mixer(g)
+        },
+        false,
+    )
+}
+
 pub fn split_cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
     geometries
         .iter()
@@ -167,7 +179,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     let sm120 = sm120
         .with_sinkhorn_lagged(registered_entries(g))
         .with_sinkhorn_lagged_split([split_entry(g)])
-        .with_sinkhorn_lagged_split_bounded([draft_split_entry(g)])
+        .with_sinkhorn_lagged_split_bounded([draft_split_entry(g), verify_split_entry(g)])
         .with_sinkhorn_lagged_tiled([prefill_entry(g)]);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         sm120.with_sinkhorn_lagged_warp(kernels_sm120::sinkhorn_hc::lagged_warp::Entry {

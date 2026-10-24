@@ -17,7 +17,11 @@ pub fn entries(g: &Geometry) -> Result<Vec<Entry>, String> {
         .map(|(query, kind)| {
             Entry::new(
                 query,
-                DECODE_BATCH,
+                if g.id == model_deepseek41_contract::geometry::FLASH.id {
+                    model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
+                } else {
+                    DECODE_BATCH
+                },
                 format!("chop_norm_quantize_{}_{kind}_v1", g.kernel_tag),
             )
             .map_err(|e| e.to_string())

@@ -589,8 +589,9 @@ impl crate::Kernels {
         g: &model_deepseek41_contract::geometry::Geometry,
         ranks: u32,
         storage: model_deepseek41_contract::state::KvStorage,
+        rows: u32,
     ) -> Option<u64> {
-        latent_cache::eligible(g, ranks, storage).then_some(latent_cache::BYTES)
+        latent_cache::eligible(g, ranks, storage).then(|| latent_cache::bytes(rows))
     }
 
     pub(crate) fn selected_cache_rows(
@@ -605,11 +606,12 @@ impl crate::Kernels {
         geometry: &model_deepseek41_contract::geometry::Geometry,
         query: &kernel_core::latent_attention::LatentAttentionQuery,
         need: kernel_core::backend::Need,
+        maximum_rows: u32,
     ) -> Result<
         kernel_core::backend::Prepared<kernels_sm120::latent::sources_cached::Buffers>,
         kernel_core::backend::Refused,
     > {
-        latent_cache::prepare(self.backend.as_ref(), geometry, query, need)
+        latent_cache::prepare(self.backend.as_ref(), geometry, query, need, maximum_rows)
     }
 
     pub(crate) fn prepare_prefill_cache(

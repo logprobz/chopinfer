@@ -42,6 +42,16 @@ impl Shape {
         self
     }
 
+    /// Prepared row bound for the Flash TP4 decode-path verify kernels.
+    pub(crate) fn verify_decode_rows(&self) -> u32 {
+        if self.geometry.id == model_deepseek41_contract::geometry::FLASH.id && self.ranks() == 4 {
+            self.verify_rows
+                .min(model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
+        } else {
+            DECODE_BATCH
+        }
+    }
+
     /// The geometry's dimensions.
     pub const fn dims(&self) -> &'static model_deepseek41_contract::geometry::Shape {
         &self.geometry.shape

@@ -43,7 +43,7 @@ pub fn register(
             .with_sinkhorn_finish_norm_cols(
                 super::hc_cols::producer(),
                 super::hc_cols::finish(),
-                super::hc_cols::BUCKETS.to_vec(),
+                super::hc_cols::buckets(),
             )
     } else {
         backend
@@ -62,10 +62,22 @@ pub fn register_pair(
 ) -> kernels_sm120::backend::Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         backend
-            .with_sinkhorn_finish_norm(entry(g), vec![1, 4, 6, 8, 12, 16, 32])
+            .with_sinkhorn_finish_norm(
+                entry(g),
+                [1, 4, 6, 8, 12, 16, 32]
+                    .into_iter()
+                    .chain(33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
+                    .collect(),
+            )
             .with_sinkhorn_finish_norm_chain(
                 super::hc_round_chain::entry(g),
-                vec![(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)],
+                [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
+                    .into_iter()
+                    .chain(
+                        (33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
+                            .map(|rows| (rows, 4)),
+                    )
+                    .collect(),
             )
             .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), vec![(32, 2)])
     } else {

@@ -9,18 +9,21 @@ use model_deepseek41_contract::state::KvStorage;
 
 pub const FAMILY: &str = "latent_decode_cache";
 pub const CUBIN: &str = "latent_decode_cache_deepseek41_sm120";
-pub const MAX_ROWS: u32 = 32;
-pub const BYTES: u64 = MAX_ROWS as u64 * 640 * (512 * 2 + 4);
+pub const MAX_ROWS: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
+
+pub fn bytes(rows: u32) -> u64 {
+    u64::from(rows.min(MAX_ROWS)) * 640 * (512 * 2 + 4)
+}
 
 pub fn eligible(g: &Geometry, ranks: u32, storage: KvStorage) -> bool {
     super::latent_scheduled::qualified(g, ranks) && storage == KvStorage::Native
 }
 
-pub fn rows(phase: AttentionPhase) -> &'static [u32] {
+pub fn rows(phase: AttentionPhase) -> Vec<u32> {
     match phase {
-        AttentionPhase::Decode => &[1, 8],
-        AttentionPhase::Verify => &[4, 6, 32],
-        _ => &[],
+        AttentionPhase::Decode => vec![1, 8],
+        AttentionPhase::Verify => [4, 6, 32].into_iter().chain(33..=MAX_ROWS).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -29,7 +32,11 @@ pub fn selected(phase: AttentionPhase, count: u32) -> bool {
     if REFERENCE.with(std::cell::Cell::get) {
         return false;
     }
-    rows(phase).contains(&count)
+    match phase {
+        AttentionPhase::Decode => matches!(count, 1 | 8),
+        AttentionPhase::Verify => matches!(count, 4 | 6) || (32..=MAX_ROWS).contains(&count),
+        _ => false,
+    }
 }
 
 /// Keep the qualified lab module byte-for-byte, including its unused controls.
@@ -55,6 +62,7 @@ pub fn prepare(
     g: &Geometry,
     query: &LatentAttentionQuery,
     need: Need,
+    maximum_rows: u32,
 ) -> Result<Prepared<Buffers>, Refused> {
     let entry = entries(g)
         .map_err(Refused::Rule)?
@@ -67,7 +75,7 @@ pub fn prepare(
     let rows: Vec<_> = rows(*phase)
         .iter()
         .copied()
-        .filter(|&r| r <= need.capacity)
+        .filter(|&r| r <= need.capacity && r <= maximum_rows)
         .collect();
     let reference = backend.latent_attention_sources(query, need)?;
     // Complete captured attention graphs won at four rows with eight heads
@@ -95,4 +103,24 @@ pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
     }
     let _restore = Restore(REFERENCE.with(|flag| flag.replace(true)));
     run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_cache_bounds_storage_without_changing_decode_selection() {
+        assert_eq!(rows(AttentionPhase::Decode), [1, 8]);
+        assert_eq!(bytes(32), 21_053_440);
+        assert_eq!(bytes(64), 42_106_880);
+        assert_eq!(bytes(192), bytes(64));
+        for count in 1..=192 {
+            assert_eq!(
+                selected(AttentionPhase::Verify, count),
+                matches!(count, 4 | 6 | 32..=64)
+            );
+            assert!(!selected(AttentionPhase::Prefill, count));
+        }
+    }
 }

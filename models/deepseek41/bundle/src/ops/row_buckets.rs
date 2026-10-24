@@ -12,6 +12,7 @@ pub(crate) struct RowBuckets<B> {
     /// Decode and verify rows above `DECODE_BATCH` up to a drafter forward's
     /// small-row limit (`SMALL_DRAFT_ROWS`).
     draft: Prepared<B>,
+    draft_rows: u32,
     /// A one-row op, where one row has an entry of its own.
     one: Option<Prepared<B>>,
 }
@@ -20,6 +21,7 @@ impl<B> RowBuckets<B> {
         asks: &Asks,
         what: impl Into<String>,
         every: Need,
+        shape: &crate::shape::Shape,
         mut prepare: impl FnMut(Need) -> Result<Prepared<B>, Refused>,
     ) -> Result<Self, Refused> {
         let what = what.into();
@@ -29,15 +31,17 @@ impl<B> RowBuckets<B> {
             exact::need(DECODE_BATCH, exact::every_phase(DECODE_BATCH)),
             &mut prepare,
         )?;
+        let draft_rows = SMALL_DRAFT_ROWS.max(shape.verify_decode_rows());
         let draft = asks.ask(
             format!("{what} draft rows"),
-            exact::need(SMALL_DRAFT_ROWS, exact::every_phase(SMALL_DRAFT_ROWS)),
+            exact::need(draft_rows, exact::every_phase(draft_rows)),
             prepare,
         )?;
         Ok(Self {
             every: large,
             small,
             draft,
+            draft_rows,
             one: None,
         })
     }
@@ -75,7 +79,7 @@ impl<B> RowBuckets<B> {
     /// keeps its plans at every row count.
     pub(crate) fn at_phase(&self, phase: Phase) -> &Prepared<B> {
         let rows = phase.rows();
-        if !phase.prefill() && rows > DECODE_BATCH && rows <= SMALL_DRAFT_ROWS {
+        if !phase.prefill() && rows > DECODE_BATCH && rows <= self.draft_rows {
             &self.draft
         } else {
             self.at(rows)

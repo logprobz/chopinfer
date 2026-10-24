@@ -462,6 +462,7 @@ impl Scratch<Allocation> {
                 shape.geometry,
                 shape.ranks(),
                 storage,
+                shape.verify_decode_rows(),
             )
             .map(Allocation::bytes),
             attention: row(heads * BF16),

@@ -156,10 +156,57 @@ also stops verification, and ends the request), and is otherwise left out.
 Repeated records are refused, and dropped log lines mark the capture
 incomplete in the report. Each position needs `--min-samples` (200) of them,
 so record arms that draft as deep as the speculative tokens. Fit on runs
-served without a calibration. The report beside the output lists per
+served without a calibration: the fitter refuses logs whose startup line
+says confidence is on. It drops records before the server's readiness line
+so greedy startup warmup cannot contaminate sampled calibration. Extracted
+record-only logs remain supported. Use recorded sampled measurement windows
+when untimed warmup prompts differ from the workload. The report beside the output lists per
 position the samples, accepted given earlier, accepted/drafted (the share of
 drafted tokens accepted), the fit, and log loss in sample, held out over two
 folds by request, and for a constant rate, AUC and the expected calibration
 error; a fit that does not beat the constant held out carries no
 information. Greedy pairs repeat the sampled fit unless `--greedy` runs are
 given.
+
+## Confidence exactness and A/B
+
+The `confidence-exact` job runs greedy and fixed-seed sampled checks against
+the first arm's reference, including an AR arm, at C8 and C16. These are
+exactness checks; performance selection uses sampled temperature 1.0 only.
+The `confidence-ab` job compares declared baseline/treatment `pairs` on one
+install. Each calibration is one JSON argv element after
+`--speculation-confidence`. The shipped arms carry the sampled fit approved
+on 2026-10-24, with identical pairs at floors 0 and 1. Position 1 has ECE
+0.0103 on 19,835 measured sampled labels; all five positions have at least
+925 labels and held-out log loss below their constant baseline. The greedy
+pairs reuse that fit for exactness checks.
+
+Confidence arms must report `startup speculation_confidence: on`; a
+refusal or missing line fails. A server reporting on without a requested
+calibration also fails. Legacy non-confidence logs may omit the line.
+Every measured confidence window where a common reservation can exceed
+the balanced width must execute allocated steps. Non-confidence windows
+must execute none. Depth checks use the verified width. Allocated step
+keys include items, width, verify items and reserved rows, for example
+`i8-r32-v8-R48`; unallocated keys retain their existing form.
+
+A/B runs one ABBA block, two visits per arm. Declare each baseline before
+its treatments. The tuner runs the declared arms, then reverses them;
+overlapping pairs share visits while each pair retains A, B, B, A order.
+Each visit uses one keeper-backed server for all its windows. C8 and C16
+get both repeats; C1 and C32 get one short control per arm, with no ABBA
+claim for those controls. The staged estimate includes every server start,
+warmup and reference window, within a 30-minute queue budget.
+
+`report.py --ab RUN` writes `ab.json` and `ab.md`: chronological repeat
+tok/s and ranges, J/token, tokens per step, median step times by shape,
+allocated share, and accepted/verified counts by position. Allocated share
+uses full-concurrency decode/verify steps; window allocation counts include
+draining tails. Missing repeats or incorrect visit order fail the report.
+The report informs the adoption decision and does not change a profile.
+
+Before queueing, run the sealed wrapper end to end with `env -i` and
+`--dry-run`. Test `TUNE_STUB_IGNORE_CONFIDENCE` (claims on but never
+allocates) and `TUNE_STUB_CLAIM_CONFIDENCE` (claims on without the flag)
+against the sealed harness directly; the queue wrapper clears these test
+controls. Both must fail. Stub results check the harness only.

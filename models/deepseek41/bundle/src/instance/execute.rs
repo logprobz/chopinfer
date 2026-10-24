@@ -269,6 +269,11 @@ impl Instance {
     /// drafts for the DSpark drafter.
     fn pack(&self, request: &[u8]) -> Result<PackedStep, BundleStatusV1> {
         let batch = BatchCodecV1::decode(request).map_err(|_| BundleStatusV1::InvalidArgument)?;
+        // The package does not declare chop.verify-allocation.v1: its target
+        // verifies every reserved draft, so an allocated step is refused.
+        if batch.verify_allocation().is_some() {
+            return Err(BundleStatusV1::Unsupported);
+        }
         if !batch.media().is_empty() && self.media.is_none() {
             return Err(BundleStatusV1::Unsupported);
         }

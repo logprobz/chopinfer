@@ -596,7 +596,7 @@ pub(crate) struct AcceptanceEstimate {
 }
 
 impl AcceptanceEstimate {
-    const fn initial() -> Self {
+    pub(crate) const fn initial() -> Self {
         Self {
             positions: [INITIAL_ACCEPTANCE; MAX_DRAFT_TOKENS],
             unverified: false,

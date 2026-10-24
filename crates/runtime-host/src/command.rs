@@ -2846,9 +2846,9 @@ fn serve_v1(
     ));
     let verify_warmup = speculation
         .filter(|_| serving.verify_warmup && package.manifest().batch_limits().is_some())
-        .map(|speculation| runtime_engine::warmup::VerifyWarmup {
+        .map(|speculation| {
             // Without declared buckets any depth runs as it is.
-            item_rows: runtime_bundle_sdk::warmup::item_rows(
+            let item_rows = runtime_bundle_sdk::warmup::item_rows(
                 &package
                     .manifest()
                     .speculation()
@@ -2861,18 +2861,28 @@ fn serve_v1(
                     })
                     .unwrap_or_default(),
                 speculation.maximum_draft_tokens(),
-            ),
-            maximum_draft_tokens: speculation.maximum_draft_tokens(),
-            step_rows: warmed_rows,
-            drafting_items: speculation.maximum_draft_items(),
-            exact_graphs: exact_verify_graphs_v1(package.manifest()),
-            widths: speculation
-                .verify_widths()
-                .widths()
-                .iter()
-                .map(|&width| usize::from(width))
-                .filter(|&width| width > warmed_rows && width <= graphed_rows)
-                .collect(),
+            );
+            // Allocated steps warm up to the graph rows too.
+            let allocated =
+                runtime_engine::warmup::allocated_shapes(speculation, warmup_sequences, &item_rows)
+                    .into_iter()
+                    .filter(|shape| shape.width <= graphed_rows)
+                    .collect();
+            runtime_engine::warmup::VerifyWarmup {
+                item_rows,
+                maximum_draft_tokens: speculation.maximum_draft_tokens(),
+                step_rows: warmed_rows,
+                drafting_items: speculation.maximum_draft_items(),
+                exact_graphs: exact_verify_graphs_v1(package.manifest()),
+                widths: speculation
+                    .verify_widths()
+                    .widths()
+                    .iter()
+                    .map(|&width| usize::from(width))
+                    .filter(|&width| width > warmed_rows && width <= graphed_rows)
+                    .collect(),
+                allocated,
+            }
         });
     let policy = deployment
         .policy()

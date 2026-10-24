@@ -24,6 +24,19 @@ pub struct VerifyWarmup {
     /// every concurrency wave whose items reach it with even drafts: the
     /// balanced plan's listed widths above the rows warmed exhaustively.
     pub widths: Vec<usize>,
+    /// Verify steps with an allocation, which warmup reaches with unpinned
+    /// requests because pinned drafts are never allocated.
+    pub allocated: Vec<AllocatedShape>,
+}
+
+/// A verify step with an allocation and the wave that reaches it: `items`
+/// fresh unpinned requests, whose plan verifies `width` rows of
+/// `reserved_rows`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AllocatedShape {
+    pub items: usize,
+    pub width: usize,
+    pub reserved_rows: usize,
 }
 
 /// One verify graph shape and a wave that reaches it: the wave's requests
@@ -186,6 +199,7 @@ mod tests {
             drafting_items,
             exact_graphs: false,
             widths: Vec::new(),
+            allocated: Vec::new(),
         }
     }
 
@@ -206,6 +220,7 @@ mod tests {
                 drafting_items: None,
                 exact_graphs: true,
                 widths: Vec::new(),
+                allocated: Vec::new(),
             };
             let shapes = verify_shapes(sequences, &warmup);
             assert_eq!(shapes.len(), count);
@@ -240,6 +255,7 @@ mod tests {
             drafting_items: None,
             exact_graphs: true,
             widths: Vec::new(),
+            allocated: Vec::new(),
         };
         let selected = verify_shapes(32, &warmup);
         let mut complete = std::collections::BTreeSet::new();
@@ -276,6 +292,7 @@ mod tests {
             drafting_items: None,
             exact_graphs: true,
             widths: Vec::new(),
+            allocated: Vec::new(),
         };
         let wide = VerifyWarmup {
             widths: vec![16, 32, 48, 64],

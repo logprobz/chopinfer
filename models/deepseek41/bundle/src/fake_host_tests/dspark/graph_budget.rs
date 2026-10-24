@@ -12,6 +12,7 @@ fn selected_adaptive_warmup_geometries_fit_the_graph_budget_and_replay() {
             drafting_items: None,
             exact_graphs: true,
             widths: Vec::new(),
+            allocated: Vec::new(),
         },
     );
     assert_eq!(shapes.len(), 97);

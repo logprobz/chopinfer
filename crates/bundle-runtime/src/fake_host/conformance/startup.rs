@@ -120,6 +120,8 @@ impl Serving {
             drafting_items: package.maximum_draft_items.map(|items| items as usize),
             exact_graphs: package.exact_graphs,
             widths: Vec::new(),
+            // Profiles never enable verify allocation.
+            allocated: Vec::new(),
         })
     }
 

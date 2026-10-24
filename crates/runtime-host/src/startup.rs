@@ -402,6 +402,38 @@ async fn verify_waves(
             }
         }
     }
+    // Pinned drafts are never allocated, so an allocated step's wave pins
+    // none and the plan reserves and allocates as it does when serving. The
+    // wave runs to its end: as its requests near their output limit they
+    // reserve fewer drafts and reach narrower allocated steps, as served
+    // requests do.
+    let allocated: Vec<_> = verify
+        .allocated
+        .iter()
+        .filter(|shape| shape.items <= sequences)
+        .collect();
+    for shape in &allocated {
+        let (items, width, reserved) = (shape.items, shape.width, shape.reserved_rows);
+        eprintln!(
+            "startup verify warmup: allocated {width} of {reserved} rows, items {items} begin"
+        );
+        let shape_started = std::time::Instant::now();
+        let requests = vec![(tokens.to_vec(), None); items];
+        let label = format!("allocated-{width}-{reserved}-{items}");
+        let result = run_wave(backend, model, &label, &requests, output, deadline, None).await;
+        eprintln!(
+            "startup verify warmup: allocated {width} of {reserved} rows, items {items} end, {:.3}s",
+            shape_started.elapsed().as_secs_f64()
+        );
+        if let Err(error) = result {
+            eprintln!(
+                "WARNING: startup verify warmup: allocated {width} of {reserved} rows, items {items} not warmed: {error}"
+            );
+            if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
+                return Err(error);
+            }
+        }
+    }
     let pin = verify
         .item_rows
         .iter()
@@ -438,8 +470,9 @@ async fn verify_waves(
         }
     }
     eprintln!(
-        "startup verify warmup: {} verify shapes considered, {} context lengths, {:.3}s",
+        "startup verify warmup: {} verify shapes considered, {} allocated, {} context lengths, {:.3}s",
         shapes.len(),
+        allocated.len(),
         if pin.is_some() { ladder.len() } else { 0 },
         started.elapsed().as_secs_f64()
     );
@@ -649,7 +682,7 @@ mod wave_tests {
     };
 
     use super::{development_skip_warmup, warmup, waves};
-    use runtime_engine::warmup::{VerifyWarmup, context_ladder, verify_shapes};
+    use runtime_engine::warmup::{AllocatedShape, VerifyWarmup, context_ladder, verify_shapes};
 
     /// The wave in progress, its held event streams, and every submitted
     /// request id with its wave size.
@@ -1019,6 +1052,7 @@ mod wave_tests {
             drafting_items: None,
             exact_graphs: false,
             widths: Vec::new(),
+            allocated: Vec::new(),
         }
     }
 
@@ -1065,6 +1099,49 @@ mod wave_tests {
         );
         let submitted = backend.submitted();
         assert_eq!(submitted[decode].1, "startup-warmup-verify-2-1-0");
+    }
+
+    #[test]
+    fn allocated_waves_pin_no_drafts_after_the_pinned_shapes() {
+        let shape = |items, width, reserved_rows| AllocatedShape {
+            items,
+            width,
+            reserved_rows,
+        };
+        // The wave of 8 items is past the served sequences.
+        let verify = VerifyWarmup {
+            allocated: vec![shape(2, 8, 12), shape(3, 8, 18), shape(8, 32, 48)],
+            ..dflash()
+        };
+        let shapes = verify_shapes(4, &verify);
+        let ladder = context_ladder(32, 64 - 17);
+        let mut expected = waves(4);
+        expected.extend(shapes.iter().map(|shape| shape.drafts.len()));
+        expected.extend([2, 3]);
+        expected.extend(ladder.iter().map(|_| 1));
+        let backend = WaveBackend::with_waves(expected, None);
+        run_with_mode(
+            &backend,
+            4,
+            RequestAcceptanceProfile::General,
+            false,
+            Some(verify),
+        )
+        .unwrap();
+        let pins = backend.pins();
+        let start = waves(4).iter().sum::<usize>()
+            + shapes.iter().map(|shape| shape.drafts.len()).sum::<usize>();
+        assert_eq!(pins[start..start + 5], [(None, 2); 5]);
+        assert_eq!(
+            pins[start + 5..],
+            ladder
+                .iter()
+                .map(|&prompt| (Some(7), prompt))
+                .collect::<Vec<_>>()
+        );
+        let submitted = backend.submitted();
+        assert_eq!(submitted[start].1, "startup-warmup-allocated-8-12-2-0");
+        assert_eq!(submitted[start + 2].1, "startup-warmup-allocated-8-18-3-0");
     }
 
     #[test]
@@ -1373,6 +1450,7 @@ mod wave_stop_tests {
             drafting_items: None,
             exact_graphs: true,
             widths: Vec::new(),
+            allocated: Vec::new(),
         }
     }
 

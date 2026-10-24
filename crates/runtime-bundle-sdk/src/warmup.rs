@@ -4,7 +4,7 @@
 
 mod shapes;
 
-pub use shapes::{VerifyShape, VerifyWarmup, context_ladder, verify_shapes};
+pub use shapes::{AllocatedShape, VerifyShape, VerifyWarmup, context_ladder, verify_shapes};
 
 /// Wave sizes: the powers of two below `sequences`, then `sequences`.
 pub fn waves(sequences: usize) -> Vec<usize> {

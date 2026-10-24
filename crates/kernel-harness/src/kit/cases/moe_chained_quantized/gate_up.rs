@@ -7,9 +7,9 @@ use kernel_core::moe_chained_oracle::{
     before_down_f64, fold_f32_chains, partial_chains, quantize_before_down,
 };
 use kernel_core::precision::WeightLayout;
-use kernel_core::precision::layout::ROW_TILES_64X128;
+use kernel_core::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use kernel_core::quantize::Scales;
-use kernel_core::transform::RowTileLayout;
+use kernel_core::transform::{QuadLaneLayout, RowTileLayout};
 
 fn decoded(codes: &[u8], scales: &[u8], row: usize, k: usize, packed: bool) -> Vec<f64> {
     (0..k)
@@ -116,21 +116,69 @@ fn weight_payload(experts: usize, n: usize, k: usize) -> (Vec<u8>, Vec<u8>) {
     (codes, scales)
 }
 
+/// A bank stored in 64-row by 128-K tiles of its codes and its scales,
+/// the codes' 64-byte blocks also in quad-lane order with `lanes`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BankTiles {
+    sections: [RowTileLayout; 2],
+    lanes: bool,
+}
+
+impl BankTiles {
+    /// Stores the row-major `codes` and `scales` in place.
+    fn store(self, codes: &mut [u8], scales: &mut [u8]) -> LabResult<()> {
+        let mut scratch = Vec::new();
+        for (bytes, tiles) in [&mut *codes, &mut *scales].into_iter().zip(self.sections) {
+            tiles
+                .pack_in_place(bytes, &mut scratch)
+                .map_err(|e| e.to_string())?;
+        }
+        if self.lanes {
+            QuadLaneLayout { bytes: codes.len() }
+                .pack_in_place(codes)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The row-major bytes of stored `codes` and `scales`.
+    fn rows(self, codes: &[u8], scales: &[u8]) -> LabResult<[Vec<u8>; 2]> {
+        let mut codes = codes.to_vec();
+        if self.lanes {
+            QuadLaneLayout { bytes: codes.len() }
+                .unpack_in_place(&mut codes)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok([
+            tile_rows(self.sections[0], &codes)?,
+            tile_rows(self.sections[1], scales)?,
+        ])
+    }
+}
+
 /// The tiles of the bank of `rows` MXFP4 rows of `k` elements the op reads
 /// (`OpInfo::weight_layouts`, role `weights`): none for rows, or 64-row by
-/// 128-K tiles of its codes and its scales ([`ROW_TILES_64X128`]).
-fn bank_tiles(info: &OpInfo, rows: usize, k: usize) -> LabResult<Option<[RowTileLayout; 2]>> {
+/// 128-K tiles of its codes and its scales ([`ROW_TILES_64X128`]), the
+/// codes in quad-lane order for [`ROW_TILES_64X128_LANES`].
+fn bank_tiles(info: &OpInfo, rows: usize, k: usize) -> LabResult<Option<BankTiles>> {
+    let tiles = |lanes| {
+        let tiles = |row_bytes, tile_bytes| RowTileLayout {
+            rows,
+            row_bytes,
+            tile_rows: 64,
+            tile_bytes,
+        };
+        Some(BankTiles {
+            sections: [tiles(k / 2, 64), tiles(k / 32, 4)],
+            lanes,
+        })
+    };
     match info.layout_of("weights") {
         None => Ok(None),
         Some(layout) if *layout == WeightLayout::row_major() => Ok(None),
-        Some(layout) if layout.id == ROW_TILES_64X128 && layout.version == 1 => {
-            let tiles = |row_bytes, tile_bytes| RowTileLayout {
-                rows,
-                row_bytes,
-                tile_rows: 64,
-                tile_bytes,
-            };
-            Ok(Some([tiles(k / 2, 64), tiles(k / 32, 4)]))
+        Some(layout) if layout.id == ROW_TILES_64X128 && layout.version == 1 => Ok(tiles(false)),
+        Some(layout) if layout.id == ROW_TILES_64X128_LANES && layout.version == 1 => {
+            Ok(tiles(true))
         }
         Some(layout) => Err(format!(
             "gate/up case cannot store its bank in {} v{}",
@@ -241,16 +289,11 @@ pub fn gate_up_case<'a>(
         })
         .collect::<Vec<_>>();
     let (mut codes, mut scales) = weight_payload(e, n, k);
-    // A bank the op reads in row tiles is stored tiled; the oracle reads
-    // its rows back from the stored images.
+    // A bank the op reads in row tiles is stored tiled, in either code
+    // order; the oracle reads its rows back from the stored images.
     let tiles = bank_tiles(prepared.info(), e * 2 * n, k)?;
     if let Some(tiles) = tiles {
-        let mut scratch = Vec::new();
-        for (bytes, tiles) in [&mut codes, &mut scales].into_iter().zip(tiles) {
-            tiles
-                .pack_in_place(bytes, &mut scratch)
-                .map_err(|e| e.to_string())?;
-        }
+        tiles.store(&mut codes, &mut scales)?;
     }
     let (input, input_scales) = activation_payload(tokens, k);
     let unit_weights = prepared.info().bytes_of("unit_weights").map(|_| {
@@ -355,10 +398,7 @@ pub fn gate_up_case<'a>(
             prior == &ids && held.iter().zip(operands).all(|(a, b)| a.as_slice() == b)
         }) {
             let bank = match tiles {
-                Some([codes, scales]) => [
-                    tile_rows(codes, operands[2])?,
-                    tile_rows(scales, operands[3])?,
-                ],
+                Some(tiles) => tiles.rows(operands[2], operands[3])?,
                 None => [operands[2].to_vec(), operands[3].to_vec()],
             };
             let mut pairs = Vec::with_capacity(tokens * top * n);
@@ -579,8 +619,9 @@ mod tests {
     use super::*;
     use kernel_core::codec::f64_to_bf16;
 
-    /// A bank the op declares in row tiles is stored in them and its rows
-    /// read back exactly; rows stay rows and any other layout refuses.
+    /// A bank the op declares in row tiles, in either code order, is stored
+    /// in them and its rows read back exactly; rows stay rows and any other
+    /// layout refuses.
     #[test]
     fn gate_up_bank_is_stored_in_the_layout_the_op_reads() {
         let (experts, n, k) = (2, 96, 256);
@@ -598,14 +639,26 @@ mod tests {
             id: ROW_TILES_64X128.into(),
             version: 1,
         };
-        let tiles = bank_tiles(&info, rows, k).unwrap().unwrap();
         let (codes, scales) = weight_payload(experts, n, k);
-        for (bytes, tiles) in [codes, scales].into_iter().zip(tiles) {
-            let mut stored = bytes.clone();
-            tiles.pack_in_place(&mut stored, &mut Vec::new()).unwrap();
-            assert_ne!(stored, bytes);
-            assert_eq!(tile_rows(tiles, &stored).unwrap(), bytes);
+        let mut tiled = Vec::new();
+        for (id, lanes) in [(ROW_TILES_64X128, false), (ROW_TILES_64X128_LANES, true)] {
+            info.weight_layouts[0].1.id = id.into();
+            let tiles = bank_tiles(&info, rows, k).unwrap().unwrap();
+            assert_eq!(tiles.lanes, lanes);
+            let (mut stored_codes, mut stored_scales) = (codes.clone(), scales.clone());
+            tiles.store(&mut stored_codes, &mut stored_scales).unwrap();
+            assert_ne!(stored_codes, codes);
+            assert_ne!(stored_scales, scales);
+            assert_eq!(
+                tiles.rows(&stored_codes, &stored_scales).unwrap(),
+                [codes.clone(), scales.clone()]
+            );
+            tiled.push((stored_codes, stored_scales));
         }
+        // The quad-lane order moves the tiles' code bytes and keeps their
+        // scales.
+        assert_ne!(tiled[0].0, tiled[1].0);
+        assert_eq!(tiled[0].1, tiled[1].1);
         info.weight_layouts[0].1.id = "bf16-fragment".into();
         assert!(bank_tiles(&info, rows, k).is_err());
     }

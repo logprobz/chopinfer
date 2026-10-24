@@ -77,6 +77,17 @@ fn launch_of(step: &[String], stream: u32, symbol: &str) -> Option<usize> {
         .position(|line| line.starts_with(&format!("launch {stream} {symbol} ")))
 }
 
+/// The buffer slot of every device buffer `line`'s launch binds.
+fn bound_buffers(line: &str) -> Vec<u32> {
+    line.split("BundleDeviceBufferHandleV1 { raw: ")
+        .skip(1)
+        .map(|rest| {
+            let raw: u64 = rest.split(' ').next().unwrap().parse().unwrap();
+            raw as u32
+        })
+        .collect()
+}
+
 /// Executes `request` with device results for `items` items of `k`
 /// drafts each (cycle `epoch`), then commits each item's bonus row;
 /// returns the step's journal, its hash on rank 0, and its acceptance of
@@ -192,6 +203,27 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             allocated_acceptance,
         );
         allocates(&step, hash);
+        // The allocation's launches bind only their own rank's
+        // allocations, as a device context requires (collectives bind
+        // peer-mapped buffers; weight images are not allocations).
+        let owners = host.allocation_ranks.borrow().clone();
+        let own = [
+            crate::sm120::allocate_entries::SYMBOL,
+            allocated_acceptance,
+            "chop_row_gather_by_index",
+        ];
+        for rank in 0..shape.ranks() {
+            let prefix = format!("launch {} ", streams[&rank]);
+            for line in step.iter().filter(|line| {
+                line.starts_with(&prefix) && own.iter().any(|symbol| line.contains(symbol))
+            }) {
+                for slot in bound_buffers(line) {
+                    if let Some(&(owner, _)) = owners.get(&slot) {
+                        assert_eq!(owner, rank, "rank {rank} binds buffer {slot}: {line}");
+                    }
+                }
+            }
+        }
         let target = &step[hash..accepted];
         for rank in 0..shape.ranks() {
             let stream = streams[&rank];

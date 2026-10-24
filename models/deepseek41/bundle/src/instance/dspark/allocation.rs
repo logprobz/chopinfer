@@ -106,10 +106,12 @@ impl Instance {
                 window_rows: bind.view(scratch.window_rows),
                 index_visible: bind.view(scratch.index_visible),
                 q_start: bind.view(target.q_start),
+                // Other ranks have no text mask. Their empty view is of
+                // their own memory: a launch binds only its rank's buffers.
                 text: bind.view(if rank == 0 {
                     slice(text, 0, reserved)?
                 } else {
-                    slice(text, 0, 0)?
+                    slice(memory.items, 0, 0)?
                 }),
             };
             let launches = bind

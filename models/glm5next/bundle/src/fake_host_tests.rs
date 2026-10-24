@@ -970,7 +970,12 @@ fn create_acquires_retires_and_releases() {
     // handle as before. Re-pinned when the dense FP8 chained cubin lost its
     // two unlaunched expert-parallel entries (two fewer resolves per rank;
     // later ids renumber).
-    check_journal(&journal, (2798, 0x7220_f828_5cb4_276c), "glm5next-create.txt").unwrap();
+    check_journal(
+        &journal,
+        (2798, 0x7220_f828_5cb4_276c),
+        "glm5next-create.txt",
+    )
+    .unwrap();
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());

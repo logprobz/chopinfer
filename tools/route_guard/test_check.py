@@ -59,14 +59,45 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(self.run_check('--journal', path), 2)
         steps = self.root / 'steps'
         route = {'fallback_launches': 0, 'families': {}, 'entries': {
-            'projection/standalone/shared': {'class': 'Fast', 'family': 'projection', 'launches': 1}}}
+            'projection/standalone/shared': {'class': 'Fast', 'family': 'projection', 'symbol': 'shared', 'launches': 1}}}
         steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
         self.assertEqual(self.run_check('--journal', path, '--steps', steps), 0)
         route['fallback_launches'] = 1
         route['families'] = {'projection': 1}
-        route['entries'] = {'projection/fallback/shared': {'class': 'Baseline', 'family': 'projection', 'launches': 1}}
+        route['entries'] = {'projection/fallback/shared': {'class': 'Baseline', 'family': 'projection', 'symbol': 'shared', 'launches': 1}}
         steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
         self.assertEqual(self.run_check('--journal', path, '--steps', steps), 1)
+
+    def test_irrelevant_steps_cannot_clear_fallbacks_or_ambiguity(self):
+        journal = self.root / 'journal'
+        journal.write_text('launch 4 shared\n')
+        steps = self.root / 'steps'
+        steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': {
+            'fallback_launches': 0, 'families': {}, 'entries': {}}}) + '\n')
+        self.assertEqual(self.run_check('--journal', journal, '--steps', steps), 1)
+        self.tags.append({**self.tags[0], 'entry': 'projection/standalone/shared', 'class': 'Fast'})
+        self.write_classes()
+        self.assertEqual(self.run_check('--journal', journal, '--steps', steps), 2)
+
+    def test_step_metadata_must_match_the_classes_revision(self):
+        self.tags[0]['class'] = 'Fast'
+        self.write_classes()
+        steps = self.root / 'steps'
+        for changed in ({'class': 'Baseline'}, {'family': 'other'}, {'symbol': 'other'}):
+            value = {'class': 'Fast', 'family': 'projection', 'symbol': 'shared', 'launches': 1, **changed}
+            fallback = value['class'] != 'Fast'
+            steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': {
+                'fallback_launches': int(fallback), 'families': {value['family']: 1} if fallback else {},
+                'entries': {self.tags[0]['entry']: value}}}) + '\n')
+            self.assertEqual(self.run_check('--steps', steps), 2)
+
+    def test_ambiguous_evidence_takes_precedence_over_policy_failure(self):
+        self.tags += [{**self.tags[0], 'entry': 'projection/standalone/shared', 'class': 'Fast'},
+                      {**self.tags[0], 'entry': 'projection/fallback/other', 'symbol': 'other'}]
+        self.write_classes()
+        journal = self.root / 'journal'
+        journal.write_text('launch 4 shared\nlaunch 4 other\n')
+        self.assertEqual(self.run_check('--journal', journal), 2)
 
     def test_empty_or_missing_step_evidence_does_not_pass(self):
         path = self.root / 'steps'

@@ -36,12 +36,13 @@ def load_classes(path):
 
 def journal(path):
     counts = collections.Counter()
-    for line in path.read_text().splitlines():
-        fields = line.split()
-        if fields and fields[0] == 'launch':
-            if len(fields) < 3:
-                raise EvidenceError('malformed journal launch')
-            counts[fields[2]] += 1
+    with path.open(encoding='utf-8') as stream:
+        for line in stream:
+            fields = line.split()
+            if fields and fields[0] == 'launch':
+                if len(fields) < 3:
+                    raise EvidenceError('malformed journal launch')
+                counts[fields[2]] += 1
     if not counts:
         raise EvidenceError('journal has no launches')
     return {symbol: (count, 0) for symbol, count in counts.items()}
@@ -60,30 +61,36 @@ def nsys(path):
     return {symbol: (count, ns) for symbol, count, ns in rows}
 
 
-def steps(paths):
+def steps(paths, entries):
     counts = collections.Counter()
     records = 0
     for path in paths:
-        for line in path.read_text().splitlines():
-            if '"chopinfer.step.v1"' not in line:
-                continue
-            record = json.loads(line[line.index('{'):])
-            route = record.get('route')
-            if not isinstance(route, dict) or not isinstance(route.get('entries'), dict):
-                raise EvidenceError('step is missing selected-entry route evidence')
-            total = 0
-            families = collections.Counter()
-            for entry, value in route['entries'].items():
-                count = value['launches']
-                if type(count) is not int or count < 0:
-                    raise EvidenceError('invalid selected-entry launch count')
-                if value['class'] != 'Fast':
-                    total += count
-                    families[value['family']] += count
-                counts[entry] += count
-            if total != route['fallback_launches'] or dict(families) != route['families']:
-                raise EvidenceError('inconsistent selected-entry totals')
-            records += 1
+        with path.open(encoding='utf-8') as stream:
+            for line in stream:
+                if '"chopinfer.step.v1"' not in line:
+                    continue
+                record = json.loads(line[line.index('{'):])
+                route = record.get('route')
+                if not isinstance(route, dict) or not isinstance(route.get('entries'), dict):
+                    raise EvidenceError('step is missing selected-entry route evidence')
+                total = 0
+                families = collections.Counter()
+                for entry, value in route['entries'].items():
+                    if entry not in entries:
+                        raise EvidenceError(f'step entry missing from classes: {entry}')
+                    for field in ('class', 'family', 'symbol'):
+                        if value.get(field) != entries[entry][field]:
+                            raise EvidenceError(f'step entry {entry}: {field} differs from classes')
+                    count = value['launches']
+                    if type(count) is not int or count < 0:
+                        raise EvidenceError('invalid selected-entry launch count')
+                    if value['class'] != 'Fast':
+                        total += count
+                        families[value['family']] += count
+                    counts[entry] += count
+                if total != route['fallback_launches'] or dict(families) != route['families']:
+                    raise EvidenceError('inconsistent selected-entry totals')
+                records += 1
     if paths and not records:
         raise EvidenceError('no step records')
     return counts
@@ -129,25 +136,31 @@ def allowed(tag, allow, profile, phase, rows):
 def check(args):
     document, entries, classes = load_classes(args.classes)
     allow = allowances(args.allow)
-    selected = steps(args.steps)
+    selected = steps(args.steps, entries)
     profile = args.profile or document.get('profile')
     observed = collections.defaultdict(lambda: [0, 0])
+    required = collections.Counter()
+    selected_symbols = collections.Counter()
+    for entry, count in selected.items():
+        selected_symbols[entries[entry]['symbol']] += count
     for paths, reader in ((args.journal, journal), (args.nsys, nsys)):
         for path in paths:
             for symbol, (count, ns) in reader(path).items():
+                required[symbol] = max(required[symbol], count)
                 observed[symbol][0] += count
                 observed[symbol][1] += ns
     failures, ambiguous = [], []
     for symbol, (count, ns) in sorted(observed.items()):
         tags = classes.get(symbol, [])
         kinds = {tag['class'] for tag in tags}
-        if len(kinds) > 1:
-            ambiguous.append(symbol)
+        if 'Fast' in kinds and len(kinds) > 1:
+            if selected_symbols[symbol] < required[symbol]:
+                ambiguous.append(symbol)
             print(f'ambiguous symbol={symbol} launches={count} device_ns={ns} (time unattributed)')
         elif kinds and kinds != {'Fast'}:
             tag = tags[0]
             print(f"{tag['class']} family={tag['family']} symbol={symbol} launches={count} device_ns={ns}")
-            if not args.steps and not all(allowed(t, allow, profile, args.phase, args.rows) for t in tags):
+            if selected_symbols[symbol] < required[symbol] and not all(allowed(t, allow, profile, args.phase, args.rows) for t in tags):
                 failures.append(symbol)
     for entry, count in sorted(selected.items()):
         if entry not in entries:
@@ -157,11 +170,11 @@ def check(args):
             print(f"{tag['class']} family={tag['family']} entry={entry} symbol={tag['symbol']} launches={count}")
             if not allowed(tag, allow, profile, args.phase, args.rows):
                 failures.append(entry)
+    if ambiguous:
+        raise EvidenceError('ambiguous symbols require enough matching selected-entry --steps evidence: ' + ', '.join(ambiguous))
     if failures:
         print('unallowed fallbacks: ' + ', '.join(failures), file=sys.stderr)
         return 1
-    if ambiguous and not args.steps:
-        raise EvidenceError('ambiguous symbols require selected-entry --steps evidence')
     return 0
 
 

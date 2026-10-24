@@ -11,6 +11,7 @@
 namespace chop::moe::lanes {
 template<uint32_t Width>
 struct EncodedScales {
+  static constexpr bool staged = true;
   template<class C>
   __device__ __forceinline__ static const uint8_t* prepare(const uint8_t* bank,
       int expert, int column, int block) {

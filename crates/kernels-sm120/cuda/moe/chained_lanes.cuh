@@ -69,6 +69,7 @@ struct Weights {
 };
 
 struct RawScales {
+  static constexpr bool staged = false;
   template<class C>
   __device__ __forceinline__ static const uint8_t* prepare(const uint8_t* bank,
       int expert, int column, int block) {
@@ -245,7 +246,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
 }
 
 // absorb::compute<C, true> over the quad-lane bank.
-template<class C>
+template<class C, class Scales = RawScales>
 __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -280,7 +281,9 @@ __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
         (is_wide ? count <= 8 || count > 64 : count > 8)) __trap();
     const int first = offsets[expert];
     if (first < 0 || first % 64 || first + count > padded) __trap();
-    const Weights<H> w = load<C, H>(weight, weight_scales, expert, column, block, warp, g, t);
+    const uint8_t* item_scales = Scales::template prepare<C>(weight_scales, expert, column, block);
+    if constexpr (Scales::staged) __syncthreads();
+    const Weights<H> w = load<C, H, Scales>(weight, item_scales, expert, column, block, warp, g, t);
     for (int base = 0; base < count; base += Rows) {
       for (int r = threadIdx.x; r < Rows; r += Threads) {
         const int route = base + r < count ? sorted_rows[first + base + r] : -1;

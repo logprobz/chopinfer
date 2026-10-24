@@ -57,20 +57,71 @@ pub fn direct_entry(e: &Entry, s: Stage) -> Result<EntrySpec, Refusal> {
 /// the scale pointer names the encoded bank table instead of raw tiles.
 /// This entry is unqualified and is not selected by a serving catalog.
 pub fn direct_scale_tiles_entry(e: &Entry, width: u32) -> Result<EntrySpec, Refusal> {
+    direct_scale_tiles_queue(e, Stage::GateSmall, width)
+}
+
+/// An unqualified direct gate queue with tile-order encoded scales.
+pub fn direct_scale_tiles_queue(e: &Entry, stage: Stage, width: u32) -> Result<EntrySpec, Refusal> {
+    let rows = match stage {
+        Stage::GateSmall => 8,
+        Stage::GateWide => 64,
+        _ => return Err(Refusal("only gate queues read encoded gate scales")),
+    };
+    encode_scale_entry(direct_entry(e, stage)?, rows, width)
+}
+
+fn encode_scale_entry(mut spec: EntrySpec, rows: u32, width: u32) -> Result<EntrySpec, Refusal> {
     if !matches!(width, 1 | 2 | 4) {
         return Err(Refusal("tile scale offset width must be 1, 2 or 4"));
     }
-    let mut spec = direct_entry(e, Stage::GateSmall)?;
-    assert_eq!(spec.body.matches(",8>(input,").count(), 1);
+    let suffix = format!(",{rows}>(input,");
+    assert_eq!(spec.body.matches(&suffix).count(), 1);
     spec.symbol = format!(
         "{}_scale_tiles_w{width}_v1",
         spec.symbol.trim_end_matches("_v1")
     );
     spec.body = spec.body.replace(
-        ",8>(input,",
-        &format!(",8,chop::moe::lanes::EncodedScales<{width}>>(input,"),
+        &suffix,
+        &format!(",{rows},chop::moe::lanes::EncodedScales<{width}>>(input,"),
     );
     Ok(spec)
+}
+
+/// An unqualified resident8 gate with tile-order encoded scales.
+pub fn resident_scale_tiles_entry(p: &Projection, width: u32) -> Result<EntrySpec, Refusal> {
+    encode_scale_entry(resident_entry(p)?, 8, width)
+}
+
+/// An unqualified absorbing gate with tile-order encoded scales.
+pub fn absorb_scale_tiles_entry(e: &Entry, width: u32) -> Result<EntrySpec, Refusal> {
+    if !matches!(width, 1 | 2 | 4) {
+        return Err(Refusal("tile scale offset width must be 1, 2 or 4"));
+    }
+    let mut spec = absorb_entry(e)?;
+    assert_eq!(spec.body.matches(">(input,").count(), 1);
+    spec.symbol = format!(
+        "{}_scale_tiles_w{width}_v1",
+        spec.symbol.trim_end_matches("_v1")
+    );
+    spec.body = spec.body.replace(
+        ">(input,",
+        &format!(",chop::moe::lanes::EncodedScales<{width}>>(input,"),
+    );
+    Ok(spec)
+}
+
+/// Unqualified small and wide streamed gate queues with encoded scales.
+pub fn streamed_scale_tiles_entry(
+    p: &Projection,
+    stage: streamed::Stage,
+    width: u32,
+) -> Result<EntrySpec, Refusal> {
+    let rows = match stage {
+        streamed::Stage::Small => 8,
+        streamed::Stage::Wide => 64,
+        _ => return Err(Refusal("only streamed gate queues read encoded scales")),
+    };
+    encode_scale_entry(streamed_entry(p, stage)?, rows, width)
 }
 
 /// The raw direct-small entry beside its three encoded-scale lab variants.

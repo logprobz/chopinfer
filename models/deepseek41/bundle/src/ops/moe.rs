@@ -459,6 +459,7 @@ impl MoeOps {
             phase.rows(),
             self.gate_up_layout,
             format,
+            matches!(phase, Phase::Decode(16) | Phase::Verify { rows: 16, .. }),
         )?;
         Ok(bind.lowered(launch))
     }

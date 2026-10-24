@@ -583,7 +583,9 @@ fn an_encoded_bank_needs_its_expanded_bank() {
 #[test]
 fn tile_scales_preserve_the_serving_schedule_and_raw_fallbacks() {
     use crate::buffers::ScaleBankEncoding;
-    use crate::sm120::test_symbols::scale_tiles_expand_pair_symbol;
+    use crate::sm120::test_symbols::{
+        scale_tiles_expand_gate_symbol, scale_tiles_expand_pair_symbol,
+    };
     use kernel_core::weight_transform::ScaleFormat;
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let kernels = crate::Kernels::new(&shape).unwrap();
@@ -630,6 +632,7 @@ fn tile_scales_preserve_the_serving_schedule_and_raw_fallbacks() {
             false,
         ),
         (Phase::Prefill { rows: 1 }, false, false),
+        (Phase::Prefill { rows: 16 }, false, false),
         (Phase::Prefill { rows: 512 }, false, false),
     ];
     for width in [1, 2, 4] {
@@ -672,10 +675,12 @@ fn tile_scales_preserve_the_serving_schedule_and_raw_fallbacks() {
                     let expansion = &new_calls.last().unwrap().launch;
                     assert_eq!(
                         expansion.symbol,
-                        if gate {
-                            scale_tiles_expand_pair_symbol(false)
+                        if matches!(phase, Phase::Decode(16) | Phase::Verify { rows: 16, .. }) {
+                            scale_tiles_expand_gate_symbol(width)
+                        } else if gate {
+                            scale_tiles_expand_pair_symbol(false).into()
                         } else {
-                            scale_tiles_expand_pair_symbol(true)
+                            scale_tiles_expand_pair_symbol(true).into()
                         },
                         "{at}"
                     );

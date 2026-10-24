@@ -14,10 +14,48 @@ use std::sync::LazyLock;
 pub const GATE_CUBIN: &str = "moe_gate_scale_tiles_deepseek41_sm120";
 pub const DOWN_CUBIN: &str = "moe_down_scale_tiles_deepseek41_sm120";
 pub const EXPAND_CUBIN: &str = "moe_scale_tiles_expand_deepseek41_sm120";
+pub const GATE_EXPAND_CUBIN: &str = "moe_scale_tiles_expand_gate_deepseek41_sm120";
 
 pub const GATE_FAMILY: &str = "routed_moe_gate_scale_tiles";
 pub const DOWN_FAMILY: &str = "routed_moe_down_scale_tiles";
 pub const EXPAND_FAMILY: &str = "routed_moe_scale_tiles_expand";
+pub const GATE_EXPAND_FAMILY: &str = "routed_moe_scale_tiles_expand_gate";
+
+fn gate_expansion_bank(width: u32) -> Result<scale_tiles_expand::PairBank, String> {
+    use kernel_core::gated_mlp::GatedMlpProjection;
+    use model_deepseek41_contract::moe::{expert_sets, scale_bank};
+    let bank = scale_bank(
+        &FLASH,
+        4,
+        expert_sets(&FLASH)[0],
+        GatedMlpProjection::GateUp,
+    )?;
+    Ok(scale_tiles_expand::PairBank {
+        rows: bank.rows,
+        groups: bank.groups,
+        projections: bank.projections,
+        width,
+    })
+}
+
+pub fn gate_expansion_cubin() -> Result<(&'static str, CubinSpec), String> {
+    let banks = [1, 2, 4]
+        .map(gate_expansion_bank)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((
+        GATE_EXPAND_FAMILY,
+        scale_tiles_expand::gate_cubin_spec(GATE_EXPAND_CUBIN, &banks)
+            .map_err(|e| e.to_string())?,
+    ))
+}
+
+pub fn gate_expansion_symbol(bank: scale_tiles_expand::PairBank) -> Option<String> {
+    if gate_expansion_bank(bank.width).ok()? != bank {
+        return None;
+    }
+    scale_tiles_expand::gate_symbol(bank).ok()
+}
 
 pub fn cubins() -> Result<Vec<(&'static str, CubinSpec)>, String> {
     let entries = moe_direct_kernels::entries(&FLASH)?;
@@ -55,6 +93,7 @@ pub fn cubins() -> Result<Vec<(&'static str, CubinSpec)>, String> {
         (GATE_FAMILY, gate),
         (DOWN_FAMILY, down),
         (EXPAND_FAMILY, scale_tiles_expand::cubin_spec(EXPAND_CUBIN)),
+        gate_expansion_cubin()?,
     ])
 }
 
@@ -64,7 +103,7 @@ fn variants() -> &'static BTreeMap<(String, u32), String> {
     static MAP: LazyLock<BTreeMap<(String, u32), String>> = LazyLock::new(|| {
         let mut map = BTreeMap::new();
         for (family, spec) in cubins().expect("Flash scale consumer catalog") {
-            if family == EXPAND_FAMILY {
+            if !matches!(family, GATE_FAMILY | DOWN_FAMILY) {
                 continue;
             }
             for entry in spec.entries {

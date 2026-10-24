@@ -452,9 +452,10 @@ impl crate::Kernels {
                 format == Some(ScaleFormat::RowOffsetV1)
                     && Self::expanded_scale_layout(true, gate_up).tiled()
             }
-            scale_inplace::GATE_CUBIN | scale_inplace::DOWN_CUBIN | scale_inplace::EXPAND_CUBIN => {
-                format == Some(ScaleFormat::RowTilesOffsetV1)
-            }
+            scale_inplace::GATE_CUBIN
+            | scale_inplace::DOWN_CUBIN
+            | scale_inplace::EXPAND_CUBIN
+            | scale_inplace::GATE_EXPAND_CUBIN => format == Some(ScaleFormat::RowTilesOffsetV1),
             _ => true,
         }
     }
@@ -535,6 +536,7 @@ impl crate::Kernels {
             rows,
             gate_up,
             kernel_core::weight_transform::ScaleFormat::RowOffsetV1,
+            false,
         )
     }
 
@@ -560,6 +562,7 @@ impl crate::Kernels {
         rows: u32,
         gate_up: model_deepseek41_contract::weight_plan::RoutedLayout,
         format: kernel_core::weight_transform::ScaleFormat,
+        gate_only: bool,
     ) -> Result<kernel_core::backend::Launch, kernel_core::contract::Refusal> {
         use kernel_core::contract::Refusal;
         use kernel_core::weight_transform::ScaleFormat;
@@ -589,6 +592,28 @@ impl crate::Kernels {
         });
         let shapes = banks.map(|b| b.map(|(bank, _, _)| bank));
         let tiled = banks[0].is_some() && Self::expanded_scale_layout(true, gate_up).tiled();
+        // Only the qualified 16-row decode/verify fallback requests this
+        // exact single-bank reader. Paired banks and other shapes retain
+        // their existing expansion entry.
+        if format == ScaleFormat::RowTilesOffsetV1
+            && gate_only
+            && rows == 16
+            && tiled
+            && active.is_some()
+            && banks[1].is_none()
+        {
+            let bank = shapes[0].unwrap();
+            if let Some(symbol) = scale_inplace::gate_expansion_symbol(bank) {
+                return Ok(kernel_core::backend::Launch {
+                    symbol,
+                    rows,
+                    collective: false,
+                    persistent: false,
+                    plan: tiles::plan(shapes, first, slots, true)?,
+                    arguments: tiles::gate_arguments(bank, banks, active, first)?,
+                });
+            }
+        }
         let (symbol, plan, arguments) = if format == ScaleFormat::RowTilesOffsetV1 {
             (
                 if tiled {

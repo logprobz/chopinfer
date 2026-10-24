@@ -24,3 +24,14 @@ pub(crate) fn scale_tiles_expand_pair_symbol(tiled: bool) -> &'static str {
         kernels_sm120::moe::scale_tiles_expand::PAIR_SYMBOL
     }
 }
+
+pub(crate) fn scale_tiles_expand_gate_symbol(width: u32) -> String {
+    super::scale_inplace::gate_expansion_cubin()
+        .unwrap()
+        .1
+        .entries
+        .into_iter()
+        .find(|entry| entry.symbol.ends_with(&format!("_w{width}_v1")))
+        .unwrap()
+        .symbol
+}

@@ -310,3 +310,57 @@ fn a_dspark_target_keeps_plans_with_the_fresh_lowerings_journal() {
         assert_eq!(counts, (9, 4), "{mode:?}");
     }
 }
+
+/// A run's journal, its (hits, misses), and the rows it keeps and the plans
+/// it dropped.
+type Outcome = (Vec<String>, (u64, u64), (Vec<u32>, u64));
+
+/// One prompt of each of `lengths` in turn, alone and retired after its
+/// commit, on an instance keeping at most `plans` plans.
+fn one_at_a_time(mode: Mode, plans: usize, lengths: &[u32]) -> Outcome {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = plan_cache::with_limit(mode, plans, || {
+        super::prefill_skip::create_profile(&host, 8192, true)
+    });
+    for (index, &rows) in lengths.iter().enumerate() {
+        let request = index as u64 + 1;
+        let first = 100 + 70 * index as u32;
+        let mut sink = Sink::default();
+        instance
+            .execute_prefill(
+                &batch(&[prompt(request, 0, rows, first, 2 * index as u64)], &[]),
+                &mut sink,
+            )
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        instance.commit().unwrap();
+        instance.retire_request(request).unwrap();
+    }
+    let counts = counts(&instance);
+    let kept = plan_cache::kept(instance.handle());
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    let journal = host.device.journal.borrow().clone();
+    (journal, counts, kept)
+}
+
+#[test]
+fn a_full_plan_cache_drops_its_least_recently_used_plan() {
+    // With two plans kept: 3 and 5 are kept, 3 is reused, 9 drops 5 (the
+    // least recently used), 5 is lowered again and drops 3, 9 is reused and
+    // 3 is lowered again and drops 5.
+    let lengths = [3, 5, 3, 9, 5, 9, 3];
+    let (fresh, counts, kept) = one_at_a_time(Mode::Off, 2, &lengths);
+    assert_eq!((counts, kept), ((0, 0), (vec![], 0)));
+    for mode in [Mode::On, Mode::Verify] {
+        let (journal, counts, kept) = one_at_a_time(mode, 2, &lengths);
+        assert_eq!(journal.len(), fresh.len(), "{mode:?}");
+        if let Some(at) = (0..fresh.len()).find(|&at| journal[at] != fresh[at]) {
+            panic!(
+                "{mode:?} journal line {at}: {} against {}",
+                journal[at], fresh[at]
+            );
+        }
+        assert_eq!(counts, (2, 5), "{mode:?}");
+        assert_eq!(kept, (vec![3, 9], 3), "{mode:?}");
+    }
+}

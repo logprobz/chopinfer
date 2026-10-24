@@ -16,6 +16,12 @@
 //! `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE`: unset or `1` keeps plans,
 //! `0` lowers every step, `verify` keeps plans and lowers every hit again,
 //! refusing the step if the fresh plan differs from the kept one.
+//!
+//! At most `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS` plans are kept
+//! (1 to 64, default [`DEFAULT_PLANS`]); keeping one more drops the least
+//! recently used. A dropped plan is lowered again on its next use, and a
+//! fresh lowering issues what a kept plan does, so the limit moves only host
+//! time and memory.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -27,10 +33,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 const SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE";
+const PLANS_SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS";
 /// The longest prompt a plan is kept for. At most one plan of each length
 /// is kept; one TP4 Flash plan holds about ten thousand launches in about
 /// 20 MiB of host memory.
 pub(crate) const MAX_ROWS: u32 = 64;
+/// Plans kept at once unless `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS`
+/// says otherwise: about 320 MiB of host memory on TP4 Flash, where every
+/// length kept would be about 1.3 GiB.
+pub(crate) const DEFAULT_PLANS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Mode {
@@ -50,21 +61,41 @@ impl Mode {
     }
 }
 
+/// The most plans kept at once, from `setting`.
+fn read_limit(setting: Option<&str>) -> Result<usize, String> {
+    let Some(setting) = setting else {
+        return Ok(DEFAULT_PLANS);
+    };
+    match setting.parse::<usize>() {
+        Ok(plans) if (1..=MAX_ROWS as usize).contains(&plans) => Ok(plans),
+        _ => Err(format!(
+            "{PLANS_SWITCH}={setting:?} is not a plan count from 1 to {MAX_ROWS}"
+        )),
+    }
+}
+
 #[cfg(test)]
 thread_local! {
-    static IN_TESTS: Cell<Option<Mode>> = const { Cell::new(None) };
+    static IN_TESTS: Cell<Option<(Mode, usize)>> = const { Cell::new(None) };
 }
 
 /// Runs `run` with instances created inside it in `mode`.
 #[cfg(test)]
 pub(crate) fn with_mode<T>(mode: Mode, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<Mode>);
+    with_limit(mode, DEFAULT_PLANS, run)
+}
+
+/// Runs `run` with instances created inside it in `mode`, keeping at most
+/// `plans` plans.
+#[cfg(test)]
+pub(crate) fn with_limit<T>(mode: Mode, plans: usize, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<(Mode, usize)>);
     impl Drop for Restore {
         fn drop(&mut self) {
             IN_TESTS.set(self.0);
         }
     }
-    let _restore = Restore(IN_TESTS.replace(Some(mode)));
+    let _restore = Restore(IN_TESTS.replace(Some((mode, plans))));
     run()
 }
 
@@ -74,36 +105,50 @@ struct Key {
     layout: InputLayout,
 }
 
-type Kept = Option<(Key, Rc<skip::Plan>)>;
+struct Kept {
+    key: Key,
+    plan: Rc<skip::Plan>,
+    /// The cache's use count when this plan was last kept or reused.
+    used: u64,
+}
 
 pub(crate) struct Cache {
     mode: Mode,
-    /// A plan of each length, `rows - 1` its index.
-    plans: RefCell<Vec<Kept>>,
+    /// At most a plan of each length, `rows - 1` its index.
+    plans: RefCell<Vec<Option<Kept>>>,
+    /// The most plans kept at once.
+    limit: usize,
+    uses: Cell<u64>,
     hits: Cell<u64>,
     misses: Cell<u64>,
+    evictions: Cell<u64>,
 }
 
 impl Cache {
     pub(crate) fn from_env() -> Result<Self, String> {
         #[cfg(test)]
-        if let Some(mode) = IN_TESTS.get() {
-            return Ok(Self::new(mode));
+        if let Some((mode, plans)) = IN_TESTS.get() {
+            return Ok(Self::new(mode, plans));
         }
-        match std::env::var(SWITCH) {
-            Ok(value) => Mode::read(Some(&value)),
-            Err(std::env::VarError::NotPresent) => Mode::read(None),
-            Err(std::env::VarError::NotUnicode(_)) => Err(format!("{SWITCH} is not unicode")),
-        }
-        .map(Self::new)
+        let read = |name: &str| match std::env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} is not unicode")),
+        };
+        let mode = Mode::read(read(SWITCH)?.as_deref())?;
+        let limit = read_limit(read(PLANS_SWITCH)?.as_deref())?;
+        Ok(Self::new(mode, limit))
     }
 
-    fn new(mode: Mode) -> Self {
+    fn new(mode: Mode, limit: usize) -> Self {
         Self {
             mode,
             plans: RefCell::new((0..MAX_ROWS).map(|_| None).collect()),
+            limit,
+            uses: Cell::new(0),
             hits: Cell::new(0),
             misses: Cell::new(0),
+            evictions: Cell::new(0),
         }
     }
 
@@ -111,6 +156,25 @@ impl Cache {
     #[cfg(test)]
     fn counts(&self) -> (u64, u64) {
         (self.hits.get(), self.misses.get())
+    }
+
+    /// The rows of every kept plan, shortest first, and the plans dropped
+    /// so far.
+    #[cfg(test)]
+    fn kept(&self) -> (Vec<u32>, u64) {
+        let rows = self
+            .plans
+            .borrow()
+            .iter()
+            .flatten()
+            .map(|kept| kept.key.rows)
+            .collect();
+        (rows, self.evictions.get())
+    }
+
+    fn next_use(&self) -> u64 {
+        self.uses.set(self.uses.get() + 1);
+        self.uses.get()
     }
 
     /// `run`'s upper-skip plan: the kept plan of its key, or a fresh one,
@@ -124,8 +188,11 @@ impl Cache {
             return skip::Plan::prepare(instance, run).map(Rc::new);
         };
         let at = key.rows as usize - 1;
-        let kept = match &self.plans.borrow()[at] {
-            Some((k, plan)) if *k == key => Some(Rc::clone(plan)),
+        let kept = match &mut self.plans.borrow_mut()[at] {
+            Some(kept) if kept.key == key => {
+                kept.used = self.next_use();
+                Some(Rc::clone(&kept.plan))
+            }
             _ => None,
         };
         if let Some(plan) = kept {
@@ -142,13 +209,35 @@ impl Cache {
         }
         self.misses.set(self.misses.get() + 1);
         let mut plans = self.plans.borrow_mut();
-        plans[at] = Some((key, Rc::clone(&plan)));
+        // A plan of the same length in another layout gives up its place;
+        // otherwise a full cache drops its least recently used plan.
+        let mut dropped = None;
+        if plans[at].is_none() && plans.iter().flatten().count() >= self.limit {
+            let oldest = (0..plans.len())
+                .filter_map(|index| plans[index].as_ref().map(|kept| (kept.used, index)))
+                .min()
+                .map(|(_, index)| index);
+            if let Some(oldest) = oldest {
+                plans[oldest] = None;
+                self.evictions.set(self.evictions.get() + 1);
+                dropped = Some(oldest + 1);
+            }
+        }
+        plans[at] = Some(Kept {
+            key,
+            plan: Rc::clone(&plan),
+            used: self.next_use(),
+        });
+        let dropped = dropped.map_or_else(String::new, |rows| format!(", dropped {rows} rows"));
         instance.log(&format!(
-            "prefill plan cache: kept {} rows; {} plans, {} hits, {} misses",
+            "prefill plan cache: kept {} rows{dropped}; {} of {} plans, {} hits, {} misses, {} \
+             dropped",
             at + 1,
             plans.iter().flatten().count(),
+            self.limit,
             self.hits.get(),
-            self.misses.get()
+            self.misses.get(),
+            self.evictions.get()
         ));
         Ok(plan)
     }
@@ -221,9 +310,24 @@ pub(crate) fn counts(handle: runtime_bundle_abi::BundleHandleV1) -> (u64, u64) {
     counts.expect("a live instance")
 }
 
+/// The rows of every plan the instance `handle` keeps, and the plans it
+/// dropped so far.
+#[cfg(test)]
+pub(crate) fn kept(handle: runtime_bundle_abi::BundleHandleV1) -> (Vec<u32>, u64) {
+    use bundle_runtime::entry::Bundle;
+    let mut kept = None;
+    Instance::instances().with(|table| {
+        bundle_runtime::table::with_instance(table, handle, |instance| {
+            kept = Some(instance.plans.kept());
+            runtime_bundle_abi::BundleStatusV1::Success
+        })
+    });
+    kept.expect("a live instance")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Mode, same_programs};
+    use super::{DEFAULT_PLANS, MAX_ROWS, Mode, read_limit, same_programs};
     use crate::program::Stage;
     use bundle_runtime::dispatch::BufferBindings;
     use bundle_runtime::pipeline::PreparedLaunch;
@@ -284,5 +388,15 @@ mod tests {
         assert_eq!(Mode::read(Some("verify")), Ok(Mode::Verify));
         assert!(Mode::read(Some("on")).is_err());
         assert!(Mode::read(Some("")).is_err());
+    }
+
+    #[test]
+    fn the_plan_limit_defaults_and_refuses_counts_outside_one_to_max_rows() {
+        assert_eq!(read_limit(None), Ok(DEFAULT_PLANS));
+        assert_eq!(read_limit(Some("1")), Ok(1));
+        assert_eq!(read_limit(Some("64")), Ok(MAX_ROWS as usize));
+        for refused in ["0", "65", "-1", "", "all"] {
+            assert!(read_limit(Some(refused)).is_err(), "{refused}");
+        }
     }
 }

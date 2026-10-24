@@ -12,14 +12,17 @@ no media or prefill cache range, on AR and DSpark targets alike; its rows and
 input layout then fix every input of the lowering, a DSpark target's
 retained feature rows included. Token IDs, pages, slots, window and tail
 inputs, index tags and Engram rows are uploaded every step and are never
-part of a plan. One plan is kept per length, about 20 MiB of host memory
-each, so at most about 1.3 GiB per instance.
-`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE=0` lowers every prefill; `verify`
-lowers every reuse again and refuses the step if the fresh plan differs. The
-fake-host test issues the same device journal with and without kept plans
-over alternating prompts, slots and pages, mixed decode steps, a cancelled
-prefill and ineligible prefills, and on a DSpark target also beside a verify
-item with drafts.
+part of a plan. At most one plan is kept per length, about 20 MiB of host
+memory each, and at most 16 plans at once (about 320 MiB per instance;
+`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS` sets 1 to 64). Keeping one
+more drops the least recently used plan, which is lowered again on its next
+use. `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE=0` lowers every prefill;
+`verify` lowers every reuse again and refuses the step if the fresh plan
+differs. The fake-host tests issue the same device journal with and without
+kept plans over alternating prompts, slots and pages, mixed decode steps, a
+cancelled prefill and ineligible prefills, on a DSpark target also beside a
+verify item with drafts, and with a full cache dropping and lowering plans
+again.
 
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU

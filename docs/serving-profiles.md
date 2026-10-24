@@ -24,6 +24,34 @@ covers, or null for experimental profiles. Startup warns above that count.
 The shared default is 32; MiMo/Qwen TP4 AR and MiMo DFlash have evidence
 through 64. Package capacity alone is not serving qualification.
 
+## Speculative token capacity and graph budget
+
+Two serve options size a speculative verify step. Each is also a profile
+field under `speculation`, so a profile sets the default and a flag
+overrides it:
+
+- `--speculative-rows N` (`speculation.rows`), the token capacity: the most
+  verify rows one step may carry, one row per decoding item plus every
+  draft. A package that declares `chop.speculative-requested-rows.v1` serves
+  its default rows unless asked for more, up to its manifest maximum, and
+  prepares its buffers for the rows it is asked for. DeepSeek serves 32 by
+  default and up to 192 (32 items at its five-draft block). Startup refuses
+  rows at or below `--speculative-tokens` or above the maximum.
+- `--speculation-graph-rows N` (`speculation.graph_rows`), the graph budget:
+  the widest verify step captured in a CUDA graph. It reaches a package that
+  declares the `verify_graph_rows` model option (DeepSeek, default 32);
+  wider steps run without a graph and pay their launches. Startup warms
+  every width up to the package's default rows and, above them, only the
+  balanced plan's listed widths (`--speculation-widths`) up to the budget.
+  Startup refuses a budget above the package's verify maximum and a package
+  that does not declare the option.
+
+`--list-model-options` checks both against the package without opening a
+device. A wider step pays only where it costs less than the tokens its
+drafts add, so measure the step cost of each width before raising either.
+Each graph captured above the default rows also takes memory from the
+graph memory reserve below.
+
 ## GPU memory
 
 `--gpu-memory-utilization F` (profile field `gpu_memory_utilization`, image

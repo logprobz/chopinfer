@@ -72,7 +72,9 @@ def measure(rows):
             cell[0] += p['drafted']
             cell[1] += p['accepted']
     histograms = {json.dumps(r['full']['histogram'], sort_keys=True) for r in rows}
-    return {'measurements': len(rows), 'request': request, 'request_median': median(request),
+    fallback = [r.get('fallback_launches') for r in rows]
+    fallback = sum(fallback) if fallback and all(type(n) is int and n >= 0 for n in fallback) else None
+    return {'fallback_launches': fallback, 'measurements': len(rows), 'request': request, 'request_median': median(request),
             'request_spread': spread(request), 'full_median': median(full), 'full_spread': spread(full),
             'joules_median': median([(r.get('energy') or {}).get('joules_per_token') for r in rows]),
             'stream_p10_median': median([(r.get('streams') or {}).get('p10') for r in rows]),
@@ -160,7 +162,7 @@ def markdown(config, cells, selection, depths):
             continue
         lines += [f"## C{c}: depth {chosen['depth']} ({chosen['reason']})", '',
                   f"| depth | request | spread | full | J/token | stream p10 | drafts/item | {kinds[0]} accepted/drafted "
-                  '| shapes | score |', '|---:|---|---|---|---|---|---|---|---|---:|']
+                  '| shapes | fallback launches | score |', '|---:|---|---|---|---|---|---|---|---|---:|---:|']
         for d, row in sorted(chosen['depths'].items()):
             first = cells.get((c, kinds[0], d), {})
             accept = ' '.join(f"{v['rate']:.2f}" for v in first.get('acceptance', {}).values() if v['rate'] is not None)
@@ -170,7 +172,7 @@ def markdown(config, cells, selection, depths):
                          f"{pair(c, d, 'request_spread', '{:.1%}')} | {pair(c, d, 'full_median', '{:.1f}')} | "
                          f"{pair(c, d, 'joules_median', '{:.3f}')} | {pair(c, d, 'stream_p10_median', '{:.1f}')} | "
                          f"{pair(c, d, 'drafts_per_item', '{:.2f}')} | {accept or '-'} | {shapes} | "
-                         f"{row['score']:.3f} |")
+                         f"{pair(c, d, 'fallback_launches', '{:.0f}')} | {row['score']:.3f} |")
         lines.append('')
     return '\n'.join(lines)
 
@@ -290,8 +292,8 @@ def ab(run):
     pairs = {}
     lines = [f"# {config['name']}: confidence A/B", '',
              'One ABBA block per decision window. Short controls have one window per arm.', '',
-             '| Pair / C | Arm | Visit tok/s | Range | J/token | Tokens/step | Allocated share |',
-             '|---|---|---|---|---:|---:|---:|']
+             '| Pair / C | Arm | Visit tok/s | Range | J/token | Tokens/step | Allocated share | Fallback launches |',
+             '|---|---|---|---|---:|---:|---:|---:|']
     for baseline, treatment in model['pairs']:
         pair = pairs[f'{baseline}/{treatment}'] = {}
         for c in model['concurrencies']:
@@ -328,7 +330,7 @@ def ab(run):
                 lines.append(f"| {baseline}/{treatment} C{c} | {label} | " +
                              ', '.join(f'{x:.1f}' for x in rates) +
                              f" | {min(rates):.1f}-{max(rates):.1f} | {value['joules_median']:.3f} | "
-                             f"{value['tokens_per_step']:.3f} | {value['allocated_share']:.1%} |")
+                             f"{value['tokens_per_step']:.3f} | {value['allocated_share']:.1%} | {value['fallback_launches'] if value['fallback_launches'] is not None else 'unknown'} |")
             base, head = (result['arms'][x] for x in (baseline, treatment))
             result['throughput_ratio'] = head['request_median'] / base['request_median']
             result['nonoverlapping_gain'] = min(head['request']) > max(base['request'])

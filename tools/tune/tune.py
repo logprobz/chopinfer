@@ -404,6 +404,30 @@ def check_allocations(name, steps, enabled, required):
     return count
 
 
+def check_fallbacks(name, steps, allow):
+    """A served window needs complete route evidence and explained fallbacks."""
+    if not isinstance(allow, dict) or any(not isinstance(reason, str) or not reason.strip() for reason in allow.values()):
+        raise RuntimeError(f'{name}: allow_fallbacks needs a reason per family')
+    if not steps or any(not isinstance(step.get('route'), dict) for step in steps):
+        raise RuntimeError(f'{name}: missing route counters')
+    families = {}
+    total = 0
+    for step in steps:
+        route = step['route']
+        counts = route.get('families')
+        if not isinstance(counts, dict) or any(type(n) is not int or n < 0 for n in counts.values()):
+            raise RuntimeError(f'{name}: invalid route family counters')
+        count = route.get('fallback_launches')
+        if type(count) is not int or count != sum(counts.values()):
+            raise RuntimeError(f'{name}: inconsistent route counters')
+        total += count
+        for family, n in counts.items():
+            if n and family not in allow:
+                raise RuntimeError(f'{name}: unallowed fallback family {family}: {n} launches')
+            families[family] = families.get(family, 0) + n
+    return {'fallback_launches': total, 'families': families}
+
+
 def tokenize(server, prompts):
     """Token IDs of every prompt from the server: raw text as is, chat
     messages through the server's template."""
@@ -634,6 +658,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
                 w = window(server, f'{name}-{tag}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
                            f'tune-{label}-{name}-{tag}-g{g}', config['sampling'])
                 check_depth(f'{label} {name} {tag} group {g}', w['steps'], depth)
+                w['route'] = check_fallbacks(name, w['steps'], config.get('allow_fallbacks', {}))
                 w['allocated_steps'] = check_allocations(
                     f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],
                     allocation_possible(config, arm, c))
@@ -649,6 +674,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat, 'tokens': tokens,
                      'arm': arm['arm'], 'visit': arm['visit'],
                      'allocated_steps': sum(w['allocated_steps'] for w in parts),
+                     'fallback_launches': sum(w['route']['fallback_launches'] for w in parts),
                      'groups': groups, 'request_seconds': seconds,
                      'request_tokens_per_second': groups * c * tokens / seconds,
                      'full': merge_full([full_concurrency(w['steps'], c) for w in parts]),

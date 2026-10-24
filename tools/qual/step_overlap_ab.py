@@ -169,6 +169,7 @@ def run(args):
                 "cohort": None if concurrency == 1 else cohort(requests),
                 "ms_per_token": statistics.median(per_token) if per_token else None,
                 "host": summarize_steps(steps, concurrency),
+                "fallback_launches": sum(step["route"]["fallback_launches"] for step in steps) if steps and all("route" in step for step in steps) else None,
                 "incomplete": sum(not row["complete"] for row in requests),
                 "requests": [{key: row[key] for key in RECORDED} for row in requests]}
 
@@ -190,7 +191,7 @@ def run(args):
         print(f"{args.arm} C{row['concurrency']}: "
               + (f"{speed:.2f} ms/token" if speed else "no tokens")
               + (f", {rate:.0f} tok/s" if rate else "")
-              + f", boundary {steady['boundary_us']} us, period {steady['period_us']} us"
+              + f", boundary {steady['boundary_us']} us, period {steady['period_us']} us, fallback launches {row['fallback_launches']}"
               + f" over {steady['steps']} steps")
 
 
@@ -276,6 +277,7 @@ def compare_arms(off, on):
         for name, passes in (("off", off_passes), ("on", on_passes)):
             entry[name] = {
                 "ms_per_token": median_of(passes, lambda row: row["ms_per_token"]),
+                "fallback_launches": median_of(passes, lambda row: row.get("fallback_launches")),
                 "tokens_per_second": median_of(
                     passes, lambda row: row["cohort"]["tokens_per_second"] if row["cohort"] else None),
                 **{field: median_of(passes, lambda row, field=field: row["host"]["steady"][field])
@@ -291,8 +293,8 @@ def table(result):
     lines = [f"{result['off']} against {result['on']}",
              f"timing: {timing['timing']}" + (f" ({'; '.join(timing['reasons'])})" if timing["reasons"] else ""), "",
              "| C | ms/token off | on | tok/s off | on | boundary us off | on | period us off | on "
-             "| deferred us on | equal on/off | off/off |",
-             "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
+             "| deferred us on | fallback launches off | on | equal on/off | off/off |",
+             "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
 
     def cell(value, digits=0):
         return "" if value is None else f"{value:.{digits}f}"
@@ -304,6 +306,7 @@ def table(result):
             cell(row["off"]["boundary_us"]), cell(row["on"]["boundary_us"]),
             cell(row["off"]["period_us"]), cell(row["on"]["period_us"]),
             cell(row["on"]["deferred_us"]),
+            cell(row["off"].get("fallback_launches")), cell(row["on"].get("fallback_launches")),
             f"{row['equal']}/{row['compared']}",
             "" if self_equal is None else f"{self_equal[0]}/{self_equal[1]}"]) + " |")
     return "\n".join(lines)

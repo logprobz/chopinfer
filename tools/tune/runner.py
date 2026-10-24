@@ -184,7 +184,7 @@ class Server:
         self.url = f'http://127.0.0.1:{port}'
         self.env = {k: v for k, v in os.environ.items()
                     if k != 'OPENAI_API_KEY' and (not k.startswith('CHOPINFER_') or k in KEPT | {CHECKPOINT_ENV})}
-        self.env.update(CHOPINFER_STEP_TRACE='1', PYTHONDONTWRITEBYTECODE='1')
+        self.env.update(CHOPINFER_STEP_TRACE='1', CHOPINFER_ROUTE_COUNTERS='1', PYTHONDONTWRITEBYTECODE='1')
         self.server_command = [str(Path(install) / 'bin/chopinfer'), 'serve', '--listen', f'127.0.0.1:{port}',
                                *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'))]
         launched = self.server_command

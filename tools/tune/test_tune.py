@@ -34,6 +34,28 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+    def test_missing_optional_route_counts_are_unknown_in_reports(self):
+        row = {'request_tokens_per_second': 1,
+               'full': {'tokens_per_second': 1, 'histogram': {}}}
+        self.assertIsNone(report.measure([row])['fallback_launches'])
+        self.assertEqual(report.measure([{**row, 'fallback_launches': 0}])['fallback_launches'], 0)
+        self.assertIsNone(report.measure([row, {**row, 'fallback_launches': 2}])['fallback_launches'])
+        self.assertEqual(report.measure([{**row, 'fallback_launches': 2}] * 2)['fallback_launches'], 4)
+
+    def test_fallback_gate_requires_complete_counts_and_justified_families(self):
+        steps = [{'route': {'fallback_launches': 3, 'families': {'projection': 3}}}]
+        with self.assertRaisesRegex(RuntimeError, 'unallowed fallback'):
+            tune.check_fallbacks('window', steps, {})
+        self.assertEqual(tune.check_fallbacks('window', steps, {'projection': 'Range qualification pending'})['fallback_launches'], 3)
+        for incomplete in ([], [{}]):
+            with self.assertRaisesRegex(RuntimeError, 'missing route counters'):
+                tune.check_fallbacks('window', incomplete, {})
+        with self.assertRaisesRegex(RuntimeError, 'reason'):
+            tune.check_fallbacks('window', steps, {'projection': ''})
+        with self.assertRaisesRegex(RuntimeError, 'inconsistent'):
+            tune.check_fallbacks('window', [{'route': {'fallback_launches': 0, 'families': {'projection': 3}}}], {'projection': 'Pending'})
+
+
     def test_confidence_startup_must_match_the_requested_arm(self):
         flag = ['--speculation-confidence', '{"floor":0}']
         on = 'startup speculation_confidence: on, floor 0, 5 positions\n'

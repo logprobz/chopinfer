@@ -5,7 +5,7 @@ pub(super) use plan::Plan;
 
 use super::Instance;
 use crate::engram_rows::{Destination, Hashed};
-use bundle_runtime::resources::{allocate_span, upload_bytes};
+use bundle_runtime::resources::upload_bytes;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
     BundleAbiError, BundleMappedGatherHandleV1, BundleStatusV1, BundleStreamHandleV1,
@@ -16,32 +16,38 @@ use std::cell::Cell;
 const SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM";
 const PINNED_LIMIT: u64 = 256 * 1024 * 1024;
 
-pub(super) fn enabled() -> Result<bool, BundleStatusV1> {
+pub(super) fn enabled(dspark: bool) -> Result<bool, BundleStatusV1> {
     #[cfg(test)]
     if let Some(value) = IN_TESTS.get() {
         return Ok(value);
     }
     match std::env::var(SWITCH).as_deref() {
         Ok("1") => Ok(true),
-        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
+        Ok("0") => Ok(false),
+        Err(std::env::VarError::NotPresent) => Ok(dspark),
         _ => Err(BundleStatusV1::InvalidArgument),
     }
 }
 
 #[cfg(test)]
 thread_local! {
-    static IN_TESTS: Cell<Option<bool>> = const { Cell::new(Some(false)) };
+    static IN_TESTS: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
 #[cfg(test)]
 pub(crate) fn with_enabled<T>(value: bool, run: impl FnOnce() -> T) -> T {
+    with_setting(Some(value), run)
+}
+
+#[cfg(test)]
+pub(crate) fn with_setting<T>(value: Option<bool>, run: impl FnOnce() -> T) -> T {
     struct Restore(Option<bool>);
     impl Drop for Restore {
         fn drop(&mut self) {
             IN_TESTS.set(self.0);
         }
     }
-    let _restore = Restore(IN_TESTS.replace(Some(value)));
+    let _restore = Restore(IN_TESTS.replace(value));
     run()
 }
 
@@ -245,7 +251,7 @@ impl Instance {
     }
 
     pub(super) fn prepare_prefill_engram(&mut self) -> Result<(), BundleAbiError> {
-        if !enabled().map_err(BundleAbiError::Status)? || !self.services.has_async_mapped_gather() {
+        if self.prefill_engram_inputs.is_empty() {
             return Ok(());
         }
         let Some(tables) = self
@@ -302,12 +308,13 @@ impl Instance {
                 "prefill Engram pinned capacity",
             ));
         }
-        // Allocate all ID spans before creating any gather, so reverse cleanup
-        // releases every gather before the allocations its transfers reference.
-        let (_, pool, stream) = self.ranks[0];
-        let indices = (0..tables.len())
-            .map(|_| allocate_span(&self.services, pool, stream, bytes, &mut self.held))
-            .collect::<Result<Vec<_>, _>>()?;
+        // ID spans were reserved before KV sizing. Gather cleanup still
+        // precedes release of every allocation its transfers reference.
+        let (_, _, stream) = self.ranks[0];
+        let indices = &self.prefill_engram_inputs;
+        if indices.len() != tables.len() || indices.iter().any(|span| span.length != bytes) {
+            return Err(BundleAbiError::InvalidRange("prefill Engram ID storage"));
+        }
         self.prefill_engram = Some(Gathers {
             layers: Vec::new(),
             columns,

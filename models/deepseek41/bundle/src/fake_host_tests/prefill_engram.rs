@@ -1,9 +1,11 @@
 //! The candidate changes only transfer scheduling and explicit layer joins.
 use super::*;
 use crate::engram_rows::{EngramRows, Step};
-use crate::instance::prefill_engram::{indices, with_enabled};
+use crate::instance::prefill_engram::indices;
 use model_deepseek41_contract::own_ops::engram::HashTables;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
+
+mod defaults;
 
 fn create_mapped(host: &Rc<Host>, on: bool, skip: bool) -> BundleInstanceV1 {
     try_create_mapped(host, on, skip).unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
@@ -25,6 +27,15 @@ fn try_create_mapped(
 fn create_backend(
     host: &Rc<Host>,
     on: bool,
+    skip: bool,
+    backend: dspark::host::MappedHost,
+) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_backend_with_setting(host, Some(on), skip, backend)
+}
+
+fn create_backend_with_setting(
+    host: &Rc<Host>,
+    on: Option<bool>,
     skip: bool,
     backend: dspark::host::MappedHost,
 ) -> Result<BundleInstanceV1, BundleAbiError> {
@@ -51,7 +62,7 @@ fn create_backend(
     let options = serde_json::to_vec(&options).unwrap();
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    with_enabled(on, || {
+    crate::instance::prefill_engram::with_setting(on, || {
         api()
             .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
             .unwrap()
@@ -106,7 +117,7 @@ fn dspark_prefill_gather_failures_are_terminal_before_publication() {
     }
 }
 
-fn launches(host: &Host) -> BTreeMap<String, Vec<String>> {
+fn launches(host: &Host) -> Vec<Vec<String>> {
     let mut result = BTreeMap::<String, Vec<String>>::new();
     for line in host
         .journal
@@ -117,7 +128,10 @@ fn launches(host: &Host) -> BTreeMap<String, Vec<String>> {
         let stream = line.split_whitespace().nth(1).unwrap().to_owned();
         result.entry(stream).or_default().push(line.clone());
     }
-    result
+    // Reserving the ID spans before KV sizing shifts later resource IDs.
+    // Keep every launch, binding, extent and alias while numbering handles
+    // by first use, as in the other allocation-changing schedule fixtures.
+    super::query_window::canonical(&result.into_values().collect::<Vec<_>>(), |_| false)
 }
 
 #[test]
@@ -305,15 +319,21 @@ fn private_id_allocation_failures_release_prior_resources() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let mut instance = create_mapped(&host, true, true);
-    let count = host
-        .journal
-        .borrow()
+    let allocations = indices(instance.handle())
         .iter()
-        .filter(|s| s.starts_with("allocate "))
-        .count();
+        .map(|(_, span)| {
+            host.device
+                .buffer_order
+                .borrow()
+                .iter()
+                .position(|&id| id == span.buffer.slot())
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(allocations.len(), 2);
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    for at in [count - 2, count - 1] {
+    for at in allocations {
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         host.device.fail_allocate.set(Some(at as u32));
         assert!(try_create_mapped(&host, true, true).is_err());

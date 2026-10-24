@@ -9,9 +9,9 @@ use std::time::Duration;
 const CONTROL: &str = "CHOPINFER_MAPPED_ROW_CONTROL";
 const ASYNC: &str = "CHOPINFER_MAPPED_ASYNC_READ_AHEAD";
 const SYNC: &str = super::MAPPED_READ_AHEAD_ENV_V1;
-// Synchronous gathers read ahead by default; `SYNC=0` turns it off.
-// Asynchronous gathers read ahead only on request. Resident row caching
-// stays enabled independently of page read-ahead.
+// Both paths read ahead by default. SYNC selects both unless ASYNC
+// overrides the asynchronous path. Resident row caching stays enabled
+// independently of page read-ahead.
 const DEFAULT_READ_AHEAD: bool = true;
 
 #[derive(Default)]
@@ -120,8 +120,8 @@ fn mode(value: &str) -> Result<u8, String> {
 fn configured(get: impl Fn(&str) -> Option<OsString>) -> u8 {
     let requested = get(SYNC).map(|value| value == "1");
     let sync = requested.unwrap_or(DEFAULT_READ_AHEAD);
-    // An explicit SYNC=1 still selects both paths, as before the default.
-    let asynchronous = get(ASYNC).map_or(requested == Some(true), |value| value == "1");
+    // Preserve the shared switch's explicit off/on control for both paths.
+    let asynchronous = get(ASYNC).map_or(sync, |value| value == "1");
     u8::from(sync) | (u8::from(asynchronous) << 1)
 }
 
@@ -247,7 +247,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sync_read_ahead_is_the_default_and_each_path_has_an_override() {
+    fn both_read_ahead_paths_default_on_and_keep_explicit_overrides() {
         let set = |pairs: &'static [(&'static str, &'static str)]| {
             move |name: &str| {
                 pairs
@@ -256,7 +256,7 @@ mod tests {
                     .map(|(_, value)| OsString::from(value))
             }
         };
-        assert_eq!(configured(|_| None), 1);
+        assert_eq!(configured(|_| None), 3);
         assert_eq!(configured(set(&[(SYNC, "0")])), 0);
         assert_eq!(configured(set(&[(SYNC, "1")])), 3);
         assert_eq!(configured(set(&[(SYNC, "1"), (ASYNC, "0")])), 1);

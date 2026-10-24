@@ -357,6 +357,26 @@ and `tp4-dspark-full-prefill` keep the full schedule and anchor anywhere;
 `tp4-ar-upper-skip-2048` and `tp4-dspark-upper-skip-2048` use 2048-token
 chunk ends.
 
+DSpark prefill batches commit projections across prompts and overlaps each
+Engram layer's mapped gather with target compute by default.
+`CHOPINFER_DSPARK_BATCHED_COMMIT=0` restores separate commit projections;
+`CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM=0` restores synchronous prefill gathers.
+AR prefill gathers remain opt-in. The shared host now reads ahead for both
+synchronous and asynchronous mapped gathers, with independent overrides
+([policy and caller audit](../../docs/mapped-row-read-ahead.md)).
+
+On 2026-10-24, Flash TP4 at a configured 1800 MHz and 300 W passed bitwise
+full-vocabulary logits, target KV, all 134 raw feature-history rows, drafter
+state and sampled-token comparisons against the preceding prefill paths.
+At temperature 1.0 with 512 output tokens, four processes per arm raised
+median C8/C16 request throughput from 465.93/544.39 to 472.37/553.35 tok/s;
+all spreads were below 0.85% with identical step histograms. Energy was
+1.8250/1.5034 versus 1.8252/1.5149 J/token. Batched commit adds 121.91 MiB
+per rank before KV sizing: automatic capacity fell from 320,972 to 318,615
+pages per rank (0.734%). The gather ID buffers also reserve 1.5 MiB on
+rank 0 before KV sizing. These bounded comparisons do not replace release
+qualification.
+
 ### DSpark qualification
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms

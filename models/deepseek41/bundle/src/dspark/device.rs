@@ -129,7 +129,10 @@ pub(crate) fn batch_commit_enabled() -> bool {
     if let Some(enabled) = BATCH_COMMIT_OVERRIDE.with(std::cell::Cell::get) {
         return enabled;
     }
-    std::env::var("CHOPINFER_DSPARK_BATCHED_COMMIT").as_deref() == Ok("1")
+    matches!(
+        std::env::var("CHOPINFER_DSPARK_BATCHED_COMMIT").as_deref(),
+        Ok("1") | Err(std::env::VarError::NotPresent)
+    )
 }
 
 #[cfg(test)]
@@ -139,13 +142,18 @@ thread_local! {
 
 #[cfg(test)]
 pub(crate) fn with_batch_commit<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    with_batch_commit_setting(Some(enabled), run)
+}
+
+#[cfg(test)]
+pub(crate) fn with_batch_commit_setting<T>(enabled: Option<bool>, run: impl FnOnce() -> T) -> T {
     struct Reset(Option<bool>);
     impl Drop for Reset {
         fn drop(&mut self) {
             BATCH_COMMIT_OVERRIDE.with(|value| value.set(self.0));
         }
     }
-    let _reset = Reset(BATCH_COMMIT_OVERRIDE.with(|value| value.replace(Some(enabled))));
+    let _reset = Reset(BATCH_COMMIT_OVERRIDE.with(|value| value.replace(enabled)));
     run()
 }
 

@@ -1,7 +1,8 @@
 # Prefill Engram layer gathers
 
 `CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM=1` opts AR text prefill into prepared
-per-layer mapped gathers. The default is off. Both gathers enqueue before
+per-layer mapped gathers. DSpark selects them by default; `=0` restores its
+synchronous gathers. AR keeps its previous default. Both gathers enqueue before
 compute; every rank waits immediately before that layer's Engram row decoder.
 Layer 14 can gather while layers 1 through 13 execute. Hashing still uses the
 current chunk's tokens and committed Engram history. Commit and cancel retain
@@ -9,9 +10,11 @@ their existing history rules.
 
 The candidate uses the existing asynchronous mapped-gather host service and
 supports ordinary eager and upper-skip prefill. Media, diagnostic text taps,
-DSpark, and alternate prefill communication schedules retain their existing
-path. No runtime ABI, kernel, arithmetic order, reduction boundary, output
-layout, or lock changes are required.
+and unsupported prefill communication schedules retain their existing
+path. DSpark joins each layer after submitting its target producer work and
+finishes the gathers after consolidated status reads. No runtime ABI, kernel,
+arithmetic order, reduction boundary, output layout, or lock changes are
+required.
 
 ## Cross-stream audit
 
@@ -39,7 +42,8 @@ step. A failed or pending gather cannot be reused by another execute call.
 Destruction releases and fences gathers before releasing their referenced
 allocations; existing poisoned-collective handling remains in force.
 
-Flash TP4 allocates two 786,432-byte device ID buffers. Each prepared layer
+Flash TP4 reserves two 786,432-byte device ID buffers on rank 0 before
+serving KV sizing. Each prepared layer
 owns 198.75 MiB of pinned staging, within the host service's 256 MiB per-handle
 limit. No additional device output buffers are allocated. Each transfer uses
 only the current row count, up to 8192.
@@ -69,11 +73,12 @@ remaining exposed gather time warrants a cross-chunk interface extension.
 
 ## Cold large gathers
 
-A chunk of more than 2,730 tokens gathers at least 65,536 rows per plane
-(24 per token), which skips the resident row cache. Before runtime-host read
+The bulk-read path starts at 8,192 rows per plane (342 tokens at 24 rows
+per token). The earlier threshold was 65,536 rows, reached above 2,730
+tokens; these large gathers skip the resident row cache. Before runtime-host read
 such gathers through its reader threads, the prepared gather copied them from
-the mapping with no read-ahead (asynchronous read-ahead is off unless
-`CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1`), one page fault at a time. Measured on
+the mapping with no read-ahead (the asynchronous default at that time),
+one page fault at a time. Measured on
 CPU on 2026-10-23 on the serving host's drive, one 8,192-token chunk of one
 layer for four ranks (196,608 rows per plane, codes and scales cold, quiet
 drive) took 18 to 22 s that way, about 10 s of it the codes plane; the
@@ -87,3 +92,9 @@ time or select this candidate under any of them without
 `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1`. The served comparison must drop the
 Engram tables' pages before each timed run: repeated prompts find the rows
 in the page cache, and the cold cost then does not show.
+
+Both synchronous and asynchronous read-ahead now default on. The shared
+`CHOPINFER_MAPPED_READ_AHEAD=0` switch disables both unless the async-specific
+`CHOPINFER_MAPPED_ASYNC_READ_AHEAD` override selects otherwise; its `=0`
+value disables async advice alone. The [caller audit](../../../docs/mapped-row-read-ahead.md)
+confirms that no in-tree production consumer depends on advice being off.

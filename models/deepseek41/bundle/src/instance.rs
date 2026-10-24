@@ -122,6 +122,8 @@ pub struct Instance {
     dma_push: bool,
     layer_overlap: bool,
     prefill_reduce_runs: u64,
+    /// Per-layer gather IDs, reserved before serving KV sizing.
+    prefill_engram_inputs: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
     prefill_engram: Option<prefill_engram::Gathers>,
     /// AR decode's per-layer Engram uploads, when switched on.
     ar_engram: Option<ar_engram::State>,
@@ -759,6 +761,26 @@ impl Instance {
             self.media = Some(media);
         }
         memory.take("encoder");
+        if prefill_engram::enabled(self.dspark.is_some()).map_err(BundleAbiError::Status)?
+            && services.has_async_mapped_gather()
+        {
+            let layers = self
+                .engram
+                .as_ref()
+                .and_then(|engram| engram.tables())
+                .map_or(0, <[_]>::len);
+            if layers > 0 {
+                let engram = &shape.geometry.shape.engram;
+                let bytes = u64::from(model_deepseek41_contract::serving::PREFILL_TOKENS)
+                    * u64::from((engram.max_ngram - 1) * engram.heads)
+                    * 4;
+                let (_, pool, stream) = ranks[0];
+                self.prefill_engram_inputs = (0..layers)
+                    .map(|_| allocate_span(services, pool, stream, bytes, held))
+                    .collect::<Result<_, _>>()?;
+            }
+        }
+        memory.take("prefill_engram");
         let (pages, pools) = acquire::serving_kv(
             log,
             self.config.kv.layout_id,
@@ -987,6 +1009,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         dma_push: false,
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
+        prefill_engram_inputs: Vec::new(),
         prefill_engram: None,
         ar_engram: None,
         ar_status: None,

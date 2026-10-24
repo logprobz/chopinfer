@@ -301,6 +301,24 @@ def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confi
 class Calibration(unittest.TestCase):
     TRUTH = [(1.5, 0.5), (1.2, 0.2), (1.0, 0.0), (0.8, -0.2), (0.6, -0.4)]
 
+    def test_startup_warmup_records_are_excluded_before_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'server.log'
+            row = {'schema': 'fixture.drafter-confidence.v1', 'request_id': 'warmup'}
+            served = {**row, 'request_id': 'served'}
+            log.write_text(json.dumps(row) + '\nstartup readiness: 12.3s\n' +
+                           json.dumps(served) + '\n')
+            rows, dropped = calibrate.records(log)
+            self.assertEqual([r['request_id'] for r in rows], ['served'])
+            self.assertEqual(dropped, 0)
+            # Startup refusal still applies even when it precedes readiness.
+            log.write_text('startup speculation_confidence: on, floor 0, 5 positions\n' + log.read_text())
+            with self.assertRaisesRegex(SystemExit, 'served with confidence allocation'):
+                calibrate.records(log)
+            # Hand-written and extracted record-only logs remain supported.
+            log.write_text(json.dumps(served) + '\n')
+            self.assertEqual(len(calibrate.records(log)[0]), 1)
+
     def test_allocating_server_logs_are_refused_before_labelling(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'server.log'

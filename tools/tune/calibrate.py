@@ -24,7 +24,8 @@ un-emitted positions and non-finite scores are left out, and a repeated
 (instance, step, request) is refused. Dropped log lines lose whole records
 without biasing labels; the report counts them and marks the capture
 incomplete. Fit on runs served without a calibration: an allocated step
-verifies fewer drafts than it emitted.
+verifies fewer drafts than it emitted. Records before a server's readiness
+line are warmup and are excluded; record-only extracted logs remain valid.
 
 Each position gets a logistic fit (Newton's method with a small ridge). The
 greedy pairs repeat the sampled ones unless greedy runs are given. FILE
@@ -83,6 +84,9 @@ def records(log, index=0):
         if re.search(r'\bstartup speculation_confidence: on(?:,|$)', line):
             raise SystemExit(f'{log} served with confidence allocation; '
                              'fit only logs served without confidence')
+        if 'startup readiness:' in line:
+            rows.clear()
+            continue
         if line.startswith(DROPPED):
             dropped += int(line[len(DROPPED):].split()[0])
             continue

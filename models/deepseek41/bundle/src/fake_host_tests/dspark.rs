@@ -129,6 +129,18 @@ fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
     for name in ["dspark.features", "dspark.ring"] {
         assert!(pieces.iter().any(|piece| piece["buffer"] == name));
     }
+    // Capture::LastRows describes the prefix's valid rows. Diagnostics
+    // copy the entire physical history plane, including verify headroom.
+    let features = pieces
+        .iter()
+        .find(|piece| piece["buffer"] == "dspark.features")
+        .unwrap();
+    let rows = u64::from(FLASH.shape.attention.window)
+        + u64::from(model_deepseek41_contract::serving::MAX_VERIFY_ROWS);
+    assert_eq!(
+        features["bytes"],
+        rows * FLASH.shape.dspark.targets.len() as u64 * u64::from(FLASH.shape.hidden) * 2
+    );
     let bytes: u64 = pieces
         .iter()
         .map(|piece| piece["bytes"].as_u64().unwrap())

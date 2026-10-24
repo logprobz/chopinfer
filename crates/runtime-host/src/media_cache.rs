@@ -12,13 +12,19 @@
 //! Its payloads keep their leases in the process media pool. An entry whose
 //! payload no request holds is idle, and the pool reclaims idle entries, least
 //! recently used first, when a reservation does not fit
-//! ([`crate::media_memory::ReclaimV1`]).
+//! ([`crate::media_memory::ReclaimV1`]). The pool bounds the payload bytes;
+//! [`MAX_ENTRIES`] bounds the entries, so many small images cannot grow the
+//! map without limit: keeping another drops the least recently used idle one.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::generation::PreparedMediaInputV1;
 use crate::media_memory::ReclaimV1;
+
+/// The most entries kept with none held by a request; entries that requests
+/// hold are kept beyond it until they are idle.
+pub(crate) const MAX_ENTRIES: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct PreparedImageCacheV1 {
@@ -63,12 +69,25 @@ impl PreparedImageCacheV1 {
         })
     }
 
-    /// Keeps `prepared`, whose payload holds `retained` pool bytes.
+    /// Keeps `prepared`, whose payload holds `retained` pool bytes, dropping
+    /// the least recently used idle entry when the cache is full.
     pub(crate) fn insert(&self, key: [u8; 32], prepared: PreparedMediaInputV1, retained: u64) {
-        let mut inner = self.lock();
-        inner.tick += 1;
-        let tick = inner.tick;
-        inner.entries.insert(key, (prepared, tick, retained));
+        let dropped = {
+            let mut inner = self.lock();
+            inner.tick += 1;
+            let tick = inner.tick;
+            let dropped = if inner.entries.len() >= MAX_ENTRIES && !inner.entries.contains_key(&key)
+            {
+                inner.remove_least_recently_used_idle()
+            } else {
+                None
+            };
+            inner.entries.insert(key, (prepared, tick, retained));
+            dropped
+        };
+        // Dropped without the cache's lock: its lease gives the bytes back
+        // to the pool.
+        drop(dropped);
     }
 
     /// The entries no request holds and the pool bytes they keep.
@@ -100,20 +119,69 @@ impl PreparedImageCacheV1 {
     }
 }
 
+impl CacheInner {
+    fn remove_least_recently_used_idle(&mut self) -> Option<(PreparedMediaInputV1, u64, u64)> {
+        let idle = self
+            .entries
+            .iter()
+            .filter(|(_, (prepared, _, _))| !prepared.input.payload.is_shared())
+            .min_by_key(|(_, (_, last_use, _))| *last_use)
+            .map(|(key, _)| *key);
+        idle.and_then(|key| self.entries.remove(&key))
+    }
+}
+
 impl ReclaimV1 for PreparedImageCacheV1 {
     fn reclaim_one(&self) -> bool {
-        let removed = {
-            let mut inner = self.lock();
-            let idle = inner
-                .entries
-                .iter()
-                .filter(|(_, (prepared, _, _))| !prepared.input.payload.is_shared())
-                .min_by_key(|(_, (_, last_use, _))| *last_use)
-                .map(|(key, _)| *key);
-            idle.and_then(|key| inner.entries.remove(&key))
-        };
+        let removed = self.lock().remove_least_recently_used_idle();
         // Dropped without the cache's lock: its lease gives the bytes back
         // to the pool.
         removed.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_ENTRIES, PreparedImageCacheV1};
+    use crate::generation::PreparedMediaInputV1;
+    use runtime_server::MediaInputV1;
+
+    fn key(index: usize) -> [u8; 32] {
+        let mut key = [0; 32];
+        key[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        key
+    }
+
+    fn image(index: usize) -> PreparedMediaInputV1 {
+        PreparedMediaInputV1::from(MediaInputV1 {
+            key: key(index),
+            encoder: 0,
+            geometry: [1, 1, 1, 1],
+            output_rows: 1,
+            payload: vec![index as u8; 16].into(),
+        })
+    }
+
+    #[test]
+    fn a_full_cache_drops_its_least_recently_used_idle_entry() {
+        let cache = PreparedImageCacheV1::default();
+        for index in 0..MAX_ENTRIES {
+            cache.insert(key(index), image(index), 16);
+        }
+        // A request holds the oldest entry and has just used the second.
+        let held = cache.get(&key(0)).unwrap();
+        assert!(cache.get(&key(1)).is_some());
+        for index in MAX_ENTRIES..MAX_ENTRIES + 3 {
+            cache.insert(key(index), image(index), 16);
+        }
+        assert_eq!(cache.len(), MAX_ENTRIES);
+        assert!(cache.get(&key(0)).is_some(), "a held entry stays");
+        assert!(cache.get(&key(1)).is_some(), "a recent entry stays");
+        for dropped in 2..5 {
+            assert!(cache.get(&key(dropped)).is_none(), "entry {dropped}");
+        }
+        assert!(cache.get(&key(5)).is_some());
+        assert!(cache.get(&key(MAX_ENTRIES + 2)).is_some());
+        drop(held);
     }
 }

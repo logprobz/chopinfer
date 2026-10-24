@@ -76,10 +76,13 @@ plan every section raw.
 
 On Linux with glibc, the generation worker returns unused allocator pages
 with `malloc_trim(0)` after requests, deferred events and KV transfers have
-drained and no command is waiting. It runs at most once per minute after
-activity. If the last burst ends during that cooldown, an idle timer performs
+drained and no command is waiting, when the allocator reports at least
+64 MiB free. It runs at most once per minute after activity. If the last
+burst ends during that cooldown, an idle timer performs
 the reclamation when the minute ends, without needing another request.
 The log reports whether pages were returned and the time spent trimming.
+The threshold limits low-benefit calls, not their maximum duration. A request
+arriving during a trim waits for that one call; the cooldown does not hold it.
 
 Live allocations and their addresses remain intact. This does not evict
 prefixes, release GPU pages or cap live caches. A continuously busy worker

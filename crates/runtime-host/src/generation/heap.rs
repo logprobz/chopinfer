@@ -4,6 +4,8 @@
 use std::time::{Duration, Instant};
 
 const INTERVAL: Duration = Duration::from_secs(60);
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const MIN_FREE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 pub(super) struct IdleHeap {
@@ -43,12 +45,19 @@ impl IdleHeap {
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim() {
     let started = Instant::now();
+    // SAFETY-REVIEWED: mallinfo2 returns allocator-owned counters by value
+    // and synchronizes its reads with concurrent allocator activity.
+    #[allow(unsafe_code)]
+    let free = unsafe { libc::mallinfo2() }.fordblks;
+    if free < MIN_FREE_BYTES {
+        return;
+    }
     // SAFETY-REVIEWED: malloc_trim releases only unused allocator pages and
     // synchronizes with concurrent allocations. It does not move live data.
     #[allow(unsafe_code)]
     let released = unsafe { libc::malloc_trim(0) };
     eprintln!(
-        "generation worker heap trim: released={released} elapsed_us={}",
+        "generation worker heap trim: released={released} free_bytes={free} elapsed_us={}",
         started.elapsed().as_micros()
     );
 }

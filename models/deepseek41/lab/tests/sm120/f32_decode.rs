@@ -1,4 +1,7 @@
 //! Bitwise baseline comparisons and paired cold-weight launch timings.
+#[path = "f32_decode/cached_spans.rs"]
+mod cached_spans;
+
 use bundle_deepseek41::sm120::{
     f32_head, f32_prefill, f32_split, fold_cubin_for_symbol, head_last, projection_reuse,
     register_f32_projections,

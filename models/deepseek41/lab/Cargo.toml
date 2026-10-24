@@ -279,3 +279,7 @@ path = "examples/sm120/build_fold_verify.rs"
 [[example]]
 name = "build_fold_verify_local"
 path = "examples/sm120/build_fold_verify_local.rs"
+
+[[example]]
+name = "build_moe_router64"
+path = "examples/sm120/build_moe_router64.rs"

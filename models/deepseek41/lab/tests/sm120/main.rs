@@ -101,6 +101,7 @@ mod row_tiled_bank;
 
 mod moe;
 mod moe_active;
+mod moe_wide;
 
 mod latent_glue;
 

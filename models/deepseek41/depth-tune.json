@@ -304,7 +304,8 @@
             "off"
           ]
         }
-      ]
+      ],
+      "require_keeper": true
     },
     "confidence-ab": {
       "verify_widths": [
@@ -415,7 +416,8 @@
           "d3",
           "d3-conf0"
         ]
-      ]
+      ],
+      "require_keeper": true
     }
   }
 }

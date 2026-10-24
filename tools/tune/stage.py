@@ -49,6 +49,15 @@ def digest(path):
     return h.hexdigest()
 
 
+def protect(stage):
+    """The queue authenticates the keeper spec only when its owned inputs
+    cannot be changed by other writers. Preserve executable file modes."""
+    for path in [stage, *stage.rglob('*')]:
+        if path.is_symlink():
+            raise RuntimeError(f'stage contains a symlink: {path}')
+        path.chmod(path.stat().st_mode & ~0o022)
+
+
 def frozen(directory, name):
     """The install in `directory` under `name`, checked as built, and every
     file to seal."""
@@ -191,6 +200,7 @@ def main():
                'sha256': digest(job), 'estimated_minutes': round(seconds / 60, 1),
                'work_budget_minutes': round(config['work_seconds'] / 60, 1), 'prompts': len(built['prompts'])}
     (stage / 'staged.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    protect(stage)
     print(json.dumps(receipt))
 
 

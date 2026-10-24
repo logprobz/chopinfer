@@ -11,6 +11,7 @@ import calibrate  # noqa: E402
 import prompts  # noqa: E402
 import recorded  # noqa: E402
 import report  # noqa: E402
+import stage  # noqa: E402
 import tune  # noqa: E402
 
 # A synthetic model: depths 0-5 over 32 verify rows, two repeats each.
@@ -48,12 +49,15 @@ class Tuner(unittest.TestCase):
     def test_allocated_steps_keep_width_and_reserved_shape_and_assert_execution(self):
         steps = [{'batch': i, 'completed_unix_ns': i * 1_000_000, 'prefill_items': 0,
                   'decode_rows': 0, 'verify_items': 8, 'verify_rows': 32, 'reserved_rows': 48,
-                  'verify_emitted_tokens': 16, 'execution_us': 800} for i in range(3)]
+                  'verify_emitted_tokens': 12, 'accepted_tokens': 8, 'execution_us': 800} for i in range(3)]
         self.assertEqual(tune.cells(steps),
                          {'i8-r32-v8-R48': {'cycle_ms': [1.0, 1.0], 'execution_ms': [0.8, 0.8]}})
         full = tune.full_concurrency(steps, 8)
         self.assertEqual(full['histogram'], {'i8-r32-v8-R48': 2})
         self.assertEqual((full['allocated_steps'], full['allocated_share']), (2, 1.0))
+        # Older traces omit the mandatory token of items allocated zero
+        # drafts. Benchmark requests ignore EOS and reserve their bonus.
+        self.assertEqual(full['tokens'], 32)
         tune.check_depth('allocated', steps, 3)
         self.assertEqual(tune.check_allocations('allocated', steps, True, True), 3)
         with self.assertRaisesRegex(RuntimeError, 'no allocated steps'):
@@ -61,6 +65,22 @@ class Tuner(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'without confidence'):
             tune.check_allocations('unrequested', steps, False, False)
         self.assertEqual(tune.check_allocations('full width', [], True, False), 0)
+
+    def test_stage_files_are_protected_from_other_writers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'stage'
+            root.mkdir()
+            keeper = root / 'keeper-spec.json'
+            keeper.write_text('{}\n')
+            keeper.chmod(0o664)
+            job = root / 'tune.job'
+            job.write_text('# timeout 60\n')
+            job.chmod(0o775)
+            root.chmod(0o775)
+            stage.protect(root)
+            self.assertEqual(keeper.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(job.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
 
     def test_allocation_expectation_uses_capacity_width_and_common_reservation(self):
         config = {'model': {**MODEL, 'verify_widths': [6, 8, 16, 32]}}

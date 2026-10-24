@@ -274,7 +274,11 @@ def full_concurrency(steps, c):
             continue
         rows[shape_key(b, histogram=True)] += 1
         micros += (b['completed_unix_ns'] - a['completed_unix_ns']) / 1000
-        tokens += b['decode_rows'] + b.get('verify_emitted_tokens', 0)
+        # Fixed-length benchmark requests reserve the mandatory target
+        # token even when allocation assigns an item no draft. Older trace
+        # folds leave those items out of verify_emitted_tokens.
+        tokens += b['decode_rows'] + (b['verify_items'] + b['accepted_tokens'] if 'reserved_rows' in b
+                                     else b.get('verify_emitted_tokens', 0))
         drafted += bool(b['verify_items'])
         allocated += 'reserved_rows' in b
     count = sum(rows.values())
@@ -773,6 +777,8 @@ def main(args):
         if shutil.disk_usage(run).free < DATA_RESERVE:
             raise RuntimeError('the output volume is under its free-space reserve')
         keep = keeper(run, args.dry_run)
+        if config['model'].get('require_keeper') and keep is None:
+            raise RuntimeError('this job requires weight keeper borrowing')
         state['keeper'] = {'used': bool(keep), **(keep or {})}
         before = state['telemetry']['before'] = r.telemetry(run, 'before', args.dry_run, since)
         reference = before['power_limits_w']

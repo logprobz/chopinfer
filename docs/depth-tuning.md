@@ -203,10 +203,19 @@ tok/s and ranges, J/token, tokens per step, median step times by shape,
 allocated share, and accepted/verified counts by position. Allocated share
 uses full-concurrency decode/verify steps; window allocation counts include
 draining tails. Missing repeats or incorrect visit order fail the report.
+For fixed-length allocated windows, emitted tokens count the mandatory row
+of every decode/verify item plus accepted drafts, including items assigned
+zero drafts. This also reads older traces that omit their mandatory tokens
+from `verify_emitted_tokens`.
 The report informs the adoption decision and does not change a profile.
 
 Before queueing, run the sealed wrapper end to end with `env -i` and
-`--dry-run`. Test `TUNE_STUB_IGNORE_CONFIDENCE` (claims on but never
+`--dry-run`. The stage writer removes group/other write permissions from
+every stage file, including the keeper spec. Repeat `chmod -R go-w` on the
+stage after adding validation outputs, and on its install before queueing.
+Confidence jobs require the keeper and fail before server startup if it is
+absent; they never silently replace borrowing with a normal load.
+Test `TUNE_STUB_IGNORE_CONFIDENCE` (claims on but never
 allocates) and `TUNE_STUB_CLAIM_CONFIDENCE` (claims on without the flag)
 against the sealed harness directly; the queue wrapper clears these test
 controls. Both must fail. Stub results check the harness only.

@@ -649,9 +649,10 @@ impl DenseOps {
         &self,
         width: u32,
         input: DType,
-        rows: u32,
+        phase: Phase,
         views: &QuantizeViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let (_, op) = self
             .quantizers
             .iter()
@@ -668,7 +669,7 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(op.at(rows), &buffers, Counts::rows(rows))
+        bind.launch(op.at_phase(phase), &buffers, Counts::rows(rows))
     }
 
     /// Projection `id` of `rows` rows.
@@ -1164,7 +1165,16 @@ mod tests {
         };
         for entry in crate::sm120::ceil_prefill::baseline_quantizers(&FLASH, 4).unwrap() {
             let width = entry.query.width;
-            for rows in [1, DECODE_BATCH, DECODE_BATCH + 1, 1024, 2048, 8192] {
+            let draft = model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS;
+            let phases = [1, DECODE_BATCH, DECODE_BATCH + 1, 1024, 2048, 8192]
+                .map(|rows| Phase::Prefill { rows })
+                .into_iter()
+                .chain([40, draft, draft + 5].map(|rows| Phase::Verify {
+                    rows,
+                    items: rows / 5,
+                }));
+            for phase in phases {
+                let rows = phase.rows();
                 let elements = u64::from(rows) * u64::from(width);
                 let views = QuantizeViews {
                     input: span(
@@ -1182,11 +1192,11 @@ mod tests {
                     status: span(5, u64::from(rows) * 4),
                 };
                 let calls = ops
-                    .quantize(width, entry.query.input, rows, &views)
+                    .quantize(width, entry.query.input, phase, &views)
                     .unwrap();
                 assert_eq!(calls.len(), 1);
                 let call = &calls[0].launch;
-                if rows <= DECODE_BATCH {
+                if rows <= DECODE_BATCH || (!phase.prefill() && rows <= draft) {
                     let decode = if crate::sm120::ceil_cached::WIDTHS.contains(&width) {
                         "_cached_v1"
                     } else {

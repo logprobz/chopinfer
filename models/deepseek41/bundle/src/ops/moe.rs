@@ -470,9 +470,10 @@ impl MoeOps {
 
     pub(crate) fn quantize(
         &self,
-        rows: u32,
+        phase: Phase,
         views: &QuantizeViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = BlockQuantizeBuffers {
             input: bind.view(views.input),
@@ -482,7 +483,7 @@ impl MoeOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(self.quantize.at(rows), &buffers, Counts::rows(rows))
+        bind.launch(self.quantize.at_phase(phase), &buffers, Counts::rows(rows))
     }
 
     pub(crate) fn routes(

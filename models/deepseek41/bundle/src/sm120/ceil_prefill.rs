@@ -1,5 +1,5 @@
 //! Large-bucket dense quantizers. Decode and verify retain the separately
-//! registered parallel entries at DECODE_BATCH capacity. MoE and latent
+//! registered parallel entries up to their capacity. MoE and latent
 //! quantizers remain with their owning registrations.
 use kernel_build::CubinSpec;
 use kernels_sm120::{

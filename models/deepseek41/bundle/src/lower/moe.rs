@@ -33,7 +33,7 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             status: self.carried(phase, scratch.row_status)?,
         };
-        ops.quantize(phase.rows(), &views)
+        ops.quantize(phase, &views)
             .map(Some)
             .map_err(|refusal| format!("input quantization: {refusal}"))
     }
@@ -291,7 +291,7 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             status: self.carried(phase, scratch.row_status)?,
         };
-        ops.activate(phase.rows(), &views)
+        ops.activate(phase, &views)
             .map(Some)
             .map_err(|refusal| format!("shared expert activation of layer {layer}: {refusal}"))
     }

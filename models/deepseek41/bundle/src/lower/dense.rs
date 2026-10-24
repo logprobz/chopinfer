@@ -54,7 +54,7 @@ impl Lowering<'_> {
             };
             let width = dense.query.activation_row_stride;
             launches.extend(
-                ops.quantize(width, dense.input.dtype(), phase.rows(), &views)
+                ops.quantize(width, dense.input.dtype(), phase, &views)
                     .map_err(error)?,
             );
             Ok((views.codes, views.scales))

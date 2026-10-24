@@ -1,12 +1,17 @@
 //! Prepare small rows separately when a row op otherwise keeps a prefill plan.
 use kernel_core::backend::{Need, Prepared, Refused};
+use model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 
 use super::{Asks, exact};
+use crate::program::Phase;
 
 pub(crate) struct RowBuckets<B> {
     every: Prepared<B>,
     small: Prepared<B>,
+    /// Decode and verify rows above `DECODE_BATCH` up to a drafter forward's
+    /// small-row limit (`SMALL_DRAFT_ROWS`).
+    draft: Prepared<B>,
     /// A one-row op, where one row has an entry of its own.
     one: Option<Prepared<B>>,
 }
@@ -22,11 +27,17 @@ impl<B> RowBuckets<B> {
         let small = asks.ask(
             format!("{what} small rows"),
             exact::need(DECODE_BATCH, exact::every_phase(DECODE_BATCH)),
+            &mut prepare,
+        )?;
+        let draft = asks.ask(
+            format!("{what} draft rows"),
+            exact::need(SMALL_DRAFT_ROWS, exact::every_phase(SMALL_DRAFT_ROWS)),
             prepare,
         )?;
         Ok(Self {
             every: large,
             small,
+            draft,
             one: None,
         })
     }
@@ -55,6 +66,19 @@ impl<B> RowBuckets<B> {
             &self.small
         } else {
             &self.every
+        }
+    }
+
+    /// [`Self::at`] for `phase`'s rows, except that decode and verify rows
+    /// up to `SMALL_DRAFT_ROWS` take the draft-rows op. A drafter forward of
+    /// up to `SMALL_DRAFT_ITEMS` items lowers as a verify phase. Prefill
+    /// keeps its plans at every row count.
+    pub(crate) fn at_phase(&self, phase: Phase) -> &Prepared<B> {
+        let rows = phase.rows();
+        if !phase.prefill() && rows > DECODE_BATCH && rows <= SMALL_DRAFT_ROWS {
+            &self.draft
+        } else {
+            self.at(rows)
         }
     }
 }

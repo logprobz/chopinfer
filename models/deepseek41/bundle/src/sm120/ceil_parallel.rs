@@ -6,6 +6,7 @@ use kernels_sm120::{
 };
 use model_deepseek41_contract::{
     admission::SUPPORTED_RANKS,
+    dspark_options::SMALL_DRAFT_ROWS,
     geometry::{FLASH, Geometry},
     serving::DECODE_BATCH,
 };
@@ -38,11 +39,31 @@ fn early_release(g: &Geometry, symbol: &str) -> bool {
         .any(|s| s == symbol)
 }
 
+/// The rows a parallel entry holds: every decode bucket and a drafter
+/// forward's rows. Capacity is not compiled; each row is quantized alone.
+pub const CAPACITY: u32 = SMALL_DRAFT_ROWS;
+
+/// The rows `entry`'s parallel form holds. The target's routed MoE chains
+/// pick their intermediate quantizer by their own rows, so its width keeps
+/// the decode batch and the target's selections stay as they were.
+fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
+    let main = model_deepseek41_contract::moe::expert_sets(g)[0];
+    let intermediate = main.top_k * (g.shape.moe.intermediate / ranks);
+    let draft = g.shape.dspark.top_k * (g.shape.moe.intermediate / ranks);
+    if entry.symbol == format!("chop_{}_moe_ceil_w{intermediate}_v1", g.kernel_tag)
+        && intermediate != draft
+    {
+        DECODE_BATCH
+    } else {
+        CAPACITY
+    }
+}
+
 pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<block_quantize::Entry>, String> {
     baseline_quantizers(g, ranks)?
         .into_iter()
         .map(|mut entry| {
-            entry.capacity = DECODE_BATCH;
+            entry.capacity = capacity(g, ranks, &entry);
             if entry.symbol == "chop_deepseek41_latent_ceil32_v1" {
                 entry.symbol = format!("chop_{}_latent_ceil32_v1", g.kernel_tag);
             }
@@ -60,7 +81,7 @@ pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<block_quantize::Entry>
 
 pub fn activation(g: &Geometry, ranks: u32) -> Result<silu_mul_quantize::Entry, String> {
     let mut entry = super::shared::activation(g, ranks)?;
-    entry.capacity = DECODE_BATCH;
+    entry.capacity = CAPACITY;
     entry.symbol = format!("{}_parallel_v1", entry.symbol.strip_suffix("_v1").unwrap());
     entry.parallel().map_err(|e| e.to_string())
 }

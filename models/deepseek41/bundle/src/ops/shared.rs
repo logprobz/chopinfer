@@ -13,6 +13,7 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::row_buckets::RowBuckets;
 use super::{Asks, Bind, Lowered, exact};
+use crate::program::Phase;
 use crate::shape::Shape;
 
 pub(crate) struct SharedOps {
@@ -48,9 +49,10 @@ impl SharedOps {
     /// The activation of `rows` rows.
     pub(crate) fn activate(
         &self,
-        rows: u32,
+        phase: Phase,
         views: &ActivationViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = SiluMulQuantizeBuffers {
             gate: bind.view(views.gate),
@@ -61,7 +63,11 @@ impl SharedOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(self.activation.at(rows), &buffers, Counts::rows(rows))
+        bind.launch(
+            self.activation.at_phase(phase),
+            &buffers,
+            Counts::rows(rows),
+        )
     }
 }
 

@@ -88,6 +88,10 @@ impl Entry {
                     .prefill_buckets
                     .iter()
                     .any(|&(_, tile)| tile == features)
+                    || self
+                        .prefill_bands
+                        .iter()
+                        .any(|band| band.features == features)
                 {
                     let tiled = self.prefill_variant(features);
                     symbols.extend([tiled.stage_symbol("_prepare"), tiled.symbol().to_owned()]);
@@ -175,6 +179,12 @@ impl Entry {
                 .iter()
                 .filter(|&&(rows, _)| rows <= capacity)
                 .map(|&(rows, _)| self.prefill_workspace_bytes(rows))
+                .chain(
+                    self.prefill_bands
+                        .iter()
+                        .filter(|band| band.lo <= capacity)
+                        .map(|band| self.prefill_workspace_bytes(band.hi.min(capacity))),
+                )
                 .max()
                 .unwrap_or(0);
             return decode.max(prefill);

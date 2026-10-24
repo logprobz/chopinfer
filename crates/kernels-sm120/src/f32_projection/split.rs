@@ -27,12 +27,20 @@ impl Entry {
             }
             return self.prefill_variant(features);
         }
+        if let Some(band) = self
+            .prefill_bands
+            .iter()
+            .find(|band| (band.lo..=band.hi).contains(&rows))
+        {
+            return self.prefill_variant(band.features);
+        }
         if self.fused && rows <= super::decode::MAX_ROWS {
             let mut entry = self.clone();
             entry.symbol = self.baseline_symbol().to_owned();
             entry.cached = false;
             entry.fused = false;
             entry.prefill_buckets.clear();
+            entry.prefill_bands.clear();
             entry.blocked_buckets.clear();
             entry.wide_buckets.clear();
             entry.with_decode()

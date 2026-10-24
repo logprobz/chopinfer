@@ -9,6 +9,9 @@ use kernels_sm120::{
     f32_projection::{self, Entry},
 };
 
+#[path = "f32_projection/bands.rs"]
+mod bands;
+
 fn entry(weight: WeightFormat) -> Entry {
     Entry::new(
         GemmQuery {

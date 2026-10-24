@@ -30,6 +30,15 @@ pub mod wide;
 pub mod zero_decode;
 pub mod zero_prefill;
 
+/// An inclusive prefill row band selecting an existing feature tile.
+/// Exact row entries take precedence over a covering band.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefillBand {
+    pub lo: u32,
+    pub hi: u32,
+    pub features: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
     query: GemmQuery,
@@ -39,6 +48,7 @@ pub struct Entry {
     fused: bool,
     prefill_tile_n: u32,
     prefill_buckets: Vec<(u32, u32)>,
+    prefill_bands: Vec<PrefillBand>,
     blocked_tile_m: u32,
     blocked_buckets: Vec<(u32, u32)>,
     wide_tile_n: u32,
@@ -80,6 +90,7 @@ impl Entry {
             fused: false,
             prefill_tile_n: 0,
             prefill_buckets: Vec::new(),
+            prefill_bands: Vec::new(),
             blocked_tile_m: 0,
             blocked_buckets: Vec::new(),
             wide_tile_n: 0,

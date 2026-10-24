@@ -1,5 +1,5 @@
 //! Exact prefill candidates. Admission requires measured bucket evidence.
-use super::{Entry, pointer};
+use super::{Entry, PrefillBand, pointer};
 use kernel_build::{EntryParam, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};
 
@@ -39,6 +39,33 @@ impl Entry {
         &self.prefill_buckets
     }
 
+    /// Admit disjoint inclusive row bands above split decode. The caller
+    /// qualifies each band's feature tile; exact buckets keep precedence.
+    /// Routing declarations do not change the compiled cubin specification.
+    pub fn with_prefill_bands(mut self, mut bands: Vec<PrefillBand>) -> Result<Self, Refusal> {
+        bands.sort_unstable_by_key(|band| (band.lo, band.hi, band.features));
+        if !self.fused
+            || self.uses_prefill_tiles()
+            || bands.iter().any(|band| {
+                band.lo <= self.decode_max_rows()
+                    || band.lo > band.hi
+                    || band.hi > self.query.m_capacity
+                    || !matches!(band.features, 32 | 64)
+            })
+            || bands.windows(2).any(|pair| pair[0].hi >= pair[1].lo)
+        {
+            return Err(Refusal(
+                "prefill bands require disjoint bounded rows above split decode",
+            ));
+        }
+        self.prefill_bands = bands;
+        Ok(self)
+    }
+
+    pub fn prefill_bands(&self) -> &[PrefillBand] {
+        &self.prefill_bands
+    }
+
     pub fn prefill_features(&self) -> u32 {
         if self.wide_tile_n != 0 {
             self.wide_tile_n
@@ -72,6 +99,10 @@ impl Entry {
                 .prefill_buckets
                 .iter()
                 .any(|&(_, tile)| tile == features)
+                || self
+                    .prefill_bands
+                    .iter()
+                    .any(|band| band.features == features)
             {
                 let entry = self.prefill_variant(features);
                 if entry.symbol() == symbol {

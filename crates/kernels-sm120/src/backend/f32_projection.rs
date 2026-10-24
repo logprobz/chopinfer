@@ -76,6 +76,13 @@ pub(super) fn prepare(
             entry.entry_for_rows(rows).prefill_plan(rows)?;
         }
     }
+    for band in entry.prefill_bands() {
+        if band.lo <= need.capacity {
+            let tiled = entry.prefill_variant(band.features);
+            tiled.prefill_plan(band.lo)?;
+            tiled.prefill_plan(band.hi.min(need.capacity))?;
+        }
+    }
     let mut info = OpInfo::new(
         f32_projection::IMPLEMENTATION,
         chosen.guarantees,

@@ -1,5 +1,5 @@
 //! The DSpark drafter's served settings as package model options. A create
-//! record without them keeps the legacy values.
+//! record without them keeps the declared defaults.
 
 use crate::serving::{DECODE_BATCH, MAX_DRAFT_TOKENS};
 use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
@@ -12,9 +12,8 @@ use std::collections::BTreeMap;
 pub const DRAFT_CHUNK_ITEMS: &str = "dspark_draft_chunk_items";
 
 /// The package default and the chunk a create record without the option
-/// keeps: six items of five block rows stay within the drafter's 32-row
-/// plans.
-pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 6;
+/// keeps: eight items of five block rows use the qualified 40-row paths.
+pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 8;
 
 /// Most drafting items one drafter forward keeps on the small-row paths:
 /// the row-local quantizers, the HC mix split and the head's weight reuse,
@@ -70,18 +69,15 @@ mod tests {
 
     /// The package default reaches the drafter through the host's
     /// resolution, a profile or flag override replaces it, and a record
-    /// without the option keeps the legacy chunk.
+    /// without the option keeps the declared default.
     #[test]
     fn the_declared_default_is_the_resolved_chunk() {
+        assert_eq!(draft_chunk_items(&resolve(&[])), Ok(8));
         assert_eq!(
-            draft_chunk_items(&resolve(&[])),
-            Ok(DEFAULT_DRAFT_CHUNK_ITEMS)
+            draft_chunk_items(&resolve(&[(DRAFT_CHUNK_ITEMS, "6")])),
+            Ok(6)
         );
-        assert_eq!(
-            draft_chunk_items(&resolve(&[(DRAFT_CHUNK_ITEMS, "8")])),
-            Ok(8)
-        );
-        assert_eq!(draft_chunk_items(&BTreeMap::new()), Ok(6));
+        assert_eq!(draft_chunk_items(&BTreeMap::new()), Ok(8));
         for bad in [
             serde_json::json!(0),
             serde_json::json!(33),

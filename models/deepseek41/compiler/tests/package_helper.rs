@@ -133,6 +133,10 @@ fn dspark_profiles_keep_balanced_full_block_drafting() {
         assert_eq!(speculation["tokens"], 5);
         assert_eq!(speculation["draft_cost"], "per-block");
         assert_eq!(speculation["drafter"], "dspark");
+        assert_eq!(
+            file["profiles"][name]["model_options"]["dspark_draft_chunk_items"],
+            "8"
+        );
         host_admits(&document, name).unwrap();
     }
 }
@@ -308,7 +312,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "options": [{"name": "dspark_coupled_drafts", "default_is_qualified": true,
                          "definition": {"type": "boolean", "default": true}},
                         {"name": "dspark_draft_chunk_items", "default_is_qualified": true,
-                         "definition": {"type": "integer", "default": 6, "minimum": 1, "maximum": 32}},
+                         "definition": {"type": "integer", "default": 8, "minimum": 1, "maximum": 32}},
                         {"name": "prefill_chunk_tokens", "default_is_qualified": true,
                          "definition": {"type": "integer", "default": 8192, "minimum": 0, "maximum": 8192}},
                         {"name": "prefill_upper_skip", "default_is_qualified": true,
@@ -336,7 +340,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 .unwrap();
             let expected = serde_json::json!({
                 "dspark_coupled_drafts": true,
-                "dspark_draft_chunk_items": 6,
+                "dspark_draft_chunk_items": 8,
                 "prefill_chunk_tokens": 8192,
                 "prefill_upper_skip": true,
                 "text_config.index_topk": override_top_k.unwrap_or(top_k),

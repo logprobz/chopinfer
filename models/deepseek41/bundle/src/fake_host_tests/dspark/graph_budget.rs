@@ -303,6 +303,7 @@ fn recorded_startup_warmup_keys_fit_the_graph_budget() {
 #[test]
 fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
     let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 192);
+    let mut captured = false;
     for slot in 0..16 {
         execute(
             &mut instance,
@@ -331,7 +332,8 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
             .filter(|r| r["schema"] == "chopinfer.graph-cache.v1" && r["family"] == "draft")
             .filter_map(|r| r["width"].as_u64())
             .collect();
-        assert!(draft_widths.iter().all(|&n| n <= 6), "{draft_widths:?}");
+        captured |= !draft_widths.is_empty();
+        assert!(draft_widths.iter().all(|&n| n == 8), "{draft_widths:?}");
         drop(logs);
         for record in records(&host).iter().rev().take(count as usize) {
             assert_eq!(record["computed_positions"], 5);
@@ -339,6 +341,7 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
             assert_eq!(record["confidence_f32_bits"].as_array().unwrap().len(), 5);
         }
     }
+    assert!(captured, "draft graphs were never captured");
     for request in 1..=16 {
         instance.retire_request(request).unwrap();
     }

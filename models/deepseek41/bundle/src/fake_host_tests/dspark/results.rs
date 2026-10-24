@@ -233,9 +233,9 @@ fn c8_device_feedback_queues_a_successor_after_current_completion() {
                 .iter()
                 .filter(|s| s.starts_with("replay "))
                 .count(),
-            // Per rank: one projection, then the default six-item draft
+            // Per rank: one projection, then the default eight-item draft
             // chunks.
-            4 * (1 + (items as usize).div_ceil(6)),
+            4 * (1 + (items as usize).div_ceil(8)),
             "private projection and draft queue after current result collection"
         );
         if cycle == 1 {

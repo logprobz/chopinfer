@@ -1025,7 +1025,7 @@ fn the_declared_draft_chunk_reaches_the_drafter() {
     };
     for (overrides, expected) in [
         (vec![], DEFAULT_DRAFT_CHUNK_ITEMS),
-        (vec![(DRAFT_CHUNK_ITEMS.to_owned(), "8".to_owned())], 8),
+        (vec![(DRAFT_CHUNK_ITEMS.to_owned(), "6".to_owned())], 6),
     ] {
         let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);

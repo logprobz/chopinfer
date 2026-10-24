@@ -374,10 +374,12 @@ raised C8 request throughput by 10.1% greedy and 9.1% sampled and lowered
 energy per token by 6.4% and 5.8%, with C8 full-concurrency throughput and
 C1, C16 and C32 unchanged. `--speculation adaptive` with the shared
 `per-block` draft-cost model remains available. The model option
-`dspark_draft_chunk_items` (default 6, at most 32) sets how many drafting
+`dspark_draft_chunk_items` (default 8, at most 32) sets how many drafting
 items one drafter forward runs; a step with more runs one forward per
-chunk, and target outputs do not depend on it. In the same run, chunks of
-8 (one 40-row forward) lowered C8 full-concurrency throughput by about 5%.
+chunk, and target outputs do not depend on it. The Flash TP4 DSpark profiles
+select eight items, one 40-row forward, on the qualified bounded head/router,
+HC and quantizer paths. Forwards above twelve items retain the larger-row
+paths; the chunk size remains overridable.
 The DSpark paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 

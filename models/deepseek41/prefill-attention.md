@@ -622,5 +622,18 @@ under live-count graph replays. Every live row's output was bitwise equal
 to the reference attention and merge, so the fused error against the f64
 oracle is the reference's. The finish took 0.118 to 0.130 of the reference
 time per layer, against 0.206 to 0.219 for paired. For a mixed layer of 14
-prompts of 554 tokens that is 4.23 ms against 7.45 ms paired. The served
-exactness, batch-invariance and speed checks are still to run.
+prompts of 554 tokens that is 4.23 ms against 7.45 ms paired. A second
+run gave every row RoPE pairs at its absolute position and the heads
+distinct sinks, and added five steps that continue long contexts: full
+chunks at 32768 and 57344, a long continuation packed with short prompts,
+two long items, and an unaligned continuation. All 136 cases were bitwise
+equal to the reference.
+
+Served check, same day, against the paired route: coding workload,
+prompts of 49 to 938 tokens, DSpark depth 3, sampled at temperature 1,
+borrowed weights, one ABBA block. Prefill steps fell from 1301 to 1264 ms
+at C8 and from 2043 to 2003 ms and 763 to 751 ms for the two C16 steps.
+Request throughput rose 1.2% at C8 and at C16, and every sampled output
+was bitwise equal to the paired route's. Every prompt of a packed step of
+8 or 16 still produced the same first token, logprobs, logits row and
+state as the same prompt prefilled alone.

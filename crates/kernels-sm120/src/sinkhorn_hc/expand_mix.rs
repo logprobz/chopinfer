@@ -21,12 +21,12 @@ impl Entry {
             capacity: self.capacity,
         })?;
         if self.capacity == 0
-            || self.capacity > 32
+            || self.capacity > 64
             || !m.flat_width().is_multiple_of(CHAIN * 8)
             || u64::from(m.mixes()) * u64::from(m.flat_width() / CHAIN + 1) * 4 > 46 * 1024
         {
             return Err(Refusal(
-                "expand-mix requires at most 32 rows and complete chain groups",
+                "expand-mix requires at most 64 rows and complete chain groups",
             ));
         }
         Ok(())
@@ -153,4 +153,51 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
             .flatten()
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wider_rows_change_only_grid_and_workspace_bounds() {
+        let old = Entry {
+            query: SinkhornExpandMixQuery {
+                mix: super::super::lagged::LAB.mix,
+            },
+            capacity: 32,
+            symbol: "expand_mix_rows".into(),
+            probe: false,
+        };
+        let wide = Entry {
+            capacity: 64,
+            ..old.clone()
+        };
+        assert_eq!(
+            format!("{:?}", old.specs().unwrap()),
+            format!("{:?}", wide.specs().unwrap())
+        );
+        for rows in 1..=32 {
+            assert_eq!(old.plans(rows).unwrap(), wide.plans(rows).unwrap());
+        }
+        for rows in 33..=64 {
+            assert!(old.plans(rows).is_err());
+            let plans = wide.plans(rows).unwrap();
+            assert!(plans.iter().all(|p| p.grid[1] == rows));
+            assert_eq!(
+                wide.workspace(rows).unwrap(),
+                wide.workspace(1).unwrap() * u64::from(rows)
+            );
+        }
+        assert!(wide.plans(0).is_err());
+        assert!(wide.plans(65).is_err());
+        assert!(
+            Entry {
+                capacity: 65,
+                ..wide
+            }
+            .validate()
+            .is_err()
+        );
+    }
 }

@@ -12,7 +12,7 @@ use super::{WeightRecord, WeightTransformError, refuse};
 use crate::contract::{DType, WeightFormat};
 use crate::precision::layout::PackingPlan;
 use crate::precision::scale_offset::{self, ScaleCode};
-use crate::precision::{DecodeOrder, NibbleOrder};
+use crate::precision::{DecodeOrder, NibbleOrder, scale_tiles};
 use std::ops::Range;
 
 mod reuse;
@@ -75,8 +75,39 @@ pub struct PackedMatrixSource {
     pub k_kept: Range<u64>,
 }
 
-/// A local-scale section stored as `scale-row-offset-v1`
-/// ([`crate::precision::scale_offset`]) instead of its raw bytes.
+/// The lossless scale encoding stored by a packed operand. The default
+/// keeps existing record parameters and reuse identities byte-identical.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "precision-serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub enum ScaleFormat {
+    #[default]
+    #[cfg_attr(feature = "precision-serde", serde(rename = "scale-row-offset-v1"))]
+    RowOffsetV1,
+    #[cfg_attr(
+        feature = "precision-serde",
+        serde(rename = "scale-row-tiles-offset-v1")
+    )]
+    RowTilesOffsetV1,
+}
+impl ScaleFormat {
+    #[must_use]
+    pub fn is_row_offset(&self) -> bool {
+        *self == Self::RowOffsetV1
+    }
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::RowOffsetV1 => scale_offset::FORMAT,
+            Self::RowTilesOffsetV1 => scale_tiles::FORMAT,
+        }
+    }
+}
+
+/// A local-scale section stored with a lossless scale encoding instead of
+/// its raw bytes. The format is part of the host's shared-packing identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
     feature = "precision-serde",
@@ -84,6 +115,11 @@ pub struct PackedMatrixSource {
 )]
 #[cfg_attr(feature = "precision-serde", serde(deny_unknown_fields))]
 pub struct ScaleEncoding {
+    #[cfg_attr(
+        feature = "precision-serde",
+        serde(default, skip_serializing_if = "ScaleFormat::is_row_offset")
+    )]
+    pub format: ScaleFormat,
     pub code: ScaleCode,
     /// Offset bits per scale: 1, 2 or 4.
     pub width: u32,
@@ -91,6 +127,40 @@ pub struct ScaleEncoding {
     /// encoder refuses another count, so a stale census cannot misplace
     /// bytes.
     pub exceptions: u64,
+}
+
+impl ScaleEncoding {
+    /// Stored bytes of one matrix, including the counted exceptions.
+    pub fn encoded_bytes(self, rows: u64, groups: u64) -> Result<u64, WeightTransformError> {
+        match self.format {
+            ScaleFormat::RowOffsetV1 => {
+                scale_offset::encoded_bytes(rows, groups, self.width, self.exceptions)
+                    .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+            }
+            ScaleFormat::RowTilesOffsetV1 => {
+                scale_tiles::encoded_bytes(rows, groups, self.width, self.exceptions)
+                    .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+            }
+        }
+    }
+    fn encode_into(
+        self,
+        raw: &[u8],
+        rows: u64,
+        groups: u64,
+        out: &mut Vec<u8>,
+    ) -> Result<u64, WeightTransformError> {
+        match self.format {
+            ScaleFormat::RowOffsetV1 => {
+                scale_offset::encode_into(raw, rows, groups, self.width, out)
+                    .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+            }
+            ScaleFormat::RowTilesOffsetV1 => {
+                scale_tiles::encode_into(raw, rows, groups, self.width, out)
+                    .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+            }
+        }
+    }
 }
 
 /// The parameters of a `PACKED_OPERAND` record.
@@ -180,7 +250,7 @@ impl PackedOperand {
 
     /// The stored section's bytes, after checking the bank is complete and
     /// every matrix names sources the record has. An encoded local-scale
-    /// section stores [`scale_offset::encoded_bytes`].
+    /// section stores [`ScaleEncoding::encoded_bytes`].
     pub fn output_bytes(&self, record: &WeightRecord) -> Result<u64, WeightTransformError> {
         let raw = self.raw_output_bytes(record)?;
         let Some(encoding) = self.local_encoding else {
@@ -190,8 +260,7 @@ impl PackedOperand {
         if self.section != PackedSection::LocalScales {
             return Ok(raw);
         }
-        scale_offset::encoded_bytes(rows, groups, encoding.width, encoding.exceptions)
-            .map_err(|e| WeightTransformError(format!("packed operand local scales: {e}")))
+        encoding.encoded_bytes(rows, groups)
     }
 
     /// The `[rows, groups]` of the raw local-scale section an encoding
@@ -229,12 +298,8 @@ impl PackedOperand {
             return Ok(());
         }
         let (rows, groups) = self.encoded_shape(encoding)?;
-        let error = |e: scale_offset::ScaleOffsetError| {
-            WeightTransformError(format!("packed operand local scales: {e}"))
-        };
         let mut out = Vec::new();
-        let exceptions = scale_offset::encode_into(raw, rows, groups, encoding.width, &mut out)
-            .map_err(error)?;
+        let exceptions = encoding.encode_into(raw, rows, groups, &mut out)?;
         if exceptions != encoding.exceptions {
             return refuse(format!(
                 "local scales hold {exceptions} exceptions at width {}, the plan counted {}",

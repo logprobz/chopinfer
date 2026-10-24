@@ -131,6 +131,7 @@ pub fn encoding(code: ScaleCode, width: u32, counts: [u64; 3]) -> ScaleEncoding 
         .position(|w| *w == width)
         .expect("a width of the codec");
     ScaleEncoding {
+        format: Default::default(),
         code,
         width,
         exceptions: counts[slot],

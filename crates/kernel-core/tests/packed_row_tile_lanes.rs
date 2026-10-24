@@ -332,6 +332,7 @@ fn encoded_scales_are_the_row_tiles_encoding() {
         for (slot, width) in WIDTHS.into_iter().enumerate() {
             let mut encoded = operand.clone();
             encoded.local_encoding = Some(ScaleEncoding {
+                format: Default::default(),
                 code: ScaleCode::Ue8m0,
                 width,
                 exceptions: counts[slot],

@@ -608,6 +608,7 @@ fn encoded(
                 let stored =
                     scale_offset::encode(bytes, rows as u64, groups as u64, width).unwrap();
                 let encoding = ScaleEncoding {
+                    format: Default::default(),
                     code: ScaleCode::Ue8m0,
                     width,
                     exceptions: counts[slot],

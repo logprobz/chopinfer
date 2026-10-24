@@ -2,8 +2,49 @@
 use super::Instance;
 use crate::dspark::device::slice;
 use crate::dspark::state::BLOCK_ROWS;
+use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 
 impl Instance {
+    /// The caller admits only one undrafted decode phase. The saved status
+    /// buffers and packet have the same lifetime as the drafted boundary.
+    pub(in crate::instance) fn check_undrafted_status(&self) -> Result<bool, String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        if !device.cycle.undrafted_status || !device.cycle.boundary_enabled {
+            return Ok(false);
+        }
+        if device.cycle.pending.is_some() || device.results.metadata.is_some() {
+            return Err("DSpark undrafted boundary contains draft results".into());
+        }
+        let packet = device
+            .cycle
+            .diagnostics
+            .ok_or("DSpark boundary packet is absent")?;
+        let sources = device
+            .ranks
+            .iter()
+            .map(|rank| rank.status.pending())
+            .collect::<Result<Vec<_>, _>>()?;
+        let bytes = sources.iter().try_fold(0_u64, |sum, span| {
+            sum.checked_add(span.length)
+                .ok_or("DSpark status extent overflow")
+        })?;
+        if bytes > packet.length {
+            return Ok(false);
+        }
+        self.join_saved_status(packet, &sources)?;
+        let mut output = vec![0; bytes as usize];
+        self.services
+            .copy_device_to_host(self.ranks[0].2, &mut output, slice(packet, 0, bytes)?)
+            .map_err(|error| error.to_string())?;
+        let mut at = 0;
+        for (rank, source) in sources.iter().enumerate() {
+            let end = at + source.length as usize;
+            device.ranks[rank].status.validate(rank, &output[at..end])?;
+            at = end;
+        }
+        Ok(true)
+    }
+
     pub(super) fn check_dspark_boundary(&self) -> Result<bool, String> {
         let Some(device) = &self.dspark else {
             return Ok(false);
@@ -55,42 +96,8 @@ impl Instance {
             // Long catch-up validation retains the original bounded reads.
             return Ok(false);
         }
-        if device.cycle.boundary_ready.len() != self.ranks.len() {
-            return Err("DSpark boundary events differ from ranks".into());
-        }
-        // These saved status buffers are private and no longer written.
-        // The packet never aliases target, sampler or collective workspace.
-        for (&ready, &(_, _, stream)) in device.cycle.boundary_ready.iter().zip(&self.ranks) {
-            self.services
-                .record_event(ready, stream)
-                .map_err(|e| e.to_string())?;
-        }
+        self.join_saved_status(packet, &sources)?;
         let stream = self.ranks[0].2;
-        for &ready in device.cycle.boundary_ready.iter().skip(1) {
-            self.services
-                .wait_event(stream, ready)
-                .map_err(|e| e.to_string())?;
-        }
-        let mut at = 0;
-        for (rank, &source) in sources.iter().enumerate() {
-            if source.length != 0 {
-                let destination = slice(packet, at, source.length)?;
-                if rank == 0 {
-                    self.services
-                        .copy_device_to_device(stream, destination, source)
-                } else {
-                    self.services.copy_peer_to_peer(
-                        stream,
-                        self.ranks[0].0,
-                        destination,
-                        self.ranks[rank].0,
-                        source,
-                    )
-                }
-                .map_err(|e| e.to_string())?;
-            }
-            at += source.length;
-        }
         let words = diagnostic_bytes / 2;
         for (offset, source) in [
             (status_bytes, device.ranks[0].draft_ids),
@@ -137,6 +144,49 @@ impl Instance {
         }
         *pending.packed_diagnostics.borrow_mut() = Some(output.split_off(at));
         Ok(true)
+    }
+
+    fn join_saved_status(&self, packet: Span, sources: &[Span]) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        if sources.len() != self.ranks.len()
+            || device.cycle.boundary_ready.len() != self.ranks.len()
+        {
+            return Err("DSpark boundary events differ from ranks".into());
+        }
+        // Every producer finishes its saved status before rank zero reads it.
+        // This packet never aliases target, sampler or collective workspace.
+        for (&ready, &(_, _, stream)) in device.cycle.boundary_ready.iter().zip(&self.ranks) {
+            self.services
+                .record_event(ready, stream)
+                .map_err(|error| error.to_string())?;
+        }
+        let stream = self.ranks[0].2;
+        for &ready in device.cycle.boundary_ready.iter().skip(1) {
+            self.services
+                .wait_event(stream, ready)
+                .map_err(|error| error.to_string())?;
+        }
+        let mut at = 0;
+        for (rank, &source) in sources.iter().enumerate() {
+            if source.length != 0 {
+                let destination = slice(packet, at, source.length)?;
+                if rank == 0 {
+                    self.services
+                        .copy_device_to_device(stream, destination, source)
+                } else {
+                    self.services.copy_peer_to_peer(
+                        stream,
+                        self.ranks[0].0,
+                        destination,
+                        self.ranks[rank].0,
+                        source,
+                    )
+                }
+                .map_err(|error| error.to_string())?;
+            }
+            at += source.length;
+        }
+        Ok(())
     }
 }
 

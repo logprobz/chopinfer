@@ -267,7 +267,12 @@ impl Instance {
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
         let mut memory = memory::Ledger::open(ranks.iter().map(|&(_, pool, _)| pool));
-        if self.dspark.is_none() && crate::device_results::enabled(shape, self.config.kv.storage) {
+        if self
+            .dspark
+            .as_ref()
+            .is_none_or(|d| d.cycle.undrafted_status)
+            && crate::device_results::enabled(shape, self.config.kv.storage)
+        {
             for &(context, _, _) in &ranks {
                 let event = services.create_event(context)?;
                 held.push(Held::Event(event));

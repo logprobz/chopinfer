@@ -377,6 +377,13 @@ pages per rank (0.734%). The gather ID buffers also reserve 1.5 MiB on
 rank 0 before KV sizing. These bounded comparisons do not replace release
 qualification.
 
+`CHOPINFER_DSPARK_UNDRAFTED_STATUS=1` opts into one joined saved-status
+readback for pure decode steps where no item drafts. On the native device
+result path it submits private sampling before collecting that status and
+completes every Engram gather before returning success. Prefill, mixed and
+drafted steps keep their existing boundaries. This switch is experimental
+until the full-state transition and served bitwise gates pass.
+
 ### DSpark qualification
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms

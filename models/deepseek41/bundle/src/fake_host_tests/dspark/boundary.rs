@@ -2,6 +2,13 @@ use super::*;
 use crate::dspark::device::slice;
 use crate::instance::dspark_boundary_for_test;
 
+#[test]
+fn undrafted_status_switch_preserves_the_drafted_boundary() {
+    crate::dspark::cycle::with_undrafted_status(true, || {
+        c1_boundary_preserves_all_status_sources_and_confidence_words();
+    });
+}
+
 fn status_bytes(rank: usize) -> u64 {
     let indexes = if rank == 0 {
         FLASH.shape.csa.index_sources.len() as u64

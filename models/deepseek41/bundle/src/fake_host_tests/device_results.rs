@@ -1,6 +1,9 @@
 use super::*;
 use runtime_bundle_abi::device_results::*;
 
+#[cfg(not(feature = "diagnostic-taps"))]
+mod undrafted;
+
 struct ReadySink {
     host: Rc<Host>,
     epoch: u64,

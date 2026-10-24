@@ -1451,11 +1451,20 @@ impl Instance {
         mut times: Option<&mut crate::dspark::timing::TargetTimes>,
     ) -> Result<(), BundleAbiError> {
         use crate::dspark::timing::measure;
-        // A single AR phase owns distinct logits storage through collection.
-        // Mixed phases retain per-phase status checks because the next phase
-        // resets the same status planes. DSpark's adapter owns its own hooks.
+        // A single phase owns distinct logits storage through collection.
+        // Mixed phases retain per-phase checks before status scratch is reused.
+        let undrafted = runs.len() == 1
+            && runs[0].arena != PREFILL
+            && runs[0].media.is_none()
+            && !runs[0].inputs.verify
+            && runs[0].inputs.q_len.iter().all(|&rows| rows == 1)
+            && self.dspark.as_ref().is_some_and(|device| {
+                device.cycle.undrafted_status
+                    && device.cycle.pending.is_none()
+                    && device.results.metadata.is_none()
+            });
         let ready_epoch = if sink.device_results_enabled()
-            && self.dspark.is_none()
+            && (self.dspark.is_none() || undrafted)
             && runs.len() == 1
             && runs[0].media.is_none()
             && self.result_ready.len() == self.ranks.len()
@@ -1514,7 +1523,7 @@ impl Instance {
             if run.media.is_some() {
                 self.clear_flags()?;
             }
-            if ready_epoch.is_none() {
+            if ready_epoch.is_none() || undrafted {
                 measure(times.as_deref_mut().map(|t| &mut t.wait_us), || {
                     self.check_status(run)
                 })?;
@@ -1528,6 +1537,30 @@ impl Instance {
                         .finish(&self.services, self.ranks.len())?;
                 }
             }
+        }
+        if undrafted {
+            // Status saving above is device-only. Queue private sampling while
+            // validation reads the joined status packet. A failed validation or
+            // gather completion still refuses the entire execute operation.
+            if ready_epoch.is_some() {
+                self.emit_logits(runs, sink, ready_epoch)?;
+            }
+            measure(times.map(|t| &mut t.wait_us), || {
+                if self.check_undrafted_status()? {
+                    Ok(())
+                } else {
+                    self.check_dspark_status()
+                }
+            })
+            .and_then(|()| self.finish_dspark_cycle(sink))
+            .map_err(|error| {
+                self.log(&error);
+                BundleAbiError::Status(BundleStatusV1::BundleError)
+            })?;
+            if ready_epoch.is_none() {
+                self.emit_logits(runs, sink, None)?;
+            }
+            return Ok(());
         }
         let device_results = self
             .dspark

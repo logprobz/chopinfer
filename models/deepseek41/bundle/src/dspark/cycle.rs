@@ -36,6 +36,8 @@ pub(crate) struct Cycle {
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
     pub boundary_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub boundary_enabled: bool,
+    /// Opt-in status aggregation and ready logits for a pure undrafted step.
+    pub undrafted_status: bool,
     pub pending: Option<Pending>,
     /// Whether drafted steps gather each item's first rows early
     /// (`early_enabled`), decided at create.
@@ -90,6 +92,26 @@ thread_local! {
     /// The switch in tests. Tests gather every row behind the drafter unless
     /// they set it, so their pinned journals stay that route's.
     static EARLY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static UNDRAFTED_STATUS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn undrafted_status_enabled() -> bool {
+    #[cfg(test)]
+    return UNDRAFTED_STATUS_IN_TESTS.get();
+    #[cfg(not(test))]
+    std::env::var_os("CHOPINFER_DSPARK_UNDRAFTED_STATUS").is_some_and(|value| value == "1")
+}
+
+#[cfg(test)]
+pub(crate) fn with_undrafted_status<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            UNDRAFTED_STATUS_IN_TESTS.set(self.0);
+        }
+    }
+    let _restore = Restore(UNDRAFTED_STATUS_IN_TESTS.replace(enabled));
+    run()
 }
 
 /// Runs `run` as if the early switch held `value`.
@@ -139,6 +161,7 @@ impl Cycle {
             boundary_ready: Vec::new(),
             boundary_enabled: std::env::var_os("CHOPINFER_DSPARK_BOUNDARY_PACKET")
                 .is_none_or(|value| value == "1"),
+            undrafted_status: undrafted_status_enabled(),
             pending: None,
             early_enabled: early_enabled(),
             early_stream: None,

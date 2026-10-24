@@ -301,6 +301,8 @@ pub(crate) struct ExactF32Ops {
     widen: Prepared<WidenRowsBuffers<View>>,
     projections: Vec<(F32Dense, Prepared<ProjectionBuffers<View>>)>,
     cached_router: Option<cached::Wide>,
+    cached_compressor: Option<cached::Wide>,
+    cached_index_weights: Option<cached::Wide>,
 }
 
 /// A step's spans of the normed rows' widening.
@@ -368,15 +370,48 @@ impl ExactF32Ops {
             shape.dims().hidden,
             experts == shape.geometry.shape.moe.experts,
         )?;
+        let target = experts == shape.geometry.shape.moe.experts;
+        let cached_compressor = cached::prepare(
+            shape,
+            asks,
+            "f32.compressor wide verify",
+            shape.geometry.shape.attention.head_dim,
+            shape.dims().hidden,
+            target && !shape.geometry.shape.csa.kv_sources.is_empty(),
+        )?;
+        let cached_index_weights = cached::prepare(
+            shape,
+            asks,
+            "f32.indexer.weights wide verify",
+            shape.geometry.shape.indexer.heads,
+            shape.dims().hidden,
+            target && !shape.geometry.shape.csa.index_sources.is_empty(),
+        )?;
         Ok(ExactF32Ops {
             widen,
             projections,
             cached_router,
+            cached_compressor,
+            cached_index_weights,
         })
     }
 
     pub(crate) fn cached_router(&self, phase: crate::program::Phase) -> Option<&cached::Wide> {
         self.cached_router.as_ref().filter(|op| op.for_phase(phase))
+    }
+
+    pub(crate) fn cached_projection(
+        &self,
+        id: &str,
+        phase: crate::program::Phase,
+    ) -> Option<&cached::Wide> {
+        match id {
+            "moe.router" => self.cached_router(phase),
+            "compressor.kv" | "compressor.gate" => self.cached_compressor.as_ref(),
+            "indexer.weights" => self.cached_index_weights.as_ref(),
+            _ => None,
+        }
+        .filter(|op| op.for_phase(phase))
     }
 
     /// The widening of `rows` normed rows to F32.

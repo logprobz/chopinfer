@@ -74,12 +74,11 @@ impl Lowering<'_> {
         if id == "moe.router" && self.router_in_norm(phase) {
             return self.certified_router(phase, layer, weight).map(Some);
         }
-        if id == "moe.router"
-            && let Some(cached) = self
-                .ops
-                .exact_f32
-                .as_ref()
-                .and_then(|ops| ops.cached_router(phase))
+        if let Some(cached) = self
+            .ops
+            .exact_f32
+            .as_ref()
+            .and_then(|ops| ops.cached_projection(id, phase))
         {
             return cached
                 .project(

@@ -12,12 +12,13 @@ unset CHOPINFER_PERF_SIGNAL_BOOTSTRAP
 # Depth tuner @NAME@ (whole machine, no profiler): one server per arm,
 # reused for every window and borrowing its weights from runner6's keeper
 # when the keeper header above starts one. The first arm runs an untimed
-# reference pass through every window, then each arm runs its greedy and
-# fixed-seed sampled windows of the workload at every concurrency its depth
-# can change, repeated in alternating order. Every output must equal the
-# reference bit for bit (greedy at once, sampled at the end). Test KV mode,
-# zero preemptions and evictions; power limits recorded and constant (and
-# equal to the config's expected watts); SM clocks recorded, never asserted;
+# reference pass through every window, then each arm runs its windows of
+# the workload (the config's kinds: fixed-seed sampled at temperature 1.0)
+# at every concurrency its depth can change, repeated in alternating order.
+# Every output must equal the reference bit for bit (greedy at once,
+# sampled at the end). Test KV mode, zero preemptions and evictions; power
+# limits recorded and constant (and equal to the config's expected watts);
+# SM clocks recorded, never asserted;
 # each rank's memory after warmup and GPU memory recorded. tune.md and
 # tune.json hold the measurements and the selected `depths` schedule, or
 # costs.md and costs.json the step costs per verify width.

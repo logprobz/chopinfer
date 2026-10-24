@@ -602,11 +602,15 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
             r.write(run / 'prompt-tokens.json', state['tokens'])
+        # Warm windows run the measured kind (sampled when the job measures
+        # it) on altered prompts, so they share no cached prefix.
+        warm_kind = windows_for(config, depth, True)[0][0]
         for c in config['warm']:
             warm = [list(x) for x in state['tokens'][:c]]
             for x in warm:
                 x[1] = x[0]
-            window(server, f'warm-c{c}', 'greedy', warm, config['warm_tokens'], f'tune-{label}-warm-c{c}', None)
+            window(server, f'warm-c{c}', warm_kind, warm, config['warm_tokens'], f'tune-{label}-warm-c{c}',
+                   config['sampling'])
             memory(f'warm-c{c}')
         record['memory_after_warmup'] = memory_lines((server.directory / 'server.log').read_text(errors='replace'))
         record['metrics_after_warmup'] = counters(server, 'after-warmup')

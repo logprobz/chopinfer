@@ -1,7 +1,7 @@
 {
   "schema": "chopinfer-depth-tune-model.v1",
   "model": "deepseek41",
-  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block, one server per depth with repeated windows, borrowing weights from the keeper. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration. The costs job measures step time per verify width at C8 and C16 (16 to 48 rows at C8, 32 to 96 at C16) with 128 rows of token capacity and graphs up to 64; its arms list widths that hold every exact row count, so the profile's widths never land a plan elsewhere, and its depth 0 arm serves the profile defaults for the default graph memory.",
+  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block, one server per depth with repeated windows, borrowing weights from the keeper. Every window is sampled at temperature 1.0 (the serving workload); greedy is an exactness check, not a measurement. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration. The costs job measures step time per verify width at C8 and C16 (16 to 48 rows at C8, 32 to 96 at C16) with 128 rows of token capacity and graphs up to 64; its arms list widths that hold every exact row count, so the profile's widths never land a plan elsewhere, and its depth 0 arm serves the profile defaults for the default graph memory.",
   "served_model_name": "DeepSeek-V4.1-Flash",
   "checkpoint_env": "CHOPINFER_DEEPSEEK_CHECKPOINT",
   "tensor_parallel_size": 4,
@@ -44,12 +44,11 @@
   ],
   "warm_tokens": 64,
   "kinds": {
-    "greedy": 0.5,
-    "sampled": 0.5
+    "sampled": 1.0
   },
   "sampling": {
-    "temperature": 0.6,
-    "top_p": 0.95,
+    "temperature": 1.0,
+    "top_p": 1.0,
     "seed": 9100
   },
   "selection": {
@@ -157,7 +156,7 @@
       "verify_rows": 128,
       "repeats": 2,
       "kinds": {
-        "greedy": 1.0
+        "sampled": 1.0
       },
       "warm": [
         16,

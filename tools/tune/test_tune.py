@@ -207,6 +207,15 @@ class Tuner(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 recorded.main(run, Path(directory) / 'short')
 
+    def test_model_configs_measure_sampled_windows_only(self):
+        # Temperature 1.0 is the serving workload: tuner jobs measure and
+        # select on sampled windows only; greedy is an exactness check.
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            model = json.loads(path.read_text())
+            self.assertEqual(model['sampling']['temperature'], 1.0, path)
+            for name, job in [('', model), *model.get('jobs', {}).items()]:
+                self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
+
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             low, high = Path(directory) / 'low', Path(directory) / 'high'

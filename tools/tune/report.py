@@ -142,27 +142,28 @@ def evaluate(run):
 
 
 def markdown(config, cells, selection, depths):
+    kinds = [k for k in ('sampled', 'greedy') if k in config['kinds']]
+
     def pair(c, d, field, form):
-        values = [cells.get((c, k, d), {}).get(field) for k in ('greedy', 'sampled')]
+        values = [cells.get((c, k, d), {}).get(field) for k in kinds]
         return ' / '.join(form.format(v) if v is not None else '-' for v in values)
 
     lines = [f"# {config['name']}: draft depth per concurrency", '',
              f"Schedule: `{depths}` (profile `depths`, or `--speculation-depths`).", '',
-             'Per C and depth, greedy / sampled: median request tok/s (spread), full-concurrency tok/s, J/token, '
-             'stream p10 tok/s, drafts per verify item, greedy accepted/drafted by position (not conditional), '
+             f"Per C and depth, {' / '.join(kinds)}: median request tok/s (spread), full-concurrency tok/s, J/token, "
+             f"stream p10 tok/s, drafts per verify item, {kinds[0]} accepted/drafted by position (not conditional), "
              'identical shapes, score (weighted request tok/s over depth 0).', '']
     for c in config['model']['concurrencies']:
         chosen = selection.get(str(c))
         if not chosen:
             continue
         lines += [f"## C{c}: depth {chosen['depth']} ({chosen['reason']})", '',
-                  '| depth | request | spread | full | J/token | stream p10 | drafts/item | greedy accepted/drafted '
+                  f"| depth | request | spread | full | J/token | stream p10 | drafts/item | {kinds[0]} accepted/drafted "
                   '| shapes | score |', '|---:|---|---|---|---|---|---|---|---|---:|']
         for d, row in sorted(chosen['depths'].items()):
-            greedy = cells.get((c, 'greedy', d), {})
-            accept = ' '.join(f"{v['rate']:.2f}" for v in greedy.get('acceptance', {}).values() if v['rate'] is not None)
-            shapes = ' / '.join('yes' if cells.get((c, k, d), {}).get('identical_shapes') else 'no'
-                                for k in ('greedy', 'sampled'))
+            first = cells.get((c, kinds[0], d), {})
+            accept = ' '.join(f"{v['rate']:.2f}" for v in first.get('acceptance', {}).values() if v['rate'] is not None)
+            shapes = ' / '.join('yes' if cells.get((c, k, d), {}).get('identical_shapes') else 'no' for k in kinds)
             note = f" (= d{row['equivalent_to']})" if row['equivalent_to'] is not None else ''
             lines.append(f"| {d}{note} | {pair(c, d, 'request_median', '{:.1f}')} | "
                          f"{pair(c, d, 'request_spread', '{:.1%}')} | {pair(c, d, 'full_median', '{:.1f}')} | "

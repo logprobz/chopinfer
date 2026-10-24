@@ -41,8 +41,10 @@ less than the tokens their drafts add. Measure the step costs first (the
   variable, tensor parallel size, test KV pages and the bundle's KV log line,
   serve options, speculation mode, deepest depth (the drafter's published
   block), verify row capacity, concurrencies, timed repeats per arm, tokens
-  per window, prompt groups per concurrency, kinds (greedy and sampled
-  weights), sampling, selection rule, power limit and work budget, planning
+  per window, prompt groups per concurrency, kinds (sampled only: speed,
+  tuning and costs are measured at the serving temperature 1.0, and greedy
+  equality is an exactness test, not a measurement), sampling, selection
+  rule, power limit and work budget, planning
   figures for the time estimate, and named `jobs` that split the sweep or
   measure costs. See `models/deepseek41/depth-tune.json`.
 - A workload under `tools/tune/workloads/`. `coding.json` weights code
@@ -85,12 +87,12 @@ that the wrapper's `# keeper use keeper-spec.json SHA256` header asks the
 queue runner for, and loads them when no keeper answers. The first arm runs
 an untimed reference pass through every window, which also warms the page
 cache, and keeps its outputs. Each arm then runs `repeats` passes, in
-alternating order, of one greedy and one fixed-seed sampled window (as the
-`kinds` select) at every concurrency the depth can change (C x (depth + 1)
+alternating order, of one fixed-seed sampled window (as the `kinds`
+select) at every concurrency the depth can change (C x (depth + 1)
 within the verify rows, every C at depth 0). Each window is one batched
 request per prompt group, so all streams start in the same step; low
 concurrencies serve several groups in turn so one prompt does not decide
-them. An arm starts only while its reserve of the work budget remains. Every
+them. Warm windows run the same kind. An arm starts only while its reserve of the work budget remains. Every
 output must equal the reference bit for bit: draft depth never changes an
 emitted token. Servers run the test KV mode with zero preemptions and
 evictions, report their speculation mode, record memory after warmup and GPU
@@ -104,7 +106,8 @@ recorded, never asserted.
 tok/s with spreads over the repeats, J/token, stream p10, drafts per item,
 accepted over drafted by draft position (not conditional on the earlier
 positions) and whether every repeat served the same shapes. A depth's score
-is its request tok/s over depth 0's, weighted over greedy and sampled.
+is its request tok/s over depth 0's (a weighted geometric mean when a
+config measures more than one kind).
 Among stable depths (identical shapes, spread within the limit) the
 shallowest within the margin of the best wins (the larger of 1.5% and the
 best depth's spread). `python3 -I tools/tune/report.py RUN_LOW RUN_HIGH`

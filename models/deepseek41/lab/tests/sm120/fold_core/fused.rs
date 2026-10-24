@@ -67,6 +67,9 @@ fn tiles() -> Vec<u32> {
     let kept = std::env::var("CHOPINFER_FOLD_FUSED_ROWS")
         .ok()
         .map(|v| v.parse::<u32>().expect("CHOPINFER_FOLD_FUSED_ROWS"));
+    if kept == Some(64) {
+        return vec![64];
+    }
     [16, 32]
         .into_iter()
         .filter(|r| kept.is_none_or(|k| k == *r))
@@ -77,7 +80,15 @@ fn group(name: &str) -> bool {
         .ok()
         .is_none_or(|g| g == name)
 }
+const WIDE_ROWS: [u32; 6] = [33, 40, 48, 56, 63, 64];
 fn row_counts(tile: u32, mode: Mode) -> Vec<u32> {
+    if tile == 64 {
+        return if matches!(mode, Mode::Memcheck | Mode::Racecheck) {
+            vec![33, 64]
+        } else {
+            WIDE_ROWS.to_vec()
+        };
+    }
     if mode == Mode::Check {
         (1..=tile).collect()
     } else {
@@ -286,6 +297,22 @@ fn wo_buffers(
     Ok((fold_a, fold_b))
 }
 
+fn wide_reference(
+    a: &mut Arena<'_>,
+    base: &mxfp8_fold::Entry,
+    b: &Buffers<View>,
+    rows: u32,
+) -> LabResult<Vec<Launch>> {
+    let packed = packed_views(a, base, b)?;
+    let query = sm120::mxfp8_fold::routed_query(base.query, rows);
+    let op = backend()
+        .mxfp8_fold_gemm(&query, Need::rows(rows))
+        .map_err(|e| e.to_string())?;
+    let work = a.filled(op.info().workspace.max(4), 0)?;
+    op.launches(&packed, work, Counts::rows(rows))
+        .map_err(|e| e.to_string())
+}
+
 fn wo_build(
     a: &mut Arena<'_>,
     tile: u32,
@@ -319,16 +346,36 @@ fn wo_build(
     };
     let q8 = served_quantizer("chop_deepseek41_dense_ceil_w8192_parallel_v1");
     let q2 = served_quantizer("chop_deepseek41_dense_ceil_f32_w2048_parallel_v1");
-    let served_a = sm120::fold_cluster::served("attention.o-a", tile).ok_or("served o-a")?;
-    let served_b = sm120::fold_cluster::served("attention.o-b", tile).ok_or("served o-b")?;
-    let fused_a = fused_family::fused("attention.o-a", tile);
-    let fused_b = fused_family::fused("attention.o-b", tile);
+    let served_a = sm120::fold_cluster::served("attention.o-a", tile);
+    let served_b = sm120::fold_cluster::served("attention.o-b", tile);
+    let fused_a = if tile == 64 {
+        sm120::fold_verify::entry("attention.o-a").unwrap()
+    } else {
+        fused_family::fused("attention.o-a", tile)
+    };
+    let fused_b = if tile == 64 {
+        sm120::fold_verify::entry("attention.o-b").unwrap()
+    } else {
+        fused_family::fused("attention.o-b", tile)
+    };
     let err = |e: Refusal| e.to_string();
     let mut arms = Vec::new();
     {
         let (fa, fb) = wo_buffers(a, &oa, &ob, &weights, rows)?;
-        let work_a = a.filled(served_a.workspace(), 0)?;
-        let work_b = a.filled(served_b.workspace(), 0)?;
+        let old_a = if tile == 64 {
+            wide_reference(a, &oa, &fa, rows)?
+        } else {
+            let entry = served_a.as_ref().ok_or("served o-a")?;
+            let work = a.filled(entry.workspace(), 0)?;
+            entry.launches(&fa, work, rows).map_err(err)?
+        };
+        let old_b = if tile == 64 {
+            wide_reference(a, &ob, &fb, rows)?
+        } else {
+            let entry = served_b.as_ref().ok_or("served o-b")?;
+            let work = a.filled(entry.workspace(), 0)?;
+            entry.launches(&fb, work, rows).map_err(err)?
+        };
         let mut calls = vec![quantize_launch(
             &q8,
             input,
@@ -337,7 +384,7 @@ fn wo_build(
             &fa,
             rows,
         )?];
-        calls.extend(served_a.launches(&fa, work_a, rows).map_err(err)?);
+        calls.extend(old_a);
         calls.push(quantize_launch(
             &q2,
             fa.output,
@@ -346,7 +393,7 @@ fn wo_build(
             &fb,
             rows,
         )?);
-        calls.extend(served_b.launches(&fb, work_b, rows).map_err(err)?);
+        calls.extend(old_b);
         arms.push(WoArm {
             label: "served".into(),
             a: fa,
@@ -356,11 +403,22 @@ fn wo_build(
             controls: None,
         });
     }
-    let first: Vec<Option<Quantizer>> = std::iter::once(None)
-        .chain(fused_family::quantizers().into_iter().map(Some))
-        .collect();
+    let first: Vec<Option<Quantizer>> = if tile == 64 {
+        let mut sliced = sm120::fold_fused::sliced(32).unwrap();
+        sliced.capacity = 64;
+        vec![None, Some(sliced)]
+    } else {
+        std::iter::once(None)
+            .chain(fused_family::quantizers().into_iter().map(Some))
+            .collect()
+    };
     for q in first {
-        let (fa, fb) = wo_buffers(a, &oa, &ob, &weights, rows)?;
+        let (mut fa, mut fb) = wo_buffers(a, &oa, &ob, &weights, rows)?;
+        let raw_weights = [fa.weights, fb.weights];
+        if tile == 64 {
+            fa = packed_views(a, &oa, &fa)?;
+            fb = packed_views(a, &ob, &fb)?;
+        }
         let flags = a.filled(u64::from(rows) * u64::from(OUTPUT_A / 32), 0xa5)?;
         let work_a = a.filled(fused_a.workspace(), 0)?;
         let work_b = a.filled(fused_b.workspace(), 0)?;
@@ -383,20 +441,36 @@ fn wo_build(
             scales: fb.activation_scales,
             flags,
         };
-        let launch_a = fused_a
+        let mut launch_a = fused_a
             .launch(&fa, Some(out), None, work_a, rows)
             .map_err(err)?;
-        let launch_b = fused_b
+        let mut launch_b = fused_b
             .launch(&fb, None, Some(flags), work_b, rows)
             .map_err(err)?;
-        let ignore = |l: &Launch| {
+        if tile == 64 {
+            launch_a.symbol = fused_a.packed_spec().map_err(err)?.symbol;
+            launch_b.symbol = fused_b.packed_spec().map_err(err)?.symbol;
+        }
+        let ignore = |l: &Launch,
+                      entry: &kernels_sm120::gemm::mxfp8_fold_cluster_fused::Entry,
+                      raw: View| {
             let mut l = l.clone();
-            l.symbol.push_str("_ignore_v1");
+            l.symbol = entry.control_spec().symbol;
+            // The negative control reads the same weights in row-major form.
+            l.arguments.0[2] = Argument::DeviceBuffer(raw.handle);
             l
         };
         let controls = [
-            vec![quantize.clone(), ignore(&launch_a), launch_b.clone()],
-            vec![quantize.clone(), launch_a.clone(), ignore(&launch_b)],
+            vec![
+                quantize.clone(),
+                ignore(&launch_a, &fused_a, raw_weights[0]),
+                launch_b.clone(),
+            ],
+            vec![
+                quantize.clone(),
+                launch_a.clone(),
+                ignore(&launch_b, &fused_b, raw_weights[1]),
+            ],
         ];
         arms.push(WoArm {
             label: q.as_ref().map_or("fused".into(), fused_family::label),
@@ -448,11 +522,21 @@ fn wo_reset(
     if bad && live >= 2 {
         values[width..2 * width].copy_from_slice(&overflow_row(weights_a[0], weights_a[1]));
     }
-    let preset: Vec<(u32, u32)> = if bad && live >= 3 {
+    if bad && live > 32 {
+        values[(live as usize - 1) * width + 5] = 0x7fc0;
+    }
+    if bad && live > 33 {
+        values[(live as usize - 2) * width..(live as usize - 1) * width]
+            .copy_from_slice(&overflow_row(weights_a[0], weights_a[1]));
+    }
+    let mut preset: Vec<(u32, u32)> = if bad && live >= 3 {
         vec![(2, 0x80)]
     } else {
         vec![]
     };
+    if bad && live > 34 {
+        preset.push((live - 3, 0x80));
+    }
     a.write(
         wo.input,
         &values
@@ -487,7 +571,7 @@ fn wo_compare(a: &Arena<'_>, wo: &Wo, live: u32, bad: bool, arms: &[usize]) -> L
     let status = words(&a.read(served.a.status)?);
     let row_status = |r: u32| status[(r + 3) as usize];
     if bad {
-        for r in 0..live.min(3) {
+        for r in (0..live.min(3)).chain((32..live).rev().take(3)) {
             if row_status(r) == 0 {
                 return Err(format!("rejected row {r} kept a zero status"));
             }
@@ -598,16 +682,17 @@ fn wo_case(
     let mut record = json!({"case":"wo","tile":tile,"rows":rows,"source":source,
         "served":symbols(&wo.arms[0].calls),"served_modules":served_modules(&wo.arms[0].calls),
         "arms":wo.arms.iter().map(|arm| json!({"label":arm.label,"calls":arm.calls.iter().map(|c| json!({"symbol":c.symbol,"grid":c.plan.grid,"block":c.plan.block,"cluster":c.plan.cluster})).collect::<Vec<_>>()})).collect::<Vec<_>>()});
-    let graphs = if mode == Mode::Check || mode == Mode::Time {
-        Some(
-            wo.arms
-                .iter()
-                .map(|arm| s.capture(|stream| issue(s, &a, &f, &arm.calls, stream)))
-                .collect::<LabResult<Vec<_>>>()?,
-        )
-    } else {
-        None
-    };
+    let graphs =
+        if mode == Mode::Check || mode == Mode::Time || tile == 64 && mode == Mode::Memcheck {
+            Some(
+                wo.arms
+                    .iter()
+                    .map(|arm| s.capture(|stream| issue(s, &a, &f, &arm.calls, stream)))
+                    .collect::<LabResult<Vec<_>>>()?,
+            )
+        } else {
+            None
+        };
     let configurations: Vec<(u32, bool)> = match mode {
         Mode::Racecheck | Mode::Memcheck => vec![(rows, true), (rows.saturating_sub(1), false)],
         _ => vec![
@@ -712,7 +797,7 @@ fn wo_inputs(rows: u32, captured: bool) -> LabResult<Vec<WoInput>> {
     if captured {
         let outputs_b = data::captured(&ob, true)?;
         for input in data::captured(&oa, true)? {
-            if input.rows == 1 {
+            if input.rows == 1 || rows > 32 && input.rows != 32 {
                 continue;
             }
             let layer = input
@@ -821,7 +906,18 @@ fn status_build(
     let b = (0..arms)
         .map(|_| status_views(a, input, rows))
         .collect::<LabResult<Vec<_>>>()?;
-    let (served, candidates, control) = if id == "attention.q-b" {
+    let (served, candidates, control) = if tile == 64 {
+        let base = base_of(input.n, input.k, input.groups);
+        let served = wide_reference(a, &base, &b[0], rows)?;
+        let f = sm120::fold_verify::entry(id).ok_or("wide status candidate absent")?;
+        let work = a.filled(f.workspace(), 0)?;
+        let packed = packed_views(a, &base, &b[1])?;
+        let mut run = f.launch(&packed, None, None, work, rows).map_err(err)?;
+        run.symbol = f.packed_spec().map_err(err)?.symbol;
+        let mut control = f.launch(&b[1], None, None, work, rows).map_err(err)?;
+        control.symbol = f.control_spec().symbol;
+        (served, vec![("status".into(), vec![run])], vec![control])
+    } else if id == "attention.q-b" {
         let e = sm120::fold_local_rows::served(id, tile).ok_or("served q-b")?;
         let work = a.filled(e.workspace(), 0)?;
         let served = e.launches(&b[0], work, rows).map_err(err)?;
@@ -948,15 +1044,16 @@ fn status_case(
     let mut record = json!({"case":"status","projection":id,"tile":tile,"rows":rows,"source":input.id,
         "served":symbols(&c.served),"served_modules":served_modules(&c.served),
         "candidates":c.candidates.iter().map(|(label, calls)| json!({"label":label,"calls":symbols(calls)})).collect::<Vec<_>>()});
-    let graphs = if mode == Mode::Check || mode == Mode::Time {
-        Some(
-            arms.iter()
-                .map(|calls| s.capture(|stream| issue(s, &a, &f, calls, stream)))
-                .collect::<LabResult<Vec<_>>>()?,
-        )
-    } else {
-        None
-    };
+    let graphs =
+        if mode == Mode::Check || mode == Mode::Time || tile == 64 && mode == Mode::Memcheck {
+            Some(
+                arms.iter()
+                    .map(|calls| s.capture(|stream| issue(s, &a, &f, calls, stream)))
+                    .collect::<LabResult<Vec<_>>>()?,
+            )
+        } else {
+            None
+        };
     let configurations: Vec<(u32, bool)> = match mode {
         Mode::Racecheck | Mode::Memcheck => vec![(rows, true)],
         _ => vec![
@@ -1059,8 +1156,13 @@ pub fn gpu(s: &Session) -> LabResult<()> {
     for tile in tiles() {
         if group("wo") {
             for rows in row_counts(tile, mode) {
-                let captured = matches!(mode, Mode::Check | Mode::Time) && rows == tile;
-                for (source, weights, input) in wo_inputs(rows, captured)? {
+                let captured =
+                    matches!(mode, Mode::Check | Mode::Time) && (rows == tile || tile == 64);
+                let inputs = wo_inputs(rows, captured)?;
+                if tile == 64 && captured && inputs.len() != 3 {
+                    return Err("wide WO capture coverage differs".into());
+                }
+                for (source, weights, input) in inputs {
                     let w = [
                         &weights[0][..],
                         &weights[1][..],
@@ -1075,12 +1177,19 @@ pub fn gpu(s: &Session) -> LabResult<()> {
         }
         if group("status") {
             for &(id, n, k, groups) in STATUS {
+                if tile == 64 && id == "attention.q-b" {
+                    continue;
+                }
                 let base = base_of(n, k, groups);
                 let mut inputs: Vec<data::Input> = row_counts(tile, mode)
                     .into_iter()
                     .map(|r| data::synthetic(&base, r))
                     .collect();
-                if mode == Mode::Check {
+                if tile == 64 && matches!(mode, Mode::Check | Mode::Time) {
+                    for rows in WIDE_ROWS {
+                        inputs.extend(data::captured_wide(&base, rows)?);
+                    }
+                } else if mode == Mode::Check {
                     inputs.extend(
                         data::captured(&base, true)?
                             .into_iter()
@@ -1093,6 +1202,18 @@ pub fn gpu(s: &Session) -> LabResult<()> {
                     cases += 1;
                 }
             }
+        }
+    }
+    if tiles() == [64] && group("wo") && group("status") {
+        let expected = if matches!(mode, Mode::Memcheck | Mode::Racecheck) {
+            6
+        } else {
+            42
+        };
+        if cases != expected {
+            return Err(format!(
+                "wide dense ran {cases} cases instead of {expected}"
+            ));
         }
     }
     if cases == 0 {
@@ -1201,6 +1322,53 @@ fn fused_catalog() {
         "FOLD_FUSED_CATALOG {}",
         json!({"family":fused_family::FAMILY,"cubin":fused_family::CUBIN,"symbols":lab,"cases":cases})
     );
+}
+
+#[test]
+fn wide_fused_catalog_keeps_full_row_references_and_packed_candidates() {
+    for rows in WIDE_ROWS {
+        let mut a = Arena::new(None);
+        let wo = wo_build(&mut a, 64, rows, [&[]; 4], &[]).unwrap();
+        assert_eq!(wo.arms.len(), 3);
+        assert_eq!(wo.arms[0].calls.len(), 6);
+        assert!(
+            wo.arms[0]
+                .calls
+                .iter()
+                .all(|c| !c.symbol.contains("cluster") && !c.symbol.contains("m8192"))
+        );
+        for arm in &wo.arms[1..] {
+            for (call, id) in arm.calls[1..]
+                .iter()
+                .zip(["attention.o-a", "attention.o-b"])
+            {
+                let entry = sm120::fold_verify::entry(id).unwrap();
+                assert_eq!(call.symbol, entry.packed_spec().unwrap().symbol);
+                assert_eq!(call.plan, entry.plan(rows).unwrap());
+                assert!(fold_cubin_for_symbol(&call.symbol).is_some());
+            }
+        }
+        for &(id, n, k, groups) in &STATUS[1..] {
+            let input = data::empty(&base_of(n, k, groups), rows);
+            let c = status_build(&mut a, id, 64, rows, &input).unwrap();
+            assert!(c.served.len() >= 2);
+            assert!(
+                c.served
+                    .iter()
+                    .all(|c| !c.symbol.contains("cluster") && !c.symbol.contains("m8192"))
+            );
+            assert_eq!(c.candidates[0].1.len(), 1);
+            assert_eq!(
+                c.candidates[0].1[0].symbol,
+                sm120::fold_verify::entry(id)
+                    .unwrap()
+                    .packed_spec()
+                    .unwrap()
+                    .symbol
+            );
+            assert!(fold_cubin_for_symbol(&c.control[0].symbol).is_some());
+        }
+    }
 }
 
 #[test]

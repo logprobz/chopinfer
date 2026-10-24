@@ -271,3 +271,7 @@ path = "examples/sm120/build_packed_serving.rs"
 [[example]]
 name = "build_f32_verify"
 path = "examples/sm120/build_f32_verify.rs"
+
+[[example]]
+name = "build_fold_verify"
+path = "examples/sm120/build_fold_verify.rs"

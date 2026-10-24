@@ -166,6 +166,37 @@ pub fn captured(base: &mxfp8_fold::Entry, decode: bool) -> LabResult<Vec<Input>>
     }
     Ok(result)
 }
+/// Extend authenticated Verify32 rows without changing their weights.
+pub fn captured_wide(base: &mxfp8_fold::Entry, rows: u32) -> LabResult<Vec<Input>> {
+    if !(33..=64).contains(&rows) {
+        return Err("wide capture rows outside 33..64".into());
+    }
+    let mut inputs = captured(base, true)?
+        .into_iter()
+        .filter(|i| i.rows == 32)
+        .collect::<Vec<_>>();
+    // This corpus has WQ_a and the WO chain at layers0/39, but no WKV.
+    let expected = if (base.query.n, base.query.k, base.query.groups) == (512, 5120, 1) {
+        0
+    } else {
+        2
+    };
+    if inputs.len() != expected {
+        return Err("wide captured layer coverage differs".into());
+    }
+    for input in &mut inputs {
+        input.codes = repeat_rows(&input.codes, 32, rows as usize);
+        input.scales = repeat_rows(&input.scales, 32, rows as usize);
+        input.expected = input
+            .expected
+            .as_ref()
+            .map(|v| repeat_rows(v, 32, rows as usize));
+        input.rows = rows;
+        input.id = format!("{}-wide{rows}", input.id);
+    }
+    Ok(inputs)
+}
+
 #[test]
 fn row_replication_keeps_complete_rows() {
     assert_eq!(

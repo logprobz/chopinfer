@@ -59,6 +59,7 @@ mod dspark_markov_row;
 mod dspark_noise;
 mod dspark_peer_embedding;
 mod dspark_ring_gather;
+use bundle_deepseek41::sm120::retain_rows;
 #[path = "../../../bundle/src/sm120/engram_hash.rs"]
 mod engram_hash;
 #[path = "../../../bundle/src/sm120/engram_hash_entries.rs"]

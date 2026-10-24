@@ -9,6 +9,8 @@ use kernels_sm120::backend::Sm120;
 use std::path::PathBuf;
 #[path = "position_query_parallel/support.rs"]
 mod support;
+#[path = "position_query_parallel/wide.rs"]
+mod wide;
 use support::*;
 
 fn backend(parallel: bool) -> Sm120 {

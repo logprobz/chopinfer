@@ -242,6 +242,7 @@ impl Geometry {
             .chain(crate::prefill_profile::declarations())
             .chain(crate::dspark_options::declarations())
             .chain(crate::dspark_coupling::declarations())
+            .chain(crate::verify_graphs::declarations())
             .collect();
         options.push(ModelOptionV1 {
             name: "text_config.indexer_mma".into(),
@@ -514,7 +515,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 8);
+        assert_eq!(options.len(), 9);
         assert_eq!(options[0].name, "dspark_coupled_drafts");
         assert_eq!(options[1].name, "dspark_draft_chunk_items");
         assert_eq!(options[5].name, "text_config.index_topk");

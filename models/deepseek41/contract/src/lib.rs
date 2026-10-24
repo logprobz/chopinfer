@@ -18,6 +18,7 @@ pub mod prefill_cone;
 pub mod prefill_profile;
 pub mod projections;
 pub mod structure;
+pub mod verify_graphs;
 
 pub mod moe;
 pub mod own_ops;

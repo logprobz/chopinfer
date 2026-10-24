@@ -310,7 +310,9 @@ impl Instance {
             }
             let layout = InputLayout::verify_within::<DeepSeek>(items);
             let phase = Phase::Verify { rows, items: live };
-            Ok((phase, VERIFY, layout, Some(verify_graph_key(rows))))
+            // Verify steps wider than the graph rows run eagerly.
+            let key = (rows <= self.config.verify_graph_rows).then(|| verify_graph_key(rows));
+            Ok((phase, VERIFY, layout, key))
         } else {
             let bucket = items.bucket(live).ok_or(BundleStatusV1::InvalidArgument)?;
             Ok((
@@ -471,7 +473,7 @@ impl Instance {
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
-            (phase.rows(), crate::buffers::head_rows())
+            (phase.rows(), crate::buffers::head_rows(&self.config.shape))
         };
         if head_rows > capacity {
             self.log(&format!(

@@ -834,13 +834,15 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     let log = |reason: &str| {
         let _ = services.log(format!("{NAME} create failed: {reason}").as_bytes());
     };
-    let config = decode(bytes, log)?;
+    let mut config = decode(bytes, log)?;
     let taps = crate::taps::StepTaps::from_env(&config).map_err(|error| {
         log(&error);
         BundleStatusV1::InvalidArgument
     })?;
     let items = config.create.items;
     let (verify_rows, mut verify) = verify_rows(&services, items)?;
+    // Every op is prepared for the verify rows the host asks for.
+    config.shape = config.shape.with_verify_rows(verify.rows_per_step);
     if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
         log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");
         return Err(BundleStatusV1::Unsupported.into());

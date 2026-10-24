@@ -7,11 +7,12 @@ use kernel_core::{
 };
 use kernels_sm120::f32_projection::zero_prefill as zero;
 pub(crate) fn prepare(
+    shape: &crate::shape::Shape,
     base: Prepared<ProjectionBuffers<View>>,
 ) -> Result<Prepared<ProjectionBuffers<View>>, Refused> {
     let e = family::entry();
     let mut info = base.info().clone();
-    if crate::ops::verify_rows() >= family::ROWS[0] {
+    if shape.verify_rows >= family::ROWS[0] {
         return Err(Refusal("router prefill buckets overlap verification rows").into());
     }
     info.implementation.push_str("+certified_bf16_prefill_v1");
@@ -157,10 +158,19 @@ mod tests {
             shard_rows: 0,
         }
     }
+    fn tp4() -> crate::shape::Shape {
+        crate::shape::Shape::new(&FLASH, bundle_runtime::geometry::Ranks::TP4).unwrap()
+    }
+    /// The widest verify rows stay below the first measured prefill count.
+    #[test]
+    fn verify_rows_below_the_measured_counts_are_admitted() {
+        assert!(prepare(&tp4().with_verify_rows(192), base()).is_ok());
+        assert!(prepare(&tp4().with_verify_rows(family::ROWS[0]), base()).is_err());
+    }
     #[test]
     fn measured_counts_preserve_base_initialization_and_other_launches() {
         let old = base();
-        let new = prepare(base()).unwrap();
+        let new = prepare(&tp4(), base()).unwrap();
         let b = buffers();
         let work = View {
             handle: 10,
@@ -186,7 +196,7 @@ mod tests {
         assert!(family::selected(&FLASH, 4, 384));
         assert!(!family::selected(&FLASH, 2, 384));
         assert!(!family::selected(&FLASH, 4, 128));
-        let op = prepare(base()).unwrap();
+        let op = prepare(&tp4(), base()).unwrap();
         let b = buffers();
         let work = View {
             handle: 10,

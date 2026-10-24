@@ -324,7 +324,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                         {"name": "text_config.indexer_mma", "default_is_qualified": true,
                              "definition": {"type": "boolean", "default": true}},
                         {"name": "text_config.indexer_prefill_tile", "default_is_qualified": true,
-                             "definition": {"type": "boolean", "default": true}}]
+                             "definition": {"type": "boolean", "default": true}},
+                        {"name": "verify_graph_rows", "default_is_qualified": true,
+                             "definition": {"type": "integer", "default": 32, "minimum": 1, "maximum": 192}}]
             })
         );
         // The serving host resolves the complete declaration before encoding
@@ -347,6 +349,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "text_config.candidate_topk_blocks": blocks,
                 "text_config.indexer_mma": true,
                 "text_config.indexer_prefill_tile": true,
+                "verify_graph_rows": 32,
             });
             assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);
             let host_config = runtime_host::HostInstanceConfigV1::new(
@@ -844,7 +847,9 @@ fn native_packages_advertise_full_block_drafting_and_bounded_verify_rows() {
             RANK_IMAGE_COMPONENT
         );
         assert_eq!(speculation.maximum_draft_tokens(), 5);
-        assert_eq!(speculation.maximum_verify_tokens(), 32);
+        // Every item at its deepest block; the host serves 32 rows unless
+        // asked for more.
+        assert_eq!(speculation.maximum_verify_tokens(), 192);
         assert_eq!(speculation.row_buckets(), &[2, 3, 4, 5, 6]);
         let slot = bundle_runtime::state::Extent {
             served: 1,

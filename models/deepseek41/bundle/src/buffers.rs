@@ -29,15 +29,16 @@ const I32: u64 = 4;
 const U32: u64 = 4;
 const U64: u64 = 8;
 
-/// Rows of every activation buffer.
+/// Rows of every activation buffer: a prefill's, which holds the widest
+/// verify step the package admits.
 pub fn scratch_rows() -> u32 {
-    PREFILL_TOKENS.max(head_rows())
+    PREFILL_TOKENS.max(DECODE_BATCH * MAX_VERIFY_ROWS)
 }
 
-/// Most rows the head scores in a decode or verify phase: the widest verify
-/// bucket, which holds every decode bucket.
-pub fn head_rows() -> u32 {
-    crate::ops::verify_rows()
+/// Most rows the head scores in a decode or verify phase of `shape`: its
+/// verify rows, which hold every decode bucket.
+pub fn head_rows(shape: &Shape) -> u32 {
+    shape.verify_rows
 }
 
 /// Cells of one item's staged window: a whole prefill chunk after the
@@ -48,8 +49,8 @@ pub fn staged_slots(shape: &Shape) -> u32 {
 
 /// Rows the local logits shard holds: a prefill's scored rows or a decode
 /// or verify phase's.
-pub fn logits_rows() -> u32 {
-    SCORED_ROWS.max(head_rows())
+pub fn logits_rows(shape: &Shape) -> u32 {
+    SCORED_ROWS.max(head_rows(shape))
 }
 
 /// Scratch buffers that share one allocation, sized to the largest member:
@@ -499,8 +500,8 @@ impl Scratch<Allocation> {
             engram_kv: row(engram_kv * F32),
             head_collapsed: row(hidden * F32),
             head_input: Allocation::bytes(u64::from(SCORED_ROWS) * hidden * F32),
-            head: Allocation::bytes(u64::from(logits_rows()) * shard * F32),
-            decode_logits: Allocation::bytes(u64::from(head_rows()) * vocab * F32),
+            head: Allocation::bytes(u64::from(logits_rows(shape)) * shard * F32),
+            decode_logits: Allocation::bytes(u64::from(head_rows(shape)) * vocab * F32),
             prefill_logits: Allocation::bytes(u64::from(SCORED_ROWS) * vocab * F32),
             router_certified: row(U32),
         }

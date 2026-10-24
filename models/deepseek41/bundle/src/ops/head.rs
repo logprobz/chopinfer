@@ -45,7 +45,7 @@ impl HeadOps {
         shape: &Shape,
         asks: &Asks,
     ) -> Result<HeadOps, Refused> {
-        let need = exact::need(logits_rows(), exact::every_phase(super::verify_rows()));
+        let need = exact::need(logits_rows(shape), exact::every_phase(shape.verify_rows));
         let project = backend
             .projection(&operation("head", "head.weight", query(shape))?, USE, need)?
             .handle;

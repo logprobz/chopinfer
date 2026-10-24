@@ -9,6 +9,7 @@
 use bundle_runtime::geometry::Ranks;
 use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
 use model_deepseek41_contract::geometry::{GEOMETRIES, Geometry, RuntimeValues};
+use model_deepseek41_contract::serving::DECODE_BATCH;
 
 /// One instance's shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,6 +17,10 @@ pub struct Shape {
     pub geometry: &'static Geometry,
     pub ranks: Ranks,
     pub runtime: RuntimeValues,
+    /// The most rows a decode or verify launch carries: the verify rows the
+    /// host asks for (`--speculative-rows`), and never fewer than the widest
+    /// decode bucket. Every op is prepared for this many decode-phase rows.
+    pub verify_rows: u32,
 }
 
 impl Shape {
@@ -26,7 +31,15 @@ impl Shape {
             geometry,
             ranks,
             runtime: geometry.runtime_defaults(),
+            verify_rows: DECODE_BATCH,
         })
+    }
+
+    /// This shape serving `rows` verify rows a step: the instance's host
+    /// limit, raised to the widest decode bucket.
+    pub fn with_verify_rows(mut self, rows: u32) -> Shape {
+        self.verify_rows = rows.max(DECODE_BATCH);
+        self
     }
 
     /// The geometry's dimensions.

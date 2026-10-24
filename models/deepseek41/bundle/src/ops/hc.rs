@@ -102,7 +102,7 @@ impl HcOps {
     ) -> Result<HcOps, Refused> {
         // Every phase mixes and expands its sublayers and collapses the
         // head's rows.
-        let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let g = shape.geometry;
         Ok(HcOps {
             finish_norm: {

@@ -227,13 +227,13 @@ mod tests {
     fn logits_moves_launch_at_their_row_limits_on_every_rank() {
         let rig = Rig::new();
         for (phase, most) in [
-            (Phase::Decode(DECODE_BATCH), head_rows()),
+            (Phase::Decode(DECODE_BATCH), head_rows(&rig.shape)),
             (
                 Phase::Verify {
-                    rows: head_rows(),
+                    rows: head_rows(&rig.shape),
                     items: DECODE_BATCH,
                 },
-                head_rows(),
+                head_rows(&rig.shape),
             ),
             (Phase::Prefill { rows: PREFILL_ROWS }, SCORED_ROWS),
         ] {

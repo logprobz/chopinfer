@@ -53,7 +53,7 @@ impl IndexerOps {
         asks: &Asks,
     ) -> Result<IndexerOps, Refused> {
         let g = shape.geometry;
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let source = g.shape.csa.index_sources[0];
         let query = indexer::selection(g, source, PREFILL_TOKENS)
             .ok_or_else(|| Refused::Rule(format!("{} has no index source", g.id)))?;

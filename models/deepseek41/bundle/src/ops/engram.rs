@@ -70,7 +70,7 @@ impl EngramOps {
         if g.engram_layers() == 0 {
             return Ok(EngramOps { layers: None });
         }
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let decode = asks.ask("engram.rows", every, |need| {
             backend.decode_mxfp8_rows(&rows_op(g), need)
         })?;

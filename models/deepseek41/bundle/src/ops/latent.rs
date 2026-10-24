@@ -184,7 +184,7 @@ impl GlueOps {
         storage: KvStorage,
     ) -> Result<GlueOps, Refused> {
         let g = shape.geometry;
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let query_norm = latent_glue::query_norm(g);
         let query_norm = asks.ask("glue.q_norm", every, |need| {
             backend.rmsnorm(&query_norm, need)

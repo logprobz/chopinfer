@@ -47,6 +47,9 @@ pub struct Configuration {
     /// Whether sampled requests draft from the target sampler's noise
     /// (`model_deepseek41_contract::dspark_coupling`).
     pub dspark_coupled_drafts: bool,
+    /// The widest verify step captured in a graph
+    /// (`model_deepseek41_contract::verify_graphs`).
+    pub verify_graph_rows: u32,
     pub shape: Shape,
     pub create: CreateConfig,
     pub kv: KvLayout,
@@ -158,6 +161,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let verify_graph_rows = model_deepseek41_contract::verify_graphs::graph_rows(&options)
+        .map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -233,6 +241,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         prefill,
         dspark_draft_chunk_items,
         dspark_coupled_drafts,
+        verify_graph_rows,
         shape,
         create,
         kv,
@@ -344,7 +353,21 @@ pub(crate) mod tests {
 
     /// `record` with its `dspark_coupled_drafts` model option set to
     /// `coupled`, its other options kept.
-    pub(crate) fn with_coupled_drafts(mut record: Vec<u8>, coupled: bool) -> Vec<u8> {
+    pub(crate) fn with_coupled_drafts(record: Vec<u8>, coupled: bool) -> Vec<u8> {
+        with_option(
+            record,
+            model_deepseek41_contract::dspark_coupling::COUPLED_DRAFTS,
+            coupled.into(),
+        )
+    }
+
+    /// `record` with its model option `name` set to `value`, its other
+    /// options kept.
+    pub(crate) fn with_option(
+        mut record: Vec<u8>,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Vec<u8> {
         let at = record
             .windows(MODEL_OPTIONS_TAG_V1.len())
             .position(|window| window == MODEL_OPTIONS_TAG_V1)
@@ -353,7 +376,7 @@ pub(crate) mod tests {
         let length = u32::from_le_bytes(record[start - 4..start].try_into().unwrap()) as usize;
         let mut options: serde_json::Value =
             serde_json::from_slice(&record[start..start + length]).unwrap();
-        options[model_deepseek41_contract::dspark_coupling::COUPLED_DRAFTS] = coupled.into();
+        options[name] = value;
         let tail = record.split_off(start + length);
         record.truncate(at);
         append_options(&mut record, &options);

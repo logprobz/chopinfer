@@ -45,7 +45,7 @@ pub(crate) use reduce::{with_bf16_partials, with_partial_setting};
 pub(crate) use reduce::{
     with_dma, with_dma_consume, with_dma_produce, with_dma_push, with_dma_setting,
 };
-pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
+pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews};
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

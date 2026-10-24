@@ -12,19 +12,11 @@ use kernel_core::rmsnorm::RmsNormBuffers;
 use kernel_core::row_copy::RowCopyBuffers;
 use kernel_core::rows::EmbeddingBuffers;
 use model_deepseek41_contract::rows;
-use model_deepseek41_contract::serving::{DeepSeek, PREFILL_TOKENS};
+use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
 use crate::shape::Shape;
-
-/// The most rows a decode or verify launch carries: the widest verify
-/// bucket, which holds every decode bucket.
-pub(crate) fn verify_rows() -> u32 {
-    bundle_runtime::graphs::verify_tokens::<DeepSeek>(bundle_runtime::geometry::Items::package::<
-        DeepSeek,
-    >())
-}
 
 /// The row ops of an instance, each prepared for a prefill's rows, the
 /// most any phase runs.
@@ -80,7 +72,7 @@ impl RowOps {
         asks: &Asks,
     ) -> Result<RowOps, Refused> {
         // Every phase normalizes, embeds and expands its rows.
-        let need = exact::need(PREFILL_TOKENS, exact::every_phase(verify_rows()));
+        let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let g = shape.geometry;
         let mut norms = Vec::new();
         for width in rows::norm_widths(g) {

@@ -544,7 +544,7 @@ impl ReduceOps {
         asks: &Asks,
     ) -> Result<ReduceOps, Refused> {
         // Every phase reduces its sublayers.
-        let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let query = query(shape, storage);
         let reduces = (0..shape.ranks())
             .map(|rank| {
@@ -589,7 +589,7 @@ impl ReduceOps {
         shape: &Shape,
         asks: &Asks,
     ) -> Result<(), Refused> {
-        let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let query = if self.bf16_partials == Partials::Prefill {
             partial_query(shape)
         } else {

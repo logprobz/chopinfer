@@ -79,7 +79,12 @@ fn production_cases() -> Vec<ProductionCase> {
             for entry in f32_split::entries(g, ranks).unwrap() {
                 let entry = f32_prefill::serving_entry(g, entry).unwrap();
                 let maximum = if entry == head {
-                    bundle_deepseek41::buffers::logits_rows()
+                    bundle_deepseek41::buffers::logits_rows(
+                        &bundle_deepseek41::shape::topologies()
+                            .into_iter()
+                            .find(|shape| shape.geometry.id == g.id && shape.ranks() == ranks)
+                            .unwrap(),
+                    )
                 } else {
                     entry.query().m_capacity
                 };
@@ -237,7 +242,12 @@ fn cpu_production_matrix_covers_registered_entries() {
                 let entry = f32_prefill::serving_entry(g, entry).unwrap();
                 let case = matrix.iter().find(|case| case.candidate == entry).unwrap();
                 let maximum = if entry == head {
-                    bundle_deepseek41::buffers::logits_rows()
+                    bundle_deepseek41::buffers::logits_rows(
+                        &bundle_deepseek41::shape::topologies()
+                            .into_iter()
+                            .find(|shape| shape.geometry.id == g.id && shape.ranks() == ranks)
+                            .unwrap(),
+                    )
                 } else {
                     entry.query().m_capacity
                 };

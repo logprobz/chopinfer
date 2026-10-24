@@ -380,6 +380,14 @@ chunk, and target outputs do not depend on it. The Flash TP4 DSpark profiles
 select eight items, one 40-row forward, on the qualified bounded head/router,
 HC and quantizer paths. Forwards above twelve items retain the larger-row
 paths; the chunk size remains overridable.
+The package declares up to 192 verify rows a step, every item at its
+deepest block. The host serves 32 unless `--speculative-rows` (profile
+`speculation.rows`) asks for more, and the instance prepares every op for
+the rows it is asked for. The model option `verify_graph_rows`
+(`--speculation-graph-rows`, profile `speculation.graph_rows`, default 32)
+is the widest verify step captured in a graph; wider steps run without one.
+Verify steps of more than 32 rows have no measured cost yet, so no profile
+uses them.
 The DSpark paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 

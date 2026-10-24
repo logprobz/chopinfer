@@ -205,7 +205,7 @@ impl CompressorOps {
             .collect();
         ratios.sort_unstable();
         ratios.dedup();
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let pooling = match ratios.contains(&2) {
             true => {
                 let [prefill, decode, verify] = PHASES.map(|phase| {

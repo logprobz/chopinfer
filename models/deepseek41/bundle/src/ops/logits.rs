@@ -54,7 +54,7 @@ impl LogitsOps {
     ) -> Result<LogitsOps, Refused> {
         let needs = Needs {
             head_rows: exact::need(PREFILL_TOKENS, exact::PREFILL),
-            exchange: exact::need(head_rows(), exact::verify(head_rows())),
+            exchange: exact::need(head_rows(shape), exact::verify(head_rows(shape))),
             gather: exact::need(SCORED_ROWS, exact::PREFILL),
         };
         let head = ShardedHead::prepare(

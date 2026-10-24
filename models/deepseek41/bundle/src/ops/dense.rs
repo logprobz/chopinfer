@@ -305,7 +305,7 @@ impl DenseOps {
         shape: &Shape,
         asks: &Asks,
     ) -> Result<DenseOps, Refused> {
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let gemms = projections(shape)
             .into_iter()
             .map(|dense| {
@@ -1148,12 +1148,9 @@ mod tests {
     #[test]
     fn dense_ceil_prefill_keeps_decode_and_verify_entries() {
         use model_deepseek41_contract::serving::DECODE_BATCH;
-        assert_eq!(
-            super::super::verify_rows(),
-            DECODE_BATCH,
-            "extend the preserved row buckets before increasing verify capacity"
-        );
+        // Verify rows past the decode buckets run the prefill entries.
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        assert_eq!(shape.verify_rows, DECODE_BATCH);
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
         let span = |index, length| {

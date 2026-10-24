@@ -320,7 +320,7 @@ impl ExactF32Ops {
         asks: &Asks,
         experts: u32,
     ) -> Result<ExactF32Ops, Refused> {
-        let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let widen = asks.ask("f32.widen", every, |need| {
             own.widen_rows(
                 &WidenRows {

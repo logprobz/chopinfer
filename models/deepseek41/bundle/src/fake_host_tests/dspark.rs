@@ -490,15 +490,26 @@ fn create_refuses_a_drafter_expert_bank_in_row_tiles() {
     );
 }
 
-#[test]
-fn full_budget_prefill_then_maximum_dspark_verify() {
-    use model_deepseek41_contract::serving::{
-        DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS,
-    };
+/// Fills a whole prefill budget, then verify steps of `cases` rows on an
+/// instance asked for `verify_tokens` verify rows, with `record` as its
+/// create record; returns the host's log lines of each verify step.
+fn prefill_then_verify(
+    verify_tokens: u32,
+    record: impl FnOnce(&Shape, &Rc<Host>) -> Vec<u8>,
+    cases: &[Vec<(u64, u32)>],
+) -> Vec<Vec<String>> {
+    use model_deepseek41_contract::serving::{DECODE_BATCH, PREFILL_TOKENS};
 
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let verify_tokens = <DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS;
-    let (host, mut instance) = create_with_limits(shape, DECODE_BATCH, verify_tokens);
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, verify_tokens)));
+    let mut instance = api()
+        .create(
+            HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+            &record(&shape, &host),
+        )
+        .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
     let prompt_rows = PREFILL_TOKENS / DECODE_BATCH;
     let slots: Vec<_> = (0..u64::from(DECODE_BATCH)).collect();
     let batch = |draft: bool, items: &[(u64, u64, u32)]| {
@@ -539,30 +550,16 @@ fn full_budget_prefill_then_maximum_dspark_verify() {
         DECODE_BATCH
     );
     instance.commit().unwrap();
-    // The package admits 32 verify rows total, up to six per item. Fill
-    // that budget with maximum-length items, then with the most drafters
-    // it admits (16 two-row items). Both include the highest state slot.
-    let cases = [
-        vec![
-            (0, MAX_VERIFY_ROWS),
-            (6, MAX_VERIFY_ROWS),
-            (12, MAX_VERIFY_ROWS),
-            (18, MAX_VERIFY_ROWS),
-            (24, MAX_VERIFY_ROWS),
-            (31, 2),
-        ],
-        (0..16).map(|i| (i * 2 + 1, 2)).collect(),
-    ];
+    let mut logs = Vec::new();
     for case in cases {
-        assert_eq!(
-            case.iter().map(|&(_, rows)| rows).sum::<u32>(),
-            verify_tokens
-        );
+        let rows: u32 = case.iter().map(|&(_, rows)| rows).sum();
         let items: Vec<_> = case
             .iter()
             .map(|&(slot, rows)| (slot, state(&instance, slot + 1).end, rows))
             .collect();
+        let from = host.logs.borrow().len();
         let verify = execute(&mut instance, &host, &batch(true, &items));
+        logs.push(host.logs.borrow()[from..].to_vec());
         assert_eq!(
             verify.draft_tokens(),
             items
@@ -572,7 +569,7 @@ fn full_budget_prefill_then_maximum_dspark_verify() {
         );
         assert_eq!(
             verify.views.iter().map(|v| v.raw().row_count).sum::<u32>(),
-            verify_tokens,
+            rows
         );
         let accepted: Vec<_> = items
             .iter()
@@ -588,6 +585,70 @@ fn full_budget_prefill_then_maximum_dspark_verify() {
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+    logs
+}
+
+/// The default 32 verify rows a step, up to six per item: maximum-length
+/// items, then the most drafters (16 two-row items). Both include the
+/// highest state slot.
+#[test]
+fn full_budget_prefill_then_maximum_dspark_verify() {
+    use model_deepseek41_contract::serving::MAX_VERIFY_ROWS;
+    let cases = [
+        vec![
+            (0, MAX_VERIFY_ROWS),
+            (6, MAX_VERIFY_ROWS),
+            (12, MAX_VERIFY_ROWS),
+            (18, MAX_VERIFY_ROWS),
+            (24, MAX_VERIFY_ROWS),
+            (31, 2),
+        ],
+        (0..16).map(|i| (i * 2 + 1, 2)).collect(),
+    ];
+    prefill_then_verify(
+        32,
+        |shape, host| crate::config::tests::record(shape, host.kv, 32, false),
+        &cases,
+    );
+}
+
+/// An instance asked for the package's widest verify rows serves every
+/// item at its deepest block, 192 rows, and widths between. Above the
+/// default graph rows the steps run eagerly; with `verify_graph_rows` 64
+/// the 48- and 64-row steps capture target graphs and wider ones do not.
+#[test]
+fn requested_verify_rows_serve_every_item_at_its_deepest_block() {
+    use model_deepseek41_contract::serving::{DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS};
+    use model_deepseek41_contract::verify_graphs::GRAPH_ROWS;
+    let widest = <DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS;
+    assert_eq!(widest, DECODE_BATCH * MAX_VERIFY_ROWS);
+    let even = |items: u64, rows: u32| -> Vec<(u64, u32)> {
+        (0..items).map(|slot| (slot, rows)).collect()
+    };
+    let cases = [even(8, 6), even(16, 4), even(32, 3), even(32, 6)];
+    let captured = |lines: &Vec<String>| {
+        lines.iter().any(|line| {
+            line.contains("\"family\":\"target\"") && line.contains("\"event\":\"capture\"")
+        })
+    };
+    let eager = prefill_then_verify(
+        widest,
+        |shape, host| crate::config::tests::record(shape, host.kv, 32, false),
+        &cases,
+    );
+    assert!(eager.iter().all(|lines| !captured(lines)), "{eager:?}");
+    let graphed = prefill_then_verify(
+        widest,
+        |shape, host| {
+            let record = crate::config::tests::record(shape, host.kv, 32, false);
+            crate::config::tests::with_option(record, GRAPH_ROWS, 64.into())
+        },
+        &cases,
+    );
+    assert_eq!(
+        graphed.iter().map(captured).collect::<Vec<_>>(),
+        [true, true, false, false]
+    );
 }
 
 fn verify(request: u64, slot: u64, start: u64, drafts: u32) -> Vec<u8> {

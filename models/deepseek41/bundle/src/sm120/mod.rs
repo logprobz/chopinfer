@@ -345,7 +345,7 @@ impl crate::Kernels {
         kernel_core::backend::Refused,
     > {
         if f32_zero::selected(shape.geometry, shape.ranks(), experts) {
-            router_prefill::prepare(base)
+            router_prefill::prepare(shape, base)
         } else {
             Ok(base)
         }

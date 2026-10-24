@@ -336,7 +336,7 @@ impl conformance::Startup for Served {
                 maximum_verify_tokens: <model_deepseek41_contract::serving::DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS,
                 row_buckets: (2..=model_deepseek41_contract::serving::MAX_VERIFY_ROWS).collect(),
                 maximum_draft_items: None,
-                narrow_rows: false,
+                narrow_rows: true,
                 exact_graphs: true,
             }),
         }

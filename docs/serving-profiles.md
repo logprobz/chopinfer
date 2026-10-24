@@ -81,8 +81,15 @@ DFlash, and at most 140 MiB live over a GLM soak; those profiles keep the
 default until the post-warmup line below measures them. On 2026-10-23
 DeepSeek TP4 DSpark at 32 sequences captured 384 graphs per GPU holding
 902 MiB, which left 137 MiB of a 1 GiB reserve, so the DeepSeek profiles
-reserve 1280 MiB (the graphs, the 256 MiB warning headroom and about 10 %
-for growth). A capture that finds no memory fails the generation worker, so
+reserved 1280 MiB. The 2026-10-24 build holds far less after warmup at 32
+sequences: 30 to 32 MiB per GPU for TP4 AR (18 graphs) and 280 MiB for TP4
+DSpark with verify graphs up to 32 rows (152 graphs), and serving captured
+no further memory. A reserve is the graphs, the 256 MiB warning headroom
+and about 10 % for growth: `tp4-ar` reserves 320 MiB and `tp4-dspark`
+640 MiB, and the rest goes to the KV pool. The other DeepSeek profiles keep
+1280 MiB until their own post-warmup lines measure them, and a profile that
+raises its graph budget measures its reserve again. A capture that finds no
+memory fails the generation worker, so
 startup logs each rank's free memory after warmup and warns below 256 MiB
 ([observability](operations-observability.md#chopinfer-metrics)); raise the
 reserve or lower `--max-sequences` when a rank warns.

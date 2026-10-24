@@ -2635,6 +2635,9 @@ impl Scheduler {
             record.shared_tail = false;
             if item.terminal {
                 self.release_shared(item.record_index);
+                // A request readmitted cold still holds the private anchor of
+                // its last preemption, which nothing can restore once it ends.
+                self.drop_own_anchor(item.record_index)?;
             }
         }
         self.active_sequences = prepared.active_sequences_after;
@@ -3399,8 +3402,10 @@ impl Scheduler {
         }
         let geometry = self.kv.geometry();
         for record in &self.requests {
+            // An ended request keeps no private anchor: nothing restores it.
             if record.replayed_tokens > record.emitted_tokens
                 || record.reserved_tokens > record.spec.maximum_kv_tokens
+                || (record.state.is_terminal() && record.own_anchor.is_some())
             {
                 return Err(ScheduleError::InvariantViolation);
             }
@@ -4465,6 +4470,89 @@ mod tests {
     #[test]
     fn new_preemption_does_not_wait_on_a_previous_anchors_copy() {
         check_new_preemption_replaces_old_anchor(true);
+    }
+
+    /// A request preempted into a private anchor and readmitted cold, because
+    /// restoring the anchor does not fit beside its neighbor, leaves no anchor
+    /// behind however it ends: finished by its last commit or cancelled.
+    fn check_cold_readmission_ends_without_its_private_anchor(finish: bool) {
+        let mut s = Scheduler::new(
+            SchedulerConfig::new(2, 8, 32, 8, 1)
+                .unwrap()
+                .with_prefix_cache(1)
+                .with_admission(AdmissionPolicy::Optimistic(
+                    OptimisticAdmission::new(0, 3).unwrap(),
+                )),
+            KvGeometry::new(4, 10).unwrap(),
+        )
+        .unwrap();
+        let pinned = RequestId::new(1);
+        let id = RequestId::new(2);
+        s.submit(
+            RequestSpec::new(pinned, 1, 29)
+                .unwrap()
+                .with_reserved_admission(),
+        )
+        .unwrap();
+        s.submit(RequestSpec::new(id, 4, 4).unwrap()).unwrap();
+        let commit = |s: &mut Scheduler| {
+            let b = s.next_batch().unwrap().unwrap();
+            let outcomes: Vec<_> = b
+                .items()
+                .iter()
+                .map(|i| {
+                    BatchOutcome::success(
+                        i.request_id(),
+                        i.phase(),
+                        usize::from(i.expects_output()),
+                        false,
+                    )
+                })
+                .collect();
+            s.commit_batch(b.id(), &outcomes).unwrap();
+        };
+        let mut chain = |_: RequestId, tokens: usize| {
+            Some(PrefixRequestV1::new(
+                Arc::new(PrefixChainV1::new(4, Arc::from(vec![1; tokens]), Vec::new()).unwrap()),
+                true,
+            ))
+        };
+        commit(&mut s);
+        s.preempt(1, &mut chain).unwrap();
+        let capture = s.take_prefix_captures().pop().unwrap();
+        assert!(s.begin_prefix_capture(&capture).unwrap().is_some());
+        s.end_prefix_capture(&capture).unwrap();
+        let own = s.requests[1].own_anchor.unwrap();
+        assert_eq!(s.admit().unwrap().admitted(), [id]);
+        assert!(s.pending_prefix_restores().is_empty());
+        assert_eq!(s.requests[1].prefilled_tokens, 0);
+        assert!(s.kv.has_anchor(own));
+        if finish {
+            while !s.requests[1].state.is_terminal() {
+                commit(&mut s);
+            }
+            assert_eq!(s.requests[1].state, RequestState::Finished);
+        } else {
+            s.cancel(id).unwrap();
+        }
+        assert!(!s.kv.has_anchor(own));
+        if !s.requests[0].state.is_terminal() {
+            s.cancel(pinned).unwrap();
+        }
+        assert_eq!(s.reap_terminal(8).unwrap().len(), 2);
+        s.audit().unwrap();
+        assert_eq!(s.kv_stats().anchors(), 0);
+        assert_eq!(s.kv_stats().free_blocks(), 10);
+    }
+
+    #[test]
+    fn a_cold_readmitted_request_finishes_without_its_private_anchor() {
+        check_cold_readmission_ends_without_its_private_anchor(true);
+    }
+
+    #[test]
+    fn a_cold_readmitted_request_is_cancelled_without_its_private_anchor() {
+        check_cold_readmission_ends_without_its_private_anchor(false);
     }
 
     /// The recomputed-row count probes and records each block a chunk

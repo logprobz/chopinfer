@@ -65,6 +65,7 @@ Usage: serving_step_breakdown.py [EXPORT.sqlite] [--step-trace FILE]
 import argparse
 import json
 import sqlite3
+import sys
 import statistics
 from collections import defaultdict
 
@@ -433,6 +434,8 @@ def main(argv=None):
     parser.add_argument("--sampler-kernel", default=SAMPLER, help=f"sampler kernel prefix (default {SAMPLER})")
     parser.add_argument("--skip", type=int, default=1, help="leading steps to drop (default 1)")
     parser.add_argument("--json")
+    parser.add_argument("--route-classes", help="route tag export from the profiled revision")
+    parser.add_argument("--route-allow", help="justified route allowlist")
     args = parser.parse_args(argv)
     if not args.sqlite and not args.step_trace:
         parser.error("give an export, --step-trace, or both")
@@ -449,6 +452,15 @@ def main(argv=None):
         with open(args.json, "w") as output:
             output.write(text + "\n")
     print(text)
+    if args.route_classes:
+        import subprocess
+        from pathlib import Path
+        command = [sys.executable, "-B", str(Path(__file__).resolve().parents[1] / "route_guard/check.py"), "--classes", args.route_classes]
+        if args.sqlite: command += ["--nsys", args.sqlite]
+        if args.step_trace: command += ["--steps", args.step_trace]
+        if args.route_allow: command += ["--allow", args.route_allow]
+        result = subprocess.run(command, check=False)
+        if result.returncode: raise SystemExit(result.returncode)
 
 
 if __name__ == "__main__":

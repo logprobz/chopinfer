@@ -843,7 +843,7 @@ pub enum HostCommandV1 {
         verify_widths: VerifyWidths,
         /// `--speculation-confidence`: the calibration balanced plans leave
         /// draft verification to, when the package takes it.
-        verify_confidence: Option<crate::confidence::VerifyConfidence>,
+        verify_confidence: Option<Box<crate::confidence::VerifyConfidence>>,
         allowed_local_media_path: Option<PathBuf>,
         remote_media: Box<runtime_media::remote::RemoteMediaPolicy>,
         /// Qualification-only teacher forcing; see `reference_forcing`.
@@ -1695,7 +1695,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         },
         draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
         verify_widths: parsed.speculation_widths.unwrap_or_default(),
-        verify_confidence,
+        verify_confidence: verify_confidence.map(Box::new),
         allowed_local_media_path: parsed.allowed_local_media_path.clone(),
         remote_media: Box::new(parsed.remote_media.clone()),
         debug_reference_tokens: parsed.debug_reference_tokens.clone(),
@@ -2181,7 +2181,7 @@ fn run_host_command_from_v1(
                 (
                     *draft_cost_model,
                     *verify_widths,
-                    verify_confidence.as_ref(),
+                    verify_confidence.as_deref(),
                 ),
                 surface,
                 None,
@@ -7874,8 +7874,8 @@ mod tests {
             panic!("serve expected");
         };
         assert_eq!(
-            verify_confidence,
-            crate::confidence::parse(calibration).unwrap()
+            verify_confidence.as_deref(),
+            crate::confidence::parse(calibration).unwrap().as_ref()
         );
         assert!(verify_confidence.is_some());
         for (tokens, mode, expected) in [

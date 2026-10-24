@@ -1183,7 +1183,7 @@ mod tests {
             match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
                 crate::HostCommandV1::Serve {
                     verify_confidence, ..
-                } => verify_confidence,
+                } => verify_confidence.map(|confidence| *confidence),
                 _ => panic!("serve"),
             }
         };

@@ -12,7 +12,17 @@ fn router_prefill_journal_preserves_decode_and_configures_shared_memory() {
         let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
         let services = HostServicesTableV1::new(Rc::new(dspark::MappedHost::new(Rc::clone(&host))));
         let mut instance = api().create(services, &record).unwrap();
-        for (id, rows) in [(7, 8192), (8, 320), (9, 17)] {
+        for (id, rows) in [
+            (7, 8192),
+            (8, 320),
+            (9, 321),
+            (10, 446),
+            (11, 789),
+            (12, 1803),
+            (13, 7754),
+            (14, 319),
+            (15, 17),
+        ] {
             let from = host.device.journal.borrow().len();
             instance
                 .execute(&prompt(id, 0, 0, rows, true), &mut Views::default())
@@ -36,7 +46,7 @@ fn router_prefill_journal_preserves_decode_and_configures_shared_memory() {
             assert_eq!(
                 zero > 0,
                 rows >= 320,
-                "rows {rows}: expected measured router route"
+                "rows {rows}: expected prefill router route"
             );
             assert_launches_fit_configured_shared(&lines, &shape.topology());
         }

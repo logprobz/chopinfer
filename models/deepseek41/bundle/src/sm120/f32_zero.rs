@@ -1,4 +1,4 @@
-//! Exact widened-BF16 router rows, qualified at explicit prefill counts.
+//! Exact widened-BF16 router rows, with independent per-row certification.
 use kernel_build::CubinSpec;
 use kernel_core::{
     contract::{ActivationFormat, DType, Epilogues, GemmQuery, WeightFormat},
@@ -8,7 +8,8 @@ use kernels_sm120::f32_projection::{Entry, zero_prefill};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "f32_zero_prefill_serving";
 pub const CUBIN: &str = "f32_zero_prefill_deepseek41_serving_sm120";
-/// Exact bucket qualification on two devices at 250 W. M32 is selected;
+/// Original measured counts on two devices at 250 W. Prefill admission
+/// covers every count from the first through 8192. M32 is selected;
 /// M64's lower occupancy loses despite its additional activation reuse.
 pub const ROWS: &[u32] = &[
     320, 448, 512, 576, 704, 832, 960, 1000, 1024, 1088, 1216, 1344, 1472, 1600, 1728, 1856, 1984,

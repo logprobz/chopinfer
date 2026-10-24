@@ -182,7 +182,7 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
 }
 
 #[test]
-fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
+fn exact_f32_prefill_router_covers_its_row_range_and_preserves_small_rows() {
     let mut cases: Vec<_> = (320..=2496)
         .step_by(128)
         .map(|rows| (rows, "_blocked_m32_v1"))
@@ -199,13 +199,10 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         (4097, ""),
         (8192, "_wide_m32_n64_v1"),
     ]);
-    for (rows, measured) in cases {
-        // At four ranks each measured route is also a certified router
-        // bucket, whose zero-component M32 tile replaces that route.
-        let certified = crate::sm120::f32_zero::ROWS
-            .iter()
-            .any(|&r| u64::from(r) == rows);
-        assert_eq!(certified, !measured.is_empty(), "rows={rows}");
+    for (rows, _) in cases {
+        // At four ranks every prefill count from 320 uses the independent
+        // row certificates, including packed steps between measured counts.
+        let certified = (320..=8192).contains(&rows);
         // At 8192 rows the router runs in the MoE-input norm instead
         // (`sm120::router_norm`), with no prepare.
         let in_norm = rows == 8192;

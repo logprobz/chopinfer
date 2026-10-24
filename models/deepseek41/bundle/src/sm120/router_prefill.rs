@@ -1,4 +1,4 @@
-//! Prefill-only wrapper; initialization and every unmeasured count use the base.
+//! Prefill-only wrapper; initialization and rows below 320 use the base.
 use crate::sm120::f32_zero as family;
 use kernel_core::{
     backend::{Counts, Launch, OpInfo, Prepared, PreparedOp, Refused, View},
@@ -46,7 +46,7 @@ impl PreparedOp<ProjectionBuffers<View>> for Router {
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         let old = self.base.launches(b, workspace, counts)?;
-        if !family::ROWS.contains(&counts.rows) {
+        if !(family::ROWS[0]..=8192).contains(&counts.rows) {
             return Ok(old);
         }
         let e = family::entry();
@@ -165,10 +165,11 @@ mod tests {
     #[test]
     fn verify_rows_below_the_measured_counts_are_admitted() {
         assert!(prepare(&tp4().with_verify_rows(192), base()).is_ok());
+        assert!(prepare(&tp4().with_verify_rows(319), base()).is_ok());
         assert!(prepare(&tp4().with_verify_rows(family::ROWS[0]), base()).is_err());
     }
     #[test]
-    fn measured_counts_preserve_base_initialization_and_other_launches() {
+    fn prefill_range_preserves_base_initialization_and_other_launches() {
         let old = base();
         let new = prepare(&tp4(), base()).unwrap();
         let b = buffers();
@@ -180,7 +181,7 @@ mod tests {
         for rows in 1..=8192 {
             let counts = Counts::rows(rows);
             let launches = new.launches(&b, work, counts).unwrap();
-            if family::ROWS.contains(&rows) {
+            if (320..=8192).contains(&rows) {
                 assert_eq!(launches.len(), 2);
                 assert_eq!(launches[0].symbol, zero::prepare_symbol(&family::entry()));
                 assert_eq!(launches[1].symbol, zero::symbol(&family::entry(), 32));

@@ -1,7 +1,8 @@
 //! Exact prefill routes qualified at SM120, 250 W, 2026-10-19.
-//! Each row below passed eager and captured full-output bitwise comparison
-//! with the old kernel. Admit only these measured row counts, with a fixed
-//! 3 percent winning margin. Only the measured row counts are admitted; no crossover is inferred.
+//! Each exact row below passed eager and captured full-output bitwise
+//! comparison with the old kernel, with a fixed 3 percent winning margin.
+//! The packed-row bands were qualified at 300 W on 2026-10-24; see
+//! `models/deepseek41/lab/prefill-row-routes.md`. Exact entries keep precedence.
 //! Heads gather smaller row sets and retain their split decode routes.
 //!
 //! | N | K | Rows | Tile N | Old us | New us | Paired new/old |
@@ -62,7 +63,7 @@
 //! | 128 | 5120 | 4095 | 32 | 2372.608 | 528.384 | 0.222604 |
 //! | 128 | 5120 | 4096 | 32 | 2402.304 | 536.544 | 0.223155 |
 use kernel_build::CubinSpec;
-use kernels_sm120::f32_projection::{Entry, cubin_spec};
+use kernels_sm120::f32_projection::{Entry, PrefillBand, cubin_spec};
 use model_deepseek41_contract::geometry::Geometry;
 
 pub const FAMILY: &str = "f32_prefill";
@@ -459,6 +460,82 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
     let entry = entry
         .with_prefill_buckets(buckets)
         .map_err(|e| e.to_string())?;
+    let bands: &[(u32, u32, u32)] = match (q.n, q.k) {
+        (512, 5120) => &[(257, 1023, 32), (1024, 8192, 64)],
+        (32, 5120) => &[(257, 8192, 64)],
+        (128, 512) => &[(257, 4095, 32), (4096, 8192, 64)],
+        (384, 5120) => &[(257, 319, 32)],
+        _ => &[],
+    };
+    let entry = entry
+        .with_prefill_bands(
+            bands
+                .iter()
+                .map(|&(lo, hi, features)| PrefillBand { lo, hi, features })
+                .collect(),
+        )
+        .map_err(|e| e.to_string())?;
     let entry = super::f32_blocked::serving_entry(g, entry)?;
     super::f32_wide::serving_entry(g, entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn bands_cover_packed_rows_and_preserve_every_exact_route_and_other_shape() {
+        let mut changed = 0;
+        for original in baseline_entries(&FLASH).unwrap() {
+            let routed = serving_entry(&FLASH, original.with_split_decode()).unwrap();
+            let exact = routed.clone().with_prefill_bands(vec![]).unwrap();
+            let q = routed.query();
+            for rows in 1..=8192 {
+                let previous = exact.entry_for_rows(rows);
+                let selected = routed.entry_for_rows(rows);
+                let tile = match (q.n, q.k, rows) {
+                    (512, 5120, 257..=1023) | (128, 512, 257..=4095) | (384, 5120, 257..=319) => 32,
+                    (512, 5120, 1024..=8192) | (32, 5120, 257..=8192) | (128, 512, 4096..=8192) => {
+                        64
+                    }
+                    _ => 0,
+                };
+                if previous.uses_prefill_tiles() {
+                    assert_eq!(selected, previous, "exact {}x{} at {rows}", q.n, q.k);
+                } else if tile != 0 {
+                    assert_eq!(
+                        selected.prefill_features(),
+                        tile,
+                        "{}x{} at {rows}",
+                        q.n,
+                        q.k
+                    );
+                    assert_eq!(selected.blocked_prefill_rows(), 0);
+                    assert_eq!(selected.wide_prefill_features(), 0);
+                    changed += 1;
+                } else {
+                    assert_eq!(
+                        selected.symbol(),
+                        previous.symbol(),
+                        "{}x{} at {rows}",
+                        q.n,
+                        q.k
+                    );
+                    assert_eq!(selected.prefill_features(), previous.prefill_features());
+                }
+            }
+        }
+        assert!(changed > 23000);
+    }
+
+    #[test]
+    fn bands_leave_other_geometries_unchanged() {
+        let mut other = FLASH;
+        other.id = "unqualified";
+        for original in baseline_entries(&FLASH).unwrap() {
+            let entry = original.with_split_decode();
+            assert_eq!(serving_entry(&other, entry.clone()).unwrap(), entry);
+        }
+    }
 }

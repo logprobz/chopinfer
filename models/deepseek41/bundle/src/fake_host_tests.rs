@@ -210,6 +210,8 @@ fn exact_f32_prefill_router_covers_its_row_range_and_preserves_small_rows() {
             "_certified_m32_f64_normed_v1"
         } else if certified {
             "_zero_m32_v1"
+        } else if (257..=319).contains(&rows) {
+            "_tiles_n32_v1"
         } else {
             ""
         };
@@ -240,7 +242,10 @@ fn exact_f32_prefill_router_covers_its_row_range_and_preserves_small_rows() {
                 .iter()
                 .all(|line| !line.contains("_tiles_n") || !line.contains("_weights"))
         );
-        assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
+        assert_eq!(
+            calls.iter().any(|line| line.contains("_tiles_n")),
+            (257..=319).contains(&rows)
+        );
         assert!(calls.iter().all(|line| !line.contains("_blocked_m")));
         assert!(calls.iter().all(|line| !line.contains("_wide_m")));
         assert_eq!(

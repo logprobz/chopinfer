@@ -48,6 +48,30 @@ fn router_prefill_journal_preserves_decode_and_configures_shared_memory() {
                 rows >= 320,
                 "rows {rows}: expected prefill router route"
             );
+            if matches!(rows, 319 | 320 | 321 | 446 | 789 | 1803 | 7754) {
+                for (n, k, tile) in [
+                    (512, 5120, if rows < 1024 { 32 } else { 64 }),
+                    (32, 5120, 64),
+                    (128, 512, if rows < 4096 { 32 } else { 64 }),
+                ] {
+                    let symbol = format!("chop_deepseek41_dense_f32_m8192_n{n}_k{k}_v1");
+                    let projected: Vec<_> = lines[from..]
+                        .iter()
+                        .filter(|line| line.starts_with("launch ") && line.contains(&symbol))
+                        .collect();
+                    assert!(
+                        projected.iter().any(|line| line
+                            .contains(&format!("{symbol}_tiles_n{tile}_v1 LaunchConfig"))),
+                        "rows {rows}: missing {n}x{k} tile {tile}"
+                    );
+                    assert!(
+                        projected
+                            .iter()
+                            .all(|line| !line.contains(&format!("{symbol} LaunchConfig"))),
+                        "rows {rows}: {n}x{k} retained the baseline route"
+                    );
+                }
+            }
             assert_launches_fit_configured_shared(&lines, &shape.topology());
         }
         instance.destroy().unwrap();

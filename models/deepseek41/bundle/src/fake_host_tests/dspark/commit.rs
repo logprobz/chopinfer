@@ -120,7 +120,7 @@ fn batched_commit_configures_large_kv_projection_before_launch() {
         {
             continue;
         }
-        let shared = kernels_sm120::gemm::mxfp8_prefill::SHARED;
+        let shared = 66_560;
         assert!(shared > bundle_runtime::acquire::DEFAULT_SHARED_BYTES);
         assert!(line.contains(&format!("shared_memory_bytes: {shared},")));
         launches += 1;

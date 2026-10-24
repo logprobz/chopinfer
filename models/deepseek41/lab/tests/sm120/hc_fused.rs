@@ -37,9 +37,7 @@ fn gpu_drafter_split() {
     use bundle_deepseek41::sm120::fold_cubin_for_symbol;
     use runtime_cuda::KernelArgument as A;
     let result = kernel_harness::gpu_test_with(super::f32_decode::timing_cubins(), 1 << 30, |s| {
-        let reference = lagged::entries(lagged::LAB_PROFILE, lagged::LAB, false).into_iter()
-            .find(|e| matches!(e.op, lagged::Op::MixCollapse { probe: false })).unwrap();
-        let split = lagged_split::entry(lagged::LAB_PROFILE, lagged::LAB, false);
+        let (reference, split) = drafter_entries();
         let symbols = [reference.symbol.clone(), split.symbol()];
         let modules = symbols.iter().map(|symbol| s.load_cubin(fold_cubin_for_symbol(symbol)
             .ok_or_else(|| format!("missing {symbol}"))?.1)).collect::<LabResult<Vec<_>>>()?;
@@ -106,6 +104,42 @@ fn gpu_drafter_split() {
     }).unwrap();
     assert!(result.is_some(), "an idle GPU is required");
 }
+
+fn drafter_entries() -> (lagged::Entry, lagged_split::Entry) {
+    let profile = kernels_sm120::Profile::synthetic(kernels_sm120::ProfileNames {
+        name: "deepseek41",
+        tag: FLASH.kernel_tag,
+    });
+    let geometry = Geometry {
+        mix: model_deepseek41_contract::hc::mix(&FLASH),
+        capacity: 80,
+    };
+    let reference = lagged::entries(profile, geometry, false)
+        .into_iter()
+        .find(|e| matches!(e.op, lagged::Op::MixCollapse { probe: false }))
+        .unwrap();
+    // Capacity is not compiled; include 80 rows as a control beyond the served bound.
+    let split = lagged_split::entry(profile, geometry, false);
+    (reference, split)
+}
+
+#[test]
+fn drafter_entries_use_locked_served_symbols() {
+    let (reference, split) = drafter_entries();
+    for symbol in [reference.symbol.clone(), split.symbol()] {
+        assert!(
+            bundle_deepseek41::sm120::fold_cubin_for_symbol(&symbol).is_some(),
+            "missing served HC symbol {symbol}"
+        );
+    }
+    for rows in [30, 40, 60, 80] {
+        for live in [0, rows - 1, rows] {
+            reference.plan(rows, live).unwrap();
+            split.plan(rows, live).unwrap();
+        }
+    }
+}
+
 pub(super) fn symbols() -> Vec<String> {
     [
         "chop_sinkhorn_hc_deepseek41_expand_f32_v1".into(),

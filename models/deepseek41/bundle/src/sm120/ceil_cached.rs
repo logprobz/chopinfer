@@ -56,7 +56,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// `ceil_parallel::register` with each measured width's cached twin in place
 /// of its parallel entry.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    for entry in super::ceil_parallel::quantizers(g, ranks)? {
+    for entry in super::ceil_parallel::registered_quantizers(g, ranks)? {
         backend = backend.with_block_quantize(cached(&entry).unwrap_or(entry));
     }
     Ok(backend.with_silu_mul_quantize(super::ceil_parallel::activation(g, ranks)?))

@@ -133,6 +133,17 @@ fn every_wide_router_binds_the_named_producer_and_disjoint_metadata_tail() {
             ] {
                 assert!(!lower(stage).is_empty());
             }
+            let gate = lower(Stage::ExpertsGateUp(0));
+            assert_eq!(gate.len(), 2, "wide gate at {rows} rows");
+            assert!(gate[0].launch.symbol.contains("_absorb_lanes_"));
+            let down = lower(Stage::ExpertsDown(0));
+            assert_eq!(down.len(), 1, "wide down at {rows} rows");
+            assert!(down[0].launch.symbol.contains("_moe_strip2_"));
+            let direct = ops.moe.as_ref().unwrap().direct(phase).unwrap();
+            for width in [1, 2, 4] {
+                assert!(direct.inplace_scales(true, width));
+                assert!(direct.inplace_scales(false, width));
+            }
         }
     }
 }

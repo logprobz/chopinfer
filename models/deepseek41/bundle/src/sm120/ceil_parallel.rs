@@ -43,10 +43,12 @@ fn early_release(g: &Geometry, symbol: &str) -> bool {
 /// is quantized alone, including every drafter forward through 60 rows.
 pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
 
-/// The rows `entry`'s parallel form holds. The target's routed MoE chains
-/// pick their intermediate quantizer by their own rows, so its width keeps
-/// the decode batch and the target's selections stay as they were.
+/// Flash TP4 includes the target intermediate in its wide verify forms.
+/// Other topologies retain their target decode and drafter row limits.
 fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
+    if g.id == FLASH.id && ranks == 4 {
+        return CAPACITY;
+    }
     let main = model_deepseek41_contract::moe::expert_sets(g)[0];
     let intermediate = main.top_k * (g.shape.moe.intermediate / ranks);
     let draft = g.shape.dspark.top_k * (g.shape.moe.intermediate / ranks);
@@ -54,8 +56,6 @@ fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
         && intermediate != draft
     {
         DECODE_BATCH
-    } else if g.id == FLASH.id && ranks == 4 {
-        CAPACITY
     } else {
         SMALL_DRAFT_ROWS
     }
@@ -117,8 +117,29 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(specs)
 }
 
+/// Preserve generic expert-chain selection while exposing wide entries
+/// to explicit callers. Direct wide gates quantize in their own finisher.
+pub(super) fn registered_quantizers(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<block_quantize::Entry>, String> {
+    let mut entries = quantizers(g, ranks)?;
+    let intermediate = g.shape.moe.top_k * (g.shape.moe.intermediate / ranks);
+    let draft = g.shape.dspark.top_k * (g.shape.moe.intermediate / ranks);
+    for entry in &mut entries {
+        if entry.query == model_deepseek41_contract::moe::quantizer(intermediate)
+            && intermediate != draft
+        {
+            // A generic capacity-64 expert chain can still serve small
+            // live plans. Keep its previous quantizer at those plans.
+            entry.capacity = DECODE_BATCH;
+        }
+    }
+    Ok(entries)
+}
+
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    for entry in quantizers(g, ranks)? {
+    for entry in registered_quantizers(g, ranks)? {
         backend = backend.with_block_quantize(entry);
     }
     Ok(backend.with_silu_mul_quantize(activation(g, ranks)?))
@@ -129,14 +150,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wide_verify_keeps_the_target_intermediate_quantizer_separate() {
+    fn generic_target_quantization_keeps_its_prepared_capacity_selection() {
+        use kernel_core::backend::{Backend, Need};
+
+        let query = model_deepseek41_contract::moe::quantizer(3456);
+        for register in [register, super::super::ceil_cached::register] {
+            let baseline = baseline_quantizers(&FLASH, 4)
+                .unwrap()
+                .into_iter()
+                .fold(Sm120::new(), Sm120::with_block_quantize);
+            let backend = register(baseline, &FLASH, 4).unwrap();
+            // A 12-row step uses a chain prepared for 64 rows. Widening
+            // registration changes its quantizer even at that small step.
+            for capacity in 1..=CAPACITY {
+                let op = backend
+                    .block_quantize(&query, Need::rows(capacity))
+                    .unwrap();
+                let symbol = if capacity <= DECODE_BATCH {
+                    "chop_deepseek41_moe_ceil_w3456_parallel_v1"
+                } else {
+                    "chop_deepseek41_moe_ceil_w3456_v1"
+                };
+                assert_eq!(op.info().symbols, [(symbol.into(), 0)]);
+            }
+        }
+    }
+
+    #[test]
+    fn wide_verify_includes_the_target_intermediate_quantizer() {
         for entry in quantizers(&FLASH, 4).unwrap() {
-            let intermediate = entry.symbol == "chop_deepseek41_moe_ceil_w3456_parallel_v1";
-            assert_eq!(
-                entry.capacity,
-                if intermediate { DECODE_BATCH } else { CAPACITY }
-            );
-            assert_eq!(entry.plan(CAPACITY).is_ok(), !intermediate);
+            assert_eq!(entry.capacity, CAPACITY);
+            for rows in 33..=CAPACITY {
+                assert!(entry.plan(rows).is_ok());
+            }
             assert!(entry.plan(CAPACITY + 1).is_err());
         }
         let shared = activation(&FLASH, 4).unwrap();

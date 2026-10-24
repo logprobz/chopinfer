@@ -129,6 +129,12 @@ fn prepare(
     r2: bool,
     tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
 ) -> Result<Prepared, Refused> {
+    let wide = fused_router
+        && entry.experts() == 384
+        && phase == ExecutionPhase::Verify
+        && (33..=64).contains(&rows);
+    let absorb_queues = absorbs(entry, phase, rows) || wide;
+    let strip2_down = strips2(entry, phase, rows) || wide;
     let scratch = entry.workspace_bytes(rows)?;
     let routed_offset = if fused_router {
         super::moe_router_finish::layout(entry, rows).routed
@@ -164,9 +170,8 @@ fn prepare(
         Stage::DownWide,
         Stage::DownFinish,
     ] {
-        if ((rows <= 8 || absorbs(entry, phase, rows))
-            && matches!(s, Stage::GateWide | Stage::DownWide))
-            || (strips2(entry, phase, rows) && s == Stage::DownWide)
+        if ((rows <= 8 || absorb_queues) && matches!(s, Stage::GateWide | Stage::DownWide))
+            || (strip2_down && s == Stage::DownWide)
         {
             continue;
         }
@@ -261,13 +266,13 @@ fn prepare(
             spec = bandwidth::finish_loads_entry(entry);
         }
         if let Some(s @ (Stage::GateSmall | Stage::DownSmall)) = stage
-            && absorbs(entry, phase, rows)
+            && absorb_queues
         {
             // The small queue's positional ABI and view names.
             spec = absorb::entry(entry, s);
             plan = absorb::plan(entry, s, rows)?;
         }
-        if stage == Some(Stage::DownSmall) && strips2(entry, phase, rows) {
+        if stage == Some(Stage::DownSmall) && strip2_down {
             // The absorbing down queue's positional ABI and view names.
             spec = strip2::entry(entry);
             plan = strip2::plan(entry, rows)?;

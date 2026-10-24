@@ -74,6 +74,28 @@ impl Lowering<'_> {
         if id == "moe.router" && self.router_in_norm(phase) {
             return self.certified_router(phase, layer, weight).map(Some);
         }
+        if id == "moe.router"
+            && let Some(cached) = self
+                .ops
+                .exact_f32
+                .as_ref()
+                .and_then(|ops| ops.cached_router(phase))
+        {
+            return cached
+                .project(
+                    phase.rows(),
+                    rows(input, phase.rows()),
+                    weight,
+                    rows(output, phase.rows()),
+                    self.inputs.live_tokens,
+                    crate::ops::exact_f32::state(
+                        self.buffers,
+                        &layer_view(layer, &format!("{}.weight", dense.tensor)),
+                    ),
+                )
+                .map(|stages| Some(stages.into_launches()))
+                .map_err(|refusal| format!("wide {id} of layer {layer}: {refusal}"));
+        }
         project(
             op,
             phase.rows(),

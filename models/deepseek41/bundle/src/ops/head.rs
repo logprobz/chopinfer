@@ -26,6 +26,7 @@ pub(crate) fn query(shape: &Shape) -> GemmQuery {
 /// The head's op of an instance.
 pub(crate) struct HeadOps {
     pub(crate) project: Prepared<ProjectionBuffers<View>>,
+    wide: Option<super::exact_f32::cached::Wide>,
 }
 
 /// A step's spans of the head: its F32 rows, the rank's head weight shard,
@@ -44,13 +45,22 @@ impl HeadOps {
         backend: &dyn Backend,
         shape: &Shape,
         asks: &Asks,
+        target: bool,
     ) -> Result<HeadOps, Refused> {
         let need = exact::need(logits_rows(shape), exact::every_phase(shape.verify_rows));
         let project = backend
             .projection(&operation("head", "head.weight", query(shape))?, USE, need)?
             .handle;
         asks.record("head.project", need, project.info());
-        Ok(HeadOps { project })
+        let wide = super::exact_f32::cached::prepare(
+            shape,
+            asks,
+            "head.project wide verify",
+            shape.vocab_rows(),
+            shape.dims().hidden,
+            target,
+        )?;
+        Ok(HeadOps { project, wide })
     }
 
     /// The codes layout the head reads its weight view in.
@@ -59,7 +69,24 @@ impl HeadOps {
     }
 
     /// The head's projection of `rows` rows.
-    pub(crate) fn head(&self, rows: u32, views: &HeadViews) -> Result<Vec<Lowered>, Refusal> {
+    pub(crate) fn head(
+        &self,
+        phase: crate::program::Phase,
+        rows: u32,
+        views: &HeadViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        if let Some(wide) = self.wide.as_ref().filter(|wide| wide.for_phase(phase)) {
+            return wide
+                .project(
+                    rows,
+                    views.input,
+                    views.weight,
+                    views.logits,
+                    views.live_rows,
+                    views.state,
+                )
+                .map(super::exact_f32::cached::CachedProjectionStages::into_launches);
+        }
         project(
             &self.project,
             rows,

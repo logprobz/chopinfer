@@ -95,7 +95,7 @@ impl Lowering<'_> {
             live_rows,
             state: crate::ops::exact_f32::state(self.buffers, "head.weight"),
         };
-        ops.head(rows, &views)
+        ops.head(phase, rows, &views)
             .map(Some)
             .map_err(|refusal| format!("rank {}'s LM head: {refusal}", self.rank))
     }

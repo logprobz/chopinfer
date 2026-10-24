@@ -330,7 +330,12 @@ impl Ops {
             &mut missing,
             &names,
             "LM head",
-            head::HeadOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            head::HeadOps::prepare(
+                kernels.backend.as_ref(),
+                shape,
+                &asks,
+                expert_set.count == shape.geometry.shape.moe.experts,
+            ),
         );
         let exact_f32 = family(
             &mut missing,

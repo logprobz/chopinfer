@@ -94,7 +94,7 @@ mod tests {
         use model_deepseek41_contract::geometry::FLASH;
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         for rows in [32, 33, 48, 64, 128] {
-            let shape = shape.clone().with_verify_rows(rows);
+            let shape = shape.with_verify_rows(rows);
             assert_eq!(
                 crate::Kernels::loads(super::super::f32_verify::CUBIN, &shape),
                 rows > 32

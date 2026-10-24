@@ -300,6 +300,7 @@ pub(crate) struct CertifiedRouterViews {
 pub(crate) struct ExactF32Ops {
     widen: Prepared<WidenRowsBuffers<View>>,
     projections: Vec<(F32Dense, Prepared<ProjectionBuffers<View>>)>,
+    cached_router: Option<cached::Wide>,
 }
 
 /// A step's spans of the normed rows' widening.
@@ -359,7 +360,23 @@ impl ExactF32Ops {
                 Ok((dense, prepared))
             })
             .collect::<Result<_, Refused>>()?;
-        Ok(ExactF32Ops { widen, projections })
+        let cached_router = cached::prepare(
+            shape,
+            asks,
+            "f32.moe.router wide verify",
+            experts,
+            shape.dims().hidden,
+            experts == shape.geometry.shape.moe.experts,
+        )?;
+        Ok(ExactF32Ops {
+            widen,
+            projections,
+            cached_router,
+        })
+    }
+
+    pub(crate) fn cached_router(&self, phase: crate::program::Phase) -> Option<&cached::Wide> {
+        self.cached_router.as_ref().filter(|op| op.for_phase(phase))
     }
 
     /// The widening of `rows` normed rows to F32.

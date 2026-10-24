@@ -81,6 +81,23 @@ fn target_programs_lower_at_wide_verify_rows() {
                         .count()
                 };
                 assert_eq!(
+                    count_symbol(
+                        "chop_deepseek41_verify_f32_n32320_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
+                    ),
+                    4
+                );
+                assert_eq!(
+                    count_symbol(
+                        "chop_deepseek41_verify_f32_n384_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
+                    ),
+                    40 * 4
+                );
+                assert!(
+                    !target
+                        .iter()
+                        .any(|line| line.contains("verify_f32_n128_k512"))
+                );
+                assert_eq!(
                     count_symbol("chop_deepseek41_hc_round_cols_r4_tx_v1"),
                     77 * 4
                 );

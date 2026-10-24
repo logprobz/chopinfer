@@ -35,7 +35,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-HARNESS = ('tune.py', 'runner.py', 'report.py', 'faults.py', 'stub.py', 'prompts.py', 'preflight.py', 'tune.job.in')
+HARNESS = ('tune.py', 'runner.py', 'report.py', 'faults.py', 'stub.py', 'prompts.py', 'preflight.py', 'recorded.py',
+           'tune.job.in')
 sys.path.insert(0, str(HERE))
 import prompts as builder  # noqa: E402
 

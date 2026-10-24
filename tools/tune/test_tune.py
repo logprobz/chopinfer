@@ -8,6 +8,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import prompts  # noqa: E402
+import recorded  # noqa: E402
 import report  # noqa: E402
 import tune  # noqa: E402
 
@@ -54,6 +55,12 @@ class Tuner(unittest.TestCase):
         named = {**MODEL, 'arms': [{'label': 'g64', 'depth': 5, 'arguments': ['--speculation-graph-rows', '64']},
                                    {'label': 'g32', 'depth': 5}]}
         self.assertEqual(tune.arms({'model': named})[1], {'label': 'g32', 'depth': 5, 'arguments': []})
+
+    def test_the_job_plans_every_arms_windows_per_repeat(self):
+        self.assertEqual(tune.planned_windows({'model': MODEL}), 2 * 2 * (6 + 5 + 4 + 4 + 3 + 3))
+        costs = {**MODEL, 'concurrencies': [8, 16], 'verify_rows': 128,
+                 'arms': [{'label': 'd5', 'depth': 5}, {'label': 'd0', 'depth': 0}]}
+        self.assertEqual(tune.planned_windows({'model': costs, 'kinds': {'greedy': 1.0}}), 2 * (2 + 2))
 
     def test_kinds_select_the_windows(self):
         config = {'model': MODEL, 'kinds': {'greedy': 1.0}}
@@ -135,11 +142,70 @@ class Tuner(unittest.TestCase):
                         'energy': {'joules_per_token': 2.0},
                         'cells': {f'i8-r{rows}': {'cycle_ms': [ms + repeat, ms + 2], 'execution_ms': [ms - 1]},
                                   'i7-r28': {'cycle_ms': [30.0], 'execution_ms': []}}}))
+            (run / 'summary.json').write_text(json.dumps({'processes': {'d5': {
+                'args': ['--speculation-depths', '1:5', '--speculative-rows', '128', '--speculation-graph-rows', '64'],
+                'gpu_memory_mib': {'ready': [1000]},
+                'memory_after_warmup': {'ranks': [{'rank': 0, 'kv_mib': 9, 'taken_mib': 700, 'free_mib': 1200}]}}}}))
             out = report.costs(run)
+            text = (run / 'costs.md').read_text()
+        self.assertEqual(out['memory_after_warmup']['d5']['graph_rows'], '64')
+        self.assertIsNone(out['memory_after_warmup']['d5']['widths'])
+        self.assertIn('| d5 | 128 | 64 | - | 700 / 1200 |', text)
         self.assertEqual(out['summary'], {'i8-r32': 39.5, 'i8-r48': 53.5})
         self.assertEqual(out['cells']['i8-r48']['steps'], 4)
         self.assertEqual(out['cells']['i7-r28']['arms'], ['d3', 'd5'])
         self.assertAlmostEqual(out['windows']['c8/greedy/d5']['request_spread'], 1 / 300)
+
+    def test_costs_arms_verify_their_exact_rows(self):
+        # Each drafting arm of a model's costs job lists a width for every
+        # row count its depth reaches at the job's concurrencies, so the
+        # profile's own widths cannot land a plan on another width.
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            model = json.loads(path.read_text())
+            for name, job in model.get('jobs', {}).items():
+                if job.get('mode') != 'costs':
+                    continue
+                config = {'model': {**model, **job}, 'kinds': job.get('kinds', model['kinds'])}
+                for arm in tune.arms(config):
+                    if arm['depth'] == 0:
+                        continue
+                    args = arm['arguments']
+                    self.assertIn('--speculation-widths', args, (path, name, arm['label']))
+                    widths = {int(x) for x in args[args.index('--speculation-widths') + 1].split(',')}
+                    for _, c in tune.windows_for(config, arm['depth']):
+                        self.assertIn(c * (arm['depth'] + 1), widths, (path, name, arm['label'], c))
+
+    def test_recorded_runs_parse_into_a_cost_table(self):
+        def step(batch, ns, items=8, rows=32, prefill=0):
+            return {'schema': 'chopinfer.step.v1', 'batch': batch, 'completed_unix_ns': ns, 'prefill_items': prefill,
+                    'decode_rows': 0, 'verify_items': items, 'verify_rows': rows, 'verify_emitted_tokens': 20,
+                    'execution_us': 37_000}
+        steps = [step(1, 0, prefill=8), *(step(b, b * 38_000_000) for b in range(2, 6))]
+        config = {'name': 'recorded', 'model': {**MODEL, 'concurrencies': [8], 'tensor_parallel_size': 2,
+                                                'kv_pages_line': 'model: {pages} KV pages per rank'}}
+        with tempfile.TemporaryDirectory() as directory:
+            run, out = Path(directory) / 'run', Path(directory) / 'out'
+            server = run / 'd3' / 'server'
+            server.mkdir(parents=True)
+            (run / 'config.json').write_text(json.dumps(config))
+            log = ['model: 64 KV pages per rank', 'startup weight_upload: {"uploaded_bytes": 10, "lent_bytes": 0}']
+            log += [f'device memory after warmup rank {i}: KV 9 MiB, 280 MiB taken since sizing (graphs), '
+                    f'1200 MiB free' for i in range(2)]
+            log += ['step ' + json.dumps(x) for x in steps]
+            (server / 'server.log').write_text('\n'.join(log) + '\n')
+            (server / 'final.prom').write_text('vllm:num_preemptions_total 0\nchop_prefix_cache_evictions_total 0\n')
+            window = run / 'd3' / 'windows' / 'greedy-c8.json'
+            window.parent.mkdir()
+            window.write_text(json.dumps({'name': 'greedy-c8', 'kind': 'greedy', 'concurrency': 8, 'depth': 3,
+                                          'request_tokens_per_second': 400.0, 'steps': steps}))
+            recorded.main(run, out)
+            result = json.loads((out / 'recorded-check.json').read_text())
+            costs = json.loads((out / 'costs.json').read_text())
+            self.assertEqual((result['servers'], result['windows']), (1, 1))
+            self.assertEqual(costs['cells']['i8-r32']['steps'], 3)
+            (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')
+            with self.assertRaises(SystemExit):
+                recorded.main(run, Path(directory) / 'short')
 
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:

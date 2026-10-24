@@ -192,7 +192,9 @@ def costs(run):
     completion) and median execution time over every timed window's steps,
     with the step count and the arms that served it; and per window
     (C, kind, depth) the median request and full-concurrency tok/s and
-    J/token over repeats. Writes RUN_DIR/costs.json and RUN_DIR/costs.md."""
+    J/token over repeats; per arm its served rows, graph rows and widths,
+    each rank's memory after warmup and the GPU memory samples. Writes
+    RUN_DIR/costs.json and RUN_DIR/costs.md."""
     run = Path(run)
     config, rows = load(run)
     table = {}
@@ -218,13 +220,19 @@ def costs(run):
         'full_median': median([x['full']['tokens_per_second'] for x in v]),
         'joules_median': median([(x.get('energy') or {}).get('joules_per_token') for x in v])}
         for (c, k, d), v in sorted(groups.items())}
-    memory = {}
+    memory, warmed = {}, {}
     summary = run / 'summary.json'
     if summary.exists():
         for label, process in json.loads(summary.read_text()).get('processes', {}).items():
             memory[label] = process.get('gpu_memory_mib')
+            args = process.get('args') or []
+            option = lambda flag: args[args.index(flag) + 1] if flag in args else None
+            warmed[label] = {'speculative_rows': option('--speculative-rows'),
+                             'graph_rows': option('--speculation-graph-rows'),
+                             'widths': option('--speculation-widths'),
+                             'ranks': (process.get('memory_after_warmup') or {}).get('ranks', [])}
     out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1]['items'], kv[1]['rows']))),
-           'windows': windows, 'gpu_memory_mib': memory}
+           'windows': windows, 'gpu_memory_mib': memory, 'memory_after_warmup': warmed}
     full = {key: cell for key, cell in out['cells'].items()
             if any(key == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
                    for d in range(config['model'].get('max_depth', 5) + 1))}
@@ -245,6 +253,15 @@ def costs(run):
         lines.append(f"| {key} | {value['repeats']} | {value['request_median']:.1f} | {value['request_spread']:.1%} | "
                      f"{value['full_median']:.1f} | "
                      + ('-' if value['joules_median'] is None else f"{value['joules_median']:.3f}") + ' |')
+    gpus = config['model'].get('tensor_parallel_size', 1)
+    lines += ['', 'Memory after warmup per arm and rank (rows and graph rows as served; `-` is the profile '
+              'default): MiB taken since KV sizing (graphs) / MiB free.', '',
+              '| arm | rows | graph rows | widths | ' + ' | '.join(f'rank {i}' for i in range(gpus)) + ' |',
+              '|---|---|---|---|' + '---|' * gpus]
+    for label, value in warmed.items():
+        ranks = {m['rank']: f"{m['taken_mib']} / {m['free_mib']}" for m in value['ranks']}
+        lines.append(f"| {label} | {value['speculative_rows'] or '-'} | {value['graph_rows'] or '-'} | "
+                     f"{value['widths'] or '-'} | " + ' | '.join(ranks.get(i, '-') for i in range(gpus)) + ' |')
     lines += ['', 'GPU MiB used per arm (at readiness, after each warm window, at the end):', '']
     lines += [f'- {label}: {value}' for label, value in memory.items()]
     (run / 'costs.md').write_text('\n'.join(lines) + '\n')

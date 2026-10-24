@@ -64,13 +64,17 @@ less than the tokens their drafts add. Measure the step costs first (the
 2. `python3 -I STAGE/harness/preflight.py STAGE` parses every arm's server
    options with the frozen executable, without CUDA, and checks the keeper
    spec.
-3. Dry run on the CPU stub (with `local.env` sourced):
+3. `python3 -B STAGE/harness/recorded.py RECORDED_RUN OUT` runs the job's
+   parsers (KV, memory, weight upload and counter lines, engine steps, the
+   full-concurrency and cost tables) on an earlier run on real servers and
+   fails unless every server and window parses.
+4. Dry run on the CPU stub (with `local.env` sourced):
    `python3 -B STAGE/harness/tune.py --output STAGE/validation/dry
    --payload-sha PAYLOAD --dry-run`. Stub timings are synthetic; the dry run
    checks mechanics and failures only. The stub's controls
    (`TUNE_STUB_PERTURB`, `TUNE_STUB_PREEMPT`, `TUNE_STUB_IGNORE_DEPTHS`,
    `TUNE_DRY_POWER_W`) must each fail the job.
-4. Queue `STAGE/tune.job` on an otherwise idle machine.
+5. Queue `STAGE/tune.job` on an otherwise idle machine.
 
 ## What the job does and checks
 
@@ -111,13 +115,17 @@ change.
 
 ## Step costs per verify width
 
-A job with `mode` `costs` runs the same arms without verify widths, so
-every depth verifies its exact rows (C x (depth + 1)), with the token
-capacity and graph budget under test in its `extra_arguments`. `costs.md`
-and `costs.json` (`report.py --costs RUN`) list, for every (items, rows)
-step shape, the median and p10/p90 cycle time from the previous step's
-completion and the median execution time, the windows' tok/s and J/token,
-and each arm's GPU memory. The memory after the warm windows less the memory
-at readiness bounds the graphs those windows captured. A model config's
-`arms` can instead name other settings per server, such as two graph
-budgets, to sweep them in one job.
+A job with `mode` `costs` measures what each verify step shape costs. Its
+`arms` set the token capacity and graph budget under test and list verify
+widths that hold every row count the arm's depth reaches (C x (depth + 1)):
+a profile's own widths would otherwise land those plans on a narrower width.
+A depth 0 arm at the profile defaults gives the default graph memory.
+`costs.md` and `costs.json` (`report.py --costs RUN`) list, for every
+(items, rows) step shape, the median and p10/p90 cycle time from the previous
+step's completion and the median execution time, the windows' tok/s and
+J/token, and per arm its rows, graph rows and widths with each rank's memory
+after warmup (MiB taken since KV sizing, MiB free) and its GPU memory
+samples. With the KV pool fixed, the free memory of an arm with a wider
+graph budget less the default arm's is what the wider graphs and buffers
+cost. DeepSeek's costs job measures 16 to 48 rows at C8 and 32 to 96 rows
+at C16 (96 runs without a graph).

@@ -498,6 +498,11 @@ def arms(config):
             for d in [deepest, *sorted(d for d in depths if d != deepest)]]
 
 
+def planned_windows(config):
+    """Timed windows the job runs: every arm's windows, `repeats` times."""
+    return sum(len(windows_for(config, arm['depth'])) for arm in arms(config)) * config['model']['repeats']
+
+
 def order(config):
     """The arms' labels in run order."""
     return [arm['label'] for arm in arms(config)]
@@ -639,6 +644,8 @@ def save(run, state):
             lines.append(f"  {name}: {value['request_tokens_per_second']:.1f} tok/s, full {full['steps']} steps "
                          f"{full['tokens_per_second']:.1f} tok/s, {dict(Counter(full['histogram']).most_common(3))}")
     lines += ['', *(f'Exact against W0: {k} in {n} timed windows' for k, n in sorted(state['exact'].items()))]
+    if state.get('windows'):
+        lines.append(f"Timed windows: {state['windows']['executed']} executed of {state['windows']['planned']} planned")
     lines += ['Sampled difference: ' + x for x in state['sampled_differences']]
     lines += [f"Power {k}: limits {v.get('power_limits_w')} W, SM MHz {v.get('sm_clock_mhz')}"
               for k, v in state['power'].items()]
@@ -688,6 +695,11 @@ def main(args):
             save(run, state)
         if state['sampled_differences']:
             raise RuntimeError(f"fixed-seed sampled outputs differ from W0: {state['sampled_differences']}")
+        planned = planned_windows(config)
+        executed = sum(state['exact'].values())
+        state['windows'] = {'planned': planned, 'executed': executed}
+        if executed != planned:
+            raise RuntimeError(f'{executed} timed windows executed, {planned} planned')
         state['status'] = 'passed'
     except BaseException as error:
         state['status'] = 'failed'

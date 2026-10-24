@@ -18,6 +18,7 @@ mod dspark_aux;
 pub mod dspark_entries;
 pub mod dspark_noise;
 pub mod dspark_peer_embedding;
+pub mod dspark_projection;
 pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
@@ -234,12 +235,37 @@ pub fn register_f32_projections(
     geometry: &model_deepseek41_contract::geometry::Geometry,
     ranks: u32,
 ) -> Result<Sm120, String> {
+    register_f32_projections_for(backend, geometry, ranks, false)
+}
+
+/// The drafter's projection inventory; backbone inventories keep their routes.
+pub fn register_dspark_f32_projections(
+    backend: Sm120,
+    geometry: &model_deepseek41_contract::geometry::Geometry,
+    ranks: u32,
+) -> Result<Sm120, String> {
+    register_f32_projections_for(backend, geometry, ranks, true)
+}
+
+fn register_f32_projections_for(
+    backend: Sm120,
+    geometry: &model_deepseek41_contract::geometry::Geometry,
+    ranks: u32,
+    drafter: bool,
+) -> Result<Sm120, String> {
     let entries = f32_split::entries(geometry, ranks)?
         .into_iter()
         .map(|entry| {
             f32_prefill::serving_entry(geometry, entry)
                 .and_then(|entry| projection_reuse::head(geometry, ranks, entry))
                 .and_then(|entry| head_last::head(geometry, ranks, entry))
+                .and_then(|entry| {
+                    if drafter {
+                        dspark_projection::route(geometry, ranks, entry)
+                    } else {
+                        Ok(entry)
+                    }
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let cubins = [
@@ -247,6 +273,7 @@ pub fn register_f32_projections(
         f32_decode::cubin_name(geometry),
         projection_reuse::HEAD_CUBIN.into(),
         head_last::CUBIN.into(),
+        dspark_projection::CUBIN.into(),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),
@@ -268,6 +295,17 @@ pub fn register_f32_projections(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    pub(crate) fn drafter_f32_backend(
+        shape: &crate::shape::Shape,
+    ) -> Result<Option<Sm120>, kernel_core::backend::Refused> {
+        if !dspark_projection::enabled(shape.geometry, shape.ranks()) {
+            return Ok(None);
+        }
+        register_dspark_f32_projections(Sm120::new(), shape.geometry, shape.ranks())
+            .map(Some)
+            .map_err(kernel_core::backend::Refused::Rule)
+    }
+
     /// Whether a prefill step of `rows` rows runs the router in the
     /// MoE-input norm (`router_norm`).
     pub(crate) fn router_in_norm(
@@ -659,6 +697,7 @@ impl crate::Kernels {
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
             || cubin == dspark_argmax::CUBIN
+            || cubin == dspark_projection::CUBIN
             || cubin == dspark_noise::CUBIN
             || cubin == dspark_quantize::cubin_name(g)
             || cubin == dspark_peer_embedding::cubin_name(g)

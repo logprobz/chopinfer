@@ -20,7 +20,7 @@ pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 6;
 /// the row-local quantizers, the HC mix split and the head's weight reuse,
 /// whose per-row arithmetic does not depend on the forward's rows. A larger
 /// chunk is served by the prefill-sized forms with the same bits.
-pub const SMALL_DRAFT_ITEMS: u32 = 16;
+pub const SMALL_DRAFT_ITEMS: u32 = 12;
 
 /// The block rows of [`SMALL_DRAFT_ITEMS`]: five per drafting item.
 pub const SMALL_DRAFT_ROWS: u32 = SMALL_DRAFT_ITEMS * MAX_DRAFT_TOKENS;

@@ -30,6 +30,8 @@ mod dspark_entries;
 mod dspark_noise;
 #[allow(dead_code, reason = "the bundle registers the entry")]
 mod dspark_peer_embedding;
+#[allow(dead_code, reason = "the drafter selects bounded rows")]
+mod dspark_projection;
 mod dspark_quantize;
 #[path = "dspark_router.rs"]
 #[allow(dead_code)]
@@ -520,6 +522,7 @@ pub fn selection(
             owners.push((fold_cluster::CUBIN.into(), geometry.id));
             owners.push((fold_fused::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
+            owners.push((dspark_projection::CUBIN.into(), geometry.id));
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
             owners.push((dense_dual::CUBIN.into(), geometry.id));
             owners.push((query_window::CUBIN.into(), geometry.id));
@@ -668,6 +671,7 @@ pub fn selection(
     specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
     specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
+    specs.extend(dspark_projection::cubins(geometries).expect("bounded drafter projection cubins"));
     specs.extend(prefill_matrix::cubins(geometries).expect("qualified prefill matrix cubin"));
     specs.extend(
         prefill_tma_matrix::cubins(geometries).expect("qualified prefill TMA matrix cubin"),
@@ -873,6 +877,7 @@ fn main() {
                     || cubin.name == f32_decode::cubin_name(g)
                     || cubin.name == projection_reuse::HEAD_CUBIN
                     || cubin.name == head_last::CUBIN
+                    || cubin.name == dspark_projection::CUBIN
                     || cubin.name == f32_head::cubin_name(g)
                     || cubin.name == f32_dense::cubin_name(g)
                     || cubin.name == dspark_router::cubin_name(g)

@@ -130,7 +130,11 @@ impl Heads {
             every,
         )?;
         let norm = backend.rmsnorm(&model_deepseek41_contract::rows::final_norm(g), every)?;
-        let vocabulary = backend
+        let draft_backend = crate::Kernels::drafter_f32_backend(&shape)?;
+        let vocabulary_backend = draft_backend
+            .as_ref()
+            .map_or(backend, |b| b as &dyn Backend);
+        let vocabulary = vocabulary_backend
             .projection(
                 &exact_f32::operation(
                     "dspark.head",

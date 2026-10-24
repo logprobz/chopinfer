@@ -329,6 +329,16 @@ impl ExactF32Ops {
                 need,
             )
         })?;
+        let draft_backend = if experts == shape.geometry.shape.dspark.experts
+            && experts != shape.geometry.shape.moe.experts
+        {
+            crate::Kernels::drafter_f32_backend(shape)?
+        } else {
+            None
+        };
+        let projection_backend = draft_backend
+            .as_ref()
+            .map_or(backend, |b| b as &dyn Backend);
         let projections = projections(shape.geometry)
             .into_iter()
             .map(|mut dense| {
@@ -336,7 +346,7 @@ impl ExactF32Ops {
                     dense.n = experts;
                 }
                 let op = operation(dense.id, dense.tensor, query(dense.n, dense.k))?;
-                let prepared = backend.projection(&op, USE, every)?.handle;
+                let prepared = projection_backend.projection(&op, USE, every)?.handle;
                 let prepared = if dense.id == "moe.router" {
                     crate::Kernels::prefill_router(shape, experts, prepared)?
                 } else {

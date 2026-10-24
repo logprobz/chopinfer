@@ -202,3 +202,44 @@ fn passive_full_state_capture_keeps_native_readiness_and_committed_cursors() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn passive_capture_budget_failure_keeps_a_committed_instance_terminal() {
+    let root = PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+        .join("deepseek41-tests")
+        .join(format!("passive-budget-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("enabled"), []).unwrap();
+    std::fs::write(
+        root.join("transitions.json"),
+        serde_json::to_vec(&json!({
+            "version":1,"before_draft":[],"after_commit":[2],"requests":[1],"max_bytes":1,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (host, mut instance) = create(1, true);
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    prefill(&host, &mut instance, 1);
+    let mut result = sink(&host, 1, 9);
+    instance
+        .execute(&decode(&[(1, 0, 3, 17)]), &mut result)
+        .unwrap();
+    assert!(!result.ready.is_empty());
+    assert!(instance.commit().is_err());
+    assert!(!root.join("transition-after-commit-2").exists());
+    let from = host.journal.borrow().len();
+    assert!(
+        instance
+            .execute(&decode(&[(1, 0, 4, 17)]), &mut sink(&host, 1, 10))
+            .is_err()
+    );
+    assert!(instance.cancel().is_err());
+    assert!(
+        host.journal.borrow()[from..]
+            .iter()
+            .all(|line| !line.starts_with("launch ") && !line.starts_with("replay "))
+    );
+    let _ = instance.destroy();
+    std::fs::remove_dir_all(root).unwrap();
+}

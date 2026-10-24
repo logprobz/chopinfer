@@ -102,6 +102,17 @@ fn compute(journal: &[String]) -> Vec<&String> {
         .collect()
 }
 
+fn compute_by_stream(journal: &[String]) -> std::collections::BTreeMap<&str, Vec<&String>> {
+    let mut streams = std::collections::BTreeMap::<&str, Vec<&String>>::new();
+    for line in compute(journal) {
+        streams
+            .entry(line.split_whitespace().nth(1).unwrap())
+            .or_default()
+            .push(line);
+    }
+    streams
+}
+
 #[test]
 fn sparse_dma_preserves_compute_and_orders_only_the_required_rows() {
     for rows in [8192, 8191] {
@@ -190,12 +201,11 @@ fn sparse_dma_serves_dspark_target_prefill() {
         assert_eq!(phased(&reference), reductions * 4);
         assert_eq!(reductions, 73);
         assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
-        let before = compute(&reference);
-        let after = compute(&candidate);
-        assert_eq!(before.len(), after.len());
-        for (index, (before, after)) in before.iter().zip(&after).enumerate() {
-            assert_eq!(before, after, "compute dispatch {index}");
-        }
+        // Default asynchronous Engram gathers can change the interleaving
+        // of independent streams around the transport joins. Each stream
+        // must retain every launch, operand, extent and alias in order.
+        // The dependency audit below still checks all cross-stream joins.
+        assert_eq!(compute_by_stream(&reference), compute_by_stream(&candidate));
         assert_eq!(phased(&candidate), 0);
         assert_eq!(
             candidate

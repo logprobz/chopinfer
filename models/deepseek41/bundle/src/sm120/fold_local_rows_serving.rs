@@ -169,6 +169,19 @@ impl crate::Kernels {
         // WQ_a's and WKV's cluster folds without their admission launch.
         if super::fold_fused::selected(shape.geometry, shape.ranks()) {
             if id == "attention.q-b"
+                && super::fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
+                && (33..=shape.verify_decode_rows()).contains(&need.capacity)
+            {
+                let entry = super::fold_verify_local::entry()?;
+                if !matches(entry.query(), query, need) {
+                    return Err(Refusal("a status fold differs from its projection").into());
+                }
+                return Ok(Some(kernels_sm120::backend::packed_op(
+                    entry.prepare(need)?,
+                    [entry.symbol()],
+                )?));
+            }
+            if id == "attention.q-b"
                 && let Some(entry) = super::fold_fused::wide(need.capacity)
             {
                 if !matches(entry.base.query, query, need) {

@@ -99,6 +99,7 @@ fn target_programs_lower_at_wide_verify_rows() {
                 );
                 for symbol in [
                     "chop_deepseek41_verify_mxfp8_n1280_k5120_g1_f32_cluster64_n64_c8s5_status_v1_packed_v1",
+                    "chop_deepseek41_verify_mxfp8_n8192_k1280_g1_f32_local32_n48_s4x_status_v1_rows64_v1_packed_v1",
                     "chop_deepseek41_verify_mxfp8_n1024_k4096_g2_f32_cluster64_n64_c8s3_statusq_v1_packed_v1",
                     "chop_deepseek41_verify_mxfp8_n5120_k2048_g1_f32_cluster64_n32_c2s4_statusp_v1_packed_v1",
                     "chop_deepseek41_dense_ceil_w8192_sliced_s16w8_v1",

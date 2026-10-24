@@ -777,7 +777,8 @@ impl crate::Kernels {
             && cubin != allocated_acceptance_entries::CUBIN
             && (cubin != fold_verify::CUBIN
                 || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
-            && cubin != fold_verify_local::CUBIN
+            && (cubin != fold_verify_local::CUBIN
+                || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))

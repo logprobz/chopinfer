@@ -89,6 +89,27 @@ struct Config {
 }
 
 impl Config {
+    fn diagnostic_invariants(
+        &self,
+        trace_hash: &str,
+        vocabulary: usize,
+        ranks: usize,
+        capacity: (usize, usize, usize),
+    ) -> Value {
+        let (sequences, verify_tokens, pages) = capacity;
+        let mut invariants = json!({"host":self.source,"trace":trace_hash,
+            "vocabulary":vocabulary,"topology":self.topology,"ranks":ranks,"fold":false,
+            "capacity":{"sequences":sequences,"verify_tokens":verify_tokens},
+            "sampling":"fixed-batch-v1"});
+        if let Some(temperature) = self.temperature {
+            invariants["sampling_temperature_bits"] = temperature.to_bits().into();
+        }
+        if self.transitions {
+            invariants["capacity"]["kv_pages"] = pages.into();
+        }
+        invariants
+    }
+
     fn serve_arguments(&self) -> Vec<String> {
         let mut arguments = vec![
             "serve".into(),
@@ -118,6 +139,43 @@ impl Config {
 #[cfg(test)]
 mod configuration_tests {
     use super::*;
+
+    #[test]
+    fn transition_comparisons_reject_changed_kv_capacity() {
+        let mut config: Config = serde_json::from_value(json!({
+            "bundle":"bundle", "checkpoint":"checkpoint", "topology":"topology",
+            "trace":"trace.json", "output":"capture", "concurrency":16,
+            "verify":true, "owned":false, "source":{}, "transitions":true
+        }))
+        .unwrap();
+        let description = |invariants| Description {
+            invariants,
+            manifest: json!({}),
+            environment: json!({}),
+            source_checkpoint: None,
+            declared_differences: Vec::new(),
+            reproduction: vec!["fixed-batch".into()],
+            expected_steps: 275,
+            expected_rows: 4480,
+            limits: diagnostic::Limits::default(),
+            context: json!({}),
+        };
+        let base = description(config.diagnostic_invariants("trace", 1024, 4, (32, 64, 8192)));
+        let changed = description(config.diagnostic_invariants("trace", 1024, 4, (32, 64, 16384)));
+        assert!(
+            diagnostic::compatible(&base, &changed)
+                .unwrap_err()
+                .to_string()
+                .contains("invariants/capacity/kv_pages")
+        );
+        config.transitions = false;
+        assert!(
+            config.diagnostic_invariants("trace", 1024, 4, (32, 64, 8192))["capacity"]
+                .get("kv_pages")
+                .is_none(),
+            "old receipts retain their capacity schema"
+        );
+    }
 
     #[test]
     fn replay_forwards_keeper_options_through_the_serving_parser() {
@@ -580,13 +638,12 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     let mut golden = if let Some(options) = &config.diagnostic {
         options.validate_environment(std::env::vars())?;
-        let mut invariants = json!({"host":config.source,"trace":diagnostic::digest(&config.trace)?,
-                "vocabulary":vocabulary,"topology":config.topology,"ranks":rank_count,"fold":false,
-                "capacity":{"sequences":max_sequences,"verify_tokens":maximum_verify_tokens},
-                "sampling":"fixed-batch-v1"});
-        if config.temperature.is_some() {
-            invariants["sampling_temperature_bits"] = temperature.to_bits().into();
-        }
+        let invariants = config.diagnostic_invariants(
+            &diagnostic::digest(&config.trace)?,
+            vocabulary,
+            rank_count,
+            (max_sequences, maximum_verify_tokens, pages),
+        );
         let description = Description {
             invariants,
             manifest: diagnostic::manifest_identity(&manifest),

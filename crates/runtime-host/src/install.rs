@@ -585,6 +585,38 @@ impl InstalledBundleHostV1 {
         kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
         context_parallel_size: usize,
     ) -> Result<(Rc<HostServicesV1Backend<D>>, LoadedBundleInstanceV1), HostLoadErrorV1> {
+        let selected = self.manifest().for_topology(topology_id)?;
+        let preferred_kv =
+            served_kv_layout_v1(&selected, kv_dtype)?.id() == selected.kv_layout().id();
+        let device_results = crate::executor::device_results_selected(&selected, preferred_kv);
+        self.create_served_instance_with_results(
+            device,
+            topology_id,
+            device_ordinals,
+            serving_kv,
+            speculation,
+            maximum_sequences,
+            kv_dtype,
+            context_parallel_size,
+            device_results,
+        )
+    }
+
+    /// Use serving's startup selection for both confidence and the result
+    /// sink, without reading the device-results override a second time.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_served_instance_with_results<D: HostDeviceBackendV1 + 'static>(
+        &self,
+        device: D,
+        topology_id: &str,
+        device_ordinals: Vec<i32>,
+        serving_kv: Option<crate::services::ServingKvPolicyV1>,
+        speculation: runtime_bundle_abi::BundleRawSpeculationV1,
+        maximum_sequences: Option<u32>,
+        kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
+        context_parallel_size: usize,
+        device_results: bool,
+    ) -> Result<(Rc<HostServicesV1Backend<D>>, LoadedBundleInstanceV1), HostLoadErrorV1> {
         let mut config =
             self.instance_config_with_kv_dtype(topology_id, device_ordinals, kv_dtype)?;
         config = config
@@ -648,10 +680,7 @@ impl InstalledBundleHostV1 {
         let configuration = config.encode_v1(topology_id.as_bytes());
         let backend = Rc::new(HostServicesV1Backend::new(device, config));
         let table = HostServicesTableV1::new(Rc::clone(&backend));
-        let selected = self.manifest().for_topology(topology_id)?;
-        let preferred_kv =
-            served_kv_layout_v1(&selected, kv_dtype)?.id() == selected.kv_layout().id();
-        let instance = if crate::executor::device_results_selected(&selected, preferred_kv) {
+        let instance = if device_results {
             self.library
                 .create_device_results_v1(table, &configuration)?
         } else {

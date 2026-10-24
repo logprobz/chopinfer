@@ -2698,6 +2698,11 @@ fn serve_v1(
         devices.map(<[i32]>::len),
     )?;
     let graph_rows = verify_graph_rows_v1(package.manifest(), model_options)?;
+    let kv_cache = resolve_kv_cache_dtype_v1(package.manifest(), serving.kv_cache_dtype)
+        .map_err(usage_error)?;
+    let preferred_kv = crate::kv_cache_dtype::kv_layout_of_v1(package.manifest(), kv_cache.dtype)
+        .is_some_and(|layout| layout.id() == package.manifest().kv_layout().id());
+    let device_results = crate::executor::device_results_selected(package.manifest(), preferred_kv);
     // The token capacity is judged against the package before a listing
     // returns, so a preflight refuses what a start would.
     let speculation = speculation_config_v1(
@@ -2709,7 +2714,9 @@ fn serve_v1(
     )?
     .map(|config| config.with_verify_widths(verify_widths))
     .map(|config| {
-        match verify_confidence.map(|confidence| confidence.resolve(package.manifest())) {
+        match verify_confidence
+            .map(|confidence| confidence.resolve(package.manifest(), device_results))
+        {
             Some(Ok(allocation)) => {
                 eprintln!(
                     "startup speculation_confidence: on, floor {}, {} positions",
@@ -2749,8 +2756,6 @@ fn serve_v1(
         crate::offload::preflight_host_memory(serving.kv_offload.budget_bytes, available)
             .map_err(run_error)?;
     }
-    let kv_cache = resolve_kv_cache_dtype_v1(package.manifest(), serving.kv_cache_dtype)
-        .map_err(usage_error)?;
     println!("{}", kv_cache.describe(package.manifest()));
     let bundle_id = package.manifest().id().as_str().to_owned();
     // The served frontend is the package's own export, so the module opens
@@ -2956,6 +2961,7 @@ fn serve_v1(
             maximum_pages: serving.kv_pages,
         },
         kv_dtype: kv_cache.dtype,
+        device_results,
         speculation,
         prefix_cache: serving.prefix_cache,
         kv_offload: serving.kv_offload,
@@ -3166,6 +3172,8 @@ struct ServedEngineV1 {
     /// The declared KV layout `--kv-cache-dtype` resolved to; it reaches the
     /// instance on either physical-KV path.
     kv_dtype: BundleKvDtypeV1,
+    /// The same startup selection that gates confidence allocation.
+    device_results: bool,
     speculation: Option<SpeculationConfig>,
     prefix_cache: bool,
     kv_offload: crate::offload::KvOffloadOptionsV1,
@@ -3330,8 +3338,11 @@ impl ServedEngineV1 {
                     loaded,
                     &self.topology,
                     self.device,
-                    serving_kv.then_some(serving_policy),
-                    self.kv_dtype,
+                    ServedKvV1 {
+                        policy: serving_kv.then_some(serving_policy),
+                        kv_dtype: self.kv_dtype,
+                        device_results: self.device_results,
+                    },
                     self.speculation,
                     u32::try_from(self.maximum_rows).unwrap_or(u32::MAX),
                 )
@@ -3928,12 +3939,10 @@ fn open_instance_v1(
     loaded: &'static InstalledBundleHostV1,
     topology: &ServedTopologyV1,
     device: DeviceServicesV1,
-    policy: Option<ServingKvPolicyV1>,
-    kv_dtype: BundleKvDtypeV1,
+    kv: ServedKvV1,
     speculation: Option<SpeculationConfig>,
     maximum_sequences: u32,
 ) -> Result<OpenServedInstanceV1, String> {
-    let kv = ServedKvV1 { policy, kv_dtype };
     match device {
         DeviceServicesV1::HostMemory => {
             open_host_memory_instance_v1(loaded, topology, kv, speculation, maximum_sequences)
@@ -3950,6 +3959,7 @@ fn open_instance_v1(
 struct ServedKvV1 {
     policy: Option<ServingKvPolicyV1>,
     kv_dtype: BundleKvDtypeV1,
+    device_results: bool,
 }
 
 fn speculation_service_v1(
@@ -3972,7 +3982,7 @@ fn open_host_memory_instance_v1(
     maximum_sequences: u32,
 ) -> Result<OpenServedInstanceV1, String> {
     let (services, instance) = loaded
-        .create_served_instance(
+        .create_served_instance_with_results(
             crate::fake::FakeHostDeviceV1::new()
                 .with_history_limit(crate::fake::FAKE_SERVED_HISTORY_ENTRIES_V1),
             &topology.id,
@@ -3982,6 +3992,7 @@ fn open_host_memory_instance_v1(
             Some(maximum_sequences),
             Some(kv.kv_dtype),
             topology.context_parallel_size,
+            kv.device_results,
         )
         .map_err(|error| format!("the selected bundle refused this host: {error}"))?;
     Ok((services.clone(), services, instance))
@@ -4014,7 +4025,7 @@ fn open_compiled_instance_v1(
         started.elapsed().as_secs_f64()
     );
     let (services, instance) = loaded
-        .create_served_instance(
+        .create_served_instance_with_results(
             device,
             &topology.id,
             topology.device_ordinals.clone(),
@@ -4023,6 +4034,7 @@ fn open_compiled_instance_v1(
             Some(maximum_sequences),
             Some(kv.kv_dtype),
             topology.context_parallel_size,
+            kv.device_results,
         )
         .map_err(|error| format!("the selected bundle refused this host: {error}"))?;
     Ok((services.clone(), services, instance))
@@ -8325,6 +8337,7 @@ mod tests {
     /// otherwise serving says why it runs without one.
     #[test]
     fn confidence_needs_the_allocation_capability_and_its_contract() {
+        use runtime_bundle::model_options::{ModelOptionV1, ModelOptionsV1, OptionDefinitionV1};
         let calibration = crate::confidence::parse(concat!(
             r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"#,
             r#""greedy":[[1,0]],"sampled":[[1,0]]}"#
@@ -8337,7 +8350,12 @@ mod tests {
                 8,
                 DECLARED_ROWS_V1,
                 &"0".repeat(64),
-                capabilities.iter().map(|name| id(name)).collect(),
+                capabilities
+                    .iter()
+                    .copied()
+                    .chain([runtime_bundle::model_options::CAPABILITY])
+                    .map(id)
+                    .collect(),
             )
             .with_speculation(
                 runtime_bundle::BundleSpeculationV1::new(
@@ -8352,32 +8370,78 @@ mod tests {
                 .unwrap(),
             )
             .unwrap()
+            .with_model_options(ModelOptionsV1 {
+                schema: runtime_bundle::model_options::CAPABILITY.into(),
+                options: vec![ModelOptionV1 {
+                    name: runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1.into(),
+                    definition: OptionDefinitionV1::Boolean { default: false },
+                    default_is_qualified: true,
+                }],
+            })
+            .unwrap()
         };
         let allocating = [
             crate::executor::SPECULATIVE_CAPABILITY_V1,
             runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
         ];
         let fitted = Some("fixture.drafter-confidence.v1");
-        let allocation = calibration.resolve(&package(&allocating, fitted)).unwrap();
+        let allocation = calibration
+            .resolve(&package(&allocating, fitted), true)
+            .unwrap();
         assert_eq!((allocation.floor(), allocation.positions()), (1, 1));
+        assert_eq!(
+            calibration
+                .resolve(&package(&allocating, fitted), false)
+                .unwrap_err(),
+            "the package returns host values"
+        );
+        for device_results in [false, true] {
+            let manifest = package(&allocating, fitted);
+            let resolved = calibration.resolve(&manifest, device_results).ok();
+            let config = runtime_engine::SpeculationConfig::new(
+                1,
+                8,
+                SpeculationMode::Balanced(Default::default()),
+                runtime_engine::DraftSource::Bundle,
+            )
+            .unwrap()
+            .with_verify_allocation(resolved);
+            assert_eq!(config.verify_allocation().is_some(), device_results);
+            let options = super::verify_allocation_options_v1(
+                &manifest,
+                &Default::default(),
+                config.verify_allocation().is_some(),
+            )
+            .unwrap();
+            assert_eq!(
+                options
+                    .get(runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1)
+                    .map(String::as_str),
+                device_results.then_some("true")
+            );
+        }
         for (capabilities, contract, reason) in [
             (
                 &allocating[..1],
                 fitted,
-                "does not declare chop.verify-allocation.v1",
+                "the package does not declare chop.verify-allocation.v1",
             ),
             (
                 &allocating[..],
                 Some("other.drafter-confidence.v1"),
-                "fitted for fixture.drafter-confidence.v1, the package's drafter follows \
+                "the calibration was fitted for fixture.drafter-confidence.v1, the package's drafter follows \
                  other.drafter-confidence.v1",
             ),
-            (&allocating[..], None, "names no confidence contract"),
+            (
+                &allocating[..],
+                None,
+                "the package names no confidence contract",
+            ),
         ] {
             let refusal = calibration
-                .resolve(&package(capabilities, contract))
+                .resolve(&package(capabilities, contract), true)
                 .unwrap_err();
-            assert!(refusal.contains(reason), "{refusal}");
+            assert_eq!(refusal, reason);
         }
     }
 

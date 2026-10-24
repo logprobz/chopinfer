@@ -64,8 +64,15 @@ impl VerifyConfidence {
 
     /// The allocation serving uses with `manifest`, or why it serves without
     /// one: the package must draft, allocate verify drafts, and name this
-    /// calibration's confidence contract.
-    pub(crate) fn resolve(&self, manifest: &BundleManifestV1) -> Result<VerifyAllocation, String> {
+    /// calibration's confidence contract, with device results selected.
+    pub(crate) fn resolve(
+        &self,
+        manifest: &BundleManifestV1,
+        device_results: bool,
+    ) -> Result<VerifyAllocation, String> {
+        if !device_results {
+            return Err("the package returns host values".to_owned());
+        }
         if !crate::executor::verify_allocation_capability_v1(manifest) {
             return Err(format!(
                 "the package does not declare {}",

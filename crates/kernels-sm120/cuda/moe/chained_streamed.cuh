@@ -13,6 +13,7 @@
 // each lane still loads the same 16 code bytes and scale byte.
 namespace chop::moe::streamed {
 constexpr int Threads = 128, Columns = 64, Stride = 136;
+struct RawScales { static constexpr bool staged = false; };
 
 template<class C> struct Layout {
   static constexpr int blocks = C::loop_k / 128;
@@ -91,7 +92,7 @@ __device__ __forceinline__ uint32_t shuffle(uint32_t word, int source) {
   return __shfl_sync(0xffffffffu, word, source);
 }
 
-template<class C, int Rows, bool Tiled = false>
+template<class C, int Rows, bool Tiled = false, class Scales = RawScales>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -131,6 +132,9 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
       if (r < count && (route < 0 || route >= live * C::top_k)) __trap();
       rows[r] = route;
     }
+    const uint32_t* scale_words = nullptr;
+    if constexpr (Scales::staged)
+      scale_words = Scales::template prepare<C, 1>(weight_scales, expert, column, block);
     __syncthreads();
 
     // Four neighboring lanes own successive 32-K groups of each weight
@@ -153,7 +157,12 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
           scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
         } else {
           owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
-          scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+          if constexpr (Scales::staged) {
+            static_assert(!C::gate_up && H == 1);
+            scales[h][r] = valid ? ((scale_words[warp * 16 + g + r * 8] >> (8 * t)) & 255) : 127;
+          } else {
+            scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+          }
         }
         check(owned[h][r], uint8_t(scales[h][r]));
       }

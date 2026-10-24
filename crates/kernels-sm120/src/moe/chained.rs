@@ -58,6 +58,7 @@ use std::path::PathBuf;
 
 pub mod absorb;
 pub mod bandwidth;
+pub mod down_scale_tiles;
 pub mod floor;
 pub mod formats;
 pub mod lanes;

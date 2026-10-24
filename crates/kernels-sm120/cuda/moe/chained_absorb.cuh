@@ -20,7 +20,7 @@ namespace chop::moe::absorb {
 using namespace streamed;
 constexpr int Rows = 8;
 
-template<class C, bool Tiled = false>
+template<class C, bool Tiled = false, class Scales = RawScales>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -56,6 +56,12 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const int first = offsets[expert];
     if (first < 0 || first % 64 || first + count > padded) __trap();
 
+    const uint32_t* scale_words = nullptr;
+    if constexpr (Scales::staged) {
+      scale_words = Scales::template prepare<C, 1>(weight_scales, expert, column, block);
+      __syncthreads();
+    }
+
     // The small and wide queues' lane ownership: one 16-byte load and one
     // scale load per lane, row and half, once per item.
     uint4 owned[H][2];
@@ -76,7 +82,12 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
           scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
         } else {
           owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
-          scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+          if constexpr (Scales::staged) {
+            static_assert(!C::gate_up && H == 1);
+            scales[h][r] = valid ? ((scale_words[warp * 16 + g + r * 8] >> (8 * t)) & 255) : 127;
+          } else {
+            scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
+          }
         }
         check(owned[h][r], uint8_t(scales[h][r]));
       }

@@ -89,6 +89,27 @@ mod tests {
         }
     }
     #[test]
+    fn default_instances_do_not_load_the_wide_family() {
+        use bundle_runtime::geometry::Ranks;
+        use model_deepseek41_contract::geometry::FLASH;
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for rows in [32, 33, 48, 64, 128] {
+            let shape = shape.clone().with_verify_rows(rows);
+            assert_eq!(
+                crate::Kernels::loads(super::super::f32_verify::CUBIN, &shape),
+                rows > 32
+            );
+        }
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP2)
+            .unwrap()
+            .with_verify_rows(64);
+        assert!(!crate::Kernels::loads(
+            super::super::f32_verify::CUBIN,
+            &shape
+        ));
+    }
+
+    #[test]
     fn router_keeps_three_named_stages_and_disjoint_domain_span() {
         let op = crate::Kernels::cached_verify_projection(384, 5120).unwrap();
         assert_eq!(op.info().workspace, 256 + 64 * 61440);

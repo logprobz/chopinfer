@@ -11,6 +11,10 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "f32_verify_spans";
 pub const CUBIN: &str = "f32_verify_spans_deepseek41_sm120";
 
+pub fn enabled(g: &Geometry, ranks: u32, verify_rows: u32) -> bool {
+    g.id == FLASH.id && ranks == 4 && verify_rows > 32
+}
+
 pub fn entry(n: u32, k: u32) -> Result<Candidate, Refusal> {
     Candidate::new(
         Entry::new(

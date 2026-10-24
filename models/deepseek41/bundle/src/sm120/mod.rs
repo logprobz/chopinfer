@@ -765,6 +765,8 @@ impl crate::Kernels {
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))
+            && (cubin != f32_verify::CUBIN
+                || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && cubin != kernels_sm120::probes::CUBIN
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))

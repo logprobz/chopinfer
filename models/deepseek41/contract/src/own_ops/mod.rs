@@ -12,6 +12,7 @@
 use kernel_core::backend::{Need, Prepared, Refused, View};
 
 pub mod acceptance;
+pub mod allocation;
 pub mod dspark;
 pub mod engram;
 pub mod engram_hash;
@@ -39,6 +40,18 @@ pub trait OwnOps: Send + Sync {
         op: &acceptance::Acceptance,
         need: Need,
     ) -> Result<Prepared<acceptance::AcceptanceBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Allocate each item's verified drafts from the drafter's confidence
+    /// and lay out the reserved and computed rows. One launch; the device
+    /// live_items count selects the items, at most the prepared capacity.
+    fn dspark_allocate(
+        &self,
+        op: &allocation::VerifyAllocate,
+        need: Need,
+    ) -> Result<Prepared<allocation::VerifyAllocateBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }

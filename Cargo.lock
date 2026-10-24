@@ -857,6 +857,7 @@ dependencies = [
  "projection-spec",
  "runtime-bundle",
  "runtime-bundle-abi",
+ "runtime-bundle-sdk",
  "runtime-cuda",
  "serde_json",
  "sha2",

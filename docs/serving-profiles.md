@@ -74,6 +74,19 @@ plan every section raw.
 
 ## Host allocator memory
 
+On Linux with glibc, both serving CLI programs set `M_ARENA_MAX` to 8 at
+process startup, before parsing the serving options, loading a model or
+starting threads. This limits allocator arena proliferation under threaded
+loads. It does not impose a byte limit on an arena or on the process.
+
+Set `CHOPINFER_MALLOC_ARENA_MAX` to a positive 32-bit integer to choose
+another limit. Set it to `0` to leave glibc's startup policy unchanged,
+including any glibc environment settings. Invalid values refuse startup.
+The startup log reports the selected limit. This policy applies only to the
+`serve` CLI command; other commands, library embedders and non-glibc hosts
+retain their allocator policy. Changing the limit requires a new process:
+a lower cap does not remove arenas that already exist.
+
 On Linux with glibc, the generation worker returns unused allocator pages
 with `malloc_trim(0)` after requests, deferred events and KV transfers have
 drained and no command is waiting, when the allocator reports at least

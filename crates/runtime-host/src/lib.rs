@@ -22,6 +22,7 @@
 
 #![deny(unsafe_code)]
 
+mod allocator;
 mod catalog;
 pub mod checkpoint_verify;
 mod command;

@@ -1741,6 +1741,14 @@ pub fn run_command_line_v1(
             );
         }
     };
+    // Initialize before even parsing serve: profile preparation and model
+    // loading can start threads. Other commands and library embedders keep
+    // ownership of their allocator policy.
+    if arguments.first().is_some_and(|command| command == "serve")
+        && let Err(error) = crate::allocator::configure_serving_process()
+    {
+        return refuse_v1(program, &error);
+    }
     if arguments == ["--version"] || arguments == ["-V"] {
         let version = env!("CARGO_PKG_VERSION");
         let revision = env!("CHOPINFER_BUILD_REVISION");

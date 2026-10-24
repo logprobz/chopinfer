@@ -22,7 +22,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tune import argument_value
+from tune import argument_value, confidence_chooses, confidence_floor
 
 def options(arguments):
     mode, depth, rows = 'balanced', 5, 32
@@ -46,6 +46,7 @@ def stub(args):
     claim_confidence = os.environ.get('TUNE_STUB_CLAIM_CONFIDENCE') == label
     mode, depth, verify_rows = options(args.serve)
     confidence = argument_value(args.serve, '--speculation-confidence', 'off') != 'off'
+    floor = confidence_floor(args.serve) or 0
     widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
     lent = '--weight-keeper' in args.serve
     state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0}
@@ -74,8 +75,10 @@ def stub(args):
             k = 1
         rows = items * (k + 1)
         rows = max((w for w in widths if items <= w <= rows), default=rows)
-        reserved = items * (1 + min(5, max(0, verify_rows // items - 1)))
-        allocated = confidence and not ignore_confidence and not prefill and items < rows < reserved
+        per_item = min(5, max(0, verify_rows // items - 1))
+        reserved = items * (1 + per_item)
+        allocated = (confidence and not ignore_confidence and not prefill and items < rows < reserved
+                     and confidence_chooses(floor, items, rows, per_item))
         drafts = [0 if prefill else (rows - items) // items + (i < (rows - items) % items) for i in range(items)]
         verify_items = items if allocated else sum(k > 0 for k in drafts)
         emitted = []

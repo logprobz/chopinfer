@@ -88,6 +88,12 @@ class Tuner(unittest.TestCase):
                                               (8, 32, 3, False), (32, 64, 3, False)]:
             arm = {'depth': depth, 'arguments': ['--speculative-rows', str(capacity)]}
             self.assertEqual(tune.allocation_possible(config, arm, c), expected)
+        # Decided in advance, so never allocated: one item takes a prefix,
+        # and a floor of one fills 16 items' 32 rows.
+        for c, floor, expected in [(1, 1, False), (16, 1, False), (16, 0, True), (8, 1, True)]:
+            arm = {'depth': 3, 'arguments': ['--speculative-rows', '48', '--speculation-confidence',
+                                             json.dumps({'floor': floor})]}
+            self.assertEqual(tune.allocation_possible(config, arm, c), expected, (c, floor))
 
     def test_ab_visits_share_overlapping_pairs_and_keep_short_controls(self):
         model = {**MODEL, 'mode': 'ab', 'concurrencies': [1, 8, 16, 32],

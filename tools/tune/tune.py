@@ -364,9 +364,25 @@ def confidence_startup(log, arguments):
     return {'enabled': enabled, 'reason': lines[0][1] if lines else 'legacy server without confidence'}
 
 
+def confidence_floor(arguments):
+    """The floor of the --speculation-confidence calibration, None when off."""
+    value = argument_value(arguments, '--speculation-confidence', 'off')
+    return None if value == 'off' else json.loads(value)['floor']
+
+
+def confidence_chooses(floor, items, width, drafts):
+    """Whether confidence chooses the verified drafts of `items` items that
+    each reserve `drafts` within `width` rows (the engine's
+    `VerifyAllocation::chooses`): rows remain after the floor, and at least
+    two items reserve drafts past it. Otherwise the step is not allocated."""
+    floor = next((f for f in range(floor, -1, -1) if items * (1 + min(f, drafts)) <= width), 0)
+    return items >= 2 and drafts > floor and items * (1 + min(floor, drafts)) < width
+
+
 def allocation_possible(config, arm, items):
     """A full cohort with executable drafts and output room can reserve
-    beyond its balanced width. Tail limits may reduce individual steps."""
+    beyond its balanced width, and confidence chooses among the reserved
+    drafts. Tail limits may reduce individual steps."""
     model = config['model']
     args = [*model.get('serve_arguments', []), *model.get('extra_arguments', []), *arm['arguments']]
     capacity = int(argument_value(args, '--speculative-rows', model['verify_rows']))
@@ -374,8 +390,9 @@ def allocation_possible(config, arm, items):
     widths = argument_value(args, '--speculation-widths')
     widths = [int(x) for x in widths.split(',')] if widths else model.get('verify_widths', [])
     width = max((w for w in widths if items <= w <= rows), default=rows)
-    reserved = items * (1 + min(model['max_depth'], max(0, capacity // items - 1)))
-    return items < width < reserved
+    drafts = min(model['max_depth'], max(0, capacity // items - 1))
+    reserved = items * (1 + drafts)
+    return items < width < reserved and confidence_chooses(confidence_floor(args) or 0, items, width, drafts)
 
 
 def check_allocations(name, steps, enabled, required):

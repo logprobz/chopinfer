@@ -52,7 +52,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   constexpr int Outputs = Rows * TileN / Splits;
   using L = Layout<Rows, TileN, Stages>;
   static_assert(K % 128 == 0 && N % TileN == 0 && (TileN == 16 || TileN == 32 || TileN == 64));
-  static_assert(Rows == 16 || Rows == 32);
+  static_assert(Rows == 16 || Rows == 32 || Rows == 64);
   static_assert(Splits >= 2 && Splits <= 8 && (Splits - 1) * Per < Folds);
   static_assert((Rows * TileN) % Splits == 0 && Per <= 8);
   static_assert(Stages >= 2 && Stages <= Per);

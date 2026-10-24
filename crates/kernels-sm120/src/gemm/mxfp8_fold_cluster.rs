@@ -1,4 +1,4 @@
-//! Split-K folds of up to 32 rows whose K splits form one thread-block
+//! Split-K folds of up to 64 rows whose K splits form one thread-block
 //! cluster: every fold's loads are issued at once, and the ranks sum the
 //! tile's fold partials in increasing K order after one cluster barrier.
 use super::{mxfp8_fold, mxfp8_fold_ticket};
@@ -13,7 +13,7 @@ use kernel_core::{
 pub struct Entry {
     pub base: mxfp8_fold::Entry,
     pub tile_n: u32,
-    /// Rows one CTA folds: 16 (one MMA row group) or 32 (two).
+    /// Rows one CTA folds: 16, 32 or 64 (one, two or four MMA row groups).
     pub tile_rows: u32,
     /// CTAs of one cluster, each owning consecutive 128-K folds.
     pub splits: u32,
@@ -41,11 +41,11 @@ impl Entry {
             || q.activation_group_stride % 128 != 0
             || ![16, 32, 64].contains(&self.tile_n)
             || q.n % self.tile_n != 0
-            || ![16, 32].contains(&self.tile_rows)
+            || ![16, 32, 64].contains(&self.tile_rows)
             || q.m_capacity > self.tile_rows
         {
             return Err(Refusal(
-                "cluster folds require aligned FP8 groups, F32 output, whole 16/32/64-column tiles and at most 32 rows",
+                "cluster folds require aligned FP8 groups, F32 output, whole 16/32/64-column tiles and at most 64 rows",
             ));
         }
         let per = self.folds_per_cta();
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn cluster_splits_cover_k_once_and_launch_whole_clusters() {
         for (n, k, groups) in [(1280, 5120, 1), (1024, 4096, 2), (512, 5120, 1)] {
-            for tile_rows in [16, 32] {
+            for tile_rows in [16, 32, 64] {
                 for distributed in [false, true] {
                     let e = entry(query(n, k, groups, tile_rows), tile_rows, 8, distributed);
                     e.validate().unwrap();

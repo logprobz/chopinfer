@@ -29,6 +29,8 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     // SAFETY-REVIEWED: private anonymous mappings owned by mutex-protected shards.
     "crates/runtime-host/src/host_rows/resident/storage.rs",
     "crates/runtime-host/tests/host_mapped_rows_cost.rs",
+    "crates/runtime-host/tests/memory_stability.rs",
+    "crates/runtime-kv/tests/prefix_registry_bytes.rs",
     "crates/runtime-bundle/src/atomic_publish.rs",
     "crates/runtime-bundle-abi/src/loader.rs",
     "crates/runtime-bundle-abi/src/prefill.rs",
@@ -176,6 +178,23 @@ mod tests {
             include_str!("../../runtime-media/tests/decode_bounds.rs"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn lifecycle_counting_allocators_have_reviewed_contracts() {
+        for (path, source) in [
+            (
+                "crates/runtime-host/tests/memory_stability.rs",
+                include_str!("../../runtime-host/tests/memory_stability.rs"),
+            ),
+            (
+                "crates/runtime-kv/tests/prefix_registry_bytes.rs",
+                include_str!("../../runtime-kv/tests/prefix_registry_bytes.rs"),
+            ),
+        ] {
+            audit_unsafe_source(Path::new(path), source).unwrap();
+            assert!(audit_unsafe_source(Path::new(path), "unsafe { call() }").is_err());
+        }
     }
 
     #[test]

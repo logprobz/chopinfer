@@ -2085,6 +2085,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         let _phase = runtime_engine::profile::PhaseTimer::traced(
             runtime_engine::profile::StepPhase::BundleLog,
         );
+        runtime_engine::logging::record_route(message);
         record_diagnostic_v1(&mut self.logs, message);
         // The log ABI has no severity. Only recognized routine trace schemas
         // may be lost; an unclassified message can be the sole failure detail.

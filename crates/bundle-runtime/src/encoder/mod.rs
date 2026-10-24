@@ -861,7 +861,7 @@ impl Encoder {
                     &launch.symbol,
                     launch.plan,
                     &launch.arguments,
-                    &bindings,
+                    &bindings.with_route(op.route(live, &launch)),
                 )
                 .map_err(|error| format!("{}: {error:?}", launch.symbol))?;
                 Ok((resolved, launch.symbol, launch.rows))

@@ -852,3 +852,50 @@ fn retaining_admission_preserves_warm_keys_and_outstanding_reservations() {
         assert_eq!(backend.live_resource_count(), baseline);
     }
 }
+
+#[test]
+fn selected_entries_count_eager_and_replayed_launches_with_a_reused_symbol() {
+    use bundle_runtime::routes::RouteCounter;
+    use kernel_core::route::{RouteClass, branch};
+    let ranks = Ranks::new(1).unwrap();
+    let (table, backend, streams, _) = host(ranks);
+    backend.with_device_mut(|device| device.accept_launches(true));
+    let symbols = symbols(&table, ranks, &["shared".into()]);
+    let mut program = program(&[("shared".into(), false), ("shared".into(), false)]);
+    for (launch, (class, wrapper)) in program.launches.iter_mut().zip([
+        (RouteClass::Fast, "standalone"),
+        (RouteClass::Baseline, "fallback"),
+    ]) {
+        launch.bindings =
+            launch
+                .bindings
+                .with_route(Some(branch("shared", class, "norm", wrapper, [8..=8])));
+    }
+    let mut graphs = GraphCache::<Steps>::new(ranks);
+    for graph in [None, Some((1, 0)), Some((1, 0)), Some((1, 0))] {
+        let counts = RouteCounter::begin(true);
+        bundle_runtime::pipeline::run_rank(
+            table.caller(),
+            streams[0],
+            0,
+            graph,
+            &symbols[0],
+            &mut graphs,
+            &program.launches,
+        )
+        .unwrap();
+        let counts = counts.finish().unwrap();
+        assert_eq!(counts.fallback_launches, 1, "capture is not executed work");
+        assert_eq!(counts.families, BTreeMap::from([("norm".into(), 1)]));
+        assert_eq!(counts.entries["norm/standalone/shared"].1, 1);
+        assert_eq!(counts.entries["norm/fallback/shared"].1, 1);
+    }
+    // Both entries preserve the actual CUDA symbol. Eager and first capture
+    // submitted two each; cached graph replays submit no new host launches.
+    assert_eq!(launched(&backend), vec!["shared"; 4]);
+    backend.with_device(|device| {
+        assert_eq!(device.synchronizations(), 0);
+        assert_eq!(device.host_to_device_copy_bytes(), 0);
+    });
+    graphs.release_all(table.caller()).unwrap();
+}

@@ -96,6 +96,8 @@ fn sweep<T: Bundle>(table: &mut InstanceTable<T>) {
 }
 
 pub fn create<T: Bundle>(services: HostServicesV1, configuration: &[u8]) -> BundleCreateResultV1 {
+    let _routes =
+        crate::routes::logging_enabled().then(|| crate::routes::RouteCounter::begin(true));
     T::instances().with(|instances| {
         let Ok(mut table) = instances.try_borrow_mut() else {
             return BundleCreateResultV1::failure(BundleStatusV1::InvalidState);
@@ -119,6 +121,23 @@ pub fn create<T: Bundle>(services: HostServicesV1, configuration: &[u8]) -> Bund
     })
 }
 
+/// Account for every execution export, including negotiated prefill callbacks.
+pub fn with_route_counter<T: Bundle>(
+    instance: &mut T,
+    execute: impl FnOnce(&mut T) -> BundleStatusV1,
+) -> BundleStatusV1 {
+    let counter = (crate::routes::logging_enabled() && !crate::routes::active())
+        .then(|| crate::routes::RouteCounter::begin(true));
+    let status = execute(instance);
+    if let Some(counts) = counter.and_then(crate::routes::RouteCounter::finish) {
+        let mut record = counts.json();
+        record["schema"] = "chopinfer.route.v1".into();
+        let (services, _) = instance.resources();
+        let _ = services.log(record.to_string().as_bytes());
+    }
+    status
+}
+
 pub fn execute<T: Bundle>(
     handle: BundleHandleV1,
     request: &[u8],
@@ -126,7 +145,7 @@ pub fn execute<T: Bundle>(
 ) -> BundleStatusV1 {
     T::instances().with(|instances| {
         with_instance(instances, handle, |instance| {
-            instance.execute(request, sink)
+            with_route_counter(instance, |instance| instance.execute(request, sink))
         })
     })
 }

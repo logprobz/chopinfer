@@ -96,6 +96,7 @@ pub fn pieces(launches: usize) -> Vec<Range<usize>> {
 #[derive(Debug, Default)]
 struct Ledger {
     graphs: Vec<BundleGraphHandleV1>,
+    routes: BTreeMap<(u32, u32), crate::routes::RouteCounts>,
     budget: budget::Budget,
     /// Counts releases of the whole ledger. A cache whose lookups predate the
     /// last one holds released graphs and treats itself as empty.
@@ -112,6 +113,7 @@ impl Ledger {
                 return Err(error);
             }
             self.graphs.pop();
+            self.routes.remove(&(graph.generation(), graph.slot()));
             self.budget.released += 1;
         }
         Ok(())
@@ -234,6 +236,14 @@ impl<G: BundleGeometry> GraphCache<G> {
         self.capture(services, stream, key, launches, record)?;
         for &graph in &self.graphs[&key] {
             services.launch_graph(stream, graph)?;
+            if let Some(counts) = self
+                .ledger
+                .borrow()
+                .routes
+                .get(&(graph.generation(), graph.slot()))
+            {
+                crate::routes::replay(counts);
+            }
         }
         Ok(())
     }
@@ -343,11 +353,18 @@ impl<G: BundleGeometry> GraphCache<G> {
                 .begin_graph_capture(stream)
                 .map_err(E::from)
                 .and_then(|()| {
+                    let routes = crate::routes::RouteCounter::nested();
                     let recorded = record(range);
+                    let counts = routes.finish();
                     let ended = services.end_graph_capture(stream);
                     if let Ok(graph) = ended {
                         let mut ledger = self.ledger.borrow_mut();
                         ledger.graphs.push(graph);
+                        if let Some(counts) = counts {
+                            ledger
+                                .routes
+                                .insert((graph.generation(), graph.slot()), counts);
+                        }
                         ledger.budget.reserved -= 1;
                         reservation.remaining -= 1;
                         ledger.budget.captured += 1;
@@ -424,6 +441,14 @@ impl<G: BundleGeometry> GraphCache<G> {
                     continue;
                 };
                 services.launch_graph(streams[rank], graph)?;
+                if let Some(counts) = self
+                    .ledger
+                    .borrow()
+                    .routes
+                    .get(&(graph.generation(), graph.slot()))
+                {
+                    crate::routes::replay(counts);
+                }
                 if piece == 0 {
                     first_piece(rank);
                 }

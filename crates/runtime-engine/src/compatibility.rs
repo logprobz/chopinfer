@@ -741,6 +741,7 @@ pub(crate) fn labels(model: &str) -> String {
 /// One committed step, as the `chopinfer.step.v1` trace line reports it.
 #[derive(Clone, Debug)]
 pub(crate) struct StepTrace {
+    pub(crate) route: Option<serde_json::Value>,
     pub(crate) batch: u64,
     pub(crate) prefill_tokens: usize,
     pub(crate) prefill_items: usize,
@@ -781,6 +782,9 @@ pub(crate) struct StepTrace {
 impl StepTrace {
     pub(crate) fn record(&self) -> serde_json::Value {
         let mut record = self.fields();
+        if let Some(route) = &self.route {
+            record["route"] = route.clone();
+        }
         if let Some(rows) = self.reserved_rows {
             record["reserved_rows"] = rows.into();
         }
@@ -1060,6 +1064,7 @@ mod tests {
     #[test]
     fn step_trace_reports_the_cap_and_assumed_against_actual_time() {
         let trace = StepTrace {
+            route: None,
             batch: 9,
             speculation: None,
             prefill_tokens: 2048,

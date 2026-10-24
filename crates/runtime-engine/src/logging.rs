@@ -166,6 +166,7 @@ pub fn is_routine_bundle_trace(message: &[u8]) -> bool {
                 && (schema.ends_with(".step-shape.v1")
                     || schema.ends_with(".commit-shape.v1")
                     || schema == "chopinfer.graph-cache.v1"
+                    || schema == "chopinfer.route.v1"
                     || schema.ends_with(".drafter-catch-up.v1")
                     || schema.ends_with(".drafter-confidence.v1"))
         })
@@ -439,5 +440,46 @@ mod tests {
         drop(logger);
         flushes.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(*bytes.lock().unwrap(), b"one\ntwo\n");
+    }
+}
+
+thread_local! {
+    static ROUTE: std::cell::RefCell<Option<serde_json::Value>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Called synchronously by the bundle log service on the stepping thread.
+/// Routine log delivery may drop text, but the step retains this structured copy.
+pub fn record_route(message: &[u8]) {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(message) else {
+        return;
+    };
+    if value["schema"] == "chopinfer.route.v1" {
+        value
+            .as_object_mut()
+            .expect("route object")
+            .remove("schema");
+        ROUTE.with(|r| {
+            r.replace(Some(value));
+        });
+    }
+}
+
+pub(crate) fn take_route() -> Option<serde_json::Value> {
+    ROUTE.with(|r| r.take())
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn route_record_is_retained_on_the_stepping_thread_until_taken() {
+        assert!(take_route().is_none());
+        record_route(br#"{"schema":"chopinfer.route.v1","fallback_launches":2,"families":{"norm":2},"entries":{}}"#);
+        assert!(std::thread::spawn(take_route).join().unwrap().is_none());
+        assert_eq!(take_route().unwrap()["fallback_launches"], 2);
+        assert!(take_route().is_none());
+        record_route(br#"{"schema":"other.v1"}"#);
+        assert!(take_route().is_none());
     }
 }

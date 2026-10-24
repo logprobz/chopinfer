@@ -2131,6 +2131,7 @@ impl<E: ModelExecutor> Engine<E> {
         if self.model_state_failed {
             return Err(EngineError::ModelStateFailed);
         }
+        let _ = logging::take_route();
         let _profile = self.metrics.start_step_profile();
         let _totals = self.step_trace.then(profile::TraceTotals::begin);
         if self.step_trace {
@@ -2751,6 +2752,7 @@ impl<E: ModelExecutor> Engine<E> {
         }
         if step_trace {
             let record = compatibility::StepTrace {
+                route: logging::take_route(),
                 batch: batch.id().get(),
                 prefill_tokens,
                 prefill_items,

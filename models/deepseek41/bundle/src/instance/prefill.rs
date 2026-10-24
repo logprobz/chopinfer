@@ -47,7 +47,9 @@ pub(crate) fn execute(
             instance.skip_prefill =
                 instance.config.prefill.skip && all_prefill && !instance.taps.text();
             instance.prefill_boundaries = envelope.boundaries;
-            instance.execute_step(envelope.original, sink)
+            bundle_runtime::entry::with_route_counter(instance, |instance| {
+                instance.execute_step(envelope.original, sink)
+            })
         })
     })
 }

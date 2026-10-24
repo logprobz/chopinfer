@@ -53,3 +53,5 @@ const _: () = assert!(
     runtime_bundle_abi::BUNDLE_DEVICE_POINTER_ARRAY_V1_MAX_SLOTS as usize
         == kernel_core::contract::MAX_COMM_RANKS
 );
+
+pub mod routes;

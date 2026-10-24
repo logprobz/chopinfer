@@ -34,6 +34,8 @@ impl From<BundleAbiError> for DispatchError {
 
 /// The ABI status a failed dispatch reports: the host's for a host error,
 /// else a bundle error.
+pub use crate::routes::RouteCounter;
+
 pub fn status(error: DispatchError) -> BundleStatusV1 {
     match error {
         DispatchError::Host(error) => crate::resources::status(error),
@@ -45,11 +47,24 @@ pub fn status(error: DispatchError) -> BundleStatusV1 {
 /// Distinct views of an arena get distinct IDs even when the host buffer is shared.
 #[derive(Clone, Default)]
 pub struct BufferBindings {
+    route: Option<kernel_core::route::RouteTag>,
     next: u64,
     views: BTreeMap<u64, DeviceBufferSpanV1>,
 }
 
 impl BufferBindings {
+    /// Attach the selected entry to this launch's bindings, outside its ABI.
+    pub fn with_route(&self, route: Option<kernel_core::route::RouteTag>) -> Self {
+        Self {
+            route,
+            ..self.clone()
+        }
+    }
+
+    pub fn route(&self) -> Option<&kernel_core::route::RouteTag> {
+        self.route.as_ref()
+    }
+
     pub fn bind(&mut self, view: DeviceBufferSpanV1) -> u64 {
         self.next += 1;
         self.views.insert(self.next, view);
@@ -183,6 +198,7 @@ pub fn arguments(
 /// A launch whose symbol, configuration and arguments the host accepted.
 #[derive(Clone)]
 pub struct Resolved {
+    route: Option<kernel_core::route::RouteTag>,
     function: BundleCudaSymbolHandleV1,
     config: LaunchConfigV1,
     arguments: Vec<KernelArgumentV1>,
@@ -209,6 +225,7 @@ impl Resolved {
             }
         }
         Ok(Self {
+            route: self.route.clone(),
             function: symbol(self.function)?,
             config: self.config,
             arguments,
@@ -221,6 +238,7 @@ impl Resolved {
         stream: BundleStreamHandleV1,
     ) -> Result<(), DispatchError> {
         services.launch_cuda_symbol(stream, self.function, self.config, &self.arguments)?;
+        crate::routes::submitted(self.route.as_ref());
         Ok(())
     }
 }
@@ -237,6 +255,7 @@ pub fn resolve(
         .get(symbol)
         .ok_or_else(|| DispatchError::MissingSymbol(symbol.into()))?;
     Ok(Resolved {
+        route: bindings.route.clone(),
         function,
         config: launch_config(plan)?,
         arguments: arguments(planned, bindings)?,

@@ -1394,6 +1394,21 @@ impl Ready {
         launches.map_err(|refusal| refusal.0.to_owned())
     }
 
+    pub(super) fn route(
+        &self,
+        rows: u32,
+        launch: &kernel_core::backend::Launch,
+    ) -> Option<kernel_core::route::RouteTag> {
+        let counts = Counts::rows(rows);
+        match self {
+            Ready::Rows(op) => kernel_core::route::selected(op.as_ref(), counts, launch),
+            Ready::Heads(op) => kernel_core::route::selected(op.as_ref(), counts, launch),
+            Ready::Attention(op) => kernel_core::route::selected(op.as_ref(), counts, launch),
+            Ready::Gemm(op) => kernel_core::route::selected(op.as_ref(), counts, launch),
+            Ready::Own(op) => kernel_core::route::selected(op.as_ref(), counts, launch),
+        }
+    }
+
     pub(super) fn info(&self) -> &kernel_core::backend::OpInfo {
         match self {
             Ready::Rows(op) => op.info(),

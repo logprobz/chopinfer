@@ -13,9 +13,9 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// Decode buckets, then drafter forwards of 8 and 16 items. A pair runs
+/// Decode buckets, then drafter forwards of 6, 8 and 12 items. A pair runs
 /// the rows its parallel entry holds ([`Entry::rows`]).
-const ROWS: [u32; 5] = [1, 8, DECODE_BATCH, 40, SMALL_DRAFT_ROWS];
+const ROWS: [u32; 6] = [1, 8, DECODE_BATCH, 30, 40, SMALL_DRAFT_ROWS];
 const PATTERNS: [&str; 15] = [
     "finite",
     "wide",

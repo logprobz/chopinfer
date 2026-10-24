@@ -143,6 +143,38 @@ fn timed(rows: u32) -> bool {
     TIMING_ROWS.contains(&rows) || rows > 256
 }
 
+#[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_DECODE_ARTIFACTS"]
+fn gpu_drafter_bounded_reuse() {
+    use bundle_deepseek41::sm120::dspark_projection;
+    use model_deepseek41_contract::geometry::FLASH;
+    kernel_harness::gpu_test_with(timing_cubins(), 4 << 30, |session| {
+        let mut cases = 0;
+        for entry in f32_split::entries(&FLASH, 4).unwrap() {
+            let old = projection_reuse::head(&FLASH, 4, entry).unwrap();
+            let new = dspark_projection::route(&FLASH, 4, old.clone()).unwrap();
+            if new.bounded_reuse_candidate().is_none() {
+                continue;
+            }
+            let q = old.query();
+            let (_, b) = random_operands(0, q.n, q.k, 0x7813_9231);
+            let weights = ComparisonWeights::routed(session, &old, new, &b)?;
+            for rows in [30, 40, 60, 80] {
+                let (mut a, _) = random_operands(rows, 0, q.k, 0x7813_9231 + rows);
+                // A late subnormal forces one row's complete SIMT fallback.
+                a[q.k as usize - 1] = f32::from_bits(1);
+                let label = HostCase::new(format!("drafter_bounded_n{}", q.n));
+                compare(session, &old, rows, &a, &weights, &label, true)?;
+                cases += 1;
+            }
+        }
+        assert_eq!(cases, 8, "head and router at four forward sizes");
+        println!("DSPARK_F32_COMPLETE cases={cases}");
+        Ok(())
+    })
+    .unwrap();
+}
+
 fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
     let edge_cases: usize = edges()
         .iter()
@@ -464,7 +496,7 @@ fn legacy_probe_bytes() -> &'static [u8] {
     })
 }
 
-fn timing_cubins() -> Cubins {
+pub(super) fn timing_cubins() -> Cubins {
     static TABLE: OnceLock<Vec<(&'static str, &'static [u8])>> = OnceLock::new();
     Cubins::new(
         TABLE.get_or_init(|| vec![("probe_sm120", probe_bytes())]),
@@ -579,7 +611,11 @@ impl ComparisonWeights {
     }
 
     fn routed(session: &Session, old: &Entry, new: Entry, b: &[f32]) -> LabResult<Self> {
-        let legacy = old.clone().with_decode();
+        let legacy = if old.uses_cached_weights() {
+            old.entry_for_rows(1)
+        } else {
+            old.clone().with_decode()
+        };
         let mut modules = [old, &new, &legacy]
             .into_iter()
             .map(|entry| {
@@ -635,6 +671,18 @@ impl ComparisonWeights {
                 )
                 .map_err(|e| e.to_string())?;
             modules.push(module);
+        }
+        // Routed candidates may launch entries from several locked cubins.
+        for symbol in old
+            .runtime_symbols()
+            .into_iter()
+            .chain(new.runtime_symbols())
+        {
+            if modules.iter().all(|m| m.function(&symbol).is_err()) {
+                let (_, bytes) = fold_cubin_for_symbol(&symbol)
+                    .ok_or_else(|| format!("missing routed comparison cubin for {symbol}"))?;
+                modules.push(session.load_cubin(bytes)?);
+            }
         }
         Self::with_modules(session, old, new, b, modules)
     }
@@ -766,7 +814,10 @@ pub(super) fn compare(
         session.allocate(rows as usize * q.n as usize * 4)?,
     ];
     let live = session.allocate(4)?;
-    let workspace = session.allocate(new.decode_workspace_bytes(rows) as usize)?;
+    let workspace = session.allocate(
+        new.runtime_workspace_bytes(rows)
+            .max(old.runtime_workspace_bytes(rows)) as usize,
+    )?;
     let status = session.allocate(rows as usize * 4)?;
     let bindings = launch::Bindings {
         buffers: BTreeMap::from([
@@ -819,7 +870,13 @@ pub(super) fn compare(
     if !weights.initialized.get() {
         let init = ops[1].initialize(&buffers(4)).map_err(|e| e.to_string())?;
         poison::poison(session, &[domain])?;
-        run_launches(session, &[&modules[1]], &bindings, &init, &session.stream)?;
+        run_launches(
+            session,
+            &modules.iter().collect::<Vec<_>>(),
+            &bindings,
+            &init,
+            &session.stream,
+        )?;
         let flags = poison::read(session, domain)?;
         for &(tile, expected) in &weights.expected_flags {
             let actual = u32::from_le_bytes(flags[tile * 4..tile * 4 + 4].try_into().unwrap());
@@ -833,13 +890,16 @@ pub(super) fn compare(
     }
     let launches = [
         ops[0]
-            .launches(&buffers(3), View::EMPTY, Counts::rows(rows))
+            .launches(&buffers(3), view(7), Counts::rows(rows))
             .unwrap(),
         ops[1]
             .launches(&buffers(4), view(7), Counts::rows(rows))
             .unwrap(),
     ];
-    let runtime_modules = [vec![&modules[0]], modules.iter().collect::<Vec<_>>()];
+    let runtime_modules = [
+        modules.iter().collect::<Vec<_>>(),
+        modules.iter().collect::<Vec<_>>(),
+    ];
     let graphs = [
         session
             .capture(|s| run_launches(session, &runtime_modules[0], &bindings, &launches[0], s))?,

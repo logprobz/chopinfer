@@ -30,6 +30,82 @@ const ROLES: [&str; 5] = ["expanded", "collapsed", "pre", "post", "comb"];
 const H: usize = 5120;
 const N: usize = 4;
 const MIXES: usize = 24;
+
+#[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_DECODE_ARTIFACTS"]
+fn gpu_drafter_split() {
+    use bundle_deepseek41::sm120::fold_cubin_for_symbol;
+    use runtime_cuda::KernelArgument as A;
+    let result = kernel_harness::gpu_test_with(super::f32_decode::timing_cubins(), 1 << 30, |s| {
+        let reference = lagged::entries(lagged::LAB_PROFILE, lagged::LAB, false).into_iter()
+            .find(|e| matches!(e.op, lagged::Op::MixCollapse { probe: false })).unwrap();
+        let split = lagged_split::entry(lagged::LAB_PROFILE, lagged::LAB, false);
+        let symbols = [reference.symbol.clone(), split.symbol()];
+        let modules = symbols.iter().map(|symbol| s.load_cubin(fold_cubin_for_symbol(symbol)
+            .ok_or_else(|| format!("missing {symbol}"))?.1)).collect::<LabResult<Vec<_>>>()?;
+        let functions = modules.iter().zip(&symbols).map(|(m, symbol)| m.function(symbol)
+            .map_err(|e| e.to_string())).collect::<LabResult<Vec<_>>>()?;
+        let mut cases = 0;
+        for rows in [30, 40, 60, 80] {
+            let r = rows as usize;
+            let input = Input {
+                x: s.allocate(r*N*H*2)?, y: s.allocate(r*H*2)?, fn_: s.allocate(MIXES*N*H*4)?,
+                base: s.allocate(MIXES*4)?, scale: s.allocate(12)?, pre: s.allocate(r*N*4)?,
+                post_in: s.allocate(r*N*4)?, comb_in: s.allocate(r*N*N*4)?, live: s.allocate(4)?,
+            };
+            let outputs = [Output::new(s, rows, false)?, Output::new(s, rows, false)?];
+            let plans = [reference.plan(rows, rows).unwrap(), split.plan(rows, rows).unwrap()];
+            let invoke = |arm: usize, stream: &Stream| {
+                let o = &outputs[arm];
+                let mut args = vec![A::Buffer(&input.x), A::Buffer(&input.fn_), A::Buffer(&input.base),
+                    A::Buffer(&input.scale), A::Buffer(&input.pre), A::Buffer(&o.data[1]),
+                    A::Buffer(&o.data[2]), A::Buffer(&o.data[3]), A::Buffer(&o.data[4])];
+                if arm == 1 { args.extend([A::Buffer(&o.scratch), A::Buffer(&o.tickets)]); }
+                args.push(A::Buffer(&input.live));
+                functions[arm].launch(stream, launch::config(plans[arm])?, &args).map_err(|e| e.to_string())
+            };
+            let graphs = (0..2).map(|arm| s.capture(|stream| invoke(arm, stream))).collect::<LabResult<Vec<_>>>()?;
+            for pattern in PATTERNS {
+                set_inputs(s, rows, pattern, &input)?;
+                for live in [rows, 0, rows-1, rows] {
+                    upload(&input.live, &live.to_le_bytes(), &s.stream)?;
+                    for graph in [false, true, true] {
+                        for o in &outputs {
+                            o.reset(s, rows, pattern)?;
+                            upload(&o.tickets, &vec![0; r*4], &s.stream)?;
+                        }
+                        for arm in 0..2 {
+                            if graph { graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?; }
+                            else { invoke(arm, &s.stream)?; }
+                        }
+                        let old = outputs[0].read(s)?;
+                        let new = outputs[1].read(s)?;
+                        if old != new { return Err(format!("drafter HC differs rows={rows} live={live} pattern={pattern} graph={graph}")); }
+                        if live > 0 && pattern == "finite" {
+                            assert!(new[1][..H*2].iter().any(|&b| b != 0xa5));
+                        }
+                        for (role, stride) in [(1,H*2),(2,N*4)] {
+                            assert!(new[role][live as usize*stride..].iter().all(|&b| b == 0xa5));
+                        }
+                        assert!(download(&outputs[1].tickets,r*4,&s.stream)?.iter().all(|&b| b == 0));
+                    }
+                }
+                cases += 1;
+                println!("DSPARK_HC_BITWISE rows={rows} pattern={pattern} PASS");
+            }
+            set_inputs(s, rows, "finite", &input)?;
+            upload(&input.live, &rows.to_le_bytes(), &s.stream)?;
+            let paired = kernel_harness::time_ab(s, 2, 7, [EvictionMode::Read; 2], |arm, stream|
+                graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
+            println!("DSPARK_HC_TIMING rows={rows} old_us={} new_us={} ratio={}",
+                paired.arms[0].median_ms*1000., paired.arms[1].median_ms*1000., paired.paired_ratio);
+        }
+        assert_eq!(cases, 4*PATTERNS.len());
+        println!("DSPARK_HC_COMPLETE cases={cases}");
+        Ok(())
+    }).unwrap();
+    assert!(result.is_some(), "an idle GPU is required");
+}
 pub(super) fn symbols() -> Vec<String> {
     [
         "chop_sinkhorn_hc_deepseek41_expand_f32_v1".into(),

@@ -50,6 +50,9 @@ pub struct Configuration {
     /// The widest verify step captured in a graph
     /// (`model_deepseek41_contract::verify_graphs`).
     pub verify_graph_rows: u32,
+    /// Whether the host sends allocated verify steps
+    /// (`model_deepseek41_contract::verify_allocation`).
+    pub verify_allocation: bool,
     pub shape: Shape,
     pub create: CreateConfig,
     pub kv: KvLayout,
@@ -166,6 +169,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let verify_allocation = model_deepseek41_contract::verify_allocation::enabled(&options)
+        .map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -242,6 +250,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         dspark_draft_chunk_items,
         dspark_coupled_drafts,
         verify_graph_rows,
+        verify_allocation,
         shape,
         create,
         kv,

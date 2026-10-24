@@ -116,6 +116,7 @@ impl Geometry {
         crate::prefill_profile::Profile::read(values)?;
         crate::dspark_options::draft_chunk_items(values)?;
         crate::dspark_coupling::coupled_drafts(values)?;
+        crate::verify_allocation::enabled(values)?;
         let defaults = self.model_options(checkpoint);
         if let Some(name) = values
             .keys()
@@ -243,6 +244,7 @@ impl Geometry {
             .chain(crate::dspark_options::declarations())
             .chain(crate::dspark_coupling::declarations())
             .chain(crate::verify_graphs::declarations())
+            .chain(crate::verify_allocation::declarations())
             .collect();
         options.push(ModelOptionV1 {
             name: "text_config.indexer_mma".into(),
@@ -515,7 +517,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 9);
+        assert_eq!(options.len(), 10);
         assert_eq!(options[0].name, "dspark_coupled_drafts");
         assert_eq!(options[1].name, "dspark_draft_chunk_items");
         assert_eq!(options[5].name, "text_config.index_topk");

@@ -62,15 +62,24 @@ impl SamplingWork {
 }
 
 impl AcceptedPrefix {
-    pub(crate) fn matches(&self, item: &ModelBatchItem, samples: &[&SampledRow]) -> bool {
+    /// Whether this decision fits its scheduled item and every sampled row:
+    /// its verified drafts are the item's reservation, or with `allocated`
+    /// at most it, and its counts refer to the verified drafts.
+    pub(crate) fn matches(
+        &self,
+        item: &ModelBatchItem,
+        samples: &[&SampledRow],
+        allocated: bool,
+    ) -> bool {
         let Some(cycle) = &item.output_cycle else {
             return false;
         };
-        let drafted = item.draft.map_or(0, |draft| draft.tokens);
+        let reserved = item.draft.map_or(0, |draft| draft.tokens);
+        let drafted = self.drafted;
         if self.request_id != item.request_id
             || self.cycle_epoch == 0
             || self.cycle_epoch != cycle.epoch
-            || self.drafted != drafted
+            || !(drafted == reserved || allocated && drafted < reserved)
             || item
                 .draft
                 .is_some_and(|draft| draft.source != DraftSource::Bundle)
@@ -78,7 +87,7 @@ impl AcceptedPrefix {
                 .sampling
                 .as_ref()
                 .is_none_or(|work| !work.history_independent())
-            || drafted.checked_add(1) != Some(samples.len())
+            || reserved.checked_add(1) != Some(samples.len())
         {
             return false;
         }
@@ -250,6 +259,89 @@ mod tests {
         )
     }
 
+    /// A device decision for an allocated step names the drafts it
+    /// verified, at most the reservation, and the step's verified rows must
+    /// fill its width; staging walks only the verified drafts.
+    #[test]
+    fn allocated_prefixes_refer_to_their_verified_drafts() {
+        use crate::{StepAllocation, VerifyAllocation};
+        let vocabulary = ModelVocabulary::new(8).unwrap();
+        let engine = engine(9);
+        // Five drafts reserved, three verified and all accepted: the bonus
+        // row is row 3, and rows 4 and 5 repeat it.
+        let samples = [1, 1, 1, 2, 2, 2]
+            .into_iter()
+            .enumerate()
+            .map(|(row, token)| sample(1, token, row.min(3)))
+            .collect::<Vec<_>>();
+        let prefix = AcceptedPrefix {
+            request_id: RequestId::new(1),
+            cycle_epoch: 7,
+            drafted: 3,
+            accepted: 3,
+            emitted: 4,
+            terminal: false,
+            rejected: false,
+            empty_row: None,
+        };
+        let items = [item(&engine, 1, 5, true)];
+        let rule = VerifyAllocation::new(1, &[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap();
+        let step = |width| StepAllocation {
+            width,
+            allocation: rule,
+        };
+        let check = |prefix: AcceptedPrefix, allocation: Option<StepAllocation>| {
+            outputs_match(
+                &items,
+                &[],
+                &[],
+                &samples,
+                &[],
+                &[prefix],
+                vocabulary,
+                allocation.as_ref(),
+            )
+        };
+        assert!(check(prefix, Some(step(4))));
+        // The rows miss the width, the step was not allocated, or more
+        // drafts were verified than reserved.
+        assert!(!check(prefix, Some(step(5))));
+        assert!(!check(prefix, None));
+        assert!(!check(
+            AcceptedPrefix {
+                drafted: 6,
+                ..prefix
+            },
+            Some(step(7))
+        ));
+        // A mismatch inside the verified drafts is a rejection; stopping
+        // after them is not.
+        assert!(!check(
+            AcceptedPrefix {
+                rejected: true,
+                ..prefix
+            },
+            Some(step(4))
+        ));
+        let staged = stage_samples(
+            &engine.requests,
+            &items,
+            &[],
+            &samples,
+            &[],
+            &[prefix],
+            vocabulary,
+            &[],
+        )
+        .unwrap();
+        let staged = staged[0].as_ref().unwrap();
+        assert_eq!(
+            (staged.drafted, staged.accepted, staged.tokens.len()),
+            (3, 3, 4)
+        );
+        assert!(!staged.rejected);
+    }
+
     #[test]
     fn accepted_prefix_matches_host_walk_for_stops_limits_and_rejections() {
         let vocabulary = ModelVocabulary::new(8).unwrap();
@@ -307,7 +399,8 @@ mod tests {
                                     &samples,
                                     &[],
                                     &[prefix],
-                                    vocabulary
+                                    vocabulary,
+                                    None,
                                 ),
                                 "{prefix:?}"
                             );
@@ -378,6 +471,7 @@ mod tests {
                 drafts,
                 prefixes,
                 engine.model_vocabulary,
+                None,
             )
         };
         assert!(matches(&samples, &[prefix], &[]));
@@ -477,7 +571,8 @@ mod tests {
             &samples,
             &[],
             &prefixes,
-            engine.model_vocabulary
+            engine.model_vocabulary,
+            None,
         ));
         let staged = stage_samples(
             &engine.requests,

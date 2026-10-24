@@ -28,9 +28,10 @@ pub use positions::{PositionAxesError, PositionAxesV1, PositionSpanV1};
 pub use prompt_lookup::{PromptLookupConfig, PromptLookupConfigError, PromptLookupExecutor};
 pub use speculation::confidence;
 pub use speculation::{
-    DraftCostModel, DraftDepths, DraftDepthsError, DraftSource, MAX_DRAFT_DEPTHS, MAX_DRAFT_TOKENS,
-    MAX_VERIFY_WIDTHS, SpeculationConfig, SpeculationConfigError, SpeculationMode, StepCost,
-    StepCosts, StepCostsError, VerifyWidths, VerifyWidthsError,
+    AllocationKind, DraftCostModel, DraftDepths, DraftDepthsError, DraftSource, MAX_DRAFT_DEPTHS,
+    MAX_DRAFT_TOKENS, MAX_VERIFY_WIDTHS, SpeculationConfig, SpeculationConfigError,
+    SpeculationMode, StepAllocation, StepCost, StepCosts, StepCostsError, VerifyAllocation,
+    VerifyAllocationError, VerifyWidths, VerifyWidthsError,
 };
 
 use media::{inject_runs, validate_media};
@@ -1456,6 +1457,32 @@ pub trait ModelExecutor {
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError>;
+
+    /// Whether [`Self::execute_allocated`] serves allocated verify steps. An
+    /// engine whose speculation allocates refuses an executor that does not.
+    fn allocates_verify_drafts_v1(&self) -> bool {
+        false
+    }
+
+    /// Executes a verify step whose drafts the engine allocated: each verify
+    /// item's draft count is its reservation, and the executor verifies the
+    /// drafts its drafter is most confident in, `allocation.width` rows over
+    /// the step's decode and verify items, by the allocation's rule. It
+    /// reports each bundle-drafted item's verified drafts: the drafts of its
+    /// `DraftRow`, or its `AcceptedPrefix::drafted`. Its rows keep the
+    /// reserved layout, and a row past an item's verified drafts repeats
+    /// its last verified row. The default refuses.
+    fn execute_allocated<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        allocation: &StepAllocation,
+    ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        let _ = (items, kv_plan, allocation);
+        Err(executor_error_fixed(
+            "the executor does not allocate verify drafts",
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1879,6 +1906,15 @@ impl<E: ModelExecutor> Engine<E> {
             .map_err(|_| EngineError::MetadataAllocationFailed)?;
         metrics.compatibility(|metrics| metrics.configure(config.maximum_sequence_tokens));
         let step_trace = metrics.compatibility(|metrics| metrics.step_trace_enabled);
+        if config
+            .speculation
+            .is_some_and(|speculation| speculation.verify_allocation().is_some())
+            && !executor.allocates_verify_drafts_v1()
+        {
+            return Err(EngineError::Executor(executor_error_fixed(
+                "verify allocation needs an executor that allocates verify drafts",
+            )));
+        }
         let speculation = config.speculation.map(|speculation| {
             SpeculationPolicy::new(speculation)
                 .with_draft_rounding(|count| executor.round_draft_tokens_v1(count).min(count))
@@ -2138,6 +2174,7 @@ impl<E: ModelExecutor> Engine<E> {
         self.restore_prefixes()?;
         let mut host_drafts = Vec::new();
         let mut draft_error = None;
+        let mut allocation = None;
         // Host drafting happens while the scheduler forms the batch.
         let planning_started_micros = self.clock.now_micros();
         let next = {
@@ -2174,6 +2211,7 @@ impl<E: ModelExecutor> Engine<E> {
                         budget,
                         &mut host_drafts,
                         &mut draft_error,
+                        &mut allocation,
                     ),
                     None => vec![0; candidates.len()],
                 },
@@ -2331,7 +2369,10 @@ impl<E: ModelExecutor> Engine<E> {
             self.host_clock.execute_started();
         }
         let rollback_preserves_state = executor.rollback_preserves_state_v1();
-        let transaction_result = executor.execute(&items, batch.kv_plan());
+        let transaction_result = match &allocation {
+            Some(allocation) => executor.execute_allocated(&items, batch.kv_plan(), allocation),
+            None => executor.execute(&items, batch.kv_plan()),
+        };
         if self.step_trace {
             self.host_clock.execute_returned();
         }
@@ -2370,6 +2411,7 @@ impl<E: ModelExecutor> Engine<E> {
             transaction.drafts(),
             transaction.accepted_prefixes(),
             self.model_vocabulary,
+            allocation.as_ref(),
         ) {
             drop(transaction);
             let message = "executor output rows do not match the pending batch";
@@ -2636,7 +2678,13 @@ impl<E: ModelExecutor> Engine<E> {
                 })
         });
         let execution_micros = completed_at.saturating_sub(execution_started_micros);
-        let rows = step_rows::StepRows::from_items(&items, row_capacity);
+        let mut rows = step_rows::StepRows::from_items(&items, row_capacity);
+        // An allocated step's target verified its width, not its reservations.
+        let reserved_rows = allocation.map(|allocation| {
+            let reserved = rows.verify_rows;
+            rows.verify_rows = allocation.width - rows.decode_rows;
+            reserved
+        });
         let step_rows::StepRows {
             prefill_tokens,
             prefill_items,
@@ -2720,6 +2768,7 @@ impl<E: ModelExecutor> Engine<E> {
                 decode_rows,
                 verify_items,
                 verify_rows: rows.verify_rows,
+                reserved_rows,
                 verified: verified.iter().flatten().fold(
                     compatibility::VerifiedTokens::default(),
                     |total, &(drafted, accepted, _, emitted)| compatibility::VerifiedTokens {
@@ -3447,6 +3496,7 @@ fn expected_output_rows(item: &ModelBatchItem) -> usize {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn outputs_match(
     items: &[ModelBatchItem],
     rows: &[LogitsRow],
@@ -3455,6 +3505,7 @@ fn outputs_match(
     drafts: &[DraftRow],
     accepted_prefixes: &[AcceptedPrefix],
     model_vocabulary: ModelVocabulary,
+    allocation: Option<&StepAllocation>,
 ) -> bool {
     let expected_prompt = items
         .iter()
@@ -3490,6 +3541,7 @@ fn outputs_match(
                                 sampled_by_request
                                     .get(&prefix.request_id)
                                     .map_or(&[], Vec::as_slice),
+                                allocation.is_some(),
                             )
                     })
         })
@@ -3503,9 +3555,10 @@ fn outputs_match(
                 .is_some_and(|items| {
                     items.iter().any(|item| {
                         bundle_drafted(item)
-                            && item
-                                .draft
-                                .is_some_and(|work| work.tokens == draft.tokens.len())
+                            && item.draft.is_some_and(|work| {
+                                work.tokens == draft.tokens.len()
+                                    || allocation.is_some() && draft.tokens.len() < work.tokens
+                            })
                     })
                 })
                 && draft
@@ -3522,6 +3575,46 @@ fn outputs_match(
             });
     if !drafts_match {
         return false;
+    }
+    if let Some(allocation) = allocation {
+        // The step verified its width, each item a prefix of its reserved
+        // drafts no shorter than the floor allows.
+        let decoding: Vec<&ModelBatchItem> = items
+            .iter()
+            .filter(|item| matches!(item.phase, BatchPhase::Decode | BatchPhase::Verify { .. }))
+            .collect();
+        let reserved: Vec<usize> = decoding
+            .iter()
+            .map(|item| item.draft.map_or(0, |draft| draft.tokens))
+            .collect();
+        let floor = allocation
+            .allocation
+            .effective_floor(&reserved, allocation.width);
+        let mut verified_rows = 0;
+        for (item, &reserved) in decoding.iter().zip(&reserved) {
+            let verified = if reserved == 0 {
+                0
+            } else if let Some(draft) = drafts_by_request
+                .get(&item.request_id)
+                .and_then(|drafts| drafts.first())
+            {
+                draft.tokens.len()
+            } else if let Some(prefix) = accepted_by_request
+                .get(&item.request_id)
+                .and_then(|prefixes| prefixes.first())
+            {
+                prefix.drafted
+            } else {
+                return false;
+            };
+            if verified < floor.min(reserved) {
+                return false;
+            }
+            verified_rows += 1 + verified;
+        }
+        if verified_rows != allocation.width {
+            return false;
+        }
     }
     let expected_total: usize = items.iter().map(expected_output_rows).sum();
     let mut expected = items.iter().filter(|item| item.expects_logits);
@@ -3592,6 +3685,7 @@ fn plan_drafts<E: ModelExecutor>(
     budget: DraftBudget,
     host_drafts: &mut Vec<(RequestId, Vec<u32>)>,
     draft_error: &mut Option<ExecutorError>,
+    allocation: &mut Option<StepAllocation>,
 ) -> Vec<usize> {
     let none = vec![0; candidates.len()];
     if budget.spare_draft_tokens() == 0 || budget.spare_rows() == 0 {
@@ -3613,6 +3707,7 @@ fn plan_drafts<E: ModelExecutor>(
         });
     }
     let mut drafts = policy.plan(&plan_candidates, budget);
+    let planned = policy.take_allocation();
     pin_drafts(
         requests,
         candidates,
@@ -3628,6 +3723,18 @@ fn plan_drafts<E: ModelExecutor>(
             *count = executor.round_draft_tokens_v1(*count).min(*count);
         }
     }
+    // A plan with confidence verifies its width among the reserved drafts.
+    // Pinned drafts are verified as pinned, so their step is not allocated.
+    let pinned = candidates.iter().any(|candidate| {
+        requests
+            .get(&candidate.request_id())
+            .is_some_and(|record| record.pinned_draft_tokens.is_some())
+    });
+    *allocation = planned.filter(|_| !pinned).and_then(|planned| {
+        let rows = candidates.len() + drafts.iter().sum::<usize>();
+        let width = planned.width.min(rows);
+        (width > candidates.len()).then_some(StepAllocation { width, ..planned })
+    });
     if policy.config().source() != DraftSource::Host {
         return drafts;
     }
@@ -5607,7 +5714,8 @@ mod transaction_tests {
             std::slice::from_ref(&sampled),
             &[],
             &[],
-            vocabulary
+            vocabulary,
+            None,
         ));
         assert!(!outputs_match(
             std::slice::from_ref(&sampled_item),
@@ -5616,7 +5724,8 @@ mod transaction_tests {
             std::slice::from_ref(&sampled),
             &[],
             &[],
-            vocabulary
+            vocabulary,
+            None,
         ));
         let staged = stage_samples(
             &requests,

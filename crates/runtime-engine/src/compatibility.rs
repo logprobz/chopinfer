@@ -748,7 +748,12 @@ pub(crate) struct StepTrace {
     pub(crate) completed_prompts: Vec<(u64, usize)>,
     pub(crate) decode_rows: usize,
     pub(crate) verify_items: usize,
+    /// Rows the target verified: an allocated step's width less its decode
+    /// rows.
     pub(crate) verify_rows: usize,
+    /// An allocated step's reserved verify rows (one per verify item plus
+    /// its reserved drafts); absent when the step was not allocated.
+    pub(crate) reserved_rows: Option<usize>,
     /// Over verify items: proposals verified, proposals accepted and
     /// tokens emitted (accepted proposals plus the bonus, unless a stop or
     /// the length limit ended the run first).
@@ -775,6 +780,14 @@ pub(crate) struct StepTrace {
 
 impl StepTrace {
     pub(crate) fn record(&self) -> serde_json::Value {
+        let mut record = self.fields();
+        if let Some(rows) = self.reserved_rows {
+            record["reserved_rows"] = rows.into();
+        }
+        record
+    }
+
+    fn fields(&self) -> serde_json::Value {
         serde_json::json!({
             "schema": "chopinfer.step.v1",
             "batch": self.batch,
@@ -1045,6 +1058,7 @@ mod tests {
             decode_rows: 31,
             verify_items: 0,
             verify_rows: 0,
+            reserved_rows: None,
             verified: VerifiedTokens::default(),
             row_capacity: None,
             prefill_cap: Some(2048),
@@ -1102,6 +1116,14 @@ mod tests {
         assert!(parsed["row_capacity"].is_null());
         assert_eq!(parsed["accepted_tokens"], 0);
         assert_eq!(parsed.as_object().unwrap().len(), 22);
+        // An allocated step adds its reserved rows.
+        let allocated = StepTrace {
+            reserved_rows: Some(48),
+            ..trace.clone()
+        }
+        .record();
+        assert_eq!(allocated["reserved_rows"], 48);
+        assert_eq!(allocated.as_object().unwrap().len(), 23);
         let fixed = StepTrace {
             prefill_cap: None,
             predicted_micros: None,

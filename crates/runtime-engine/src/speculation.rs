@@ -340,6 +340,109 @@ pub enum SpeculationConfigError {
     ZeroVerifyTokens,
 }
 
+/// How a step's sampler treats an item, which selects its calibration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AllocationKind {
+    Greedy,
+    Sampled,
+}
+
+/// A calibration outside the allocation's bounds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifyAllocationError;
+
+/// Balanced plans with confidence: each verify step reserves every item's
+/// drafts up to its limits, and the executor verifies the drafts its drafter
+/// is most confident in within the width the plan would verify without
+/// confidence. `floor` drafts per item come first; the calibration turns a
+/// raw confidence `s` at a draft position into `sigmoid(scale * s + offset)`,
+/// the chance the draft is accepted when every earlier one was, per kind.
+/// Floats are kept as their bits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifyAllocation {
+    floor: usize,
+    positions: usize,
+    /// Greedy, then sampled: `(scale, offset)` bits per draft position.
+    calibration: [[(u32, u32); MAX_DRAFT_TOKENS]; 2],
+}
+
+impl VerifyAllocation {
+    /// Both kinds name the same 1 to [`MAX_DRAFT_TOKENS`] positions with
+    /// finite values, and the floor is at most the positions.
+    pub fn new(
+        floor: usize,
+        greedy: &[(f32, f32)],
+        sampled: &[(f32, f32)],
+    ) -> Result<Self, VerifyAllocationError> {
+        let positions = greedy.len();
+        if !(1..=MAX_DRAFT_TOKENS).contains(&positions)
+            || sampled.len() != positions
+            || floor > positions
+            || greedy
+                .iter()
+                .chain(sampled)
+                .any(|(scale, offset)| !scale.is_finite() || !offset.is_finite())
+        {
+            return Err(VerifyAllocationError);
+        }
+        let mut calibration = [[(0, 0); MAX_DRAFT_TOKENS]; 2];
+        for (kind, pairs) in calibration.iter_mut().zip([greedy, sampled]) {
+            for (slot, (scale, offset)) in kind.iter_mut().zip(pairs) {
+                *slot = (scale.to_bits(), offset.to_bits());
+            }
+        }
+        Ok(Self {
+            floor,
+            positions,
+            calibration,
+        })
+    }
+
+    #[must_use]
+    pub const fn floor(&self) -> usize {
+        self.floor
+    }
+
+    /// Draft positions the calibration covers.
+    #[must_use]
+    pub const fn positions(&self) -> usize {
+        self.positions
+    }
+
+    /// The `(scale, offset)` of a kind's draft position, counted from zero.
+    #[must_use]
+    pub fn pair(&self, kind: AllocationKind, position: usize) -> (f32, f32) {
+        let (scale, offset) = self.calibration[kind as usize][position];
+        (f32::from_bits(scale), f32::from_bits(offset))
+    }
+
+    /// The floor every item verifies within `width` rows: the largest up to
+    /// [`Self::floor`] at which each item's floor, bounded by its reserved
+    /// drafts, and its own row fit.
+    #[must_use]
+    pub fn effective_floor(&self, reserved: &[usize], width: usize) -> usize {
+        (0..=self.floor)
+            .rev()
+            .find(|&floor| {
+                reserved
+                    .iter()
+                    .map(|&drafts| 1 + floor.min(drafts))
+                    .sum::<usize>()
+                    <= width
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// One verify step's allocation as the executor receives it: the rows the
+/// target verifies over the step's decode and verify items, and the rule.
+/// Each verify item's draft count is its reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StepAllocation {
+    pub width: usize,
+    pub allocation: VerifyAllocation,
+}
+
 /// Speculative decoding settings for one engine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpeculationConfig {
@@ -352,6 +455,9 @@ pub struct SpeculationConfig {
     maximum_draft_items: Option<usize>,
     /// The verify widths balanced plans land on.
     verify_widths: VerifyWidths,
+    /// Balanced plans reserve drafts and leave their verification to the
+    /// executor's confidence.
+    verify_allocation: Option<VerifyAllocation>,
 }
 
 impl SpeculationConfig {
@@ -383,6 +489,7 @@ impl SpeculationConfig {
             draft_cost_model: DraftCostModel::PerToken,
             maximum_draft_items: None,
             verify_widths: VerifyWidths::NONE,
+            verify_allocation: None,
         })
     }
 
@@ -444,6 +551,20 @@ impl SpeculationConfig {
     #[must_use]
     pub const fn verify_widths(self) -> VerifyWidths {
         self.verify_widths
+    }
+
+    /// Lets a balanced plan reserve each item's drafts up to its limits and
+    /// the executor verify the most confident of them within the plan's
+    /// width. Other modes and host drafters ignore it.
+    #[must_use]
+    pub const fn with_verify_allocation(mut self, allocation: Option<VerifyAllocation>) -> Self {
+        self.verify_allocation = allocation;
+        self
+    }
+
+    #[must_use]
+    pub const fn verify_allocation(self) -> Option<VerifyAllocation> {
+        self.verify_allocation
     }
 
     pub(crate) const fn limits(self) -> DraftLimits {
@@ -977,6 +1098,9 @@ pub(crate) struct SpeculationPolicy {
     draft_cursor: usize,
     trace_enabled: bool,
     decision: Option<PlanTrace>,
+    /// The verify width of the last plan whose drafts are reservations
+    /// for the executor to allocate, until [`Self::take_allocation`].
+    allocated_width: Option<usize>,
 }
 
 impl SpeculationPolicy {
@@ -1001,7 +1125,18 @@ impl SpeculationPolicy {
             draft_cursor: 0,
             trace_enabled: false,
             decision: None,
+            allocated_width: None,
         }
+    }
+
+    /// The allocation of the last plan, whose draft counts are then
+    /// reservations: its verify width over the planned items and the rule.
+    pub(crate) fn take_allocation(&mut self) -> Option<StepAllocation> {
+        let width = self.allocated_width.take()?;
+        Some(StepAllocation {
+            width,
+            allocation: self.config.verify_allocation?,
+        })
     }
 
     /// Plans only the draft counts `round` keeps, such as the counts whose
@@ -1312,6 +1447,7 @@ impl SpeculationPolicy {
         candidates: &[PlanCandidate<'_>],
         budget: DraftBudget,
     ) -> Vec<usize> {
+        self.allocated_width = None;
         self.begin_diagnostics(
             candidates.len(),
             budget.spare_draft_tokens().min(budget.spare_rows()),
@@ -1399,6 +1535,21 @@ impl SpeculationPolicy {
                     && width < rows
                 {
                     drafts = self.plan_balanced(candidates, width - candidates.len(), limit);
+                }
+                // With confidence the plan's rows stay the step's width, and
+                // every item reserves drafts up to its limits within the
+                // token capacity, never fewer than the plan gave it: the
+                // executor verifies the most confident within the width.
+                if self.config.verify_allocation.is_some()
+                    && self.config.source == DraftSource::Bundle
+                    && drafts.iter().any(|&d| d > 0)
+                {
+                    let width = candidates.len() + drafts.iter().sum::<usize>();
+                    let reserved = self.plan_balanced(candidates, remaining, None);
+                    for (draft, reserved) in drafts.iter_mut().zip(reserved) {
+                        *draft = (*draft).max(reserved);
+                    }
+                    self.allocated_width = Some(width);
                 }
             }
             SpeculationMode::Adaptive if budget.prefill() => {

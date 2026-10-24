@@ -10,10 +10,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime_engine::{
-    DraftRow, DraftSource, Engine, EngineConfig, EngineError, EngineEvent, EngineEventKind,
-    EngineMetrics, EngineRequest, ExecutorError, KeptRows, LogitsRow, ModelBatchItem,
-    ModelExecutor, ModelTransaction, ModelTransactionState, MonotonicClock, PromptLookupConfig,
-    PromptLookupExecutor, SampledRow, SpeculationConfig, SpeculationMode, StepStatus,
+    AllocationKind, DraftRow, DraftSource, Engine, EngineConfig, EngineError, EngineEvent,
+    EngineEventKind, EngineMetrics, EngineRequest, ExecutorError, KeptRows, LogitsRow,
+    ModelBatchItem, ModelExecutor, ModelTransaction, ModelTransactionState, MonotonicClock,
+    PromptLookupConfig, PromptLookupExecutor, SampledRow, SpeculationConfig, SpeculationMode,
+    StepAllocation, StepStatus, VerifyAllocation,
 };
 use runtime_kv::{KvGeometry, PreparedAppendBatch};
 use runtime_model_api::ModelVocabulary;
@@ -133,6 +134,13 @@ struct Model {
     verify_steps: Vec<(usize, usize)>,
     /// A fake confidence result sink supplies a shorter proposal prefix.
     confidence_caps: Vec<usize>,
+    /// Serves allocated verify steps by the allocation rule over hashed
+    /// confidence scores.
+    allocates: bool,
+    /// Reports one verified draft too few on an allocated step.
+    corrupt_allocation: bool,
+    /// (width, reserved drafts, verified drafts) of every allocated step.
+    allocated_steps: Vec<(usize, Vec<usize>, Vec<usize>)>,
 }
 
 /// A clock only the model advances, so step costs are exact.
@@ -160,7 +168,59 @@ impl Model {
             copy_period: None,
             verify_steps: Vec::new(),
             confidence_caps: Vec::new(),
+            allocates: false,
+            corrupt_allocation: false,
+            allocated_steps: Vec::new(),
         }
+    }
+
+    /// The drafts each decode or verify item verifies under `allocation`:
+    /// the floor first, then the positions with the largest calibrated
+    /// survival of a hashed raw score, ties to the earlier item and position.
+    fn allocate(&self, items: &[ModelBatchItem], allocation: &StepAllocation) -> Vec<usize> {
+        let decoding: Vec<&ModelBatchItem> = items
+            .iter()
+            .filter(|item| matches!(item.phase(), BatchPhase::Decode | BatchPhase::Verify { .. }))
+            .collect();
+        let reserved: Vec<usize> = decoding
+            .iter()
+            .map(|item| item.draft().map_or(0, |draft| draft.tokens()))
+            .collect();
+        let rule = allocation.allocation;
+        let floor = rule.effective_floor(&reserved, allocation.width);
+        let mut verified: Vec<usize> = reserved.iter().map(|&c| c.min(floor)).collect();
+        let mut left = allocation.width - verified.iter().map(|k| k + 1).sum::<usize>();
+        let mut candidates = Vec::new();
+        for (index, (item, &drafts)) in decoding.iter().zip(&reserved).enumerate() {
+            let kind = if item
+                .sampling()
+                .is_some_and(|work| work.parameters.temperature() > 0.0)
+            {
+                AllocationKind::Sampled
+            } else {
+                AllocationKind::Greedy
+            };
+            let committed = self.kv.get(&item.request_id()).map_or(0, Vec::len) as u64;
+            let mut survival = 1.0_f32;
+            for position in 0..drafts {
+                let hash = mix(item.request_id().get() ^ (committed << 8) ^ position as u64);
+                let score = (hash >> 40) as f32 / (1u64 << 24) as f32 * 6.0 - 3.0;
+                let (scale, offset) = rule.pair(kind, position);
+                survival *= 1.0 / (1.0 + (-(scale * score + offset)).exp());
+                if position >= floor {
+                    candidates.push((survival, index, position));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (_, index, _) in candidates {
+            if left == 0 {
+                break;
+            }
+            verified[index] += 1;
+            left -= 1;
+        }
+        verified
     }
 }
 
@@ -226,11 +286,53 @@ impl ModelExecutor for Model {
         Ok(self.drafter.propose(history, maximum))
     }
 
+    fn allocates_verify_drafts_v1(&self) -> bool {
+        self.allocates
+    }
+
+    fn execute_allocated<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        allocation: &StepAllocation,
+    ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        assert!(self.allocates);
+        let mut verified = self.allocate(items, allocation);
+        let reserved = items
+            .iter()
+            .filter(|item| matches!(item.phase(), BatchPhase::Decode | BatchPhase::Verify { .. }))
+            .map(|item| item.draft().map_or(0, |draft| draft.tokens()))
+            .collect::<Vec<_>>();
+        self.allocated_steps
+            .push((allocation.width, reserved, verified.clone()));
+        if self.corrupt_allocation
+            && let Some(last) = verified.iter_mut().rev().find(|k| **k > 0)
+        {
+            *last -= 1;
+        }
+        self.run(items, kv_plan, Some(verified))
+    }
+
     fn execute<'a>(
         &'a mut self,
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        self.run(items, kv_plan, None)
+    }
+}
+
+impl Model {
+    /// One step; with `verified`, each decode or verify item in order
+    /// verifies that many of its reserved drafts and reports them, and its
+    /// rows past them repeat its last verified row.
+    fn run<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        verified: Option<Vec<usize>>,
+    ) -> Result<ModelTransaction<ModelState<'a>>, ExecutorError> {
+        let mut verified = verified.map(Vec::into_iter);
         assert!(self.pending.is_empty());
         if let Some(costs) = self.scripted_verify_costs.as_mut() {
             let verifies = items
@@ -268,6 +370,11 @@ impl ModelExecutor for Model {
             assert_eq!(committed.len(), append.previous_tokens());
             let mut inputs = item.input_tokens().to_vec();
             let mut drafts = Vec::new();
+            let decoding = matches!(item.phase(), BatchPhase::Decode | BatchPhase::Verify { .. });
+            let item_verified = verified
+                .as_mut()
+                .filter(|_| decoding)
+                .map(|verified| verified.next().expect("one count per decoding item"));
             if let Some(draft) = item.draft() {
                 assert!(
                     matches!(item.phase(), BatchPhase::Verify { draft_tokens } if draft_tokens == draft.tokens())
@@ -281,6 +388,9 @@ impl ModelExecutor for Model {
                         drafts = self.drafter.propose(&context, draft.tokens());
                         inputs.extend_from_slice(&drafts);
                         let mut reported = drafts.clone();
+                        if let Some(count) = item_verified {
+                            reported.truncate(count);
+                        }
                         if self.corrupt_drafts {
                             reported.pop();
                         }
@@ -301,9 +411,27 @@ impl ModelExecutor for Model {
                     inputs.len() - 1
                 };
                 for input in first_row..inputs.len() {
+                    let row = input - first_row;
+                    // A row past the verified drafts repeats the last
+                    // verified row; the engine never consumes it.
+                    if let Some(count) = item_verified
+                        && item.draft().is_some()
+                        && row > count
+                    {
+                        match self.rows {
+                            Rows::Logits => {
+                                let last = logits_rows.last().cloned().expect("verified row");
+                                logits_rows.push(last);
+                            }
+                            Rows::Sampled => {
+                                let last = sampled_rows.last().cloned().expect("verified row");
+                                sampled_rows.push(last);
+                            }
+                        }
+                        continue;
+                    }
                     let mut prefix = committed.clone();
                     prefix.extend_from_slice(&inputs[..=input]);
-                    let row = input - first_row;
                     let row_work = work.for_verify_row(&drafts, row);
                     // The row's sampling history is exactly the tokens the
                     // model conditions on.
@@ -547,6 +675,110 @@ fn every_drafter_policy_and_row_path_emits_exactly_the_reference_output() {
             }
         }
     }
+}
+
+fn allocation() -> VerifyAllocation {
+    VerifyAllocation::new(1, &[(1.0, 0.0); 5], &[(0.8, -0.2); 5]).unwrap()
+}
+
+/// Balanced plans with confidence reserve every item's drafts up to its
+/// limits and verify the plan's width among them: every step fills its
+/// width with verified prefixes, some item verifies past the schedule's
+/// depth, and every request emits exactly the reference output on both row
+/// paths, with the metrics counting the verified drafts.
+#[test]
+fn allocated_balanced_steps_emit_exactly_the_reference_output() {
+    let requests = requests(20);
+    let depths = runtime_engine::DraftDepths::parse("1:2").unwrap();
+    for rows in [Rows::Logits, Rows::Sampled] {
+        let expected = reference(&requests, rows);
+        for drafter in [
+            Drafter::Greedy,
+            Drafter::Wrong,
+            Drafter::Mostly,
+            Drafter::Noise,
+        ] {
+            let mut model = Model::new(drafter, rows);
+            model.allocates = true;
+            let mut engine = Engine::new(
+                config(Some(
+                    speculation(
+                        5,
+                        64,
+                        SpeculationMode::Balanced(depths),
+                        DraftSource::Bundle,
+                    )
+                    .with_verify_allocation(Some(allocation())),
+                )),
+                model,
+            )
+            .unwrap();
+            let actual = run(&mut engine, &requests);
+            assert_eq!(actual, expected, "{rows:?} {drafter:?}");
+            let steps = &engine.executor().allocated_steps;
+            assert!(!steps.is_empty(), "{rows:?} {drafter:?}");
+            let mut verified_drafts = 0;
+            for (width, reserved, verified) in steps {
+                assert_eq!(verified.iter().map(|k| k + 1).sum::<usize>(), *width);
+                assert!(verified.iter().zip(reserved).all(|(k, c)| k <= c));
+                // The width is what depth 2 verifies without confidence.
+                assert_eq!(
+                    *width,
+                    reserved.iter().map(|&c| 1 + c.min(2)).sum::<usize>(),
+                    "{reserved:?}"
+                );
+                verified_drafts += verified.iter().sum::<usize>() as u64;
+            }
+            assert!(
+                steps
+                    .iter()
+                    .any(|(_, _, verified)| verified.iter().any(|&k| k > 2)),
+                "{rows:?} {drafter:?}"
+            );
+            let metrics = engine.metrics().snapshot();
+            assert_eq!(metrics.spec_draft_tokens, verified_drafts);
+            assert_eq!(
+                metrics.spec_drafted_positions.iter().sum::<u64>(),
+                verified_drafts
+            );
+            assert_eq!(
+                metrics.spec_accepted_positions.iter().sum::<u64>(),
+                metrics.spec_accepted_tokens
+            );
+        }
+    }
+}
+
+/// An engine refuses allocation over an executor that does not allocate,
+/// and a step whose verified rows miss the width fails as an output
+/// mismatch.
+#[test]
+fn allocation_needs_an_allocating_executor_that_fills_the_width() {
+    let allocated = speculation(
+        5,
+        64,
+        SpeculationMode::Balanced(runtime_engine::DraftDepths::parse("1:2").unwrap()),
+        DraftSource::Bundle,
+    )
+    .with_verify_allocation(Some(allocation()));
+    assert!(matches!(
+        Engine::new(
+            config(Some(allocated)),
+            Model::new(Drafter::Greedy, Rows::Logits)
+        ),
+        Err(EngineError::Executor(_))
+    ));
+    let mut model = Model::new(Drafter::Greedy, Rows::Logits);
+    model.allocates = true;
+    model.corrupt_allocation = true;
+    let mut engine = Engine::new(config(Some(allocated)), model).unwrap();
+    for request in requests(6) {
+        engine.submit(request).unwrap();
+    }
+    let error = (0..1000)
+        .find_map(|_| engine.step().err())
+        .expect("a short allocation fails its step");
+    assert!(matches!(error, EngineError::OutputMismatch), "{error:?}");
 }
 
 #[test]

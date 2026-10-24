@@ -199,6 +199,79 @@ mod tests {
         }
     }
 
+    /// With confidence, the plan's rows stay the step's width while every
+    /// item reserves drafts up to its limits within the token capacity; a
+    /// plan without drafts reserves nothing, and a capacity the plan already
+    /// fills leaves the reservations at the plan.
+    #[test]
+    fn plans_with_confidence_reserve_drafts_and_keep_the_width() {
+        use super::super::VerifyAllocation;
+        let estimate = AcceptanceEstimate::initial();
+        let allocation = VerifyAllocation::new(1, &[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap();
+        let allocated = |capacity| {
+            SpeculationPolicy::new(
+                SpeculationConfig::new(
+                    5,
+                    capacity,
+                    SpeculationMode::Balanced(DraftDepths::parse("1:5,8:3,16:0").unwrap()),
+                    DraftSource::Bundle,
+                )
+                .unwrap()
+                .with_verify_widths(VerifyWidths::parse("6,8,16,32").unwrap())
+                .with_verify_allocation(Some(allocation)),
+            )
+        };
+        for (items, reserved, width) in [
+            (1, vec![5], Some(6)),
+            (4, vec![5; 4], Some(16)),
+            (6, vec![5; 6], Some(32)),
+            (8, vec![5; 8], Some(32)),
+            (16, vec![0; 16], None),
+        ] {
+            let mut policy = allocated(128);
+            let candidates = vec![candidate(&estimate, 5); items];
+            let spare = 128 - items;
+            assert_eq!(
+                policy.plan(&candidates, DraftBudget::new(spare, spare)),
+                reserved
+            );
+            assert_eq!(policy.take_allocation().map(|a| a.width), width, "{items}");
+            assert_eq!(policy.take_allocation(), None);
+        }
+        let mut narrow = allocated(32);
+        let candidates = vec![candidate(&estimate, 5); 8];
+        assert_eq!(
+            narrow.plan(&candidates, DraftBudget::new(24, 24)),
+            vec![3; 8]
+        );
+        assert_eq!(narrow.take_allocation().map(|a| a.width), Some(32));
+        // Request caps bound reservations; a host drafter never reserves.
+        let mut policy = allocated(128);
+        let capped = [5, 1, 0, 5].map(|cap| candidate(&estimate, cap));
+        // The caps reach 15 rows, which land on width 8.
+        assert_eq!(
+            policy.plan(&capped, DraftBudget::new(124, 124)),
+            [5, 1, 0, 5]
+        );
+        assert_eq!(policy.take_allocation().map(|a| a.width), Some(8));
+        let mut host = SpeculationPolicy::new(
+            SpeculationConfig::new(
+                5,
+                128,
+                SpeculationMode::Balanced(DraftDepths::parse("1:5,8:3").unwrap()),
+                DraftSource::Host,
+            )
+            .unwrap()
+            .with_verify_allocation(Some(allocation)),
+        );
+        let candidates = vec![candidate(&estimate, 5); 8];
+        assert_eq!(
+            host.plan(&candidates, DraftBudget::new(120, 120)),
+            vec![3; 8]
+        );
+        assert_eq!(host.take_allocation(), None);
+    }
+
     /// Two engines with a depth schedule and verify widths that verify the
     /// same drafts but time their steps differently, one about 20 ms a step
     /// and the other anywhere from 30 to 120 ms, plan the same drafts at

@@ -3977,9 +3977,11 @@ pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact
 /// per item, chosen by the SDK's allocation rule, so the target computes
 /// exactly W rows, and reports K'_i: the verified drafts it emits with host
 /// values, or `BUNDLE_ACCEPTANCE_ALLOCATED_V1` and `verified_drafts` in each
-/// device acceptance result. Rows past an item's 1 + K'_i are unspecified and
-/// never read. Acceptance stays the host's walk over the verified drafts:
-/// allocation changes work, never an emitted token. The package names what
+/// device acceptance result. Every reserved row still reaches the host and
+/// is validated, so an item's rows past its 1 + K'_i repeat its last
+/// verified row's logits; acceptance never consumes them. Acceptance stays
+/// the host's walk over the verified drafts: allocation changes work, never
+/// an emitted token. The package names what
 /// its raw confidence means in its speculation declaration's
 /// `confidence_contract`; a calibration fitted for another contract is not
 /// used.

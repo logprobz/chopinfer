@@ -1,4 +1,6 @@
 //! Candidate-only prefill tiles and their sharded bitwise gate.
+#[path = "f32_prefill/bands.rs"]
+mod bands;
 use super::f32_decode::{
     ComparisonWeights, HostCase, Shard, check_poison_expansion, compare, edges, prepared,
     random_operands,
@@ -229,7 +231,11 @@ fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
                     )));
                 }
                 for rows in [258, 510, 514, 2046, 2050, 4094, 4097, 8190] {
-                    assert!(!selected.entry_for_rows(rows).uses_prefill_tiles());
+                    let in_band = selected
+                        .prefill_bands()
+                        .iter()
+                        .any(|band| (band.lo..=band.hi).contains(&rows));
+                    assert_eq!(selected.entry_for_rows(rows).uses_prefill_tiles(), in_band);
                 }
             }
         }

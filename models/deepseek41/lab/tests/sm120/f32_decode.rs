@@ -112,6 +112,12 @@ fn production_cases() -> Vec<ProductionCase> {
             assert_eq!(old.symbol(), entry.baseline_symbol());
             let mut rows = sampled_rows();
             rows.extend(entry.prefill_buckets().iter().map(|&(rows, _)| rows));
+            rows.extend(
+                entry
+                    .prefill_bands()
+                    .iter()
+                    .flat_map(|band| [band.lo, band.lo + (band.hi - band.lo) / 2, band.hi]),
+            );
             if maximum > 256 {
                 rows.extend([512, 2048]);
             }
@@ -221,6 +227,8 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
             "baseline": case.old.symbol(),
             "candidate": case.candidate.symbol(),
             "prefill_buckets": case.candidate.prefill_buckets(),
+            "prefill_bands": case.candidate.prefill_bands().iter().map(|band|
+                serde_json::json!({"lo":band.lo,"hi":band.hi,"features":band.features})).collect::<Vec<_>>(),
             "routed_rows": case.rows.iter().copied().filter(|&rows|
                 rows <= case.candidate.decode_max_rows() || case.candidate.entry_for_rows(rows).uses_prefill_tiles()).collect::<Vec<_>>(),
             "n": case.old.query().n,
@@ -294,6 +302,12 @@ fn cpu_production_matrix_covers_registered_entries() {
                 for rows in sampled_rows()
                     .into_iter()
                     .chain(entry.prefill_buckets().iter().map(|&(rows, _)| rows))
+                    .chain(
+                        entry
+                            .prefill_bands()
+                            .iter()
+                            .flat_map(|band| [band.lo, band.lo + (band.hi - band.lo) / 2, band.hi]),
+                    )
                 {
                     assert!(
                         case.rows.contains(&rows),
@@ -634,7 +648,7 @@ impl ComparisonWeights {
                 session.load_cubin(bytes)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if !new.prefill_buckets().is_empty() {
+        if !new.prefill_buckets().is_empty() || !new.prefill_bands().is_empty() {
             for features in [32, 64] {
                 let tiled = old
                     .clone()

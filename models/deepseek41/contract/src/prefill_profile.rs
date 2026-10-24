@@ -65,16 +65,21 @@ mod tests {
         }
     }
 
+    /// The profile's prefill options; its other options have their own
+    /// declarations.
     fn profile_overrides(name: &str) -> BTreeMap<String, String> {
         let profiles: serde_json::Value =
             serde_json::from_str(include_str!("../../profiles.json")).unwrap();
-        serde_json::from_value(
+        let all: BTreeMap<String, String> = serde_json::from_value(
             profiles["profiles"][name]
                 .get("model_options")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({})),
         )
-        .unwrap()
+        .unwrap();
+        all.into_iter()
+            .filter(|(key, _)| [CHUNK, SKIP].contains(&key.as_str()))
+            .collect()
     }
 
     #[test]

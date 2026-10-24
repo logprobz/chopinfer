@@ -8,8 +8,14 @@ use runtime_bundle_sdk::prefill::{Boundary, encode};
 fn resolved(profile: Option<&str>) -> BTreeMap<String, serde_json::Value> {
     let profiles: serde_json::Value =
         serde_json::from_str(include_str!("../../../../profiles.json")).unwrap();
+    // The profile's prefill options; its other options have their own
+    // declarations.
     let overrides = profile.map_or_else(BTreeMap::new, |name| {
-        serde_json::from_value(profiles["profiles"][name]["model_options"].clone()).unwrap()
+        let all: BTreeMap<String, String> =
+            serde_json::from_value(profiles["profiles"][name]["model_options"].clone()).unwrap();
+        all.into_iter()
+            .filter(|(key, _)| [CHUNK, SKIP].contains(&key.as_str()))
+            .collect()
     });
     ModelOptionsV1 {
         schema: CAPABILITY.into(),

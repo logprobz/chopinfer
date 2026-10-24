@@ -362,6 +362,15 @@ impl conformance::Startup for Served {
             ]);
             configurations.push(full);
         }
+        // The DSpark profiles select eight drafting items a forward.
+        for entry in &mut configurations {
+            if entry.draft_tokens > 0 {
+                entry.model_options.insert(
+                    model_deepseek41_contract::dspark_options::DRAFT_CHUNK_ITEMS.into(),
+                    "8".into(),
+                );
+            }
+        }
         configurations
     }
     fn new(serving: &conformance::Serving) -> Self {

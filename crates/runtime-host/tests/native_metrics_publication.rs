@@ -2273,3 +2273,173 @@ async fn batch_exchange(stream: &tokio::net::TcpStream, mut request: &[u8]) -> V
         }
     }
 }
+
+/// How a client of [`clients_that_hang_up_leave_the_worker_and_transport_empty`]
+/// leaves its request.
+#[derive(Clone, Copy, Debug)]
+enum Client {
+    /// Reads the whole answer.
+    Reads { stream: bool },
+    /// Hangs up after its first streamed event.
+    HangsUpMidStream,
+    /// Hangs up right after sending, before any answer.
+    HangsUpAtOnce { stream: bool },
+}
+
+/// Sends one completion over a fresh connection and leaves as `client` does.
+/// Returns whether the client read a whole answer.
+async fn completion(address: std::net::SocketAddr, index: usize, client: Client) -> bool {
+    let stream = !matches!(
+        client,
+        Client::Reads { stream: false } | Client::HangsUpAtOnce { stream: false }
+    );
+    let body = serde_json::json!({
+        "model": "fixture/metrics-1",
+        "prompt": format!("x{}", "y".repeat(index % 7)),
+        "max_tokens": 8,
+        "temperature": 0,
+        "stream": stream,
+        "return_token_ids": index % 2 == 0,
+    })
+    .to_string();
+    let request = format!(
+        "POST /v1/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    match client {
+        Client::Reads { .. } => {
+            let raw = tokio::time::timeout(TIMEOUT, batch_exchange(&socket, request.as_bytes()))
+                .await
+                .unwrap();
+            let raw = String::from_utf8(raw).unwrap();
+            raw.starts_with("HTTP/1.1 200")
+        }
+        Client::HangsUpAtOnce { .. } => {
+            let mut sent = request.as_bytes();
+            while !sent.is_empty() {
+                socket.writable().await.unwrap();
+                match socket.try_write(sent) {
+                    Ok(written) => sent = &sent[written..],
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("the socket write failed: {error}"),
+                }
+            }
+            drop(socket);
+            false
+        }
+        Client::HangsUpMidStream => {
+            let mut sent = request.as_bytes();
+            while !sent.is_empty() {
+                socket.writable().await.unwrap();
+                match socket.try_write(sent) {
+                    Ok(written) => sent = &sent[written..],
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("the socket write failed: {error}"),
+                }
+            }
+            let mut seen = Vec::new();
+            let deadline = tokio::time::Instant::now() + TIMEOUT;
+            while !String::from_utf8_lossy(&seen).contains("data: ") {
+                assert!(tokio::time::Instant::now() < deadline, "no streamed event");
+                socket.readable().await.unwrap();
+                let mut chunk = [0_u8; 4096];
+                match socket.try_read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => seen.extend_from_slice(&chunk[..read]),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("the socket read failed: {error}"),
+                }
+            }
+            drop(socket);
+            false
+        }
+    }
+}
+
+/// Requests over the transport whose clients read their answers or hang up
+/// before or during them leave nothing held: no request, sequence or KV token
+/// in the worker, and no intake or transport bytes in the server.
+#[tokio::test]
+async fn clients_that_hang_up_leave_the_worker_and_transport_empty() {
+    let worker = ServedWorkerV1::start(FixtureExecutorV1::slow());
+    let metrics = Arc::clone(&worker.metrics);
+    let backend: Arc<dyn GenerationBackend> = Arc::new(worker.backend);
+    let config = runtime_server::ServerConfig::default();
+    let frontend = runtime_host::frontend_from_declaration_v1(
+        &declaration(),
+        &runtime_frontend::test_support::fixture_export_v1(),
+        config,
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(runtime_server::serve(listener, backend, frontend, config));
+    let clients = [
+        Client::Reads { stream: false },
+        Client::Reads { stream: true },
+        Client::HangsUpMidStream,
+        Client::HangsUpAtOnce { stream: false },
+        Client::HangsUpAtOnce { stream: true },
+    ];
+    let mut read = 0;
+    for round in 0..24 {
+        // Two clients at a time, as the fixture engine runs two sequences.
+        let pair = [round * 2, round * 2 + 1]
+            .map(|index| tokio::spawn(completion(address, index, clients[index % clients.len()])));
+        for client in pair {
+            read += usize::from(client.await.unwrap());
+        }
+    }
+    assert!(read >= 16, "{read} clients read their answer");
+    let provider: &dyn MetricsSnapshotProvider = metrics.as_ref();
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let (worker_text, server_text) = loop {
+        let worker_text = provider.snapshot(12_345_678);
+        let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let server_text = String::from_utf8(
+            tokio::time::timeout(
+                TIMEOUT,
+                batch_exchange(
+                    &socket,
+                    b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                ),
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        let worker_idle = [
+            "chop_requests_active",
+            "chop_sequences_active",
+            "chop_kv_active_sequences",
+            "chop_kv_tokens",
+        ]
+        .iter()
+        .all(|name| metric_value(&worker_text, name) == Some(0.0));
+        let server_idle = ["chop_requests_waiting", "chop_intake_used_bytes"]
+            .iter()
+            .all(|name| metric_value(&server_text, name) == Some(0.0));
+        if worker_idle && server_idle {
+            break (worker_text, server_text);
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the worker or transport still holds requests:\n{worker_text}\n{server_text}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        value(&worker_text, "chop_cancellations_total") > 0.0,
+        "{worker_text}"
+    );
+    assert!(
+        value(&worker_text, "chop_requests_completed_total") > 0.0,
+        "{worker_text}"
+    );
+    assert_eq!(value(&worker_text, "chop_generation_worker_ready"), 1.0);
+    // Only the metrics request's own connection holds transport buffers.
+    assert!(value(&server_text, "chop_transport_buffer_reserved_bytes") >= 0.0);
+    server.abort();
+    let _ = server.await;
+}

@@ -737,9 +737,17 @@ impl Instance {
             let tail = handles.allocate(rank, items * SHAPE.indexer_tail_slot_bytes(drafter));
             let retained = StatePools::retained_bytes(SHAPE, &format, extent)
                 .map(|bytes| handles.allocate(rank, bytes));
-            let state = StatePools::new(SHAPE, &format, extent, retained, tail, &mut allocate)
-                .map_err(err)?
-                .map_err(err)?;
+            let state = StatePools::new(
+                SHAPE,
+                &format,
+                extent,
+                model_glm5next_contract::contract::head_rows(),
+                retained,
+                tail,
+                &mut allocate,
+            )
+            .map_err(err)?
+            .map_err(err)?;
             // The drafter's staging, on an instance that runs it.
             let drafter_buffers = drafter
                 .then(|| DrafterBuffers::allocate(SHAPE, &mut allocate))

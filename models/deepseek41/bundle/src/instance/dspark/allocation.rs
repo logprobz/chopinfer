@@ -18,6 +18,11 @@ use model_deepseek41_contract::own_ops::allocation::{BLOCK, Item, RULE_WORDS};
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 use runtime_bundle_sdk::SamplingKindV1;
 
+/// The bucket of an allocated step's tail rows: each bucket is a graph
+/// bank of its own, so a step reserving fewer rows than the prepared ones
+/// scores and exchanges fewer.
+const TAIL_ROWS: u32 = 16;
+
 impl Instance {
     /// The pending device target's allocation, when its step is allocated.
     pub(crate) fn allocated_step(&self) -> Option<&Step> {
@@ -31,12 +36,14 @@ impl Instance {
     }
 
     /// The rows the pending allocated step's tail gathers into and scores:
-    /// the prepared reserved rows, whatever the step reserves, so its
-    /// programs depend only on its width. Rows past the step's reserved
-    /// rows are never gathered, read or sampled.
+    /// its reserved rows rounded up to a multiple of `TAIL_ROWS`, at most
+    /// the prepared reserved rows, so its programs depend only on its width
+    /// and that bucket. Rows past the step's reserved rows are never
+    /// gathered, read or sampled.
     pub(crate) fn allocated_tail_rows(&self) -> Option<u32> {
-        self.allocated_step()?;
-        Some(self.dspark.as_ref()?.allocation.as_ref()?.op.reserved_rows)
+        let step = self.allocated_step()?;
+        let prepared = self.dspark.as_ref()?.allocation.as_ref()?.op.reserved_rows;
+        Some(step.reserved_rows.next_multiple_of(TAIL_ROWS).min(prepared))
     }
 
     /// Rank `rank`'s allocation storage.

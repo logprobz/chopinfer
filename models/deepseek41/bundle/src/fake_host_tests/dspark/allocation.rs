@@ -8,8 +8,8 @@ use super::results::{DeviceSink, metadata};
 use super::*;
 use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
 
-/// An instance of `items` slots whose host allocates.
-fn create_allocating(shape: Shape, items: u32) -> (Rc<Host>, BundleInstanceV1) {
+/// An instance of `items` slots and `rows` verify rows whose host allocates.
+fn create_allocating(shape: Shape, items: u32, rows: u32) -> (Rc<Host>, BundleInstanceV1) {
     use model_deepseek41_contract::verify_allocation::OPTION;
     use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
     let declared = ModelOptionsV1 {
@@ -27,7 +27,7 @@ fn create_allocating(shape: Shape, items: u32) -> (Rc<Host>, BundleInstanceV1) {
         .unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
-    host.speculation.set(Some((5, 32)));
+    host.speculation.set(Some((5, rows)));
     let record = crate::config::tests::with_options(
         crate::config::tests::record(&shape, host.kv, items, false),
         &resolved,
@@ -144,13 +144,14 @@ fn device_step(
 /// without device results is refused before any work. The target's graph
 /// is keyed by the width in the allocated bank: the first step of a width
 /// captures it, a step of the same width that reserves other rows replays
-/// it without lowering, and an unallocated step of the same key captures
-/// its own.
+/// it without lowering when its reservation rounds to the same tail rows
+/// (a multiple of 16) and captures another when it does not, and an
+/// unallocated step of the same key captures its own.
 #[test]
 fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
     for shape in crate::shape::topologies() {
         let (items, width) = (8_u32, 16_u32);
-        let (host, mut instance) = create_allocating(shape, 8);
+        let (host, mut instance) = create_allocating(shape, 8, 48);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -245,8 +246,9 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             assert_eq!(gathers, 3, "rank {rank}");
         }
 
-        // The same width over fewer reserved rows replays the graph: the
-        // allocation and the device counts carry the reservation.
+        // The same width over 24 reserved rows, whose tail is still 32
+        // rows, replays the graph: the allocation and the device counts
+        // carry the reservation.
         let request = allocated(items, 4, 2, width).encode().unwrap();
         let (step, hash, accepted) = device_step(
             &host,
@@ -270,6 +272,23 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             );
         }
 
+        // 40 reserved rows take a 48-row tail, another bank: the step
+        // captures its graph.
+        let request = allocated(items, 5, 4, width).encode().unwrap();
+        let (step, hash, accepted) = device_step(
+            &host,
+            &mut instance,
+            &request,
+            (items, 4, 3),
+            allocated_acceptance,
+        );
+        allocates(&step, hash);
+        let target = &step[hash..accepted];
+        for rank in 0..shape.ranks() {
+            let stream = streams[&rank];
+            assert!(lines(target, "captured", stream) > 0, "rank {rank}");
+        }
+
         // An unallocated step of the same graph key captures its own graph.
         let plain = BatchRequestV1::new(
             BatchWireVersionV1::V3,
@@ -277,7 +296,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
                 .map(|slot| BatchItemV1::verify(u64::from(slot + 1), 2, true, vec![7]))
                 .collect(),
             (0..items)
-                .map(|slot| BatchAppendV1::new(5, 2, 7, vec![u64::from(slot)], None))
+                .map(|slot| BatchAppendV1::new(6, 2, 8, vec![u64::from(slot)], None))
                 .collect(),
         )
         .with_state_slots((0..items).map(u64::from).collect())
@@ -287,7 +306,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             &host,
             &mut instance,
             &plain,
-            (items, 1, 3),
+            (items, 1, 4),
             crate::sm120::host_acceptance_entries::SYMBOL,
         );
         assert!(launch_of(&step, streams[&0], allocated_acceptance).is_none());

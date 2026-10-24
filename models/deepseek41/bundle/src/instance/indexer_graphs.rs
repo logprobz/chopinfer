@@ -10,22 +10,20 @@ pub(super) struct Pair {
     layers: Vec<(u32, GraphCache<DeepSeek>)>,
 }
 
-/// The bank a run's graphs live in: its indexer route, and whether it is an
-/// allocated verify step, whose features and head gather into the reserved
-/// rows, so its programs differ from an unallocated step's of the same key.
+/// The bank a run's graphs live in: its indexer route, and for an allocated
+/// verify step the rows its tail gathers into and scores (zero otherwise).
+/// An allocated program differs from an unallocated one of the same key,
+/// and from one of other tail rows.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Bank {
     pub(crate) route: Route,
-    pub(crate) allocated: bool,
+    pub(crate) tail: u32,
 }
 
 impl Bank {
     /// The bank of an unallocated run on `route`.
     pub(crate) const fn of(route: Route) -> Self {
-        Self {
-            route,
-            allocated: false,
-        }
+        Self { route, tail: 0 }
     }
 }
 

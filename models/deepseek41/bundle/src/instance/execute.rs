@@ -58,8 +58,8 @@ struct Run {
     /// A decode phase whose Engram rows upload per layer and join at their
     /// consumers (`super::ar_engram`) instead of before the first launch.
     ar_engram: bool,
-    /// The graph bank: the indexer route lowering takes and whether the
-    /// step is allocated.
+    /// The graph bank: the indexer route lowering takes and an allocated
+    /// step's tail rows.
     bank: Bank,
     dma: Option<dma::Plan>,
     skip: Option<std::rc::Rc<skip::Plan>>,
@@ -315,10 +315,10 @@ impl Instance {
             Ok((phase, PREFILL, layout, None))
         } else if let Some(step) = self.allocated_step().filter(|_| inputs.verify) {
             // The target computes the allocation's width over the reserved
-            // rows the host packed. Its tail gathers into the prepared
+            // rows the host packed. Its tail gathers into its bucket of
             // reserved rows by device counts, so its program is a function
-            // of the width and its graph is keyed like an unallocated
-            // step's, in the allocated bank.
+            // of the width and the bucket, and its graph is keyed like an
+            // unallocated step's, in the bucket's bank.
             let rows = step.width;
             if live == 0
                 || live > items.get()
@@ -496,10 +496,10 @@ impl Instance {
         // An allocated step's items verify device-chosen counts, so it
         // takes the route that reads no host count, in its own bank.
         let allocated = self.allocated_tail_rows().filter(|_| inputs.verify);
-        let bank = if allocated.is_some() {
+        let bank = if let Some(tail) = allocated {
             Bank {
                 route: IndexerRoute::Accepted,
-                allocated: true,
+                tail,
             }
         } else {
             Bank::of(IndexerRoute::select(
@@ -534,7 +534,7 @@ impl Instance {
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
-            // An allocated step's head scores the prepared reserved rows.
+            // An allocated step's head scores its tail rows.
             (
                 allocated.unwrap_or(phase.rows()),
                 crate::buffers::head_rows(&self.config.shape),

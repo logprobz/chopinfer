@@ -156,7 +156,7 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
     // into the reserved rows, unlike an unallocated step's of the same key.
     let allocated = Bank {
         route: IndexerRoute::Accepted,
-        allocated: true,
+        tail: 48,
     };
     let (host, mut instance) = host(Ranks::TP1, true);
     super::super::INSTANCES.with(|table| {

@@ -1555,8 +1555,12 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
     }
     let verify_confidence = parsed.speculation_confidence.clone().flatten();
     if let Some(confidence) = &verify_confidence {
+        // With a pending profile, the profile may give the tokens and the
+        // balanced mode; an explicit other mode is refused at once.
         let tokens = parsed.speculative_tokens.unwrap_or(0);
-        if tokens == 0 || !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_))) {
+        let balanced = matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)));
+        let pending = profile_pending && (parsed.speculation_mode.is_none() || balanced);
+        if !pending && (tokens == 0 || !balanced) {
             return Err(usage_error(
                 "--speculation-confidence requires --speculation balanced and speculative \
                  tokens, which only it uses",
@@ -7931,6 +7935,46 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("invalid --speculation-confidence")
+        );
+        // `serve --model` takes its tokens and mode from the profile, so
+        // only an explicit other mode is refused before it applies.
+        let model = |flags: &[&str]| {
+            let mut words = arguments(&["serve", "--model", "checkpoint"]);
+            words.extend(flags.iter().map(|flag| flag.to_string()));
+            parse_host_command_v1(&words)
+        };
+        for flags in [
+            &["--speculation-confidence", calibration][..],
+            &[
+                "--speculation",
+                "balanced",
+                "--speculation-confidence",
+                calibration,
+            ],
+        ] {
+            assert!(model(flags).is_ok(), "{flags:?}");
+        }
+        assert!(
+            model(&[
+                "--speculation",
+                "adaptive",
+                "--speculation-confidence",
+                calibration
+            ])
+            .unwrap_err()
+            .to_string()
+            .contains("requires --speculation balanced and speculative tokens")
+        );
+        assert!(
+            model(&[
+                "--speculative-tokens",
+                "3",
+                "--speculation-confidence",
+                calibration
+            ])
+            .unwrap_err()
+            .to_string()
+            .contains("calibrates 2 draft positions, fewer than the 3")
         );
         let HostCommandV1::Serve {
             verify_confidence, ..

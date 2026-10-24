@@ -778,10 +778,13 @@ fn allocation_engine(
 #[test]
 fn confidence_reservations_fill_only_common_depths_and_skip_full_widths() {
     let mut cases = 0;
+    // 16 items at depth 1 fill their 32 rows with the floor's one draft
+    // each, so their verified drafts are decided and the step keeps the
+    // plan; so does a capacity the plan already fills.
     for (count, capacity, depth, reserved, width) in [
         (12, 64, 3, 4, Some(32)),
         (8, 48, 3, 5, Some(32)),
-        (16, 64, 1, 3, Some(32)),
+        (16, 64, 1, 3, None),
         (8, 32, 3, 3, None),
     ] {
         let mut plain = None;
@@ -848,14 +851,15 @@ fn confidence_reservations_respect_the_remaining_output_limit() {
     let mut engine = allocation_engine(8, 48, 3, true, Drafter::Wrong);
     for id in 1..=8 {
         engine
-            .submit(allocation_request(id, if id == 1 { 4 } else { 128 }))
+            .submit(allocation_request(id, if id == 1 { 5 } else { 128 }))
             .unwrap();
     }
     engine.step().unwrap();
     engine.step().unwrap();
     let steps = &engine.executor().allocated_steps;
     assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].1[0], 2);
+    assert_eq!(steps[0].0, 32);
+    assert_eq!(steps[0].1[0], 3);
     assert_eq!(&steps[0].1[1..], &[5; 7]);
 }
 

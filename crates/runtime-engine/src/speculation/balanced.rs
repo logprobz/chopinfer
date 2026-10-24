@@ -267,6 +267,32 @@ mod tests {
             assert_eq!(policy.take_allocation().map(|a| a.width), width, "{items}");
             assert_eq!(policy.take_allocation(), None);
         }
+        // A step whose verified drafts are decided in advance keeps the
+        // plan unallocated: one drafting item, or a floor of one draft that
+        // fills 16 items' 32 rows. A floor of zero leaves them to rank.
+        let ranked = |floor, depths: &str, items| {
+            let allocation =
+                VerifyAllocation::new(floor, &[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap();
+            let mut policy = SpeculationPolicy::new(
+                SpeculationConfig::new(
+                    5,
+                    64,
+                    SpeculationMode::Balanced(DraftDepths::parse(depths).unwrap()),
+                    DraftSource::Bundle,
+                )
+                .unwrap()
+                .with_verify_widths(VerifyWidths::parse("6,8,16,32").unwrap())
+                .with_verify_allocation(Some(allocation)),
+            );
+            let candidates = vec![candidate(&estimate, 5); items];
+            let spare = 64 - items;
+            let drafts = policy.plan(&candidates, DraftBudget::new(spare, spare));
+            (drafts, policy.take_allocation().map(|a| a.width))
+        };
+        assert_eq!(ranked(1, "1:3", 1), (vec![3], None));
+        assert_eq!(ranked(1, "1:1", 16), (vec![1; 16], None));
+        assert_eq!(ranked(0, "1:1", 16), (vec![3; 16], Some(32)));
+        assert_eq!(ranked(1, "1:3", 8), (vec![5; 8], Some(32)));
         let mut narrow = allocated(32);
         let candidates = vec![candidate(&estimate, 5); 8];
         assert_eq!(

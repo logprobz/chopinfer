@@ -432,6 +432,20 @@ impl VerifyAllocation {
             })
             .unwrap_or(0)
     }
+
+    /// Whether the drafts verified within `width` rows over `reserved`
+    /// drafts depend on the drafter's confidence: after the floor, rows
+    /// remain to rank, and at least two items reserve drafts past the floor
+    /// to rank them between. Otherwise every item's verified drafts are
+    /// decided in advance (one drafting item takes a prefix; a floor that
+    /// fills the width leaves nothing to rank), and allocating only costs.
+    #[must_use]
+    pub fn chooses(&self, reserved: &[usize], width: usize) -> bool {
+        let floor = self.effective_floor(reserved, width);
+        let floor_rows: usize = reserved.iter().map(|&drafts| 1 + floor.min(drafts)).sum();
+        let ranked = reserved.iter().filter(|&&drafts| drafts > floor).count();
+        floor_rows < width && ranked >= 2
+    }
 }
 
 /// One verify step's allocation as the executor receives it: the rows the
@@ -1540,6 +1554,8 @@ impl SpeculationPolicy {
                 // every item reserves drafts up to its limits within the
                 // token capacity, never fewer than the plan gave it: the
                 // executor verifies the most confident within the width.
+                // A step whose verified drafts are decided in advance keeps
+                // the plan's drafts unallocated.
                 if self.config.verify_allocation.is_some()
                     && !budget.prefill()
                     && self.config.source == DraftSource::Bundle
@@ -1547,7 +1563,11 @@ impl SpeculationPolicy {
                 {
                     let width = candidates.len() + drafts.iter().sum::<usize>();
                     let reserved = self.reserve_balanced(candidates, remaining, &drafts);
-                    if candidates.len() + reserved.iter().sum::<usize>() > width {
+                    let chooses = self
+                        .config
+                        .verify_allocation
+                        .is_some_and(|allocation| allocation.chooses(&reserved, width));
+                    if candidates.len() + reserved.iter().sum::<usize>() > width && chooses {
                         drafts = reserved;
                         self.allocated_width = Some(width);
                     }

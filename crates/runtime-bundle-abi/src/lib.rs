@@ -3971,8 +3971,9 @@ pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact
 /// each item's reserved drafts the target verifies. A verify step the host
 /// allocates arrives as `chopbatch-v7` (`runtime_bundle_sdk::VerifyAllocationV1`):
 /// the step's verify width W, a floor, and the calibration that turns the
-/// drafter's raw confidence into acceptance probabilities. Each decode-phase
-/// item's rows (one plus its reserved drafts c_i) keep sizing its KV,
+/// drafter's raw confidence into acceptance probabilities. An allocated step
+/// never prefills: each of its items is a decode or verify item. Each item's
+/// rows (one plus its reserved drafts c_i) keep sizing its KV,
 /// sampler rows and acceptance inputs. The bundle verifies K'_i <= c_i drafts
 /// per item, chosen by the SDK's allocation rule, so the target computes
 /// exactly W rows, and reports K'_i: the verified drafts it emits with host

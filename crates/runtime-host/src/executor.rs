@@ -2263,9 +2263,9 @@ fn write_position_axes_v1(
 /// step's allocation when the engine allocated it: the width, the floor, the
 /// calibrated positions, the greedy and then the sampled calibration as
 /// (scale, offset) f32 bits per position, then a count equal to the items
-/// and each item's kind (1 for a positive temperature, else 0). Other steps
-/// keep their record unwrapped. `enclosed` receives the bytes appended
-/// after it.
+/// and each item's kind (1 for a positive temperature, else 0). A step that
+/// also prefills is refused. Other steps keep their record unwrapped.
+/// `enclosed` receives the bytes appended after it.
 fn write_verify_allocation_v1(
     out: &mut Vec<u8>,
     items: &[ModelBatchItem],
@@ -2275,6 +2275,14 @@ fn write_verify_allocation_v1(
     let Some(step) = allocation else {
         return enclosed(out, 0);
     };
+    if items
+        .iter()
+        .any(|item| matches!(item.phase(), BatchPhase::Prefill { .. }))
+    {
+        return Err(executor_error_v1(
+            "an allocated verify step never prefills".to_owned(),
+        ));
+    }
     let rule = step.allocation;
     let positions = rule.positions();
     let own = 12 + 16 * positions + 4 + 4 * items.len();
@@ -4890,6 +4898,22 @@ mod tests {
         };
         let enclosed = write(None);
         assert!(enclosed.starts_with(super::BATCH_REQUEST_MAGIC_V6));
+        // A step that also prefills is never allocated.
+        let prefilling = [ModelBatchItem::new(
+            RequestId::new(3),
+            BatchPhase::Prefill { tokens: 2 },
+            vec![1, 2],
+            true,
+        )];
+        assert!(
+            super::write_verify_allocation_v1(
+                &mut Vec::new(),
+                &prefilling,
+                Some(&step),
+                |_, _| unreachable!("the enclosed record is never written")
+            )
+            .is_err()
+        );
         let bytes = write(Some(&step));
         assert!(bytes.starts_with(super::BATCH_REQUEST_MAGIC_V7));
         assert_eq!(bytes[16..16 + enclosed.len()], enclosed[..]);

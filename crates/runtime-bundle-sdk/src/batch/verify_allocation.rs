@@ -8,9 +8,9 @@
 //! equal to the enclosed item count with one u32 kind per item (0 greedy,
 //! 1 sampled), little endian.
 //!
-//! The step's decode-phase items are its decode and verify items, in item
-//! order; a verify item of `rows` rows reserves `rows - 1` drafts, a decode
-//! item none. [`allocate_verify_drafts_v1`] is the rule a bundle verifies
+//! An allocated step never prefills: its items, its decode-phase items, are
+//! decode and verify items; a verify item of `rows` rows reserves
+//! `rows - 1` drafts, a decode item none. [`allocate_verify_drafts_v1`] is the rule a bundle verifies
 //! by: every item verifies a prefix of its reserved drafts, and the verified
 //! rows (one per item plus its verified drafts) sum to the width.
 
@@ -219,11 +219,14 @@ impl VerifyAllocationV1 {
             .collect()
     }
 
-    /// One kind per item, a calibration covering every reservation, and a
-    /// width from the decode-phase items through their reserved rows.
+    /// No prefill item, one kind per item, a calibration covering every
+    /// reservation, and a width from the items through their reserved rows.
     pub fn validate(&self, request: &BatchRequestV1) -> Result<(), InvalidVerifyAllocationV1> {
         self.calibration.validate()?;
         let reservations = Self::reservations(request);
+        if reservations.len() != request.items().len() {
+            return Err(InvalidVerifyAllocationV1);
+        }
         let items = reservations.len() as u64;
         let rows: u64 = reservations
             .iter()
@@ -469,6 +472,28 @@ mod tests {
                 Err(BatchWriteErrorV1::InvalidVerifyAllocation)
             );
         }
+        // A step that also prefills is never allocated.
+        let prefilling = BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            plain
+                .items()
+                .iter()
+                .cloned()
+                .chain([BatchItemV1::new(5, false, 3, true, vec![1, 2, 3])])
+                .collect(),
+            plain
+                .appends()
+                .iter()
+                .cloned()
+                .chain([BatchAppendV1::new(0, 3, 3, vec![3], None)])
+                .collect(),
+        );
+        assert_eq!(
+            prefilling
+                .with_verify_allocation(allocation(12, 1, 5))
+                .encode(),
+            Err(BatchWriteErrorV1::InvalidVerifyAllocation)
+        );
         let short = VerifyCalibrationV1::new(&[(1.0, 0.0); 4], &[(1.0, 0.0); 4]).unwrap();
         let shallow = VerifyAllocationV1::new(12, 0, short, vec![SamplingKindV1::Greedy; 4]);
         assert!(shallow.validate(&plain).is_err());

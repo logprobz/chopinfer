@@ -1,0 +1,26 @@
+[package]
+name = "model-glm5next-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Model-owned GPU tests use the shared harness and the bundle's cubins.
+# This crate is a workspace member, but not a default member.
+[dev-dependencies]
+bundle-glm5next.workspace = true
+bundle-runtime.workspace = true
+kernel-core.workspace = true
+kernel-harness.workspace = true
+kernels-sm120.workspace = true
+model-glm5next-contract.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-cuda.workspace = true
+
+[[test]]
+name = "retained_rows"
+path = "tests/sm120/retained_rows.rs"
+
+[lints]
+workspace = true

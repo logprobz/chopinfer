@@ -917,6 +917,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "model-glm5next-lab"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "bundle-glm5next",
+ "bundle-runtime",
+ "kernel-core",
+ "kernel-harness",
+ "kernels-sm120",
+ "model-glm5next-contract",
+ "runtime-bundle-abi",
+ "runtime-cuda",
+]
+
+[[package]]
 name = "model-mimo26"
 version = "0.1.0-alpha.3"
 dependencies = [

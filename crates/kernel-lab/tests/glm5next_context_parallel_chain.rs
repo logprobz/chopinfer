@@ -114,7 +114,7 @@ use kernels_sm120::context_parallel::phased;
 use kernels_sm120::latent;
 use kernels_sm120::pooled_indexer::Kind as IndexerKind;
 use model_glm5next_contract::contract::{
-    DECODE_BATCH, Glm as Model, MAX_VERIFY_ROWS, PREFILL_GRANULE, Shape, has_mtp_layer,
+    DECODE_BATCH, Glm as Model, MAX_VERIFY_ROWS, PREFILL_GRANULE, Shape, has_mtp_layer, head_rows,
     latent_format,
 };
 use model_glm5next_contract::direct::layout;
@@ -741,7 +741,7 @@ impl Instance {
                 SHAPE,
                 &format,
                 extent,
-                model_glm5next_contract::contract::head_rows(),
+                head_rows(),
                 retained,
                 tail,
                 &mut allocate,

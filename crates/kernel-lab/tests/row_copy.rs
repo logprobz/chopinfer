@@ -9,9 +9,6 @@
 #[path = "common/row_copies.rs"]
 mod row_copies;
 
-#[path = "row_copy/glm_retained.rs"]
-mod glm_retained;
-
 use kernel_core::backend::{Counts, View};
 use kernel_core::contract::DType;
 use kernel_core::row_copy::{ColumnSlice, RowCopyBuffers};

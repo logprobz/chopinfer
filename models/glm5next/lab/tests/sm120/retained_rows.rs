@@ -3,8 +3,8 @@
 use bundle_glm5next::drafter::{RETAINED_ROWS, copies};
 use bundle_runtime::drafter::Retain;
 use kernel_core::contract::Argument;
-use kernel_lab::{LabResult, Session, launch, poison};
-use kernels_sm120::row::copy::{LAB_CUBIN, SLICE_SYMBOL};
+use kernel_harness::{LabResult, Session, launch, poison};
+use kernels_sm120::row::copy::SLICE_SYMBOL;
 use model_glm5next_contract::contract::Shape;
 use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
 use runtime_cuda::{DeviceBuffer, KernelArgument, Stream};
@@ -74,10 +74,24 @@ fn upload(session: &Session, bytes: &[u8]) -> LabResult<DeviceBuffer> {
     Ok(buffer)
 }
 
+fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
 #[test]
 fn batched_rows_match_scalar_copies_gpu() {
-    kernel_lab::gpu_test(256 << 20, |session| {
-        let module = session.module(LAB_CUBIN)?;
+    kernel_harness::gpu_test(256 << 20, |session| {
+        let cubin = bundle_glm5next::cubin_of(SLICE_SYMBOL).ok_or("missing row-copy entry")?;
+        let bytes = bundle_glm5next::embedded_cubin(cubin).ok_or("missing row-copy cubin")?;
+        let module = session.load_cubin(bytes)?;
         let function = module.function(SLICE_SYMBOL).map_err(|e| e.to_string())?;
         let mut control_allocations = Vec::new();
         let staging = bundle_glm5next::buffers::DrafterBuffers::allocate(Shape::TP4, |bytes| {
@@ -108,8 +122,8 @@ fn batched_rows_match_scalar_copies_gpu() {
             let destination_rows = rows.iter().map(|r| r.retained + 1).max().unwrap() as usize;
             let bytes = destination_rows * ROW + 64;
             let input = [
-                super::row_copies::noise(source_rows * ROW, index as u64 + 1),
-                super::row_copies::noise(source_rows * ROW, index as u64 + 91),
+                noise(source_rows * ROW, index as u64 + 1),
+                noise(source_rows * ROW, index as u64 + 91),
             ];
             let sources = [upload(session, &input[0])?, upload(session, &input[1])?];
             let output = session.allocate(bytes)?;

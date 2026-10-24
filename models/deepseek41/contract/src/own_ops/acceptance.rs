@@ -238,5 +238,7 @@ pub fn u64_at(bytes: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes[at..at + 8].try_into().expect("checked U64 span"))
 }
 
+pub mod allocated;
+
 #[cfg(test)]
 mod tests;

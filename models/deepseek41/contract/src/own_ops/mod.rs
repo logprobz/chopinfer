@@ -56,6 +56,18 @@ pub trait OwnOps: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Reduce an allocated step's sampler rows into the host result wire
+    /// encoding, walking each item's verified drafts. Counts::rows is the
+    /// live item count.
+    fn dspark_allocated_acceptance(
+        &self,
+        op: &acceptance::Acceptance,
+        need: Need,
+    ) -> Result<Prepared<acceptance::allocated::AllocatedAcceptanceBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Reduce sampler rows into the optional host result wire encoding. Counts::rows is the live item count.
     fn dspark_host_acceptance(
         &self,
@@ -188,6 +200,15 @@ mod tests {
             Need::rows(1),
         ));
         unsupported(backend.dspark_host_acceptance(
+            &acceptance::Acceptance {
+                vocab: 32,
+                sample_rows: 6,
+                draft_items: 1,
+                stop_ids: 1,
+            },
+            Need::rows(1),
+        ));
+        unsupported(backend.dspark_allocated_acceptance(
             &acceptance::Acceptance {
                 vocab: 32,
                 sample_rows: 6,

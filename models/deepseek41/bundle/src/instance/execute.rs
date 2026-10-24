@@ -305,10 +305,15 @@ impl Instance {
                 items,
             )
             .ok_or(BundleStatusV1::InvalidArgument)?;
-            if live == 0 || live > items.get() || rows < live || rows > live * MAX_VERIFY_ROWS {
+            if live == 0
+                || live > items.get()
+                || rows < live
+                || rows > live * MAX_VERIFY_ROWS
+                || rows > self.config.shape.verify_rows
+            {
                 return Err(BundleStatusV1::InvalidArgument);
             }
-            let layout = InputLayout::verify_within::<DeepSeek>(items);
+            let layout = super::verify_layout(&self.config.shape, items);
             let phase = Phase::Verify { rows, items: live };
             // Verify steps wider than the graph rows run eagerly.
             let key = (rows <= self.config.verify_graph_rows).then(|| verify_graph_key(rows));

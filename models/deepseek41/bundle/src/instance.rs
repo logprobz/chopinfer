@@ -178,6 +178,13 @@ pub(crate) fn model_limits(config: &Configuration) -> ModelLimits {
     .expect("the geometry's limits are valid")
 }
 
+/// The input layout of a verify step of an instance of `shape` serving
+/// `items`: the verify rows the host asked for (`Shape::verify_rows`), so an
+/// instance asked for the default rows lays its inputs out as before.
+pub(crate) fn verify_layout(shape: &crate::shape::Shape, items: Items) -> InputLayout {
+    InputLayout::within(shape.verify_rows, 1, items)
+}
+
 /// Verify rows per item the host's speculation asks for (the drafts and
 /// the bonus row; none without speculation), and the verify limits of an
 /// instance serving `items`.
@@ -311,7 +318,7 @@ impl Instance {
         let layouts = [
             InputLayout::prefill_capacity_within::<DeepSeek>(items),
             InputLayout::decode_within(items).end,
-            InputLayout::verify_within::<DeepSeek>(items).end,
+            verify_layout(&self.config.shape, items).end,
         ];
         let tables = BlockTableMirror::<DeepSeek>::device_bytes(limits, items);
         let mut scratch = Vec::new();

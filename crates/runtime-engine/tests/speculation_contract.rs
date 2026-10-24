@@ -745,6 +745,120 @@ fn confidence_mixed_steps_keep_the_unallocated_plan_and_entry_point() {
     assert_eq!(plans[0], plans[1]);
 }
 
+fn allocation_engine(
+    count: usize,
+    capacity: usize,
+    depth: usize,
+    confidence: bool,
+    drafter: Drafter,
+) -> Engine<Model> {
+    let base = EngineConfig::new(
+        SchedulerConfig::new(count, 128, 256, 4, 1).unwrap(),
+        KvGeometry::new(4, count * 64).unwrap(),
+        vocabulary(),
+        256,
+        128,
+    )
+    .unwrap();
+    let policy = speculation(
+        5,
+        capacity,
+        SpeculationMode::Balanced(
+            runtime_engine::DraftDepths::parse(&format!("1:{depth}")).unwrap(),
+        ),
+        DraftSource::Bundle,
+    )
+    .with_verify_widths(runtime_engine::VerifyWidths::parse("6,8,16,32").unwrap())
+    .with_verify_allocation(confidence.then(allocation));
+    let mut model = Model::new(drafter, Rows::Logits);
+    model.allocates = true;
+    Engine::new(base.with_speculation(policy), model).unwrap()
+}
+
+#[test]
+fn confidence_reservations_fill_only_common_depths_and_skip_full_widths() {
+    let mut cases = 0;
+    for (count, capacity, depth, reserved, width) in [
+        (12, 64, 3, 4, Some(32)),
+        (8, 48, 3, 5, Some(32)),
+        (16, 64, 1, 3, Some(32)),
+        (8, 32, 3, 3, None),
+    ] {
+        let mut plain = None;
+        for confidence in [false, true] {
+            let mut engine = allocation_engine(count, capacity, depth, confidence, Drafter::Wrong);
+            for id in 1..=count {
+                engine.submit(allocation_request(id as u64, 128)).unwrap();
+            }
+            engine.step().unwrap();
+            engine.step().unwrap();
+            let model = engine.executor();
+            if confidence && let Some(width) = width {
+                assert_eq!(model.allocated_steps.len(), 1);
+                let step = &model.allocated_steps[0];
+                assert_eq!(step.0, width);
+                assert_eq!(step.1, vec![reserved; count]);
+            } else {
+                assert!(model.allocated_steps.is_empty());
+                let step = model.plain_steps.last().unwrap();
+                if confidence {
+                    assert_eq!(Some(step), plain.as_ref());
+                } else {
+                    plain = Some(step.clone());
+                }
+            }
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, 8);
+}
+
+#[test]
+fn confidence_width_and_reservations_ignore_acceptance_history() {
+    let mut cases = 0;
+    for depth in 1..=5 {
+        let mut histories = Vec::new();
+        for drafter in [Drafter::Greedy, Drafter::Noise] {
+            let mut engine = allocation_engine(12, 64, depth, true, drafter);
+            for id in 1..=12 {
+                engine.submit(allocation_request(id, 128)).unwrap();
+            }
+            for _ in 0..9 {
+                engine.step().unwrap();
+            }
+            let steps = &engine.executor().allocated_steps;
+            assert_eq!(steps.len(), 8);
+            let shapes = steps
+                .iter()
+                .map(|(w, c, _)| (*w, c.clone()))
+                .collect::<Vec<_>>();
+            assert!(shapes.iter().all(|shape| shape == &shapes[0]));
+            assert!(shapes.iter().all(|(_, c)| c == &vec![4; 12]));
+            histories.push((shapes, engine.metrics().snapshot().spec_accepted_tokens));
+            cases += 1;
+        }
+        assert_eq!(histories[0].0, histories[1].0);
+        assert_ne!(histories[0].1, histories[1].1);
+    }
+    assert_eq!(cases, 10);
+}
+
+#[test]
+fn confidence_reservations_respect_the_remaining_output_limit() {
+    let mut engine = allocation_engine(8, 48, 3, true, Drafter::Wrong);
+    for id in 1..=8 {
+        engine
+            .submit(allocation_request(id, if id == 1 { 4 } else { 128 }))
+            .unwrap();
+    }
+    engine.step().unwrap();
+    engine.step().unwrap();
+    let steps = &engine.executor().allocated_steps;
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].1[0], 2);
+    assert_eq!(&steps[0].1[1..], &[5; 7]);
+}
+
 /// Balanced plans with confidence reserve every item's drafts up to its
 /// limits and verify the plan's width among them: every step fills its
 /// width with verified prefixes, some item verifies past the schedule's

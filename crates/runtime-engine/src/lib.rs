@@ -3736,7 +3736,8 @@ fn plan_drafts<E: ModelExecutor>(
         .and_then(|planned| {
             let rows = candidates.len() + drafts.iter().sum::<usize>();
             let width = planned.width.min(rows);
-            (width > candidates.len()).then_some(StepAllocation { width, ..planned })
+            (width > candidates.len() && rows > width)
+                .then_some(StepAllocation { width, ..planned })
         });
     if policy.config().source() != DraftSource::Host {
         return drafts;

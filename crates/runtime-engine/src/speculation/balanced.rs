@@ -4,6 +4,35 @@
 use super::{MAX_DRAFT_TOKENS, PlanCandidate, SpeculationPolicy};
 
 impl SpeculationPolicy {
+    /// Reserve a common executable depth without ranking partial increments
+    /// by acceptance history. Keep every draft the balanced plan needs.
+    pub(super) fn reserve_balanced(
+        &self,
+        candidates: &[PlanCandidate<'_>],
+        remaining: usize,
+        planned: &[usize],
+    ) -> Vec<usize> {
+        let mut reserved = planned.to_vec();
+        for depth in 1..=MAX_DRAFT_TOKENS {
+            if !self.executable[depth] {
+                continue;
+            }
+            let next = candidates
+                .iter()
+                .zip(planned)
+                .map(|(candidate, &drafts)| {
+                    self.executable_at_most(depth.min(candidate.maximum_draft_tokens))
+                        .max(drafts)
+                })
+                .collect::<Vec<_>>();
+            if next.iter().sum::<usize>() > remaining {
+                break;
+            }
+            reserved = next;
+        }
+        reserved
+    }
+
     /// No item verifies more than `limit` drafts; `None` leaves the request
     /// and batch limits alone, and `Some(0)` plans no drafts.
     pub(super) fn plan_balanced(
@@ -222,7 +251,7 @@ mod tests {
             )
         };
         for (items, reserved, width) in [
-            (1, vec![5], Some(6)),
+            (1, vec![5], None),
             (4, vec![5; 4], Some(16)),
             (6, vec![5; 6], Some(32)),
             (8, vec![5; 8], Some(32)),
@@ -244,7 +273,7 @@ mod tests {
             narrow.plan(&candidates, DraftBudget::new(24, 24)),
             vec![3; 8]
         );
-        assert_eq!(narrow.take_allocation().map(|a| a.width), Some(32));
+        assert_eq!(narrow.take_allocation(), None);
         // Request caps bound reservations; a host drafter never reserves.
         let mut policy = allocated(128);
         let capped = [5, 1, 0, 5].map(|cap| candidate(&estimate, cap));

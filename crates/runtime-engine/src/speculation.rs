@@ -1546,11 +1546,11 @@ impl SpeculationPolicy {
                     && drafts.iter().any(|&d| d > 0)
                 {
                     let width = candidates.len() + drafts.iter().sum::<usize>();
-                    let reserved = self.plan_balanced(candidates, remaining, None);
-                    for (draft, reserved) in drafts.iter_mut().zip(reserved) {
-                        *draft = (*draft).max(reserved);
+                    let reserved = self.reserve_balanced(candidates, remaining, &drafts);
+                    if candidates.len() + reserved.iter().sum::<usize>() > width {
+                        drafts = reserved;
+                        self.allocated_width = Some(width);
                     }
-                    self.allocated_width = Some(width);
                 }
             }
             SpeculationMode::Adaptive if budget.prefill() => {

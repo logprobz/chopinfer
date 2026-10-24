@@ -16,6 +16,7 @@ pub(crate) mod prefetch;
 pub(crate) mod results;
 pub mod staging;
 pub mod state;
+pub mod timing;
 pub mod transfers;
 pub(crate) mod upload;
 

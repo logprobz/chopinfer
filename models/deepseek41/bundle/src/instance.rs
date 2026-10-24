@@ -1488,6 +1488,23 @@ pub(crate) fn prefill_cache_for_test(
 }
 
 #[cfg(test)]
+pub(crate) fn dspark_step_trace_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    enabled: bool,
+) {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .dspark
+            .as_mut()
+            .expect("enabled drafter")
+            .step_trace = enabled;
+    });
+}
+
+#[cfg(test)]
 pub(crate) fn dspark_graphs_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
     capacity: Option<usize>,

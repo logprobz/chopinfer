@@ -164,6 +164,7 @@ pub fn is_routine_bundle_trace(message: &[u8]) -> bool {
         .is_some_and(|schema| {
             schema.starts_with("chopinfer.")
                 && (schema.ends_with(".step-shape.v1")
+                    || schema.ends_with(".commit-shape.v1")
                     || schema == "chopinfer.graph-cache.v1"
                     || schema.ends_with(".drafter-catch-up.v1")
                     || schema.ends_with(".drafter-confidence.v1"))
@@ -344,7 +345,12 @@ mod tests {
         assert!(is_routine_bundle_trace(
             br#"{"schema":"chopinfer.graph-cache.v1"}"#
         ));
-        for kind in ["step-shape", "drafter-catch-up", "drafter-confidence"] {
+        for kind in [
+            "step-shape",
+            "commit-shape",
+            "drafter-catch-up",
+            "drafter-confidence",
+        ] {
             assert!(is_routine_bundle_trace(
                 format!(r#"{{"schema":"chopinfer.example.{kind}.v1"}}"#).as_bytes()
             ));

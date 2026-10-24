@@ -301,7 +301,10 @@ class Tuner(unittest.TestCase):
             log = ['model: 64 KV pages per rank', 'startup weight_upload: {"uploaded_bytes": 10, "lent_bytes": 0}']
             log += [f'device memory after warmup rank {i}: KV 9 MiB, 280 MiB taken since sizing (graphs), '
                     f'1200 MiB free' for i in range(2)]
-            log += ['step ' + json.dumps(x) for x in steps]
+            for x in steps:
+                log += ['step ' + json.dumps(x), 'bundle: ' + json.dumps({
+                    'schema': 'chopinfer.deepseek41.commit-shape.v1',
+                    'instance_id': '1', 'step_id': str(x['batch']), 'micros': {'total': 100}})]
             (server / 'server.log').write_text('\n'.join(log) + '\n')
             (server / 'final.prom').write_text('vllm:num_preemptions_total 0\nchop_prefix_cache_evictions_total 0\n')
             window = run / 'd3' / 'windows' / 'greedy-c8.json'
@@ -312,6 +315,7 @@ class Tuner(unittest.TestCase):
             result = json.loads((out / 'recorded-check.json').read_text())
             costs = json.loads((out / 'costs.json').read_text())
             self.assertEqual((result['servers'], result['windows']), (1, 1))
+            self.assertEqual(recorded.r.trace_rows(server / 'server.log'), steps)
             self.assertEqual(costs['cells']['i8-r32']['steps'], 3)
             (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')
             with self.assertRaises(SystemExit):
@@ -412,6 +416,18 @@ def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confi
 
 class Calibration(unittest.TestCase):
     TRUTH = [(1.5, 0.5), (1.2, 0.2), (1.0, 0.0), (0.8, -0.2), (0.6, -0.4)]
+
+    def test_commit_shape_records_do_not_enter_confidence_folds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'server.log'
+            confidence_log(path, self.TRUTH, records=250)
+            original, dropped = calibrate.records(path)
+            lines = path.read_text().splitlines()
+            commit = json.dumps({'schema': 'chopinfer.deepseek41.commit-shape.v1',
+                                 'instance_id': '1', 'step_id': '1', 'micros': {'total': 100}})
+            path.write_text('\n'.join(line + '\nbundle: ' + commit for line in lines) + '\n')
+            after, after_dropped = calibrate.records(path)
+            self.assertEqual((after, after_dropped), (original, dropped))
 
     def test_startup_warmup_records_are_excluded_before_readiness(self):
         with tempfile.TemporaryDirectory() as directory:

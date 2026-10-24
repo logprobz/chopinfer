@@ -1354,6 +1354,16 @@ impl Instance {
         sink: &mut ExecuteResultSinkV1,
         step: PackedStep,
     ) -> BundleStatusV1 {
+        self.execute_packed_timed(request, sink, step, None)
+    }
+
+    pub(super) fn execute_packed_timed(
+        &mut self,
+        request: &[u8],
+        sink: &mut ExecuteResultSinkV1,
+        step: PackedStep,
+        mut times: Option<&mut crate::dspark::timing::TargetTimes>,
+    ) -> BundleStatusV1 {
         let mut items = items(&step.prefill);
         items.extend(self::items(&step.decode));
         // The encoder runs before the step opens: a failure leaves no step
@@ -1387,7 +1397,10 @@ impl Instance {
             if inputs.request_ids.is_empty() {
                 continue;
             }
-            match self.plan_run(inputs, media) {
+            match crate::dspark::timing::measure(
+                times.as_deref_mut().map(|t| &mut t.lower_us),
+                || self.plan_run(inputs, media),
+            ) {
                 Ok(run) => runs.push(run),
                 Err(error) => return error,
             }
@@ -1398,7 +1411,7 @@ impl Instance {
         if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {
             engram.begin(runs.iter().map(|run| &run.inputs));
         }
-        let issued = self.issue_step(&mut runs, sink);
+        let issued = self.issue_step(&mut runs, sink, times);
         if let Err(error) = issued {
             self.log(&format!("execute failed: {error}"));
             // Work queued behind an unmatched collective never runs; a
@@ -1424,7 +1437,9 @@ impl Instance {
         &mut self,
         runs: &mut [Run],
         sink: &mut ExecuteResultSinkV1,
+        mut times: Option<&mut crate::dspark::timing::TargetTimes>,
     ) -> Result<(), BundleAbiError> {
+        use crate::dspark::timing::measure;
         // A single AR phase owns distinct logits storage through collection.
         // Mixed phases retain per-phase status checks because the next phase
         // resets the same status planes. DSpark's adapter owns its own hooks.
@@ -1444,44 +1459,54 @@ impl Instance {
             None
         };
         for run in runs.iter_mut() {
-            self.upload(run)?;
-            if run.ar_engram {
-                self.begin_ar_engram(
-                    run.engram
-                        .as_ref()
-                        .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
-                )?;
-            }
-            if run.prefill_engram.is_some() {
-                self.prefill_engram
-                    .as_ref()
-                    .expect("prepared prefill gather")
-                    .begin(
-                        &self.services,
-                        self.ranks[0].2,
-                        run.engram.as_ref().expect("prefill hashes"),
-                        run.inputs.positions.first().copied().unwrap_or(0),
-                    )?;
-            }
-            self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
-                .map_err(|error| {
-                    self.log(&error);
-                    BundleAbiError::Status(BundleStatusV1::BundleError)
-                })?;
-            if run.skip.is_none() {
-                let live = if self.allocated_step().is_some() && run.inputs.verify {
-                    run.phase.rows()
-                } else {
-                    run.inputs.live_tokens()
-                };
-                self.dspark_pack_counts(run.phase, live)?;
-            }
-            self.launch(run)?;
+            measure(
+                times.as_deref_mut().map(|t| &mut t.upload_us),
+                || -> Result<(), BundleAbiError> {
+                    self.upload(run)?;
+                    if run.ar_engram {
+                        self.begin_ar_engram(
+                            run.engram
+                                .as_ref()
+                                .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
+                        )?;
+                    }
+                    if run.prefill_engram.is_some() {
+                        self.prefill_engram
+                            .as_ref()
+                            .expect("prepared prefill gather")
+                            .begin(
+                                &self.services,
+                                self.ranks[0].2,
+                                run.engram.as_ref().expect("prefill hashes"),
+                                run.inputs.positions.first().copied().unwrap_or(0),
+                            )?;
+                    }
+                    self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
+                        .map_err(|error| {
+                            self.log(&error);
+                            BundleAbiError::Status(BundleStatusV1::BundleError)
+                        })?;
+                    if run.skip.is_none() {
+                        let live = if self.allocated_step().is_some() && run.inputs.verify {
+                            run.phase.rows()
+                        } else {
+                            run.inputs.live_tokens()
+                        };
+                        self.dspark_pack_counts(run.phase, live)?;
+                    }
+                    Ok(())
+                },
+            )?;
+            measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
+                self.launch(run)
+            })?;
             if run.media.is_some() {
                 self.clear_flags()?;
             }
             if ready_epoch.is_none() {
-                self.check_status(run)?;
+                measure(times.as_deref_mut().map(|t| &mut t.wait_us), || {
+                    self.check_status(run)
+                })?;
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
@@ -1504,7 +1529,7 @@ impl Instance {
                 BundleAbiError::Status(BundleStatusV1::BundleError)
             })?;
         }
-        self.check_dspark_status().map_err(|error| {
+        measure(times.map(|t| &mut t.wait_us), || self.check_dspark_status()).map_err(|error| {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)
         })?;

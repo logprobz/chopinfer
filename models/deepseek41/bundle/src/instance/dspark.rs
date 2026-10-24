@@ -39,6 +39,7 @@ struct Work<'a> {
     request: &'a [u8],
     step: Option<PackedStep>,
     sink: Option<&'a mut ExecuteResultSinkV1>,
+    target_times: Option<crate::dspark::timing::TargetTimes>,
 }
 
 impl Program for Work<'_> {
@@ -82,11 +83,20 @@ impl Program for Work<'_> {
         if position != rows.len() {
             return Err("DSpark target has surplus rows".into());
         }
-        let status = self.instance.execute_packed(self.request, sink, step);
+        let status = self.instance.execute_packed_timed(
+            self.request,
+            sink,
+            step,
+            self.target_times.as_mut(),
+        );
         if status != BundleStatusV1::Success {
             return Err(format!("DSpark target execute: {status:?}"));
         }
         Ok(())
+    }
+
+    fn target_times(&self) -> crate::dspark::timing::TargetTimes {
+        self.target_times.unwrap_or_default()
     }
 
     fn device_target(
@@ -272,6 +282,9 @@ impl Instance {
             request,
             step,
             sink,
+            target_times: times
+                .as_ref()
+                .map(|_| crate::dspark::timing::TargetTimes::default()),
         };
         let mut host = Adapter {
             program: &mut program,

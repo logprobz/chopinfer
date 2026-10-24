@@ -4,6 +4,7 @@ use super::*;
 use crate::buffers::rows;
 use crate::dspark::device::{DECODE_BASE, slice};
 use crate::dspark::state::{CommitPlan, Projection, RowProjection};
+use crate::dspark::timing::{CommitTimes, ProjectionTimes, finish, measure};
 use crate::dspark::transfers::{self, ProjectionChunk};
 use crate::lower::Lowering;
 use crate::lower::dspark::heads::{HeadViews, Peer, PositionViews};
@@ -48,7 +49,13 @@ impl Instance {
         }
     }
 
-    fn drafter_launch(&self, lowered: Vec<Vec<Lowered>>, live: u32) -> Result<(), String> {
+    fn drafter_launch(
+        &self,
+        lowered: Vec<Vec<Lowered>>,
+        live: u32,
+        mut times: Option<&mut ProjectionTimes>,
+    ) -> Result<(), String> {
+        let started = times.as_ref().map(|_| std::time::Instant::now());
         let (programs, waits): (Vec<Vec<_>>, Vec<Vec<_>>) = lowered
             .into_iter()
             .map(|rank| {
@@ -60,7 +67,10 @@ impl Instance {
         let streams = self.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
         self.launch_eager(&streams, &programs, &waits)
             .map_err(|e| format!("DSpark dispatch: {e:?}"))?;
-        self.drafter_status(live)
+        finish(times.as_deref_mut().map(|t| &mut t.submit_us), started);
+        measure(times.map(|t| &mut t.status_us), || {
+            self.drafter_status(live)
+        })
     }
 
     fn drafter_status(&self, live: u32) -> Result<(), String> {
@@ -96,6 +106,14 @@ impl Instance {
     }
 
     fn project_chunk(&self, pass: ProjectionChunk) -> Result<(), String> {
+        self.project_chunk_timed(pass, None)
+    }
+
+    fn project_chunk_timed(
+        &self,
+        pass: ProjectionChunk,
+        mut times: Option<&mut ProjectionTimes>,
+    ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let bound = &device.stages[pass.stage as usize];
         let mut programs = Vec::new();
@@ -106,6 +124,7 @@ impl Instance {
         for (rank, buffers) in bound.iter().enumerate() {
             let stream = self.ranks[rank].2;
             let stored = &device.ranks[rank];
+            let started = times.as_ref().map(|_| std::time::Instant::now());
             upload(
                 &self.services,
                 stream,
@@ -126,6 +145,8 @@ impl Instance {
             self.services
                 .zero_device_buffer(stream, rows(buffers.scratch.shared_row_status, pass.rows))
                 .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
+            finish(times.as_deref_mut().map(|t| &mut t.upload_us), started);
+            let started = times.as_ref().map(|_| std::time::Instant::now());
             let features = device.features.bind(
                 buffers
                     .state
@@ -164,8 +185,9 @@ impl Instance {
                     last: stored.last,
                 },
             )?);
+            finish(times.as_deref_mut().map(|t| &mut t.lower_us), started);
         }
-        self.drafter_launch(programs, pass.rows)
+        self.drafter_launch(programs, pass.rows, times)
     }
 
     pub(super) fn dspark_project(&self, pass: Projection) -> Result<(), String> {
@@ -355,6 +377,29 @@ impl Instance {
     }
 
     pub(super) fn dspark_commit_features(&self, plan: &CommitPlan) -> Result<(), String> {
+        let mut times = self
+            .dspark
+            .as_ref()
+            .is_some_and(|d| d.step_trace)
+            .then(CommitTimes::default);
+        let started = times.as_ref().map(|_| std::time::Instant::now());
+        let result = self.dspark_commit_features_timed(plan, times.as_mut());
+        if result.is_ok()
+            && let Some(times) = &mut times
+        {
+            finish(Some(&mut times.total_us), started);
+            let context = self.dspark.as_ref().expect("enabled drafter").diagnostic;
+            let _ = self.services.log(times.record(context).as_bytes());
+        }
+        result
+    }
+
+    fn dspark_commit_features_timed(
+        &self,
+        plan: &CommitPlan,
+        mut times: Option<&mut CommitTimes>,
+    ) -> Result<(), String> {
+        let started = times.as_ref().map(|_| std::time::Instant::now());
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let mut offsets = [0, u64::from(DECODE_BASE)];
         let mut copies = Vec::new();
@@ -379,6 +424,7 @@ impl Instance {
             }
             offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
+        finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         let mut offsets = [0, u64::from(DECODE_BASE)];
         for item in plan.items() {
             let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
@@ -396,21 +442,30 @@ impl Instance {
                         offsets[phase],
                         device.config.window,
                     )? {
-                        self.project_chunk(pass)?;
+                        if let Some(times) = times.as_deref_mut() {
+                            times.passes += 1;
+                            times.rows += u64::from(pass.rows);
+                        }
+                        self.project_chunk_timed(
+                            pass,
+                            times.as_deref_mut().map(|t| &mut t.projection),
+                        )?;
                     }
                 }
             }
             offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
+        let started = times.as_ref().map(|_| std::time::Instant::now());
         for (rank, copy) in copies {
             self.services
                 .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
                 .map_err(|e| format!("DSpark feature retention: {e:?}"))?;
         }
+        finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         // Copies remain ordered on each rank's stream. Any following draft,
         // prefix copy or slot reuse uses that same stream. Staged projections
         // still validate their saved status before the commit can succeed.
-        self.check_dspark_status()
+        measure(times.map(|t| &mut t.wait_us), || self.check_dspark_status())
     }
 
     pub(super) fn dspark_draft_chunk(

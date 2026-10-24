@@ -23,9 +23,15 @@ pub enum StepPhase {
     SchedulerCommit,
     ModelCommit,
     Publication,
+    /// Reading mapped source rows, including resident row gathering.
+    MappedGather,
+    /// Host staging copies and DMA submission, excluding source gathering.
+    UploadCopy,
+    /// Waiting for previous copies to release upload-ring space.
+    UploadBackpressure,
 }
 
-const PHASES: usize = 14;
+const PHASES: usize = 17;
 
 thread_local! {
     static TRACING: Cell<bool> = const { Cell::new(false) };
@@ -39,6 +45,22 @@ thread_local! {
 #[must_use]
 pub fn is_tracing() -> bool {
     TRACING.get()
+}
+
+/// Whether the current thread collects a sampled profile or a step trace.
+#[must_use]
+pub fn is_active() -> bool {
+    ACTIVE.get()
+}
+
+/// Add an already measured host duration, without reading a clock or waiting.
+pub fn record_duration(phase: StepPhase, elapsed: std::time::Duration) {
+    if ACTIVE.get() {
+        let micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        let mut totals = TOTALS.get();
+        totals[phase as usize] = totals[phase as usize].saturating_add(micros);
+        TOTALS.set(totals);
+    }
 }
 
 /// Starts accumulating phase totals for one step unless a sampled profile
@@ -229,6 +251,9 @@ impl StepProfiles {
                     "scheduler_commit_us": sample.phases[11],
                     "model_commit_us": sample.phases[12],
                     "publication_us": sample.phases[13],
+                    "mapped_gather_us": sample.phases[14],
+                    "upload_copy_us": sample.phases[15],
+                    "upload_backpressure_us": sample.phases[16],
                 })
             })
             .collect();
@@ -266,6 +291,32 @@ impl Drop for StepTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_subphases_fit_the_total_and_ignore_disabled_steps() {
+        let trace = TraceTotals::begin();
+        let upload = PhaseTimer::new(StepPhase::Upload);
+        for phase in [
+            StepPhase::MappedGather,
+            StepPhase::UploadCopy,
+            StepPhase::UploadBackpressure,
+        ] {
+            let started = Instant::now();
+            let mut value = 0_u64;
+            for i in 0..8192 {
+                value = std::hint::black_box(value.wrapping_add(i));
+            }
+            record_duration(phase, started.elapsed());
+        }
+        drop(upload);
+        let before = snapshot().totals;
+        let parts: u64 = before[14..].iter().sum();
+        assert!(parts > 0 && parts <= before[StepPhase::Upload as usize]);
+        drop(trace);
+        assert!(!is_active());
+        record_duration(StepPhase::UploadCopy, std::time::Duration::from_secs(1));
+        assert_eq!(snapshot().totals, before);
+    }
 
     #[test]
     fn trace_only_scopes_leave_disabled_and_sampled_steps_alone() {
@@ -321,7 +372,7 @@ mod tests {
             let timer = profiles.begin();
             assert_eq!(timer.is_some(), step % 2 == 0);
             if timer.is_some() {
-                TOTALS.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+                TOTALS.set([1, 100, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
             }
             drop(timer);
         }
@@ -341,6 +392,9 @@ mod tests {
             ("scheduler_commit_us", 12),
             ("model_commit_us", 13),
             ("publication_us", 14),
+            ("mapped_gather_us", 15),
+            ("upload_copy_us", 16),
+            ("upload_backpressure_us", 17),
         ] {
             assert_eq!(json["samples"][1][field], expected);
         }

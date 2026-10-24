@@ -7,6 +7,7 @@
 //! is known to be complete, and dropping the ring waits for every copy.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// Copies kept in flight before the oldest is waited for. Small uploads would
 /// otherwise hold an event and a destination each until the ring wraps.
@@ -69,6 +70,21 @@ struct InFlight {
     _stream: Stream,
 }
 
+/// Disjoint host wall times inside one or more ordered uploads.
+/// Filling includes the caller's source reader. No device timing is added.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UploadTimings {
+    pub wait: Duration,
+    pub fill: Duration,
+    pub enqueue: Duration,
+}
+
+fn finish_time(field: Option<&mut Duration>, started: Option<Instant>) {
+    if let (Some(field), Some(started)) = (field, started) {
+        *field = field.saturating_add(started.elapsed());
+    }
+}
+
 /// Stream-ordered host-to-device copies staged through page-locked memory.
 pub struct PinnedUploadRing {
     staging: PinnedHostBuffer,
@@ -100,14 +116,25 @@ impl PinnedUploadRing {
         source: &[u8],
         stream: &Stream,
     ) -> Result<(), CudaError> {
-        self.upload_with(
+        self.upload_profiled(destination, offset, source, stream, None)
+    }
+
+    /// The same upload, optionally measuring its existing host scopes.
+    pub fn upload_profiled(
+        &mut self,
+        destination: &DeviceBuffer,
+        offset: usize,
+        source: &[u8],
+        stream: &Stream,
+        times: Option<&mut UploadTimings>,
+    ) -> Result<(), CudaError> {
+        self.upload_with_profiled(
             destination,
             offset,
             source.len(),
             stream,
-            &mut |at, chunk| {
-                chunk.copy_from_slice(&source[at..at + chunk.len()]);
-            },
+            &mut |at, chunk| chunk.copy_from_slice(&source[at..at + chunk.len()]),
+            times,
         )
     }
 
@@ -123,6 +150,19 @@ impl PinnedUploadRing {
         stream: &Stream,
         fill: &mut dyn FnMut(usize, &mut [u8]),
     ) -> Result<(), CudaError> {
+        self.upload_with_profiled(destination, offset, length, stream, fill, None)
+    }
+
+    /// The same fill and upload, optionally measuring waits, filling and enqueue.
+    pub fn upload_with_profiled(
+        &mut self,
+        destination: &DeviceBuffer,
+        offset: usize,
+        length: usize,
+        stream: &Stream,
+        fill: &mut dyn FnMut(usize, &mut [u8]),
+        mut times: Option<&mut UploadTimings>,
+    ) -> Result<(), CudaError> {
         require_same_context(&destination.stream.context, &self.staging.context)?;
         require_same_context(&destination.stream.context, &stream.inner.context)?;
         stream.require_live()?;
@@ -132,13 +172,18 @@ impl PinnedUploadRing {
             let bytes = capacity.min(length - first);
             let at = offset + first;
             let (start, waits) = self.regions.place(bytes);
+            let started = times.as_ref().map(|_| Instant::now());
             for _ in 0..waits.max((self.in_flight.len() + 1).saturating_sub(MAX_IN_FLIGHT)) {
                 self.retire_oldest();
             }
+            finish_time(times.as_deref_mut().map(|t| &mut t.wait), started);
+            let started = times.as_ref().map(|_| Instant::now());
             fill(
                 first,
                 &mut self.staging.as_mut_slice()[start..start + bytes],
             );
+            finish_time(times.as_deref_mut().map(|t| &mut t.fill), started);
+            let started = times.as_ref().map(|_| Instant::now());
             let pointer = destination.pointer_at(at, bytes)?;
             set_current_inner(&stream.inner.context)?;
             checked(
@@ -170,6 +215,7 @@ impl PinnedUploadRing {
                 _destination: destination.clone(),
                 _stream: stream.clone(),
             });
+            finish_time(times.as_deref_mut().map(|t| &mut t.enqueue), started);
         }
         Ok(())
     }

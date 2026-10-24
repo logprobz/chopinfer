@@ -32,6 +32,11 @@ pub trait Program {
     fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String>;
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String>;
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String>;
+    /// Detail of the most recent target callback, when its implementation records it.
+    fn target_times(&self) -> super::timing::TargetTimes {
+        super::timing::TargetTimes::default()
+    }
+
     /// Device-resident decode target, with committed lookback and text masks.
     /// None is a refusal before work; successful results follow verification.
     fn device_target(
@@ -333,7 +338,8 @@ impl Staging {
 
 /// Host wall time of each synchronous phase of one execute, in microseconds.
 /// Catch-up, drafting and readback end in device synchronizations, so they
-/// include their device time; target launch returns before its device work.
+/// include their device time. Prefill target includes upload, submission and
+/// status waits; a device-resident decode target records its own phases.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
     pub catch_up_us: u64,
@@ -347,6 +353,7 @@ pub struct PhaseTimes {
     pub gather_us: u64,
     pub upload_us: u64,
     pub target_us: u64,
+    pub target: super::timing::TargetTimes,
 }
 
 impl PhaseTimes {
@@ -357,7 +364,8 @@ impl PhaseTimes {
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"read_ids\":{},",
-                "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{}}}}}"
+                "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{},",
+                "\"target_lower\":{},\"target_upload\":{},\"target_submit\":{},\"target_wait\":{}}}}}"
             ),
             context.instance_id,
             context.step_id,
@@ -374,6 +382,10 @@ impl PhaseTimes {
             self.gather_us,
             self.upload_us,
             self.target_us,
+            self.target.lower_us,
+            self.target.upload_us,
+            self.target.submit_us,
+            self.target.wait_us,
         )
     }
 }
@@ -602,11 +614,15 @@ impl<P: Program> Host for Adapter<'_, P> {
     }
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String> {
         let program = &mut *self.program;
-        timed(
+        let result = timed(
             &mut self.times,
             |t| &mut t.target_us,
             || program.target(rows),
-        )
+        );
+        if let Some(times) = &mut self.times {
+            times.target = program.target_times();
+        }
+        result
     }
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String> {
         self.staging.validate_commit(plan)?;

@@ -291,3 +291,103 @@ fn failed_snapshot_catch_up_poisoned_cursors_cannot_resume() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+#[test]
+fn prefill_phase_records_preserve_device_boundaries() {
+    let mut boundaries = Vec::new();
+    for enabled in [false, true] {
+        let (host, mut instance) =
+            create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 2, 32);
+        crate::instance::dspark_step_trace_for_test(instance.handle(), enabled);
+        let lengths = [2048_u32, 1024];
+        let request = BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            lengths
+                .iter()
+                .enumerate()
+                .map(|(i, &rows)| {
+                    BatchItemV1::new(i as u64 + 1, false, rows, true, vec![7; rows as usize])
+                })
+                .collect(),
+            lengths
+                .iter()
+                .enumerate()
+                .map(|(i, &rows)| {
+                    BatchAppendV1::new(
+                        0,
+                        u64::from(rows),
+                        u64::from(rows),
+                        (0..rows.div_ceil(64))
+                            .map(|p| i as u64 * 64 + u64::from(p))
+                            .collect(),
+                        None,
+                    )
+                })
+                .collect(),
+        )
+        .with_state_slots(vec![0, 1])
+        .encode()
+        .unwrap();
+        let from = host.journal.borrow().len();
+        execute(&mut instance, &host, &request);
+        instance.commit().unwrap();
+        boundaries.push(counts(&host.journal.borrow()[from..]));
+        let records: Vec<serde_json::Value> = host
+            .logs
+            .borrow()
+            .iter()
+            .filter_map(|s| serde_json::from_str(s).ok())
+            .collect();
+        let targets: Vec<_> = records
+            .iter()
+            .filter(|r| {
+                r["schema"] == "chopinfer.deepseek41.step-shape.v1"
+                    && r["micros"]["target"].is_u64()
+            })
+            .collect();
+        let commits: Vec<_> = records
+            .iter()
+            .filter(|r| r["schema"] == "chopinfer.deepseek41.commit-shape.v1")
+            .collect();
+        assert_eq!(targets.len(), usize::from(enabled));
+        assert_eq!(commits.len(), usize::from(enabled));
+        if enabled {
+            let target = targets[0];
+            let commit = commits[0];
+            assert_eq!(target["instance_id"], commit["instance_id"]);
+            assert_eq!(target["step_id"], commit["step_id"]);
+            let sum: u64 = [
+                "target_lower",
+                "target_upload",
+                "target_submit",
+                "target_wait",
+            ]
+            .into_iter()
+            .map(|name| target["micros"][name].as_u64().unwrap())
+            .sum();
+            assert!(sum <= target["micros"]["target"].as_u64().unwrap());
+            assert!(target["micros"]["target_lower"].as_u64().unwrap() > 0);
+            let sum: u64 = [
+                "retention",
+                "projection_lower",
+                "projection_upload",
+                "projection_submit",
+                "projection_status",
+                "wait",
+            ]
+            .into_iter()
+            .map(|name| commit["micros"][name].as_u64().unwrap())
+            .sum();
+            assert!(sum <= commit["micros"]["total"].as_u64().unwrap());
+            assert!(commit["projection_passes"].as_u64().unwrap() > 0);
+        }
+        for id in 1..=2 {
+            instance.retire_request(id).unwrap();
+        }
+        instance.destroy().unwrap();
+    }
+    assert_eq!(
+        boundaries[0], boundaries[1],
+        "clocks must not add device operations"
+    );
+}

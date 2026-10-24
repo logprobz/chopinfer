@@ -4709,6 +4709,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         // shared mapping in turn; the first rank's read serves the others.
         let later = (state.config.topology.rank_count() as usize).saturating_sub(1);
         let read = if large {
+            let _profile = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::MappedGather,
+            );
             let read = state
                 .large_fanout
                 .rows(&mapping, row_bytes, gather.rows, later)
@@ -4723,8 +4726,18 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         state
             .device
             .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| match &read {
-                Some(read) => chunk.copy_from_slice(&read[at..at + chunk.len()]),
-                None => gather_rows_v1(table, row_bytes, gather.rows, at, chunk, &ahead),
+                Some(read) => {
+                    let _profile = runtime_engine::profile::PhaseTimer::new(
+                        runtime_engine::profile::StepPhase::UploadCopy,
+                    );
+                    chunk.copy_from_slice(&read[at..at + chunk.len()]);
+                }
+                None => {
+                    let _profile = runtime_engine::profile::PhaseTimer::new(
+                        runtime_engine::profile::StepPhase::MappedGather,
+                    );
+                    gather_rows_v1(table, row_bytes, gather.rows, at, chunk, &ahead);
+                }
             })
             .inspect_err(|status| {
                 eprintln!(

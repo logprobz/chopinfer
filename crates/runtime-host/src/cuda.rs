@@ -24,6 +24,7 @@ use runtime_cuda::{
     Context, CudaError, DeviceBuffer, Driver, Event, Function, GraphExec, KernelArgument,
     LaunchConfig, MemoryPool, Module, PeerAccessOwnership, PeerTransfer, PinnedHostBuffer,
     PinnedUploadRing, Stream, TensorMap, TensorMapDataType, TensorMapDescriptor, TensorMapSwizzle,
+    UploadTimings,
 };
 use runtime_engine::{ModelBatchItem, SampledRow};
 
@@ -1595,8 +1596,14 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
                 ))
             }
         };
-        ring.upload(&buffer, offset, source, &stream_handle)
-            .map_err(driver_status)
+        let mut times = runtime_engine::profile::is_active().then(UploadTimings::default);
+        let result = ring.upload_profiled(&buffer, offset, source, &stream_handle, times.as_mut());
+        if let Some(times) = times {
+            use runtime_engine::profile::{StepPhase, record_duration};
+            record_duration(StepPhase::UploadCopy, times.fill + times.enqueue);
+            record_duration(StepPhase::UploadBackpressure, times.wait);
+        }
+        result.map_err(driver_status)
     }
 
     fn fill_host_to_device_ordered(
@@ -1620,8 +1627,22 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
                 ))
             }
         };
-        ring.upload_with(&buffer, offset, length, &stream_handle, fill)
-            .map_err(driver_status)
+        let mut times = runtime_engine::profile::is_active().then(UploadTimings::default);
+        let result = ring.upload_with_profiled(
+            &buffer,
+            offset,
+            length,
+            &stream_handle,
+            fill,
+            times.as_mut(),
+        );
+        if let Some(times) = times {
+            use runtime_engine::profile::{StepPhase, record_duration};
+            // The caller classifies its fill as source gathering or a staging copy.
+            record_duration(StepPhase::UploadCopy, times.enqueue);
+            record_duration(StepPhase::UploadBackpressure, times.wait);
+        }
+        result.map_err(driver_status)
     }
 
     fn fill_staging_bytes(&self) -> u64 {

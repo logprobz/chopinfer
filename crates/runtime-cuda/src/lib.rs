@@ -18,7 +18,7 @@ mod nvdec;
 
 pub use nvdec::{AnnexBStream, DecodedFrame, NvdecError, NvdecSession};
 pub use upload_chunk::{PinnedChunk, PinnedChunkTransfer};
-pub use upload_ring::PinnedUploadRing;
+pub use upload_ring::{PinnedUploadRing, UploadTimings};
 
 use std::cell::Cell;
 use std::collections::BTreeSet;

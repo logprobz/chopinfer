@@ -862,6 +862,9 @@ pub(crate) struct HostTiming {
     /// host work deferred into device waits.
     pub(crate) device_wait: u64,
     pub(crate) upload: u64,
+    pub(crate) mapped_gather: u64,
+    pub(crate) upload_copy: u64,
+    pub(crate) upload_backpressure: u64,
     pub(crate) launch: u64,
     pub(crate) sampling: u64,
     pub(crate) deferred: u64,
@@ -892,6 +895,9 @@ impl HostTiming {
             "boundary_us": self.boundary,
             "device_wait_us": self.device_wait,
             "upload_us": self.upload,
+            "mapped_gather_us": self.mapped_gather,
+            "upload_copy_us": self.upload_copy,
+            "upload_backpressure_us": self.upload_backpressure,
             "launch_us": self.launch,
             "sampling_us": self.sampling,
             "deferred_us": self.deferred,
@@ -969,6 +975,10 @@ impl HostClock {
                 .map(|(ended, started)| micros(started.saturating_duration_since(ended))),
             device_wait: phases.totals[crate::profile::StepPhase::DeviceWait as usize],
             upload: phases.totals[crate::profile::StepPhase::Upload as usize],
+            mapped_gather: phases.totals[crate::profile::StepPhase::MappedGather as usize],
+            upload_copy: phases.totals[crate::profile::StepPhase::UploadCopy as usize],
+            upload_backpressure: phases.totals
+                [crate::profile::StepPhase::UploadBackpressure as usize],
             launch: phases.totals[crate::profile::StepPhase::GraphLaunch as usize],
             sampling: phases.totals[crate::profile::StepPhase::Sampling as usize],
             deferred: phases.totals[crate::profile::StepPhase::Deferred as usize],
@@ -1084,6 +1094,10 @@ mod tests {
                 result_convert: 1_000,
                 prefix_capture: 25,
                 bundle_log: 12,
+                upload: 50,
+                mapped_gather: 15,
+                upload_copy: 20,
+                upload_backpressure: 10,
                 ..HostTiming::default()
             },
         };
@@ -1096,6 +1110,16 @@ mod tests {
         assert_eq!(parsed["decode_estimate_us"], 16_400);
         assert_eq!(parsed["host"]["boundary_us"], 150);
         assert_eq!(parsed["host"]["device_wait_us"], 174_700);
+        let upload_parts: u64 = [
+            "mapped_gather_us",
+            "upload_copy_us",
+            "upload_backpressure_us",
+        ]
+        .into_iter()
+        .map(|name| parsed["host"][name].as_u64().unwrap())
+        .sum();
+        assert_eq!(upload_parts, 45);
+        assert!(upload_parts <= parsed["host"]["upload_us"].as_u64().unwrap());
         assert_eq!(parsed["prompt_completions"], 1);
         for (field, expected) in [
             ("bundle_execute_us", 170_000),
@@ -1110,7 +1134,7 @@ mod tests {
             assert_eq!(parsed["host"][field], expected);
         }
         assert!(parsed["host"]["period_us"].is_null());
-        assert_eq!(parsed["host"].as_object().unwrap().len(), 20);
+        assert_eq!(parsed["host"].as_object().unwrap().len(), 23);
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());

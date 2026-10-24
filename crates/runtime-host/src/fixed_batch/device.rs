@@ -1,6 +1,7 @@
 use super::diagnostic::{self, Budget, Description, Options};
 use super::record::{Capture, CapturedRow, Frame, Golden, SampleBits, create, metadata};
 use super::trace::{MIXED_DECODE, Trace};
+use super::transition;
 use crate::executor::{
     BatchWireCapabilityV1, BundleExecutionV1, DeviceLogitsSamplerV1, SamplingDispatch,
     batch_wire_capability_v1, write_batch_request_v1, write_state_slots_v1,
@@ -70,6 +71,9 @@ struct Config {
     /// reference: arms are compared offline.
     #[serde(default)]
     mixed: bool,
+    /// A bounded explicit trace with histories derived from accepted proposals.
+    #[serde(default)]
+    transitions: bool,
     /// KV pages of a mixed decode replay, the same for every compared arm.
     #[serde(default)]
     kv_pages: Option<usize>,
@@ -280,6 +284,24 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let compare_packages = config.verify_rows_per_item.is_some();
     let max_sequences = config.max_sequences.unwrap_or(config.concurrency);
     let mixed = config.mixed;
+    let transitions = config.transitions;
+    if transitions
+        && (!config.trace_input
+            || !config.verify
+            || mixed
+            || config.owned
+            || config.prefill_only
+            || config.draft_tokens.is_some()
+            || compare_packages
+            || config.diagnostic.is_none()
+            || !(1..=32).contains(&config.concurrency)
+            || !(config.concurrency..=32).contains(&max_sequences)
+            || config.kv_pages.is_none())
+    {
+        return Err(
+            "a transition replay needs an explicit drafted trace, capture limits and pages".into(),
+        );
+    }
     if mixed
         && (!config.trace_input
             || config.verify
@@ -298,6 +320,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         );
     }
     if !mixed
+        && !transitions
         && ((config.prefill_only
             && (config.verify
                 || config.owned
@@ -388,6 +411,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     if trace.concurrency != config.concurrency
         || (trace.version == MIXED_DECODE) != mixed
+        || (trace.version == transition::VERSION) != transitions
         || trace.vocabulary != vocabulary
         || trace
             .steps
@@ -400,7 +424,10 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     if config
         .verify_rows_per_item
         .is_some_and(|rows| !trace.matches_verify_rows(rows))
-        || (!compare_packages && !mixed && trace.version != if config.prefill_only { 4 } else { 1 })
+        || (!compare_packages
+            && !mixed
+            && !transitions
+            && trace.version != if config.prefill_only { 4 } else { 1 })
     {
         return Err("configured verify geometry differs from recorded trace".into());
     }
@@ -408,7 +435,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         0
     } else if compare_packages {
         trace.verify_capacity(max_sequences)?
-    } else if config.draft_tokens.is_some() {
+    } else if config.draft_tokens.is_some() || transitions {
         trace.steps.iter().map(|step| step.rows()).max().unwrap()
     } else {
         32
@@ -424,7 +451,17 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens});
     }
     let page_tokens = loaded.manifest().kv_layout().page_tokens() as usize;
-    let quota = if mixed {
+    let quota = if transitions {
+        // Leave room for the provisional rows of the final verify step.
+        trace.final_tokens()
+            + trace
+                .steps
+                .iter()
+                .flat_map(|s| &s.items)
+                .map(|item| item.drafts)
+                .max()
+                .unwrap_or(0)
+    } else if mixed {
         trace.final_tokens()
     } else if config.prefill_only {
         trace.steps[0]
@@ -465,8 +502,55 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             return Err("the package or KV pages cannot hold the mixed decode trace".into());
         }
     }
+    if transitions {
+        let limits = loaded
+            .manifest()
+            .batch_limits()
+            .ok_or("the package declares no batch limits")?;
+        let speculation = loaded
+            .manifest()
+            .speculation()
+            .ok_or("the transition package declares no speculation")?;
+        let served = crate::served_sequences_v1(
+            loaded
+                .manifest()
+                .resource_requirements()
+                .required_capabilities(),
+            Some(limits),
+            Some(max_sequences as u32),
+        )?;
+        if served != Some(max_sequences as u32)
+            || trace.prefill_tokens() > limits.maximum_prefill_tokens() as usize
+            || !speculation.bundle_drafter()
+            || maximum_verify_tokens > speculation.maximum_verify_tokens() as usize
+            || trace.steps.iter().any(|step| {
+                step.items
+                    .iter()
+                    .any(|item| item.drafts > speculation.maximum_draft_tokens() as usize)
+                    || speculation.maximum_draft_items().is_some_and(|limit| {
+                        step.items.iter().filter(|item| item.drafts > 0).count() > limit as usize
+                    })
+            })
+            || pages < config.concurrency * quota.div_ceil(page_tokens)
+        {
+            return Err("the package or KV pages cannot hold the transition trace".into());
+        }
+        identity = json!({"format":"fixed-batch-transitions-v1","source":config.source,
+            "topology":config.topology,"ranks":rank_count,"trace":trace,
+            "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens,
+            "kv_pages":pages});
+    }
     if config.temperature.is_some() {
         identity["sampling_temperature_bits"] = temperature.to_bits().into();
+    }
+    if let Some(options) = &config.diagnostic {
+        let estimate = options
+            .limits
+            .estimate(trace.steps.iter().map(|s| s.rows()), vocabulary as u32)?;
+        eprintln!("fixed trace maximum capture: {estimate} bytes");
+        let metadata = trace.metadata_bound() + serde_json::to_vec(&identity)?.len() as u64 + 1;
+        options.limits.check_metadata(metadata)?;
+        eprintln!("fixed trace maximum frame metadata: {metadata} bytes");
     }
     if std::env::var_os("CHOPINFER_BATCH_REPLAY_DRY_RUN").is_some_and(|v| v == "1") {
         // Everything above runs without a device; nothing is written.
@@ -496,13 +580,6 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     let mut golden = if let Some(options) = &config.diagnostic {
         options.validate_environment(std::env::vars())?;
-        let estimate = options
-            .limits
-            .estimate(trace.steps.iter().map(|s| s.rows()), vocabulary as u32)?;
-        eprintln!("fixed trace maximum capture: {estimate} bytes");
-        let metadata = trace.metadata_bound() + serde_json::to_vec(&identity)?.len() as u64 + 1;
-        options.limits.check_metadata(metadata)?;
-        eprintln!("fixed trace maximum frame metadata: {metadata} bytes");
         let mut invariants = json!({"host":config.source,"trace":diagnostic::digest(&config.trace)?,
                 "vocabulary":vocabulary,"topology":config.topology,"ranks":rank_count,"fold":false,
                 "capacity":{"sequences":max_sequences,"verify_tokens":maximum_verify_tokens},
@@ -611,8 +688,11 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let memory_after_create = memory(&backend)?;
     let mut rank_rows: BTreeMap<u32, usize> = BTreeMap::new();
     let mut boundary_splits = 0;
+    let mut history = transitions.then(|| transition::History::new(&trace));
     let result = (|| -> Result<()> {
         for (index, step) in trace.steps.iter().enumerate() {
+            let materialized = history.as_ref().map(|h| h.materialize(step)).transpose()?;
+            let step = materialized.as_ref().unwrap_or(step);
             let items = step.model_items_at_temperature(Some(&constraint), temperature);
             let appends = step
                 .items
@@ -679,7 +759,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             }
             if index > 0 {
                 // Mixed replays run each package's default logits owners.
-                if !compare_packages && !mixed {
+                if !compare_packages && !mixed && !transitions {
                     super::trace::validate_row_owners(
                         &rows.iter().map(|row| row.rank).collect::<Vec<_>>(),
                         rank_count,
@@ -726,6 +806,10 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             if let Some(budget) = &sampler.budget {
                 budget.borrow_mut().next_step();
             }
+            let next_history = history
+                .as_ref()
+                .map(|h| h.prepare_commit(step, &frame.drafts))
+                .transpose()?;
             let partial = step
                 .items
                 .iter()
@@ -752,6 +836,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 instance.commit_accepted(&records)?;
             }
             kv.apply_prepared_commit(kv_commit)?;
+            history = next_history;
             eprintln!(
                 "fixed trace step {index}: {} rows, {:?}, exact records",
                 step.rows(),

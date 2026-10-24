@@ -7,6 +7,9 @@ mod record;
 #[cfg(test)]
 mod tests;
 mod trace;
+mod transition;
+#[cfg(test)]
+mod transition_tests;
 
 #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
 pub(super) fn replay(configuration: &std::path::Path) -> Result<String, String> {

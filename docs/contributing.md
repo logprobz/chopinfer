@@ -210,6 +210,18 @@ configuration; do not reuse a proof from another executable. The optional
 identity. Omission preserves 0.8; greedy rows remain at zero. Keep GPU selection,
 trace limits, baseline repeat controls and capture locations unchanged.
 
+For a bounded drafting transition, supply a version-6 trace and set
+`transitions: true`, `trace_input: true`, `verify: true`, explicit `kv_pages`
+and diagnostic capture limits in the replay configuration. Such traces permit
+2 to 1,024 steps, up to 32 live requests and 256 rows per step, within the
+package's limits. Finish all prompt prefills before decoding. An absent
+request keeps its committed state. Each item's serialized `history` is empty:
+the recorder derives it from committed inputs and accepted bundle proposals.
+`kept` includes the input row and any accepted draft rows; `emitted` counts
+the current history's generated tokens before the proposed rows. Every
+proposal, resulting history, sampling record and logits byte remains part of
+the exact comparison. Versions 1 through 5 retain their existing rules.
+
 ## Measuring a change
 
 First establish [accuracy](numerics.md#a-speedup-that-changes-bits). Use the

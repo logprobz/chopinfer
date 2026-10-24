@@ -204,6 +204,7 @@ impl Trace {
         const ITEM_WIRE_FIXED: u64 = 1024;
         const FRAME_FIXED: u64 = 4096;
         let mask = NUMBER * (self.vocabulary as u64).div_ceil(32) + 16;
+        let mut committed = vec![0; self.concurrency];
         self.steps
             .iter()
             .map(|step| {
@@ -215,7 +216,14 @@ impl Trace {
                     .map(|item| {
                         let rows = 1 + item.drafts as u64;
                         // A row's history extends by at most the item's drafts.
-                        let tokens = (item.history.len() + item.drafts + 1) as u64;
+                        let history = if self.version == super::transition::VERSION {
+                            let history = committed[item.slot] + item.inputs.len();
+                            committed[item.slot] += item.kept;
+                            history
+                        } else {
+                            item.history.len()
+                        };
+                        let tokens = (history + item.drafts + 1) as u64;
                         let row = ROW_FIXED + NUMBER * tokens + if grammar { mask } else { 0 };
                         // Inputs, drafts and at most one page entry per token.
                         let wire = ITEM_WIRE_FIXED
@@ -260,6 +268,13 @@ impl Trace {
 
     /// Tokens each request holds after the trace's last step.
     pub fn final_tokens(&self) -> usize {
+        if self.version == super::transition::VERSION {
+            let mut committed = vec![0; self.concurrency];
+            for item in self.steps.iter().flat_map(|step| &step.items) {
+                committed[item.slot] += item.kept;
+            }
+            return committed.into_iter().max().unwrap_or(0);
+        }
         self.steps
             .iter()
             .flat_map(|step| &step.items)
@@ -284,6 +299,9 @@ impl Trace {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.version == super::transition::VERSION {
+            return super::transition::validate(self);
+        }
         if self.version == MIXED_DECODE {
             return self.validate_mixed();
         }

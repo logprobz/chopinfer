@@ -1,7 +1,7 @@
 //! CPU checks of the quad-lane gate queues (`chained_lanes.cuh`) and the
 //! column kernel's quad-lane load (`chained_experts.cuh`): the word-wide
 //! code checks and the lane operand bytes on the host, and compiles of
-//! DeepSeek V4.1 Flash's TP4 backbone gate queues and column gate/up beside
+//! 384-expert gate queues and column gate/up beside
 //! their row-tiled twins.
 use kernel_build::{BuildOptions, CubinSpec, EntryParam, EntrySpec, Toolchain};
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ fn word_checks_and_lane_bytes_match_the_row_tiled_queues() {
     );
 }
 
-/// The Flash TP4 backbone gate/up projection: 384 experts, top 6, 576
+/// A gate/up projection: 384 experts, top 6, 576
 /// columns per half, K 5120.
 const CONFIG: &str = "chop::moe::chained::quantized::Config<chop::moe::chained::Projection::gate_up,384,6,576,5120,64,64,chop::moe::clamp::SwigluClamp<true,1088421888u,1088421888u>>";
 /// The same projection at the streamed module's 8-token capacity.

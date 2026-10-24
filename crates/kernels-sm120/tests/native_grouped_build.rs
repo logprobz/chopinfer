@@ -210,7 +210,7 @@ fn sass(cuobjdump: &std::path::Path, cubin: &std::path::Path, symbol: &str) -> S
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// DeepSeek V4.1 Flash's served TP4 gate/up tiles (the fused ceil at the
+/// Gate/up tiles for 384 experts (the fused ceil at the
 /// first gate/up tile and the scanned loop at the wide tile), each built
 /// over row tiles and over quad-lane tiles: every quad-lane build compiles
 /// without spills at its twin's ABI and launch bound, with the same shared

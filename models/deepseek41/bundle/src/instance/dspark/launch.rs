@@ -16,6 +16,7 @@ use model_deepseek41_contract::own_ops::ring_gather::RingGatherBuffers;
 use runtime_bundle_abi::{BundleStreamHandleV1, DeviceBufferSpanV1 as Span};
 
 mod commit;
+mod retention;
 
 fn upload(
     services: &HostServicesV1,
@@ -426,6 +427,7 @@ impl Instance {
             }
             offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
+        let indexed = self.prepare_indexed_retention(plan, &copies)?;
         finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         if device.batch_commit {
             self.project_commit_batches(plan, times.as_deref_mut())?;
@@ -462,10 +464,21 @@ impl Instance {
             }
         }
         let started = times.as_ref().map(|_| std::time::Instant::now());
-        for (rank, copy) in copies {
-            self.services
-                .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
-                .map_err(|e| format!("DSpark feature retention: {e:?}"))?;
+        if let Some(indexed) = indexed {
+            self.submit_indexed_retention(indexed)?;
+            if let Some(times) = times.as_deref_mut() {
+                times.retention_kernel_launches += self.ranks.len() as u32;
+                times.retention_metadata_bytes += copies.len() as u64 * 12;
+            }
+        } else {
+            for (rank, copy) in copies {
+                self.services
+                    .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
+                    .map_err(|e| format!("DSpark feature retention: {e:?}"))?;
+                if let Some(times) = times.as_deref_mut() {
+                    times.retention_copy_calls += 1;
+                }
+            }
         }
         finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         // Copies remain ordered on each rank's stream. Any following draft,

@@ -65,6 +65,11 @@ impl MappedHost {
         Ok(())
     }
 
+    #[cfg(not(feature = "diagnostic-taps"))]
+    pub(in crate::fake_host_tests) fn fail_gather_after(&self, stage: &'static str, after: usize) {
+        self.fail_gather.set(Some((stage, after)));
+    }
+
     /// Journal peer copies as the ordinary fake host does (`peer-copy`
     /// lines), so the prefill DMA audit can order them.
     pub(in crate::fake_host_tests) fn with_peer_copies(host: Rc<Host>) -> Self {

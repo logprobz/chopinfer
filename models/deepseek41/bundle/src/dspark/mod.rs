@@ -16,6 +16,7 @@ pub mod features;
 pub(crate) mod head_capture;
 pub(crate) mod prefetch;
 pub(crate) mod results;
+pub(crate) mod retention;
 pub mod staging;
 pub mod state;
 pub mod timing;

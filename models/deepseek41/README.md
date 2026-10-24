@@ -384,6 +384,17 @@ completes every Engram gather before returning success. Prefill, mixed and
 drafted steps keep their existing boundaries. This switch is experimental
 until the full-state transition and served bitwise gates pass.
 
+`CHOPINFER_DSPARK_INDEXED_RETENTION=1` opts into one byte-copy kernel per
+rank when an undrafted or verify commit would otherwise submit at least
+eight retention copies per rank. Prefill, mixed prefill/decode and smaller
+commits retain the original copy list. Metadata reserves 768 bytes per rank
+before KV sizing. All mappings and rank bindings validate before any write;
+every accepted raw row keeps its original physical slot and wrap position.
+This path also remains experimental until its GPU and served gates pass.
+Step records expose `undrafted_ready` and `undrafted_status_packets`;
+commit records expose `retention_kernel_launches`, `retention_copy_calls`
+and `retention_metadata_bytes` so gates can assert which path executed.
+
 For untimed transition diagnostics, build the bundle with `state-capture`.
 This feature keeps native launches and ready logits enabled. Set
 `CHOPINFER_DSPARK_STATE_DIR` to a private external directory, create its

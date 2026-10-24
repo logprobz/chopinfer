@@ -9,10 +9,20 @@ fn create(count: u32, enabled: bool) -> (Rc<Host>, BundleInstanceV1) {
 }
 
 fn create_with_sampling(count: u32, enabled: bool, sampled: bool) -> (Rc<Host>, BundleInstanceV1) {
+    let (host, instance, _) = create_with_mapping(count, enabled, sampled);
+    (host, instance)
+}
+
+fn create_with_mapping(
+    count: u32,
+    enabled: bool,
+    sampled: bool,
+) -> (Rc<Host>, BundleInstanceV1, Rc<MappedHost>) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
     host.speculation.set(Some((5, 32)));
+    let mapped = Rc::new(MappedHost::with_delayed_completion(Rc::clone(&host)));
     let record = crate::config::tests::with_coupled_drafts(
         crate::config::tests::record(&shape, host.kv, count, false),
         sampled,
@@ -23,17 +33,42 @@ fn create_with_sampling(count: u32, enabled: bool, sampled: bool) -> (Rc<Host>, 
                 api()
                     .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
                     .unwrap()
-                    .create(
-                        HostServicesTableV1::new(Rc::new(MappedHost::with_delayed_completion(
-                            Rc::clone(&host),
-                        ))),
-                        &record,
-                    )
+                    .create(HostServicesTableV1::new(Rc::clone(&mapped)), &record)
                     .unwrap()
             })
         })
     });
-    (host, instance)
+    crate::instance::dspark_step_trace_for_test(instance.handle(), true);
+    (host, instance, mapped)
+}
+
+#[test]
+fn failed_undrafted_gather_completion_refuses_private_ready_results() {
+    let (host, mut instance, mapped) = create_with_mapping(1, true, false);
+    prefill(&host, &mut instance, 1);
+    mapped.fail_gather_after("complete", 0);
+    let mut result = sink(&host, 1, 9);
+    assert!(
+        instance
+            .execute(&decode(&[(1, 0, 3, 17)]), &mut result)
+            .is_err()
+    );
+    assert!(!result.ready.is_empty());
+    assert!(result.legacy.is_empty());
+    assert!(
+        host.journal
+            .borrow()
+            .iter()
+            .any(|line| line == "async mapped failure complete")
+    );
+    assert_eq!(
+        crate::instance::dspark_context(instance.handle(), 1)
+            .unwrap()
+            .end,
+        3
+    );
+    assert!(instance.commit().is_err());
+    let _ = instance.destroy();
 }
 
 fn sink(host: &Rc<Host>, count: u32, epoch: u64) -> ReadySink {
@@ -87,6 +122,19 @@ fn undrafted_ready_steps_join_status_once_without_changing_target_launches() {
                     .execute(&request, &mut sink)
                     .unwrap_or_else(|error| panic!("decode: {error:?}, {:?}", host.logs.borrow()));
                 let lines = host.journal.borrow()[from..].to_vec();
+                let record = host
+                    .logs
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find_map(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .ok()
+                            .filter(|value| value["schema"] == "chopinfer.deepseek41.step-shape.v1")
+                    })
+                    .unwrap();
+                assert_eq!(record["undrafted_ready"], u32::from(enabled));
+                assert_eq!(record["undrafted_status_packets"], u32::from(enabled));
                 let downloads = lines
                     .iter()
                     .filter(|line| line.starts_with("download "))

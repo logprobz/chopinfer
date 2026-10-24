@@ -15,6 +15,43 @@ fn records(host: &FakeHost) -> Vec<serde_json::Value> {
 }
 
 #[test]
+fn indexed_retention_metadata_is_dspark_only_and_precedes_kv_sizing() {
+    for speculation in [None, Some((3, 32))] {
+        let run = |enabled| {
+            crate::dspark::retention::with_enabled(enabled, || {
+                let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+                host.speculation.set(speculation);
+                let mut instance = create(&host, 4);
+                let result = records(&host);
+                instance.destroy().unwrap();
+                assert_eq!(host.acquired.get(), host.released.get());
+                result
+            })
+        };
+        let before = run(false);
+        let after = run(true);
+        assert_eq!(before.len(), 4);
+        assert_eq!(after.len(), 4);
+        for (before, after) in before.iter().zip(&after) {
+            if speculation.is_none() {
+                assert_eq!(before, after);
+            } else {
+                assert_eq!(
+                    after["total"].as_u64().unwrap() - before["total"].as_u64().unwrap(),
+                    crate::dspark::retention::METADATA_BYTES
+                );
+                assert_eq!(
+                    after["bytes"]["dspark"].as_u64().unwrap()
+                        - before["bytes"]["dspark"].as_u64().unwrap(),
+                    crate::dspark::retention::METADATA_BYTES
+                );
+                assert_eq!(before["after_kv"], after["after_kv"]);
+            }
+        }
+    }
+}
+
+#[test]
 fn batched_commit_storage_is_dspark_only_and_precedes_kv_sizing() {
     use crate::dspark::device::{COMMIT_ROWS, with_batch_commit};
     use model_deepseek41_contract::serving::DeepSeek;

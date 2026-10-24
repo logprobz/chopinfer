@@ -1545,18 +1545,22 @@ impl Instance {
             if ready_epoch.is_some() {
                 self.emit_logits(runs, sink, ready_epoch)?;
             }
-            measure(times.map(|t| &mut t.wait_us), || {
-                if self.check_undrafted_status()? {
-                    Ok(())
-                } else {
-                    self.check_dspark_status()
+            let packet = measure(times.as_deref_mut().map(|t| &mut t.wait_us), || {
+                let packet = self.check_undrafted_status()?;
+                if !packet {
+                    self.check_dspark_status()?;
                 }
+                Ok(packet)
             })
-            .and_then(|()| self.finish_dspark_cycle(sink))
-            .map_err(|error| {
+            .and_then(|packet| self.finish_dspark_cycle(sink).map(|()| packet))
+            .map_err(|error: String| {
                 self.log(&error);
                 BundleAbiError::Status(BundleStatusV1::BundleError)
             })?;
+            if let Some(times) = times {
+                times.undrafted_ready += u32::from(ready_epoch.is_some());
+                times.undrafted_status_packets += u32::from(packet);
+            }
             if ready_epoch.is_none() {
                 self.emit_logits(runs, sink, None)?;
             }

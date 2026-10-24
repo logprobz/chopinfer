@@ -19,6 +19,7 @@ mod layers;
 mod native_package;
 mod prefetch;
 mod results;
+mod retention;
 mod round_trips;
 mod undrafted;
 mod verify_rows;

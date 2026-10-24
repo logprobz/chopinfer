@@ -7,6 +7,8 @@ pub struct TargetTimes {
     pub upload_us: u64,
     pub submit_us: u64,
     pub wait_us: u64,
+    pub undrafted_ready: u32,
+    pub undrafted_status_packets: u32,
 }
 
 #[derive(Default)]
@@ -25,6 +27,9 @@ pub(crate) struct CommitTimes {
     pub wait_us: u64,
     pub passes: u32,
     pub rows: u64,
+    pub retention_kernel_launches: u32,
+    pub retention_copy_calls: u32,
+    pub retention_metadata_bytes: u64,
 }
 
 impl CommitTimes {
@@ -34,6 +39,7 @@ impl CommitTimes {
                 "{{\"schema\":\"chopinfer.deepseek41.commit-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",",
                 "\"projection_passes\":{},\"projection_rows\":{},",
+                "\"retention_kernel_launches\":{},\"retention_copy_calls\":{},\"retention_metadata_bytes\":{},",
                 "\"micros\":{{\"total\":{},\"retention\":{},",
                 "\"projection_lower\":{},\"projection_upload\":{},",
                 "\"projection_submit\":{},\"projection_status\":{},\"wait\":{}}}}}"
@@ -42,6 +48,9 @@ impl CommitTimes {
             context.step_id,
             self.passes,
             self.rows,
+            self.retention_kernel_launches,
+            self.retention_copy_calls,
+            self.retention_metadata_bytes,
             self.total_us,
             self.retention_us,
             self.projection.lower_us,

@@ -1546,6 +1546,28 @@ pub(crate) fn dspark_step_trace_for_test(
 }
 
 #[cfg(test)]
+pub(crate) fn retention_metadata_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<runtime_bundle_abi::DeviceBufferSpanV1> {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .dspark
+            .as_ref()
+            .map(|device| {
+                device
+                    .ranks
+                    .iter()
+                    .filter_map(|rank| rank.retention_segments)
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn dspark_graphs_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
     capacity: Option<usize>,

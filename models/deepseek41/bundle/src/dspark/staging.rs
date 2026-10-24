@@ -396,6 +396,7 @@ impl PhaseTimes {
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
+                "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
                 "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"read_ids\":{},",
                 "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{},",
                 "\"target_lower\":{},\"target_upload\":{},\"target_submit\":{},\"target_wait\":{}}}}}"
@@ -407,6 +408,8 @@ impl PhaseTimes {
             self.catch_up_items,
             self.catch_up_rows,
             self.bulk_passes,
+            self.target.undrafted_ready,
+            self.target.undrafted_status_packets,
             self.catch_up_us,
             self.bulk_us,
             self.draft_us,

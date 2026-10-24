@@ -1,7 +1,7 @@
 //! The DSpark drafter's served settings as package model options. A create
 //! record without them keeps the legacy values.
 
-use crate::serving::DECODE_BATCH;
+use crate::serving::{DECODE_BATCH, MAX_DRAFT_TOKENS};
 use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
 use std::collections::BTreeMap;
 
@@ -15,6 +15,15 @@ pub const DRAFT_CHUNK_ITEMS: &str = "dspark_draft_chunk_items";
 /// keeps: six items of five block rows stay within the drafter's 32-row
 /// plans.
 pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 6;
+
+/// Most drafting items one drafter forward keeps on the small-row paths:
+/// the row-local quantizers, the HC mix split and the head's weight reuse,
+/// whose per-row arithmetic does not depend on the forward's rows. A larger
+/// chunk is served by the prefill-sized forms with the same bits.
+pub const SMALL_DRAFT_ITEMS: u32 = 16;
+
+/// The block rows of [`SMALL_DRAFT_ITEMS`]: five per drafting item.
+pub const SMALL_DRAFT_ROWS: u32 = SMALL_DRAFT_ITEMS * MAX_DRAFT_TOKENS;
 
 pub fn declarations() -> [ModelOptionV1; 1] {
     [ModelOptionV1 {

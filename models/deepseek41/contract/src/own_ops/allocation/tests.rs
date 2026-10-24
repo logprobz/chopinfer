@@ -90,7 +90,7 @@ fn ranked_allocation_equals_the_sdk_rule() {
             assert!(reserved_rows - width + w >= r as u32);
             assert!(r == 0 || reference.expand[r - 1] <= w);
         }
-        ties += usize::from(scores.iter().any(|row| row.iter().any(|s| *s == 0.0)));
+        ties += usize::from(scores.iter().any(|row| row.contains(&0.0)));
     }
     assert!(ties > 100);
 }

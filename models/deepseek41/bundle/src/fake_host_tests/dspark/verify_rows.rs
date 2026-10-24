@@ -110,6 +110,10 @@ fn target_programs_lower_at_wide_verify_rows() {
                     40 * 4
                 );
                 assert_eq!(
+                    count_symbol("chop_position_query_deepseek41_parallel_v1"),
+                    8 * 4
+                );
+                assert_eq!(
                     count_symbol(
                         "chop_deepseek41_verify_f32_n32320_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
                     ),

@@ -48,7 +48,7 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: self.carried(phase, scratch.row_status)?,
         };
-        ops.prepare_query(phase.rows(), compressor.table_rows(), &views)
+        ops.prepare_query(phase, compressor.table_rows(), &views)
             .map(Some)
             .map_err(|refusal| format!("index query of layer {layer}: {refusal}"))
     }

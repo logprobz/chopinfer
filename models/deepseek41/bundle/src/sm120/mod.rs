@@ -146,6 +146,7 @@ pub mod f32_zero;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
 pub mod host_acceptance_entries;
+mod index_query_serving;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer;
 mod indexer_cached_serving;

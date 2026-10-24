@@ -284,7 +284,12 @@ impl Ops {
             &mut missing,
             &names,
             "indexer",
-            indexer::IndexerOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            indexer::IndexerOps::prepare(
+                kernels.backend.as_ref(),
+                shape,
+                &asks,
+                expert_set.count == shape.geometry.shape.moe.experts,
+            ),
         );
         let select = family(
             &mut missing,

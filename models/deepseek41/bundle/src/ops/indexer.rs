@@ -30,6 +30,7 @@ pub(crate) struct IndexerOps {
     /// The query preparation every index source shares: the heads, width
     /// and rotation are the same at each.
     query: Prepared<PositionQueryBuffers<View>>,
+    wide_query: Option<Prepared<PositionQueryBuffers<View>>>,
 }
 
 /// A step's spans of a query preparation: the F32 index query, the
@@ -51,26 +52,38 @@ impl IndexerOps {
         backend: &dyn Backend,
         shape: &Shape,
         asks: &Asks,
+        target: bool,
     ) -> Result<IndexerOps, Refused> {
         let g = shape.geometry;
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let source = g.shape.csa.index_sources[0];
-        let query = indexer::selection(g, source, PREFILL_TOKENS)
+        let query_spec = indexer::selection(g, source, PREFILL_TOKENS)
             .ok_or_else(|| Refused::Rule(format!("{} has no index source", g.id)))?;
         let query = asks.ask("indexer.query", every, |need| {
-            backend.position_indexer_query(&query, need)
+            backend.position_indexer_query(&query_spec, need)
         })?;
-        Ok(IndexerOps { query })
+        let rows = shape.verify_decode_rows();
+        let wide_query = if target && rows > 32 {
+            Some(asks.ask(
+                "indexer.query wide verify",
+                exact::need(rows, exact::verify(rows)),
+                |need| crate::Kernels::wide_index_query(shape, &query_spec, need),
+            )?)
+        } else {
+            None
+        };
+        Ok(IndexerOps { query, wide_query })
     }
 
     /// The preparation of `rows` index queries over a RoPE table of
     /// `table_rows` positions.
     pub(crate) fn prepare_query(
         &self,
-        rows: u32,
+        phase: crate::program::Phase,
         table_rows: u32,
         views: &QueryViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = PositionQueryBuffers {
             q: bind.view(views.q),
@@ -82,7 +95,13 @@ impl IndexerOps {
             quantizer_status_row_offset: 0,
         };
         let counts = Counts::rows(rows).with_positions(table_rows);
-        bind.launch_within(&self.query, &buffers, views.workspace, counts)
+        let op = if matches!(phase, crate::program::Phase::Verify { rows: 33..=64, .. }) {
+            self.wide_query.as_ref()
+        } else {
+            None
+        }
+        .unwrap_or(&self.query);
+        bind.launch_within(op, &buffers, views.workspace, counts)
     }
 }
 
@@ -370,6 +389,49 @@ impl SelectOps {
 mod tests {
     use super::*;
     use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+    #[test]
+    fn wide_index_query_preserves_drafter_prefill_and_default_rows() {
+        use crate::program::Phase;
+        use bundle_runtime::geometry::Ranks;
+        use model_deepseek41_contract::geometry::FLASH;
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let span = |handle, bytes| {
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(handle), 0, bytes)
+        };
+        for target in [false, true] {
+            let ops =
+                IndexerOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default(), target)
+                    .unwrap();
+            let views = QueryViews {
+                q: span(1, 65 * 4096 * 4),
+                cos_sin: span(2, 8 * 64 * 4),
+                positions: span(3, 65 * 4),
+                live_rows: span(4, 4),
+                output: span(5, 65 * 4096 * 2),
+                status: span(6, 65 * 4),
+                workspace: span(7, ops.query.info().workspace),
+            };
+            for phase in [Phase::Prefill { rows: 64 }, Phase::Decode(32)]
+                .into_iter()
+                .chain([32, 33, 48, 64, 65].map(|rows| Phase::Verify { items: 16, rows }))
+            {
+                let calls = ops.prepare_query(phase, 8, &views).unwrap();
+                let fused = phase.rows() <= 32
+                    || target && matches!(phase, Phase::Verify { rows: 33..=64, .. });
+                assert_eq!(calls.len(), if fused { 1 } else { 2 });
+                assert_eq!(
+                    calls[0].launch.symbol,
+                    if fused {
+                        "chop_position_query_deepseek41_parallel_v1"
+                    } else {
+                        "chop_position_query_deepseek41_rotate_v3"
+                    }
+                );
+            }
+        }
+    }
+
     #[test]
     fn bf16_index_pages_do_not_bind_an_absent_scale_plane() {
         let values =

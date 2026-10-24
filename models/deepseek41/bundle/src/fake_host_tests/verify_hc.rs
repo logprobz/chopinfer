@@ -126,19 +126,18 @@ use super::*;
 // in `FLASH_JOURNALS`: every other line is equal once ids are mapped.
 // The row-tiled gate/up builds rename their resolves and launches, as in
 // `FLASH_JOURNALS`, and so do their quad-lane builds.
-// `FLASH_JOURNALS`.
-// The drafter's mixer scratch covers its forwards of up to 16 items
-// (`HcOps::draft_scratch`): the twelve warp mixer launches of each journal
-// bind the same partials and tickets spans at 80 rows' length (1228800 and
-// 320 bytes, against 491520 and 128). Audited against the previous
-// journals: no other line differs.
+// The bounded drafter head/router module adds four resolves per rank.
+// Its mixer scratch covers 60 rows: partials and tickets grow from 491520
+// and 128 bytes to 921600 and 240. The allocations, ticket zeroing and
+// warp/split mixer spans use those sizes. Every other line matches after
+// mapping the handles shifted by one module and four functions per rank.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x3f0f995ad5b37086)),
-    (6, (8680, 0xacd1e4c753ea7872)),
-    (8, (7720, 0x36524738ac1f75e5)),
-    (12, (10136, 0x351abc75c65731fd)),
-    (16, (7892, 0x05d8cbcda647bfdf)),
-    (32, (7744, 0x0ec26390381c4412)),
+    (4, (7880, 0xd53c496e0aab902f)),
+    (6, (8680, 0xed990305b8839d35)),
+    (8, (7720, 0xcf94314df6903eca)),
+    (12, (10136, 0x48899f802f4e8c30)),
+    (16, (7892, 0x2e9a5a18258a879c)),
+    (32, (7744, 0xc5b015622e30434b)),
 ];
 
 #[test]

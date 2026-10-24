@@ -480,8 +480,12 @@ impl CollectingSinkV1<'_> {
                         .get(offset..offset + 32)
                         .ok_or(BundleStatusV1::InvalidArgument)?,
                 )?;
+                // A result says whether its step was allocated; the engine
+                // checks that an allocated step's verified rows fill its
+                // width and that an unallocated one verified every draft.
+                let allocated = record.flags & BUNDLE_ACCEPTANCE_ALLOCATED_V1 != 0;
                 let (drafted, count, emitted, terminal, rejected, empty_row) =
-                    match record.validate(item.acceptance)? {
+                    match record.validate_allocation(item.acceptance, allocated)? {
                         DeviceAcceptanceV1::Prefix {
                             accepted_drafts,
                             emitted_rows,

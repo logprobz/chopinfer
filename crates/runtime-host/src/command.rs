@@ -3357,6 +3357,9 @@ impl ServedEngineV1 {
         .with_draft_sampling(crate::executor::draft_sampling_capability_v1(
             loaded.manifest(),
         ))
+        .with_verify_allocation(crate::executor::verify_allocation_capability_v1(
+            loaded.manifest(),
+        ))
         .with_row_buckets(if self.speculation.is_some() {
             loaded
                 .manifest()
@@ -3590,6 +3593,19 @@ struct ServedExecutorV1<E: BundleExecutionV1 = LoadedBundleInstanceV1> {
     reference: Option<Rc<ReferenceTokensV1>>,
 }
 
+impl<E: BundleExecutionV1> ServedExecutorV1<E> {
+    /// Readies the serving KV pool's page work for a step's appends.
+    fn prepare_pool(&self, kv_plan: &PreparedAppendBatch) -> Result<(), ExecutorError> {
+        if let Some(pool) = &self.pool_control {
+            pool.prepare(kv_plan).map_err(|status| {
+                ExecutorError::new(format!("serving KV page work failed: {status:?}"))
+                    .expect("bounded error")
+            })?;
+        }
+        Ok(())
+    }
+}
+
 impl<E: BundleExecutionV1> ModelExecutor for ServedExecutorV1<E> {
     fn device_results_v1(&self) -> bool {
         self.executor.device_results_v1()
@@ -3689,13 +3705,22 @@ impl<E: BundleExecutionV1> ModelExecutor for ServedExecutorV1<E> {
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
-        if let Some(pool) = &self.pool_control {
-            pool.prepare(kv_plan).map_err(|status| {
-                ExecutorError::new(format!("serving KV page work failed: {status:?}"))
-                    .expect("bounded error")
-            })?;
-        }
+        self.prepare_pool(kv_plan)?;
         self.executor.execute(items, kv_plan)
+    }
+
+    fn allocates_verify_drafts_v1(&self) -> bool {
+        self.executor.allocates_verify_drafts_v1()
+    }
+
+    fn execute_allocated<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        allocation: &runtime_engine::StepAllocation,
+    ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        self.prepare_pool(kv_plan)?;
+        self.executor.execute_allocated(items, kv_plan, allocation)
     }
 }
 
@@ -5833,6 +5858,9 @@ impl ArgumentsV1 {
             ))
             .chain(std::iter::once(
                 runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
+                runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
             ))
             .chain(std::iter::once(crate::offload::KV_OFFLOAD_CAPABILITY_V1))
             .chain(std::iter::once(
@@ -8899,6 +8927,7 @@ mod tests {
                 runtime_bundle_abi::SPECULATIVE_REQUESTED_ROWS_CAPABILITY_V1,
                 crate::executor::SPECULATIVE_CAPABILITY_V1,
                 runtime_bundle_abi::STATE_PER_ITEM_CAPABILITY_V1,
+                runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
                 runtime_bundle_abi::weight_plan::WEIGHT_PLAN_CAPABILITY_V1,
             ]
         );
@@ -8958,6 +8987,7 @@ mod tests {
                     .unwrap(),
                 &BundleOpaqueId::new(crate::executor::SPECULATIVE_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::STATE_PER_ITEM_CAPABILITY_V1).unwrap(),
+                &BundleOpaqueId::new(runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::weight_plan::WEIGHT_PLAN_CAPABILITY_V1)
                     .unwrap(),
                 &BundleOpaqueId::new("collective").expect("the test capability is valid"),

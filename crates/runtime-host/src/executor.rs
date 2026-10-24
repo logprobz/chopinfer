@@ -30,8 +30,8 @@ use runtime_bundle_abi::{
 };
 use runtime_engine::profile::{PhaseTimer, StepPhase};
 use runtime_engine::{
-    DraftRow, DraftSource, ExecutorError, KeptRows, LogitsRow, ModelBatchItem, ModelExecutor,
-    ModelTransaction, ModelTransactionState, RequestId, SampledRow,
+    AllocationKind, DraftRow, DraftSource, ExecutorError, KeptRows, LogitsRow, ModelBatchItem,
+    ModelExecutor, ModelTransaction, ModelTransactionState, RequestId, SampledRow, StepAllocation,
 };
 use runtime_kv::{BlockId, PreparedAppendBatch};
 use runtime_scheduler::BatchPhase;
@@ -76,6 +76,10 @@ pub const BATCH_REQUEST_MAGIC_V6: &[u8; 12] = b"chopbatch-v6";
 
 /// Bytes of one item's draft sampling record in a V6 record.
 pub const DRAFT_SAMPLING_BYTES_V1: usize = 48;
+
+/// The prefix of a V3 to V6 record followed by a verify step's allocation
+/// (`chop.verify-allocation.v1`).
+pub const BATCH_REQUEST_MAGIC_V7: &[u8; 12] = b"chopbatch-v7";
 
 /// The manifest capability that opts a bundle into V2 COW append records.
 pub const BATCH_WIRE_V2_CAPABILITY_V1: &str = "chop.batch-wire.v2";
@@ -175,6 +179,19 @@ pub fn draft_sampling_capability_v1(manifest: &BundleManifestV1) -> bool {
         .required_capabilities()
         .iter()
         .any(|capability| capability.as_str() == runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1)
+}
+
+/// Whether the package chooses which reserved drafts its target verifies
+/// (`chop.verify-allocation.v1`), and so takes V7 records.
+#[must_use]
+pub fn verify_allocation_capability_v1(manifest: &BundleManifestV1) -> bool {
+    manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|capability| {
+            capability.as_str() == runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1
+        })
 }
 
 /// What the last finalized transaction did at the ABI boundary.
@@ -1346,6 +1363,7 @@ pub struct BundleModelExecutorV1<E: BundleExecutionV1 = LoadedBundleInstanceV1> 
     in_place_state: bool,
     position_axes: bool,
     draft_sampling: bool,
+    verify_allocation: bool,
     offload: Option<Rc<dyn crate::offload::KvOffloadExecutorV1>>,
     offload_info: Option<runtime_engine::KvOffloadInfo>,
 }
@@ -1384,6 +1402,7 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
             in_place_state: false,
             position_axes: false,
             draft_sampling: false,
+            verify_allocation: false,
             offload: None,
             offload_info: None,
         }
@@ -1414,6 +1433,14 @@ impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
     #[must_use]
     pub fn with_draft_sampling(mut self, enabled: bool) -> Self {
         self.draft_sampling = enabled;
+        self
+    }
+
+    /// Serves allocated verify steps as V7 records. Only a bundle that
+    /// declares `chop.verify-allocation.v1` may enable it.
+    #[must_use]
+    pub fn with_verify_allocation(mut self, enabled: bool) -> Self {
+        self.verify_allocation = enabled;
         self
     }
 
@@ -1736,19 +1763,49 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
     where
         Self: 'a;
 
+    fn allocates_verify_drafts_v1(&self) -> bool {
+        self.verify_allocation
+    }
+
+    fn execute_allocated<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        allocation: &StepAllocation,
+    ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        if !self.verify_allocation {
+            return Err(executor_error_v1(format!(
+                "allocated verify steps require the {} capability",
+                runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1
+            )));
+        }
+        self.execute_steps(items, kv_plan, Some(allocation))
+    }
+
     fn execute<'a>(
         &'a mut self,
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        self.execute_steps(items, kv_plan, None)
+    }
+}
+
+impl<E: BundleExecutionV1> BundleModelExecutorV1<E> {
+    /// One step, allocated when `allocation` is given: its record is then
+    /// V7, and each bundle-drafted item reports the drafts it verified.
+    fn execute_steps<'a>(
+        &'a mut self,
+        items: &[ModelBatchItem],
+        kv_plan: &PreparedAppendBatch,
+        allocation: Option<&StepAllocation>,
+    ) -> Result<ModelTransaction<BundleTransactionStateV1<'a, E>>, ExecutorError> {
         // One buffer holds the whole record: wrappers patch their lengths in
         // place, so a step's media payloads are written once and never copied.
         let mut request = Vec::new();
-        write_draft_sampling_v1(
-            &mut request,
-            items,
-            self.draft_sampling,
-            |request, trailing| {
+        write_verify_allocation_v1(&mut request, items, allocation, |request, trailing| {
+            write_draft_sampling_v1(request, items, self.draft_sampling, |request, own| {
+                let trailing = trailing + own;
                 write_position_axes_v1(
                     request,
                     items,
@@ -1776,8 +1833,8 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
                         }
                     },
                 )
-            },
-        )?;
+            })
+        })?;
         let expected = items
             .iter()
             .flat_map(|item| {
@@ -1956,10 +2013,15 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
                 .get(&item.request_id().get())
                 .map_or(&[][..], Vec::as_slice);
             match item.draft().map(|draft| draft.source()) {
+                // An allocated step's item reports the drafts it verified,
+                // at most its reservation; the engine checks the width.
                 Some(DraftSource::Bundle)
                     if emitted_for_item.len() == 1
-                        && emitted_for_item[0].tokens.len()
-                            == item.draft().expect("verify draft").tokens() =>
+                        && (emitted_for_item[0].tokens.len()
+                            == item.draft().expect("verify draft").tokens()
+                            || allocation.is_some()
+                                && emitted_for_item[0].tokens.len()
+                                    < item.draft().expect("verify draft").tokens()) =>
                 {
                     drafts.push(DraftRow::new(
                         item.request_id(),
@@ -2193,6 +2255,51 @@ fn write_position_axes_v1(
         for axis in axes.iter().flatten() {
             out.extend_from_slice(&axis.to_le_bytes());
         }
+    }
+    Ok(())
+}
+
+/// Appends the V3 to V6 record `enclosed` writes, wrapped with a verify
+/// step's allocation when the engine allocated it: the width, the floor, the
+/// calibrated positions, the greedy and then the sampled calibration as
+/// (scale, offset) f32 bits per position, then a count equal to the items
+/// and each item's kind (1 for a positive temperature, else 0). Other steps
+/// keep their record unwrapped. `enclosed` receives the bytes appended
+/// after it.
+fn write_verify_allocation_v1(
+    out: &mut Vec<u8>,
+    items: &[ModelBatchItem],
+    allocation: Option<&StepAllocation>,
+    enclosed: impl FnOnce(&mut Vec<u8>, usize) -> Result<(), ExecutorError>,
+) -> Result<(), ExecutorError> {
+    let Some(step) = allocation else {
+        return enclosed(out, 0);
+    };
+    let rule = step.allocation;
+    let positions = rule.positions();
+    let own = 12 + 16 * positions + 4 + 4 * items.len();
+    write_framed_v1(
+        out,
+        BATCH_REQUEST_MAGIC_V7,
+        "verify allocation batch does not fit the wire",
+        |out| enclosed(out, own),
+    )?;
+    write_wire_count_v1(out, step.width, "verify width")?;
+    write_wire_count_v1(out, rule.floor(), "verify floor")?;
+    write_wire_count_v1(out, positions, "calibrated position")?;
+    for kind in [AllocationKind::Greedy, AllocationKind::Sampled] {
+        for position in 0..positions {
+            let (scale, offset) = rule.pair(kind, position);
+            out.extend_from_slice(&scale.to_bits().to_le_bytes());
+            out.extend_from_slice(&offset.to_bits().to_le_bytes());
+        }
+    }
+    write_wire_count_v1(out, items.len(), "allocation kind")?;
+    for item in items {
+        let sampled = item
+            .sampling()
+            .is_some_and(|work| work.parameters.temperature() > 0.0);
+        out.extend_from_slice(&u32::from(sampled).to_le_bytes());
     }
     Ok(())
 }
@@ -4729,6 +4836,97 @@ mod tests {
             write(&items[1..], &plan, true),
             super::encode_batch_request_with_capability_v1(&items[1..], &plan, wire).unwrap()
         );
+    }
+
+    /// An allocated step wraps its V6 record in V7: the width, floor and
+    /// calibration, then each item's kind, read back by the bundle codec
+    /// with the enclosed record intact. Unallocated steps keep the V6
+    /// record, and an executor whose bundle does not allocate verify
+    /// drafts refuses an allocated step before the bundle sees it.
+    #[test]
+    fn allocated_verify_steps_carry_their_allocation_in_v7() {
+        use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
+        let geometry = KvGeometry::new(4, 8).unwrap();
+        let mut pool = KvPool::new(geometry, 4).unwrap();
+        let sequences = [0, 1].map(|_| pool.create_sequence(8).unwrap());
+        let plan = pool
+            .prepare_append_batch(&[(sequences[0], 4), (sequences[1], 1)])
+            .unwrap();
+        let sampled = SamplingWork {
+            parameters: SamplingParameters::new(0.8).unwrap(),
+            state: SamplingState::new(7).after(3),
+            history: vec![1].into(),
+            emitted_tokens: 3,
+            stop_ids: Vec::new(),
+            constraint: None,
+        };
+        let items = vec![
+            ModelBatchItem::new(
+                RequestId::new(1),
+                BatchPhase::Verify { draft_tokens: 3 },
+                vec![7],
+                true,
+            )
+            .with_sampling(sampled)
+            .with_draft(DraftWork::new(3, DraftSource::Bundle)),
+            ModelBatchItem::new(RequestId::new(2), BatchPhase::Decode, vec![8], true),
+        ];
+        let greedy = [(1.5, -0.25), (1.0, 0.0), (0.5, 0.125)];
+        let sampled = [(0.75, 0.5), (2.0, -1.0), (0.25, 0.0)];
+        let step = runtime_engine::StepAllocation {
+            width: 4,
+            allocation: runtime_engine::VerifyAllocation::new(1, &greedy, &sampled).unwrap(),
+        };
+        let wire = super::BatchWireCapabilityV1::V3Speculative;
+        let write = |allocation: Option<&runtime_engine::StepAllocation>| {
+            let mut out = Vec::new();
+            super::write_verify_allocation_v1(&mut out, &items, allocation, |out, trailing| {
+                super::write_draft_sampling_v1(out, &items, true, |out, own| {
+                    super::write_batch_request_v1(out, &items, &plan, wire, trailing + own)
+                })
+            })
+            .unwrap();
+            out
+        };
+        let enclosed = write(None);
+        assert!(enclosed.starts_with(super::BATCH_REQUEST_MAGIC_V6));
+        let bytes = write(Some(&step));
+        assert!(bytes.starts_with(super::BATCH_REQUEST_MAGIC_V7));
+        assert_eq!(bytes[16..16 + enclosed.len()], enclosed[..]);
+        assert_eq!(bytes.len(), 16 + enclosed.len() + 12 + 16 * 3 + 4 + 4 * 2);
+        let decoded = runtime_bundle_sdk::BatchCodecV1::decode(&bytes).unwrap();
+        assert_eq!(
+            decoded.verify_allocation(),
+            Some(&VerifyAllocationV1::new(
+                4,
+                1,
+                VerifyCalibrationV1::new(&greedy, &sampled).unwrap(),
+                vec![SamplingKindV1::Sampled, SamplingKindV1::Greedy],
+            ))
+        );
+        assert_eq!(
+            decoded.draft_sampling(),
+            runtime_bundle_sdk::BatchCodecV1::decode(&enclosed)
+                .unwrap()
+                .draft_sampling()
+        );
+
+        let mut executor = BundleModelExecutorV1::new(
+            FakeExecutionV1::emitting(vec![row(REQUEST, &[1.0, 2.0, 3.0])]),
+            VOCABULARY,
+            8,
+        );
+        assert!(!executor.allocates_verify_drafts_v1());
+        let error = executor
+            .execute_allocated(&items, &plan, &step)
+            .err()
+            .expect("allocation needs the capability");
+        assert!(
+            error
+                .message()
+                .contains(runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1)
+        );
+        assert!(executor.instance.calls.is_empty());
     }
 
     trait ClearedForTest {

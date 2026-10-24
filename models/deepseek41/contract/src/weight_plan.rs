@@ -47,7 +47,7 @@ use kernel_core::precision::layout::{
     ROW_TILE_CODES_VIEW, ROW_TILE_LANE_CODES_VIEW, ROW_TILE_SCALES_VIEW, ROW_TILES_64X128,
     ROW_TILES_64X128_LANES,
 };
-use kernel_core::weight_transform::{PackedSection, WeightTransform};
+use kernel_core::weight_transform::{PackedSection, ScaleFormat, WeightTransform};
 use model_compiler_sdk::quantization::declared::{self, Admitted};
 use model_compiler_sdk::quantization::import::ImportedOperand;
 use model_compiler_sdk::quantization::projection::metadata::HeaderCompanionRules;
@@ -961,7 +961,26 @@ fn rank_census(request: &WeightPlanRequestV1, planned: &Planned) -> Result<Weigh
 /// The layout identifier of an encoded scale bank at `width`.
 #[must_use]
 pub fn encoded_scale_layout(width: u32) -> String {
-    format!("{}.w{width}", kernel_core::precision::scale_offset::FORMAT)
+    encoded_scale_layout_for(ScaleFormat::RowOffsetV1, width)
+}
+
+/// The exact encoded layout identity, including the scale format.
+#[must_use]
+pub fn encoded_scale_layout_for(format: ScaleFormat, width: u32) -> String {
+    format!("{}.w{width}", format.id())
+}
+
+/// The format and offset width of a supported encoded scale layout.
+#[must_use]
+pub fn encoded_scale_format(layout_id: &str) -> Option<(ScaleFormat, u32)> {
+    for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+        for width in kernel_core::precision::scale_offset::WIDTHS {
+            if layout_id == encoded_scale_layout_for(format, width) {
+                return Some((format, width));
+            }
+        }
+    }
+    None
 }
 
 /// The offset width of an [`encoded_scale_layout`], or `None` for another
@@ -980,7 +999,11 @@ pub fn encoded_scale_width(layout_id: &str) -> Option<u32> {
 /// inline record) and one encoded block per matrix; the codes records of the
 /// same operands carry the same encoding, so the host still packs each
 /// matrix once.
-fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String> {
+fn encode_banks(
+    views: &[View],
+    counts: &[[u64; 3]],
+    format: ScaleFormat,
+) -> Result<Vec<View>, String> {
     use kernel_core::precision::scale_offset;
     let mut views = views.to_vec();
     let mut next = 0;
@@ -1008,9 +1031,11 @@ fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String
         for (piece, ((rows, groups), counts)) in view.pieces.iter().zip(&matrices) {
             let mut operand = packed(piece).clone();
             let code = scale_census::scale_code(&operand).expect("an encodable operand");
-            let encoding = scale_census::encoding(code, width, *counts);
+            let mut encoding = scale_census::encoding(code, width, *counts);
+            encoding.format = format;
             operand.local_encoding = Some(encoding);
-            let bytes = scale_offset::encoded_bytes(*rows, *groups, width, encoding.exceptions)
+            let bytes = encoding
+                .encoded_bytes(*rows, *groups)
                 .map_err(|e| format!("{}: {e}", view.name))?;
             blocks.push(bytes);
             let mut key = operand.clone();
@@ -1060,7 +1085,7 @@ fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String
         view.bytes = layout.bytes;
         view.dtype = "U8".into();
         view.shape = vec![layout.bytes];
-        view.layout_id = encoded_scale_layout(width);
+        view.layout_id = encoded_scale_layout_for(format, width);
     }
     if next != counts.len() {
         return Err("the census counts more matrices than the plan's banks".into());
@@ -1095,7 +1120,7 @@ fn encode_banks(views: &[View], counts: &[[u64; 3]]) -> Result<Vec<View>, String
 /// ([`encode_banks`]); the cached derivation stays census-free, so a census
 /// changes only this rank's last step.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
-    plan_routed(request, None)
+    plan_routed(request, None, ScaleFormat::RowOffsetV1)
 }
 
 /// [`plan`] with the backbone's routed gate/up bank stored in `routed`.
@@ -1103,14 +1128,26 @@ pub fn plan_with(
     request: &WeightPlanRequestV1,
     routed: RoutedLayout,
 ) -> Result<Option<WeightPlanV1>, String> {
-    plan_routed(request, Some(routed))
+    plan_routed(request, Some(routed), ScaleFormat::RowOffsetV1)
 }
 
-/// [`plan`] with the backbone's routed gate/up bank stored in `routed`, or
-/// in the served layout of the checkpoint's geometry.
+/// Explicit scale-format planning for qualification. The census, the v1
+/// width-or-raw decision and the code layout are independent of the format.
+/// Serving uses [`plan`], which retains the row-offset encoding.
+pub fn plan_with_scale_format(
+    request: &WeightPlanRequestV1,
+    routed: Option<RoutedLayout>,
+    format: ScaleFormat,
+) -> Result<Option<WeightPlanV1>, String> {
+    plan_routed(request, routed, format)
+}
+
+/// [`plan`] with explicit code and scale layouts, applied after the cached
+/// raw derivation so a format never changes the census identity.
 fn plan_routed(
     request: &WeightPlanRequestV1,
     routed: Option<RoutedLayout>,
+    format: ScaleFormat,
 ) -> Result<Option<WeightPlanV1>, String> {
     if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
         return encoder_plan::plan(request).map(Some);
@@ -1132,7 +1169,7 @@ fn plan_routed(
         let census = rank_census(request, &planned)?;
         let counts = scale_census::counts(request, &census)?
             .ok_or("a request with a census measured nothing for this rank")?;
-        Some(encode_banks(raw, counts)?)
+        Some(encode_banks(raw, counts, format)?)
     };
     let views = encoded.as_deref().unwrap_or(raw);
     let (offsets, arena_bytes) = offsets(views);
@@ -1192,4 +1229,31 @@ fn plan_routed(
         bytes: index(request.rank, views, &offsets, arena_bytes, &identity)?,
     }];
     Ok(Some(plan))
+}
+
+#[cfg(test)]
+mod scale_layout_tests {
+    use super::*;
+    #[test]
+    fn scale_layouts_keep_format_and_width_distinct() {
+        for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+            for width in [1, 2, 4] {
+                let layout = encoded_scale_layout_for(format, width);
+                assert_eq!(encoded_scale_format(&layout), Some((format, width)));
+                assert_eq!(
+                    encoded_scale_width(&layout),
+                    (format == ScaleFormat::RowOffsetV1).then_some(width)
+                );
+            }
+        }
+        for invalid in [
+            "scale-row-tiles-offset-v1",
+            "scale-row-tiles-offset-v1.w3",
+            "scale-row-tiles-offset-v1.w01",
+            "scale-row-offset-v1.w8",
+            "unknown.w1",
+        ] {
+            assert_eq!(encoded_scale_format(invalid), None);
+        }
+    }
 }

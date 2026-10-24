@@ -4,10 +4,13 @@
 //! counts measured for another census.
 use super::*;
 use kernel_core::gated_mlp::GatedMlpProjection;
-use kernel_core::precision::scale_offset;
+use kernel_core::precision::{scale_offset, scale_tiles};
+use kernel_core::weight_transform::ScaleFormat;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 use model_deepseek41_contract::moe;
-use model_deepseek41_contract::weight_plan::{census, encoded_scale_layout};
+use model_deepseek41_contract::weight_plan::{
+    census, encoded_scale_format, encoded_scale_layout, plan_with_scale_format,
+};
 use runtime_bundle_abi::weight_plan::WeightPlanRequestV1;
 use runtime_host::direct::census_counts_v1;
 
@@ -141,7 +144,7 @@ fn check_banks(
             assert_eq!(raw.len() as u64, bank.bytes(), "{at}");
             raw_total += raw.len() as u64;
             encoded_total += got.len() as u64;
-            let Some(width) = (1..=4).find(|w| view.layout_id == encoded_scale_layout(*w)) else {
+            let Some((format, width)) = encoded_scale_format(&view.layout_id) else {
                 // No width stored the bank smaller: it stays raw.
                 assert_eq!(view.layout_id, raw_view.layout_id, "{at}");
                 same(&got, &raw, &at);
@@ -150,9 +153,16 @@ fn check_banks(
             assert_eq!(view.dtype, "U8", "{at}");
             let mut decoded = Vec::with_capacity(raw.len());
             for (matrix, (rows, groups)) in matrices.iter().enumerate() {
-                decoded.extend(
-                    scale_offset::decode_bank_matrix(&got, matrix, *rows, *groups, width).unwrap(),
-                );
+                decoded.extend(match format {
+                    ScaleFormat::RowOffsetV1 => {
+                        scale_offset::decode_bank_matrix(&got, matrix, *rows, *groups, width)
+                            .unwrap()
+                    }
+                    ScaleFormat::RowTilesOffsetV1 => {
+                        scale_tiles::decode_bank_matrix(&got, matrix, *rows, *groups, width)
+                            .unwrap()
+                    }
+                });
             }
             same(&decoded, &raw, &at);
         }
@@ -393,4 +403,80 @@ fn plans_refuse_counts_for_another_census() {
     let error = plan(&stale).unwrap_err();
     assert!(error.contains("answer another census"), "{error}");
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// The new format sizes the v1 census's chosen widths without changing
+/// which banks remain raw. Every produced scale byte decodes to the raw plan.
+#[test]
+fn tile_scale_plans_keep_census_widths_and_raw_choices() {
+    let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
+        eprintln!("no synthetic geometry is compiled: skipped");
+        return;
+    };
+    let root = varied_checkpoint(geometry, "census-tile-format");
+    let mut checked = 0;
+    for &ranks in SUPPORTED_RANKS {
+        if check_ranks(geometry, ranks).is_err() {
+            continue;
+        }
+        let (raw_image, raw_plans) = prepare_with(&root, ranks, Some(RoutedLayout::Rows)).unwrap();
+        let checkpoint = Arc::new(DirectCheckpointV1::open(&root).unwrap());
+        let (requests, censuses) = measured_requests(&checkpoint, ranks);
+        let old: Vec<_> = requests
+            .iter()
+            .map(|r| plan_with(r, RoutedLayout::Rows).unwrap().unwrap())
+            .collect();
+        let plans: Vec<_> = requests
+            .iter()
+            .map(|r| {
+                plan_with_scale_format(r, Some(RoutedLayout::Rows), ScaleFormat::RowTilesOffsetV1)
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect();
+        for (rank, ((request, old), new)) in requests.iter().zip(&old).zip(&plans).enumerate() {
+            let unchanged =
+                plan_with_scale_format(request, Some(RoutedLayout::Rows), ScaleFormat::RowOffsetV1)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(unchanged.encode(), old.encode());
+            assert_eq!(
+                census(request).unwrap().unwrap().encode(),
+                censuses[rank].encode()
+            );
+            let index = |p: &WeightPlanV1| {
+                bundle_runtime::index::parse(&p.components[0].bytes, rank as u32, INDEX_SCHEMA)
+                    .unwrap()
+            };
+            let (a, b) = (index(old), index(new));
+            for (name, view) in &a.views {
+                match encoded_scale_format(&view.layout_id) {
+                    Some((ScaleFormat::RowOffsetV1, width)) => {
+                        assert_eq!(
+                            encoded_scale_format(&b.views[name].layout_id),
+                            Some((ScaleFormat::RowTilesOffsetV1, width))
+                        );
+                        checked += 1;
+                    }
+                    None => assert_eq!(view.layout_id, b.views[name].layout_id),
+                    _ => panic!("default plan changed scale format"),
+                }
+            }
+        }
+        let tile_image = image(checkpoint, plans.clone());
+        let totals = check_banks(
+            geometry,
+            &raw_image,
+            &raw_plans,
+            &tile_image,
+            &plans,
+            &censuses,
+            true,
+        );
+        assert_eq!(totals.len(), ranks as usize);
+        eprintln!("tile format tp{ranks}: {totals:?}");
+    }
+    assert!(checked > 0, "no encoded bank was checked");
+    eprintln!("TILE_SCALE_PLAN_COMPLETE banks={checked}");
+    std::fs::remove_dir_all(root).unwrap();
 }

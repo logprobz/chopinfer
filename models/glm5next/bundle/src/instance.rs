@@ -353,6 +353,11 @@ impl Instance {
                         staging.vocab_width,
                         &shape.profile.vocab_rows.to_le_bytes(),
                     )?;
+                    services.copy_host_to_device(
+                        stream,
+                        staging.copy_rows,
+                        &crate::drafter::copies::counts(),
+                    )?;
                     Some((staging, retained))
                 }
                 None => None,

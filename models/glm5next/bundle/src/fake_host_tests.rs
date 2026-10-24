@@ -39,6 +39,7 @@ mod nvfp4;
 mod phased_reset;
 mod phased_residency;
 mod prefill_dma;
+mod retained_copy;
 mod rows;
 mod shared_overlap;
 mod sm120;

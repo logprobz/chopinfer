@@ -1880,6 +1880,19 @@ impl Instance {
         }
         let shape = self.config.shape;
         let row = |span, row| crate::buffers::DrafterBuffers::row(shape, span, row);
+        let staged = if run.arena == PREFILL {
+            crate::drafter::copies::runs(
+                &(0..run.inputs.request_ids.len())
+                    .map(|item| bundle_runtime::drafter::Retain {
+                        phase: 0,
+                        staged: (run.inputs.q_start[item] + run.inputs.q_len[item] - 1) as u32,
+                        retained: item as u32,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            Vec::new()
+        };
         for (rank, &(_, _, stream)) in self.ranks.iter().enumerate() {
             let buffers = &self.buffers[rank];
             let drafter = buffers
@@ -1887,14 +1900,7 @@ impl Instance {
                 .ok_or(BundleAbiError::InvalidRange("glm5next drafter buffers"))?;
             let normed = buffers.get(Buffer::Normed);
             if run.arena == PREFILL {
-                for item in 0..run.inputs.request_ids.len() {
-                    let last = run.inputs.q_start[item] + run.inputs.q_len[item] - 1;
-                    self.services.copy_device_to_device(
-                        stream,
-                        row(drafter.staged[0], item as u32),
-                        row(normed, last as u32),
-                    )?;
-                }
+                self.copy_hidden_rows(rank, [normed; 2], drafter.staged[0], &staged)?;
                 for (from, to, rows) in self.anchor_retains(run, rank)? {
                     let bytes = u64::from(rows) * u64::from(shape.profile.hidden) * 2;
                     let span = |span: DeviceBufferSpanV1| {
@@ -2135,9 +2141,8 @@ impl Instance {
                     .map(|&(_, rows)| rows)
             })
             .map_err(|_| BundleAbiError::InvalidRange("the MTP drafter's commit"))?;
-        let shape = self.config.shape;
-        let row = |span, row| crate::buffers::DrafterBuffers::row(shape, span, row);
-        for (rank, &(_, _, stream)) in self.ranks.iter().enumerate() {
+        let runs = crate::drafter::copies::runs(&retains);
+        for rank in 0..self.ranks.len() {
             let buffers = self.buffers[rank]
                 .drafter
                 .ok_or(BundleAbiError::InvalidRange("glm5next drafter buffers"))?;
@@ -2145,13 +2150,70 @@ impl Instance {
                 .state
                 .retained()
                 .map_err(|_| BundleAbiError::InvalidRange("glm5next retained rows"))?;
-            for retain in &retains {
+            self.copy_hidden_rows(rank, buffers.staged, retained, &runs)?;
+        }
+        Ok(())
+    }
+
+    /// Copy whole hidden rows with the existing byte-copy entry. Runs do
+    /// not cross a phase or ring wrap, and all destinations within a run
+    /// are distinct. Singletons retain the original device-copy path.
+    fn copy_hidden_rows(
+        &self,
+        rank: usize,
+        sources: [DeviceBufferSpanV1; 2],
+        destination: DeviceBufferSpanV1,
+        runs: &[crate::drafter::copies::Run],
+    ) -> Result<(), BundleAbiError> {
+        let invalid = || BundleAbiError::InvalidRange("glm5next hidden row copy");
+        let hidden = self.config.shape.profile.hidden;
+        let row_bytes = u64::from(hidden) * 2;
+        let stream = self.ranks[rank].2;
+        let counts = self.buffers[rank].drafter.ok_or_else(invalid)?.copy_rows;
+        let view = |span: DeviceBufferSpanV1, first: u32, bytes: u64| {
+            let offset = u64::from(first)
+                .checked_mul(row_bytes)
+                .ok_or_else(invalid)?;
+            if offset
+                .checked_add(bytes)
+                .is_none_or(|end| end > span.length)
+            {
+                return Err(invalid());
+            }
+            Ok(DeviceBufferSpanV1::new(
+                span.buffer,
+                span.offset + offset,
+                bytes,
+            ))
+        };
+        for &run in runs {
+            let source = *sources.get(run.first.phase).ok_or_else(invalid)?;
+            if run.contiguous() {
+                let bytes = u64::from(run.rows) * row_bytes;
                 self.services.copy_device_to_device(
                     stream,
-                    row(retained, retain.retained),
-                    row(buffers.staged[retain.phase], retain.staged),
+                    view(destination, run.first.retained, bytes)?,
+                    view(source, run.first.staged, bytes)?,
                 )?;
+                continue;
             }
+            let launch = self
+                .target
+                .hidden_copy(run, hidden, source, destination, counts)
+                .map_err(|_| invalid())?;
+            crate::submit::launch(
+                &self.services,
+                stream,
+                &self.symbols[rank],
+                &launch.symbol,
+                launch.plan,
+                &launch.arguments,
+                &launch.bindings,
+            )
+            .map_err(|error| match error {
+                DispatchError::Host(error) => error,
+                _ => invalid(),
+            })?;
         }
         Ok(())
     }

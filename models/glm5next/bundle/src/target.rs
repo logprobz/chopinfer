@@ -57,6 +57,17 @@ pub struct PoolGateSpans {
 
 /// One topology's target.
 pub trait Target: Send + Sync {
+    /// Exact hidden-row copies between disjoint staging/history allocations.
+    /// The count table is immutable: entry `n` contains the u32 value `n`.
+    fn hidden_copy(
+        &self,
+        run: crate::drafter::copies::Run,
+        hidden: u32,
+        source: Span,
+        destination: Span,
+        counts: Span,
+    ) -> Result<PreparedLaunch, String>;
+
     /// The existing F32 MoE fold over one DMA owner's local interval.
     fn prefill_dma_sum(&self, owner: bundle_runtime::dma::Owner) -> Result<PreparedLaunch, String>;
 

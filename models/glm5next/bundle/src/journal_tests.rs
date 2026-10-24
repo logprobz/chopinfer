@@ -709,12 +709,12 @@ fn drafter_journals_are_pinned_per_pass() {
         (
             DraftPass::Extend,
             Phase::Verify { rows: 32, items: 8 },
-            (576, 0x5143_48f1_7083_f081),
+            (576, 0x9802_679a_ef79_e889),
         ),
         (
             DraftPass::Step,
             Phase::Decode(8),
-            (552, 0x3643_40c1_617c_74aa),
+            (552, 0x15bf_ea25_4338_a5a2),
         ),
     ] {
         let lines = journal_of(kv, phase, Some(pass));

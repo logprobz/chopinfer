@@ -12,6 +12,8 @@
 //! step, which reuses the extend pass's selection
 //! (`index_share_for_mtp_iteration`).
 
+pub mod copies;
+
 use model_glm5next_contract::contract::{
     DRAFT_ITEMS, MAX_VERIFY_ROWS, PAGE_TOKENS, PREFILL_GRANULE, PREFILL_TOKENS, Shape,
 };

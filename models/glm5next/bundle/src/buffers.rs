@@ -716,6 +716,8 @@ pub struct DrafterBuffers {
     /// The `u32` columns of the rank's logits shard, which create writes
     /// once: the live width the drafter's argmax partial reads.
     pub vocab_width: DeviceBufferSpanV1,
+    /// Immutable `u32` counts, entry `n` holds `n` for hidden-row copies.
+    pub copy_rows: DeviceBufferSpanV1,
 }
 
 impl DrafterBuffers {
@@ -725,12 +727,16 @@ impl DrafterBuffers {
     ) -> Result<Self, E> {
         let row = u64::from(shape.profile.hidden) * BF16;
         let items = u64::from(model_glm5next_contract::contract::DRAFT_ITEMS);
+        let staged = [
+            allocate(items * row)?,
+            allocate(u64::from(head_rows()) * row)?,
+        ];
+        let counts = u64::from(crate::drafter::copies::capacity() + 1) * I32;
+        let control = allocate(I32 + counts)?;
         Ok(Self {
-            staged: [
-                allocate(items * row)?,
-                allocate(u64::from(head_rows()) * row)?,
-            ],
-            vocab_width: allocate(I32)?,
+            staged,
+            vocab_width: DeviceBufferSpanV1::new(control.buffer, control.offset, I32),
+            copy_rows: DeviceBufferSpanV1::new(control.buffer, control.offset + I32, counts),
         })
     }
 

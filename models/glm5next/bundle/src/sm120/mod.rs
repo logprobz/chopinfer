@@ -8,6 +8,7 @@
 pub mod device;
 pub(crate) mod encoders;
 pub mod engines;
+pub mod hidden_copy;
 #[cfg(test)]
 mod launch_tests;
 #[cfg(test)]

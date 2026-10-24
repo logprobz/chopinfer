@@ -66,6 +66,17 @@ fn loads_format(layout: &Layout, cubin: &str) -> bool {
 }
 
 impl Target for Sm120Own {
+    fn hidden_copy(
+        &self,
+        run: crate::drafter::copies::Run,
+        hidden: u32,
+        source: Span,
+        destination: Span,
+        counts: Span,
+    ) -> Result<PreparedLaunch, String> {
+        super::hidden_copy::prepare(run, hidden, source, destination, counts)
+    }
+
     fn prefill_dma_sum(&self, owner: bundle_runtime::dma::Owner) -> Result<PreparedLaunch, String> {
         use bundle_runtime::dispatch::BufferBindings;
         use kernel_core::contract::{Argument, ArgumentList};

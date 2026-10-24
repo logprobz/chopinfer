@@ -1364,3 +1364,68 @@ fn startup_warmup_recomputes_forced_preemptions() {
     assert_eq!(backend.readiness(), BackendReadiness::Ready);
     backend.shutdown();
 }
+
+#[test]
+fn a_client_gone_before_its_prompt_echo_leaves_nothing_behind() {
+    let tokenizer = tokenizer();
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    descriptor.vocabulary.eos_token_id = EOS;
+    descriptor.vocabulary.stop_token_ids = vec![EOS];
+    let policy = EngineModelPolicyV1::from_declaration(&descriptor);
+    let mut engine = engine(vec![X; 8], false, false);
+    let mut active = BTreeMap::new();
+    for id in 1..=3 {
+        let request = PreparedRequest {
+            request_id: format!("echo-{id}"),
+            client_request_id: None,
+            model: "fixture/alpha-1".into(),
+            prompt: PreparedPrompt::TokenIds(vec![X, X, X]),
+            max_new_tokens: 4,
+            stop: vec![],
+            decoding: runtime_server::DecodingOptions::default(),
+            sampling: SamplingParameters::new(0.0).unwrap(),
+            seed: 7,
+            // Returned token IDs echo the prompt as the first event.
+            logprobs: runtime_server::RequestedLogprobs {
+                enabled: false,
+                top: 0,
+                echo: false,
+                prompt_top: None,
+                return_token_ids: true,
+            },
+            chat: None,
+            constraint: None,
+            cache_salt: None,
+            cancellation: CancellationSignal::new(),
+        };
+        // The client hung up after submitting, so the echo cannot be sent.
+        let (sender, receiver) = tokio::sync::mpsc::channel(128);
+        drop(receiver);
+        let (response, mut admission) = oneshot::channel();
+        assert!(admit(
+            &tokenizer,
+            &mut engine,
+            &mut active,
+            RequestId::new(id),
+            request,
+            None,
+            EventSender::new(sender),
+            response,
+            65536,
+            &policy,
+            Delivery::Immediate,
+        ));
+        assert!(matches!(
+            admission.try_recv(),
+            Ok(Err(AdmissionError::WorkerUnavailable))
+        ));
+        let _ = engine.drain_events();
+    }
+    assert!(active.is_empty());
+    // The deferred completion metrics were finished with each request.
+    assert_eq!(engine.metrics().live_request_records(), 0);
+    assert_eq!(engine.metrics().snapshot().requests_active, 0);
+    assert_eq!(engine.metrics().snapshot().cancellations, 3);
+}

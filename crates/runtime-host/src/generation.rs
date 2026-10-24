@@ -2110,7 +2110,7 @@ where
                 if request.cancellation.is_cancelled() || events.is_closed() {
                     continue;
                 }
-                admit(
+                if !admit(
                     &tokenizer,
                     &mut engine,
                     &mut active,
@@ -2122,7 +2122,11 @@ where
                     tokenizer_input_bytes,
                     &policy,
                     deliver,
-                );
+                ) {
+                    state.store(FAILED, Ordering::Release);
+                    fail_all(&mut engine, &mut active);
+                    return WorkerExit::Fatal;
+                }
                 if let Some(generation) = active.get_mut(&id) {
                     generation.group_admitted = Rc::clone(&group_admitted);
                     generation.queued_since = queued_since;
@@ -2257,7 +2261,7 @@ fn admit<E: ModelExecutor>(
     tokenizer_input_bytes: usize,
     policy: &EngineModelPolicyV1,
     deliver: Delivery,
-) {
+) -> bool {
     let prepared = std::mem::replace(&mut request.prompt, PreparedPrompt::TokenIds(Vec::new()));
     let (prompt, media, spans, positions) = match prepared {
         PreparedPrompt::MediaTokens {
@@ -2270,7 +2274,7 @@ fn admit<E: ModelExecutor>(
                 admit_prepared_media_v1(policy.declaration().multimodal.as_ref(), &media)
             {
                 let _ = response.send(Err(error));
-                return;
+                return true;
             }
             let media = media
                 .into_iter()
@@ -2305,7 +2309,7 @@ fn admit<E: ModelExecutor>(
             Ok(prompt) => (prompt, Vec::new(), Vec::new(), Vec::new()),
             Err(_) => {
                 let _ = response.send(Err(AdmissionError::InvalidPrompt));
-                return;
+                return true;
             }
         },
     };
@@ -2313,20 +2317,20 @@ fn admit<E: ModelExecutor>(
         let _ = response.send(Err(AdmissionError::Rejected(
             "bundle does not support prompt logprobs".to_owned(),
         )));
-        return;
+        return true;
     }
     let prompt_echo = (request.logprobs.prompt_top.is_some() || request.logprobs.return_token_ids)
         .then(|| prompt.clone());
     if request.sampling.top_logprobs() != request.logprobs.top {
         let _ = response.send(Err(AdmissionError::InvalidRequest));
-        return;
+        return true;
     }
     let declaration = policy.declaration();
     let decoder = match completion_decoder_v1(tokenizer, policy, &request, &prompt) {
         Ok(decoder) => decoder,
         Err(error) => {
             let _ = response.send(Err(error));
-            return;
+            return true;
         }
     };
     let chat_state = request
@@ -2338,7 +2342,7 @@ fn admit<E: ModelExecutor>(
         Ok(count) => count,
         Err(_) => {
             let _ = response.send(Err(AdmissionError::InvalidRequest));
-            return;
+            return true;
         }
     };
     // A forced choice's constraint begins after the prefill the prompt ends
@@ -2354,7 +2358,7 @@ fn admit<E: ModelExecutor>(
         Ok(constraint) => constraint,
         Err(_) => {
             let _ = response.send(Err(AdmissionError::InvalidRequest));
-            return;
+            return true;
         }
     };
     let engine_request = match EngineRequest::new(
@@ -2390,7 +2394,7 @@ fn admit<E: ModelExecutor>(
         }
         Err(_) => {
             let _ = response.send(Err(AdmissionError::InvalidRequest));
-            return;
+            return true;
         }
     };
     if let Err(error) = engine.submit(engine_request) {
@@ -2404,7 +2408,7 @@ fn admit<E: ModelExecutor>(
             _ => AdmissionError::WorkerUnavailable,
         };
         let _ = response.send(Err(refusal));
-        return;
+        return true;
     }
     engine.metrics().set_request_trace_id(
         id,
@@ -2433,9 +2437,12 @@ fn admit<E: ModelExecutor>(
             })
             .is_err()
         {
-            let _ = engine.cancel(id);
+            // The client is gone before its first event. Its completion
+            // metrics were deferred to this host, so they are finished here
+            // with the request, as every other host cancel does.
+            let retired = cancel_live_request(engine, id);
             let _ = response.send(Err(AdmissionError::WorkerUnavailable));
-            return;
+            return retired;
         }
     }
     active.insert(
@@ -2461,6 +2468,7 @@ fn admit<E: ModelExecutor>(
             group_admitted: Rc::new(Cell::new(false)),
         },
     );
+    true
 }
 
 /// The single-token markers that end a reasoning section, as the

@@ -114,6 +114,7 @@ struct Arm {
     domain: View,
     partials: View,
     arrived: View,
+    gaps: [View; 2],
     semantic: Vec<(&'static str, View)>,
 }
 
@@ -132,6 +133,14 @@ fn arm(
     let arrived = p.subspan(workspace, layout.arrival, 4)?;
     let table = p.subspan(workspace, layout.routed, TABLE_BYTES)?;
     let tickets = p.subspan(workspace, ticket_offset, 256)?;
+    let gaps = [
+        p.subspan(workspace, layout.arrival + 4, 252)?,
+        p.subspan(
+            workspace,
+            layout.routed + TABLE_BYTES,
+            ticket_offset - layout.routed - TABLE_BYTES,
+        )?,
+    ];
     let mut semantic = Vec::new();
     for (name, bytes) in [
         ("logits", u64::from(rows * EXPERTS) * 4),
@@ -234,6 +243,7 @@ fn arm(
         domain,
         partials,
         arrived,
+        gaps,
         semantic,
     })
 }
@@ -308,7 +318,9 @@ pub fn cpu_worker(worker: u32, checked: bool) -> LabResult<()> {
                     let new = arm(&mut p, &e, rows, &input, true)?;
                     assert_eq!((old.calls.len(), new.calls.len()), (5, 3));
                     cases += 1;
-                    println!("MOE_ROUTER64_DRY_PAIR rows={rows} rank={rank} pattern={pattern} fallback={fallback} PASS");
+                    println!(
+                        "MOE_ROUTER64_DRY_PAIR rows={rows} rank={rank} pattern={pattern} fallback={fallback} PASS"
+                    );
                 }
             }
         }
@@ -404,6 +416,15 @@ pub fn run(s: &Session, worker: u32, checked: bool) -> LabResult<()> {
                                     }
                                 }
                                 p.sync()?;
+                                for arm in &arms {
+                                    for gap in arm.gaps {
+                                        assert_bytes(
+                                            "workspace padding",
+                                            &vec![poison; gap.bytes as usize],
+                                            &p.read(gap)?,
+                                        )?;
+                                    }
+                                }
                                 for ((name, old), (_, new)) in
                                     arms[0].semantic.iter().zip(&arms[1].semantic)
                                 {

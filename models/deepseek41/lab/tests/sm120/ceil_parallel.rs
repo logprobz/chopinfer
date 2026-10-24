@@ -6,13 +6,16 @@ use kernel_core::contract::{DType, LaunchPlan};
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode, launch};
 use kernels_sm120::row::{block_quantize, silu_mul_quantize};
 use model_deepseek41_contract::{
-    admission::SUPPORTED_RANKS, geometry::GEOMETRIES, serving::DECODE_BATCH,
+    admission::SUPPORTED_RANKS, dspark_options::SMALL_DRAFT_ROWS, geometry::GEOMETRIES,
+    serving::DECODE_BATCH,
 };
 use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
-const ROWS: [u32; 3] = [1, 8, DECODE_BATCH];
+/// Decode buckets, then drafter forwards of 8 and 16 items. A pair runs
+/// the rows its parallel entry holds ([`Entry::rows`]).
+const ROWS: [u32; 5] = [1, 8, DECODE_BATCH, 40, SMALL_DRAFT_ROWS];
 const PATTERNS: [&str; 15] = [
     "finite",
     "wide",
@@ -68,6 +71,20 @@ impl Entry {
         }
         .unwrap()
     }
+    fn capacity(&self) -> u32 {
+        match self {
+            Self::Quant(e) => e.capacity,
+            Self::Silu(e) => e.capacity,
+        }
+    }
+    /// The [`ROWS`] this parallel entry holds.
+    fn rows(&self) -> Vec<u32> {
+        ROWS.into_iter().filter(|&r| r <= self.capacity()).collect()
+    }
+}
+/// Every compared pair's rows: the bitwise and timing case count.
+fn compared_rows() -> usize {
+    compared().iter().map(|p| p[1].rows().len()).sum()
 }
 fn pairs() -> Vec<[Entry; 2]> {
     let mut pairs = BTreeMap::new();
@@ -188,7 +205,7 @@ fn decode_selection_preserves_prefill_and_covers_all_widths() {
                     let backend = entries
                         .into_iter()
                         .fold(Sm120::new(), Sm120::with_block_quantize);
-                    for rows in ROWS {
+                    for rows in Entry::Quant(new.clone()).rows() {
                         assert_eq!(
                             backend
                                 .block_quantize(&old.query, Need::rows(rows))
@@ -201,7 +218,7 @@ fn decode_selection_preserves_prefill_and_covers_all_widths() {
                     }
                     assert_eq!(
                         backend
-                            .block_quantize(&old.query, Need::rows(DECODE_BATCH + 1))
+                            .block_quantize(&old.query, Need::rows(new.capacity + 1))
                             .unwrap()
                             .info()
                             .symbols[0]
@@ -217,7 +234,7 @@ fn decode_selection_preserves_prefill_and_covers_all_widths() {
                     .with_silu_mul_quantize(new.clone());
                 assert_eq!(
                     backend
-                        .silu_mul_quantize(&old.query, Need::rows(DECODE_BATCH))
+                        .silu_mul_quantize(&old.query, Need::rows(new.capacity))
                         .unwrap()
                         .info()
                         .symbols[0]
@@ -226,7 +243,7 @@ fn decode_selection_preserves_prefill_and_covers_all_widths() {
                 );
                 assert_eq!(
                     backend
-                        .silu_mul_quantize(&old.query, Need::rows(DECODE_BATCH + 1))
+                        .silu_mul_quantize(&old.query, Need::rows(new.capacity + 1))
                         .unwrap()
                         .info()
                         .symbols[0]
@@ -292,7 +309,7 @@ fn frozen_modules_are_complete() {
         )
         .unwrap();
         let coverage = json!({"entries": compared().iter().map(|p| json!({"old":p[0].symbol(),"new":p[1].symbol(),"width":p[0].width()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
-            "bitwise_cases":compared().len()*ROWS.len()*PATTERNS.len(), "timing_cases":compared().len()*ROWS.len(), "negative_controls":compared().len()*ROWS.len()*3});
+            "bitwise_cases":compared_rows()*PATTERNS.len(), "timing_cases":compared_rows(), "negative_controls":compared_rows()*3});
         std::fs::write(
             dir.join("coverage.json"),
             serde_json::to_vec_pretty(&coverage).unwrap(),
@@ -485,7 +502,7 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
             }).collect::<LabResult<Vec<_>>>()?;
             let functions = loaded.iter().zip(&pair).map(|(m,e)| m.function(e.symbol()).map_err(|e| e.to_string())).collect::<LabResult<Vec<_>>>()?;
             let width = pair[0].width();
-            for rows in ROWS {
+            for rows in pair[1].rows() {
                 let input = s.allocate(width*rows as usize*if pair[0].f32() {4} else {2})?;
                 let up = s.allocate(width*rows as usize*4)?;
                 let live = s.allocate(4)?;
@@ -542,8 +559,8 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
                 timings.push(json!({"symbol":pair[0].symbol(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
             }
         }
-        assert_eq!(bitwise,compared().len()*ROWS.len()*PATTERNS.len());
-        assert_eq!(negative,compared().len()*ROWS.len()*3);
+        assert_eq!(bitwise,compared_rows()*PATTERNS.len());
+        assert_eq!(negative,compared_rows()*3);
         s.receipt("ceil-parallel",BTreeMap::from([("bitwise_cases".into(),json!(bitwise)),("negative_controls".into(),json!(negative)),("timings".into(),json!(timings))]))?;
         eprintln!("CEIL_COMPLETE bitwise={bitwise} negative={negative} timings={}",timings.len());
         Ok(())

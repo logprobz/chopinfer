@@ -96,6 +96,21 @@ impl OwnOps for Sm120Own {
         super::ring_gather::prepare(*op, need)
     }
 
+    fn dspark_allocated_acceptance(
+        &self,
+        op: &model_deepseek41_contract::own_ops::acceptance::Acceptance,
+        need: Need,
+    ) -> Result<
+        Prepared<
+            model_deepseek41_contract::own_ops::acceptance::allocated::AllocatedAcceptanceBuffers<
+                View,
+            >,
+        >,
+        Refused,
+    > {
+        super::allocated_acceptance::prepare(*op, need)
+    }
+
     fn dspark_allocate(
         &self,
         op: &model_deepseek41_contract::own_ops::allocation::VerifyAllocate,

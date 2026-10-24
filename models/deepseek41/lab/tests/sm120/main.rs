@@ -35,6 +35,12 @@ mod allocate;
 #[allow(dead_code, reason = "the bundle build owns the lock family")]
 mod allocate_entries;
 mod allocate_test;
+#[path = "../../../bundle/src/sm120/allocated_acceptance.rs"]
+mod allocated_acceptance;
+#[path = "../../../bundle/src/sm120/allocated_acceptance_entries.rs"]
+#[allow(dead_code, reason = "the bundle build owns the lock family")]
+mod allocated_acceptance_entries;
+mod allocated_acceptance_test;
 mod compressor;
 #[path = "../../../bundle/src/sm120/dspark.rs"]
 mod dspark;

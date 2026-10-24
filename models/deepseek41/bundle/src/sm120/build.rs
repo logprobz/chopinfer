@@ -15,6 +15,8 @@ mod acceptance_cubin;
 mod acceptance_entries;
 mod allocate_cubin;
 mod allocate_entries;
+mod allocated_acceptance_cubin;
+mod allocated_acceptance_entries;
 #[allow(dead_code, reason = "the bundle selects the measured widths")]
 mod ceil_cached;
 #[allow(dead_code)]
@@ -274,6 +276,10 @@ pub fn selection(
     specs.push((
         allocate_entries::FAMILY,
         allocate_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        allocated_acceptance_entries::FAMILY,
+        allocated_acceptance_cubin::cubin_spec(manifest),
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_quantize::cubins(geometries).expect("DSpark parallel quantizer cubins"));

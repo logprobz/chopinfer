@@ -5,7 +5,9 @@
 //! spans. All copies of a plan are bound before any copy is submitted.
 
 use super::state::{Config, Result};
-use super::transfers::{GatherSegment, ProjectionChunk, RetainCopy, SnapshotCopy, Source};
+use super::transfers::{
+    GatherSegment, ProjectionChunk, RetainCopy, SnapshotCopy, Source, StagedSegment,
+};
 use model_deepseek41_contract::geometry::Geometry;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 
@@ -154,6 +156,25 @@ impl Features {
                 })
             })
             .collect()
+    }
+
+    /// Gather a commit segment without overwriting target staging or the
+    /// raw history that remains live until retention finishes.
+    pub fn gather_staged(self, segment: StagedSegment, destination: Span) -> Result<Copy> {
+        if !matches!(segment.source.source, Source::Staged { .. }) {
+            return Err("DSpark commit gather reads retained history");
+        }
+        self.layout.validate_span(destination)?;
+        disjoint(self.staged, destination)?;
+        disjoint(self.retained, destination)?;
+        Ok(Copy {
+            source: self.projection_source(segment.source)?,
+            destination: self.layout.rows(
+                destination,
+                u64::from(segment.destination_row),
+                segment.source.rows,
+            )?,
+        })
     }
 
     /// Copy one segment's retained rows into the batched launch's staging

@@ -38,6 +38,7 @@ use crate::shape::Shape;
 /// Enough disjoint staging for a maximum prefill and the decode phase.
 pub(crate) const TARGET_ROWS: u32 = PREFILL_TOKENS + DECODE_BATCH * MAX_VERIFY_ROWS;
 pub(crate) const DECODE_BASE: u32 = PREFILL_TOKENS;
+pub(crate) const COMMIT_ROWS: u32 = PREFILL_TOKENS;
 const DRAFT_ROWS: u32 = DECODE_BATCH * BLOCK_ROWS;
 static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
@@ -72,6 +73,8 @@ pub(crate) struct Device {
     /// Most drafting items per drafter forward, from the create record's
     /// `dspark_draft_chunk_items` model option.
     pub draft_chunk_items: usize,
+    /// Opt-in until the packed commit passes state and served comparisons.
+    pub batch_commit: bool,
     #[cfg(feature = "diagnostic-taps")]
     pub draft_check: Option<std::path::PathBuf>,
 }
@@ -92,6 +95,7 @@ pub(crate) struct Rank {
     pub feature_counts: Vec<Span>,
     pub feature_codes: Span,
     pub feature_scales: Span,
+    pub commit: Option<CommitStorage>,
     pub predecessor_ids: Span,
     pub draft_ids: Span,
     pub confidence: Span,
@@ -112,6 +116,37 @@ pub(crate) struct Rank {
     pub gather_state: Vec<Span>,
     /// The early Engram gathers' destination (`early_engram_bytes`).
     pub engram_early: Option<Span>,
+}
+
+pub(crate) struct CommitStorage {
+    pub inputs: DeviceInputs,
+    pub codes: Span,
+    pub scales: Span,
+}
+
+pub(crate) fn batch_commit_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = BATCH_COMMIT_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    std::env::var("CHOPINFER_DSPARK_BATCHED_COMMIT").as_deref() == Ok("1")
+}
+
+#[cfg(test)]
+thread_local! {
+    static BATCH_COMMIT_OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_batch_commit<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<bool>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            BATCH_COMMIT_OVERRIDE.with(|value| value.set(self.0));
+        }
+    }
+    let _reset = Reset(BATCH_COMMIT_OVERRIDE.with(|value| value.replace(Some(enabled))));
+    run()
 }
 
 pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
@@ -250,6 +285,7 @@ impl Device {
             verified: Vec::new(),
             step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
             draft_chunk_items,
+            batch_commit: batch_commit_enabled(),
             #[cfg(feature = "diagnostic-taps")]
             draft_check: std::env::var_os("CHOPINFER_DSPARK_DRAFT_CHECK")
                 .map(std::path::PathBuf::from),
@@ -418,6 +454,20 @@ impl Device {
             block_tables: alloc(4)?,
         };
         let inputs = DeviceInputs::within(arena, &layout);
+        // Keep draft metadata offsets and uploads unchanged. Commit has a
+        // separate row domain, allocated before the host sizes the KV pool.
+        let commit_inputs = if self.batch_commit {
+            let layout = InputLayout::new::<DeepSeek>(COMMIT_ROWS, 1);
+            Some(DeviceInputs::within(
+                PhaseArena {
+                    arena: alloc(layout.end)?,
+                    block_tables: arena.block_tables,
+                },
+                &layout,
+            ))
+        } else {
+            None
+        };
         let stride = u64::from(cells) * u64::from(g.shape.attention.head_dim);
         let window = Window {
             codes: alloc(items * stride)?,
@@ -478,6 +528,13 @@ impl Device {
             + u64::from(TARGET_ROWS)
                 * (u64::from(self.config.stages) + g.shape.csa.index_sources.len() as u64 + 1)
             + rows;
+        let feature_rows = if self.batch_commit {
+            COMMIT_ROWS
+        } else {
+            self.config.window
+        };
+        let feature_codes;
+        let feature_scales;
         self.ranks.push(Rank {
             metadata,
             status: super::status::Status::new(alloc(status_rows * 8)?),
@@ -492,8 +549,29 @@ impl Device {
             packed: alloc(u64::from(TARGET_ROWS) * targets * hidden * 2)?,
             feature_indices,
             feature_counts,
-            feature_codes: alloc(u64::from(self.config.window) * targets * hidden)?,
-            feature_scales: alloc(u64::from(self.config.window) * targets * hidden / 32)?,
+            feature_codes: {
+                feature_codes = alloc(u64::from(feature_rows) * targets * hidden)?;
+                slice(
+                    feature_codes,
+                    0,
+                    u64::from(self.config.window) * targets * hidden,
+                )
+                .map_err(|_| BundleAbiError::InvalidRange("DSpark feature codes"))?
+            },
+            feature_scales: {
+                feature_scales = alloc(u64::from(feature_rows) * targets * hidden / 32)?;
+                slice(
+                    feature_scales,
+                    0,
+                    u64::from(self.config.window) * targets * hidden / 32,
+                )
+                .map_err(|_| BundleAbiError::InvalidRange("DSpark feature scales"))?
+            },
+            commit: commit_inputs.map(|inputs| CommitStorage {
+                inputs,
+                codes: feature_codes,
+                scales: feature_scales,
+            }),
             predecessor_ids: plane(metadata_layout.predecessor_ids)?,
             draft_ids: alloc(rows * 4)?,
             confidence: alloc(rows * 4)?,

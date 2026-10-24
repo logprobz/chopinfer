@@ -28,6 +28,63 @@ fn span(id: u32, offset: u64, length: u64) -> Span {
 }
 
 #[test]
+fn staged_commit_gathers_keep_sources_and_history_disjoint() {
+    use crate::dspark::transfers::StagedSegment;
+    let (config, layout, retained, staged) = setup();
+    let bound = layout.bind(retained, staged).unwrap();
+    let segment = StagedSegment {
+        source: ProjectionChunk {
+            request: 7,
+            slot: 2,
+            stage: 1,
+            position: 128,
+            rows: 65,
+            source: Source::Staged { row: 777 },
+            ring_row: 256,
+        },
+        destination_row: 64,
+    };
+    let scratch = span(3, 512, 8192 * layout.row_bytes());
+    let copy = bound.gather_staged(segment, scratch).unwrap();
+    assert_eq!(copy.source, layout.rows(staged, 777, 65).unwrap());
+    assert_eq!(copy.destination, layout.rows(scratch, 64, 65).unwrap());
+    for bad in [
+        staged,
+        retained,
+        span(3, 512, 128 * layout.row_bytes()),
+        span(3, 1, scratch.length),
+    ] {
+        assert!(bound.gather_staged(segment, bad).is_err());
+    }
+    for source in [
+        ProjectionChunk {
+            source: Source::Staged { row: 8192 - 64 },
+            ..segment.source
+        },
+        ProjectionChunk {
+            source: Source::Retained {
+                row: config.history_cell(2, 128),
+            },
+            ..segment.source
+        },
+        ProjectionChunk {
+            rows: 129,
+            ..segment.source
+        },
+        ProjectionChunk {
+            stage: config.stages,
+            ..segment.source
+        },
+    ] {
+        assert!(
+            bound
+                .gather_staged(StagedSegment { source, ..segment }, scratch)
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn accepted_rows_bind_to_the_right_slot_across_a_history_wrap() {
     let (config, layout, retained, staged) = setup();
     let bound = layout.bind(retained, staged).unwrap();

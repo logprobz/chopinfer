@@ -7,6 +7,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 mod allocation;
 mod boundary;
 mod catch_up;
+mod commit;
 mod coupled;
 mod drafter_rows;
 mod early;

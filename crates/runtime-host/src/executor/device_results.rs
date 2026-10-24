@@ -870,6 +870,54 @@ mod tests {
         assert_eq!(sampler.cancels.get(), 1);
     }
 
+    /// An allocated result counts the drafts its item verified, fewer than
+    /// it reserved, and stopping after them is not a rejection; every
+    /// reserved row still reaches validation. A result may not verify more
+    /// than its item reserved, and only an allocated one names its verified
+    /// drafts.
+    #[test]
+    fn allocated_results_report_the_drafts_their_items_verified() {
+        let run = |flags, verified_drafts| {
+            let items = vec![item(1, 2)];
+            let sampler = Rc::new(Sampler::default());
+            let mut sink = sink(&items, sampler.clone());
+            sink.device_dependency(1).unwrap();
+            sink.device_drafts(draft(1, 2)).unwrap();
+            sink.device_sample(sample_request(0, 3)).unwrap();
+            let mut packet = BundleAcceptanceResultV1 {
+                cycle_epoch: 9,
+                accepted_drafts: 1,
+                emitted_rows: 2,
+                flags,
+                status: 0,
+                failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
+                verified_drafts,
+            }
+            .to_le_bytes()
+            .to_vec();
+            for token in [4, 5, 5] {
+                packet.extend(sample_record(token, 0));
+            }
+            *sampler.packet.borrow_mut() = packet;
+            sink.device_completion(completion(1, 3)).unwrap();
+            sink.collect_device_observed().map(|(prefixes, _)| prefixes)
+        };
+        let prefixes = run(BUNDLE_ACCEPTANCE_ALLOCATED_V1, 1).unwrap();
+        let prefix = &prefixes[0];
+        assert_eq!(
+            (
+                prefix.drafted,
+                prefix.accepted,
+                prefix.emitted,
+                prefix.rejected,
+                prefix.terminal
+            ),
+            (1, 1, 2, false, false)
+        );
+        assert!(run(BUNDLE_ACCEPTANCE_ALLOCATED_V1, 3).is_err());
+        assert!(run(0, 1).is_err());
+    }
+
     #[test]
     fn invalid_unused_sample_suffix_is_fatal_and_cancellation_discards_pending_packet() {
         for status in [1, 3, 77] {

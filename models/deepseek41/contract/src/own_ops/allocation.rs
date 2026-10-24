@@ -11,9 +11,8 @@
 //! only, so every rank and the oracle agree bit for bit.
 use kernel_core::backend::Need;
 use kernel_core::contract::Refusal;
-use runtime_bundle_sdk::{
-    SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1, allocate_verify_drafts_v1,
-};
+pub use runtime_bundle_sdk::SamplingKindV1;
+use runtime_bundle_sdk::{VerifyAllocationV1, VerifyCalibrationV1, allocate_verify_drafts_v1};
 
 pub const CONTRACT: &str = "deepseek41.verify-allocation.f32-rn.v1";
 /// Draft positions a block reserves at most.

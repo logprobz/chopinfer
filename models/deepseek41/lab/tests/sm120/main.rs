@@ -29,6 +29,12 @@ mod acceptance;
 mod acceptance_entries;
 use bundle_deepseek41::sm120::host_acceptance_entries;
 mod acceptance_test;
+#[path = "../../../bundle/src/sm120/allocate.rs"]
+mod allocate;
+#[path = "../../../bundle/src/sm120/allocate_entries.rs"]
+#[allow(dead_code, reason = "the bundle build owns the lock family")]
+mod allocate_entries;
+mod allocate_test;
 mod compressor;
 #[path = "../../../bundle/src/sm120/dspark.rs"]
 mod dspark;

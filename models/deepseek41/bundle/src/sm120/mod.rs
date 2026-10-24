@@ -102,6 +102,12 @@ pub(crate) mod own_ops;
 // their entries.
 pub mod acceptance;
 pub mod acceptance_entries;
+#[allow(
+    dead_code,
+    reason = "the drafter wires the allocation with its capability"
+)]
+pub mod allocate;
+pub mod allocate_entries;
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
 mod compressor;
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
@@ -693,6 +699,7 @@ impl crate::Kernels {
             return false;
         }
         cubin == host_acceptance_entries::CUBIN
+            || cubin == allocate_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
@@ -712,7 +719,8 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// the unwired acceptance reducer, the one-launch HC boundary, which the
+    /// the unwired acceptance reducer and verify allocation, the one-launch
+    /// HC boundary, which the
     /// column-block pair replaced (packaged and locked for the labs), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
@@ -743,6 +751,7 @@ impl crate::Kernels {
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
+            && cubin != allocate_entries::CUBIN
             && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))

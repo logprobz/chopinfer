@@ -96,6 +96,17 @@ impl OwnOps for Sm120Own {
         super::ring_gather::prepare(*op, need)
     }
 
+    fn dspark_allocate(
+        &self,
+        op: &model_deepseek41_contract::own_ops::allocation::VerifyAllocate,
+        need: Need,
+    ) -> Result<
+        Prepared<model_deepseek41_contract::own_ops::allocation::VerifyAllocateBuffers<View>>,
+        Refused,
+    > {
+        super::allocate::prepare(*op, need)
+    }
+
     fn dspark_markov_step(
         &self,
         op: &MarkovStep,

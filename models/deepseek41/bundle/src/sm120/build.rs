@@ -13,6 +13,8 @@ use model_deepseek41_contract::geometry::GEOMETRIES;
 
 mod acceptance_cubin;
 mod acceptance_entries;
+mod allocate_cubin;
+mod allocate_entries;
 #[allow(dead_code, reason = "the bundle selects the measured widths")]
 mod ceil_cached;
 #[allow(dead_code)]
@@ -268,6 +270,10 @@ pub fn selection(
     specs.push((
         host_acceptance_entries::FAMILY,
         host_acceptance_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        allocate_entries::FAMILY,
+        allocate_cubin::cubin_spec(manifest),
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_quantize::cubins(geometries).expect("DSpark parallel quantizer cubins"));

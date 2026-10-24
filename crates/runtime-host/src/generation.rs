@@ -29,6 +29,8 @@ use runtime_scheduler::RequestState;
 use runtime_tokenizer::Tokenizer;
 use tokio::sync::oneshot;
 
+mod heap;
+
 use crate::media_memory::{
     DecodeSlotsV1, MEDIA_PREPARATION_CANCELLED_V1, MediaMemoryV1, REQUEST_MEDIA_MEMORY_REFUSAL_V1,
     REQUEST_MEDIA_PREPARATION_BYTES_V1, RequestMediaMemoryV1,
@@ -2000,6 +2002,7 @@ where
     let _flush = crate::overlap::FlushOnDrop;
     let mut active = BTreeMap::new();
     let mut submissions = Vec::new();
+    let mut idle_heap = heap::IdleHeap::default();
     loop {
         progress.mark(WorkerPhase::Decode);
         if active.is_empty() {
@@ -2017,7 +2020,16 @@ where
             let received = if pending {
                 receiver.recv_timeout(Duration::from_millis(1))
             } else {
-                receiver.recv().map_err(|_| RecvTimeoutError::Disconnected)
+                // A waiting command takes priority over allocator maintenance.
+                // Reclaim only after request, deferred-event and transfer drain.
+                match receiver.try_recv() {
+                    Ok(command) => Ok(command),
+                    Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                    Err(TryRecvError::Empty) => match idle_heap.idle(Instant::now()) {
+                        Some(wait) => receiver.recv_timeout(wait),
+                        None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    },
+                }
             };
             match received {
                 Ok(WorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
@@ -2072,6 +2084,10 @@ where
                 Ok(WorkerCommand::Submit(batch)) => submissions.push(batch),
                 Err(TryRecvError::Empty) => break,
             }
+        }
+
+        if !active.is_empty() || !submissions.is_empty() {
+            idle_heap.busy();
         }
 
         // Cancelled requests leave the engine before new ones enter it, so a

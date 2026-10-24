@@ -160,7 +160,13 @@ fn read(session: &Session, buffer: &runtime_cuda::DeviceBuffer) -> LabResult<Vec
 
 #[test]
 fn retention_bytes_match_scalar_copies_with_poison_and_consumers() {
-    kernel_harness::gpu_test(1 << 30, |session| {
+    if kernel_harness::selected_ordinals().unwrap().is_none() {
+        kernel_harness::skip("retention pair needs two idle GPUs").unwrap();
+        return;
+    }
+    let result = kernel_harness::gpu_test_multi(1 << 30, |sessions| {
+        assert_eq!(sessions.len(), 2, "retention pair must execute both assigned GPUs");
+        for session in sessions {
         use kernel_core::contract::DType;
         use kernel_harness::launch::{Bindings,launch};
         use kernel_harness::poison::{LiveProducer,Replay,Rewrites,WriteMap};
@@ -259,6 +265,8 @@ fn retention_bytes_match_scalar_copies_with_poison_and_consumers() {
         let final_free=session.context.memory_info().map_err(|e|e.to_string())?.0;
         println!("{}",json!({"cases":32,"negative_controls":controls,"bitwise":true,
             "peak_extra_device_bytes":peak,"final_extra_device_bytes":initial_free.saturating_sub(final_free)}));
+        }
         Ok(())
     }).expect("retained bytes and dependent consumers match the previous copy list");
+    assert!(result.is_some(), "the retention pair executed");
 }

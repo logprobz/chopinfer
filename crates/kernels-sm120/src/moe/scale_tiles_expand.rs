@@ -49,6 +49,57 @@ pub fn linear_cubin_spec(name: &str) -> CubinSpec {
     }
 }
 
+/// Exact complete-tile gate shape for an entry with no second bank.
+pub fn gate_symbol(bank: PairBank) -> Result<String, Refusal> {
+    plan([Some(bank), None], 1, 1, true)?;
+    Ok(format!(
+        "chop_moe_scale_tiles_expand_gate_r{}_g{}_p{}_w{}_v1",
+        bank.rows, bank.groups, bank.projections, bank.width
+    ))
+}
+
+/// Keep the paired ABI while refusing a changed shape or a second bank.
+pub fn gate_arguments(
+    expected: PairBank,
+    banks: [Option<(PairBank, View, View)>; 2],
+    active: Option<View>,
+    experts: u32,
+) -> Result<ArgumentList, Refusal> {
+    gate_symbol(expected)?;
+    if banks[1].is_some() || banks[0].is_none_or(|(actual, _, _)| actual != expected) {
+        return Err(Refusal(
+            "tile gate expansion requires its exact single bank",
+        ));
+    }
+    arguments(banks, active, experts, true)
+}
+
+pub fn gate_cubin_spec(name: &str, banks: &[PairBank]) -> Result<CubinSpec, Refusal> {
+    if banks.is_empty() {
+        return Err(Refusal("tile gate family needs at least one shape"));
+    }
+    let entries = banks
+        .iter()
+        .map(|&bank| {
+            Ok(scale_expand::pair_entry(
+                &gate_symbol(bank)?,
+                &format!(
+                    "run_tiles_gate<{}, {}, {}, {}>",
+                    bank.rows, bank.groups, bank.projections, bank.width
+                ),
+            ))
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
+    Ok(CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: vec![],
+        headers: vec!["#include \"moe/scale_tiles_expand_gate.cuh\"".into()],
+        defines: vec![],
+        entries,
+    })
+}
+
 pub fn minimum_bank_bytes(bank: PairBank, experts: u32) -> Result<u64, Refusal> {
     ScaleTilesQuery {
         width: bank.width,
@@ -117,6 +168,64 @@ mod tests {
             groups,
             projections: 1,
         }
+    }
+    #[test]
+    fn gate_only_entries_refuse_a_second_bank_or_changed_shape() {
+        let expected = PairBank {
+            projections: 2,
+            ..bank(576, 160, 1)
+        };
+        let input = View {
+            handle: 1,
+            bytes: 1 << 30,
+        };
+        let output = View {
+            handle: 2,
+            bytes: 384 * 2 * 576 * 160,
+        };
+        let active = View {
+            handle: 3,
+            bytes: 385 * 4,
+        };
+        let first = Some((expected, input, output));
+        let banks = [first, None];
+        assert_eq!(
+            gate_arguments(expected, banks, Some(active), 384).unwrap(),
+            arguments(banks, Some(active), 384, true).unwrap()
+        );
+        assert!(gate_arguments(expected, [first, first], Some(active), 384).is_err());
+        assert!(gate_arguments(expected, [None, None], Some(active), 384).is_err());
+        for changed in [
+            PairBank {
+                rows: 512,
+                ..expected
+            },
+            PairBank {
+                groups: 128,
+                ..expected
+            },
+            PairBank {
+                projections: 1,
+                ..expected
+            },
+            PairBank {
+                width: 2,
+                ..expected
+            },
+        ] {
+            assert!(
+                gate_arguments(
+                    expected,
+                    [Some((changed, input, output)), None],
+                    Some(active),
+                    384
+                )
+                .is_err()
+            );
+        }
+        assert!(gate_symbol(bank(65, 160, 1)).is_err());
+        assert!(gate_symbol(bank(576, 159, 1)).is_err());
+        assert!(gate_cubin_spec("empty", &[]).is_err());
     }
     #[test]
     fn tile_extent_tracks_partial_groups_and_rejects_short_or_aliased_banks() {

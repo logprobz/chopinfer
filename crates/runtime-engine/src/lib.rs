@@ -3724,17 +3724,20 @@ fn plan_drafts<E: ModelExecutor>(
         }
     }
     // A plan with confidence verifies its width among the reserved drafts.
-    // Pinned drafts are verified as pinned, so their step is not allocated.
+    // Pinned drafts are verified as pinned, and steps that also prefill
+    // have no allocation result metadata, so neither is allocated.
     let pinned = candidates.iter().any(|candidate| {
         requests
             .get(&candidate.request_id())
             .is_some_and(|record| record.pinned_draft_tokens.is_some())
     });
-    *allocation = planned.filter(|_| !pinned).and_then(|planned| {
-        let rows = candidates.len() + drafts.iter().sum::<usize>();
-        let width = planned.width.min(rows);
-        (width > candidates.len()).then_some(StepAllocation { width, ..planned })
-    });
+    *allocation = planned
+        .filter(|_| !pinned && !budget.prefill())
+        .and_then(|planned| {
+            let rows = candidates.len() + drafts.iter().sum::<usize>();
+            let width = planned.width.min(rows);
+            (width > candidates.len()).then_some(StepAllocation { width, ..planned })
+        });
     if policy.config().source() != DraftSource::Host {
         return drafts;
     }

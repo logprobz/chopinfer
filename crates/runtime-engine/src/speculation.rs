@@ -1541,6 +1541,7 @@ impl SpeculationPolicy {
                 // token capacity, never fewer than the plan gave it: the
                 // executor verifies the most confident within the width.
                 if self.config.verify_allocation.is_some()
+                    && !budget.prefill()
                     && self.config.source == DraftSource::Bundle
                     && drafts.iter().any(|&d| d > 0)
                 {

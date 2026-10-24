@@ -141,6 +141,8 @@ struct Model {
     corrupt_allocation: bool,
     /// (width, reserved drafts, verified drafts) of every allocated step.
     allocated_steps: Vec<(usize, Vec<usize>, Vec<usize>)>,
+    /// Phases of steps dispatched through the unallocated entry point.
+    plain_steps: Vec<Vec<BatchPhase>>,
 }
 
 /// A clock only the model advances, so step costs are exact.
@@ -171,6 +173,7 @@ impl Model {
             allocates: false,
             corrupt_allocation: false,
             allocated_steps: Vec::new(),
+            plain_steps: Vec::new(),
         }
     }
 
@@ -297,6 +300,11 @@ impl ModelExecutor for Model {
         allocation: &StepAllocation,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
         assert!(self.allocates);
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item.phase(), BatchPhase::Prefill { .. }))
+        );
         let mut verified = self.allocate(items, allocation);
         let reserved = items
             .iter()
@@ -318,6 +326,8 @@ impl ModelExecutor for Model {
         items: &[ModelBatchItem],
         kv_plan: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        self.plain_steps
+            .push(items.iter().map(ModelBatchItem::phase).collect());
         self.run(items, kv_plan, None)
     }
 }
@@ -681,6 +691,60 @@ fn allocation() -> VerifyAllocation {
     VerifyAllocation::new(1, &[(1.0, 0.0); 5], &[(0.8, -0.2); 5]).unwrap()
 }
 
+fn allocation_request(id: u64, maximum: usize) -> EngineRequest {
+    EngineRequest::new(
+        RequestId::new(id),
+        vec![1, 2],
+        maximum,
+        SamplingParameters::new(0.0).unwrap(),
+        id,
+        vec![],
+        vocabulary(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn confidence_mixed_steps_keep_the_unallocated_plan_and_entry_point() {
+    let mut plans = Vec::new();
+    let mut cases = 0;
+    for confidence in [false, true] {
+        let mut model = Model::new(Drafter::Greedy, Rows::Logits);
+        model.allocates = true;
+        let policy = speculation(
+            5,
+            64,
+            SpeculationMode::Balanced(runtime_engine::DraftDepths::parse("1:2").unwrap()),
+            DraftSource::Bundle,
+        )
+        .with_verify_allocation(confidence.then(allocation));
+        let mut engine = Engine::new(config(Some(policy)), model).unwrap();
+        engine.submit(allocation_request(1, 64)).unwrap();
+        engine.step().unwrap();
+        engine.submit(allocation_request(2, 64)).unwrap();
+        engine.step().unwrap();
+        let model = engine.executor();
+        assert!(model.allocated_steps.is_empty());
+        assert_eq!(model.plain_steps.len(), 2);
+        let mixed = model.plain_steps.last().unwrap();
+        assert!(
+            mixed
+                .iter()
+                .any(|p| matches!(p, BatchPhase::Prefill { .. }))
+        );
+        assert!(mixed.iter().any(|p| matches!(p, BatchPhase::Verify { .. })));
+        plans.push(mixed.clone());
+        engine.step().unwrap();
+        assert_eq!(
+            engine.executor().allocated_steps.len(),
+            usize::from(confidence)
+        );
+        cases += 1;
+    }
+    assert_eq!(cases, 2);
+    assert_eq!(plans[0], plans[1]);
+}
+
 /// Balanced plans with confidence reserve every item's drafts up to its
 /// limits and verify the plan's width among them: every step fills its
 /// width with verified prefixes, some item verifies past the schedule's
@@ -717,7 +781,16 @@ fn allocated_balanced_steps_emit_exactly_the_reference_output() {
             assert_eq!(actual, expected, "{rows:?} {drafter:?}");
             let steps = &engine.executor().allocated_steps;
             assert!(!steps.is_empty(), "{rows:?} {drafter:?}");
-            let mut verified_drafts = 0;
+            let mut verified_drafts = engine
+                .executor()
+                .plain_steps
+                .iter()
+                .flatten()
+                .map(|phase| match phase {
+                    BatchPhase::Verify { draft_tokens } => *draft_tokens as u64,
+                    _ => 0,
+                })
+                .sum::<u64>();
             for (width, reserved, verified) in steps {
                 assert_eq!(verified.iter().map(|k| k + 1).sum::<usize>(), *width);
                 assert!(verified.iter().zip(reserved).all(|(k, c)| k <= c));

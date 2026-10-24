@@ -2058,6 +2058,18 @@ fn run_host_command_from_v1(
                     if *list_model_options {
                         let selected = BundleSelectionV1::Directory(package.bundle.clone());
                         let verified = crate::install::verify_selected_bundle_v1(&selected, host)?;
+                        // The profile's options under the explicit ones, as
+                        // a start serves them, against the package's limits.
+                        let resolution = crate::profiles::direct_arguments(
+                            &package.profile,
+                            model.tensor_parallel_size,
+                            &model.serve_arguments,
+                            &package.bundle,
+                        )?;
+                        check_speculation_bounds_v1(
+                            verified.manifest(),
+                            &parse_serve_command_v1(&resolution.arguments[1..])?,
+                        )?;
                         verified.manifest().resolve_model_options(model_options)?;
                         return serde_json::to_string_pretty(&verified.manifest().model_options())
                             .map_err(|e| run_error(e.to_string()));
@@ -2250,6 +2262,36 @@ fn verify_graph_rows_v1(
             "--speculation-graph-rows must be from 1 to the bundle's verify maximum of {maximum}"
         ))),
     }
+}
+
+/// A resolved serve command's token capacity and graph budget against the
+/// package, as a start checks them: what `--list-model-options` refuses
+/// besides the options themselves.
+fn check_speculation_bounds_v1(
+    manifest: &BundleManifestV1,
+    command: &HostCommandV1,
+) -> Result<(), HostCommandErrorV1> {
+    let HostCommandV1::Serve {
+        model_options,
+        serving,
+        speculative_tokens,
+        speculative_rows,
+        speculation_mode,
+        draft_cost_model,
+        ..
+    } = command
+    else {
+        return Err(run_error("a resolved serve command is not serve"));
+    };
+    verify_graph_rows_v1(manifest, model_options)?;
+    speculation_config_v1(
+        manifest,
+        (*speculative_tokens, speculative_rows.map(usize::from)),
+        serving.maximum_sequences,
+        *speculation_mode,
+        *draft_cost_model,
+    )?;
+    Ok(())
 }
 
 fn exact_verify_graphs_v1(manifest: &BundleManifestV1) -> bool {
@@ -2598,6 +2640,16 @@ fn serve_v1(
     )?;
     let graph_rows = verify_graph_rows_v1(package.manifest(), model_options)?;
     let resolved_options = package.manifest().resolve_model_options(model_options)?;
+    // The token capacity is judged against the package before a listing
+    // returns, so a preflight refuses what a start would.
+    let speculation = speculation_config_v1(
+        package.manifest(),
+        speculative,
+        serving.maximum_sequences,
+        speculation_mode,
+        draft_cost_model,
+    )?
+    .map(|config| config.with_verify_widths(verify_widths));
     if list_model_options {
         return serde_json::to_string_pretty(&package.manifest().model_options())
             .map_err(|e| run_error(e.to_string()));
@@ -2617,14 +2669,6 @@ fn serve_v1(
     let kv_cache = resolve_kv_cache_dtype_v1(package.manifest(), serving.kv_cache_dtype)
         .map_err(usage_error)?;
     println!("{}", kv_cache.describe(package.manifest()));
-    let speculation = speculation_config_v1(
-        package.manifest(),
-        speculative,
-        serving.maximum_sequences,
-        speculation_mode,
-        draft_cost_model,
-    )?
-    .map(|config| config.with_verify_widths(verify_widths));
     let bundle_id = package.manifest().id().as_str().to_owned();
     // The served frontend is the package's own export, so the module opens
     // here, before the deployment; the generation worker builds its engine
@@ -8140,6 +8184,74 @@ mod tests {
                 items.map(|items| items as usize)
             );
         }
+    }
+
+    /// A listing refuses a token capacity or graph budget beyond the
+    /// package, with the messages a start gives, and passes ones within it.
+    #[test]
+    fn listings_check_the_token_capacity_and_graph_budget() {
+        use runtime_bundle::model_options::{ModelOptionV1, ModelOptionsV1, OptionDefinitionV1};
+        let manifest = manifest_requiring(
+            vec![topology("tp1", 1)],
+            8,
+            DECLARED_ROWS_V1,
+            &"0".repeat(64),
+            vec![
+                id(crate::executor::SPECULATIVE_CAPABILITY_V1),
+                id(runtime_bundle_abi::SPECULATIVE_REQUESTED_ROWS_CAPABILITY_V1),
+                id(runtime_bundle::model_options::CAPABILITY),
+            ],
+        )
+        .with_speculation(
+            runtime_bundle::BundleSpeculationV1::new(5, true, 192, vec![6], Some(id("weights")))
+                .unwrap(),
+        )
+        .unwrap()
+        .with_model_options(ModelOptionsV1 {
+            schema: runtime_bundle::model_options::CAPABILITY.into(),
+            options: vec![ModelOptionV1 {
+                name: runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1.into(),
+                definition: OptionDefinitionV1::Integer {
+                    default: 32,
+                    minimum: 1,
+                    maximum: 192,
+                },
+                default_is_qualified: true,
+            }],
+        })
+        .unwrap();
+        let check = |extra: &[&str]| {
+            let words = [
+                &["serve", "--bundle", "a", "--speculative-tokens", "5"][..],
+                extra,
+            ]
+            .concat();
+            super::check_speculation_bounds_v1(
+                &manifest,
+                &parse_host_command_v1(&arguments(&words)).unwrap(),
+            )
+            .map_err(|error| error.to_string())
+        };
+        assert!(check(&[]).is_ok());
+        assert!(
+            check(&[
+                "--speculative-rows",
+                "128",
+                "--speculation-graph-rows",
+                "64"
+            ])
+            .is_ok()
+        );
+        assert!(
+            check(&["--speculative-rows", "193"])
+                .unwrap_err()
+                .contains("bundle maximum of 192")
+        );
+        assert!(
+            check(&["--speculation-graph-rows", "193"])
+                .unwrap_err()
+                .contains("verify maximum of 192")
+        );
     }
 
     /// `/health` reports what startup resolved: the profile, the direct

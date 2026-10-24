@@ -58,6 +58,9 @@ pub struct Inputs {
     pub compressed_budget: u32,
     pub capacity: u32,
     pub heads: usize,
+    /// Window state slots, items and compressed sequences: one per packed
+    /// prompt.
+    pub items: u32,
 }
 
 impl Inputs {
@@ -123,9 +126,108 @@ impl Inputs {
             compressed_budget: if second { 512 } else { 0 },
             capacity: rows,
             heads,
+            items: 1,
         };
         inputs.set_case(s, seed, false, rows)?;
         Ok(inputs)
+    }
+
+    /// Prompts of `lengths` rows packed in order into one prefill step, as
+    /// the host packs them: each item has its own window ring, state slot,
+    /// block table and keys at its own positions. Adversarial cases add
+    /// holes, out-of-range keys and pages, an item without window state and
+    /// rows without an item.
+    pub fn packed(
+        s: &Session,
+        page: u32,
+        second: bool,
+        seed: u32,
+        lengths: &[u32],
+        adversarial: bool,
+    ) -> LabResult<Self> {
+        let rows = lengths.iter().sum::<u32>();
+        if lengths.is_empty() || lengths.contains(&0) || rows > ROWS {
+            return Err("packed prompts must be nonempty and fit the chunk".into());
+        }
+        let items = lengths.len() as u32;
+        let pages = CONTEXT / page;
+        let stride = page as usize * (WIDTH / 2 + WIDTH / 16);
+        let codes = [0x00, 0x80, 0x38, 0xb8, 0x40, 0xc0, 0x18, 0xb4];
+        let window_codes = (0..items as usize * SLOTS as usize * WIDTH)
+            .map(|i| codes[(i * 17 + i / WIDTH + seed as usize) % codes.len()])
+            .collect::<Vec<_>>();
+        let window_scales = (0..items as usize * SLOTS as usize * (WIDTH / 32))
+            .map(|i| (121 + (i * 7 + i / 16 + i / (SLOTS as usize * 16)) % 8) as u8)
+            .collect::<Vec<_>>();
+        let mut compressed_pool = vec![0u8; pages as usize * stride];
+        for (p, data) in compressed_pool.chunks_exact_mut(stride).enumerate() {
+            let (codes, scales) = data.split_at_mut(page as usize * WIDTH / 2);
+            for (i, value) in codes.iter_mut().enumerate() {
+                *value = (((i + p) % 16) | (((i * 7 + p + 3) % 16) << 4)) as u8;
+            }
+            for (i, value) in scales.iter_mut().enumerate() {
+                *value = [0x20, 0x28, 0x30, 0x38, 0x40, 0x48][(i + p) % 6];
+            }
+        }
+        // (item, row within the item) of every packed row.
+        let owners = lengths
+            .iter()
+            .enumerate()
+            .flat_map(|(item, &length)| (0..length).map(move |local| (item as u32, local)))
+            .collect::<Vec<_>>();
+        let row_batch = integers(owners.iter().enumerate().map(|(row, &(item, _))| {
+            if adversarial && row % 37 == 5 {
+                -1
+            } else {
+                item as i32
+            }
+        }));
+        let item_slots = integers((0..items).map(|item| {
+            if adversarial && item == items / 2 && items > 1 {
+                -1
+            } else {
+                item as i32
+            }
+        }));
+        let window_keys = integers(owners.iter().flat_map(|&(_, local)| {
+            (0..WINDOW).map(move |key| window_key(local, key, adversarial))
+        }));
+        let compressed_keys = integers(owners.iter().flat_map(|&(item, local)| {
+            (0..512).map(move |key| compressed_key(local, key, seed + 97 * item, adversarial))
+        }));
+        // A distinct page order per item; adversarial tables add holes and
+        // out-of-range pages.
+        let tables = integers((0..items).flat_map(|item| {
+            (0..pages).map(move |p| {
+                if adversarial && p % 29 == item % 29 {
+                    -1
+                } else if adversarial && p % 31 == 1 {
+                    pages as i32
+                } else {
+                    ((p * 5 + item * 37) % pages) as i32
+                }
+            })
+        }));
+        Ok(Self {
+            q: upload(s, &query_with_heads(rows.max(2), HEADS, seed))?,
+            row_batch: upload(s, &row_batch)?,
+            live: upload(s, &rows.to_le_bytes())?,
+            window_codes: upload(s, &window_codes)?,
+            window_scales: upload(s, &window_scales)?,
+            item_slots: upload(s, &item_slots)?,
+            window_keys: upload(s, &window_keys)?,
+            compressed_pool: upload(s, &compressed_pool)?,
+            compressed_keys: upload(s, &compressed_keys)?,
+            tables: upload(s, &tables)?,
+            sinks: s.upload_f32(&(0..HEADS).map(|i| i as f32 * 0.125).collect::<Vec<_>>())?,
+            cos_sin: s.upload_f32(&[0.6, 0.8].repeat(rows.max(2) as usize * 32))?,
+            page,
+            pages,
+            compressed_budget: if second { 512 } else { 0 },
+            capacity: rows,
+            heads: HEADS,
+            items,
+        })
     }
 
     pub fn set_case(&self, s: &Session, seed: u32, adversarial: bool, live: u32) -> LabResult<()> {

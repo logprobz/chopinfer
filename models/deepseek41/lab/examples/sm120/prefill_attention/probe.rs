@@ -16,6 +16,8 @@ mod ablations;
 pub(super) mod cache;
 #[path = "fixture.rs"]
 mod fixture;
+#[path = "packed.rs"]
+pub(super) mod packed;
 #[path = "retained.rs"]
 pub(super) mod retained;
 pub use ablations::run as ablation;
@@ -164,8 +166,8 @@ impl Rig {
             Arg::U64(u64::from(SLOTS) * WIDTH as u64),
             Arg::U64(u64::from(SLOTS) * (WIDTH / 32) as u64),
             Arg::U32(SLOTS),
-            Arg::U32(1),
-            Arg::U32(1),
+            Arg::U32(input.items),
+            Arg::U32(input.items),
             Arg::U32(WINDOW),
             Arg::U32(window_budget),
             Arg::U32(softmax_scale_bits),
@@ -178,7 +180,7 @@ impl Rig {
                 Arg::U64(u64::from(input.page) * (WIDTH / 2 + WIDTH / 16) as u64),
                 Arg::U32(input.pages),
                 Arg::U32(input.pages),
-                Arg::U32(1),
+                Arg::U32(input.items),
                 Arg::U32(512),
                 Arg::U32(compressed_budget),
             ]);
@@ -350,16 +352,28 @@ fn scheduled_op(
 }
 
 fn oracle(s: &Session, entry: &sources::Entry, schedule: Schedule) -> LabResult<()> {
+    oracle_rows(s, entry, schedule, 4)
+}
+
+/// The kit's numerical case over `rows` rows, which interleaves three items
+/// row by row (one without window state): both arms bitwise equal and each
+/// within the native f64 oracle's gate.
+fn oracle_rows(
+    s: &Session,
+    entry: &sources::Entry,
+    schedule: Schedule,
+    rows: u32,
+) -> LabResult<()> {
     let backend = Sm120::new().with_latent_sources(entry.clone());
     let prepared = backend
-        .latent_attention_sources(&entry.query, Need::rows(4))
+        .latent_attention_sources(&entry.query, Need::rows(rows))
         .map_err(|e| e.to_string())?;
-    let case = cases::latent_sources::numerical_case(entry.query, 4, prepared)?;
+    let case = cases::latent_sources::numerical_case(entry.query, rows, prepared)?;
     let images = case.images();
     let reference = s.module(REFERENCE)?;
     let candidate = s.module(schedule.module())?;
-    let scheduled = scheduled_op(entry, schedule, 4)?;
-    let new_case = cases::latent_sources::numerical_case(entry.query, 4, scheduled)?;
+    let scheduled = scheduled_op(entry, schedule, rows)?;
+    let new_case = cases::latent_sources::numerical_case(entry.query, rows, scheduled)?;
     let old_lookup = |symbol: &str| reference.function(symbol).map_err(|e| e.to_string());
     let new_lookup = |symbol: &str| {
         if symbol == schedule.symbol(entry) {
@@ -368,13 +382,13 @@ fn oracle(s: &Session, entry: &sources::Entry, schedule: Schedule) -> LabResult<
             old_lookup(symbol)
         }
     };
-    let old = case.launch(s, &old_lookup, &images, 4)?;
-    let new = new_case.launch(s, &new_lookup, &images, 4)?;
+    let old = case.launch(s, &old_lookup, &images, rows)?;
+    let new = new_case.launch(s, &new_lookup, &images, rows)?;
     if old != new {
-        return Err("small oracle case differs bitwise".into());
+        return Err(format!("{rows}-row oracle case differs bitwise"));
     }
-    case.judge_outputs(&images, 4, &old)?;
-    new_case.judge_outputs(&images, 4, &new)?;
+    case.judge_outputs(&images, rows, &old)?;
+    new_case.judge_outputs(&images, rows, &new)?;
     Ok(())
 }
 

@@ -279,6 +279,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    if ["packed-check", "packed-time"].contains(&mode.as_str()) {
+        if args.len() != 2 {
+            return Err("usage: packed-mode OUT".into());
+        }
+        let cubins = snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::packed::run(sessions, mode == "packed-time")
+        })?
+        .is_none()
+        {
+            return Err("packed GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
     if ["retained-inputs", "retained-check", "retained-time"].contains(&mode.as_str()) {
         if args.len() != 4 {
             return Err("usage: retained-mode OUT LISTS OFFSET".into());

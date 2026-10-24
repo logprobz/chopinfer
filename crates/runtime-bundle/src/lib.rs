@@ -2717,6 +2717,10 @@ pub struct BundleSpeculationV1 {
     /// The most items that draft in one step; absent, every item may.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maximum_draft_items: Option<u32>,
+    /// What the drafter's raw confidence means: a verify allocation
+    /// calibration fitted for another contract does not apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confidence_contract: Option<BundleOpaqueId>,
 }
 
 impl BundleSpeculationV1 {
@@ -2736,9 +2740,30 @@ impl BundleSpeculationV1 {
             drafter_component,
             drafter_kind: None,
             maximum_draft_items: None,
+            confidence_contract: None,
         };
         value.validate()?;
         Ok(value)
+    }
+
+    /// Names what the bundle drafter's raw confidence means, so a serving
+    /// profile's verify allocation calibration
+    /// (`chop.verify-allocation.v1`) applies only to the scores it was
+    /// fitted on.
+    pub fn with_confidence_contract(
+        mut self,
+        contract: Option<BundleOpaqueId>,
+    ) -> Result<Self, BundleError> {
+        self.confidence_contract = contract;
+        self.validate()?;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn confidence_contract(&self) -> Option<&str> {
+        self.confidence_contract
+            .as_ref()
+            .map(BundleOpaqueId::as_str)
     }
 
     /// Optional generic identity for checking a serving profile against this package.
@@ -2820,6 +2845,14 @@ impl BundleSpeculationV1 {
             return Err(BundleError::validation(
                 "bundle speculation allows no drafting items",
             ));
+        }
+        if let Some(contract) = &self.confidence_contract {
+            validate_opaque_id(contract.as_str())?;
+            if !self.bundle_drafter {
+                return Err(BundleError::validation(
+                    "a confidence contract requires a bundle drafter",
+                ));
+            }
         }
         if let Some(component) = &self.drafter_component {
             validate_opaque_id(component.as_str())?;

@@ -236,6 +236,56 @@ fn speculation_drafting_item_bound_is_canonical_and_positive() {
     }
 }
 
+/// The optional confidence contract round-trips canonically, stays absent
+/// from manifests without it, and requires a bundle drafter.
+#[test]
+fn speculation_confidence_contract_is_canonical_and_needs_a_bundle_drafter() {
+    let fixture = Fixture::new();
+    let mut value = fixture.manifest();
+    value["resource_requirements"]["required_capabilities"] = json!(["chop.speculative.v1"]);
+    value["speculation"] = json!({
+        "maximum_draft_tokens": 5,
+        "bundle_drafter": true,
+        "maximum_verify_tokens": 192,
+        "row_buckets": [2, 6],
+        "drafter_component": "weights"
+    });
+    let absent = BundleManifestV1::from_canonical_json(&canonical_json(&value)).unwrap();
+    assert_eq!(absent.speculation().unwrap().confidence_contract(), None);
+    assert!(
+        !String::from_utf8(absent.to_canonical_json().unwrap())
+            .unwrap()
+            .contains("confidence_contract")
+    );
+    value["speculation"]["confidence_contract"] = json!("fixture.drafter-confidence.v1");
+    let bytes = canonical_json(&value);
+    let manifest = BundleManifestV1::from_canonical_json(&bytes).unwrap();
+    assert_eq!(manifest.to_canonical_json().unwrap(), bytes);
+    let built = BundleSpeculationV1::new(
+        5,
+        true,
+        192,
+        vec![2, 6],
+        Some(BundleOpaqueId::new("weights").unwrap()),
+    )
+    .unwrap()
+    .with_confidence_contract(Some(
+        BundleOpaqueId::new("fixture.drafter-confidence.v1").unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(built, *manifest.speculation().unwrap());
+    assert_eq!(
+        built.confidence_contract(),
+        Some("fixture.drafter-confidence.v1")
+    );
+    let host_drafted = BundleSpeculationV1::new(5, false, 192, vec![2, 6], None).unwrap();
+    assert!(
+        host_drafted
+            .with_confidence_contract(Some(BundleOpaqueId::new("any").unwrap()))
+            .is_err()
+    );
+}
+
 #[test]
 fn speculation_manifest_refuses_missing_capability_bad_order_and_unknown_drafter() {
     let fixture = Fixture::new();

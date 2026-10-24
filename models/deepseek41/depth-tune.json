@@ -1,33 +1,151 @@
 {
   "schema": "chopinfer-depth-tune-model.v1",
   "model": "deepseek41",
-  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block. The profile's verify widths stay on, so some depths serve the same plans at a concurrency; the report counts them as the shallowest.",
+  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration.",
   "served_model_name": "DeepSeek-V4.1-Flash",
   "checkpoint_env": "CHOPINFER_DEEPSEEK_CHECKPOINT",
   "tensor_parallel_size": 4,
   "kv_pages": 65536,
   "kv_pages_line": "DeepSeek V4.1: {pages} KV pages per rank",
-  "serve_arguments": ["--prefix-cache", "on", "--max-sequences", "32", "--prefill-budget", "fixed",
-                      "--max-batch-tokens", "8192", "--prefill-chunk-tokens", "8192"],
+  "serve_arguments": [
+    "--prefix-cache",
+    "on",
+    "--max-sequences",
+    "32",
+    "--prefill-budget",
+    "fixed",
+    "--max-batch-tokens",
+    "8192",
+    "--prefill-chunk-tokens",
+    "8192"
+  ],
   "speculation_mode": "balanced",
   "max_depth": 5,
   "verify_rows": 32,
-  "concurrencies": [1, 2, 4, 8, 16, 32],
+  "concurrencies": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
   "processes_per_depth": 3,
   "workload": "tools/tune/workloads/coding.json",
-  "tokens": {"default": 256},
-  "warm": [32, 16, 8, 4, 2, 1],
+  "tokens": {
+    "default": 256
+  },
+  "warm": [
+    32,
+    16,
+    8,
+    4,
+    2,
+    1
+  ],
   "warm_tokens": 64,
-  "kinds": {"greedy": 0.5, "sampled": 0.5},
-  "sampling": {"temperature": 0.6, "top_p": 0.95, "seed": 9100},
-  "selection": {"margin": 0.015, "spread": 0.03},
+  "kinds": {
+    "greedy": 0.5,
+    "sampled": 0.5
+  },
+  "sampling": {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "seed": 9100
+  },
+  "selection": {
+    "margin": 0.015,
+    "spread": 0.03
+  },
   "expected_power_w": 300,
   "work_seconds": 3300,
   "queue_timeout_seconds": 3600,
   "planning": {
-    "startup_seconds": 90,
-    "process_overhead_seconds": 30,
-    "tokens_per_second": {"1": 150, "2": 220, "4": 320, "8": 450, "16": 600, "32": 830},
-    "ar_tokens_per_second": {"1": 95, "2": 170, "4": 290, "8": 420, "16": 620, "32": 830}
+    "startup_seconds": 101,
+    "process_overhead_seconds": 6,
+    "settle_seconds": 1.4,
+    "process_reserve_seconds": 240,
+    "tokens_per_second": {
+      "1": 167,
+      "2": 171,
+      "4": 232,
+      "8": 338,
+      "16": 371,
+      "32": 456
+    },
+    "ar_tokens_per_second": {
+      "1": 77,
+      "2": 90,
+      "4": 137,
+      "8": 276,
+      "16": 353,
+      "32": 456
+    }
+  },
+  "jobs": {
+    "low": {
+      "concurrencies": [
+        1,
+        2,
+        4
+      ],
+      "max_depth": 5,
+      "processes_per_depth": 2,
+      "groups": {
+        "1": 4,
+        "2": 2
+      },
+      "warm": [
+        4,
+        2,
+        1
+      ],
+      "work_seconds": 2400,
+      "queue_timeout_seconds": 2700
+    },
+    "high": {
+      "concurrencies": [
+        8,
+        16,
+        32
+      ],
+      "max_depth": 3,
+      "processes_per_depth": 3,
+      "warm": [
+        32,
+        16,
+        8
+      ],
+      "work_seconds": 2400,
+      "queue_timeout_seconds": 2700
+    },
+    "confidence": {
+      "concurrencies": [
+        2,
+        4
+      ],
+      "max_depth": 5,
+      "depths": [
+        5
+      ],
+      "processes_per_depth": 2,
+      "groups": {
+        "2": 4,
+        "4": 4
+      },
+      "tokens": {
+        "default": 384
+      },
+      "warm": [
+        4,
+        2
+      ],
+      "extra_arguments": [
+        "--speculation-widths",
+        "32"
+      ],
+      "work_seconds": 1200,
+      "queue_timeout_seconds": 1500
+    }
   }
 }

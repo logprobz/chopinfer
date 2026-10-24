@@ -20,6 +20,7 @@ mod prefetch;
 mod results;
 mod round_trips;
 mod undrafted;
+mod verify_rows;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 

@@ -139,7 +139,7 @@ fn quantize_launch(
 
 /// Functions of `calls`: a bundle cubin's where the bundle holds the
 /// symbol, otherwise the fused family's.
-fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
+pub(super) fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
     struct Cache(std::cell::RefCell<BTreeMap<String, Module>>);
     let cache = s.state(|| Ok(Cache(std::cell::RefCell::new(BTreeMap::new()))))?;
     let mut loaded = cache.0.borrow_mut();
@@ -173,14 +173,14 @@ fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
         _modules: Vec::new(),
     })
 }
-fn eager(calls: &[Launch]) -> Vec<Launch> {
+pub(super) fn eager(calls: &[Launch]) -> Vec<Launch> {
     let mut v = calls.to_vec();
     for c in &mut v {
         c.plan.pdl = false;
     }
     v
 }
-fn served_modules(calls: &[Launch]) -> Value {
+pub(super) fn served_modules(calls: &[Launch]) -> Value {
     let mut map = serde_json::Map::new();
     for c in calls {
         if let Some((name, bytes)) = fold_cubin_for_symbol(&c.symbol) {

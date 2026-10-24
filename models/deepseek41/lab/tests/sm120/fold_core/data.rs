@@ -66,7 +66,7 @@ pub fn manifest() -> LabResult<Value> {
     )
     .map_err(|e| e.to_string())
 }
-fn blob(meta: &Value) -> LabResult<Vec<u8>> {
+pub(super) fn blob(meta: &Value) -> LabResult<Vec<u8>> {
     use std::{io::Read, os::unix::fs::OpenOptionsExt};
     let name = meta["file"].as_str().ok_or("missing input file")?;
     if name.contains('/') || name.contains('\\') || name == ".." {

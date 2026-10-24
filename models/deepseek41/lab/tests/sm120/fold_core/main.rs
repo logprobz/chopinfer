@@ -23,6 +23,7 @@ mod cluster_family;
 mod data;
 #[path = "../../../sm120/fold_deep.rs"]
 mod deep_family;
+mod engram_wide;
 #[path = "../../../sm120/fold_core.rs"]
 mod family;
 mod fused;

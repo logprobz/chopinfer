@@ -6,14 +6,14 @@ use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
 use std::collections::BTreeMap;
 
 /// Most drafting items one drafter forward runs; a step with more drafting
-/// items runs one forward per chunk of this many. Target outputs never
+/// items splits into the fewest near-equal chunks within this limit. Target outputs never
 /// depend on it, and the diagnostic build checks chunked drafts against one
 /// whole forward.
 pub const DRAFT_CHUNK_ITEMS: &str = "dspark_draft_chunk_items";
 
 /// The package default and the chunk a create record without the option
-/// keeps: eight items of five block rows use the qualified 40-row paths.
-pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 8;
+/// keeps: at most twelve items of five block rows use the small-row paths.
+pub const DEFAULT_DRAFT_CHUNK_ITEMS: u32 = 12;
 
 /// Most drafting items one drafter forward keeps on the small-row paths:
 /// the row-local quantizers, the HC mix split and the head's weight reuse,
@@ -72,12 +72,12 @@ mod tests {
     /// without the option keeps the declared default.
     #[test]
     fn the_declared_default_is_the_resolved_chunk() {
-        assert_eq!(draft_chunk_items(&resolve(&[])), Ok(8));
+        assert_eq!(draft_chunk_items(&resolve(&[])), Ok(12));
         assert_eq!(
             draft_chunk_items(&resolve(&[(DRAFT_CHUNK_ITEMS, "6")])),
             Ok(6)
         );
-        assert_eq!(draft_chunk_items(&BTreeMap::new()), Ok(8));
+        assert_eq!(draft_chunk_items(&BTreeMap::new()), Ok(12));
         for bad in [
             serde_json::json!(0),
             serde_json::json!(33),

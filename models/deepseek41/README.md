@@ -406,12 +406,13 @@ raised C8 request throughput by 10.1% greedy and 9.1% sampled and lowered
 energy per token by 6.4% and 5.8%, with C8 full-concurrency throughput and
 C1, C16 and C32 unchanged. `--speculation adaptive` with the shared
 `per-block` draft-cost model remains available. The model option
-`dspark_draft_chunk_items` (default 8, at most 32) sets how many drafting
-items one drafter forward runs; a step with more runs one forward per
-chunk, and target outputs do not depend on it. The Flash TP4 DSpark profiles
-select eight items, one 40-row forward, on the qualified bounded head/router,
-HC and quantizer paths. Forwards above twelve items retain the larger-row
-paths; the chunk size remains overridable.
+`dspark_draft_chunk_items` (default 12, at most 32) caps the drafting items
+one drafter forward runs. A step splits into the fewest near-equal chunks
+within that limit, with larger chunks first: 16 items use 8 + 8, 24 use
+12 + 12, and 32 use 11 + 11 + 10. Target outputs do not depend on chunking.
+The Flash TP4 DSpark profiles select this twelve-item limit on the bounded
+head/router, HC and quantizer paths. An override above twelve items can
+select the larger-row paths.
 The package declares up to 192 verify rows a step, every item at its
 deepest block. The host serves 32 unless `--speculative-rows` (profile
 `speculation.rows`) asks for more, and the instance prepares every op for

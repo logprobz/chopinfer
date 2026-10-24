@@ -306,7 +306,7 @@ fn recorded_startup_warmup_keys_fit_the_graph_budget() {
 fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
     let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 192);
     let mut captured = false;
-    for slot in 0..16 {
+    for slot in 0..32 {
         execute(
             &mut instance,
             &host,
@@ -314,7 +314,15 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
         );
         instance.commit().unwrap();
     }
-    for count in [8, 16, 8, 16] {
+    for (count, widths) in [
+        (8, &[8][..]),
+        (16, &[8][..]),
+        (24, &[12][..]),
+        (32, &[10, 11][..]),
+        (17, &[8, 9][..]),
+        (32, &[10, 11][..]),
+        (16, &[8][..]),
+    ] {
         let items: Vec<_> = (0..count)
             .map(|slot| (slot + 1, slot, state(&instance, slot + 1).end))
             .collect();
@@ -335,7 +343,10 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
             .filter_map(|r| r["width"].as_u64())
             .collect();
         captured |= !draft_widths.is_empty();
-        assert!(draft_widths.iter().all(|&n| n == 8), "{draft_widths:?}");
+        assert!(
+            draft_widths.iter().all(|n| widths.contains(n)),
+            "items={count}: {draft_widths:?}"
+        );
         drop(logs);
         for record in records(&host).iter().rev().take(count as usize) {
             assert_eq!(record["computed_positions"], 5);
@@ -344,7 +355,7 @@ fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
         }
     }
     assert!(captured, "draft graphs were never captured");
-    for request in 1..=16 {
+    for request in 1..=32 {
         instance.retire_request(request).unwrap();
     }
     instance.destroy().unwrap();

@@ -111,7 +111,7 @@
       "model_options": {
         "prefill_chunk_tokens": "8192",
         "prefill_upper_skip": "true",
-        "dspark_draft_chunk_items": "8"
+        "dspark_draft_chunk_items": "12"
       }
     },
     "tp4-dspark-full-prefill": {
@@ -150,7 +150,7 @@
       "model_options": {
         "prefill_chunk_tokens": "0",
         "prefill_upper_skip": "false",
-        "dspark_draft_chunk_items": "8"
+        "dspark_draft_chunk_items": "12"
       }
     },
     "tp4-ar-upper-skip-2048": {
@@ -225,7 +225,7 @@
       "model_options": {
         "prefill_chunk_tokens": "2048",
         "prefill_upper_skip": "true",
-        "dspark_draft_chunk_items": "8"
+        "dspark_draft_chunk_items": "12"
       }
     }
   }

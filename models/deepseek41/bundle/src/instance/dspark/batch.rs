@@ -5,6 +5,16 @@ use crate::dspark::execution::DraftInput;
 use crate::dspark::state::BLOCK_ROWS;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 
+fn chunk_ranges(items: usize, maximum: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let chunks = items.div_ceil(maximum);
+    let small = items / chunks.max(1);
+    let extra = items % chunks.max(1);
+    (0..chunks).map(move |chunk| {
+        let start = chunk * small + chunk.min(extra);
+        start..start + small + usize::from(chunk < extra)
+    })
+}
+
 impl Instance {
     pub(super) fn dspark_draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         // A reused successor already holds every item's draft; no chunk runs.
@@ -26,10 +36,11 @@ impl Instance {
         let reference = self.draft_reference(inputs)?;
         let plane = u64::from(DECODE_BATCH * BLOCK_ROWS) * 4;
         let item_bytes = u64::from(BLOCK_ROWS) * 4;
-        for (chunk, batch) in inputs.chunks(chunk_items).enumerate() {
+        for range in chunk_ranges(inputs.len(), chunk_items) {
+            let offset = range.start as u64 * item_bytes;
+            let batch = &inputs[range];
             self.dspark_draft_chunk(batch)?;
             let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-            let offset = (chunk * chunk_items) as u64 * item_bytes;
             let bytes = batch.len() as u64 * item_bytes;
             for (rank, stored) in device.ranks.iter().enumerate() {
                 for (base, source) in [(0, stored.draft_ids), (plane, stored.confidence)] {
@@ -63,5 +74,50 @@ impl Instance {
             self.check_draft_reference(inputs.len(), &reference)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunks_balance_work_and_cover_every_retained_item() {
+        for (items, expected) in [
+            (0, vec![]),
+            (8, vec![8]),
+            (12, vec![12]),
+            (16, vec![8, 8]),
+            (17, vec![9, 8]),
+            (24, vec![12, 12]),
+            (25, vec![9, 8, 8]),
+            (32, vec![11, 11, 10]),
+        ] {
+            assert_eq!(
+                chunk_ranges(items, 12)
+                    .map(|range| range.len())
+                    .collect::<Vec<_>>(),
+                expected,
+                "items={items}"
+            );
+        }
+        for maximum in 1..=DECODE_BATCH as usize {
+            for items in 0..=DECODE_BATCH as usize {
+                let ranges: Vec<_> = chunk_ranges(items, maximum).collect();
+                assert_eq!(ranges.len(), items.div_ceil(maximum));
+                assert_eq!(
+                    ranges.iter().cloned().flatten().collect::<Vec<_>>(),
+                    (0..items).collect::<Vec<_>>()
+                );
+                assert!(
+                    ranges
+                        .iter()
+                        .all(|range| (1..=maximum).contains(&range.len()))
+                );
+                assert!(ranges.windows(2).all(|pair| {
+                    pair[0].len() >= pair[1].len() && pair[0].len() - pair[1].len() <= 1
+                }));
+            }
+        }
     }
 }

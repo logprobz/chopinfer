@@ -3966,3 +3966,21 @@ pub const VERIFY_GRAPH_ROWS_OPTION_V1: &str = "verify_graph_rows";
 /// Verify graph keys retain exact row and item counts. Startup warms each
 /// reachable width at its concurrency waves and each reachable drafter count.
 pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact-graphs.v1";
+
+/// Capability for speculative bundles that choose, after drafting, which of
+/// each item's reserved drafts the target verifies. A verify step the host
+/// allocates arrives as `chopbatch-v7` (`runtime_bundle_sdk::VerifyAllocationV1`):
+/// the step's verify width W, a floor, and the calibration that turns the
+/// drafter's raw confidence into acceptance probabilities. Each decode-phase
+/// item's rows (one plus its reserved drafts c_i) keep sizing its KV,
+/// sampler rows and acceptance inputs. The bundle verifies K'_i <= c_i drafts
+/// per item, chosen by the SDK's allocation rule, so the target computes
+/// exactly W rows, and reports K'_i: the verified drafts it emits with host
+/// values, or `BUNDLE_ACCEPTANCE_ALLOCATED_V1` and `verified_drafts` in each
+/// device acceptance result. Rows past an item's 1 + K'_i are unspecified and
+/// never read. Acceptance stays the host's walk over the verified drafts:
+/// allocation changes work, never an emitted token. The package names what
+/// its raw confidence means in its speculation declaration's
+/// `confidence_contract`; a calibration fitted for another contract is not
+/// used.
+pub const VERIFY_ALLOCATION_CAPABILITY_V1: &str = "chop.verify-allocation.v1";

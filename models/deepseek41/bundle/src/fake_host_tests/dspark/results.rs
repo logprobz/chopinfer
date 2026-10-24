@@ -187,7 +187,7 @@ fn c8_device_feedback_queues_a_successor_after_current_completion() {
                 flags: 0,
                 status: 0,
                 failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-                reserved: 0,
+                verified_drafts: 0,
             };
             bytes[offset + index * 32..offset + (index + 1) * 32]
                 .copy_from_slice(&accepted.to_le_bytes());

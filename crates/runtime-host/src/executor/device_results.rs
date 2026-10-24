@@ -480,28 +480,38 @@ impl CollectingSinkV1<'_> {
                         .get(offset..offset + 32)
                         .ok_or(BundleStatusV1::InvalidArgument)?,
                 )?;
-                let (count, emitted, terminal, rejected, empty_row) =
+                let (drafted, count, emitted, terminal, rejected, empty_row) =
                     match record.validate(item.acceptance)? {
                         DeviceAcceptanceV1::Prefix {
                             accepted_drafts,
                             emitted_rows,
+                            verified_drafts,
                             terminal,
                             rejected,
                         } => (
+                            verified_drafts as usize,
                             accepted_drafts as usize,
                             emitted_rows as usize,
                             terminal,
                             rejected,
                             None,
                         ),
-                        DeviceAcceptanceV1::EmptyDistribution { row } => {
-                            (0, 0, false, false, Some(row as usize))
-                        }
+                        DeviceAcceptanceV1::EmptyDistribution {
+                            row,
+                            verified_drafts,
+                        } => (
+                            verified_drafts as usize,
+                            0,
+                            0,
+                            false,
+                            false,
+                            Some(row as usize),
+                        ),
                     };
                 accepted.push(AcceptedPrefix {
                     request_id: RequestId::new(item.request_id),
                     cycle_epoch: record.cycle_epoch,
-                    drafted: item.acceptance.draft_tokens as usize,
+                    drafted,
                     accepted: count,
                     emitted,
                     terminal,
@@ -798,7 +808,7 @@ mod tests {
                         flags: BUNDLE_ACCEPTANCE_REJECTED_V1,
                         status: 0,
                         failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-                        reserved: 0,
+                        verified_drafts: 0,
                     }
                     .to_le_bytes(),
                 );
@@ -872,7 +882,7 @@ mod tests {
                 flags: BUNDLE_ACCEPTANCE_REJECTED_V1,
                 status: 0,
                 failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-                reserved: 0,
+                verified_drafts: 0,
             }
             .to_le_bytes()
             .to_vec();
@@ -976,7 +986,7 @@ mod tests {
                                 flags: BUNDLE_ACCEPTANCE_REJECTED_V1,
                                 status: 0,
                                 failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-                                reserved: 0,
+                                verified_drafts: 0,
                             }
                             .to_le_bytes(),
                         );

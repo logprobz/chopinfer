@@ -18,7 +18,7 @@ fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
         },
         status: 0,
         failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-        reserved: 0,
+        verified_drafts: 0,
     };
     packet[..32].copy_from_slice(&result.to_le_bytes());
     let sample = crate::dspark::results::SAMPLE_OFFSET as usize + accepted as usize * 256;

@@ -102,7 +102,7 @@ fn outcome(feedback: &mut Feedback, depth: u32) {
             },
             status: 0,
             failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-            reserved: 0,
+            verified_drafts: 0,
         };
         feedback.packet[i * 32..i * 32 + 32].copy_from_slice(&record.to_le_bytes());
         let at = crate::dspark::results::SAMPLE_OFFSET as usize

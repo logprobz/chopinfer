@@ -19,6 +19,11 @@ pub const BUNDLE_ACCEPTANCE_NO_DRAFT_V1: u32 = u32::MAX;
 pub const BUNDLE_ACCEPTANCE_NO_FAILURE_V1: u32 = u32::MAX;
 pub const BUNDLE_ACCEPTANCE_TERMINAL_V1: u32 = 1;
 pub const BUNDLE_ACCEPTANCE_REJECTED_V1: u32 = 2;
+/// The host allocated the step's drafts
+/// (`crate::VERIFY_ALLOCATION_CAPABILITY_V1`): `verified_drafts` holds the
+/// drafts the item verified, at most its reserved `draft_tokens`, and every
+/// count below refers to them.
+pub const BUNDLE_ACCEPTANCE_ALLOCATED_V1: u32 = 4;
 
 /// One item's device acceptance inputs. All offsets count elements.
 /// `stop_offset` indexes terminal stop IDs, not the sampler's masked IDs.
@@ -115,21 +120,27 @@ pub struct BundleAcceptanceResultV1 {
     pub flags: u32,
     pub status: u32,
     pub failure_row: u32,
-    pub reserved: u32,
+    /// Zero, or with [`BUNDLE_ACCEPTANCE_ALLOCATED_V1`] the drafts the item
+    /// verified.
+    pub verified_drafts: u32,
 }
 
 /// A checked result still needs full sampler validation and the model's
 /// status check. An empty distribution authorizes no token publication.
+/// `verified_drafts` is the input's `draft_tokens` unless the step was
+/// allocated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceAcceptanceV1 {
     Prefix {
         accepted_drafts: u32,
         emitted_rows: u32,
+        verified_drafts: u32,
         terminal: bool,
         rejected: bool,
     },
     EmptyDistribution {
         row: u32,
+        verified_drafts: u32,
     },
 }
 
@@ -146,7 +157,7 @@ impl BundleAcceptanceResultV1 {
             flags: word(16),
             status: word(20),
             failure_row: word(24),
-            reserved: word(28),
+            verified_drafts: word(28),
         })
     }
 
@@ -160,7 +171,7 @@ impl BundleAcceptanceResultV1 {
             self.flags,
             self.status,
             self.failure_row,
-            self.reserved,
+            self.verified_drafts,
         ]) {
             target.copy_from_slice(&word.to_le_bytes());
         }
@@ -173,18 +184,45 @@ impl BundleAcceptanceResultV1 {
         self,
         input: BundleAcceptanceInputV1,
     ) -> Result<DeviceAcceptanceV1, BundleStatusV1> {
+        self.validate_allocation(input, false)
+    }
+
+    /// [`Self::validate`] for a step whose drafts the host did (`allocated`)
+    /// or did not allocate: an allocated result must say so and name its
+    /// verified drafts, within the reservation, and its counts refer to
+    /// them; an unallocated one must not.
+    pub fn validate_allocation(
+        self,
+        input: BundleAcceptanceInputV1,
+        allocated: bool,
+    ) -> Result<DeviceAcceptanceV1, BundleStatusV1> {
         if input.cycle_epoch == 0 || self.cycle_epoch != input.cycle_epoch {
             return Err(BundleStatusV1::StaleHandle);
         }
-        if self.reserved != 0
-            || self.flags & !(BUNDLE_ACCEPTANCE_TERMINAL_V1 | BUNDLE_ACCEPTANCE_REJECTED_V1) != 0
+        let known = BUNDLE_ACCEPTANCE_TERMINAL_V1
+            | BUNDLE_ACCEPTANCE_REJECTED_V1
+            | if allocated {
+                BUNDLE_ACCEPTANCE_ALLOCATED_V1
+            } else {
+                0
+            };
+        let verified = if allocated {
+            self.verified_drafts
+        } else {
+            input.draft_tokens
+        };
+        if self.flags & !known != 0
+            || (self.flags & BUNDLE_ACCEPTANCE_ALLOCATED_V1 != 0) != allocated
+            || (!allocated && self.verified_drafts != 0)
+            || verified > input.draft_tokens
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
         if self.status == 2 {
-            return if self.failure_row <= input.draft_tokens {
+            return if self.failure_row <= verified {
                 Ok(DeviceAcceptanceV1::EmptyDistribution {
                     row: self.failure_row,
+                    verified_drafts: verified,
                 })
             } else {
                 Err(BundleStatusV1::InvalidArgument)
@@ -200,18 +238,19 @@ impl BundleAcceptanceResultV1 {
         if self.failure_row != BUNDLE_ACCEPTANCE_NO_FAILURE_V1
             || self.emitted_rows == 0
             || u64::from(self.emitted_rows) > input.remaining_tokens
-            || self.accepted_drafts > input.draft_tokens
+            || self.accepted_drafts > verified
             || (!last_matched && !last_unmatched)
             || (last_matched
                 && (rejected
                     || (!terminal && u64::from(self.emitted_rows) != input.remaining_tokens)))
-            || (last_unmatched && rejected != (self.emitted_rows <= input.draft_tokens))
+            || (last_unmatched && rejected != (self.emitted_rows <= verified))
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
         Ok(DeviceAcceptanceV1::Prefix {
             accepted_drafts: self.accepted_drafts,
             emitted_rows: self.emitted_rows,
+            verified_drafts: verified,
             terminal,
             rejected,
         })
@@ -247,7 +286,7 @@ mod tests {
             flags,
             status: 0,
             failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
-            reserved: 0,
+            verified_drafts: 0,
         }
     }
 
@@ -341,6 +380,77 @@ mod tests {
         }
     }
 
+    /// An allocated step's results name their verified drafts within the
+    /// reservation, and acceptance counts refer to them: stopping at the
+    /// verified drafts with all of them matched is no rejection.
+    #[test]
+    fn allocated_results_refer_to_their_verified_drafts() {
+        let reserved = input(5, 9);
+        let allocated = |accepted, emitted, flags, verified| BundleAcceptanceResultV1 {
+            verified_drafts: verified,
+            ..result(accepted, emitted, BUNDLE_ACCEPTANCE_ALLOCATED_V1 | flags)
+        };
+        for (accepted, emitted, flags, verified) in [
+            (2, 3, 0, 2),
+            (0, 1, 0, 0),
+            (1, 2, BUNDLE_ACCEPTANCE_REJECTED_V1, 3),
+            (5, 6, 0, 5),
+        ] {
+            assert_eq!(
+                allocated(accepted, emitted, flags, verified).validate_allocation(reserved, true),
+                Ok(DeviceAcceptanceV1::Prefix {
+                    accepted_drafts: accepted,
+                    emitted_rows: emitted,
+                    verified_drafts: verified,
+                    terminal: false,
+                    rejected: flags != 0,
+                })
+            );
+        }
+        for bad in [
+            // More verified than reserved, more accepted than verified, a
+            // full verified prefix called a rejection, a rejection unmarked.
+            allocated(5, 6, 0, 6),
+            allocated(3, 4, 0, 2),
+            allocated(2, 3, BUNDLE_ACCEPTANCE_REJECTED_V1, 2),
+            allocated(1, 2, 0, 3),
+            // An allocated step's result must carry the flag.
+            result(2, 3, 0),
+        ] {
+            assert!(bad.validate_allocation(reserved, true).is_err(), "{bad:?}");
+        }
+        // An unallocated step refuses the flag and a nonzero count.
+        assert!(allocated(2, 3, 0, 2).validate(reserved).is_err());
+        assert!(
+            BundleAcceptanceResultV1 {
+                verified_drafts: 5,
+                ..result(5, 6, 0)
+            }
+            .validate(reserved)
+            .is_err()
+        );
+        let empty = BundleAcceptanceResultV1 {
+            status: 2,
+            failure_row: 2,
+            ..allocated(0, 1, 0, 2)
+        };
+        assert_eq!(
+            empty.validate_allocation(reserved, true),
+            Ok(DeviceAcceptanceV1::EmptyDistribution {
+                row: 2,
+                verified_drafts: 2
+            })
+        );
+        assert!(
+            BundleAcceptanceResultV1 {
+                failure_row: 3,
+                ..empty
+            }
+            .validate_allocation(reserved, true)
+            .is_err()
+        );
+    }
+
     #[test]
     fn empty_distribution_does_not_read_unspecified_counts() {
         let empty = BundleAcceptanceResultV1 {
@@ -352,7 +462,10 @@ mod tests {
         };
         assert_eq!(
             empty.validate(input(5, 6)),
-            Ok(DeviceAcceptanceV1::EmptyDistribution { row: 2 })
+            Ok(DeviceAcceptanceV1::EmptyDistribution {
+                row: 2,
+                verified_drafts: 5
+            })
         );
         for status in [1, 3, u32::MAX] {
             assert_eq!(

@@ -149,7 +149,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|balanced|adaptive|table]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
-  [--speculation-widths ROWS,...]
+  [--speculation-widths ROWS,...] [--speculation-graph-rows N]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -1330,6 +1330,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation-costs",
             "--speculation-depths",
             "--speculation-widths",
+            "--speculation-graph-rows",
             "--draft-cost",
             "--prefix-cache",
             "--verify-warmup",
@@ -1563,6 +1564,28 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculative-rows requires positive --speculative-tokens",
         ));
     }
+    if !profile_pending
+        && parsed.speculation_graph_rows.is_some()
+        && parsed.speculative_tokens.unwrap_or(0) == 0
+    {
+        return Err(usage_error(
+            "--speculation-graph-rows requires positive --speculative-tokens",
+        ));
+    }
+    let mut model_options = parsed.model_options.clone();
+    if let Some(rows) = parsed.speculation_graph_rows
+        && model_options
+            .insert(
+                runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1.into(),
+                rows.to_string(),
+            )
+            .is_some()
+    {
+        return Err(usage_error(format!(
+            "--speculation-graph-rows sets the model option '{}'; give one of them",
+            runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1
+        )));
+    }
     if parsed.model.is_none() && parsed.activation_policy.is_some() {
         return Err(usage_error(
             "--activation-policy applies to --model; an explicit package serves the precision \
@@ -1576,7 +1599,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         ));
     }
     Ok(HostCommandV1::Serve {
-        model_options: parsed.model_options.clone(),
+        model_options,
         list_model_options: parsed.list_model_options,
         profile_name: resolved.profile,
         profile_drafter: resolved.drafter,
@@ -2160,24 +2183,74 @@ fn run_host_command_from_v1(
     }
 }
 
-/// The decode-phase rows one verify step may carry: the bundle's `declared`
-/// maximum, or fewer when `--speculative-rows` asks, but more than the
-/// `tokens` one item drafts.
+/// The decode-phase rows one verify step may carry: the bundle's `served`
+/// rows, or what `--speculative-rows` asks, more than the `tokens` one item
+/// drafts and at most `maximum`: the served rows, or the manifest maximum
+/// of a package that prepares the rows its instances are asked for.
 fn verify_rows_v1(
-    declared: usize,
+    served: usize,
+    maximum: usize,
     tokens: usize,
     requested: Option<usize>,
 ) -> Result<usize, HostCommandErrorV1> {
-    let rows = requested.unwrap_or(declared);
-    if rows > declared || rows <= tokens {
+    let rows = requested.unwrap_or(served);
+    if rows > maximum || rows <= tokens {
         return Err(usage_error(format!(
-            "--speculative-rows must exceed --speculative-tokens and stay within the bundle maximum of {declared}"
+            "--speculative-rows must exceed --speculative-tokens and stay within the bundle maximum of {maximum}"
         )));
     }
     Ok(rows)
 }
 
 use runtime_bundle_sdk::warmup::served_verify_rows as served_verify_rows_v1;
+
+/// The verify rows served without `--speculative-rows`: the manifest
+/// maximum, narrowed for a narrow-rows package serving few sequences.
+fn default_verify_rows_v1(manifest: &BundleManifestV1, sequences: usize) -> usize {
+    let declared = manifest.speculation().map_or(0, |declaration| {
+        declaration.maximum_verify_tokens() as usize
+    });
+    let narrow = manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|id| id.as_str() == runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1);
+    served_verify_rows_v1(
+        declared,
+        sequences,
+        runtime_bundle_sdk::warmup::narrows_rows(narrow),
+    )
+}
+
+/// `--speculation-graph-rows`, which reaches the package as its
+/// `verify_graph_rows` model option: from 1 to the manifest's verify
+/// maximum, and only for a package that declares the option.
+fn verify_graph_rows_v1(
+    manifest: &BundleManifestV1,
+    model_options: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<usize>, HostCommandErrorV1> {
+    let name = runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1;
+    let Some(value) = model_options.get(name) else {
+        return Ok(None);
+    };
+    if !manifest
+        .model_options()
+        .is_some_and(|options| options.options.iter().any(|option| option.name == name))
+    {
+        return Err(usage_error(format!(
+            "--speculation-graph-rows needs a package that declares the '{name}' model option"
+        )));
+    }
+    let maximum = manifest.speculation().map_or(0, |declaration| {
+        declaration.maximum_verify_tokens() as usize
+    });
+    match value.parse::<usize>() {
+        Ok(rows) if (1..=maximum).contains(&rows) => Ok(Some(rows)),
+        _ => Err(usage_error(format!(
+            "--speculation-graph-rows must be from 1 to the bundle's verify maximum of {maximum}"
+        ))),
+    }
+}
 
 fn exact_verify_graphs_v1(manifest: &BundleManifestV1) -> bool {
     manifest
@@ -2215,17 +2288,21 @@ fn speculation_config_v1(
             declaration.maximum_draft_tokens()
         )));
     }
-    let served_rows = manifest
-        .resource_requirements()
-        .required_capabilities()
-        .iter()
-        .any(|id| id.as_str() == runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1);
-    let declared = served_verify_rows_v1(
-        declaration.maximum_verify_tokens() as usize,
-        maximum_sequences,
-        runtime_bundle_sdk::warmup::narrows_rows(served_rows),
-    );
-    let rows = verify_rows_v1(declared, tokens, rows)?;
+    let capability = |name: &str| {
+        manifest
+            .resource_requirements()
+            .required_capabilities()
+            .iter()
+            .any(|id| id.as_str() == name)
+    };
+    let declared = declaration.maximum_verify_tokens() as usize;
+    let served = default_verify_rows_v1(manifest, maximum_sequences);
+    let maximum = if capability(runtime_bundle_abi::SPECULATIVE_REQUESTED_ROWS_CAPABILITY_V1) {
+        declared
+    } else {
+        served
+    };
+    let rows = verify_rows_v1(served, maximum, tokens, rows)?;
     let source = if declaration.bundle_drafter() {
         DraftSource::Bundle
     } else {
@@ -2519,6 +2596,7 @@ fn serve_v1(
         topology,
         devices.map(<[i32]>::len),
     )?;
+    let graph_rows = verify_graph_rows_v1(package.manifest(), model_options)?;
     let resolved_options = package.manifest().resolve_model_options(model_options)?;
     if list_model_options {
         return serde_json::to_string_pretty(&package.manifest().model_options())
@@ -2622,7 +2700,18 @@ fn serve_v1(
         1
     };
     // Verify graphs are captured per row and item bucket, which only a
-    // package with batch limits declares.
+    // package with batch limits declares. Every width warms up to the
+    // package's default rows; wider steps up to the graph rows warm only at
+    // the balanced plan's listed widths, and none above the graph rows.
+    let graphed_rows = speculation.map_or(0, |speculation| {
+        speculation
+            .maximum_verify_tokens()
+            .min(graph_rows.unwrap_or(usize::MAX))
+    });
+    let warmed_rows = graphed_rows.min(default_verify_rows_v1(
+        package.manifest(),
+        serving.maximum_sequences,
+    ));
     let verify_warmup = speculation
         .filter(|_| serving.verify_warmup && package.manifest().batch_limits().is_some())
         .map(|speculation| runtime_engine::warmup::VerifyWarmup {
@@ -2642,9 +2731,16 @@ fn serve_v1(
                 speculation.maximum_draft_tokens(),
             ),
             maximum_draft_tokens: speculation.maximum_draft_tokens(),
-            step_rows: speculation.maximum_verify_tokens(),
+            step_rows: warmed_rows,
             drafting_items: speculation.maximum_draft_items(),
             exact_graphs: exact_verify_graphs_v1(package.manifest()),
+            widths: speculation
+                .verify_widths()
+                .widths()
+                .iter()
+                .map(|&width| usize::from(width))
+                .filter(|&width| width > warmed_rows && width <= graphed_rows)
+                .collect(),
         });
     let policy = deployment
         .policy()
@@ -4871,6 +4967,9 @@ struct ArgumentsV1 {
     speculation_depths: Option<DraftDepths>,
     /// `--speculation-widths`; balanced mode lands on these widths.
     speculation_widths: Option<VerifyWidths>,
+    /// `--speculation-graph-rows`: the widest verify step captured in a
+    /// graph, passed to the package as its `verify_graph_rows` option.
+    speculation_graph_rows: Option<usize>,
     draft_cost_model: Option<DraftCostModel>,
     prefix_cache: Option<bool>,
     kv_offload_gib: Option<u64>,
@@ -5271,6 +5370,13 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.speculation_widths, widths, flag)?;
                 }
+                "--speculation-graph-rows" => {
+                    let rows = count_v1(flag, value)?;
+                    if rows == 0 {
+                        return Err(usage_error("--speculation-graph-rows must be at least 1"));
+                    }
+                    set_once_v1(&mut parsed.speculation_graph_rows, rows, flag)?;
+                }
                 "--kv-cache-dtype" => {
                     let dtype = KvCacheDtypeV1::parse(value).ok_or_else(|| {
                         usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
@@ -5480,6 +5586,10 @@ impl ArgumentsV1 {
             ("--speculation-costs", self.speculation_costs.is_some()),
             ("--speculation-depths", self.speculation_depths.is_some()),
             ("--speculation-widths", self.speculation_widths.is_some()),
+            (
+                "--speculation-graph-rows",
+                self.speculation_graph_rows.is_some(),
+            ),
             ("--draft-cost", self.draft_cost_model.is_some()),
             ("--kv-offload-gib", self.kv_offload_gib.is_some()),
             (
@@ -7304,6 +7414,48 @@ mod tests {
         );
     }
 
+    /// `--speculation-graph-rows` becomes the package's `verify_graph_rows`
+    /// model option, needs speculative tokens and a positive count, and is
+    /// refused next to an explicit option of the same name.
+    #[test]
+    fn the_graph_rows_flag_is_the_verify_graph_rows_model_option() {
+        let options = |words: &[&str]| match parse_host_command_v1(&arguments(words)).unwrap() {
+            HostCommandV1::Serve { model_options, .. } => model_options,
+            _ => panic!("serve parses as serve"),
+        };
+        let base = ["serve", "--bundle", "a", "--speculative-tokens", "5"];
+        let set = options(&[&base[..], &["--speculation-graph-rows", "64"]].concat());
+        assert_eq!(
+            set.get(runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1)
+                .map(String::as_str),
+            Some("64")
+        );
+        assert!(!options(&base).contains_key(runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1));
+        assert!(
+            refusal(&["serve", "--bundle", "a", "--speculation-graph-rows", "64"])
+                .contains("--speculation-graph-rows requires positive --speculative-tokens")
+        );
+        assert!(
+            refusal(&[&base[..], &["--speculation-graph-rows", "0"]].concat())
+                .contains("--speculation-graph-rows must be at least 1")
+        );
+        assert!(
+            refusal(
+                &[
+                    &base[..],
+                    &[
+                        "--speculation-graph-rows",
+                        "64",
+                        "--model-option",
+                        "verify_graph_rows=32"
+                    ]
+                ]
+                .concat()
+            )
+            .contains("give one of them")
+        );
+    }
+
     #[test]
     fn the_prefix_cache_and_verify_warmup_flags_are_on_or_off_and_default_on() {
         let serving = |words: &[&str]| match parse_host_command_v1(&arguments(words)).unwrap() {
@@ -8190,17 +8342,27 @@ mod tests {
 
     #[test]
     fn speculative_rows_narrow_the_declared_verify_rows() {
-        assert_eq!(super::verify_rows_v1(256, 7, None).unwrap(), 256);
-        assert_eq!(super::verify_rows_v1(256, 7, Some(32)).unwrap(), 32);
+        assert_eq!(super::verify_rows_v1(256, 256, 7, None).unwrap(), 256);
+        assert_eq!(super::verify_rows_v1(256, 256, 7, Some(32)).unwrap(), 32);
         for refused in [257, 7] {
             assert!(
-                super::verify_rows_v1(256, 7, Some(refused))
+                super::verify_rows_v1(256, 256, 7, Some(refused))
                     .unwrap_err()
                     .to_string()
                     .contains("--speculative-rows"),
                 "{refused}"
             );
         }
+        // A package that prepares the rows it is asked for keeps its
+        // narrowed default and serves up to its manifest maximum on request.
+        assert_eq!(super::verify_rows_v1(32, 192, 5, None).unwrap(), 32);
+        assert_eq!(super::verify_rows_v1(32, 192, 5, Some(128)).unwrap(), 128);
+        assert!(
+            super::verify_rows_v1(32, 192, 5, Some(193))
+                .unwrap_err()
+                .to_string()
+                .contains("bundle maximum of 192")
+        );
         let parsed = parse_host_command_v1(&arguments(&[
             "serve",
             "--bundle",

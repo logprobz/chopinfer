@@ -3952,6 +3952,17 @@ pub const RECURRENT_STATE_IN_PLACE_CAPABILITY_V1: &str = "chop.recurrent-state.i
 /// preserves small-instance row budgets without model-specific host policy.
 pub const SPECULATIVE_NARROW_ROWS_CAPABILITY_V1: &str = "chop.speculative-narrow-rows.v1";
 
+/// Each instance prepares the verify rows its create record asks for
+/// (`maximum_verify_tokens`), up to the manifest maximum. A narrowed
+/// default stays the default, and `--speculative-rows` may raise it up to
+/// that maximum.
+pub const SPECULATIVE_REQUESTED_ROWS_CAPABILITY_V1: &str = "chop.speculative-requested-rows.v1";
+
+/// The model option through which a package that declares it takes the
+/// host's `--speculation-graph-rows`: the widest verify step it captures in
+/// a graph. Wider verify steps run without one.
+pub const VERIFY_GRAPH_ROWS_OPTION_V1: &str = "verify_graph_rows";
+
 /// Verify graph keys retain exact row and item counts. Startup warms each
 /// reachable width at its concurrency waves and each reachable drafter count.
 pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact-graphs.v1";

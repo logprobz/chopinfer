@@ -1275,6 +1275,7 @@ fn startup_warmup_uses_real_group_admission_with_a_small_kv_pool() {
                 step_rows: 32,
                 drafting_items: Some(4),
                 exact_graphs: false,
+                widths: Vec::new(),
             }),
             Some(&steps),
         ))
@@ -1357,6 +1358,7 @@ fn startup_warmup_recomputes_forced_preemptions() {
             step_rows: 32,
             drafting_items: Some(4),
             exact_graphs: false,
+            widths: Vec::new(),
         }),
         Some(&steps),
     ));

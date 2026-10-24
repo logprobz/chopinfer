@@ -1018,6 +1018,7 @@ mod wave_tests {
             step_rows: 32,
             drafting_items: None,
             exact_graphs: false,
+            widths: Vec::new(),
         }
     }
 
@@ -1371,6 +1372,7 @@ mod wave_stop_tests {
             step_rows: 8,
             drafting_items: None,
             exact_graphs: true,
+            widths: Vec::new(),
         }
     }
 

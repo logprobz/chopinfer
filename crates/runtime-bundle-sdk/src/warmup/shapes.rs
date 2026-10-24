@@ -20,6 +20,10 @@ pub struct VerifyWarmup {
     pub drafting_items: Option<usize>,
     /// Graph keys retain exact row and item counts instead of rounded buckets.
     pub exact_graphs: bool,
+    /// Verify widths wider than `step_rows` that are also warmed, each at
+    /// every concurrency wave whose items reach it with even drafts: the
+    /// balanced plan's listed widths above the rows warmed exhaustively.
+    pub widths: Vec<usize>,
 }
 
 /// One verify graph shape and a wave that reaches it: the wave's requests
@@ -129,6 +133,27 @@ pub fn verify_shapes(sequences: usize, warmup: &VerifyWarmup) -> Vec<VerifyShape
             shapes.insert((requests, rows), vec![extra; requests]);
         }
     }
+    // A listed wider width at each wave that reaches it with drafts as
+    // even as the per-item depths allow.
+    if warmup.exact_graphs {
+        for &width in warmup.widths.iter().filter(|&&w| w > warmup.step_rows) {
+            for &requests in &waves {
+                let Some(extra) = width.checked_sub(requests).filter(|&extra| extra > 0) else {
+                    continue;
+                };
+                let (base, more) = (extra / requests, extra % requests);
+                let drafts: Vec<usize> = (0..requests)
+                    .map(|item| base + usize::from(item < more))
+                    .collect();
+                let drafting = drafts.iter().filter(|&&d| d > 0).count();
+                if drafts.iter().all(|d| *d == 0 || extras.contains(d))
+                    && warmup.drafting_items.is_none_or(|limit| drafting <= limit)
+                {
+                    shapes.insert((requests, width), drafts);
+                }
+            }
+        }
+    }
     shapes
         .into_iter()
         .map(|((item_bucket, row_bucket), drafts)| VerifyShape {
@@ -160,6 +185,7 @@ mod tests {
             step_rows,
             drafting_items,
             exact_graphs: false,
+            widths: Vec::new(),
         }
     }
 
@@ -179,6 +205,7 @@ mod tests {
                 step_rows: 32,
                 drafting_items: None,
                 exact_graphs: true,
+                widths: Vec::new(),
             };
             let shapes = verify_shapes(sequences, &warmup);
             assert_eq!(shapes.len(), count);
@@ -212,6 +239,7 @@ mod tests {
             step_rows: 32,
             drafting_items: None,
             exact_graphs: true,
+            widths: Vec::new(),
         };
         let selected = verify_shapes(32, &warmup);
         let mut complete = std::collections::BTreeSet::new();
@@ -235,6 +263,44 @@ mod tests {
         // complete set, before any draft, AR or catch-up graph.
         assert_eq!(complete.len() * 3, 1278);
         assert_eq!(selected.len() * 3, 291);
+    }
+
+    /// Listed widths above the exhaustive rows warm once per wave that
+    /// reaches them with even drafts, and nothing else changes.
+    #[test]
+    fn listed_wide_widths_warm_at_the_waves_that_reach_them() {
+        let narrow = VerifyWarmup {
+            item_rows: (2..=6).collect(),
+            maximum_draft_tokens: 5,
+            step_rows: 32,
+            drafting_items: None,
+            exact_graphs: true,
+            widths: Vec::new(),
+        };
+        let wide = VerifyWarmup {
+            widths: vec![16, 32, 48, 64],
+            ..narrow.clone()
+        };
+        let before = verify_shapes(32, &narrow);
+        let after = verify_shapes(32, &wide);
+        let added: Vec<_> = after.iter().filter(|s| !before.contains(s)).collect();
+        assert_eq!(after.len(), before.len() + 5);
+        assert_eq!(
+            added
+                .iter()
+                .map(|s| (s.row_bucket, s.item_bucket))
+                .collect::<Vec<_>>(),
+            [(48, 8), (48, 16), (64, 16), (48, 32), (64, 32)]
+        );
+        assert_eq!(added[0].drafts, vec![5; 8]);
+        assert_eq!(added[2].drafts, vec![3; 16]);
+        assert_eq!(added[3].drafts, [vec![1; 16], vec![0; 16]].concat());
+        for shape in added {
+            assert_eq!(
+                shape.row_bucket,
+                shape.drafts.len() + shape.drafts.iter().sum::<usize>()
+            );
+        }
     }
 
     #[test]

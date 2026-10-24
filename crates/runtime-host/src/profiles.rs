@@ -112,6 +112,14 @@ pub(crate) struct Speculation {
     /// `--speculation-widths` form.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widths: Option<String>,
+    /// The token capacity: most verify rows of one step, as
+    /// `--speculative-rows`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<usize>,
+    /// The graph budget: the widest verify step captured in a graph, as
+    /// `--speculation-graph-rows`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_rows: Option<usize>,
 }
 
 fn error(message: impl Into<String>) -> HostCommandErrorV1 {
@@ -238,6 +246,19 @@ impl Profile {
                 "profile speculation widths must be valid, and only balanced mode takes them",
             ));
         }
+        if (self.speculation.rows.is_some() || self.speculation.graph_rows.is_some())
+            && self.speculation.tokens == 0
+            || self
+                .speculation
+                .rows
+                .is_some_and(|rows| rows <= self.speculation.tokens)
+            || self.speculation.graph_rows == Some(0)
+        {
+            return Err(error(
+                "profile speculation rows must exceed its tokens, graph rows must be positive, \
+                 and both need speculative tokens",
+            ));
+        }
         if self
             .context_parallel_size
             .is_some_and(|size| size == 0 || self.tensor_parallel % size != 0)
@@ -332,6 +353,12 @@ impl Profile {
             if let Some(widths) = &self.speculation.widths {
                 args.extend(["--speculation-widths".into(), widths.clone()]);
             }
+            if let Some(rows) = self.speculation.rows {
+                args.extend(["--speculative-rows".into(), rows.to_string()]);
+            }
+            if let Some(rows) = self.speculation.graph_rows {
+                args.extend(["--speculation-graph-rows".into(), rows.to_string()]);
+            }
         }
         args
     }
@@ -374,8 +401,9 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// default speculation mode, an explicit mode other than `table` or zero
 /// speculative tokens the default speculation costs, an explicit mode other
 /// than `balanced` or zero speculative tokens the default depth schedule and
-/// verify widths, a non-TBT `--prefill-budget` the default TBT target. Duplicate explicit
-/// flags are kept for the serve parser to refuse.
+/// verify widths, zero speculative tokens the default speculative and graph
+/// rows, a non-TBT `--prefill-budget` the default TBT target. Duplicate
+/// explicit flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
     let flags: std::collections::BTreeSet<&str> =
@@ -416,6 +444,8 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             || (replace_costs && flag == "--speculation-costs")
             || (replace_balanced
                 && (flag == "--speculation-depths" || flag == "--speculation-widths"))
+            || (disable_speculation
+                && (flag == "--speculative-rows" || flag == "--speculation-graph-rows"))
             || (disable_tbt && flag == "--decode-tbt-target-ms")
         {
             continue;
@@ -1095,6 +1125,61 @@ mod tests {
             let refusal = refusal.to_string();
             assert!(
                 refusal.contains("only balanced mode takes them"),
+                "{refusal}"
+            );
+        }
+    }
+
+    /// A profile's token capacity and graph budget reach the serve command
+    /// as `--speculative-rows` and the `verify_graph_rows` model option;
+    /// explicit flags replace them, zero speculative tokens drop them, and
+    /// rows within the tokens or a zero graph budget are refused.
+    #[test]
+    fn profiles_pass_their_verify_rows_and_graph_rows() {
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "balanced".into();
+        entry["speculation"]["rows"] = 128.into();
+        entry["speculation"]["graph_rows"] = 64.into();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry.clone(),
+        };
+        let resolve = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
+            let resolved =
+                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                crate::HostCommandV1::Serve {
+                    speculative_rows,
+                    model_options,
+                    ..
+                } => (
+                    speculative_rows,
+                    model_options
+                        .get(runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1)
+                        .cloned(),
+                ),
+                _ => panic!("serve"),
+            }
+        };
+        assert_eq!(resolve(&[]), (Some(128), Some("64".into())));
+        assert_eq!(
+            resolve(&["--speculative-rows", "32", "--speculation-graph-rows", "32"]),
+            (Some(32), Some("32".into()))
+        );
+        assert_eq!(resolve(&["--speculative-tokens", "0"]), (None, None));
+        for (field, value) in [("rows", 3), ("graph_rows", 0)] {
+            let mut bad = entry.clone();
+            bad["speculation"][field] = value.into();
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: bad,
+            };
+            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+                panic!("{field} {value} accepted");
+            };
+            assert!(
+                refusal.to_string().contains("profile speculation rows"),
                 "{refusal}"
             );
         }

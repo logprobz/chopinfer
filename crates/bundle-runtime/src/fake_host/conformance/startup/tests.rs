@@ -325,6 +325,7 @@ fn every_profile_creates_describes_and_runs_the_hosts_warmup() {
             step_rows: 32,
             drafting_items: None,
             exact_graphs: false,
+            widths: Vec::new(),
         }
     );
     assert_eq!(mtp.verify_keys, keys(&warmup));

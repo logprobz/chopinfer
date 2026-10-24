@@ -119,6 +119,7 @@ impl Serving {
             step_rows: rows,
             drafting_items: package.maximum_draft_items.map(|items| items as usize),
             exact_graphs: package.exact_graphs,
+            widths: Vec::new(),
         })
     }
 

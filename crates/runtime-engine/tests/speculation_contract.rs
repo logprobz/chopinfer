@@ -1251,6 +1251,7 @@ fn verify_warmup_waves_reach_every_planned_shape() {
         step_rows: 64,
         drafting_items: None,
         exact_graphs: false,
+        widths: Vec::new(),
     };
     let shapes = verify_shapes(6, &warmup);
     assert!(shapes.len() >= 12, "{shapes:?}");

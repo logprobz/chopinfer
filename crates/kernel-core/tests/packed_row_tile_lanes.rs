@@ -322,6 +322,7 @@ fn a_fused_bank_is_stored_in_quad_lane_order() {
 #[test]
 fn encoded_scales_are_the_row_tiles_encoding() {
     use kernel_core::precision::scale_offset::{ScaleCode, WIDTHS, census};
+    use kernel_core::weight_transform::ScaleFormat;
     for (operand, mut record, [codes, scales]) in seeded().into_iter().take(8) {
         let sources = [codes.as_slice(), scales.as_slice()];
         let row_major = with_layout(operand.clone(), "row-major-groups")
@@ -329,21 +330,23 @@ fn encoded_scales_are_the_row_tiles_encoding() {
             .unwrap();
         let (rows, groups) = operand.plan.scale_shape();
         let counts = census(&row_major[1], rows as u64, groups as u64).unwrap();
-        for (slot, width) in WIDTHS.into_iter().enumerate() {
-            let mut encoded = operand.clone();
-            encoded.local_encoding = Some(ScaleEncoding {
-                format: Default::default(),
-                code: ScaleCode::Ue8m0,
-                width,
-                exceptions: counts[slot],
-            });
-            record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
-            let tiled = with_layout(encoded.clone(), ROW_TILES_64X128)
-                .execute_sections(&record, &sources)
-                .unwrap();
-            let stored = encoded.execute_sections(&record, &sources).unwrap();
-            assert_eq!(stored[1], tiled[1]);
-            assert_eq!(stored[0], lanes(tiled)[0]);
+        for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+            for (slot, width) in WIDTHS.into_iter().enumerate() {
+                let mut encoded = operand.clone();
+                encoded.local_encoding = Some(ScaleEncoding {
+                    format,
+                    code: ScaleCode::Ue8m0,
+                    width,
+                    exceptions: counts[slot],
+                });
+                record.transform = WeightTransform::PackedOperand(Box::new(encoded.clone()));
+                let tiled = with_layout(encoded.clone(), ROW_TILES_64X128)
+                    .execute_sections(&record, &sources)
+                    .unwrap();
+                let stored = encoded.execute_sections(&record, &sources).unwrap();
+                assert_eq!(stored[1], tiled[1]);
+                assert_eq!(stored[0], lanes(tiled)[0]);
+            }
         }
     }
 }

@@ -317,10 +317,30 @@ fn a_keeper_of_row_tiled_banks_lends_nothing_to_a_quad_lane_plan() {
 /// A keeper of the bank planned in `kept`, in keeper directory `name`, lends
 /// nothing to a server that plans it in `planned`.
 fn lends_nothing(name: &str, kept: &str, planned: &str) {
-    use super::packed::{bank_checkpoint, bank_plans};
+    lends_nothing_formats(name, kept, planned, None);
+}
+
+fn lends_nothing_formats(
+    name: &str,
+    kept: &str,
+    planned: &str,
+    formats: Option<(
+        kernel_core::weight_transform::ScaleFormat,
+        kernel_core::weight_transform::ScaleFormat,
+    )>,
+) {
+    use super::packed::{bank_checkpoint, bank_plans, encoded_as};
     let (root, tensors) = bank_checkpoint();
     let (keeps, kept_bytes) = bank_plans(ROLE, kept, &tensors);
     let (plans, planned_bytes) = bank_plans(ROLE, planned, &tensors);
+    let ((keeps, kept_bytes), (plans, planned_bytes)) = if let Some((a, b)) = formats {
+        (
+            encoded_as(&keeps, &kept_bytes, 1, a),
+            encoded_as(&plans, &planned_bytes, 1, b),
+        )
+    } else {
+        ((keeps, kept_bytes), (plans, planned_bytes))
+    };
     let directory = KeeperDirectory::new(name);
     let keeper = keep(&root.0, &keeps, &directory.0, |_| {});
     let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
@@ -352,4 +372,21 @@ fn lends_nothing(name: &str, kept: &str, planned: &str) {
         assert_ne!(bytes, kept_bytes[rank], "{kept} -> {planned} rank {rank}");
     }
     assert_eq!(keeper.join(), Ok(KeeperExitV1::Released));
+}
+
+#[test]
+fn a_keeper_never_lends_between_row_and_tile_scale_encodings() {
+    use kernel_core::precision::layout::ROW_TILES_64X128_LANES;
+    use kernel_core::weight_transform::ScaleFormat::{RowOffsetV1, RowTilesOffsetV1};
+    for (name, formats) in [
+        ("scales-to-tiles", (RowOffsetV1, RowTilesOffsetV1)),
+        ("scales-to-rows", (RowTilesOffsetV1, RowOffsetV1)),
+    ] {
+        lends_nothing_formats(
+            name,
+            ROW_TILES_64X128_LANES,
+            ROW_TILES_64X128_LANES,
+            Some(formats),
+        );
+    }
 }

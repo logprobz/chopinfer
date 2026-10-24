@@ -587,8 +587,17 @@ fn encoded(
     expected: &[Vec<u8>],
     width: u32,
 ) -> (Vec<WeightPlanV1>, Vec<Vec<u8>>) {
+    encoded_as(plans, expected, width, Default::default())
+}
+
+pub(super) fn encoded_as(
+    plans: &[WeightPlanV1],
+    expected: &[Vec<u8>],
+    width: u32,
+    format: kernel_core::weight_transform::ScaleFormat,
+) -> (Vec<WeightPlanV1>, Vec<Vec<u8>>) {
     use kernel_core::precision::scale_offset::{self, ScaleCode, WIDTHS};
-    use kernel_core::weight_transform::ScaleEncoding;
+    use kernel_core::weight_transform::{ScaleEncoding, ScaleFormat};
     let slot = WIDTHS.iter().position(|w| *w == width).unwrap();
     let mut plans = plans.to_vec();
     let mut arenas = Vec::new();
@@ -604,11 +613,29 @@ fn encoded(
             if operand.section == PackedSection::LocalScales {
                 let (rows, groups) = operand.plan.scale_shape();
                 let bytes = &raw[record.arena_offset as usize..][..record.byte_length as usize];
+                // A raw tiled plan stores scales in tiles. The encoded
+                // transform always measures and encodes their row order.
+                let untiled = operand.plan.row_tiles().map(|tiles| {
+                    (0..rows * groups)
+                        .map(|i| bytes[tiles[1].offset(i / groups, i % groups)])
+                        .collect::<Vec<_>>()
+                });
+                let bytes = untiled.as_deref().unwrap_or(bytes);
                 let counts = scale_offset::census(bytes, rows as u64, groups as u64).unwrap();
-                let stored =
-                    scale_offset::encode(bytes, rows as u64, groups as u64, width).unwrap();
+                let stored = match format {
+                    ScaleFormat::RowOffsetV1 => {
+                        scale_offset::encode(bytes, rows as u64, groups as u64, width).unwrap()
+                    }
+                    ScaleFormat::RowTilesOffsetV1 => kernel_core::precision::scale_tiles::encode(
+                        bytes,
+                        rows as u64,
+                        groups as u64,
+                        width,
+                    )
+                    .unwrap(),
+                };
                 let encoding = ScaleEncoding {
-                    format: Default::default(),
+                    format,
                     code: ScaleCode::Ue8m0,
                     width,
                     exceptions: counts[slot],
@@ -790,11 +817,14 @@ fn encoded_scale_records_load_as_their_encoding() {
     use kernel_core::precision::scale_offset;
     let (root, plans, expected, _) = fixture(6);
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
-    for width in scale_offset::WIDTHS {
-        let (encoded_plans, arenas) = encoded(&plans, &expected, width);
-        for (threads, shared) in [(1, 0), (2, 128 << 10)] {
-            let image = sharing_image(&checkpoint, &encoded_plans, threads, shared);
-            assert_eq!(waves(&image, 4096), arenas, "width {width}");
+    use kernel_core::weight_transform::ScaleFormat;
+    for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+        for width in scale_offset::WIDTHS {
+            let (encoded_plans, arenas) = encoded_as(&plans, &expected, width, format);
+            for (threads, shared) in [(1, 0), (2, 128 << 10)] {
+                let image = sharing_image(&checkpoint, &encoded_plans, threads, shared);
+                assert_eq!(waves(&image, 4096), arenas, "{format:?} width {width}");
+            }
         }
     }
 }
@@ -941,11 +971,17 @@ fn row_tiled_banks_load_their_row_major_shares_in_tiles() {
 #[test]
 fn row_tiled_banks_encode_their_scales_from_rows() {
     for layout in [ROW_TILES_64X128, ROW_TILES_64X128_LANES] {
-        tiled_banks_encode_their_scales_from_rows(layout);
+        use kernel_core::weight_transform::ScaleFormat;
+        for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+            tiled_banks_encode_their_scales_from_rows(layout, format);
+        }
     }
 }
 
-fn tiled_banks_encode_their_scales_from_rows(layout: &str) {
+fn tiled_banks_encode_their_scales_from_rows(
+    layout: &str,
+    format: kernel_core::weight_transform::ScaleFormat,
+) {
     use kernel_core::precision::scale_offset::WIDTHS;
     let (root, tensors) = bank_checkpoint();
     let (rows, row_major) = bank_plans("r", "row-major-groups", &tensors);
@@ -961,7 +997,7 @@ fn tiled_banks_encode_their_scales_from_rows(layout: &str) {
     for width in WIDTHS {
         // The row-major bank encoded, then each record in tiles: its codes
         // are the tiled plan's, its encoded scales stay as encoded.
-        let (mut plans, mut arenas) = encoded(&rows, &row_major, width);
+        let (mut plans, mut arenas) = encoded_as(&rows, &row_major, width, format);
         for (rank, plan) in plans.iter_mut().enumerate() {
             for record in &mut plan.records {
                 let mut tiled_operand = operand(record);
@@ -990,5 +1026,37 @@ fn tiled_banks_encode_their_scales_from_rows(layout: &str) {
             let image = sharing_image(&checkpoint, &plans, threads, shared);
             assert_eq!(waves(&image, 4096), arenas, "{layout} width {width}");
         }
+    }
+}
+
+/// Sharing one checkpoint must never cross the scale format in its key,
+/// including when the two encodings occur in a single load wave.
+#[test]
+fn shared_packing_separates_scale_formats() {
+    use kernel_core::weight_transform::ScaleFormat;
+    let (root, plans, expected, _) = fixture(6);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for width in [1, 2, 4] {
+        let (v1, old) = encoded_as(&plans, &expected, width, ScaleFormat::RowOffsetV1);
+        let (v2, tiles) = encoded_as(&plans, &expected, width, ScaleFormat::RowTilesOffsetV1);
+        let old_image = sharing_image(&checkpoint, &v1, 2, 128 << 10);
+        let tile_image = sharing_image(&checkpoint, &v2, 2, 128 << 10);
+        let mut mixed = Vec::new();
+        let mut wanted = Vec::new();
+        for rank in 0..plans.len() {
+            assert_ne!(old_image.identity(rank), tile_image.identity(rank));
+            mixed.push(if rank % 2 == 0 {
+                v1[rank].clone()
+            } else {
+                v2[rank].clone()
+            });
+            wanted.push(if rank % 2 == 0 {
+                old[rank].clone()
+            } else {
+                tiles[rank].clone()
+            });
+        }
+        let image = sharing_image(&checkpoint, &mixed, 2, 128 << 10);
+        assert_eq!(waves(&image, 4096), wanted);
     }
 }

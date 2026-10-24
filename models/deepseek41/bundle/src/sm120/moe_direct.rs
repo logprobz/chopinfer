@@ -22,12 +22,14 @@ use model_deepseek41_contract::moe::Experts;
 // Full graphs, poisoned replays and clean eager/graph memcheck preserve
 // the result. Local-fold candidates remain unselected. A separate measured
 // router epilogue may fuse projection reduction, selection and metadata.
-fn buckets(set: Experts) -> Vec<(ExecutionPhase, u32)> {
+fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
     use ExecutionPhase::{Decode, Verify};
     let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
     out.extend([1, 2, 4, 5, 6, 8, 16, 32, 64].map(|rows| (Verify, rows)));
     if set.count == 128 {
         out.push((Verify, 48));
+    } else {
+        out.extend((33..=maximum_verify_rows.min(63)).map(|rows| (Verify, rows)));
     }
     out
 }
@@ -54,9 +56,10 @@ pub(super) fn prepare_set(
         super::moe_row_tiles_op::layout(shape.geometry, shape.ranks(), set),
     )
     .map_err(Refused::Rule)?;
-    buckets(set)
+    buckets(set, shape.verify_decode_rows())
         .into_iter()
         .map(|(phase, rows)| {
+            let wide = super::moe_router_finish::wide(set, phase, rows, shape.verify_decode_rows());
             Ok((
                 phase,
                 rows,
@@ -65,8 +68,8 @@ pub(super) fn prepare_set(
                     rows,
                     phase,
                     scaling,
-                    super::moe_router_finish::qualified(set, phase, rows),
-                    super::moe_router_finish::r2(set, phase, rows),
+                    super::moe_router_finish::qualified(set, phase, rows) || wide,
+                    super::moe_router_finish::r2(set, phase, rows) || wide,
                     &tiles,
                 )?,
             ))
@@ -333,7 +336,16 @@ fn prepare(
             },
         });
     }
-    Ok(Prepared::new(info, calls, ticket_offset))
+    let mut prepared = Prepared::new(info, calls, ticket_offset);
+    if fused_router && rows > 32 {
+        let layout = kernels_sm120::moe::chained::router_finish64::Layout::new(entry, rows)?;
+        prepared = prepared.with_router_planes(crate::ops::moe::direct::RouterPlanes {
+            domain_bytes: kernels_sm120::moe::chained::router_finish64::DOMAIN_BYTES,
+            partial_offset: layout.partials,
+            partial_bytes: layout.partial_bytes,
+        });
+    }
+    Ok(prepared)
 }
 
 fn role(stage: Option<Stage>, name: &str) -> &str {

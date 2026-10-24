@@ -3,6 +3,10 @@ use super::{Lowering, layer_view};
 use crate::ops::{Lowered, moe::direct::Point};
 use crate::program::{Phase, Stage};
 
+#[cfg(test)]
+#[path = "moe_direct_wide_tests.rs"]
+mod wide_tests;
+
 impl Lowering<'_> {
     pub(super) fn moe_direct_stage(
         &self,
@@ -14,26 +18,51 @@ impl Lowering<'_> {
         };
         let (layer, point, partial) = match stage {
             Stage::Project(layer, "moe.router") => {
-                let projected = self.exact_f32(phase, layer, "moe.router")?;
-                if !op.fuses_router() {
-                    return Ok(projected);
+                if let Some((row_domain, partials)) = op.router_spans(self.buffers.workspace)? {
+                    let cached = self
+                        .ops
+                        .exact_f32
+                        .as_ref()
+                        .and_then(|ops| ops.cached_router(phase))
+                        .ok_or("wide fused router requires named cached stages")?;
+                    let name = layer_view(layer, "ffn.gate.weight");
+                    let scratch = &self.buffers.scratch;
+                    let stages = cached
+                        .project(
+                            phase.rows(),
+                            super::rows(scratch.normed_wide, phase.rows()),
+                            self.buffers.view(&name)?,
+                            super::rows(scratch.router_logits, phase.rows()),
+                            self.inputs.live_tokens,
+                            crate::ops::exact_f32::state(self.buffers, &name),
+                        )
+                        .map_err(|e| format!("wide fused router stages: {e}"))?;
+                    let producer = stages
+                        .into_producer(phase.rows(), row_domain, partials)
+                        .map_err(|e| format!("wide fused router producer: {e}"))?;
+                    (layer, Point::RouterPrepare, Some(producer))
+                } else {
+                    let projected = self.exact_f32(phase, layer, "moe.router")?;
+                    if !op.fuses_router() {
+                        return Ok(projected);
+                    }
+                    let mut projected =
+                        projected.ok_or("fused router requires exact F32 projection")?;
+                    let suffixes = ["_cached_rows_v1", "_cached_decode_v1", "_cached_reduce_v1"];
+                    if projected.len() != suffixes.len()
+                        || !projected
+                            .iter()
+                            .zip(suffixes)
+                            .all(|(p, suffix)| p.launch.symbol.ends_with(suffix))
+                    {
+                        return Err(
+                            "fused router requires the qualified cached partial producer".into(),
+                        );
+                    }
+                    // Keep the original producer and all of its bindings. The
+                    // route stage now performs its ordered reduction.
+                    (layer, Point::RouterPrepare, Some(projected.remove(1)))
                 }
-                let mut projected =
-                    projected.ok_or("fused router requires exact F32 projection")?;
-                let suffixes = ["_cached_rows_v1", "_cached_decode_v1", "_cached_reduce_v1"];
-                if projected.len() != suffixes.len()
-                    || !projected
-                        .iter()
-                        .zip(suffixes)
-                        .all(|(p, suffix)| p.launch.symbol.ends_with(suffix))
-                {
-                    return Err(
-                        "fused router requires the qualified cached partial producer".into(),
-                    );
-                }
-                // Keep the original producer and all of its bindings. The
-                // route stage now performs its ordered reduction.
-                (layer, Point::RouterPrepare, Some(projected.remove(1)))
             }
             Stage::Route(l) => (l, Point::Route, None),
             Stage::ExpertsGateUp(l) => (l, Point::Gate, None),

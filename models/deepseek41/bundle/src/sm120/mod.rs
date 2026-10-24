@@ -191,6 +191,8 @@ pub mod moe_pipeline;
 mod moe_pipeline_entries;
 #[allow(dead_code, reason = "the build compiles the frozen vector declaration")]
 mod moe_pipeline_vector;
+#[allow(dead_code, reason = "the build script compiles the router family")]
+pub(crate) mod moe_router64;
 pub(crate) mod moe_router_finish;
 #[allow(dead_code, reason = "the build script serves the tiled builds")]
 pub mod moe_row_tiles;
@@ -890,6 +892,8 @@ impl crate::Kernels {
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))
+            && (cubin != moe_router64::CUBIN
+                || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && cubin != kernels_sm120::probes::CUBIN

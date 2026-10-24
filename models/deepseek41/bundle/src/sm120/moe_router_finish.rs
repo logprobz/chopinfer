@@ -4,7 +4,7 @@ use crate::ops::moe::direct::{Call, Point, Pointer, Source};
 use kernel_core::backend::{Launch, Refused};
 use kernel_core::contract::{Argument, ArgumentList};
 use kernel_core::precision::ExecutionPhase;
-use kernels_sm120::moe::chained::{floor::Entry, router_finish as kernel};
+use kernels_sm120::moe::chained::{floor::Entry, router_finish as kernel, router_finish64};
 use model_deepseek41_contract::moe::Experts;
 
 // TP4, 250 W, 2026-10-19, complete bitwise graphs and clean eager/graph
@@ -34,6 +34,17 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
         (128, 3, ExecutionPhase::Decode) => rows == 1,
         _ => false,
     }
+}
+
+pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows: u32) -> bool {
+    #[cfg(test)]
+    if DISABLED.get() {
+        return false;
+    }
+    set.count == 384
+        && set.top_k == 6
+        && phase == ExecutionPhase::Verify
+        && (33..=maximum_rows.min(64)).contains(&rows)
 }
 
 // TP4, 250 W, 2026-10-21, captured full MoE graphs, every case bitwise
@@ -81,6 +92,14 @@ pub(crate) struct Layout {
 }
 
 pub(crate) fn layout(entry: &Entry, rows: u32) -> Layout {
+    if rows > 32 {
+        let wide = router_finish64::Layout::new(entry, rows).expect("admitted wide router rows");
+        return Layout {
+            partial_bytes: wide.partials + wide.partial_bytes,
+            arrival: wide.arrival,
+            routed: wide.routed,
+        };
+    }
     let partial_bytes = kernel::router_workspace_bytes(entry, rows);
     let arrival = partial_bytes.next_multiple_of(256);
     Layout {
@@ -96,12 +115,18 @@ pub(super) fn calls(e: &Entry, rows: u32, scale_bits: u32, r2: bool) -> Result<V
     kernel::STAGES
         .into_iter()
         .map(|stage| {
-            let spec = if r2 && stage == kernel::Stage::Finish {
+            let spec = if rows > 32 {
+                router_finish64::entry(e, stage)
+            } else if r2 && stage == kernel::Stage::Finish {
                 kernel::r2_entry(e, R2_VARIANT, false)
             } else {
                 kernel::entry(e, stage)
             };
-            let plan = kernel::plan(e, stage, rows)?;
+            let plan = if rows > 32 {
+                router_finish64::plan(e, stage, rows)?
+            } else {
+                kernel::plan(e, stage, rows)?
+            };
             let pointers = spec
                 .params
                 .iter()
@@ -112,6 +137,14 @@ pub(super) fn calls(e: &Entry, rows: u32, scale_bits: u32, r2: bool) -> Result<V
                     };
                     let (source, bytes, alignment) = match name.as_str() {
                         "workspace" => (Source::WorkspaceAt(0), layout.partial_bytes, 256),
+                        "row_domain" => {
+                            (Source::WorkspaceAt(0), router_finish64::DOMAIN_BYTES, 256)
+                        }
+                        "partials" => (
+                            Source::WorkspaceAt(router_finish64::DOMAIN_BYTES),
+                            layout.partial_bytes - router_finish64::DOMAIN_BYTES,
+                            256,
+                        ),
                         "arrived" => (Source::WorkspaceAt(layout.arrival), 4, 4),
                         "scratch" => (
                             Source::WorkspaceAt(layout.routed),

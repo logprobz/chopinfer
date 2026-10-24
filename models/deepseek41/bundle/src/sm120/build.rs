@@ -198,6 +198,8 @@ mod moe_pipeline_entries;
 #[allow(dead_code)]
 mod moe_pipeline_vector;
 #[allow(dead_code)]
+mod moe_router64;
+#[allow(dead_code)]
 mod moe_row_tiles;
 #[path = "mxfp8_fold.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -776,6 +778,7 @@ pub fn selection(
         ));
     }
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
+    specs.extend(moe_router64::cubins(geometries).expect("wide router finish cubins"));
     // A composition may already carry the floor family for a drafter route.
     // Reuse that identical locked module; add only absent direct dependencies.
     for geometry in geometries {

@@ -32,8 +32,62 @@ pub(crate) struct Prepared {
     pub info: OpInfo,
     calls: Vec<Call>,
     ticket_offset: u64,
+    router_planes: Option<RouterPlanes>,
 }
+
+#[derive(Clone, Copy)]
+pub(crate) struct RouterPlanes {
+    pub domain_bytes: u64,
+    pub partial_offset: u64,
+    pub partial_bytes: u64,
+}
+
+impl RouterPlanes {
+    fn bind(
+        self,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<(DeviceBufferSpanV1, DeviceBufferSpanV1), String> {
+        let end = self
+            .partial_offset
+            .checked_add(self.partial_bytes)
+            .ok_or("router partial span overflows")?;
+        if self.domain_bytes == 0
+            || self.partial_bytes == 0
+            || self.domain_bytes > self.partial_offset
+            || !workspace.offset.is_multiple_of(256)
+            || !self.partial_offset.is_multiple_of(256)
+            || end > workspace.length
+        {
+            return Err("router planes are short, overlapping or unaligned".into());
+        }
+        workspace
+            .offset
+            .checked_add(end)
+            .ok_or("router workspace span overflows")?;
+        Ok((
+            DeviceBufferSpanV1::new(workspace.buffer, workspace.offset, self.domain_bytes),
+            DeviceBufferSpanV1::new(
+                workspace.buffer,
+                workspace.offset + self.partial_offset,
+                self.partial_bytes,
+            ),
+        ))
+    }
+}
+
 impl Prepared {
+    pub(crate) fn with_router_planes(mut self, planes: RouterPlanes) -> Self {
+        self.router_planes = Some(planes);
+        self
+    }
+
+    pub(crate) fn router_spans(
+        &self,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Option<(DeviceBufferSpanV1, DeviceBufferSpanV1)>, String> {
+        self.router_planes.map(|p| p.bind(workspace)).transpose()
+    }
+
     pub(crate) fn inplace_scales(&self, gate_up: bool, width: u32) -> bool {
         let point = if gate_up { Point::Gate } else { Point::Down };
         let role = if gate_up {
@@ -65,6 +119,7 @@ impl Prepared {
             info,
             calls,
             ticket_offset,
+            router_planes: None,
         }
     }
     pub(crate) fn record(&self, asks: &Asks, phase: ExecutionPhase, rows: u32) {
@@ -126,5 +181,59 @@ impl Prepared {
             result.push(bind.lowered(launch));
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+
+    #[test]
+    fn router_planes_refuse_short_overlapping_and_overflowing_spans() {
+        let planes = RouterPlanes {
+            domain_bytes: 256,
+            partial_offset: 256,
+            partial_bytes: 61440 * 64,
+        };
+        let workspace = DeviceBufferSpanV1::new(
+            BundleDeviceBufferHandleV1::from_parts(1, 1),
+            256,
+            256 + planes.partial_bytes,
+        );
+        let (domain, partials) = planes.bind(workspace).unwrap();
+        assert_eq!(domain.offset + domain.length, partials.offset);
+        for bad in [
+            DeviceBufferSpanV1 {
+                length: workspace.length - 1,
+                ..workspace
+            },
+            DeviceBufferSpanV1 {
+                offset: 1,
+                ..workspace
+            },
+            DeviceBufferSpanV1 {
+                offset: u64::MAX - 255,
+                ..workspace
+            },
+        ] {
+            assert!(planes.bind(bad).is_err());
+        }
+        assert!(
+            RouterPlanes {
+                domain_bytes: 257,
+                ..planes
+            }
+            .bind(workspace)
+            .is_err()
+        );
+        assert!(
+            RouterPlanes {
+                partial_bytes: u64::MAX,
+                ..planes
+            }
+            .bind(workspace)
+            .is_err()
+        );
     }
 }

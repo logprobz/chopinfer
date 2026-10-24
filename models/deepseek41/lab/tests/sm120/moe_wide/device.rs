@@ -48,8 +48,10 @@ impl<'a> Pool<'a> {
             if !b.is_aligned_to(256) {
                 return Err("unaligned guarded allocation".into());
             }
-            b.copy_from_bytes(&vec![MARK; allocated], &s.stream)
-                .map_err(|e| e.to_string())?;
+            for offset in [0, GUARD + size] {
+                b.copy_from_bytes_at(offset, &[MARK; GUARD], &s.stream)
+                    .map_err(|e| e.to_string())?;
+            }
             b.zero_at_async(GUARD, size, &s.stream)
                 .map_err(|e| e.to_string())?;
             self.buffers.insert(view.handle, b);
@@ -137,6 +139,21 @@ impl<'a> Pool<'a> {
         }
         Ok(())
     }
+    pub fn mark(&self) -> u64 {
+        self.next
+    }
+    pub fn allocated_bytes(&self) -> u64 {
+        self.roots.iter().map(|v| v.bytes + 2 * GUARD as u64).sum()
+    }
+    pub fn truncate(&mut self, mark: u64) -> LabResult<()> {
+        if let Some(s) = self.session {
+            s.context.synchronize().map_err(|e| e.to_string())?;
+        }
+        self.roots.retain(|v| v.handle <= mark);
+        self.regions.retain(|handle, _| *handle <= mark);
+        self.buffers.retain(|handle, _| *handle <= mark);
+        Ok(())
+    }
     pub fn argument(&self, handle: u64) -> LabResult<KernelArgument<'_>> {
         let r = self.regions.get(&handle).ok_or("unbound lab view")?;
         Ok(KernelArgument::Range {
@@ -161,10 +178,14 @@ impl Drop for Pool<'_> {
 pub struct Programs(BTreeMap<String, Function>);
 impl Programs {
     pub fn load(pool: &Pool<'_>, calls: &[Launch]) -> LabResult<Self> {
+        let mut programs = Self(BTreeMap::new());
+        programs.extend(pool, calls)?;
+        Ok(programs)
+    }
+    pub fn extend(&mut self, pool: &Pool<'_>, calls: &[Launch]) -> LabResult<()> {
         let s = pool.session.ok_or("loading needs a GPU")?;
-        let mut functions = BTreeMap::new();
         for call in calls {
-            if functions.contains_key(&call.symbol) {
+            if self.0.contains_key(&call.symbol) {
                 continue;
             }
             let (_, bytes) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
@@ -173,9 +194,9 @@ impl Programs {
                 .load_cubin(bytes)?
                 .function(&call.symbol)
                 .map_err(|e| e.to_string())?;
-            functions.insert(call.symbol.clone(), f);
+            self.0.insert(call.symbol.clone(), f);
         }
-        Ok(Self(functions))
+        Ok(())
     }
     pub fn issue(&self, pool: &Pool<'_>, calls: &[Launch], stream: &Stream) -> LabResult<()> {
         for call in calls {

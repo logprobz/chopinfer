@@ -1,6 +1,21 @@
 //! Complete wide MoE pairs keep explicit reference schedules and guarded spans.
 mod device;
+mod full;
+mod graphs;
+mod recorded;
 mod router;
+
+#[test]
+#[ignore = "requires frozen programs, weights and an allocated GPU pair"]
+fn full_gpu() {
+    let options = full::Options::environment().unwrap();
+    if std::env::var("CHOPINFER_MOE_WIDE_DRY_RUN").as_deref() == Ok("1") {
+        full::run(None, options).unwrap();
+        return;
+    }
+    let ran = kernel_harness::gpu_test(4_u64 << 30, |s| full::run(Some(s), options)).unwrap();
+    assert!(ran.is_some(), "an idle GPU is required");
+}
 
 #[test]
 fn router64_cpu_inventory() {

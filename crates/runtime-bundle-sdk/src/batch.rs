@@ -10,7 +10,7 @@ mod verify_allocation;
 pub use verify_allocation::{
     BATCH_REQUEST_MAGIC_V7, InvalidVerifyAllocationV1, SamplingKindV1,
     VERIFY_ALLOCATION_POSITIONS_V1, VerifyAllocationV1, VerifyCalibrationV1,
-    allocate_verify_drafts_v1,
+    allocate_verify_drafts_v1, sigmoid_v1,
 };
 
 /// The fixed prefix of one V1 batch request.

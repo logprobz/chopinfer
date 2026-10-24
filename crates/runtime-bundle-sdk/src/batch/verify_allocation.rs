@@ -102,14 +102,52 @@ impl VerifyCalibrationV1 {
     }
 
     /// The calibrated acceptance probability of a raw score at a draft
-    /// position counted from zero, in f32 and within [0, 1]; a score that
+    /// position counted from zero: [`sigmoid_v1`] of `scale * score +
+    /// offset`, each operation rounded to f32, within (0, 1]; a score that
     /// gives no number gives zero.
     #[must_use]
     pub fn probability(&self, kind: SamplingKindV1, position: usize, score: f32) -> f32 {
         let (scale, offset) = self.pair(kind, position);
-        let p = 1.0 / (1.0 + (-(scale * score + offset)).exp());
-        if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) }
+        sigmoid_v1(scale * score + offset)
     }
+}
+
+/// `log2(e)`, `ln(2)` split so `n * LN2_HI` is exact, and the remainder.
+const LOG2E: u32 = 0x3fb8_aa3b;
+const LN2_HI: u32 = 0x3f31_8000;
+const LN2_LO: u32 = 0xb95e_8083;
+/// `1/k!` for k = 6 down to 2.
+const TAYLOR: [u32; 5] = [
+    0x3ab6_0b61,
+    0x3c08_8889,
+    0x3d2a_aaab,
+    0x3e2a_aaab,
+    0x3f00_0000,
+];
+
+/// `1 / (1 + exp(-z))` from IEEE single operations alone, each rounded to
+/// nearest with no fused multiply-add, so a device reproduces it bit for
+/// bit: z is clamped to [-30, 30]; with `x = -z`, `n = floor(x * LOG2E +
+/// 0.5)`, `r = (x - n * LN2_HI) - n * LN2_LO`, `exp(x) = 2^n * t` where
+/// `t = ((((((r * c6 + c5) * r + c4) * r + c3) * r + c2) * r + 1) * r + 1)`
+/// with `c_k = 1/k!` as [`TAYLOR`]'s bits, and the result is `1 / (1 +
+/// exp(x))`. A NaN gives zero. Within 2e-7 of the exact sigmoid.
+#[must_use]
+pub fn sigmoid_v1(z: f32) -> f32 {
+    if z.is_nan() {
+        return 0.0;
+    }
+    let x = -z.clamp(-30.0, 30.0);
+    let n = (x * f32::from_bits(LOG2E) + 0.5).floor();
+    let r = (x - n * f32::from_bits(LN2_HI)) - n * f32::from_bits(LN2_LO);
+    let mut taylor = f32::from_bits(TAYLOR[0]);
+    for &coefficient in &TAYLOR[1..] {
+        taylor = taylor * r + f32::from_bits(coefficient);
+    }
+    let taylor = (taylor * r + 1.0) * r + 1.0;
+    // n is within [-44, 44], so 2^n is a normal f32.
+    let power = f32::from_bits(((n as i32 + 127) as u32) << 23);
+    1.0 / (1.0 + taylor * power)
 }
 
 /// One verify step's allocation: the rows the target verifies, the drafts
@@ -521,6 +559,44 @@ mod tests {
             assert!(verified.iter().zip(reserved).all(|(k, c)| *k <= c));
         }
     }
+
+    /// The rule's sigmoid stays within 2e-7 of the exact one, never grows
+    /// past one or shrinks below zero, and maps a NaN to zero. Its bits are
+    /// pinned, so a device implementation is checked against them.
+    #[test]
+    fn the_rules_sigmoid_is_close_to_exact_and_its_bits_are_pinned() {
+        for step in -4000..=4000 {
+            let z = step as f32 / 100.0;
+            let exact = 1.0 / (1.0 + (-f64::from(z)).exp());
+            let p = sigmoid_v1(z);
+            assert!((f64::from(p) - exact).abs() < 2e-7, "{z} {p} {exact}");
+            assert!((0.0..=1.0).contains(&p));
+        }
+        for step in -3000..3000 {
+            let z = step as f32 / 100.0;
+            assert!(sigmoid_v1(z) <= sigmoid_v1(z + 0.01), "{z}");
+        }
+        assert_eq!(sigmoid_v1(f32::NAN), 0.0);
+        assert_eq!(sigmoid_v1(f32::INFINITY), sigmoid_v1(30.0));
+        assert_eq!(sigmoid_v1(f32::NEG_INFINITY), sigmoid_v1(-30.0));
+        let pinned = [-30.0, -7.25, -1.0, -0.125, 0.0, 0.5, 2.0, 13.0, 30.0]
+            .map(|z: f32| sigmoid_v1(z).to_bits());
+        assert_eq!(pinned, PINNED_SIGMOID_BITS, "{pinned:#010x?}");
+    }
+
+    /// Also reproduced by rounding each operation to f32 in an independent
+    /// script.
+    const PINNED_SIGMOID_BITS: [u32; 9] = [
+        0x29d2_b707,
+        0x3a3a_092e,
+        0x3e89_b2b1,
+        0x3ef0_0553,
+        0x3f00_0000,
+        0x3f1f_597f,
+        0x3f61_7bea,
+        0x3f7f_ffda,
+        0x3f80_0000,
+    ];
 
     /// The kind selects the calibration.
     #[test]

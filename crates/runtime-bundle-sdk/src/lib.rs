@@ -26,7 +26,7 @@ pub use batch::{
     BatchWriteErrorV1, DRAFT_SAMPLING_BYTES_V1, DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1,
     InvalidDraftSamplingV1, InvalidVerifyAllocationV1, MAXIMUM_BATCH_WIRE_ELEMENTS_V1,
     SamplingKindV1, VERIFY_ALLOCATION_POSITIONS_V1, VerifyAllocationV1, VerifyCalibrationV1,
-    allocate_verify_drafts_v1,
+    allocate_verify_drafts_v1, sigmoid_v1,
 };
 pub use host::{
     AuthenticatedComponentErrorV1, AuthenticatedComponentV1, HostServiceErrorV1,

@@ -1,5 +1,6 @@
 //! Connect the model-owned lifecycle to one synchronous bundle instance.
 
+mod allocation;
 mod batch;
 #[cfg(feature = "diagnostic-taps")]
 mod batch_check;
@@ -331,6 +332,14 @@ impl Instance {
                 return BundleStatusV1::InvalidArgument;
             }
         };
+        // An allocated step's verified drafts stay on the device, so only
+        // the device results path takes it.
+        let allocated =
+            BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
+        if allocated && !sink.device_results_enabled() {
+            self.log("DSpark allocated verify steps need device results");
+            return BundleStatusV1::Unsupported;
+        }
         if let Err(error) = self.consume_dspark_prefetch(&inputs) {
             if let Some(runtime) = self
                 .dspark
@@ -345,6 +354,15 @@ impl Instance {
         if let Err(error) = self.begin_dspark_results(sink, &inputs, &step) {
             self.log(&error);
             return BundleStatusV1::InvalidArgument;
+        }
+        if allocated
+            && self
+                .dspark
+                .as_ref()
+                .is_some_and(|device| device.results.metadata.is_none())
+        {
+            self.log("DSpark allocated verify steps need device results");
+            return BundleStatusV1::Unsupported;
         }
         #[cfg(feature = "diagnostic-taps")]
         if self.active_dspark_state_capture().is_some() {

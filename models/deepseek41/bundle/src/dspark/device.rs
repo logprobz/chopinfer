@@ -224,9 +224,12 @@ impl Device {
             allocation: verify_allocation
                 .then(|| {
                     super::allocation::Allocation::new(
+                        kernels.backend.as_ref(),
                         kernels.own.as_ref(),
                         g.shape.vocab,
-                        shape.verify_rows,
+                        (config.slots, shape.verify_rows),
+                        features.row_bytes(),
+                        g.shape.hidden,
                     )
                 })
                 .transpose()?,

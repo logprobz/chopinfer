@@ -34,26 +34,60 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("rank {}'s head rows: {refusal}", self.rank))
     }
 
+    /// An allocated verify step's computed final-norm rows gathered by
+    /// `expand` into its `head_rows` reserved rows at `destination`, with
+    /// the device count `count` of them.
+    pub(crate) fn reserved_head_rows(
+        &self,
+        phase: Phase,
+        expand: Span,
+        count: Span,
+        destination: Span,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        let Some(ops) = &self.ops.logits else {
+            return Ok(None);
+        };
+        let spans = GatherByIndexBuffers {
+            source: rows(self.buffers.scratch.normed_wide, phase.rows()),
+            row_indices: expand,
+            count,
+            destination,
+        };
+        ops.head_rows(self.head_rows, self.head_rows, spans)
+            .map(Some)
+            .map_err(|refusal| format!("rank {}'s reserved head rows: {refusal}", self.rank))
+    }
+
     /// The head over the rank's vocabulary shard: a decode or verify
     /// phase's final-norm rows, or a prefill's gathered head rows (none
     /// without logits rows).
     pub(super) fn lm_head(&self, phase: Phase) -> Result<Option<Vec<Lowered>>, String> {
-        let Some(ops) = &self.ops.head else {
-            return Ok(None);
-        };
         let scratch = &self.buffers.scratch;
-        let (input, rows, live_rows) = if phase.prefill() {
+        if phase.prefill() {
             if self.head_rows == 0 {
-                return Ok(Some(Vec::new()));
+                return Ok(self.ops.head.as_ref().map(|_| Vec::new()));
             }
-            (scratch.head_input, self.head_rows, self.inputs.logit_rows)
+            self.lm_head_over(scratch.head_input, self.head_rows, self.inputs.logit_rows)
         } else {
-            (
+            self.lm_head_over(
                 rows(scratch.normed_wide, phase.rows()),
                 phase.rows(),
                 self.inputs.live_tokens,
             )
+        }
+    }
+
+    /// The head over `rows` rows of `input`, `live_rows` of them live.
+    pub(crate) fn lm_head_over(
+        &self,
+        input: Span,
+        rows: u32,
+        live_rows: Span,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        let Some(ops) = &self.ops.head else {
+            return Ok(None);
         };
+        let scratch = &self.buffers.scratch;
         let views = HeadViews {
             input,
             weight: self.buffers.view("head.weight")?,

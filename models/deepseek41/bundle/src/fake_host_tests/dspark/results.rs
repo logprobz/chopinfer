@@ -1,13 +1,13 @@
 use super::*;
 use runtime_bundle_abi::device_results::*;
 
-struct DeviceSink {
-    host: Rc<Host>,
-    metadata: Option<DeviceCycleMetadataV1>,
-    legacy: Sink,
-    drafts: Vec<BundleDeviceDraftsV1>,
-    samples: Vec<BundleDeviceSamplingRequestV1>,
-    completion: Option<BundleDeviceCompletionV1>,
+pub(super) struct DeviceSink {
+    pub(super) host: Rc<Host>,
+    pub(super) metadata: Option<DeviceCycleMetadataV1>,
+    pub(super) legacy: Sink,
+    pub(super) drafts: Vec<BundleDeviceDraftsV1>,
+    pub(super) samples: Vec<BundleDeviceSamplingRequestV1>,
+    pub(super) completion: Option<BundleDeviceCompletionV1>,
 }
 impl LogitsRowSinkV1 for DeviceSink {
     fn device_results_enabled(&self) -> bool {
@@ -83,8 +83,10 @@ impl LogitsRowSinkV1 for DeviceSink {
             assert!(journal.iter().any(|line| line.starts_with("wait ")
                 && line.ends_with(&format!(" {}", sample.done.slot()))));
         }
+        // An allocated step's acceptance walks its verified drafts.
         assert!(journal.iter().any(|line| {
-            line.contains(crate::sm120::host_acceptance_entries::SYMBOL)
+            (line.contains(crate::sm120::host_acceptance_entries::SYMBOL)
+                || line.contains(crate::sm120::allocated_acceptance_entries::SYMBOL))
                 && line.starts_with("launch ")
         }));
         drop(journal);
@@ -116,7 +118,7 @@ fn batch(items: u32, start: u64, k: u32) -> Vec<u8> {
     .encode()
     .unwrap()
 }
-fn metadata(items: u32, k: u32, epoch: u64) -> DeviceCycleMetadataV1 {
+pub(super) fn metadata(items: u32, k: u32, epoch: u64) -> DeviceCycleMetadataV1 {
     DeviceCycleMetadataV1 {
         cycle_epoch: epoch,
         termination_stop_ids: vec![3],

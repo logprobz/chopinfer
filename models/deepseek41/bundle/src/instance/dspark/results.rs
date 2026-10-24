@@ -220,7 +220,13 @@ impl Instance {
         if rows != expected {
             return Err("DSpark sampler rows differ from acceptance metadata".into());
         }
-        for lowered in result.launch(device.ranks[0].draft_ids, metadata.items.len() as u32)? {
+        let count = metadata.items.len() as u32;
+        let acceptance = if self.allocated_step().is_some() {
+            self.dspark_allocated_acceptance(device.ranks[0].draft_ids, count)?
+        } else {
+            result.launch(device.ranks[0].draft_ids, count)?
+        };
+        for lowered in acceptance {
             let launch = lowered.launch;
             bundle_runtime::dispatch::launch(
                 &self.services,

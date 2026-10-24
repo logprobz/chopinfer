@@ -5,7 +5,8 @@ use bundle_runtime::graphs::GraphCache;
 use model_deepseek41_contract::serving::DeepSeek;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 use runtime_bundle_abi::device_results::{
-    BundleAcceptanceResultV1, DeviceAcceptanceV1, DeviceCycleMetadataV1,
+    BUNDLE_ACCEPTANCE_ALLOCATED_V1, BundleAcceptanceResultV1, DeviceAcceptanceV1,
+    DeviceCycleMetadataV1,
 };
 use std::collections::BTreeMap;
 
@@ -89,7 +90,11 @@ impl Feedback {
                     .get(index * 32..index * 32 + 32)
                     .ok_or("DSpark successor acceptance record is absent")?,
             )
-            .and_then(|result| result.validate(item.acceptance))
+            .and_then(|result| {
+                // An allocated step's result names the drafts it verified.
+                let allocated = result.flags & BUNDLE_ACCEPTANCE_ALLOCATED_V1 != 0;
+                result.validate_allocation(item.acceptance, allocated)
+            })
             else {
                 return Ok(None);
             };

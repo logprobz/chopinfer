@@ -109,12 +109,13 @@ struct IndexUpload {
     live: Vec<u32>,
 }
 
-/// The selections' inputs of step `step`'s `inputs` in an instance of `g`.
-fn index_upload(g: &Geometry, step: u64, inputs: &PhaseInputs) -> IndexUpload {
+/// The selections' inputs of step `step`'s `inputs` in an instance of `g`,
+/// whose target computes `live` rows (fewer than the inputs' rows in an
+/// allocated step, whose visible counts the allocation compacts).
+fn index_upload(g: &Geometry, step: u64, inputs: &PhaseInputs, live: u32) -> IndexUpload {
     use crate::ops::indexer::{FULL_BLOCK, REINDEX_BLOCK};
     let rows = inputs.positions.len();
     let ratio = g.compress_ratio(g.shape.candidates.source).max(1);
-    let live = inputs.live_tokens();
     let mut upload = IndexUpload {
         tags: (0..rows as u64).map(|row| (step << 32) | row).collect(),
         visible: inputs
@@ -269,9 +270,14 @@ impl Instance {
     /// drafts for the DSpark drafter.
     fn pack(&self, request: &[u8]) -> Result<PackedStep, BundleStatusV1> {
         let batch = BatchCodecV1::decode(request).map_err(|_| BundleStatusV1::InvalidArgument)?;
-        // The package does not declare chop.verify-allocation.v1: its target
-        // verifies every reserved draft, so an allocated step is refused.
-        if batch.verify_allocation().is_some() {
+        // Only a drafter that prepared the allocation (the host's
+        // verify_allocation option) takes an allocated step.
+        if batch.verify_allocation().is_some()
+            && self
+                .dspark
+                .as_ref()
+                .is_none_or(|device| device.allocation.is_none())
+        {
             return Err(BundleStatusV1::Unsupported);
         }
         if !batch.media().is_empty() && self.media.is_none() {
@@ -304,6 +310,21 @@ impl Instance {
                 rows: inputs.live_tokens(),
             };
             Ok((phase, PREFILL, layout, None))
+        } else if let Some(step) = self.allocated_step().filter(|_| inputs.verify) {
+            // The target computes the allocation's width over the reserved
+            // rows the host packed. It runs eagerly: its head reads the
+            // reserved rows, which a graph of the width does not.
+            let rows = step.width;
+            if live == 0
+                || live > items.get()
+                || rows < live
+                || rows > self.config.shape.verify_rows
+                || step.reserved_rows != inputs.live_tokens()
+            {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+            let layout = super::verify_layout(&self.config.shape, items);
+            Ok((Phase::Verify { rows, items: live }, VERIFY, layout, None))
         } else if inputs.verify {
             let rows = bundle_runtime::graphs::verify_bucket_within::<DeepSeek>(
                 inputs.live_tokens(),
@@ -353,6 +374,10 @@ impl Instance {
         indexer_route: IndexerRoute,
     ) -> Result<Programs, BundleStatusV1> {
         let stages = crate::program::stages(self.config.shape.geometry, phase);
+        let allocated = self
+            .allocated_step()
+            .filter(|_| matches!(phase, Phase::Verify { .. }))
+            .map(|step| step.reserved_rows);
         let mut programs = Vec::new();
         let mut collectives = Vec::new();
         let mut stage_lists = Vec::new();
@@ -381,7 +406,11 @@ impl Instance {
             let mut of = Vec::new();
             for &stage in &stages {
                 if self.dspark.is_some() && stage == Stage::HeadCollapse {
-                    for lowered in self.dspark_pack_features(rank, phase).map_err(|error| {
+                    let packed = match allocated {
+                        Some(reserved) => self.dspark_allocated_features(rank, phase, reserved),
+                        None => self.dspark_pack_features(rank, phase),
+                    };
+                    for lowered in packed.map_err(|error| {
                         self.log(&error);
                         BundleStatusV1::InternalError
                     })? {
@@ -397,6 +426,9 @@ impl Instance {
                     }
                     (true, _, Stage::DsparkFeature(layer)) => {
                         self.dspark_feature(&lowering, phase, layer).map(Some)
+                    }
+                    (true, _, Stage::LmHead) if allocated.is_some() => {
+                        self.dspark_allocated_head(&lowering, phase)
                     }
                     (true, _, Stage::EngramRows(layer)) => {
                         self.dspark_engram(&lowering, phase, layer)
@@ -456,8 +488,17 @@ impl Instance {
         media: Option<PrefillMedia>,
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
-        let indexer_route =
-            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs);
+        // An allocated step's items verify device-chosen counts, so it
+        // takes the route that reads no host count.
+        let allocated = self
+            .allocated_step()
+            .filter(|_| inputs.verify)
+            .map(|step| step.reserved_rows);
+        let indexer_route = if allocated.is_some() {
+            IndexerRoute::Accepted
+        } else {
+            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs)
+        };
         let ar_engram = arena == DECODE && self.ar_engram_serves(graph);
         let capture = if self.dspark.is_some() {
             graph.and_then(|key| {
@@ -483,7 +524,11 @@ impl Instance {
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
-            (phase.rows(), crate::buffers::head_rows(&self.config.shape))
+            // An allocated step's head scores its reserved rows.
+            (
+                allocated.unwrap_or(phase.rows()),
+                crate::buffers::head_rows(&self.config.shape),
+            )
         };
         if head_rows > capacity {
             self.log(&format!(
@@ -539,7 +584,12 @@ impl Instance {
             })?),
             None => None,
         };
-        let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs);
+        let live = if allocated.is_some() {
+            phase.rows()
+        } else {
+            inputs.live_tokens()
+        };
+        let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs, live);
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             prefill_engram: None,
@@ -1409,7 +1459,12 @@ impl Instance {
                     BundleAbiError::Status(BundleStatusV1::BundleError)
                 })?;
             if run.skip.is_none() {
-                self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
+                let live = if self.allocated_step().is_some() && run.inputs.verify {
+                    run.phase.rows()
+                } else {
+                    run.inputs.live_tokens()
+                };
+                self.dspark_pack_counts(run.phase, live)?;
             }
             self.launch(run)?;
             if run.media.is_some() {
@@ -1632,8 +1687,8 @@ mod tests {
         inputs.slot_ids = vec![0];
         inputs.prefix_len = vec![0];
         inputs.q_len = vec![130];
-        let first = index_upload(&FLASH, 1, &inputs);
-        let second = index_upload(&FLASH, 2, &inputs);
+        let first = index_upload(&FLASH, 1, &inputs, inputs.live_tokens());
+        let second = index_upload(&FLASH, 2, &inputs, inputs.live_tokens());
         let mut tags = first.tags.clone();
         tags.extend(&second.tags);
         tags.sort_unstable();
@@ -1644,6 +1699,10 @@ mod tests {
         let dense = crate::buffers::blocks(crate::ops::indexer::FULL_BLOCK) as usize;
         assert_eq!(first.live[..4], [64, 64, 2, 0]);
         assert_eq!(first.live[dense..], [130, 0]);
+        // An allocated step's blocks count the rows its target computes.
+        let allocated = index_upload(&FLASH, 3, &inputs, 70);
+        assert_eq!(allocated.live[..4], [64, 6, 0, 0]);
+        assert_eq!(allocated.live[dense..], [70, 0]);
     }
 
     #[test]

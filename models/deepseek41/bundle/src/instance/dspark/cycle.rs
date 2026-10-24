@@ -211,9 +211,22 @@ impl Instance {
                 return Err("DSpark device target metadata differs from packed inputs".into());
             }
         }
+        let batch = runtime_bundle_sdk::BatchCodecV1::decode(request)
+            .map_err(|e| format!("DSpark batch: {e:?}"))?;
+        let allocation = crate::dspark::allocation::Step::of(&batch, &step.decode)?;
         let device = self.dspark.as_mut().ok_or("DSpark is absent")?;
         if device.cycle.pending.is_some() || device.cycle.gathering {
             return Err("DSpark device cycle is already pending".into());
+        }
+        if let Some(step) = &allocation {
+            let op = device
+                .allocation
+                .as_ref()
+                .ok_or("DSpark verify allocation is not prepared")?
+                .op;
+            if step.reserved_rows > op.reserved_rows || step.width > op.width {
+                return Err("DSpark allocated step exceeds the prepared rows".into());
+            }
         }
         let joined = device
             .cycle
@@ -243,6 +256,7 @@ impl Instance {
             history: history.to_vec(),
             text: text.to_vec(),
             result: None,
+            allocation,
             packed_diagnostics: Default::default(),
             feedback: Default::default(),
         });
@@ -315,6 +329,9 @@ impl Instance {
         }
         let memory = device.cycle.memory.ok_or("DSpark hash memory is absent")?;
         let stream = self.ranks[0].2;
+        // An allocated step hashes its computed rows, after the allocation
+        // compacts them.
+        let rows = pending.allocation.as_ref().map_or(rows, |step| step.width);
         let history: Vec<_> = pending
             .history
             .iter()
@@ -334,6 +351,12 @@ impl Instance {
                 &pending.text,
             )
             .map_err(|e| e.to_string())?;
+        if let Some(step) = &pending.allocation {
+            let targets: Vec<_> = (0..self.ranks.len())
+                .map(|rank| DeviceInputs::within(self.arenas[arena][rank], &layout))
+                .collect();
+            self.allocate_dspark_step(step, &targets, memory.text)?;
+        }
         let target = DeviceInputs::within(self.arenas[arena][0], &layout);
         let status = crate::buffers::rows(self.buffers[0].scratch.row_status, rows);
         for lowered in device.cycle.hash.launch(memory, target, status, rows)? {

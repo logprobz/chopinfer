@@ -15,6 +15,8 @@ pub(crate) struct Pending {
     pub history: Vec<i64>,
     pub text: Vec<u8>,
     pub result: Option<DeviceTarget>,
+    /// The step's allocation, when the host allocated its drafts.
+    pub allocation: Option<super::allocation::Step>,
     pub packed_diagnostics: std::cell::RefCell<Option<Vec<u8>>>,
     pub feedback: std::cell::RefCell<Option<super::prefetch::Feedback>>,
 }

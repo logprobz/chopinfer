@@ -431,6 +431,14 @@ impl EngineMetrics {
         )
     }
 
+    /// Requests the reference metric set still keeps a record of: every
+    /// submitted request until it finishes, fails or its frontend finishes
+    /// it. Zero once every request has left.
+    #[must_use]
+    pub fn live_request_records(&self) -> usize {
+        self.compatibility(|metrics| metrics.live_records())
+    }
+
     /// Publishes the documented reference metric set for one local engine.
     #[must_use]
     pub fn prometheus_compatibility(&self, model: &str) -> String {

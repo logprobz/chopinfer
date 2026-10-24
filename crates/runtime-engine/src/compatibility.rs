@@ -542,6 +542,12 @@ impl CompatibilityMetrics {
         }
     }
 
+    /// Requests this keeps a record of, terminal ones whose frontend has not
+    /// finished them included.
+    pub(crate) fn live_records(&self) -> usize {
+        self.live.len()
+    }
+
     pub(crate) fn defer_completion(&mut self, id: RequestId) {
         if let Some(request) = self.live.get_mut(&id) {
             request.frontend_completion = true;

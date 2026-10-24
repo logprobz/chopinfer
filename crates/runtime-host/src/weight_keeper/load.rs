@@ -71,8 +71,12 @@ pub(crate) fn load_v1<D: HostDeviceBackendV1>(
     // Newest first, as the host releases everything.
     let mut kept = Vec::new();
     for (image, arenas) in opened.into_iter().rev() {
-        for arena in arenas.into_iter().rev() {
-            kept.push(backend.hold_rank_arena_v1(arena).map_err(failed("hold"))?);
+        for (rank, arena) in arenas.into_iter().enumerate().rev() {
+            kept.push(
+                backend
+                    .hold_rank_arena_v1(arena, ranks[rank].3)
+                    .map_err(failed("hold"))?,
+            );
         }
         backend
             .release_compiled_image(image)

@@ -141,6 +141,7 @@ verify --model DIR [--manifest FILE[#ENTRY]] [--allow-unrecorded] [--jobs N]
 eval list|run|verify-references --model DIR ... (eval --help lists the options)
 serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--weight-keeper DIR [--weight-keeper-policy prefer|require]]] [--profile NAME|FILE#NAME]
+  [--weight-keeper-identity FILE]
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
   [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
@@ -167,6 +168,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--allow-credentials] [--api-key KEY] [--enable-request-id-headers]
   [--fake-host-services]
 weights keep --keeper-dir DIR [--read-write] SERVE-OPTIONS (loads what serve would, and lends it)
+weights identity [--content] [--output FILE] SERVE-OPTIONS (CPU-only rank fingerprints)
 weights status|stop --keeper-dir DIR
 conformance-run --bundle DIR [--checkpoint DIR] --fixture-request LABEL
   [--topology ID] [--fixture-tokens COUNT] [--scenario commit|cancel|drop]
@@ -809,6 +811,12 @@ pub enum HostCommandV1 {
         keep: crate::weight_keeper::KeepRequestV1,
         serve: Box<HostCommandV1>,
     },
+    /// `weights identity`: plan on the CPU, optionally hashing produced bytes.
+    WeightsIdentity {
+        content: bool,
+        output: Option<PathBuf>,
+        serve: Box<HostCommandV1>,
+    },
     /// `weights status` and `weights stop`: ask the keeper in a directory
     /// for its registry, or to stop.
     WeightsKeeper {
@@ -856,6 +864,7 @@ pub enum HostCommandV1 {
         /// `--weight-keeper DIR` and its policy: map the rank images the
         /// keeper there lends instead of loading them.
         weight_keeper: Option<(PathBuf, crate::weight_keeper::KeeperPolicyV1)>,
+        weight_keeper_identity: Option<PathBuf>,
     },
     ConformanceRun {
         selection: BundleSelectionV1,
@@ -1041,9 +1050,11 @@ fn parse_named_command_v1(
 fn parse_weights_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCommandErrorV1> {
     let command = arguments
         .first()
-        .ok_or_else(|| usage_error("weights requires keep, status or stop"))?;
+        .ok_or_else(|| usage_error("weights requires keep, identity, status or stop"))?;
     let mut directory = None;
     let mut read_only = true;
+    let mut content = false;
+    let mut output = None;
     let mut rest = Vec::new();
     let mut words = arguments[1..].iter();
     while let Some(word) = words.next() {
@@ -1055,8 +1066,46 @@ fn parse_weights_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostC
                 set_once_v1(&mut directory, PathBuf::from(value), "--keeper-dir")?;
             }
             "--read-write" if command == "keep" && read_only => read_only = false,
+            "--content" if command == "identity" && !content => content = true,
+            "--output" if command == "identity" => {
+                let value = words
+                    .next()
+                    .ok_or_else(|| usage_error("--output requires a file"))?;
+                set_once_v1(&mut output, PathBuf::from(value), "--output")?;
+            }
             _ => rest.push(word.clone()),
         }
+    }
+    if command == "identity" {
+        if directory.is_some() {
+            return Err(usage_error("weights identity takes no --keeper-dir"));
+        }
+        let serve = parse_serve_command_v1(&rest)?;
+        let HostCommandV1::Serve {
+            direct_checkpoint,
+            selection,
+            weight_keeper,
+            weight_keeper_identity,
+            ..
+        } = &serve
+        else {
+            return Err(usage_error("weights identity takes serve's options"));
+        };
+        if weight_keeper.is_some() || weight_keeper_identity.is_some() {
+            return Err(usage_error(
+                "weights identity computes its proof without borrowing or accepting another proof",
+            ));
+        }
+        if direct_checkpoint.is_none() && !matches!(selection, ServeSelection::Model(_)) {
+            return Err(usage_error(
+                "weights identity requires --model or --checkpoint",
+            ));
+        }
+        return Ok(HostCommandV1::WeightsIdentity {
+            content,
+            output,
+            serve: Box::new(serve),
+        });
     }
     let directory = directory.ok_or_else(|| usage_error("weights requires --keeper-dir DIR"))?;
     match command.as_str() {
@@ -1376,6 +1425,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--load-threads",
             "--weight-keeper",
             "--weight-keeper-policy",
+            "--weight-keeper-identity",
             "--fake-host-services",
         ],
     )?;
@@ -1706,6 +1756,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         direct_checkpoint,
         load_threads,
         weight_keeper,
+        weight_keeper_identity: parsed.weight_keeper_identity.clone(),
         selection: match parsed.serve_selection()? {
             ServeSelection::Model(model) => ServeSelection::Model(Box::new(LocalModel {
                 serve_arguments: crate::profiles::serving_options(&resolved.arguments),
@@ -1968,6 +2019,29 @@ fn run_host_command_from_v1(
             crate::weight_keeper::select_keep_v1(keep.clone()).map_err(run_error)?;
             run_host_command_from_v1(serve, surface, started)
         }
+        HostCommandV1::WeightsIdentity {
+            content,
+            output,
+            serve,
+        } => {
+            crate::weight_keeper::content::select_identify(*content).map_err(run_error)?;
+            let value = run_host_command_from_v1(serve, surface, started)?;
+            if let Some(path) = output {
+                use std::io::Write;
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(path)
+                    .map_err(|error| run_error(format!("weight identity output: {error}")))?;
+                writeln!(file, "{value}")
+                    .and_then(|()| file.sync_all())
+                    .map_err(|error| run_error(error.to_string()))?;
+            }
+            Ok(value)
+        }
         HostCommandV1::WeightsKeeper { directory, stop } => {
             if *stop {
                 crate::weight_keeper::stop_v1(directory).map_err(run_error)?;
@@ -2024,8 +2098,12 @@ fn run_host_command_from_v1(
             direct_checkpoint,
             load_threads,
             weight_keeper,
+            weight_keeper_identity,
         } => {
             let started = serve_started_v1(started);
+            if let Some(path) = weight_keeper_identity {
+                crate::weight_keeper::content::select(path).map_err(run_error)?;
+            }
             if let Some((directory, policy)) = weight_keeper {
                 crate::weight_keeper::select_arena_source_v1(
                     crate::weight_keeper::ArenaSourceV1::Borrow {
@@ -2763,8 +2841,25 @@ fn serve_v1(
     // over the same library.
     let (library, frontend_export, deployment) =
         open_served_deployment_v1(&package, host, server_config)?;
-    let topology = ServedTopologyV1::new(package.manifest(), topology, devices, device)?
-        .with_context_parallel(package.manifest(), serving.context_parallel_size)?;
+    let identifying = crate::weight_keeper::content::identifying();
+    let topology = if identifying.is_some() {
+        ServedTopologyV1::planned(package.manifest(), topology, devices)?
+    } else {
+        ServedTopologyV1::new(package.manifest(), topology, devices, device)?
+    }
+    .with_context_parallel(package.manifest(), serving.context_parallel_size)?;
+    if let Some(content) = identifying {
+        let loaded = load_verified_process_bundle_v1(selection, host, package, Some(library))
+            .map_err(|error| run_error(error.to_string()))?
+            .with_model_options(model_options)
+            .map_err(|error| run_error(error.to_string()))?;
+        let config = loaded
+            .instance_config(&topology.id, topology.device_ordinals.clone())
+            .map_err(|error| run_error(error.to_string()))?;
+        let manifest = config.weight_identity(content).map_err(run_error)?;
+        return serde_json::to_string_pretty(&manifest)
+            .map_err(|error| run_error(error.to_string()));
+    }
     if let Some(keep) = crate::weight_keeper::keep_request_v1() {
         let loaded = load_verified_process_bundle_v1(selection, host, package, Some(library))
             .map_err(|error| run_error(format!("the selected bundle did not load: {error}")))?
@@ -4072,6 +4167,29 @@ struct ServedTopologyV1 {
 }
 
 impl ServedTopologyV1 {
+    /// Plan logical ranks without querying visible CUDA devices, peer access,
+    /// memory or driver contexts. Identity generation is a CPU operation.
+    fn planned(
+        manifest: &BundleManifestV1,
+        requested: Option<&str>,
+        devices: Option<&[i32]>,
+    ) -> Result<Self, HostCommandErrorV1> {
+        let topology = resolve_topology_v1(manifest, requested, devices.map(<[i32]>::len))?;
+        let device_ordinals = match devices {
+            Some(devices) => devices.to_vec(),
+            None => (0..topology.rank_count())
+                .map(|rank| i32::try_from(rank).map_err(|error| usage_error(error.to_string())))
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        crate::HostTopologyV1::new(device_ordinals.clone())
+            .map_err(|error| usage_error(error.to_string()))?;
+        Ok(Self {
+            id: topology.id().as_str().to_owned(),
+            device_ordinals,
+            context_parallel_size: 1,
+        })
+    }
+
     fn video_device(&self) -> i32 {
         self.device_ordinals[0]
     }
@@ -5183,6 +5301,7 @@ struct ArgumentsV1 {
     direct_checkpoint: Option<PathBuf>,
     load_threads: Option<usize>,
     weight_keeper: Option<PathBuf>,
+    weight_keeper_identity: Option<PathBuf>,
     weight_keeper_policy: Option<crate::weight_keeper::KeeperPolicyV1>,
     fixture_request: Option<String>,
     fixture_tokens: Option<usize>,
@@ -5701,6 +5820,11 @@ impl ArgumentsV1 {
                 "--weight-keeper" => {
                     set_once_v1(&mut parsed.weight_keeper, PathBuf::from(value), flag)?
                 }
+                "--weight-keeper-identity" => set_once_v1(
+                    &mut parsed.weight_keeper_identity,
+                    PathBuf::from(value),
+                    flag,
+                )?,
                 "--weight-keeper-policy" => set_once_v1(
                     &mut parsed.weight_keeper_policy,
                     crate::weight_keeper::KeeperPolicyV1::parse(value).map_err(usage_error)?,
@@ -5848,6 +5972,10 @@ impl ArgumentsV1 {
             ("--checkpoint", self.direct_checkpoint.is_some()),
             ("--load-threads", self.load_threads.is_some()),
             ("--weight-keeper", self.weight_keeper.is_some()),
+            (
+                "--weight-keeper-identity",
+                self.weight_keeper_identity.is_some(),
+            ),
             (
                 "--weight-keeper-policy",
                 self.weight_keeper_policy.is_some(),
@@ -6447,6 +6575,72 @@ mod tests {
             refusal.contains("--activation-policy applies to --model"),
             "{refusal}"
         );
+    }
+
+    #[test]
+    fn weight_identity_topology_has_no_physical_device_dependency() {
+        let manifest = manifest(vec![topology("tp4", 4)], 64);
+        let planned = super::ServedTopologyV1::planned(&manifest, None, None).unwrap();
+        assert_eq!(planned.device_ordinals, [0, 1, 2, 3]);
+        let planned =
+            super::ServedTopologyV1::planned(&manifest, None, Some(&[101, 103, 105, 107])).unwrap();
+        assert_eq!(planned.device_ordinals, [101, 103, 105, 107]);
+        assert!(super::ServedTopologyV1::planned(&manifest, None, Some(&[1, 1, 2, 3])).is_err());
+    }
+
+    #[test]
+    fn weight_identity_is_cpu_planning_and_content_paths_stay_host_owned() {
+        let parsed = parse_host_command_v1(&arguments(&[
+            "weights",
+            "identity",
+            "--content",
+            "--output",
+            "proof.json",
+            "--model",
+            "checkpoint",
+            "--tensor-parallel-size",
+            "4",
+        ]))
+        .unwrap();
+        assert!(matches!(
+            parsed,
+            HostCommandV1::WeightsIdentity {
+                content: true,
+                output: Some(_),
+                ..
+            }
+        ));
+        let parsed = parse_host_command_v1(&arguments(&[
+            "serve",
+            "--model",
+            "checkpoint",
+            "--weight-keeper",
+            "keeper",
+            "--weight-keeper-identity",
+            "proof.json",
+            "--max-sequences",
+            "3",
+        ]))
+        .unwrap();
+        let HostCommandV1::Serve {
+            selection: super::ServeSelection::Model(model),
+            weight_keeper_identity,
+            ..
+        } = parsed
+        else {
+            panic!("serve")
+        };
+        assert_eq!(weight_keeper_identity, Some(PathBuf::from("proof.json")));
+        assert_eq!(model.serve_arguments, ["--max-sequences", "3"]);
+        for extra in [
+            ["--keeper-dir", "keeper"],
+            ["--weight-keeper", "keeper"],
+            ["--weight-keeper-identity", "proof.json"],
+        ] {
+            let mut words = arguments(&["weights", "identity", "--model", "checkpoint"]);
+            words.extend(arguments(&extra));
+            assert!(parse_host_command_v1(&words).is_err());
+        }
     }
 
     #[test]

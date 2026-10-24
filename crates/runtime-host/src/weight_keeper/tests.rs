@@ -55,6 +55,7 @@ fn keeper(directory: &Path, stamps: Arc<Mutex<Result<Vec<String>, String>>>) -> 
         images: (0..2)
             .map(|rank| KeptImageV1 {
                 image: image(rank),
+                content: None,
                 fd: fds::anonymous_file(&bytes(rank), 4096).unwrap(),
                 mapped_bytes: 4096,
                 held: None,
@@ -280,4 +281,65 @@ fn the_policy_and_source_selections_parse_and_compare() {
     );
     assert!(KeeperPolicyV1::parse("always").is_err());
     assert_eq!(ArenaSourceV1::default(), ArenaSourceV1::Load);
+}
+
+#[test]
+fn content_protocol_never_weakens_layout_device_checkpoint_or_read_only_guards() {
+    let directory = Directory::new("content-guards");
+    let stamps = Arc::new(Mutex::new(Ok(checkpoint().stamps)));
+    let mut held = keeper(&directory.0, Arc::clone(&stamps));
+    let proof = content::Identity {
+        content_sha256: runtime_weights::sha256_bytes(&bytes(0)),
+        layout_sha256: "a".repeat(64),
+    };
+    held.images[0].content = Some(proof.clone());
+    let shared = SharedV1 {
+        keeper: held,
+        state: Mutex::new(KeeperStateV1::default()),
+        started_unix: 0,
+        exit: Mutex::new(None),
+        exiting: AtomicBool::new(false),
+    };
+    let mut asked = image(0);
+    asked.identity = "e".repeat(64);
+    let mut request = RequestV1 {
+        schema: content::PROTOCOL.to_owned(),
+        op: OperationV1::Lease,
+        checkpoint: Some(checkpoint()),
+        images: vec![asked],
+    };
+    assert!(shared.answer(&request, &[Some(proof.clone())]).0[0].lent);
+    assert!(!shared.answer(&request, &[]).0[0].lent);
+    for field in ["content", "layout", "device", "length", "checkpoint"] {
+        let mut proof = proof.clone();
+        let mut altered = request.images[0].clone();
+        match field {
+            "content" => proof.content_sha256 = "b".repeat(64),
+            "layout" => proof.layout_sha256 = "b".repeat(64),
+            "device" => altered.device = "other-device".to_owned(),
+            "length" => altered.byte_length += 1,
+            "checkpoint" => request.checkpoint.as_mut().unwrap().identity = "d".repeat(64),
+            _ => unreachable!(),
+        }
+        let original = std::mem::replace(&mut request.images[0], altered);
+        assert!(
+            !shared.answer(&request, &[Some(proof)]).0[0].lent,
+            "{field}"
+        );
+        request.images[0] = original;
+        request.checkpoint = Some(checkpoint());
+    }
+    let mut shared = shared;
+    shared.keeper.read_only = false;
+    assert!(!shared.answer(&request, &[Some(proof)]).0[0].lent);
+}
+
+#[test]
+fn content_extension_preserves_duplicate_and_unknown_field_refusals() {
+    let plain = format!(r#"{{"schema":"{SCHEMA_V1}","op":"status"}}"#);
+    assert!(serde_json::from_str::<WireRequest>(&plain).is_ok());
+    let duplicate = format!(r#"{{"schema":"{SCHEMA_V1}","schema":"{SCHEMA_V1}","op":"status"}}"#);
+    assert!(serde_json::from_str::<WireRequest>(&duplicate).is_err());
+    let unknown = format!(r#"{{"schema":"{SCHEMA_V1}","op":"status","unexpected":true}}"#);
+    assert!(serde_json::from_str::<WireRequest>(&unknown).is_err());
 }

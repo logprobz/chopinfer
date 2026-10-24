@@ -750,6 +750,7 @@ const MODEL_OPTIONS: &[&str] = &[
     "--load-threads",
     "--weight-keeper",
     "--weight-keeper-policy",
+    "--weight-keeper-identity",
 ];
 
 /// The serve options of a `serve --model` invocation other than the model

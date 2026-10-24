@@ -6,6 +6,8 @@
 //! rejected without reaching the device. Resources release in reverse
 //! acquisition order; a release out of order is refused and changes nothing.
 
+mod weight_content;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -680,6 +682,7 @@ pub struct HostInstanceConfigV1 {
     /// Where rank arenas come from; the host's own choice, never encoded
     /// for the bundle.
     arena_source: crate::weight_keeper::ArenaSourceV1,
+    weight_content: Option<Arc<crate::weight_keeper::content::Manifest>>,
 }
 
 /// How the host sizes the serving KV pool: from the memory each rank has
@@ -812,6 +815,7 @@ impl HostInstanceConfigV1 {
             context_parallel_size: 1,
             batch_limits: runtime_bundle_abi::BundleRawBatchLimitsV1::unreported(),
             arena_source: crate::weight_keeper::ArenaSourceV1::Load,
+            weight_content: None,
         }
     }
 
@@ -1304,6 +1308,7 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
     let started = std::time::Instant::now();
     let mut asked: Vec<(usize, RankImageV1)> = Vec::new();
     let mut checkpoint = None;
+    let mut content = Vec::new();
     for (index, upload) in uploads.iter().enumerate() {
         let record = state
             .images
@@ -1321,6 +1326,18 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
             .ok_or(BundleStatusV1::InvalidArgument)?
             .to_owned();
         let image_role = image.image_role().to_owned();
+        content.push(
+            state
+                .config
+                .weight_content
+                .as_ref()
+                .map(|manifest| weight_content::expected(manifest, image, description, upload.rank))
+                .transpose()
+                .map_err(|error| {
+                    eprintln!("weight content proof refused: {error}");
+                    BundleStatusV1::InvalidArgument
+                })?,
+        );
         if checkpoint.is_none() {
             checkpoint = Some((
                 image.checkpoint().identity_hex(),
@@ -1351,7 +1368,12 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
     };
     let images: Vec<RankImageV1> = asked.iter().map(|(_, image)| image.clone()).collect();
     let outcome = stamps.and_then(|stamps| {
-        crate::weight_keeper::lease_v1(&directory, CheckpointV1 { identity, stamps }, images)
+        crate::weight_keeper::lease_content_v2(
+            &directory,
+            CheckpointV1 { identity, stamps },
+            images,
+            content,
+        )
     });
     let (mut taken, mut refused, mut error, mut connection) = (Vec::new(), Vec::new(), None, None);
     match outcome {
@@ -2290,6 +2312,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
     pub(crate) fn hold_rank_arena_v1(
         &self,
         arena: BundleRankArenaHandleV1,
+        upload_stream: BundleStreamHandleV1,
     ) -> HostServiceResultV1<crate::weight_keeper::KeptImageV1> {
         let mut state = self.state.borrow_mut();
         if !state.captures.is_empty() {
@@ -2308,6 +2331,22 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             .ok_or(BundleStatusV1::InvalidArgument)?
             .to_owned();
         let image_role = image.image_role().to_owned();
+        let description = state
+            .images
+            .get(record.image)?
+            .description
+            .as_ref()
+            .ok_or(BundleStatusV1::InvalidState)?;
+        let expected_content = state
+            .config
+            .weight_content
+            .as_ref()
+            .map(|manifest| weight_content::expected(manifest, image, description, rank))
+            .transpose()
+            .map_err(|error| {
+                eprintln!("keeper content proof refused: {error}");
+                BundleStatusV1::InvalidArgument
+            })?;
         state.order.preflight(order)?;
         let context = *state
             .context_by_rank
@@ -2316,6 +2355,31 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         let context = state.contexts.get(context)?.object;
         let device = state.device.device_identity(context)?;
         let object = state.buffers.get(buffer)?.object;
+        let content = if let Some(expected) = expected_content {
+            let stream = state.streams.get(slot_key_v1(
+                upload_stream.generation(),
+                upload_stream.slot(),
+            )?)?;
+            if stream.context
+                != *state
+                    .context_by_rank
+                    .get(&rank)
+                    .ok_or(BundleStatusV1::InvalidState)?
+            {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+            let stream = stream.object;
+            let actual = device_digest_v1(&mut state.device, stream, object, byte_length)?;
+            if actual != expected.content_sha256 {
+                eprintln!(
+                    "keeper uploaded bytes differ from the CPU content proof for rank {rank}"
+                );
+                return Err(BundleStatusV1::HostError);
+            }
+            Some(expected)
+        } else {
+            None
+        };
         let (fd, mapped_bytes) = state.device.export_device_buffer(object)?;
         if let Some(host_buffer) = host_buffer {
             state.release_host_buffer(host_buffer)?;
@@ -2326,6 +2390,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         state.order.release(order)?;
         state.arenas.remove(key)?;
         Ok(crate::weight_keeper::KeptImageV1 {
+            content,
             image: crate::weight_keeper::RankImageV1 {
                 image_role,
                 rank,

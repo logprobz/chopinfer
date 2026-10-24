@@ -439,6 +439,11 @@ impl InstalledBundleHostV1 {
                 .with_planned_compiled_image(image)
                 .map_err(|error| BundleError::validation(error.to_string()))?;
         }
+        if let Some(content) = crate::weight_keeper::content::selected() {
+            config = config
+                .with_weight_content(content)
+                .map_err(BundleError::validation)?;
+        }
         Ok(config)
     }
 

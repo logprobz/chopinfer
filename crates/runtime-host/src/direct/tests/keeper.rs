@@ -95,11 +95,35 @@ fn keep(
     directory: &Path,
     edit: impl FnOnce(&mut [weight_keeper::KeptImageV1]),
 ) -> KeepingV1 {
+    keep_mode(root, plans, directory, false, edit)
+}
+
+fn content_config(image: Arc<PlannedImageV1>, source: ArenaSourceV1) -> HostInstanceConfigV1 {
+    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap())
+        .with_planned_compiled_image(image)
+        .unwrap()
+        .with_arena_source(source);
+    let manifest = serde_json::from_value(config.weight_identity(true).unwrap()).unwrap();
+    config.with_weight_content(Arc::new(manifest)).unwrap()
+}
+
+fn keep_mode(
+    root: &Path,
+    plans: &[WeightPlanV1],
+    directory: &Path,
+    content: bool,
+    edit: impl FnOnce(&mut [weight_keeper::KeptImageV1]),
+) -> KeepingV1 {
     let opened = Arc::new(DirectCheckpointV1::open(root).unwrap());
-    let keeper = host(
-        Arc::new(sharing_image(&opened, plans, 2, 128 << 10)),
-        ArenaSourceV1::Lend,
-    );
+    let image = Arc::new(sharing_image(&opened, plans, 2, 128 << 10));
+    let keeper = if content {
+        HostServicesV1Backend::new(
+            FakeHostDeviceV1::new(),
+            content_config(image, ArenaSourceV1::Lend),
+        )
+    } else {
+        host(image, ArenaSourceV1::Lend)
+    };
     let mut images = weight_keeper::load::load_v1(&keeper, &[0, 1, 2, 3]).unwrap();
     // Every arena is held, not live, so the backend can go.
     assert_eq!(
@@ -389,4 +413,188 @@ fn a_keeper_never_lends_between_row_and_tile_scale_encodings() {
             Some(formats),
         );
     }
+}
+
+#[test]
+fn content_lending_crosses_producer_builds_without_loading_or_writable_maps() {
+    let (root, plans, expected) = fixture();
+    let directory = KeeperDirectory::new("content-builds");
+    let keeper = keep_mode(&root.0, &plans, &directory.0, true, |images| {
+        assert!(
+            images
+                .iter()
+                .all(|image| image.content.as_ref().is_some_and(|proof| proof.valid()))
+        );
+    });
+    let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = Arc::new(
+        PlannedImageV1::new_with_range_tracking(
+            opened,
+            &plans,
+            None,
+            WeightPlanImplementationV1 {
+                shared_transforms: [17; 32],
+                bundle_module: [0; 32],
+            },
+            DirectLoadOptionsV1 {
+                threads_per_rank: 2,
+                read_ahead: false,
+                direct_reads: false,
+                shared_bytes: 128 << 10,
+            },
+            true,
+        )
+        .unwrap(),
+    );
+    let config = content_config(
+        Arc::clone(&image),
+        ArenaSourceV1::Borrow {
+            directory: directory.0.clone(),
+            policy: KeeperPolicyV1::Require,
+        },
+    );
+    let before = image.stats();
+    let borrower = HostServicesV1Backend::new(FakeHostDeviceV1::new(), config);
+    let arenas = upload(&borrower).unwrap();
+    for (rank, arena) in arenas.iter().enumerate() {
+        let (bytes, lent, object) = borrower.rank_arena_v1(*arena);
+        assert!(lent);
+        assert_eq!(bytes, expected[rank]);
+        assert_eq!(
+            borrower.with_device(|device| device.imported_access(object)),
+            Some((vec![0, 1, 2, 3], true))
+        );
+    }
+    assert_eq!(image.stats().source_bytes, before.source_bytes);
+    assert_eq!(image.stats().produced_bytes, before.produced_bytes);
+    drop(borrower);
+    wait_for_leases(&directory.0, 0);
+    stop(&directory.0, keeper);
+}
+
+#[test]
+fn keeper_checks_actual_uploaded_bytes_instead_of_trusting_a_cpu_proof() {
+    let (root, plans, _) = fixture();
+    let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = Arc::new(sharing_image(&opened, &plans, 2, 128 << 10));
+    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap())
+        .with_planned_compiled_image(image)
+        .unwrap()
+        .with_arena_source(ArenaSourceV1::Lend);
+    let mut manifest: weight_keeper::content::Manifest =
+        serde_json::from_value(config.weight_identity(true).unwrap()).unwrap();
+    for image in &mut manifest.images {
+        image.identity.content_sha256 = "f".repeat(64);
+    }
+    let config = config.with_weight_content(Arc::new(manifest)).unwrap();
+    let keeper = HostServicesV1Backend::new(FakeHostDeviceV1::new(), config);
+    assert!(
+        weight_keeper::load::load_v1(&keeper, &[0, 1, 2, 3])
+            .unwrap_err()
+            .contains("hold")
+    );
+    assert_eq!(
+        keeper
+            .with_device(FakeHostDeviceV1::held_allocations)
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}
+
+#[test]
+fn content_mismatch_refuses_required_ranks_and_prefer_loads_them() {
+    let (root, plans, expected) = fixture();
+    let directory = KeeperDirectory::new("content-fallback");
+    let keeper = keep_mode(&root.0, &plans, &directory.0, true, |images| {
+        images[2].content.as_mut().unwrap().content_sha256 = "f".repeat(64);
+    });
+    let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = Arc::new(sharing_image(&opened, &plans, 2, 128 << 10));
+    let config = content_config(
+        Arc::clone(&image),
+        ArenaSourceV1::Borrow {
+            directory: directory.0.clone(),
+            policy: KeeperPolicyV1::Require,
+        },
+    );
+    let required = HostServicesV1Backend::new(FakeHostDeviceV1::new(), config);
+    assert_eq!(upload(&required), Err(BundleStatusV1::HostError));
+    drop(required);
+    wait_for_leases(&directory.0, 0);
+    let config = content_config(
+        image,
+        ArenaSourceV1::Borrow {
+            directory: directory.0.clone(),
+            policy: KeeperPolicyV1::Prefer,
+        },
+    );
+    let preferred = HostServicesV1Backend::new(FakeHostDeviceV1::new(), config);
+    for (rank, arena) in upload(&preferred).unwrap().iter().enumerate() {
+        let (bytes, lent, _) = preferred.rank_arena_v1(*arena);
+        assert_eq!(bytes, expected[rank]);
+        assert_eq!(lent, rank != 2);
+    }
+    drop(preferred);
+    wait_for_leases(&directory.0, 0);
+    stop(&directory.0, keeper);
+}
+
+#[test]
+fn content_proof_covers_compacted_bytes_zero_padding_and_component_only_layout_changes() {
+    let (root, mut plans, expected) = fixture();
+    let opened = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    for plan in &mut plans {
+        let end = plan.arena_bytes;
+        plan.arena_bytes += 512;
+        plan.views.push(PlannedViewV1 {
+            id: "host-padding".to_owned(),
+            alignment: 256,
+            placement: ViewPlacementV1::Host,
+            offset: end,
+            byte_length: 128,
+        });
+        let identity = runtime_weights::sha256_bytes(
+            &plan.identity_document(&opened.identity(), &implementation_v1([0; 32])),
+        );
+        plan.components.push(NamedBytesV1{name:format!("chop.bundle-metadata.fixture.index.r{}",plan.rank),
+            bytes:serde_json::to_vec(&serde_json::json!({"schema":"fixture.rank.v1","rank":plan.rank,
+                "image_bytes":plan.arena_bytes,"direct_identity":identity,"views":[{"layout_id":"layout-a","dtype":"u8","shape":[4096]}]})).unwrap()});
+    }
+    let image = Arc::new(sharing_image(&opened, &plans, 2, 128 << 10));
+    let config = content_config(Arc::clone(&image), ArenaSourceV1::Lend);
+    let manifest: weight_keeper::content::Manifest =
+        serde_json::from_value(config.weight_identity(true).unwrap()).unwrap();
+    for (rank, record) in manifest.images.iter().enumerate() {
+        let mut bytes = expected[rank].clone();
+        bytes.extend([0; 256]);
+        assert_eq!(record.byte_length, bytes.len() as u64);
+        assert_eq!(
+            record.identity.content_sha256,
+            runtime_weights::sha256_bytes(&bytes)
+        );
+    }
+    let keeper = HostServicesV1Backend::new(FakeHostDeviceV1::new(), config);
+    let held = weight_keeper::load::load_v1(&keeper, &[0, 1, 2, 3]).unwrap();
+    assert!(held.iter().all(|item| item.content.is_some()));
+    drop(held);
+    drop(keeper);
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&plans[0].components[0].bytes).unwrap();
+    metadata["views"][0]["layout_id"] = "layout-b".into();
+    plans[0].components[0].bytes = serde_json::to_vec(&metadata).unwrap();
+    let changed = Arc::new(sharing_image(&opened, &plans, 2, 128 << 10));
+    assert_eq!(
+        image.identity(0),
+        changed.identity(0),
+        "the strict recipe excludes components"
+    );
+    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap())
+        .with_planned_compiled_image(changed)
+        .unwrap();
+    assert!(
+        config
+            .with_weight_content(Arc::new(manifest))
+            .unwrap_err()
+            .contains("fresh recipe and layout")
+    );
 }

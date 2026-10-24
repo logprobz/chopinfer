@@ -9,7 +9,9 @@
 //! what the server planned, and both processes opened the same checkpoint
 //! files, unchanged. The identity is the SHA-256 of the plan's identity
 //! document, which covers the checkpoint, the host's transform sources and
-//! the bundle module, so a keeper built from other sources never matches.
+//! applicable bundle transforms. An explicit content proof additionally permits
+//! different recipes to lend identical read-only bytes under the same layout.
+//! The keeper verifies that proof against its actual device allocation.
 //! The server maps what it is lent instead of loading it and loads the rest
 //! itself; under `--weight-keeper-policy require` anything not lent fails
 //! the start instead.
@@ -22,6 +24,7 @@
 //! answer. The directory must be the caller's own and closed to everyone
 //! else, and each side checks the other runs as the same user.
 
+pub(crate) mod content;
 pub(crate) mod fds;
 pub(crate) mod load;
 
@@ -177,6 +180,24 @@ struct RequestV1 {
     checkpoint: Option<CheckpointV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<RankImageV1>,
+}
+
+/// The content extension leaves every v1 message and comparison unchanged.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ContentRequestV2 {
+    schema: String,
+    op: OperationV1,
+    checkpoint: CheckpointV1,
+    images: Vec<RankImageV1>,
+    content: Vec<Option<content::Identity>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WireRequest {
+    Legacy(RequestV1),
+    Content(ContentRequestV2),
 }
 
 /// The keeper's answer for one image asked for. Lent answers carry the
@@ -375,6 +396,47 @@ pub(crate) fn lease_v1(
         Some(checkpoint),
         images.clone(),
     )?;
+    received_lease(stream, reply, fds, images)
+}
+
+/// Requests verified content matching only when the resident keeper advertises
+/// that protocol. An older keeper retains its strict recipe comparison.
+pub(crate) fn lease_content_v2(
+    directory: &Path,
+    checkpoint: CheckpointV1,
+    images: Vec<RankImageV1>,
+    identities: Vec<Option<content::Identity>>,
+) -> Result<LeaseV1, String> {
+    if identities.len() != images.len() {
+        return Err("content proof count differs from rank image count".to_owned());
+    }
+    if identities.iter().all(Option::is_none)
+        || read_registry(directory)?["content_protocol"].as_str() != Some(content::PROTOCOL)
+    {
+        return lease_v1(directory, checkpoint, images);
+    }
+    let stream = connect(directory)?;
+    let request = ContentRequestV2 {
+        schema: content::PROTOCOL.to_owned(),
+        op: OperationV1::Lease,
+        checkpoint,
+        images: images.clone(),
+        content: identities,
+    };
+    send(&stream, &request, &[]).map_err(|error| error.to_string())?;
+    let (reply, fds): (ReplyV1, _) = receive(&stream)?;
+    if reply.schema != content::PROTOCOL {
+        return Err("keeper content reply has another schema".to_owned());
+    }
+    received_lease(stream, reply, fds, images)
+}
+
+fn received_lease(
+    stream: UnixStream,
+    reply: ReplyV1,
+    fds: Vec<OwnedFd>,
+    images: Vec<RankImageV1>,
+) -> Result<LeaseV1, String> {
     if !reply.ok {
         return Err(reply
             .reason
@@ -396,6 +458,9 @@ pub(crate) fn lease_v1(
             let reason = answer.reason.unwrap_or_else(|| "not lent".to_owned());
             lease.refused.push((image, reason));
             continue;
+        }
+        if reply.schema == content::PROTOCOL && !answer.read_only {
+            return Err("content lease returned writable memory".to_owned());
         }
         let fd = fds.next().ok_or("the keeper sent too few descriptors")?;
         if answer.mapped_bytes < image.byte_length {
@@ -464,6 +529,7 @@ pub(crate) fn status_v1(directory: &Path) -> Result<serde_json::Value, String> {
 /// or a context so the keeper is no compute process while it lends.
 pub(crate) struct KeptImageV1 {
     pub(crate) image: RankImageV1,
+    pub(crate) content: Option<content::Identity>,
     pub(crate) fd: OwnedFd,
     pub(crate) mapped_bytes: u64,
     pub(crate) held: Option<crate::device::HeldDeviceMemoryV1>,
@@ -474,6 +540,7 @@ impl std::fmt::Debug for KeptImageV1 {
         formatter
             .debug_struct("KeptImageV1")
             .field("image", &self.image)
+            .field("content", &self.content)
             .field("fd", &self.fd)
             .field("mapped_bytes", &self.mapped_bytes)
             .field("held", &self.held.is_some())
@@ -551,12 +618,14 @@ impl SharedV1 {
             "stale_reason": state.stale,
             "socket": keeper.directory.join(SOCKET_NAME_V1),
             "checkpoint_identity": keeper.checkpoint_identity,
+            "content_protocol": content::PROTOCOL,
             "read_only": keeper.read_only,
             "devices": devices.iter().map(|(device, bytes)| serde_json::json!({"device": device, "bytes": bytes})).collect::<Vec<_>>(),
             "images": keeper.images.iter().map(|kept| serde_json::json!({
                 "image_role": kept.image.image_role, "rank": kept.image.rank,
                 "identity": kept.image.identity, "device": kept.image.device,
                 "byte_length": kept.image.byte_length, "mapped_bytes": kept.mapped_bytes,
+                "content_identity": kept.content,
             })).collect::<Vec<_>>(),
             "leases": state.leases,
             "started_unix": self.started_unix,
@@ -591,7 +660,11 @@ impl SharedV1 {
             .map_err(|error| format!("keeper registry: {error}"))
     }
 
-    fn answer(&self, request: &RequestV1) -> (Vec<AnswerV1>, Vec<BorrowedFd<'_>>) {
+    fn answer(
+        &self,
+        request: &RequestV1,
+        proofs: &[Option<content::Identity>],
+    ) -> (Vec<AnswerV1>, Vec<BorrowedFd<'_>>) {
         let refuse_all = |reason: String| {
             let answers = request
                 .images
@@ -606,6 +679,9 @@ impl SharedV1 {
             (answers, Vec::new())
         };
         let keeper = &self.keeper;
+        if request.schema == content::PROTOCOL && !keeper.read_only {
+            return refuse_all("content borrowing requires read-only images".to_owned());
+        }
         if let Some(reason) = &self.state().stale {
             return refuse_all(format!("the keeper's checkpoint changed: {reason}"));
         }
@@ -632,12 +708,29 @@ impl SharedV1 {
         let answers = request
             .images
             .iter()
-            .map(|asked| {
+            .enumerate()
+            .map(|(index, asked)| {
                 let kept = keeper.images.iter().find(|kept| {
                     kept.image.image_role == asked.image_role && kept.image.rank == asked.rank
                 });
                 let reason = match kept {
                     None => Some("the keeper does not hold this image"),
+                    Some(kept) if proofs.get(index).and_then(Option::as_ref).is_some() => {
+                        let asked_content = proofs[index].as_ref().expect("checked content");
+                        if !keeper.read_only {
+                            Some("content borrowing requires read-only images")
+                        } else if !asked_content.valid()
+                            || kept.content.as_ref() != Some(asked_content)
+                        {
+                            Some("the image content or layout differs")
+                        } else if kept.image.device != asked.device {
+                            Some("the device differs")
+                        } else if kept.image.byte_length != asked.byte_length {
+                            Some("the image length differs")
+                        } else {
+                            None
+                        }
+                    }
                     Some(kept) if kept.image.identity != asked.identity => {
                         Some("the image identity differs")
                     }
@@ -680,26 +773,58 @@ impl SharedV1 {
         }
         let _ = stream.set_read_timeout(Some(ANSWER_TIMEOUT));
         let _ = stream.set_write_timeout(Some(ANSWER_TIMEOUT));
-        let request: RequestV1 = match receive(&stream) {
-            Ok((request, _)) => request,
+        let parsed = receive::<WireRequest>(&stream).and_then(|(value, fds)| {
+            if !fds.is_empty() {
+                return Err("a keeper request must not send descriptors".to_owned());
+            }
+            match value {
+                WireRequest::Content(content) => {
+                    if content.schema != content::PROTOCOL
+                        || content.op != OperationV1::Lease
+                        || content.content.len() != content.images.len()
+                    {
+                        return Err("invalid content lease request".to_owned());
+                    }
+                    Ok((
+                        RequestV1 {
+                            schema: content.schema,
+                            op: content.op,
+                            checkpoint: Some(content.checkpoint),
+                            images: content.images,
+                        },
+                        content.content,
+                    ))
+                }
+                WireRequest::Legacy(request) => {
+                    if request.schema != SCHEMA_V1 {
+                        return Err(format!(
+                            "the keeper speaks {SCHEMA_V1} and {}",
+                            content::PROTOCOL
+                        ));
+                    }
+                    Ok((request, Vec::new()))
+                }
+            }
+        });
+        let (request, proofs) = match parsed {
+            Ok(value) => value,
             Err(reason) => {
                 let _ = send(&stream, &ReplyV1::new(false, Some(reason)), &[]);
                 return;
             }
         };
-        if request.schema != SCHEMA_V1 {
-            let reason = format!("the keeper speaks {SCHEMA_V1}");
-            let _ = send(&stream, &ReplyV1::new(false, Some(reason)), &[]);
-            return;
-        }
         match request.op {
             OperationV1::Status => {
                 let mut reply = ReplyV1::new(true, None);
                 reply.registry = Some(self.registry(&self.state()));
                 let _ = send(&stream, &reply, &[]);
             }
-            OperationV1::Lease => self.lend(&stream, peer.pid, &request),
+            OperationV1::Lease => self.lend(&stream, peer.pid, &request, &proofs),
             OperationV1::Release | OperationV1::Stop => {
+                eprintln!(
+                    "weight keeper: {:?} requested by process {}",
+                    request.op, peer.pid
+                );
                 let state = self.state();
                 if request.op == OperationV1::Release && state.leases > 0 {
                     let reason = format!("{} leases are open", state.leases);
@@ -730,7 +855,13 @@ impl SharedV1 {
         }
     }
 
-    fn lend(&self, stream: &UnixStream, pid: i32, request: &RequestV1) {
+    fn lend(
+        &self,
+        stream: &UnixStream,
+        pid: i32,
+        request: &RequestV1,
+        proofs: &[Option<content::Identity>],
+    ) {
         if self.exiting.load(Ordering::Acquire) {
             let _ = send(
                 stream,
@@ -739,10 +870,11 @@ impl SharedV1 {
             );
             return;
         }
-        let (answers, fds) = self.answer(request);
+        let (answers, fds) = self.answer(request, proofs);
         let lent = answers.iter().filter(|answer| answer.lent).count();
         let mut reply = ReplyV1::new(true, None);
         reply.images = answers;
+        reply.schema = request.schema.clone();
         let mut state = self.state();
         if self.exiting.load(Ordering::Acquire) {
             drop(state);

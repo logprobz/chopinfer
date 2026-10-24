@@ -20,11 +20,13 @@ pub mod warmup;
 pub use batch::{
     BATCH_ITEM_FLAG_BUNDLE_DRAFTS_V3, BATCH_PHASE_DECODE_V1, BATCH_PHASE_PREFILL_V1,
     BATCH_PHASE_VERIFY_V3, BATCH_REQUEST_MAGIC_V1, BATCH_REQUEST_MAGIC_V2, BATCH_REQUEST_MAGIC_V3,
-    BATCH_REQUEST_MAGIC_V5, BATCH_REQUEST_MAGIC_V6, BatchAppendCopyV2, BatchAppendV1, BatchCodecV1,
-    BatchItemV1, BatchMediaEncodeV3, BatchMediaInjectV3, BatchMediaSectionV3, BatchReadErrorV1,
-    BatchReaderV1, BatchRequestV1, BatchWireVersionV1, BatchWriteErrorV1, DRAFT_SAMPLING_BYTES_V1,
-    DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1, InvalidDraftSamplingV1,
-    MAXIMUM_BATCH_WIRE_ELEMENTS_V1,
+    BATCH_REQUEST_MAGIC_V5, BATCH_REQUEST_MAGIC_V6, BATCH_REQUEST_MAGIC_V7, BatchAppendCopyV2,
+    BatchAppendV1, BatchCodecV1, BatchItemV1, BatchMediaEncodeV3, BatchMediaInjectV3,
+    BatchMediaSectionV3, BatchReadErrorV1, BatchReaderV1, BatchRequestV1, BatchWireVersionV1,
+    BatchWriteErrorV1, DRAFT_SAMPLING_BYTES_V1, DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1,
+    InvalidDraftSamplingV1, InvalidVerifyAllocationV1, MAXIMUM_BATCH_WIRE_ELEMENTS_V1,
+    SamplingKindV1, VERIFY_ALLOCATION_POSITIONS_V1, VerifyAllocationV1, VerifyCalibrationV1,
+    allocate_verify_drafts_v1,
 };
 pub use host::{
     AuthenticatedComponentErrorV1, AuthenticatedComponentV1, HostServiceErrorV1,

@@ -6,6 +6,12 @@ pub use draft_sampling::{
     BATCH_REQUEST_MAGIC_V6, DRAFT_SAMPLING_BYTES_V1, DRAFT_SAMPLING_PROCESSED_V1, DraftSamplingV1,
     InvalidDraftSamplingV1,
 };
+mod verify_allocation;
+pub use verify_allocation::{
+    BATCH_REQUEST_MAGIC_V7, InvalidVerifyAllocationV1, SamplingKindV1,
+    VERIFY_ALLOCATION_POSITIONS_V1, VerifyAllocationV1, VerifyCalibrationV1,
+    allocate_verify_drafts_v1,
+};
 
 /// The fixed prefix of one V1 batch request.
 pub const BATCH_REQUEST_MAGIC_V1: &[u8; 12] = b"chopbatch-v1";
@@ -73,6 +79,7 @@ pub enum BatchReadErrorV1 {
     InvalidStateSlots,
     InvalidPositionAxes,
     InvalidDraftSampling,
+    InvalidVerifyAllocation,
 }
 
 impl fmt::Display for BatchReadErrorV1 {
@@ -124,6 +131,10 @@ impl fmt::Display for BatchReadErrorV1 {
             }
             Self::InvalidDraftSampling => formatter.write_str(
                 "draft sampling must enclose V3, V4 or V5 with one valid record per item",
+            ),
+            Self::InvalidVerifyAllocation => formatter.write_str(
+                "a verify allocation must enclose V3 to V6 with one kind per item, a calibration \
+                 covering every reservation and a width within the reserved rows",
             ),
         }
     }
@@ -548,6 +559,7 @@ pub struct BatchRequestV1 {
     media: BatchMediaSectionV3,
     state_slots: Option<Vec<u64>>,
     draft_sampling: Option<Vec<DraftSamplingV1>>,
+    verify_allocation: Option<VerifyAllocationV1>,
 }
 
 impl BatchRequestV1 {
@@ -564,7 +576,21 @@ impl BatchRequestV1 {
             media: BatchMediaSectionV3::default(),
             state_slots: None,
             draft_sampling: None,
+            verify_allocation: None,
         }
+    }
+
+    /// The verify step's allocation, which makes the record V7.
+    #[must_use]
+    pub fn with_verify_allocation(mut self, allocation: VerifyAllocationV1) -> Self {
+        self.verify_allocation = Some(allocation);
+        self
+    }
+
+    /// The step's verify allocation, when the host allocated its drafts.
+    #[must_use]
+    pub fn verify_allocation(&self) -> Option<&VerifyAllocationV1> {
+        self.verify_allocation.as_ref()
     }
 
     /// One draft sampling record per item, which makes the record V6.
@@ -652,6 +678,7 @@ pub enum BatchWriteErrorV1 {
     InvalidStateSlots,
     InvalidPositionAxes,
     InvalidDraftSampling,
+    InvalidVerifyAllocation,
 }
 
 impl fmt::Display for BatchWriteErrorV1 {
@@ -679,6 +706,10 @@ impl fmt::Display for BatchWriteErrorV1 {
             Self::InvalidDraftSampling => {
                 formatter.write_str("draft sampling requires V3 and one record per item")
             }
+            Self::InvalidVerifyAllocation => formatter.write_str(
+                "a verify allocation requires V3, one kind per item, a calibration covering every \
+                 reservation and a width within the reserved rows",
+            ),
         }
     }
 }
@@ -696,6 +727,9 @@ impl BatchCodecV1 {
 
     /// Decodes either supported version from its fixed magic.
     pub fn decode(bytes: &[u8]) -> Result<BatchRequestV1, BatchReadErrorV1> {
+        if bytes.starts_with(BATCH_REQUEST_MAGIC_V7) {
+            return verify_allocation::decode_v7(bytes);
+        }
         if bytes.starts_with(BATCH_REQUEST_MAGIC_V6) {
             return draft_sampling::decode_v6(bytes);
         }
@@ -744,6 +778,9 @@ impl BatchCodecV1 {
 
     /// Encodes the selected version without host or model dependencies.
     pub fn encode(request: &BatchRequestV1) -> Result<Vec<u8>, BatchWriteErrorV1> {
+        if request.verify_allocation.is_some() {
+            return verify_allocation::encode_v7(request);
+        }
         if request.draft_sampling.is_some() {
             return draft_sampling::encode_v6(request);
         }

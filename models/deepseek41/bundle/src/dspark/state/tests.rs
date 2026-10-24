@@ -970,9 +970,16 @@ fn deferred_catch_up_drafts_from_the_eager_rings_and_keeps_wide_passes() {
 
 #[test]
 fn batched_catch_up_stays_within_the_one_row_exact_bounds() {
-    // The KV projection asks one-row bits up to the verify rows; the main
-    // projection routes each count up to the dense decode capacity to a
-    // one-row-exact entry.
-    assert!(BATCH_PROJECTION_ROWS <= model_deepseek41_contract::serving::DECODE_BATCH);
+    // The KV projection asks one-row bits up to the verify rows, which an
+    // instance asking for the fewest rows still has; the main projection
+    // routes each count up to the dense decode capacity to a one-row-exact
+    // entry.
+    let shape = crate::shape::Shape::new(
+        &model_deepseek41_contract::geometry::FLASH,
+        bundle_runtime::geometry::Ranks::TP4,
+    )
+    .unwrap()
+    .with_verify_rows(1);
+    assert!(BATCH_PROJECTION_ROWS <= shape.verify_rows);
     assert!(BATCH_PROJECTION_ROWS <= crate::Kernels::dense_decode_capacity());
 }

@@ -157,6 +157,12 @@ fn target_programs_lower_at_wide_verify_rows() {
                         .any(|line| line.contains("verify_mxfp8_n512_k5120"))
                 );
                 assert_eq!(
+                    count_symbol(
+                        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1"
+                    ),
+                    2 * 4
+                );
+                assert_eq!(
                     count_symbol("chop_deepseek41_hc_round_cols_r4_tx_v1"),
                     77 * 4
                 );

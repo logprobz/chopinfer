@@ -272,7 +272,13 @@ impl Ops {
             &mut missing,
             &names,
             "dense projection",
-            dense::DenseOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            dense::DenseOps::prepare(kernels.backend.as_ref(), shape, &asks).and_then(|ops| {
+                ops.with_verify_engram(
+                    shape,
+                    &asks,
+                    expert_set.count == shape.geometry.shape.moe.experts,
+                )
+            }),
         );
         let shared = family(
             &mut missing,

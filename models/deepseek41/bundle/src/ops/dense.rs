@@ -231,6 +231,7 @@ pub(crate) trait SlicedQuantize: Send + Sync {
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
+    wide_engram: Vec<(u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// Row-local folds by projection and decode or verify bucket.
     local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// WO_a and WO_b status folds over their fused buffers, by projection
@@ -423,6 +424,7 @@ impl DenseOps {
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
+            wide_engram: Vec::new(),
             local,
             fused,
             sliced,
@@ -435,6 +437,25 @@ impl DenseOps {
             paired,
             prefill_gemms,
         })
+    }
+
+    /// Bind measured matrix tiles only in the target operation set.
+    pub(crate) fn with_verify_engram(
+        mut self,
+        shape: &Shape,
+        asks: &Asks,
+        target: bool,
+    ) -> Result<Self, Refused> {
+        if target {
+            for rows in 33..=shape.verify_decode_rows() {
+                if let Some(op) = crate::Kernels::wide_engram_fold(shape, rows)? {
+                    let need = exact::need(rows, exact::verify(rows));
+                    asks.record(format!("dense.engram.kv verify {rows}"), need, op.info());
+                    self.wide_engram.push((rows, op));
+                }
+            }
+        }
+        Ok(self)
     }
 
     /// The layout every op of projection `id` reads its weight codes in.
@@ -465,6 +486,12 @@ impl DenseOps {
                     .iter()
                     .filter(|(of, _, _)| *of == id)
                     .map(|(_, _, op)| op.info()),
+            )
+            .chain(
+                self.wide_engram
+                    .iter()
+                    .filter(|_| id == "engram.kv")
+                    .map(|(_, op)| op.info()),
             )
             .chain(self.paired.iter().filter(|_| pair).map(|(_, op)| op.info()))
             .chain(
@@ -740,6 +767,12 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
+        if id == "engram.kv"
+            && matches!(phase, Phase::Verify { rows: 33..=64, .. })
+            && let Some((_, op)) = self.wide_engram.iter().find(|(count, _)| *count == rows)
+        {
+            return bind.launch(op, &buffers, Counts::rows(rows));
+        }
         if !phase.prefill()
             && let Some((_, _, op)) = self
                 .stream
@@ -836,6 +869,77 @@ mod tests {
             DecodePath::Split => "mxfp8_decode_",
             DecodePath::Ticket => "mxfp8_ticket_",
             DecodePath::Prefetch => "mxfp8_prefetch_",
+        }
+    }
+
+    #[test]
+    fn wide_engram_preserves_drafter_prefill_and_default_rows() {
+        use model_deepseek41_contract::{moe::Experts, state::KvStorage};
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let span = |index, length| {
+            DeviceBufferSpanV1::new(
+                runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(index, 1),
+                0,
+                length,
+            )
+        };
+        let views = GemmViews {
+            stream: Some(fold_stream::Storage {
+                packed: [span(100, 1 << 30), span(101, 1 << 30)],
+                state: span(102, 1 << 20),
+                workspace: span(103, 1 << 30),
+            }),
+            activations: span(1, 65 * 6144),
+            activation_scales: span(2, 65 * 192),
+            weights: span(3, 25600 * 6144),
+            weight_scales: span(4, 25600 * 192),
+            output: span(5, 65 * 25600 * 4),
+            live_rows: span(6, 4),
+            status: span(7, 65 * 4),
+        };
+        for target in [false, true] {
+            let experts = if target {
+                Experts {
+                    count: FLASH.shape.moe.experts,
+                    top_k: FLASH.shape.moe.top_k,
+                }
+            } else {
+                Experts {
+                    count: FLASH.shape.dspark.experts,
+                    top_k: FLASH.shape.dspark.top_k,
+                }
+            };
+            let ops = super::super::Ops::prepare_set(&kernels, &shape, KvStorage::Native, experts);
+            let dense = ops
+                .dense
+                .as_ref()
+                .unwrap_or_else(|| panic!("{:?}", ops.missing));
+            for phase in [
+                Phase::Prefill { rows: 64 },
+                Phase::Decode(32),
+                Phase::Decode(64),
+            ]
+            .into_iter()
+            .chain([32, 33, 48, 64, 65].map(|rows| Phase::Verify { items: 16, rows }))
+            {
+                let calls = dense
+                    .project("engram.kv", phase, &views, span(99, 1 << 30))
+                    .unwrap();
+                let matrix = target && matches!(phase, Phase::Verify { rows: 33..=64, .. });
+                assert_eq!(
+                    calls
+                        .iter()
+                        .filter(|c| c.launch.symbol.contains("_matrix_m64_n128_s2_"))
+                        .count(),
+                    if matrix { 2 } else { 0 },
+                    "{target} {phase:?}"
+                );
+                if matrix {
+                    assert_eq!(calls.len(), 2);
+                    assert!(calls[1].launch.symbol.ends_with("_packed_v1"));
+                }
+            }
         }
     }
 

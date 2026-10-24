@@ -22,6 +22,7 @@ pub mod dspark_projection;
 pub mod dspark_quantize;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
+mod engram_verify;
 pub mod fold_cluster;
 pub mod fold_fused;
 pub mod fold_local_rows;

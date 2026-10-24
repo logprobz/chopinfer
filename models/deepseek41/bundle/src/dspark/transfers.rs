@@ -6,6 +6,9 @@
 //! every chunk. A chunk never crosses a source wrap or a destination wrap,
 //! so its ring writes are disjoint even on a parallel device launch.
 
+mod staged;
+pub use staged::{StagedBatch, StagedSegment, staged_batches};
+
 use super::state::{CommitItem, Config, Kind, Projection, Result, RowProjection, Snapshot};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

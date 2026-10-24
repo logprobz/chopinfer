@@ -1225,6 +1225,12 @@ fn journal_steps(host: &Rc<Host>) {
 /// rounded up, twice the threads and 85,504 shared bytes. Audited against
 /// the previous journal: those 720 launches differ in exactly these fields,
 /// and every other line, argument, stream and handle is identical.
+/// Outside the cache's admitted chunks, the mixed32 and mixed64 layers then
+/// fuse with shared heads: each of those 760 paired attention launches and
+/// its merge become one finish launch on the same stream, with grid (rows,
+/// 1, 1), 256 threads and 83,200 shared bytes. Its arguments are the
+/// attention's with the partial workspace null, then the merge's sinks,
+/// RoPE and output. Audited line by line; every other line is identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1251,7 +1257,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78523, 0x88ef7adeb0dabed7),
+        (77763, 0x0e657787086fdcc5),
     ),
     (
         "deepseek41-flash-tp4",

@@ -601,3 +601,26 @@ prompt of a packed step of 8 or 16 produced the same first token,
 logprobs, logits row and state as the same prompt prefilled alone. State
 here means window ring, compressor tail and every committed KV page,
 excluding bytes no prefill writes.
+
+## Fused shared heads outside the cache's chunks
+
+The mixed32 and mixed64 layers' native TP4 prefill attention now takes the
+fused shared-head finish whenever a step has no prefill cache range: packed
+prompts, a single prompt that is not a consecutive full chunk, and chunks
+past the cache's offsets. The window layers stay paired. A chunk the cache
+admits keeps its measured rule and the decoded route. The finish computes
+the reference attention with sixteen heads sharing each staged key tile,
+one CTA per row, and writes the output through the reference's
+single-split merge arithmetic, so no partials or merge launch remain. Like
+the paired body, it reads each row's own item, slot, block table and key
+lists. The fake-host journals change only those attention launches and
+their merges.
+
+Lab, TP4, two GPUs, 2026-10-24: the 12 packed shapes of the paired
+qualification, plain and adversarial, on both entries with compressed keys,
+under live-count graph replays. Every live row's output was bitwise equal
+to the reference attention and merge, so the fused error against the f64
+oracle is the reference's. The finish took 0.118 to 0.130 of the reference
+time per layer, against 0.206 to 0.219 for paired. For a mixed layer of 14
+prompts of 554 tokens that is 4.23 ms against 7.45 ms paired. The served
+exactness, batch-invariance and speed checks are still to run.

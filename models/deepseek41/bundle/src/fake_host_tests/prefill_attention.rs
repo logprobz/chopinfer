@@ -1,5 +1,7 @@
-//! Qualified output fusion covers the small tails; paired attention covers
-//! every native TP4 prefill row count and packing of prompts.
+//! Native TP4 prefill fuses the mixed layers' attention and output (shared
+//! heads) at every row count and packing of prompts outside the cache's
+//! admitted chunks, which keep their measured rule; paired attention covers
+//! the window layers.
 use super::*;
 
 #[test]
@@ -49,10 +51,10 @@ fn retained_prefill_fuses_every_measured_count_and_small_tail() {
 }
 
 #[test]
-fn paired_prefill_configures_shared_memory_at_every_row_count() {
-    // Native TP4 pairs every prefill row count (full mixed 8192-row chunks
-    // take the fused shared heads); other layouts and topologies keep the
-    // reference.
+fn native_prefill_fuses_mixed_and_pairs_window_layers_at_every_row_count() {
+    // Native TP4 fuses every mixed layer's prefill rows with shared heads
+    // and pairs the window layers' at every row count; other layouts and
+    // topologies keep the reference.
     for (ranks, layout, rows, paired) in [
         (Ranks::TP4, KV_LAYOUTS[0], 8192, true),
         (Ranks::TP4, KV_LAYOUTS[0], 8191, true),
@@ -93,13 +95,13 @@ fn paired_prefill_configures_shared_memory_at_every_row_count() {
             .collect();
         assert_eq!(attention.len(), shape.ranks() as usize * 40);
         for line in &attention {
-            let shared = paired && rows == 8192 && line.contains("_mixed_");
+            let shared = paired && line.contains("_mixed_");
             let paired = paired && !shared;
             assert_eq!(line.contains("_head_shared_finish_v1"), shared, "{line}");
             assert_eq!(line.contains("_reuse2_v1"), paired, "{line}");
             if shared {
                 assert!(
-                    line.contains("grid_x: 8192, grid_y: 1, grid_z: 1,"),
+                    line.contains(&format!("grid_x: {rows}, grid_y: 1, grid_z: 1,")),
                     "{line}"
                 );
                 assert!(line.contains("block_x: 256,"), "{line}");
@@ -177,11 +179,12 @@ fn packed(prompts: &[(u64, u64, u64)]) -> Vec<u8> {
         .unwrap()
 }
 
-/// A prefill step that packs prompts of served lengths pairs every
-/// attention row of the step, one CTA per two rows, and keeps one reference
-/// merge per attention launch.
+/// A prefill step that packs prompts of served lengths fuses every mixed
+/// layer's rows with shared heads, one CTA per row and sixteen heads
+/// without a merge, and pairs every window layer's rows, one CTA per two
+/// rows with one reference merge.
 #[test]
-fn packed_prompts_pair_every_attention_row() {
+fn packed_prompts_fuse_mixed_and_pair_window_attention_rows() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
@@ -208,15 +211,31 @@ fn packed_prompts_pair_every_attention_row() {
     };
     let attention = prefill(false);
     assert_eq!(attention.len(), shape.ranks() as usize * 40);
-    let grid = format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows.div_ceil(2));
+    let paired = format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows.div_ceil(2));
+    let fused = format!("grid_x: {rows}, grid_y: 1, grid_z: 1,");
     for line in &attention {
-        assert!(line.contains("_reuse2_v1"), "{line}");
-        assert!(line.contains(&grid), "{line}");
-        assert!(line.contains("shared_memory_bytes: 85504,"), "{line}");
+        if line.contains("_mixed_") {
+            assert!(line.contains("_head_shared_finish_v1"), "{line}");
+            assert!(line.contains(&fused), "{line}");
+            assert!(line.contains("shared_memory_bytes: 83200,"), "{line}");
+        } else {
+            assert!(line.contains("_reuse2_v1"), "{line}");
+            assert!(line.contains(&paired), "{line}");
+            assert!(line.contains("shared_memory_bytes: 85504,"), "{line}");
+        }
     }
+    let windows = attention
+        .iter()
+        .filter(|line| !line.contains("_mixed_"))
+        .count();
+    assert_eq!(windows, shape.ranks() as usize * 2);
     let merges = prefill(true);
-    assert_eq!(merges.len(), attention.len());
-    assert!(merges.iter().all(|line| !line.contains("reuse")));
+    assert_eq!(merges.len(), windows);
+    assert!(
+        merges
+            .iter()
+            .all(|line| !line.contains("reuse") && line.contains("_window_"))
+    );
     drop(lines);
     instance.commit().unwrap();
     for (request, _, _) in prompts {

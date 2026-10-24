@@ -114,17 +114,10 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Shared {
         workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
+        // Validate through the reference first. Every row count and packing
+        // of prompts fuses: the body reads each row's own item and keeps the
+        // reference arithmetic, and device live counts still mask replays.
         let launches = self.reference.launches(buffers, workspace, counts)?;
-        let full_or_part = matches!(counts.rows, 8192 | 4096);
-        let retained = (64..=2496).contains(&counts.rows)
-            && counts.rows % 128 == 64
-            && matches!(
-                self.entry.query,
-                LatentAttentionQuery::Attention { page_size: 64, .. }
-            );
-        if !(full_or_part || retained) {
-            return Err(Refusal("unqualified fused prefill row count"));
-        }
         finish(&self.entry, &self.entry, buffers, counts.rows, launches)
     }
 }

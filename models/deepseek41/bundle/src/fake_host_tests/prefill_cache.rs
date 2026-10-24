@@ -209,9 +209,12 @@ fn decoded_prefill_routes_winning_offsets_and_fuses_mixed_outputs() {
             if line.contains("_decoded_") != cached {
                 mismatches.push(format!("offset {offset}: {line}"));
             }
-            let head = !window && offset < 32768;
+            // Mixed layers fuse at every offset: decoded where the cache
+            // admits the offset, native shared heads at offset 0 and past
+            // the cache's offsets, where a chunk has no cache range.
+            let head = !window;
             let suffix = if head {
-                if offset == 0 {
+                if offset == 0 || offset >= 32768 {
                     "_head_shared_finish_v1"
                 } else {
                     "_head_async_finish_v1"
@@ -238,7 +241,7 @@ fn decoded_prefill_routes_winning_offsets_and_fuses_mixed_outputs() {
             .iter()
             .filter(|l| l.contains("chop_latent_sources_") && l.contains("_merge_"))
             .collect();
-        assert_eq!(merges.len(), if offset < 32768 { 8 } else { 160 });
+        assert_eq!(merges.len(), 8);
         assert!(merges.iter().all(|l| !l.contains("_decoded_")));
         if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_JOURNAL_DIR") {
             std::fs::create_dir_all(&dir).unwrap();
@@ -397,7 +400,9 @@ fn composed_trace_capacity(
         if mode == 2 && !skip {
             assert_eq!(attention.len(), 2 * 4 * 40);
             for line in &attention {
-                let fused = matches!(offset, 0 | 24576) && line.contains("_mixed_");
+                // Offsets past the cache's have no cache range and fuse.
+                let fused =
+                    (matches!(offset, 0 | 24576) || offset >= 32768) && line.contains("_mixed_");
                 assert!(!line.contains("_decoded_"));
                 assert_eq!(line.contains("_head_shared_finish_v1"), fused);
                 assert_eq!(line.contains("_reuse2_"), !fused);
@@ -408,11 +413,10 @@ fn composed_trace_capacity(
                 .iter()
                 .filter(|s| s.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1"))
                 .count();
-            assert_eq!(
-                retained,
-                4 * if offset < 32768 { 0 } else { 20 },
-                "retained native-key attention"
-            );
+            // Retained native-key attention fuses at every offset: at the
+            // cache's offsets through the measured counts, past them because
+            // a chunk without a cache range fuses at every row count.
+            assert_eq!(retained, 0, "retained native-key attention");
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
             && s.contains(if dma && (!skip || mode == 0) {
@@ -448,10 +452,13 @@ fn composed_trace_capacity(
 
 #[test]
 fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
+    // The chunk at offset 32768 has no cache range, so every mixed layer of
+    // it fuses too: 2 parts x 38 layers x 4 ranks without skip, 38 x 4 with
+    // retained rows.
     for (mode, skip, cached, fused) in [
-        (2, false, true, 608),
-        (0, true, true, 608),
-        (2, true, false, 392),
+        (2, false, true, 608 + 304),
+        (0, true, true, 608 + 152),
+        (2, true, false, 392 + 152),
     ] {
         let trace =
             composed_trace_offsets(mode, false, skip, cached, &[0, 8192, 16384, 24576, 32768]);

@@ -503,8 +503,13 @@ impl Lowering<'_> {
             output: rows(scratch.attention, phase.rows()),
             workspace: self.buffers.workspace,
             decoded_cache: decoded_cache.map(|cache| cache.data),
+            // A step without a cache range (packed prompts, or one prompt
+            // that is not a consecutive full chunk) takes the fused shared
+            // heads at every row count: each row reads its own item's slot,
+            // block table and keys, and the epilogue is the reference's
+            // single-split merge. An admitted chunk keeps its measured rule.
             native_shared_heads: phase.prefill()
-                && offset.is_some_and(|range| {
+                && offset.is_none_or(|range| {
                     qualified_native_finish(
                         phase.rows(),
                         self.prefill_row_origin,

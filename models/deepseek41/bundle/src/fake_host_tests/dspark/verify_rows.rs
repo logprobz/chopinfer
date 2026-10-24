@@ -97,6 +97,19 @@ fn target_programs_lower_at_wide_verify_rows() {
                         .iter()
                         .any(|line| line.contains("verify_f32_n128_k512"))
                 );
+                for symbol in [
+                    "chop_deepseek41_verify_mxfp8_n1280_k5120_g1_f32_cluster64_n64_c8s5_status_v1_packed_v1",
+                    "chop_deepseek41_verify_mxfp8_n1024_k4096_g2_f32_cluster64_n64_c8s3_statusq_v1_packed_v1",
+                    "chop_deepseek41_verify_mxfp8_n5120_k2048_g1_f32_cluster64_n32_c2s4_statusp_v1_packed_v1",
+                    "chop_deepseek41_dense_ceil_w8192_sliced_s16w8_v1",
+                ] {
+                    assert_eq!(count_symbol(symbol), 40 * 4, "{symbol}");
+                }
+                assert!(
+                    !target
+                        .iter()
+                        .any(|line| line.contains("verify_mxfp8_n512_k5120"))
+                );
                 assert_eq!(
                     count_symbol("chop_deepseek41_hc_round_cols_r4_tx_v1"),
                     77 * 4

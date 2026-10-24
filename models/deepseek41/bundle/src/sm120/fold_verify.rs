@@ -18,6 +18,18 @@ pub const IDS: [&str; 4] = [
     "attention.o-b",
 ];
 
+pub fn enabled(g: &Geometry, ranks: u32, verify_rows: u32) -> bool {
+    g.id == FLASH.id && ranks == 4 && verify_rows > 32
+}
+
+/// The query projection and sliced output chain won on both devices at
+/// every wide row count tested. The window-KV prefetch path remains faster.
+pub fn served(id: &str, rows: u32) -> Option<Entry> {
+    ((33..=64).contains(&rows) && id != "attention.kv")
+        .then(|| entry(id))
+        .flatten()
+}
+
 pub fn entry(id: &str) -> Option<Entry> {
     let (n, k, groups, tile_n, splits, stages, pending, quantize) = match id {
         "attention.q-a" => (1280, 5120, 1, 64, 8, 5, 0, false),

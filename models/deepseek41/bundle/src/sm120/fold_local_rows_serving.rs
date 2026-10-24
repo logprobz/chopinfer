@@ -82,6 +82,20 @@ fn matches(entry: Mxfp8FoldGemmQuery, query: Mxfp8FoldGemmQuery, need: Need) -> 
             ..entry
         } == query
 }
+fn cluster(
+    shape: &crate::shape::Shape,
+    id: &str,
+    rows: u32,
+) -> Option<kernels_sm120::gemm::mxfp8_fold_cluster_fused::Entry> {
+    if super::fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
+        && rows <= shape.verify_decode_rows()
+        && let Some(entry) = super::fold_verify::served(id, rows)
+    {
+        return Some(entry);
+    }
+    super::fold_fused::fused(id, rows)
+}
+
 impl crate::Kernels {
     /// WO_a's or WO_b's status fold over its fused buffers at
     /// `need.capacity` rows, if one serves (`fold_fused`).
@@ -96,7 +110,7 @@ impl crate::Kernels {
         {
             return Ok(None);
         }
-        let Some(entry) = super::fold_fused::fused(id, need.capacity) else {
+        let Some(entry) = cluster(shape, id, need.capacity) else {
             return Ok(None);
         };
         if !matches(entry.cluster.base.query, query, need) {
@@ -121,9 +135,18 @@ impl crate::Kernels {
             return Vec::new();
         }
         super::fold_fused::ROWS
-            .iter()
-            .filter_map(|&rows| {
-                super::fold_fused::sliced(rows).map(|q| {
+            .into_iter()
+            .chain(33..=shape.verify_decode_rows())
+            .filter_map(|rows| {
+                let q = if rows > 32 {
+                    super::fold_fused::sliced(32).map(|mut q| {
+                        q.capacity = 64;
+                        q
+                    })
+                } else {
+                    super::fold_fused::sliced(rows)
+                };
+                q.map(|q| {
                     (
                         rows,
                         Box::new(SlicedQuantizer(q)) as Box<dyn SlicedQuantize>,
@@ -157,7 +180,7 @@ impl crate::Kernels {
                 )?));
             }
             if matches!(id, "attention.q-a" | "attention.kv")
-                && let Some(entry) = super::fold_fused::fused(id, need.capacity)
+                && let Some(entry) = cluster(shape, id, need.capacity)
             {
                 if !matches(entry.cluster.base.query, query, need) {
                     return Err(Refusal("a status fold differs from its projection").into());
@@ -168,7 +191,7 @@ impl crate::Kernels {
                 )?));
             }
             if matches!(id, "attention.o-a" | "attention.o-b")
-                && super::fold_fused::fused(id, need.capacity).is_some()
+                && cluster(shape, id, need.capacity).is_some()
             {
                 // `prepare_fused_fold` serves these buckets.
                 return Ok(None);

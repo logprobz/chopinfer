@@ -28,6 +28,15 @@ impl Instance {
             .as_ref()
     }
 
+    /// The rows the pending allocated step's tail gathers into and scores:
+    /// the prepared reserved rows, whatever the step reserves, so its
+    /// programs depend only on its width. Rows past the step's reserved
+    /// rows are never gathered, read or sampled.
+    pub(crate) fn allocated_tail_rows(&self) -> Option<u32> {
+        self.allocated_step()?;
+        Some(self.dspark.as_ref()?.allocation.as_ref()?.op.reserved_rows)
+    }
+
     /// Rank `rank`'s allocation storage.
     fn allocation_memory(&self, rank: usize) -> Result<Memory, String> {
         self.dspark
@@ -132,7 +141,7 @@ impl Instance {
 
     /// An allocated step's head on rank `rank`: its computed final-norm
     /// rows gathered by `expand` into the reserved rows, then the head over
-    /// those (`base.head_rows`).
+    /// the prepared reserved rows (`base.head_rows`), the step's live.
     pub(crate) fn dspark_allocated_head(
         &self,
         base: &Lowering<'_>,
@@ -153,12 +162,14 @@ impl Instance {
 
     /// An allocated step's packed features on rank `rank`: its computed
     /// rows packed ahead of the decode rows, then gathered by `expand`
-    /// into the reserved decode rows the commit reads.
+    /// into the reserved decode rows the commit reads. The gather's launch
+    /// covers the `tail` prepared reserved rows; the device count bounds
+    /// it to the step's.
     pub(crate) fn dspark_allocated_features(
         &self,
         rank: usize,
         phase: Phase,
-        reserved: u32,
+        tail: u32,
     ) -> Result<Vec<Lowered>, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let allocation = device
@@ -188,11 +199,11 @@ impl Instance {
             destination: bind.view(slice(
                 stored.packed,
                 u64::from(DECODE_BASE) * width,
-                u64::from(reserved) * width,
+                u64::from(tail) * width,
             )?),
         };
         launches.extend(
-            bind.launch(&allocation.features, &buffers, Counts::rows(reserved))
+            bind.launch(&allocation.features, &buffers, Counts::rows(tail))
                 .map_err(|e| format!("DSpark reserved feature rows: {e}"))?,
         );
         Ok(launches)

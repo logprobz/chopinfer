@@ -27,6 +27,7 @@ use runtime_bundle_abi::{
 use runtime_bundle_sdk::BatchCodecV1;
 
 use super::Instance;
+use super::indexer_graphs::Bank;
 use super::media::PrefillMedia;
 use crate::engram_rows::Hashed;
 use crate::indexer_workloads::Route as IndexerRoute;
@@ -57,7 +58,9 @@ struct Run {
     /// A decode phase whose Engram rows upload per layer and join at their
     /// consumers (`super::ar_engram`) instead of before the first launch.
     ar_engram: bool,
-    indexer_route: IndexerRoute,
+    /// The graph bank: the indexer route lowering takes and whether the
+    /// step is allocated.
+    bank: Bank,
     dma: Option<dma::Plan>,
     skip: Option<std::rc::Rc<skip::Plan>>,
     overlap: Option<overlap::Plan>,
@@ -68,7 +71,7 @@ struct Run {
     layout: InputLayout,
     /// Rows the head scores.
     head_rows: u32,
-    /// A decode or verify phase's graph key in `indexer_route`'s bank:
+    /// A decode or verify phase's graph key in `bank`:
     /// (tokens, 0) for decode, `verify_graph_key` for verify. An eager
     /// prefill has none.
     graph: Option<(u32, u32)>,
@@ -312,8 +315,10 @@ impl Instance {
             Ok((phase, PREFILL, layout, None))
         } else if let Some(step) = self.allocated_step().filter(|_| inputs.verify) {
             // The target computes the allocation's width over the reserved
-            // rows the host packed. It runs eagerly: its head reads the
-            // reserved rows, which a graph of the width does not.
+            // rows the host packed. Its tail gathers into the prepared
+            // reserved rows by device counts, so its program is a function
+            // of the width and its graph is keyed like an unallocated
+            // step's, in the allocated bank.
             let rows = step.width;
             if live == 0
                 || live > items.get()
@@ -324,7 +329,8 @@ impl Instance {
                 return Err(BundleStatusV1::InvalidArgument);
             }
             let layout = super::verify_layout(&self.config.shape, items);
-            Ok((Phase::Verify { rows, items: live }, VERIFY, layout, None))
+            let key = (rows <= self.config.verify_graph_rows).then(|| verify_graph_key(rows));
+            Ok((Phase::Verify { rows, items: live }, VERIFY, layout, key))
         } else if inputs.verify {
             let rows = bundle_runtime::graphs::verify_bucket_within::<DeepSeek>(
                 inputs.live_tokens(),
@@ -375,9 +381,8 @@ impl Instance {
     ) -> Result<Programs, BundleStatusV1> {
         let stages = crate::program::stages(self.config.shape.geometry, phase);
         let allocated = self
-            .allocated_step()
-            .filter(|_| matches!(phase, Phase::Verify { .. }))
-            .map(|step| step.reserved_rows);
+            .allocated_tail_rows()
+            .filter(|_| matches!(phase, Phase::Verify { .. }));
         let mut programs = Vec::new();
         let mut collectives = Vec::new();
         let mut stage_lists = Vec::new();
@@ -407,7 +412,7 @@ impl Instance {
             for &stage in &stages {
                 if self.dspark.is_some() && stage == Stage::HeadCollapse {
                     let packed = match allocated {
-                        Some(reserved) => self.dspark_allocated_features(rank, phase, reserved),
+                        Some(tail) => self.dspark_allocated_features(rank, phase, tail),
                         None => self.dspark_pack_features(rank, phase),
                     };
                     for lowered in packed.map_err(|error| {
@@ -489,20 +494,25 @@ impl Instance {
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
         // An allocated step's items verify device-chosen counts, so it
-        // takes the route that reads no host count.
-        let allocated = self
-            .allocated_step()
-            .filter(|_| inputs.verify)
-            .map(|step| step.reserved_rows);
-        let indexer_route = if allocated.is_some() {
-            IndexerRoute::Accepted
+        // takes the route that reads no host count, in its own bank.
+        let allocated = self.allocated_tail_rows().filter(|_| inputs.verify);
+        let bank = if allocated.is_some() {
+            Bank {
+                route: IndexerRoute::Accepted,
+                allocated: true,
+            }
         } else {
-            IndexerRoute::select(&self.config.shape, self.config.kv.storage, phase, &inputs)
+            Bank::of(IndexerRoute::select(
+                &self.config.shape,
+                self.config.kv.storage,
+                phase,
+                &inputs,
+            ))
         };
         let ar_engram = arena == DECODE && self.ar_engram_serves(graph);
         let capture = if self.dspark.is_some() {
             graph.and_then(|key| {
-                let reservation = self.reserve_dspark_target(key, indexer_route);
+                let reservation = self.reserve_dspark_target(key, bank);
                 if reservation.is_none() {
                     // Decide before lowering, so no cached rank leaves an
                     // empty program in an eager fallback. Keep exact widths.
@@ -512,7 +522,7 @@ impl Instance {
             })
         } else if ar_engram {
             graph.and_then(|key| {
-                let reservation = self.reserve_ar_engram(key, indexer_route);
+                let reservation = self.reserve_ar_engram(key, bank.route);
                 if reservation.is_none() {
                     graph = None;
                 }
@@ -524,7 +534,7 @@ impl Instance {
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
-            // An allocated step's head scores its reserved rows.
+            // An allocated step's head scores the prepared reserved rows.
             (
                 allocated.unwrap_or(phase.rows()),
                 crate::buffers::head_rows(&self.config.shape),
@@ -536,7 +546,7 @@ impl Instance {
             ));
             return Err(BundleStatusV1::Unsupported);
         }
-        let lower = self.missing_ranks(graph, indexer_route);
+        let lower = self.missing_ranks(graph, bank);
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);
         }
@@ -554,7 +564,7 @@ impl Instance {
                 media.is_some(),
                 cache,
                 &inputs.positions,
-                indexer_route,
+                bank.route,
             )?
         };
         let mut tails = Vec::new();
@@ -594,7 +604,7 @@ impl Instance {
         let mut run = Run {
             prefill_engram: None,
             ar_engram,
-            indexer_route,
+            bank,
             dma: None,
             skip: None,
             overlap: None,
@@ -688,7 +698,7 @@ impl Instance {
     /// Which ranks need their program lowered: every rank of an eager run,
     /// and of a graph run the ranks whose graph of the bucket is not
     /// captured yet.
-    fn missing_ranks(&self, graph: Option<(u32, u32)>, route: IndexerRoute) -> Vec<bool> {
+    fn missing_ranks(&self, graph: Option<(u32, u32)>, bank: Bank) -> Vec<bool> {
         let ranks = self.buffers.len();
         let Some((bucket, items)) = graph else {
             return vec![true; ranks];
@@ -700,7 +710,7 @@ impl Instance {
                     bucket,
                     items,
                 };
-                !self.indexer_graph_contains(route, key)
+                !self.indexer_graph_contains(bank, key)
             })
             .collect()
     }
@@ -851,7 +861,7 @@ impl Instance {
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
         if run.graph.is_some() {
-            self.activate_indexer_graphs(run.indexer_route);
+            self.activate_indexer_graphs(run.bank);
         }
         if let Some(plan) = &run.skip {
             return plan.execute(self, run.prefill_engram.as_ref());

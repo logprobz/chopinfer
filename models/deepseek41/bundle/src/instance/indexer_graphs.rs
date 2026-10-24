@@ -10,6 +10,25 @@ pub(super) struct Pair {
     layers: Vec<(u32, GraphCache<DeepSeek>)>,
 }
 
+/// The bank a run's graphs live in: its indexer route, and whether it is an
+/// allocated verify step, whose features and head gather into the reserved
+/// rows, so its programs differ from an unallocated step's of the same key.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct Bank {
+    pub(crate) route: Route,
+    pub(crate) allocated: bool,
+}
+
+impl Bank {
+    /// The bank of an unallocated run on `route`.
+    pub(crate) const fn of(route: Route) -> Self {
+        Self {
+            route,
+            allocated: false,
+        }
+    }
+}
+
 impl Instance {
     /// Every prepared layer gather whose graphs the banks hold: DSpark's
     /// target layers, or AR's decode layers (`super::ar_engram`).
@@ -43,9 +62,9 @@ impl Instance {
 
     /// Count uncaptured pieces in the bank that will execute this run. All
     /// banks share the same ledger, but their cached keys are independent.
-    pub(super) fn indexer_graph_missing(&self, route: Route, key: GraphKey) -> usize {
+    pub(super) fn indexer_graph_missing(&self, bank: Bank, key: GraphKey) -> usize {
         let joined = self.joined_layers(key);
-        if route == self.indexer_route {
+        if bank == self.graph_bank {
             usize::from(!self.graphs.contains(key))
                 + joined.map_or(0, |layers| {
                     layers
@@ -53,7 +72,7 @@ impl Instance {
                         .filter(|layer| !layer.graphs.contains(key))
                         .count()
                 })
-        } else if let Some(pair) = self.indexer_banks.get(&route) {
+        } else if let Some(pair) = self.indexer_banks.get(&bank) {
             usize::from(!pair.target.contains(key))
                 + joined.map_or(0, |_| {
                     pair.layers
@@ -66,14 +85,14 @@ impl Instance {
         }
     }
 
-    pub(super) fn indexer_graph_contains(&self, route: Route, key: GraphKey) -> bool {
+    pub(super) fn indexer_graph_contains(&self, bank: Bank, key: GraphKey) -> bool {
         let joined = self.joined_layers(key);
-        if route == self.indexer_route {
+        if bank == self.graph_bank {
             self.graphs.contains(key)
                 && joined.is_none_or(|layers| {
                     !layers.is_empty() && layers.iter().all(|layer| layer.graphs.contains(key))
                 })
-        } else if let Some(pair) = self.indexer_banks.get(&route) {
+        } else if let Some(pair) = self.indexer_banks.get(&bank) {
             pair.target.contains(key)
                 && joined.is_none_or(|layers| {
                     !pair.layers.is_empty()
@@ -89,11 +108,11 @@ impl Instance {
         }
     }
 
-    pub(super) fn activate_indexer_graphs(&mut self, route: Route) {
-        if route == self.indexer_route {
+    pub(super) fn activate_indexer_graphs(&mut self, bank: Bank) {
+        if bank == self.graph_bank {
             return;
         }
-        let mut next = self.indexer_banks.remove(&route).unwrap_or_else(|| Pair {
+        let mut next = self.indexer_banks.remove(&bank).unwrap_or_else(|| Pair {
             target: GraphCache::sharing(&self.graphs),
             layers: self
                 .layer_gathers()
@@ -108,9 +127,9 @@ impl Instance {
             assert_eq!(*id, layer.layer);
             std::mem::swap(&mut layer.graphs, graphs);
         }
-        let previous = self.indexer_banks.insert(self.indexer_route, next);
+        let previous = self.indexer_banks.insert(self.graph_bank, next);
         debug_assert!(previous.is_none());
-        self.indexer_route = route;
+        self.graph_bank = bank;
         // Every bank shares the existing acquisition ledger. Switching neither
         // frees in-flight graphs nor changes streams or gather ownership.
     }

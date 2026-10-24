@@ -300,7 +300,7 @@ impl Instance {
         let missing = (0..self.ranks.len())
             .map(|rank| {
                 self.indexer_graph_missing(
-                    route,
+                    super::indexer_graphs::Bank::of(route),
                     GraphKey {
                         rank: rank as u32,
                         bucket,

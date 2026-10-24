@@ -77,16 +77,68 @@ fn launch_of(step: &[String], stream: u32, symbol: &str) -> Option<usize> {
         .position(|line| line.starts_with(&format!("launch {stream} {symbol} ")))
 }
 
+/// Executes `request` with device results for `items` items of `k`
+/// drafts each (cycle `epoch`), then commits each item's bonus row;
+/// returns the step's journal, its hash on rank 0, and its acceptance of
+/// `acceptance`.
+fn device_step(
+    host: &Rc<Host>,
+    instance: &mut BundleInstanceV1,
+    request: &[u8],
+    (items, k, epoch): (u32, u32, u64),
+    acceptance: &str,
+) -> (Vec<String>, usize, usize) {
+    let mut sink = DeviceSink {
+        host: Rc::clone(host),
+        metadata: Some(metadata(items, k, epoch)),
+        legacy: Sink::default(),
+        drafts: Vec::new(),
+        samples: Vec::new(),
+        completion: None,
+    };
+    let start = host.journal.borrow().len();
+    instance
+        .execute(request, &mut sink)
+        .unwrap_or_else(|e| panic!("cycle {epoch}: {e:?} {:?}", host.logs.borrow()));
+    assert_eq!(sink.drafts.len(), items as usize);
+    assert_eq!(
+        sink.samples
+            .iter()
+            .map(|s| s.logits.logits.row_count)
+            .sum::<u32>(),
+        items * (k + 1)
+    );
+    assert_eq!(sink.completion.unwrap().sample_rows, items * (k + 1));
+    instance
+        .commit_accepted(
+            &(1..=items)
+                .map(|id| super::kept(u64::from(id), 1))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    let step = host.journal.borrow()[start..].to_vec();
+    let rank0 = host.rank_streams.borrow()[&0];
+    let hash = launch_of(&step, rank0, crate::sm120::engram_hash_rows::SYMBOL)
+        .expect("rank 0 hashes the computed rows");
+    let accepted = launch_of(&step, rank0, acceptance).expect("the step's acceptance runs");
+    assert!(hash < accepted);
+    (step, hash, accepted)
+}
+
 /// An allocated step runs on every topology: each rank allocates after its
 /// draft copies and before rank 0 hashes the computed rows, the target
-/// computes the width eagerly (no replay), every rank gathers its head and
-/// packed feature rows back into the reserved rows by index, the sampler
-/// reads the reserved rows, and the allocated acceptance walks the verified
-/// drafts. A host without device results is refused before any work.
+/// computes the width, every rank gathers its head and packed feature rows
+/// back into the reserved rows by index, the sampler reads the reserved
+/// rows, and the allocated acceptance walks the verified drafts. A host
+/// without device results is refused before any work. The target's graph
+/// is keyed by the width in the allocated bank: the first step of a width
+/// captures it, a step of the same width that reserves other rows replays
+/// it without lowering, and an unallocated step of the same key captures
+/// its own.
 #[test]
 fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
     for shape in crate::shape::topologies() {
-        let (items, k, width) = (8_u32, 3_u32, 16_u32);
+        let (items, width) = (8_u32, 16_u32);
         let (host, mut instance) = create_allocating(shape, 8);
         for slot in 0..items {
             execute(
@@ -96,75 +148,63 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             );
             instance.commit().unwrap();
         }
-        let request = allocated(items, 3, k, width).encode().unwrap();
+        let request = allocated(items, 3, 3, width).encode().unwrap();
         let mut legacy = Sink::default();
         assert_eq!(
             instance.execute(&request, &mut legacy).err(),
             Some(BundleAbiError::Status(BundleStatusV1::Unsupported))
         );
-        let mut sink = DeviceSink {
-            host: Rc::clone(&host),
-            metadata: Some(metadata(items, k, 1)),
-            legacy: Sink::default(),
-            drafts: Vec::new(),
-            samples: Vec::new(),
-            completion: None,
-        };
-        let start = host.journal.borrow().len();
-        instance
-            .execute(&request, &mut sink)
-            .unwrap_or_else(|e| panic!("{e:?} {:?}", host.logs.borrow()));
-        assert_eq!(sink.drafts.len(), items as usize);
-        assert_eq!(
-            sink.samples
-                .iter()
-                .map(|s| s.logits.logits.row_count)
-                .sum::<u32>(),
-            items * (k + 1)
-        );
-        let packet = sink.completion.unwrap();
-        assert_eq!(packet.sample_rows, items * (k + 1));
-        let journal = host.journal.borrow();
-        let step = &journal[start..];
         let streams = host.rank_streams.borrow().clone();
-        let hash = launch_of(step, streams[&0], crate::sm120::engram_hash_rows::SYMBOL)
-            .expect("rank 0 hashes the computed rows");
-        let acceptance = launch_of(
-            step,
-            streams[&0],
-            crate::sm120::allocated_acceptance_entries::SYMBOL,
-        )
-        .expect("the allocated acceptance walks the verified drafts");
-        assert!(
-            launch_of(
-                step,
-                streams[&0],
-                crate::sm120::host_acceptance_entries::SYMBOL
-            )
-            .is_none()
+        let allocated_acceptance = crate::sm120::allocated_acceptance_entries::SYMBOL;
+        // Every rank allocates before rank 0 hashes, and no host
+        // acceptance runs.
+        let allocates = |step: &[String], hash: usize| {
+            assert!(
+                launch_of(
+                    step,
+                    streams[&0],
+                    crate::sm120::host_acceptance_entries::SYMBOL
+                )
+                .is_none()
+            );
+            for rank in 0..shape.ranks() {
+                let allocate =
+                    launch_of(step, streams[&rank], crate::sm120::allocate_entries::SYMBOL)
+                        .unwrap_or_else(|| panic!("rank {rank} allocates"));
+                assert!(allocate < hash);
+            }
+        };
+        let lines = |step: &[String], prefix: &str, stream: u32| {
+            step.iter()
+                .filter(|line| line.starts_with(&format!("{prefix} {stream} ")))
+                .count()
+        };
+
+        // The first step of the width captures each rank's target graph:
+        // the feature packing's gather and the packed rows' gather into the
+        // reserved rows, then the reserved head rows' gather before the
+        // head, then replays it.
+        let (step, hash, accepted) = device_step(
+            &host,
+            &mut instance,
+            &request,
+            (items, 3, 1),
+            allocated_acceptance,
         );
-        // The target runs eagerly between the hash and the acceptance.
-        assert!(
-            !step[hash..acceptance]
-                .iter()
-                .any(|line| line.starts_with("replay "))
-        );
+        allocates(&step, hash);
+        let target = &step[hash..accepted];
         for rank in 0..shape.ranks() {
             let stream = streams[&rank];
-            let allocate = launch_of(step, stream, crate::sm120::allocate_entries::SYMBOL)
-                .unwrap_or_else(|| panic!("rank {rank} allocates"));
-            assert!(allocate < hash);
+            assert!(lines(target, "captured", stream) > 0, "rank {rank}");
+            assert!(lines(target, "replay", stream) > 0, "rank {rank}");
             let prefix = format!("launch {stream} ");
-            let head = step[hash..acceptance]
+            let head = target
                 .iter()
                 .position(|line| {
                     line.starts_with(&prefix) && line.contains("chop_deepseek41_head_f32")
                 })
-                .map(|offset| hash + offset)
-                .unwrap_or_else(|| panic!("rank {rank} runs its head"));
-            // The feature packing's gather and the packed rows' gather into
-            // the reserved rows, then the reserved head rows' gather.
-            let gathers = step[hash..head]
+                .unwrap_or_else(|| panic!("rank {rank} captures its head"));
+            let gathers = target[..head]
                 .iter()
                 .filter(|line| {
                     line.starts_with(&prefix) && line.contains("chop_row_gather_by_index")
@@ -172,8 +212,59 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
                 .count();
             assert_eq!(gathers, 3, "rank {rank}");
         }
-        drop(journal);
-        instance.cancel().unwrap();
+
+        // The same width over fewer reserved rows replays the graph: the
+        // allocation and the device counts carry the reservation.
+        let request = allocated(items, 4, 2, width).encode().unwrap();
+        let (step, hash, accepted) = device_step(
+            &host,
+            &mut instance,
+            &request,
+            (items, 2, 2),
+            allocated_acceptance,
+        );
+        allocates(&step, hash);
+        let target = &step[hash..accepted];
+        for rank in 0..shape.ranks() {
+            let stream = streams[&rank];
+            assert_eq!(lines(target, "captured", stream), 0, "rank {rank}");
+            assert!(lines(target, "replay", stream) > 0, "rank {rank}");
+            assert!(
+                !target
+                    .iter()
+                    .any(|line| line.starts_with(&format!("launch {stream} "))
+                        && line.contains("chop_deepseek41_head_f32")),
+                "rank {rank} replays its head"
+            );
+        }
+
+        // An unallocated step of the same graph key captures its own graph.
+        let plain = BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            (0..items)
+                .map(|slot| BatchItemV1::verify(u64::from(slot + 1), 2, true, vec![7]))
+                .collect(),
+            (0..items)
+                .map(|slot| BatchAppendV1::new(5, 2, 7, vec![u64::from(slot)], None))
+                .collect(),
+        )
+        .with_state_slots((0..items).map(u64::from).collect())
+        .encode()
+        .unwrap();
+        let (step, hash, accepted) = device_step(
+            &host,
+            &mut instance,
+            &plain,
+            (items, 1, 3),
+            crate::sm120::host_acceptance_entries::SYMBOL,
+        );
+        assert!(launch_of(&step, streams[&0], allocated_acceptance).is_none());
+        let target = &step[hash..accepted];
+        for rank in 0..shape.ranks() {
+            let stream = streams[&rank];
+            assert!(launch_of(&step, stream, crate::sm120::allocate_entries::SYMBOL).is_none());
+            assert!(lines(target, "captured", stream) > 0, "rank {rank}");
+        }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }

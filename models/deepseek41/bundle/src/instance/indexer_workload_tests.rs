@@ -56,7 +56,7 @@ fn indexer_context_routes_capture_once_and_replay_the_matching_schedule() {
             for context in [8192, 32768, 131072, 262144, 32768, 8192, 131072, 262145] {
                 let start = host.device.journal.borrow().len();
                 let mut run = live.plan_run(inputs(rows, per, context), None).unwrap();
-                let route = run.indexer_route;
+                let route = run.bank.route;
                 let expected = if (131072..=262144).contains(&context) {
                     IndexerRoute::Combined
                 } else if per == 4 && context == 32768 {
@@ -152,6 +152,12 @@ fn indexer_context_routes_capture_once_and_replay_the_matching_schedule() {
 
 #[test]
 fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
+    // Allocated verify steps keep their own bank: their programs gather
+    // into the reserved rows, unlike an unallocated step's of the same key.
+    let allocated = Bank {
+        route: IndexerRoute::Accepted,
+        allocated: true,
+    };
     let (host, mut instance) = host(Ranks::TP1, true);
     super::super::INSTANCES.with(|table| {
         let mut table = table.borrow_mut();
@@ -162,28 +168,30 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
             items: 8,
         };
         let mut expected = std::collections::BTreeMap::new();
-        for route in [
-            IndexerRoute::Accepted,
-            IndexerRoute::VerifyHierarchy,
-            IndexerRoute::Combined,
-            IndexerRoute::Accepted,
-            IndexerRoute::Combined,
-            IndexerRoute::VerifyHierarchy,
+        for bank in [
+            Bank::of(IndexerRoute::Accepted),
+            Bank::of(IndexerRoute::VerifyHierarchy),
+            Bank::of(IndexerRoute::Combined),
+            allocated,
+            Bank::of(IndexerRoute::Accepted),
+            allocated,
+            Bank::of(IndexerRoute::Combined),
+            Bank::of(IndexerRoute::VerifyHierarchy),
         ] {
-            let fresh = !expected.contains_key(&route);
-            assert_eq!(live.indexer_graph_contains(route, key), !fresh);
+            let fresh = !expected.contains_key(&bank);
+            assert_eq!(live.indexer_graph_contains(bank, key), !fresh);
             let missing = if fresh { 3 } else { 0 };
-            assert_eq!(live.indexer_graph_missing(route, key), missing);
-            let reservation = live.reserve_dspark_target((32, 8), route).unwrap();
+            assert_eq!(live.indexer_graph_missing(bank, key), missing);
+            let reservation = live.reserve_dspark_target((32, 8), bank).unwrap();
             assert_eq!(live.graphs.stats().reserved, missing);
             drop(reservation);
-            live.activate_indexer_graphs(route);
+            live.activate_indexer_graphs(bank);
             let stream = live.ranks[0].2;
             live.graphs
                 .capture::<BundleAbiError>(&live.services, stream, key, 1, |_| Ok(()))
                 .unwrap();
             assert_eq!(
-                live.indexer_graph_missing(route, key),
+                live.indexer_graph_missing(bank, key),
                 if fresh { 2 } else { 0 }
             );
             let layers = &mut live.dspark.as_mut().unwrap().cycle.layers;
@@ -199,23 +207,24 @@ fn indexer_context_banks_keep_dspark_prefix_and_suffix_together() {
                 pair.push(graph);
             }
             if fresh {
-                expected.insert(route, pair);
+                expected.insert(bank, pair);
             } else {
-                assert_eq!(expected[&route], pair);
+                assert_eq!(expected[&bank], pair);
             }
-            assert!(live.indexer_graph_contains(route, key));
+            assert!(live.indexer_graph_contains(bank, key));
         }
         assert_eq!(
             live.graphs.ledger_len(),
-            3 * (1 + live.dspark.as_ref().unwrap().cycle.layers.len())
+            4 * (1 + live.dspark.as_ref().unwrap().cycle.layers.len())
         );
         live.graphs.release_all(&live.services).unwrap();
-        for route in [
-            IndexerRoute::Accepted,
-            IndexerRoute::VerifyHierarchy,
-            IndexerRoute::Combined,
+        for bank in [
+            Bank::of(IndexerRoute::Accepted),
+            Bank::of(IndexerRoute::VerifyHierarchy),
+            Bank::of(IndexerRoute::Combined),
+            allocated,
         ] {
-            assert!(!live.indexer_graph_contains(route, key));
+            assert!(!live.indexer_graph_contains(bank, key));
         }
     });
     instance.destroy().unwrap();

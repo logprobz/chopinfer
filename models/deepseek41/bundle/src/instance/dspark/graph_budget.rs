@@ -1,7 +1,7 @@
 //! Bound graphs across target pieces, drafts and catch-up without releasing
 //! request state or mapped-gather resources.
 use super::Instance;
-use crate::indexer_workloads::Route;
+use crate::instance::indexer_graphs::Bank;
 use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
@@ -40,7 +40,7 @@ impl Instance {
     pub(crate) fn reserve_dspark_target(
         &self,
         (bucket, items): (u32, u32),
-        route: Route,
+        bank: Bank,
     ) -> Option<GraphReservation> {
         self.dspark.as_ref()?;
         let missing = (0..self.ranks.len())
@@ -50,7 +50,7 @@ impl Instance {
                     bucket,
                     items,
                 };
-                self.indexer_graph_missing(route, key)
+                self.indexer_graph_missing(bank, key)
             })
             .sum();
         // Target keys are the verify rows and decode buckets of each route

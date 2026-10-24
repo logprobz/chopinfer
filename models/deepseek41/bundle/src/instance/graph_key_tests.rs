@@ -308,7 +308,7 @@ fn sweep(
             let items = case.split.len() as u32;
             assert_eq!(run.phase, Phase::Verify { rows, items });
             mutate(&mut run);
-            let key = (run.indexer_route, run.graph.unwrap());
+            let key = (run.bank.route, run.graph.unwrap());
             assert_eq!(key.1, verify_graph_key(rows));
             let plan = planned(&run);
             *counts.entry(key).or_default() += 1;
@@ -464,7 +464,7 @@ fn route_banks_plan_different_launches_at_the_same_rows_and_items() {
                 .plan_run(phase_inputs(&placed(split, vec![end; 8])), None)
                 .unwrap();
             assert_eq!(run.phase, Phase::Verify { rows: 32, items: 8 });
-            (run.indexer_route, planned(&run))
+            (run.bank.route, planned(&run))
         };
         let uneven = vec![1, 1, 5, 5, 5, 5, 5, 5];
         let (accepted, base) = plan(uneven.clone(), MEDIUM);

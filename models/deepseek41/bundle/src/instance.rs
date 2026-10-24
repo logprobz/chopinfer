@@ -34,7 +34,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::thread::LocalKey;
 
-use crate::indexer_workloads::Route as IndexerRoute;
 use bundle_runtime::acquire::{self, Log, RankHandles};
 use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::entry::{Bundle, Failed};
@@ -134,8 +133,8 @@ pub struct Instance {
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
     graphs: GraphCache<DeepSeek>,
-    indexer_route: IndexerRoute,
-    indexer_banks: BTreeMap<IndexerRoute, indexer_graphs::Pair>,
+    graph_bank: indexer_graphs::Bank,
+    indexer_banks: BTreeMap<indexer_graphs::Bank, indexer_graphs::Pair>,
     shared_overlap: crate::shared_overlap::Settings,
     side_lanes: Vec<crate::shared_overlap::Lanes>,
     /// A full draft program for each exact item count, sharing graph ownership.
@@ -948,7 +947,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         held: Vec::new(),
         collectives: Collectives::default(),
         graphs: GraphCache::with_items(config.create.ranks, items),
-        indexer_route: IndexerRoute::Accepted,
+        graph_bank: indexer_graphs::Bank::default(),
         indexer_banks: BTreeMap::new(),
         shared_overlap: crate::shared_overlap::Settings::from_env(),
         side_lanes: Vec::new(),

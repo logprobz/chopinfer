@@ -3986,3 +3986,10 @@ pub const SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1: &str = "chop.speculative-exact
 /// `confidence_contract`; a calibration fitted for another contract is not
 /// used.
 pub const VERIFY_ALLOCATION_CAPABILITY_V1: &str = "chop.verify-allocation.v1";
+
+/// The boolean model option through which the host tells a package that
+/// declares [`VERIFY_ALLOCATION_CAPABILITY_V1`] that it will send allocated
+/// verify steps: the host sets it to true when its confidence calibration
+/// applies, and a package prepares the allocation's work and memory only
+/// then. Without it a package refuses allocated steps.
+pub const VERIFY_ALLOCATION_OPTION_V1: &str = "verify_allocation";

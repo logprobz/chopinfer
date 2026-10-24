@@ -2261,6 +2261,30 @@ fn default_verify_rows_v1(manifest: &BundleManifestV1, sequences: usize) -> usiz
     )
 }
 
+/// `model_options` with the package's `verify_allocation` option set when
+/// serving allocates verify drafts and the package declares the option. The
+/// host owns the option, so an explicit one is refused.
+fn verify_allocation_options_v1(
+    manifest: &BundleManifestV1,
+    model_options: &std::collections::BTreeMap<String, String>,
+    allocates: bool,
+) -> Result<std::collections::BTreeMap<String, String>, HostCommandErrorV1> {
+    let name = runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1;
+    if model_options.contains_key(name) {
+        return Err(usage_error(format!(
+            "the '{name}' model option follows --speculation-confidence; do not set it"
+        )));
+    }
+    let declared = manifest
+        .model_options()
+        .is_some_and(|options| options.options.iter().any(|option| option.name == name));
+    let mut options = model_options.clone();
+    if allocates && declared {
+        options.insert(name.to_owned(), "true".to_owned());
+    }
+    Ok(options)
+}
+
 /// `--speculation-graph-rows`, which reaches the package as its
 /// `verify_graph_rows` model option: from 1 to the manifest's verify
 /// maximum, and only for a package that declares the option.
@@ -2670,7 +2694,6 @@ fn serve_v1(
         devices.map(<[i32]>::len),
     )?;
     let graph_rows = verify_graph_rows_v1(package.manifest(), model_options)?;
-    let resolved_options = package.manifest().resolve_model_options(model_options)?;
     // The token capacity is judged against the package before a listing
     // returns, so a preflight refuses what a start would.
     let speculation = speculation_config_v1(
@@ -2698,6 +2721,14 @@ fn serve_v1(
             None => config,
         }
     });
+    let model_options = &verify_allocation_options_v1(
+        package.manifest(),
+        model_options,
+        speculation
+            .and_then(SpeculationConfig::verify_allocation)
+            .is_some(),
+    )?;
+    let resolved_options = package.manifest().resolve_model_options(model_options)?;
     if list_model_options {
         return serde_json::to_string_pretty(&package.manifest().model_options())
             .map_err(|e| run_error(e.to_string()));
@@ -8394,6 +8425,51 @@ mod tests {
                 items.map(|items| items as usize)
             );
         }
+    }
+
+    /// Serving that allocates verify drafts sets the package's
+    /// `verify_allocation` option when the package declares it; other
+    /// serving and other packages keep their options, and an explicit
+    /// option is refused because the host owns it.
+    #[test]
+    fn allocation_sets_the_packages_verify_allocation_option() {
+        use runtime_bundle::model_options::{ModelOptionV1, ModelOptionsV1, OptionDefinitionV1};
+        let name = runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1;
+        let plain = manifest_requiring(
+            vec![topology("tp1", 1)],
+            8,
+            DECLARED_ROWS_V1,
+            &"0".repeat(64),
+            vec![id(runtime_bundle::model_options::CAPABILITY)],
+        );
+        let declaring = plain
+            .clone()
+            .with_model_options(ModelOptionsV1 {
+                schema: runtime_bundle::model_options::CAPABILITY.into(),
+                options: vec![ModelOptionV1 {
+                    name: name.into(),
+                    definition: OptionDefinitionV1::Boolean { default: false },
+                    default_is_qualified: true,
+                }],
+            })
+            .unwrap();
+        let given = std::collections::BTreeMap::from([("other".to_owned(), "1".to_owned())]);
+        let set = super::verify_allocation_options_v1(&declaring, &given, true).unwrap();
+        assert_eq!(set.get(name).map(String::as_str), Some("true"));
+        assert_eq!(set.get("other").map(String::as_str), Some("1"));
+        for (manifest, allocates) in [(&declaring, false), (&plain, true), (&plain, false)] {
+            assert_eq!(
+                super::verify_allocation_options_v1(manifest, &given, allocates).unwrap(),
+                given
+            );
+        }
+        let explicit = std::collections::BTreeMap::from([(name.to_owned(), "true".to_owned())]);
+        assert!(
+            super::verify_allocation_options_v1(&declaring, &explicit, true)
+                .unwrap_err()
+                .to_string()
+                .contains("follows --speculation-confidence")
+        );
     }
 
     /// A listing refuses a token capacity or graph budget beyond the

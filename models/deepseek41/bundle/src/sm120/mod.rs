@@ -724,10 +724,16 @@ impl crate::Kernels {
                 .any(|name| name == cubin)
     }
 
+    /// The allocated verify steps' cubins, which an instance loads only
+    /// when its host allocates (`verify_allocation`).
+    pub fn allocation_cubin(cubin: &str) -> bool {
+        cubin == allocate_entries::CUBIN || cubin == allocated_acceptance_entries::CUBIN
+    }
+
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// the unwired acceptance reducer, verify allocation and allocated
-    /// acceptance, the one-launch HC boundary, which the
+    /// the unwired acceptance reducer, the allocated verify steps' (loaded
+    /// apart, `allocation_cubin`), the one-launch HC boundary, which the
     /// column-block pair replaced (packaged and locked for the labs), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.

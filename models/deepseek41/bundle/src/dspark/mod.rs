@@ -6,6 +6,7 @@
 //! drafter stage projects the same raw features through its own KV path.
 
 pub mod acceptance;
+pub(crate) mod allocation;
 pub mod calibration;
 pub(crate) mod cycle;
 pub(crate) mod device;

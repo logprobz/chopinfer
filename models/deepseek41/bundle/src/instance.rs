@@ -580,7 +580,11 @@ impl Instance {
             // The cubins of this geometry and the shared ones.
             for cubin in crate::CUBINS
                 .iter()
-                .filter(|cubin| crate::serves(cubin.name, &shape))
+                .filter(|cubin| {
+                    crate::serves(cubin.name, &shape)
+                        || self.dspark.as_ref().is_some_and(|d| d.allocation.is_some())
+                            && crate::Kernels::allocation_cubin(cubin.name)
+                })
                 .filter(|cubin| crate::Kernels::loads_indexer(cubin.name, self.config.kv.storage))
                 .filter(|cubin| {
                     crate::Kernels::loads_latent_attention(
@@ -904,6 +908,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
+                config.verify_allocation,
             )
             .map_err(|error| {
                 log(&error);
@@ -1261,6 +1266,25 @@ pub(crate) fn dspark_context(
             .state()
             .context(request)
             .cloned()
+    })
+}
+
+/// Whether the instance's drafter holds the allocated verify steps' ops
+/// and storage: one storage record per rank.
+#[cfg(test)]
+pub(crate) fn dspark_allocation_ranks(handle: runtime_bundle_abi::BundleHandleV1) -> Option<usize> {
+    INSTANCES.with(|table| {
+        Some(
+            table
+                .borrow_mut()
+                .get_mut(handle)?
+                .dspark
+                .as_ref()?
+                .allocation
+                .as_ref()?
+                .ranks
+                .len(),
+        )
     })
 }
 

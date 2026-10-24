@@ -51,6 +51,9 @@ pub(crate) struct Device {
     pub cycle: super::cycle::Cycle,
     pub prefetch: super::prefetch::Cache,
     pub results: super::results::Results,
+    /// Allocated verify steps' ops and storage, when the host allocates
+    /// (the create record's `verify_allocation` model option).
+    pub allocation: Option<super::allocation::Allocation>,
     pub features: Layout,
     pub ops: Ops,
     pub prepared: Prepared,
@@ -152,6 +155,7 @@ impl Device {
         context_tokens: u64,
         draft_chunk_items: usize,
         mode: DraftMode,
+        verify_allocation: bool,
     ) -> Result<Self, String> {
         let g = shape.geometry;
         if !(1..=DECODE_BATCH as usize).contains(&draft_chunk_items) {
@@ -217,6 +221,15 @@ impl Device {
             cycle,
             prefetch: super::prefetch::Cache::new(),
             results: super::results::Results::new(kernels.own.as_ref(), g.shape.vocab)?,
+            allocation: verify_allocation
+                .then(|| {
+                    super::allocation::Allocation::new(
+                        kernels.own.as_ref(),
+                        g.shape.vocab,
+                        shape.verify_rows,
+                    )
+                })
+                .transpose()?,
             features,
             ops,
             prepared,
@@ -358,6 +371,9 @@ impl Device {
             )?);
         }
         self.results.allocate(services, pool, stream, held)?;
+        if let Some(allocation) = &mut self.allocation {
+            allocation.allocate(services, pool, stream, held)?;
+        }
         let items = u64::from(DECODE_BATCH);
         let rows = u64::from(DRAFT_ROWS);
         let hidden = u64::from(g.shape.hidden);

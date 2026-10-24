@@ -556,3 +556,28 @@ allocation and leaves the existing partial workspace reserved for fallback.
 Every query, live count, selected-key list, sink, RoPE and output view keeps
 its prior row origin. Cache producers stay on the owning main stream;
 part reductions and side-stream work retain their prior fork/join order.
+
+## Every prefill row count
+
+Native Flash TP4 now pairs prefill attention rows at every row count and
+for any packing of prompts, in all three entries. Served prompts rarely
+have a measured row count, and a step that packs several prompts never
+does, so both used to run the reference plan. The reference and the paired
+body loop over the full 128+512 key budget for every row whatever the
+prompt length, so the 8192-row lab costs above apply per row: about 29 ms
+against 6.1 ms per mixed layer per 8192 rows.
+
+The paired body takes the reference's arguments and keeps its arithmetic.
+Each row reads its own item's slot, block table and key lists. A CTA stages
+one key tile for both rows only when their valid flags and key addresses
+are the same or shifted by one, so the staged keys are exactly the ones
+each row would load alone; otherwise it runs one pass per row. Rows of
+different prompts therefore compute exactly what the reference computes
+for them, and the merge is unchanged. The fake-host journals change only those attention launches'
+symbols, grids, threads and shared bytes.
+
+Served packed prefill steps of 8 and 14 prompts (about 560 tokens each)
+spent about 0.25 ms per token in the target at TP4 on 2026-10-24, of which
+the reference attention plan accounts for about 0.14 ms by the lab costs.
+The lab qualification on packed multi-prompt shapes and the served
+exactness and batch-invariance checks are still to run.

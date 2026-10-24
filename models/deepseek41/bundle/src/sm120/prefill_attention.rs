@@ -1,4 +1,4 @@
-//! Paired-row attention qualified for native Flash TP4 prefill chunks.
+//! Paired-row attention for native Flash TP4 prefill rows.
 use kernel_build::CubinSpec;
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
@@ -61,8 +61,9 @@ pub fn prepare(
         return Ok(reference);
     };
     let mut info = reference.info().clone();
-    // Retain the reference symbols for unqualified host grids. The merge and
-    // numerical contract are unchanged; only input staging is different.
+    // Retain the reference symbols: the reference validates every launch and
+    // keeps its merge. The numerical contract is unchanged; only input
+    // staging is different.
     info.symbols.push((
         sources_prefill::reuse_symbol(&entry, 2),
         sources_prefill::reuse_plan(&entry, ROWS, 2)
@@ -83,20 +84,6 @@ struct PairedPrefill {
     entry: sources::Entry,
 }
 
-fn qualified_rows(entry: &sources::Entry, rows: u32) -> bool {
-    matches!(rows, ROWS | 4096)
-        || ((((64..=2496).contains(&rows) && rows % 128 == 64)
-            || ((64..=1280).contains(&rows) && rows % 64 == 0))
-            && matches!(
-                entry.query,
-                LatentAttentionQuery::Attention {
-                    second_fp4_keys: true,
-                    page_size: 64,
-                    ..
-                }
-            ))
-}
-
 impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
     fn info(&self) -> &OpInfo {
         &self.info
@@ -110,13 +97,15 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
     ) -> Result<Vec<Launch>, Refusal> {
         // Validate through the reference before changing the attention plan.
         // Device live counts still mask graph replays, including empty tails.
+        // Every row count and packing of prompts pairs rows: each row reads
+        // its own item's keys and keeps the reference arithmetic, and a CTA
+        // stages one key tile for both rows only when their keys are the
+        // same or shifted by one, otherwise one tile per row.
         let mut launches = self.reference.launches(buffers, workspace, counts)?;
-        if qualified_rows(&self.entry, counts.rows) {
-            for launch in &mut launches {
-                if launch.symbol == self.entry.symbol() {
-                    launch.symbol = sources_prefill::reuse_symbol(&self.entry, 2);
-                    launch.plan = sources_prefill::reuse_plan(&self.entry, counts.rows, 2)?;
-                }
+        for launch in &mut launches {
+            if launch.symbol == self.entry.symbol() {
+                launch.symbol = sources_prefill::reuse_symbol(&self.entry, 2);
+                launch.plan = sources_prefill::reuse_plan(&self.entry, counts.rows, 2)?;
             }
         }
         Ok(launches)

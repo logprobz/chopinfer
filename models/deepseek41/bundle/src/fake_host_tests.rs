@@ -1219,6 +1219,12 @@ fn journal_steps(host: &Rc<Host>) {
 /// Its codes are in quad-lane order: the quad-lane builds replace the
 /// row-tiled ones the same way, renaming the same resolves and launches.
 /// No other line changes.
+/// Native TP4 pairs prefill attention rows at every row count, so these
+/// short prompts' window, mixed32 and mixed64 attention launches (3, 6, 64
+/// and 70 rows) name the loaded paired entries, with grid x halved and
+/// rounded up, twice the threads and 85,504 shared bytes. Audited against
+/// the previous journal: those 720 launches differ in exactly these fields,
+/// and every other line, argument, stream and handle is identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1245,7 +1251,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78523, 0xf33b345096e954c9),
+        (78523, 0x88ef7adeb0dabed7),
     ),
     (
         "deepseek41-flash-tp4",

@@ -440,9 +440,11 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// `FLASH_JOURNALS`. No other line changes.
 /// The packed fold codes change both histories as in `FLASH_JOURNALS`; the
 /// C1 dual fold binds its two projections' views as their packed banks.
+/// TP4 pairs the 5- and 13-row prefill attention launches as in
+/// `FLASH_JOURNALS` (320 launches); no other line changes.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (19835, 0x7e98b22150ec56f3)),
-    (Ranks::TP4, (50503, 0x913c05bd1e9a4fcf)),
+    (Ranks::TP4, (50503, 0xfa781aa978fa3cc5)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

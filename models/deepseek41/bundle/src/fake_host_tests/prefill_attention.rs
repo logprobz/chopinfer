@@ -1,4 +1,5 @@
-//! Qualified output fusion covers the small tails; unmeasured counts keep their fallbacks.
+//! Qualified output fusion covers the small tails; paired attention covers
+//! every native TP4 prefill row count and packing of prompts.
 use super::*;
 
 #[test]
@@ -48,34 +49,28 @@ fn retained_prefill_fuses_every_measured_count_and_small_tail() {
 }
 
 #[test]
-fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
-    for (ranks, layout, rows, route) in [
-        (Ranks::TP4, KV_LAYOUTS[0], 8192, 1),
-        (Ranks::TP4, KV_LAYOUTS[0], 8191, 0),
-        (Ranks::TP4, KV_LAYOUTS[1], 8192, 0),
-        (Ranks::TP2, KV_LAYOUTS[0], 8192, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 64, 2),
-        (Ranks::TP4, KV_LAYOUTS[0], 192, 2),
-        (Ranks::TP4, KV_LAYOUTS[0], 2496, 2),
-        (Ranks::TP4, KV_LAYOUTS[0], 65, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 128, 2),
-        (Ranks::TP4, KV_LAYOUTS[0], 1281, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 1408, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 2560, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 4095, 0),
-        (Ranks::TP4, KV_LAYOUTS[0], 4096, 1),
-        (Ranks::TP4, KV_LAYOUTS[0], 4097, 0),
-        (Ranks::TP4, KV_LAYOUTS[1], 64, 0),
-        (Ranks::TP2, KV_LAYOUTS[0], 64, 0),
-        (Ranks::TP4, KV_LAYOUTS[1], 4096, 0),
-        (Ranks::TP2, KV_LAYOUTS[0], 4096, 0),
-    ]
-    .into_iter()
-    .chain(
-        (256..=1280)
-            .step_by(128)
-            .map(|rows| (Ranks::TP4, KV_LAYOUTS[0], rows, 2)),
-    ) {
+fn paired_prefill_configures_shared_memory_at_every_row_count() {
+    // Native TP4 pairs every prefill row count (full mixed 8192-row chunks
+    // take the fused shared heads); other layouts and topologies keep the
+    // reference.
+    for (ranks, layout, rows, paired) in [
+        (Ranks::TP4, KV_LAYOUTS[0], 8192, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 8191, true),
+        (Ranks::TP4, KV_LAYOUTS[1], 8192, false),
+        (Ranks::TP2, KV_LAYOUTS[0], 8192, false),
+        (Ranks::TP4, KV_LAYOUTS[0], 1, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 3, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 64, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 65, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 789, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 2560, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 4095, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 4096, true),
+        (Ranks::TP4, KV_LAYOUTS[0], 4097, true),
+        (Ranks::TP4, KV_LAYOUTS[1], 64, false),
+        (Ranks::TP2, KV_LAYOUTS[0], 789, false),
+        (Ranks::TP4, KV_LAYOUTS[1], 4096, false),
+    ] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, layout);
         let record = crate::config::tests::record(&shape, layout, 1, false);
@@ -98,10 +93,8 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
             .collect();
         assert_eq!(attention.len(), shape.ranks() as usize * 40);
         for line in &attention {
-            let shared = route == 1 && rows == 8192 && line.contains("_mixed_");
-            let paired = !shared
-                && (route == 1
-                    || (route == 2 && line.contains("_mixed_") && !line.contains("_p32_")));
+            let shared = paired && rows == 8192 && line.contains("_mixed_");
+            let paired = paired && !shared;
             assert_eq!(line.contains("_head_shared_finish_v1"), shared, "{line}");
             assert_eq!(line.contains("_reuse2_v1"), paired, "{line}");
             if shared {
@@ -114,7 +107,10 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
             }
             if paired {
                 assert!(
-                    line.contains(&format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows / 2)),
+                    line.contains(&format!(
+                        "grid_x: {}, grid_y: 2, grid_z: 1,",
+                        rows.div_ceil(2)
+                    )),
                     "{line}"
                 );
                 assert!(line.contains("block_x: 256,"), "{line}");
@@ -154,4 +150,78 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
+}
+
+/// One prefill step of `prompts`: (request, state slot, tokens), each from
+/// its first token, packed in order.
+fn packed(prompts: &[(u64, u64, u64)]) -> Vec<u8> {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let mut items = Vec::new();
+    let mut appends = Vec::new();
+    for &(request, slot, count) in prompts {
+        let inputs = (0..count).map(|token| token as u32).collect();
+        items.push(BatchItemV1::new(request, false, count as u32, true, inputs));
+        appends.push(BatchAppendV1::new(
+            0,
+            count,
+            count,
+            (0..count.div_ceil(64))
+                .map(|page| slot * 16 + page)
+                .collect(),
+            None,
+        ));
+    }
+    BatchRequestV1::new(BatchWireVersionV1::V3, items, appends)
+        .with_state_slots(prompts.iter().map(|&(_, slot, _)| slot).collect())
+        .encode()
+        .unwrap()
+}
+
+/// A prefill step that packs prompts of served lengths pairs every
+/// attention row of the step, one CTA per two rows, and keeps one reference
+/// merge per attention launch.
+#[test]
+fn packed_prompts_pair_every_attention_row() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
+    let mut instance = api()
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+        .unwrap();
+    let prompts = [(7, 0, 554), (9, 1, 560), (11, 2, 568)];
+    let rows: u64 = prompts.iter().map(|&(_, _, count)| count).sum();
+    instance
+        .execute(&packed(&prompts), &mut Views::default())
+        .unwrap();
+    let lines = host.device.journal.borrow();
+    assert_launches_fit_configured_shared(&lines, &shape.topology());
+    let prefill = |merge: bool| {
+        lines
+            .iter()
+            .filter(|line| {
+                line.starts_with("launch ")
+                    && line.contains("chop_latent_sources_")
+                    && line.contains("_prefill")
+                    && line.contains("_merge_") == merge
+            })
+            .collect::<Vec<_>>()
+    };
+    let attention = prefill(false);
+    assert_eq!(attention.len(), shape.ranks() as usize * 40);
+    let grid = format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows.div_ceil(2));
+    for line in &attention {
+        assert!(line.contains("_reuse2_v1"), "{line}");
+        assert!(line.contains(&grid), "{line}");
+        assert!(line.contains("shared_memory_bytes: 85504,"), "{line}");
+    }
+    let merges = prefill(true);
+    assert_eq!(merges.len(), attention.len());
+    assert!(merges.iter().all(|line| !line.contains("reuse")));
+    drop(lines);
+    instance.commit().unwrap();
+    for (request, _, _) in prompts {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

@@ -222,7 +222,7 @@ pub struct Sm120 {
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
-    parallel_position_queries: bool,
+    parallel_position_query_rows: u32,
     position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
     indexer_candidates: Vec<crate::pooled_indexer::position::CandidateEntry>,
     gated_sparse: Option<Box<GatedSparseEntries>>,
@@ -864,8 +864,20 @@ impl Sm120 {
 
     /// Use the separately locked, whole-row parallel query through 32 rows.
     pub fn with_parallel_position_queries(mut self) -> Self {
-        self.parallel_position_queries = true;
+        self.parallel_position_query_rows =
+            crate::pooled_indexer::position_query_parallel::MAX_ROWS;
         self
+    }
+
+    /// Bound an explicitly qualified parallel query selection through 64 rows.
+    pub fn with_parallel_position_query_rows(mut self, rows: u32) -> Result<Self, Refusal> {
+        if !(1..=64).contains(&rows) {
+            return Err(Refusal(
+                "parallel position query row limit must be in 1..=64",
+            ));
+        }
+        self.parallel_position_query_rows = rows;
+        Ok(self)
     }
 
     /// F32 query rotations compiled beside the registered shared quantizer.
@@ -2191,7 +2203,7 @@ impl Backend for Sm120 {
             self,
             op,
             need,
-            self.parallel_position_queries,
+            self.parallel_position_query_rows,
         )
     }
 

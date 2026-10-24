@@ -117,6 +117,54 @@ fn cpu_query_prepared_capacity_preserves_the_launch_crossover_and_refusals() {
     );
 }
 
+#[test]
+fn cpu_explicit_wide_query_keeps_the_default_crossover() {
+    use kernel_core::backend::View;
+    for limit in [0, 65, u32::MAX] {
+        assert!(
+            backend(false)
+                .with_parallel_position_query_rows(limit)
+                .is_err()
+        );
+    }
+    let wide = backend(false)
+        .with_parallel_position_query_rows(64)
+        .unwrap();
+    let op = wide
+        .position_indexer_query(&family::query(), Need::rows(64))
+        .unwrap();
+    assert_eq!(op.info().symbols.len(), 1);
+    let v = |handle, bytes| View { handle, bytes };
+    let buffers = PositionQueryBuffers {
+        q: v(1, 64 * 4096 * 4),
+        cos_sin: v(2, 8 * 64 * 4),
+        positions: v(3, 64 * 4),
+        live_rows: v(4, 4),
+        output: v(5, 64 * 4096 * 2),
+        quantizer_status: v(6, 66 * 4),
+        quantizer_status_row_offset: 1,
+    };
+    let scratch = v(7, op.info().workspace);
+    let default = backend(true)
+        .position_indexer_query(&family::query(), Need::rows(64))
+        .unwrap();
+    for rows in 1..=64 {
+        let counts = Counts::rows(rows).with_positions(8);
+        let calls = op.launches(&buffers, scratch, counts).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].plan.grid, [rows, 1, 1]);
+        assert_eq!(calls[0].plan.block, [1024, 1, 1]);
+        assert!(calls[0].symbol.ends_with("_parallel_v1"));
+        let old = default.launches(&buffers, scratch, counts).unwrap();
+        if rows <= 32 {
+            assert_eq!(calls, old);
+        } else {
+            assert_eq!(old.len(), 2);
+            assert!(old[0].symbol.ends_with("rotate_v3"));
+        }
+    }
+}
+
 fn inputs(rows: u32) -> Vec<f32> {
     let mut seed = 0x6ab2_c7e9_1243_8ef1_u64;
     (0..rows as usize * 4096)

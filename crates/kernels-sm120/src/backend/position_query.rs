@@ -16,7 +16,7 @@ pub(super) fn prepare(
     backend: &dyn Backend,
     query: &PositionIndexerQuery,
     need: Need,
-    parallel_queries: bool,
+    parallel_rows: u32,
 ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
     query.validate()?;
     if need.capacity == 0 || need.capacity > query.capacity {
@@ -39,7 +39,12 @@ pub(super) fn prepare(
         need,
     )?;
     let entry = chosen.entry;
-    let parallel = parallel_queries && parallel::supports(&entry);
+    let parallel_rows = if parallel::supports(&entry) {
+        parallel_rows
+    } else {
+        0
+    };
+    let parallel = parallel_rows > 0;
     super::check_plan(&entry.plan(need.capacity)?)?;
     let quantizer = backend.block_quantize(&query.query_quantization()?, need)?;
     if quantizer.info().workspace != 0 {
@@ -50,14 +55,18 @@ pub(super) fn prepare(
     let mut symbols = vec![(entry.symbol(), 0)];
     symbols.extend(quantizer.info().symbols.iter().cloned());
     if parallel {
-        if need.capacity <= parallel::MAX_ROWS {
+        if need.capacity <= parallel_rows {
             symbols.clear();
         }
         symbols.push((parallel::symbol(&entry), 0));
     }
     let identity = format!("{:?} {}", entry, quantizer.info().implementation);
     let identity = if parallel {
-        format!("{identity} parallel-v1")
+        if parallel_rows == parallel::MAX_ROWS {
+            format!("{identity} parallel-v1")
+        } else {
+            format!("{identity} parallel-v1 rows={parallel_rows}")
+        }
     } else {
         identity
     };
@@ -84,7 +93,7 @@ pub(super) fn prepare(
         quantizer,
         info,
         capacity: need.capacity,
-        parallel,
+        parallel_rows,
     }))
 }
 
@@ -93,7 +102,7 @@ struct Query {
     quantizer: Prepared<BlockQuantizeBuffers<View>>,
     info: OpInfo,
     capacity: u32,
-    parallel: bool,
+    parallel_rows: u32,
 }
 
 impl PreparedOp<PositionQueryBuffers<View>> for Query {
@@ -155,7 +164,7 @@ impl PreparedOp<PositionQueryBuffers<View>> for Query {
                 "position query inputs, output and workspace must not overlap",
             ));
         }
-        if self.parallel && counts.rows <= parallel::MAX_ROWS {
+        if counts.rows <= self.parallel_rows {
             let mut plan = self.entry.plan(counts.rows)?;
             plan.grid = [counts.rows, 1, 1];
             plan.block = [parallel::THREADS, 1, 1];

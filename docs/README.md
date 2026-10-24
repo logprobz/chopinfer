@@ -2,7 +2,7 @@
 
 - [Build and serve](developer-preview.md)
 - [Serving profiles and qualification scope](serving-profiles.md)
-- [Tuning speculative draft depth](depth-tuning.md)
+- [Tuning speculative decoding: depths, widths, token capacity, graph budget](depth-tuning.md)
 - [HTTP API](serving-request-surface.md)
 - [Operations and diagnostics](operations-observability.md)
 - [Contributing and checks](contributing.md)

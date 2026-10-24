@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse every depth's server configuration with the stage's frozen
+"""Parse every arm's server configuration with the stage's frozen
 executable, without CUDA (--list-model-options), before the job is queued.
 
 Usage: python3 -I STAGE/harness/preflight.py STAGE (after stage.py sealed it).
@@ -14,6 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import runner as r  # noqa: E402
+import tune  # noqa: E402
 
 
 def main(stage):
@@ -27,23 +28,32 @@ def main(stage):
     root = stage / 'validation' / f'argv-{time.time_ns()}'
     root.mkdir(parents=True)
     rows = []
-    for depth in model.get('depths') or range(model['max_depth'] + 1):
+    for arm in tune.arms(seal['config']):
+        depth = arm['depth']
         arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}',
-                     *model.get('extra_arguments', [])]
-        server = r.Server(root / f'd{depth}', install['install'], install['cache'], arguments)
+                     *model.get('extra_arguments', []), *arm['arguments']]
+        server = r.Server(root / arm['label'], install['install'], install['cache'], arguments)
         argv = server.server_command + ['--list-model-options']
         if any('kv-memory-fraction' in x for x in argv):
             raise SystemExit('the tuner serves the test KV mode, never a KV memory fraction')
         result = subprocess.run(argv, env=dict(server.env, CUDA_VISIBLE_DEVICES=''), stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, timeout=180)
-        (root / f'd{depth}' / 'stdout.json').write_text(result.stdout)
-        (root / f'd{depth}' / 'stderr.log').write_text(result.stderr)
+        (root / arm['label'] / 'stdout.json').write_text(result.stdout)
+        (root / arm['label'] / 'stderr.log').write_text(result.stderr)
         if result.returncode != 0:
-            raise SystemExit(f'depth {depth}: exit {result.returncode}: {result.stderr[-2000:]}')
+            raise SystemExit(f"{arm['label']}: exit {result.returncode}: {result.stderr[-2000:]}")
         json.loads(result.stdout)
-        rows.append({'depth': depth, 'argv': argv, 'exit': 0})
+        rows.append({'arm': arm['label'], 'depth': depth, 'argv': argv, 'exit': 0})
     (root / 'preflight.json').write_text(json.dumps({'passed': True, 'cpu_only': True, 'cases': rows}, indent=2) + '\n')
     print(f'PASS: {len(rows)} frozen server parsers, no CUDA: {root}')
+    keeper = stage / 'keeper-spec.json'
+    if keeper.exists():
+        # The keeper loads what the first arm's server would.
+        spec = json.loads(keeper.read_text())
+        if spec['argv'] != rows[0]['argv'][rows[0]['argv'].index('--model'):-1] or \
+                spec['install'] != install['install']:
+            raise SystemExit('keeper-spec.json differs from the first arm\'s serve options')
+        print('PASS: the keeper spec holds the first arm\'s serve options')
 
 
 if __name__ == '__main__':

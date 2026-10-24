@@ -11,8 +11,8 @@ import prompts  # noqa: E402
 import report  # noqa: E402
 import tune  # noqa: E402
 
-# A synthetic model: depths 0-5 over 32 verify rows, three processes each.
-MODEL = {'max_depth': 5, 'verify_rows': 32, 'concurrencies': [1, 2, 4, 8, 16, 32], 'processes_per_depth': 3}
+# A synthetic model: depths 0-5 over 32 verify rows, two repeats each.
+MODEL = {'max_depth': 5, 'verify_rows': 32, 'concurrencies': [1, 2, 4, 8, 16, 32], 'repeats': 2}
 CONFIG = {'name': 'synthetic', 'model': MODEL, 'kinds': {'greedy': 0.5, 'sampled': 0.5},
           'selection': {'margin': 0.015, 'spread': 0.03}}
 
@@ -49,10 +49,15 @@ class Tuner(unittest.TestCase):
         self.assertEqual(cs(5), [1, 2, 4])
         self.assertEqual(cs(5, True), [1, 2, 4, 8, 16, 32])
 
-    def test_processes_alternate_and_cover_every_depth(self):
-        labels = tune.order({'model': MODEL})
-        self.assertEqual(labels[:7], ['d0p1', 'd1p1', 'd2p1', 'd3p1', 'd4p1', 'd5p1', 'd5p2'])
-        self.assertEqual(sorted(labels), sorted(f'd{d}p{p}' for d in range(6) for p in (1, 2, 3)))
+    def test_one_server_per_depth_starts_with_the_deepest(self):
+        self.assertEqual(tune.order({'model': MODEL}), ['d5', 'd0', 'd1', 'd2', 'd3', 'd4'])
+        named = {**MODEL, 'arms': [{'label': 'g64', 'depth': 5, 'arguments': ['--speculation-graph-rows', '64']},
+                                   {'label': 'g32', 'depth': 5}]}
+        self.assertEqual(tune.arms({'model': named})[1], {'label': 'g32', 'depth': 5, 'arguments': []})
+
+    def test_kinds_select_the_windows(self):
+        config = {'model': MODEL, 'kinds': {'greedy': 1.0}}
+        self.assertEqual(tune.windows_for(config, 5), [('greedy', 1), ('greedy', 2), ('greedy', 4)])
 
     def test_the_shallowest_depth_within_the_margin_wins(self):
         rates = {  # C: {depth: request tok/s}, the same in both kinds
@@ -103,8 +108,38 @@ class Tuner(unittest.TestCase):
         self.assertEqual((energy['joules_per_token'], energy['sm_mhz_range']), (3.0, [[1690, 1792]]))
 
     def test_a_job_runs_only_its_depths(self):
-        model = {**MODEL, 'depths': [5], 'processes_per_depth': 2}
-        self.assertEqual(tune.order({'model': model}), ['d5p1', 'd5p2'])
+        model = {**MODEL, 'depths': [5, 3]}
+        self.assertEqual(tune.order({'model': model}), ['d5', 'd3'])
+
+    def test_steps_give_cycle_and_execution_times_by_shape(self):
+        def step(batch, ns, prefill=0, decode=0, items=0, rows=0, us=None):
+            return {'batch': batch, 'completed_unix_ns': ns, 'prefill_items': prefill, 'decode_rows': decode,
+                    'verify_items': items, 'verify_rows': rows, 'execution_us': us}
+        steps = [step(1, 0, prefill=8), step(2, 40_000_000, items=8, rows=48, us=39_000),
+                 step(3, 80_500_000, items=8, rows=48, us=39_500), step(4, 100_000_000, decode=8, us=19_000)]
+        self.assertEqual(tune.cells(steps), {'i8-r48': {'cycle_ms': [40.5], 'execution_ms': [39.5]},
+                                             'i8-r8': {'cycle_ms': [19.5], 'execution_ms': [19.0]}})
+
+    def test_costs_tabulate_every_width_over_repeats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            (run / 'config.json').write_text(json.dumps({**CONFIG, 'model': {**MODEL, 'concurrencies': [8]}}))
+            for depth, ms in ((3, 38.0), (5, 52.0)):
+                for repeat in (0, 1):
+                    path = run / f'd{depth}' / 'windows' / f'greedy-c8-r{repeat}.json'
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    rows = 8 * (depth + 1)
+                    path.write_text(json.dumps({
+                        'name': 'greedy-c8', 'kind': 'greedy', 'concurrency': 8, 'depth': depth, 'repeat': repeat,
+                        'request_tokens_per_second': 300 + repeat, 'full': {'tokens_per_second': 400},
+                        'energy': {'joules_per_token': 2.0},
+                        'cells': {f'i8-r{rows}': {'cycle_ms': [ms + repeat, ms + 2], 'execution_ms': [ms - 1]},
+                                  'i7-r28': {'cycle_ms': [30.0], 'execution_ms': []}}}))
+            out = report.costs(run)
+        self.assertEqual(out['summary'], {'i8-r32': 39.5, 'i8-r48': 53.5})
+        self.assertEqual(out['cells']['i8-r48']['steps'], 4)
+        self.assertEqual(out['cells']['i7-r28']['arms'], ['d3', 'd5'])
+        self.assertAlmostEqual(out['windows']['c8/greedy/d5']['request_spread'], 1 / 300)
 
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:

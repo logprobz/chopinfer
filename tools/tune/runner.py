@@ -158,6 +158,15 @@ def trace_rows(path, offset=0):
     return rows
 
 
+def serve_options(cache, arguments, checkpoint):
+    """A server's serve options other than `--listen`: the direct path of
+    the checkpoint over the prepared package in `cache`, the model config's
+    options and `arguments`. A weight keeper's SPEC holds these."""
+    return ['--model', checkpoint, '--tensor-parallel-size', str(GPUS), '--model-cache-dir', str(cache),
+            '--served-model-name', MODEL, '--drain-timeout-ms', '5000', '--kv-pages', str(KV_PAGES), *SERVE,
+            *arguments]
+
+
 class Server:
     """One direct-path server of `install` and its prepared package in
     `cache`, serving the checkpoint with `arguments` added: the arm's own
@@ -176,11 +185,8 @@ class Server:
         self.env = {k: v for k, v in os.environ.items()
                     if k != 'OPENAI_API_KEY' and (not k.startswith('CHOPINFER_') or k in KEPT | {CHECKPOINT_ENV})}
         self.env.update(CHOPINFER_STEP_TRACE='1', PYTHONDONTWRITEBYTECODE='1')
-        self.server_command = [
-            str(Path(install) / 'bin/chopinfer'), 'serve', '--model', os.environ.get(CHECKPOINT_ENV, 'dry-run'),
-            '--tensor-parallel-size', str(GPUS), '--model-cache-dir', str(cache), '--listen', f'127.0.0.1:{port}',
-            '--served-model-name', MODEL, '--drain-timeout-ms', '5000', '--kv-pages', str(KV_PAGES), *SERVE,
-            *arguments]
+        self.server_command = [str(Path(install) / 'bin/chopinfer'), 'serve', '--listen', f'127.0.0.1:{port}',
+                               *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'))]
         launched = self.server_command
         if dry:
             launched = [sys.executable, '-B', str(stub), '--port', str(port), '--directory', str(self.directory),

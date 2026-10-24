@@ -12,8 +12,11 @@ install-NAME.sha256, prepare-NAME.json). The stage builds the workload's
 prompts from source-NAME, copies the harness into STAGE_DIR/harness, hashes
 the harness, prompts, install binaries, prepared package and source-NAME's
 tools/qual (the job imports spec_metrics from it), and writes
-runtime-seal.json, the queue wrapper tune.job (with the seal's digest) and
-staged.json (with an estimate of the job's minutes).
+runtime-seal.json, the queue wrapper tune.job (with the seal's digest),
+keeper-spec.json and staged.json (with an estimate of the job's minutes).
+The wrapper's `# keeper use keeper-spec.json SHA256` header asks runner6 for
+a weight keeper started with the first arm's serve options, from which every
+arm's server borrows its weights.
 
 --template seals without an install, prompts and tools/qual from this tree,
 for CPU dry runs only: the job refuses it outside --dry-run.
@@ -25,6 +28,7 @@ STAGE_DIR must be outside the repository (stage under $CHOPINFER_DATA).
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -71,24 +75,47 @@ def frozen(directory, name):
 
 
 def estimate(config):
-    """Expected job seconds from the model config's planning figures: per
-    process a startup and fixed overhead, then every warm-up and window
-    request at the planned request tok/s plus its settling time."""
+    """Expected job seconds from the model config's planning figures: per arm
+    a startup and fixed overhead, then every warm-up, reference (first arm)
+    and timed window request at the planned request tok/s plus its settling
+    time."""
     sys.path.insert(0, str(HERE))
     import tune
     model, plan = config['model'], config['model']['planning']
     tokens = lambda c: config['tokens'].get(str(c), config['tokens']['default'])
-    deepest = max(model.get('depths') or [model['max_depth']])
     total = 0.0
-    for label in ['W0', *tune.order(config)]:
-        depth = deepest if label == 'W0' else int(label[1:].split('p')[0])
+    for index, arm in enumerate(tune.arms(config)):
+        depth = arm['depth']
         rates = plan['ar_tokens_per_second'] if depth == 0 else plan['tokens_per_second']
         total += plan['startup_seconds'] + plan['process_overhead_seconds']
         total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
-        for _, c in tune.windows_for(config, depth, label == 'W0'):
+        windows = (tune.windows_for(config, depth, True) if index == 0 else []) \
+            + tune.windows_for(config, depth) * model['repeats']
+        for _, c in windows:
             groups = model.get('groups', {}).get(str(c), 1)
             total += groups * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])
     return total
+
+
+def keeper_spec(config, install, stage):
+    """The weight keeper SPEC for runner6: the install and the first arm's
+    serve options, which every arm shares but for its speculation options."""
+    sys.path.insert(0, str(HERE))
+    import runner
+    import tune
+    model = config['model']
+    runner.MODEL, runner.GPUS = model['served_model_name'], model['tensor_parallel_size']
+    runner.KV_PAGES, runner.SERVE = model['kv_pages'], model['serve_arguments']
+    arm = tune.arms(config)[0]
+    arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
+                 *model.get('extra_arguments', []), *arm['arguments']]
+    checkpoint = os.environ.get(model['checkpoint_env'])
+    if not checkpoint:
+        raise SystemExit(f"set {model['checkpoint_env']} (source local.env) to stage the weight keeper")
+    spec = {'install': install['install'], 'argv': runner.serve_options(install['cache'], arguments, checkpoint)}
+    path = stage / 'keeper-spec.json'
+    path.write_text(json.dumps(spec, indent=1) + '\n')
+    return path
 
 
 def main():
@@ -136,13 +163,18 @@ def main():
         shutil.copy2(HERE / item, copy / item)
     files |= {copy / item for item in HARNESS}
     files |= {x for x in (source / 'tools/qual').rglob('*') if x.is_file() and '__pycache__' not in x.parts}
+    keeper = None if args.template or not model.get('keeper', True) else keeper_spec(config, install, stage)
+    if keeper:
+        files.add(keeper)
     seal = {'schema': 'chopinfer-depth-tune-seal.v1', 'ready': not args.template, 'config': config, 'install': install,
             'harness_source': str(source), 'prompts': built['prompts'], 'prompt_sources': built['sources'],
             'sha256': {str(x): digest(x) for x in sorted(files)}}
     (stage / 'runtime-seal.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
     payload = digest(stage / 'runtime-seal.json')
     text = (copy / 'tune.job.in').read_text()
-    for key, value in (('@STAGE@', str(stage)), ('@PAYLOAD_SHA@', payload), ('@NAME@', name),
+    keeper_line = f'# keeper use {keeper} {digest(keeper)}\n' if keeper else ''
+    for key, value in (('@KEEPER@\n', keeper_line), ('@STAGE@', str(stage)), ('@PAYLOAD_SHA@', payload),
+                       ('@NAME@', name),
                        ('@CHECKPOINT_ENV@', model['checkpoint_env']),
                        ('@DEVICES@', ','.join(map(str, range(model['tensor_parallel_size'])))),
                        ('@QUEUE_TIMEOUT@', str(config['queue_timeout_seconds'])),
@@ -154,6 +186,7 @@ def main():
     job.chmod(0o755)
     seconds = estimate(config)
     receipt = {'payload_sha256': payload, 'revision': install['revision'], 'ready': seal['ready'], 'job': str(job),
+               'keeper_spec_sha256': digest(keeper) if keeper else None,
                'sha256': digest(job), 'estimated_minutes': round(seconds / 60, 1),
                'work_budget_minutes': round(config['work_seconds'] / 60, 1), 'prompts': len(built['prompts'])}
     (stage / 'staged.json').write_text(json.dumps(receipt, indent=2) + '\n')

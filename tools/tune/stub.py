@@ -5,7 +5,8 @@ It reports the arm's speculation mode on /health, prints the model's KV line,
 memory after warmup and a weight upload, tokenizes raw prompts and chat
 messages, serves batched completions (one response, or a stream for sampled
 windows), and writes one engine step record per step with drafts limited by
-`--speculation-depths` and the verify rows. Tokens follow the prompt, sampling
+`--speculation-depths` and the verify rows (`--speculative-rows`, default 32).
+With `--weight-keeper` its weights are lent. Tokens follow the prompt, sampling
 and seed only, so every depth emits the same tokens; acceptance by position
 decays, so deeper drafts take fewer steps. /metrics carries the speculation
 counters by position. TUNE_STUB_PERTURB names a label whose greedy output
@@ -22,17 +23,16 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROWS = 32
-
-
 def options(arguments):
-    mode, depth = 'balanced', 5
+    mode, depth, rows = 'balanced', 5, 32
     for flag, value in zip(arguments, arguments[1:]):
         if flag == '--speculation':
             mode = value
         elif flag == '--speculation-depths':
             depth = int(value.split(',')[0].split(':')[1])
-    return mode, depth
+        elif flag == '--speculative-rows':
+            rows = int(value)
+    return mode, depth, rows
 
 
 def stub(args):
@@ -41,13 +41,15 @@ def stub(args):
     perturb = os.environ.get('TUNE_STUB_PERTURB') == label
     preempt = os.environ.get('TUNE_STUB_PREEMPT') == label
     ignore = os.environ.get('TUNE_STUB_IGNORE_DEPTHS') == label
-    mode, depth = options(args.serve)
+    mode, depth, verify_rows = options(args.serve)
+    lent = '--weight-keeper' in args.serve
     state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0}
     print(args.kv_line.replace('{pages}', str(args.kv_pages)), flush=True)
     for rank in range(args.gpus):
         print(f'device memory after warmup rank {rank}: KV 3560 MiB, 294 MiB taken since sizing (graphs), '
               f'{6539 + rank} MiB free', flush=True)
-    print('startup weight_upload: ' + json.dumps({'uploaded_bytes': 1, 'lent_bytes': 0}), flush=True)
+    print('startup weight_upload: ' + json.dumps({'uploaded_bytes': 0 if lent else 1, 'lent_bytes': int(lent)}),
+          flush=True)
 
     def token(key, index):
         value = int.from_bytes(hashlib.sha256(f'{key}/{index}'.encode()).digest()[:4], 'little')
@@ -60,7 +62,7 @@ def stub(args):
         """One step over `keys` (streams) at `positions`; returns each
         stream's emitted token count."""
         items = len(keys)
-        k = 0 if prefill else min(depth, (ROWS - items) // items)
+        k = 0 if prefill else min(depth, (verify_rows - items) // items)
         if ignore and not prefill and items >= 16:
             k = 1
         emitted = []

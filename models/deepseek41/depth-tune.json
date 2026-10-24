@@ -1,7 +1,7 @@
 {
   "schema": "chopinfer-depth-tune-model.v1",
   "model": "deepseek41",
-  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration.",
+  "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block, one server per depth with repeated windows, borrowing weights from the keeper. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration. The costs job measures step time per verify width up to 128 rows (graphs up to 64) at C4-C32 without widths, so every depth runs its exact rows.",
   "served_model_name": "DeepSeek-V4.1-Flash",
   "checkpoint_env": "CHOPINFER_DEEPSEEK_CHECKPOINT",
   "tensor_parallel_size": 4,
@@ -30,7 +30,6 @@
     16,
     32
   ],
-  "processes_per_depth": 3,
   "workload": "tools/tune/workloads/coding.json",
   "tokens": {
     "default": 256
@@ -82,6 +81,7 @@
       "32": 456
     }
   },
+  "repeats": 2,
   "jobs": {
     "low": {
       "concurrencies": [
@@ -90,7 +90,6 @@
         4
       ],
       "max_depth": 5,
-      "processes_per_depth": 2,
       "groups": {
         "1": 4,
         "2": 2
@@ -101,7 +100,8 @@
         1
       ],
       "work_seconds": 2400,
-      "queue_timeout_seconds": 2700
+      "queue_timeout_seconds": 2700,
+      "repeats": 2
     },
     "high": {
       "concurrencies": [
@@ -110,14 +110,14 @@
         32
       ],
       "max_depth": 3,
-      "processes_per_depth": 3,
       "warm": [
         32,
         16,
         8
       ],
       "work_seconds": 2400,
-      "queue_timeout_seconds": 2700
+      "queue_timeout_seconds": 2700,
+      "repeats": 2
     },
     "confidence": {
       "concurrencies": [
@@ -128,7 +128,6 @@
       "depths": [
         5
       ],
-      "processes_per_depth": 2,
       "groups": {
         "2": 4,
         "4": 4
@@ -145,7 +144,37 @@
         "32"
       ],
       "work_seconds": 1200,
-      "queue_timeout_seconds": 1500
+      "queue_timeout_seconds": 1500,
+      "repeats": 2
+    },
+    "costs": {
+      "mode": "costs",
+      "concurrencies": [
+        4,
+        8,
+        16,
+        32
+      ],
+      "max_depth": 5,
+      "verify_rows": 128,
+      "repeats": 2,
+      "kinds": {
+        "greedy": 1.0
+      },
+      "warm": [
+        32,
+        16,
+        8,
+        4
+      ],
+      "extra_arguments": [
+        "--speculative-rows",
+        "128",
+        "--speculation-graph-rows",
+        "64"
+      ],
+      "work_seconds": 1800,
+      "queue_timeout_seconds": 2100
     }
   }
 }

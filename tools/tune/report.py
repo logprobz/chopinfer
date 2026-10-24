@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Select a per-concurrency draft depth schedule from a depth tuner run.
+"""Select a per-concurrency draft depth schedule from a depth tuner run, or
+tabulate a costs run's step times per verify width.
 
 Usage: python3 -I report.py RUN_DIR [RUN_DIR ...]
+       python3 -I report.py --costs RUN_DIR
 
 Several runs (for example a low- and a high-concurrency job) merge into one
 schedule, each concurrency taken from the run that measured it. Each run
-reads RUN_DIR/config.json and every timed process's window records (W0 is the
-untimed warm-up and never counts) and writes RUN_DIR/tune.json and
-RUN_DIR/tune.md.
+reads RUN_DIR/config.json and every timed window record (the reference pass
+never counts) and writes RUN_DIR/tune.json and RUN_DIR/tune.md.
 
 Per concurrency C, kind (greedy, sampled) and depth d, over every measurement
-(one per process): median and spread (max/min - 1) of request tok/s and
-full-concurrency tok/s, median J/token, median stream p10, acceptance per
-draft position (summed counts), drafts per verify item and whether every
-measurement served the same full-concurrency step shapes.
+(one per timed repeat, or per process in runs with a server per repeat):
+median and spread (max/min - 1) of request tok/s and full-concurrency tok/s,
+median J/token, median stream p10, accepted over drafted by draft position
+(summed counts; not conditional on the earlier positions), drafts per verify
+item and whether every measurement served the same full-concurrency step
+shapes.
 
 Selection per C: a depth's score is the weighted geometric mean, over the
 kinds in config["kinds"], of its median request tok/s over depth 0's. A depth
@@ -36,7 +39,7 @@ def load(run):
     run = Path(run)
     config = json.loads((run / 'config.json').read_text())
     rows = []
-    for directory in sorted(run.glob('d*p*/windows')):
+    for directory in sorted(run.glob('*/windows')):
         for path in sorted(directory.glob('*.json')):
             record = json.loads(path.read_text())
             record.pop('exact', None)
@@ -146,14 +149,14 @@ def markdown(config, cells, selection, depths):
     lines = [f"# {config['name']}: draft depth per concurrency", '',
              f"Schedule: `{depths}` (profile `depths`, or `--speculation-depths`).", '',
              'Per C and depth, greedy / sampled: median request tok/s (spread), full-concurrency tok/s, J/token, '
-             'stream p10 tok/s, drafts per verify item, greedy acceptance by position, identical shapes, score '
-             '(weighted request tok/s over depth 0).', '']
+             'stream p10 tok/s, drafts per verify item, greedy accepted/drafted by position (not conditional), '
+             'identical shapes, score (weighted request tok/s over depth 0).', '']
     for c in config['model']['concurrencies']:
         chosen = selection.get(str(c))
         if not chosen:
             continue
         lines += [f"## C{c}: depth {chosen['depth']} ({chosen['reason']})", '',
-                  '| depth | request | spread | full | J/token | stream p10 | drafts/item | greedy acceptance '
+                  '| depth | request | spread | full | J/token | stream p10 | drafts/item | greedy accepted/drafted '
                   '| shapes | score |', '|---:|---|---|---|---|---|---|---|---|---:|']
         for d, row in sorted(chosen['depths'].items()):
             greedy = cells.get((c, 'greedy', d), {})
@@ -178,5 +181,78 @@ def merged(runs):
     return schedule(selection)
 
 
+def percentile(values, q):
+    values = sorted(values)
+    return values[min(len(values) - 1, int(q * (len(values) - 1) + 0.5))] if values else None
+
+
+def costs(run):
+    """A costs run's step times per verify width: for every `i{items}-r{rows}`
+    cell the median, p10 and p90 cycle time (from the previous step's
+    completion) and median execution time over every timed window's steps,
+    with the step count and the arms that served it; and per window
+    (C, kind, depth) the median request and full-concurrency tok/s and
+    J/token over repeats. Writes RUN_DIR/costs.json and RUN_DIR/costs.md."""
+    run = Path(run)
+    config, rows = load(run)
+    table = {}
+    for row in rows:
+        for key, cell in (row.get('cells') or {}).items():
+            into = table.setdefault(key, {'cycle_ms': [], 'execution_ms': [], 'arms': set()})
+            into['cycle_ms'] += cell['cycle_ms']
+            into['execution_ms'] += cell['execution_ms']
+            into['arms'].add(row['label'])
+    cells = {}
+    for key, cell in table.items():
+        items, rows_ = (int(x[1:]) for x in key.split('-'))
+        cells[key] = {'items': items, 'rows': rows_, 'steps': len(cell['cycle_ms']),
+                      'cycle_ms_median': median(cell['cycle_ms']), 'cycle_ms_p10': percentile(cell['cycle_ms'], .1),
+                      'cycle_ms_p90': percentile(cell['cycle_ms'], .9),
+                      'execution_ms_median': median(cell['execution_ms']), 'arms': sorted(cell['arms'])}
+    groups = {}
+    for row in rows:
+        groups.setdefault((row['concurrency'], row['kind'], row['depth']), []).append(row)
+    windows = {f'c{c}/{k}/d{d}': {
+        'repeats': len(v), 'request_median': median([x['request_tokens_per_second'] for x in v]),
+        'request_spread': spread([x['request_tokens_per_second'] for x in v]),
+        'full_median': median([x['full']['tokens_per_second'] for x in v]),
+        'joules_median': median([(x.get('energy') or {}).get('joules_per_token') for x in v])}
+        for (c, k, d), v in sorted(groups.items())}
+    memory = {}
+    summary = run / 'summary.json'
+    if summary.exists():
+        for label, process in json.loads(summary.read_text()).get('processes', {}).items():
+            memory[label] = process.get('gpu_memory_mib')
+    out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1]['items'], kv[1]['rows']))),
+           'windows': windows, 'gpu_memory_mib': memory}
+    full = {key: cell for key, cell in out['cells'].items()
+            if any(key == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
+                   for d in range(config['model'].get('max_depth', 5) + 1))}
+    out['summary'] = {key: round(cell['cycle_ms_median'], 2) for key, cell in full.items()
+                      if cell['cycle_ms_median'] is not None}
+    (run / 'costs.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
+    lines = [f"# {config['name']}: step cost per verify width", '',
+             'Per (items, rows): steps, median / p10 / p90 cycle ms (completion to completion), median execution '
+             'ms, arms.', '', '| items | rows | steps | cycle median | p10 | p90 | execution | arms |',
+             '|---:|---:|---:|---:|---:|---:|---:|---|']
+    for cell in out['cells'].values():
+        form = lambda v: '-' if v is None else f'{v:.2f}'
+        lines.append(f"| {cell['items']} | {cell['rows']} | {cell['steps']} | {form(cell['cycle_ms_median'])} | "
+                     f"{form(cell['cycle_ms_p10'])} | {form(cell['cycle_ms_p90'])} | "
+                     f"{form(cell['execution_ms_median'])} | {' '.join(cell['arms'])} |")
+    lines += ['', '| window | repeats | request tok/s | spread | full tok/s | J/token |', '|---|---:|---:|---:|---:|---:|']
+    for key, value in windows.items():
+        lines.append(f"| {key} | {value['repeats']} | {value['request_median']:.1f} | {value['request_spread']:.1%} | "
+                     f"{value['full_median']:.1f} | "
+                     + ('-' if value['joules_median'] is None else f"{value['joules_median']:.3f}") + ' |')
+    lines += ['', 'GPU MiB used per arm (at readiness, after each warm window, at the end):', '']
+    lines += [f'- {label}: {value}' for label, value in memory.items()]
+    (run / 'costs.md').write_text('\n'.join(lines) + '\n')
+    return out
+
+
 if __name__ == '__main__':
-    print(json.dumps({'depths': merged(sys.argv[1:])}))
+    if sys.argv[1:2] == ['--costs']:
+        print(json.dumps({'costs': costs(sys.argv[2])['summary']}))
+    else:
+        print(json.dumps({'depths': merged(sys.argv[1:])}))

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Speculative depth tuner job: measure every draft depth at every concurrency
-and pick a per-concurrency depth schedule.
+"""Speculative depth tuner job: measure draft depths (or other speculation
+settings) at every concurrency, with one server per arm, and pick a
+per-concurrency depth schedule or tabulate step costs per verify width.
 
 Usage: python3 -B STAGE/harness/tune.py --output RUN --payload-sha SHA [--dry-run]
 
@@ -10,32 +11,41 @@ The job:
 1. checks the machine: no GPU compute process, power limits recorded and
    constant (and equal to the config's expected watts), SM clocks recorded and
    never asserted, no kernel Xids;
-2. runs an untimed warm-up process W0 at the deepest depth through every
-   window, so every timed process finds the same warm page cache, and keeps
-   W0's outputs as the reference;
-3. runs `processes_per_depth` fresh servers per depth d in 0..max_depth (or
-   the job's `depths`), in alternating order, each with `--speculation MODE
-   --speculation-depths 1:d` and the job's `extra_arguments` (the profile's
-   other settings, verify widths included, stay); a process starts only
-   while `planning.process_reserve_seconds` of the work budget remain: test KV
-   mode, zero preemptions and prefix-cache evictions, speculation mode on
-   /health, memory after warmup recorded, no step drafting past d;
-4. per server, for each concurrency C whose rows a depth d can still change
-   (C x (d + 1) <= verify_rows, and every C at depth 0), one greedy and one
-   fixed-seed sampled window: one batched request per prompt group, the
-   window's `groups[C]` groups of C prompts in turn (token IDs from the
+2. runs one server per arm, reusing it for every window: by default one arm
+   per depth d of `depths` (or 0..max_depth), the deepest first, each with
+   `--speculation MODE --speculation-depths 1:d`, the job's
+   `extra_arguments` and the arm's own `arguments` (a model config's `arms`
+   may name other settings, such as verify widths). A depth schedule is fixed
+   for a server's lifetime, so each depth needs its own server. Servers
+   borrow their weights from the weight keeper when runner6 provides one
+   (CHOPINFER_WEIGHT_KEEPER_DIR, with `--weight-keeper-policy require`), and
+   load them otherwise. An arm starts only while
+   `planning.process_reserve_seconds` of the work budget remain. Test KV mode,
+   zero preemptions and prefix-cache evictions, speculation mode on /health,
+   memory after warmup and GPU memory at readiness, after the warm windows
+   and at the end recorded, no step drafting past d;
+3. the first arm first runs an untimed reference pass through every window,
+   so later windows find a warm page cache, and keeps its outputs as the
+   reference W0;
+4. per arm, `repeats` passes (alternating order) over each concurrency C
+   whose rows depth d can still change (C x (d + 1) <= verify_rows, and every
+   C at depth 0), one window per kind: one batched request per prompt group,
+   the window's `groups[C]` groups of C prompts in turn (token IDs from the
    server's /tokenize, chat prompts through its template), `tokens` tokens
-   each. Every greedy window must equal W0's bits
-   at once and every sampled window at the end: draft depth never changes an
-   emitted token.
+   each, each with its own cache salt. Every greedy window must equal W0's
+   bits at once and every sampled window at the end: draft depth never
+   changes an emitted token.
 Per window: request tok/s (C x tokens over send-to-last-token), the step
-trace, full-concurrency steps (count, tok/s, shape histogram), per-stream
-tok/s, acceptance per draft position (/metrics), energy (100 ms board power of
-every GPU) and SM clocks. report.py then selects the schedule.
+trace, full-concurrency steps (count, tok/s, shape histogram), step times by
+(items, verify rows), per-stream tok/s, accepted/drafted by draft position
+(/metrics), energy (100 ms board power of every GPU) and SM clocks. report.py
+then selects the schedule (`mode` sweep) or tabulates step costs per verify
+width (`mode` costs).
 """
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import signal
@@ -62,6 +72,7 @@ PREEMPTIONS = re.compile(r'^vllm:num_preemptions_total(?:\{[^}]*\})? (\S+)$', re
 EVICTIONS = re.compile(r'^chop_prefix_cache_evictions_total(?:\{[^}]*\})? (\S+)$', re.M)
 WEIGHT_UPLOAD = re.compile(r'^startup weight_upload: (\{.*\})$', re.M)
 SEAL = None
+SEAL_RUN = None
 spec_metrics = None
 
 
@@ -156,24 +167,64 @@ def validate(payload, dry):
     return m
 
 
-def idle(directory, label, dry):
+def gpu_memory(directory, label):
+    """Each GPU's index, bus ID and used MiB."""
+    r.command(['/usr/bin/nvidia-smi', '--query-gpu=index,pci.bus_id,memory.used', '--format=csv,noheader,nounits'],
+              directory / f'memory-{label}.csv', 15)
+    rows = [[x.strip() for x in line.split(',')] for line in (directory / f'memory-{label}.csv').read_text().splitlines()
+            if line.strip()]
+    return [(int(index), bus.lower(), int(used)) for index, bus, used in rows]
+
+
+def idle(directory, label, dry, lent=None):
+    """No GPU compute process, and no GPU memory beyond what the weight
+    keeper lends (`lent`: MiB by bus ID)."""
     if dry:
         r.write(directory / f'idle-{label}.json', {'synthetic': True, 'passed': True})
         return
+    lent = lent or {}
     deadline = time.monotonic() + 20
     while True:
         r.command(['/usr/bin/nvidia-smi', '--query-compute-apps=pid,used_memory', '--format=csv,noheader,nounits'],
                   directory / f'compute-{label}.csv', 15)
-        r.command(['/usr/bin/nvidia-smi', '--query-gpu=index,memory.used', '--format=csv,noheader,nounits'],
-                  directory / f'memory-{label}.csv', 15)
-        rows = [list(map(int, x.split(','))) for x in (directory / f'memory-{label}.csv').read_text().splitlines()]
+        rows = gpu_memory(directory, label)
+        held = [lent.get(bus[-12:], 0) for _, bus, _ in rows]
         if not (directory / f'compute-{label}.csv').read_text().strip() and [x[0] for x in rows] == list(range(r.GPUS)) \
-                and all(x[1] <= 32 for x in rows):
+                and all(used <= keep + 32 for (_, _, used), keep in zip(rows, held)):
             break
         if time.monotonic() > deadline:
             raise RuntimeError(f'{label}: residual GPU process or memory')
         time.sleep(.5)
-    r.write(directory / f'idle-{label}.json', {'passed': True, 'memory_mib': rows})
+    r.write(directory / f'idle-{label}.json', {'passed': True, 'memory_mib': [x[2] for x in rows],
+                                               'keeper_mib': held})
+
+
+def keeper(run, dry):
+    """The weight keeper runner6 started for this job (`# keeper use`), if
+    it answers: its directory and the MiB it lends on each GPU by bus ID."""
+    directory = os.environ.get('CHOPINFER_WEIGHT_KEEPER_DIR')
+    if not directory:
+        return None
+    if dry:
+        return {'directory': directory, 'lent_mib': {}, 'synthetic': True}
+    binary = Path(SEAL['install']['install']) / 'bin/chopinfer'
+    log = run / 'keeper-status.txt'
+    code = r.command([binary, 'weights', 'status', '--keeper-dir', directory], log, 60, check=False)
+    text = log.read_text(errors='replace')
+    try:
+        registry = json.loads(text[text.index('{'):])
+    except ValueError:
+        registry = None
+    if code or not registry:
+        r.write(run / 'keeper.json', {'available': False, 'exit_code': code})
+        return None
+    lent = {}
+    for device in registry.get('devices', []):
+        key = str(device.get('device', '')).lower()[-12:]
+        lent[key] = lent.get(key, 0) + int(device.get('bytes', 0)) // 2 ** 20
+    value = {'directory': directory, 'lent_mib': lent, 'pid': registry.get('pid')}
+    r.write(run / 'keeper.json', {'available': True, **value})
+    return value
 
 
 def bits(x):
@@ -218,6 +269,32 @@ def full_concurrency(steps, c):
             'mean_step_ms': micros / count / 1000 if count else None,
             'histogram': dict(sorted(rows.items())), 'drafted_steps': drafted,
             'drafted_share': drafted / count if count else 0.0}
+
+
+def cells(steps):
+    """Each decode or verify step's cycle time (from the previous step's
+    completion) and execution time in milliseconds, by `i{items}-r{rows}`,
+    over steps without prefill in either."""
+    out = {}
+    for a, b in zip(steps, steps[1:]):
+        if b['prefill_items'] or a['prefill_items'] or b['batch'] != a['batch'] + 1:
+            continue
+        items, rows = b['decode_rows'] + b['verify_items'], b['decode_rows'] + b['verify_rows']
+        cell = out.setdefault(f'i{items}-r{rows}', {'cycle_ms': [], 'execution_ms': []})
+        cell['cycle_ms'].append((b['completed_unix_ns'] - a['completed_unix_ns']) / 1e6)
+        if b.get('execution_us') is not None:
+            cell['execution_ms'].append(b['execution_us'] / 1000)
+    return out
+
+
+def merge_cells(parts):
+    out = {}
+    for part in parts:
+        for key, cell in part.items():
+            into = out.setdefault(key, {'cycle_ms': [], 'execution_ms': []})
+            into['cycle_ms'] += cell['cycle_ms']
+            into['execution_ms'] += cell['execution_ms']
+    return out
 
 
 def batched_finishes(steps, c, sent_ns):
@@ -399,35 +476,120 @@ def memory_lines(log):
 
 def windows_for(config, depth, every=False):
     """The (kind, C) windows a depth measures: every C at depth 0 (and for
-    W0), otherwise the C whose rows depth `depth` can still change."""
+    the reference pass), otherwise the C whose rows depth `depth` can still
+    change. Kinds follow the config's `kinds`."""
     model = config['model']
     cs = [c for c in model['concurrencies'] if every or depth == 0 or c * (depth + 1) <= model['verify_rows']]
-    return [(kind, c) for kind in ('greedy', 'sampled') for c in cs]
+    kinds = [kind for kind in ('greedy', 'sampled') if kind in config.get('kinds', {'greedy': 1, 'sampled': 1})]
+    return [(kind, c) for kind in kinds for c in cs]
 
 
-def run_process(run, label, depth, state, dry, every=False):
+def arms(config):
+    """Server arms in run order, one server each: the model config's `arms`
+    ({label, depth, arguments}), or one per depth of `depths` (or
+    0..max_depth), the deepest first (it also runs the reference pass), then
+    the rest ascending."""
+    model = config['model']
+    if model.get('arms'):
+        return [{'arguments': [], **arm} for arm in model['arms']]
+    depths = model.get('depths') or list(range(model['max_depth'] + 1))
+    deepest = max(depths)
+    return [{'label': f'd{d}', 'depth': d, 'arguments': []}
+            for d in [deepest, *sorted(d for d in depths if d != deepest)]]
+
+
+def order(config):
+    """The arms' labels in run order."""
+    return [arm['label'] for arm in arms(config)]
+
+
+def run_windows(server, label, depth, state, power, root, passes, reference):
+    """Every window of `passes` ((repeat, [(kind, C), ...]) each), compared
+    with the reference; with `reference` set the first output of each window
+    becomes it and nothing is recorded as timed."""
+    config = SEAL['config']
+    model = config['model']
+    inputs = state['tokens']
+    record = state['processes'][label]
+    for repeat, windows in passes:
+        for kind, c in windows:
+            name = f'{kind}-c{c}'
+            tokens = config['tokens'].get(str(c), config['tokens']['default'])
+            # Low concurrencies serve several prompt groups in turn, so a
+            # window covers more than its first C prompts.
+            groups = model.get('groups', {}).get(str(c), 1)
+            tag = 'reference' if reference else f'r{repeat}'
+            parts = []
+            for g in range(groups):
+                w = window(server, f'{name}-{tag}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
+                           f'tune-{label}-{name}-{tag}-g{g}', config['sampling'])
+                check_depth(f'{label} {name} {tag} group {g}', w['steps'], depth)
+                w['energy'] = power.window(w['started'], w['ended'], c * tokens)
+                parts.append(w)
+            exact = [stream for w in parts for stream in w['exact']]
+            if reference:
+                state['reference'][name] = exact
+                r.write(root / 'reference' / f'{name}.json', {'name': name, 'exact': exact})
+                continue
+            seconds = sum(w['ended'] - w['started'] for w in parts)
+            finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
+            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat, 'tokens': tokens,
+                     'groups': groups, 'request_seconds': seconds,
+                     'request_tokens_per_second': groups * c * tokens / seconds,
+                     'full': merge_full([full_concurrency(w['steps'], c) for w in parts]),
+                     'cells': merge_cells([cells(w['steps']) for w in parts]),
+                     'streams': streams(finishes, tokens), 'acceptance': merge_acceptance([w['acceptance'] for w in parts]),
+                     'energy': merge_energy([w['energy'] for w in parts], groups * c * tokens),
+                     'faults': [w['faults'] for w in parts],
+                     'prompts': [p['sha256'] for p in SEAL['prompts'][:groups * c]]}
+            r.write(root / 'windows' / f'{name}-r{repeat}.json',
+                    {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
+            record['windows'][f'{name}-r{repeat}'] = {k: value[k] for k in ('request_tokens_per_second', 'full')}
+            wanted = state['reference'].get(name)
+            if wanted is None:
+                raise RuntimeError(f'{label} {name}: no reference output')
+            if exact != wanted:
+                where = first_difference(wanted, exact)
+                if kind == 'greedy':
+                    raise RuntimeError(f'{label} {name} r{repeat}: greedy output differs from W0 at {where}')
+                state['sampled_differences'].append(f'{label} {name} r{repeat}: differs from W0 at {where}')
+            state['exact'][name] = state['exact'].get(name, 0) + 1
+            save(SEAL_RUN, state)
+
+
+def run_arm(run, arm, state, dry, keep, reference_pass):
     config = SEAL['config']
     model = config['model']
     install = SEAL['install']
+    label, depth = arm['label'], arm['depth']
     root = run / label
     arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}',
-                 *model.get('extra_arguments', [])]
+                 *model.get('extra_arguments', []), *arm['arguments']]
+    if keep:
+        arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
     server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py')
-    record = state['processes'][label] = {'depth': depth, 'args': arguments, 'windows': {}}
+    record = state['processes'][label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {},
+                                          'reference_pass': reference_pass}
     power = Power(root, dry)
     kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
+
+    def memory(when):
+        if not dry:
+            record['gpu_memory_mib'][when] = [used for _, _, used in gpu_memory(root, when)]
     try:
         power.start()
         server.start()
         record['readiness_seconds'] = server.readiness
+        memory('ready')
         mode = ((server.health.get('serving') or {}).get('profile') or {}).get('speculation', {}).get('mode')
         record['speculation_mode'] = mode
         if mode != model['speculation_mode']:
             raise RuntimeError(f"{label}: serves speculation {mode}, expected {model['speculation_mode']}")
         log = (server.directory / 'server.log').read_text(errors='replace')
         record['weights'] = weight_source(log)
-        if not dry and record['weights']['source'] != 'loaded':
-            raise RuntimeError(f"{label}: weights {record['weights']}; without a weight keeper every server loads")
+        wanted = 'borrowed' if keep else 'loaded'
+        if not dry and record['weights']['source'] != wanted:
+            raise RuntimeError(f"{label}: weights {record['weights']}, expected {wanted}")
         found = kv_line.findall(log)
         record['kv_pages_per_rank'] = [int(x) for x in found]
         if not found or any(int(x) != r.KV_PAGES for x in found):
@@ -435,48 +597,20 @@ def run_process(run, label, depth, state, dry, every=False):
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
             r.write(run / 'prompt-tokens.json', state['tokens'])
-        inputs = state['tokens']
         for c in config['warm']:
-            warm = [list(x) for x in inputs[:c]]
+            warm = [list(x) for x in state['tokens'][:c]]
             for x in warm:
                 x[1] = x[0]
             window(server, f'warm-c{c}', 'greedy', warm, config['warm_tokens'], f'tune-{label}-warm-c{c}', None)
+            memory(f'warm-c{c}')
         record['memory_after_warmup'] = memory_lines((server.directory / 'server.log').read_text(errors='replace'))
         record['metrics_after_warmup'] = counters(server, 'after-warmup')
-        for kind, c in windows_for(config, depth, every):
-            name = f'{kind}-c{c}'
-            tokens = config['tokens'].get(str(c), config['tokens']['default'])
-            # Low concurrencies serve several prompt groups in turn, so a
-            # window covers more than its first C prompts.
-            groups = model.get('groups', {}).get(str(c), 1)
-            parts = []
-            for g in range(groups):
-                w = window(server, f'{name}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
-                           f'tune-{label}-{name}-g{g}', config['sampling'])
-                check_depth(f'{label} {name} group {g}', w['steps'], depth)
-                w['energy'] = power.window(w['started'], w['ended'], c * tokens)
-                parts.append(w)
-            seconds = sum(w['ended'] - w['started'] for w in parts)
-            finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
-            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'tokens': tokens, 'groups': groups,
-                     'request_seconds': seconds, 'request_tokens_per_second': groups * c * tokens / seconds,
-                     'full': merge_full([full_concurrency(w['steps'], c) for w in parts]),
-                     'streams': streams(finishes, tokens), 'acceptance': merge_acceptance([w['acceptance'] for w in parts]),
-                     'energy': merge_energy([w['energy'] for w in parts], groups * c * tokens),
-                     'faults': [w['faults'] for w in parts],
-                     'prompts': [p['sha256'] for p in SEAL['prompts'][:groups * c]]}
-            exact = [stream for w in parts for stream in w['exact']]
-            r.write(root / 'windows' / f'{name}.json', {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
-            record['windows'][name] = {k: value[k] for k in ('request_tokens_per_second', 'full')}
-            reference = state['reference'].setdefault(name, exact)
-            if exact is not reference:
-                if exact != reference:
-                    where = first_difference(reference, exact)
-                    if kind == 'greedy':
-                        raise RuntimeError(f'{label} {name}: greedy output differs from W0 at {where}')
-                    state['sampled_differences'].append(f'{label} {name}: differs from W0 at {where}')
-                state['exact'][name] = state['exact'].get(name, 0) + 1
-            save(run, state)
+        if reference_pass:
+            run_windows(server, label, depth, state, power, root, [(0, windows_for(config, depth, True))], True)
+        windows = windows_for(config, depth)
+        passes = [(p, windows if p % 2 == 0 else windows[::-1]) for p in range(model['repeats'])]
+        run_windows(server, label, depth, state, power, root, passes, False)
+        memory('end')
         record['metrics'] = counters(server, 'final')
         if record['metrics']['preemptions'] or record['metrics']['prefix_cache_evictions']:
             raise RuntimeError(f"{label}: {record['metrics']} (the test KV mode requires zero)")
@@ -486,18 +620,6 @@ def run_process(run, label, depth, state, dry, every=False):
         finally:
             power.stop()
             save(run, state)
-
-
-def order(config):
-    """Process labels: passes alternate ascending and descending depth, and
-    later passes start from the middle."""
-    depths = config['model'].get('depths') or list(range(config['model']['max_depth'] + 1))
-    out = []
-    for p in range(config['model']['processes_per_depth']):
-        seq = depths if p % 2 == 0 else depths[::-1]
-        shift = (p // 2) * (len(depths) // 2)
-        out += [f'd{d}p{p + 1}' for d in seq[shift:] + seq[:shift]]
-    return out
 
 
 def save(run, state):
@@ -510,7 +632,8 @@ def save(run, state):
                      f"{row.get('weights', {}).get('source')}, KV pages {row.get('kv_pages_per_rank')}, metrics "
                      f"{row.get('metrics')}; memory after warmup " + '; '.join(
                          f"rank {m['rank']}: {m['free_mib']} MiB free" for m in memory.get('ranks', []))
-                     + (f"; WARNINGS {memory['warnings']}" if memory.get('warnings') else ''))
+                     + (f"; WARNINGS {memory['warnings']}" if memory.get('warnings') else '')
+                     + (f"; GPU MiB {row['gpu_memory_mib']}" if row.get('gpu_memory_mib') else ''))
         for name, value in row['windows'].items():
             full = value['full']
             lines.append(f"  {name}: {value['request_tokens_per_second']:.1f} tok/s, full {full['steps']} steps "
@@ -519,6 +642,8 @@ def save(run, state):
     lines += ['Sampled difference: ' + x for x in state['sampled_differences']]
     lines += [f"Power {k}: limits {v.get('power_limits_w')} W, SM MHz {v.get('sm_clock_mhz')}"
               for k, v in state['power'].items()]
+    if state.get('keeper') is not None:
+        lines.append(f"Weight keeper: {state['keeper']}")
     lines += ['Error: ' + x for x in state['errors']]
     (run / 'summary.md').write_text('\n'.join(lines) + '\n')
 
@@ -531,9 +656,12 @@ def main(args):
     run.mkdir(parents=True, exist_ok=False)
     r.write(run / 'config.json', config)
     r.write(run / 'prompts.json', m['prompts'])
+    global SEAL_RUN
+    SEAL_RUN = run
     state = {'status': 'running', 'dry_run': args.dry_run, 'revision': m['install'].get('revision'),
-             'order': ['W0', *order(config)], 'processes': {}, 'exact': {}, 'reference': {}, 'tokens': [],
-             'sampled_differences': [], 'power': {}, 'telemetry': {}, 'errors': []}
+             'mode': config['model'].get('mode', 'sweep'), 'order': order(config), 'processes': {}, 'exact': {},
+             'reference': {}, 'tokens': [], 'sampled_differences': [], 'power': {}, 'telemetry': {}, 'keeper': None,
+             'errors': []}
     r.WORK_DEADLINE = time.monotonic() + config['work_seconds']
     since = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
     began = time.monotonic()
@@ -543,20 +671,20 @@ def main(args):
     try:
         if shutil.disk_usage(run).free < DATA_RESERVE:
             raise RuntimeError('the output volume is under its free-space reserve')
+        keep = keeper(run, args.dry_run)
+        state['keeper'] = {'used': bool(keep), **(keep or {})}
         before = state['telemetry']['before'] = r.telemetry(run, 'before', args.dry_run, since)
         reference = before['power_limits_w']
         state['power']['before'] = before['power']
-        deepest = max(config['model'].get('depths') or [config['model']['max_depth']])
         reserve = config['model']['planning']['process_reserve_seconds']
-        for label in state['order']:
-            depth = deepest if label == 'W0' else int(label[1:].split('p')[0])
+        for index, arm in enumerate(arms(config)):
             left = r.WORK_DEADLINE - time.monotonic()
             if left < reserve:
-                raise RuntimeError(f'work budget: {left:.0f} s left, under the {reserve} s a process needs; '
-                                   f'stopped before {label}')
-            idle(run, f'before-{label}', args.dry_run)
-            run_process(run, label, depth, state, args.dry_run, every=label == 'W0')
-            state['power'][label] = r.power_check(run, f'after-{label}', args.dry_run, reference)
+                raise RuntimeError(f'work budget: {left:.0f} s left, under the {reserve} s an arm needs; '
+                                   f"stopped before {arm['label']}")
+            idle(run, f"before-{arm['label']}", args.dry_run, (keep or {}).get('lent_mib'))
+            run_arm(run, arm, state, args.dry_run, keep, reference_pass=index == 0)
+            state['power'][arm['label']] = r.power_check(run, f"after-{arm['label']}", args.dry_run, reference)
             save(run, state)
         if state['sampled_differences']:
             raise RuntimeError(f"fixed-seed sampled outputs differ from W0: {state['sampled_differences']}")
@@ -577,11 +705,15 @@ def main(args):
             state['errors'].append('cleanup: ' + str(error))
         state['elapsed_seconds'] = time.monotonic() - began
         try:
-            state['depths'] = report.evaluate(run)['depths']
+            if state['mode'] == 'costs':
+                state['costs'] = report.costs(run)['summary']
+            else:
+                state['depths'] = report.evaluate(run)['depths']
         except Exception as error:
             state['errors'].append(f'report: {type(error).__name__}: {error}')
         save(run, state)
     print(json.dumps({'output': str(run), 'status': state['status'], 'depths': state.get('depths'),
+                      'costs': state.get('costs'),
                       'errors': state['errors'], 'elapsed_seconds': round(state['elapsed_seconds'], 1)}), flush=True)
     return int(state['status'] != 'passed')
 

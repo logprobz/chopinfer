@@ -43,6 +43,7 @@ pub mod mxfp8_rows;
 pub mod ngram_oracle;
 pub mod occupancy;
 pub mod oracle;
+pub mod route;
 pub mod per_channel_decay_delta_rule;
 pub mod per_channel_decay_delta_rule_oracle;
 pub mod pooled_indexer;

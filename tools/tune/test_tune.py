@@ -301,6 +301,17 @@ def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confi
 class Calibration(unittest.TestCase):
     TRUTH = [(1.5, 0.5), (1.2, 0.2), (1.0, 0.0), (0.8, -0.2), (0.6, -0.4)]
 
+    def test_allocating_server_logs_are_refused_before_labelling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'server.log'
+            # Even a log without records must be refused: an unknown draft
+            # from an allocated step cannot establish a rejection.
+            log.write_text('startup speculation_confidence: on, floor 0, 5 positions\n')
+            with self.assertRaisesRegex(SystemExit, 'served with confidence allocation'):
+                calibrate.records(log)
+            log.write_text('startup speculation_confidence: off, the package returns host values\n')
+            self.assertEqual(calibrate.records(log), ([], 0))
+
     def test_records_fit_each_positions_acceptance_given_earlier_ones(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'server.log'

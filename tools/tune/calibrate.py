@@ -40,6 +40,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import struct
 import sys
 import zlib
@@ -79,6 +80,9 @@ def records(log, index=0):
     `index`, and the lines its writer dropped."""
     rows, dropped = [], 0
     for line in log.read_text(errors='replace').splitlines():
+        if re.search(r'\bstartup speculation_confidence: on(?:,|$)', line):
+            raise SystemExit(f'{log} served with confidence allocation; '
+                             'fit only logs served without confidence')
         if line.startswith(DROPPED):
             dropped += int(line[len(DROPPED):].split()[0])
             continue

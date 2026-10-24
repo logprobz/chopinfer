@@ -6737,3 +6737,6 @@ fn invariance_adapters_match_the_table() {
         "claims without an adapter: {uncovered:?}"
     );
 }
+
+#[path = "moe_chained/fp8_moe.rs"]
+mod fp8_moe;

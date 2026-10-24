@@ -302,6 +302,7 @@ impl Ops {
                 shape,
                 &asks,
                 storage,
+                expert_set.count == shape.geometry.shape.moe.experts,
             ),
         );
         let logits = family(

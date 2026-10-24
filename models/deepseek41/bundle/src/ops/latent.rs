@@ -183,6 +183,7 @@ impl GlueOps {
         shape: &Shape,
         asks: &Asks,
         storage: KvStorage,
+        target: bool,
     ) -> Result<GlueOps, Refused> {
         let g = shape.geometry;
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
@@ -201,7 +202,7 @@ impl GlueOps {
             |need| backend.latent_query_rope(&query, need),
         )?;
         let wide_rows = shape.verify_decode_rows();
-        let query_rope_wide = if wide_rows > small {
+        let query_rope_wide = if target && wide_rows > small {
             Some(asks.ask(
                 "glue.query_rope wide verify",
                 exact::need(wide_rows, exact::verify(wide_rows)),
@@ -878,6 +879,58 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
     use model_deepseek41_contract::state::KvStorage;
+
+    #[test]
+    fn wide_query_routing_keeps_the_drafter_entry() {
+        use crate::program::Phase;
+        use model_deepseek41_contract::moe::Experts;
+        use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let span = |handle, bytes| {
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(handle), 0, bytes)
+        };
+        let views = QueryRopeViews {
+            query: span(1, 60 * 16 * 512 * 4),
+            native_q: span(2, 60 * 16 * 512 * 2),
+            cos_sin: span(3, 60 * 64 * 4),
+            live_rows: span(4, 4),
+            status: span(5, 60 * 4),
+        };
+        for (experts, symbol) in [
+            (
+                Experts {
+                    count: FLASH.shape.moe.experts,
+                    top_k: FLASH.shape.moe.top_k,
+                },
+                "chop_deepseek41_latent_query_rope_heads_v1",
+            ),
+            (
+                Experts {
+                    count: FLASH.shape.dspark.experts,
+                    top_k: FLASH.shape.dspark.top_k,
+                },
+                "chop_deepseek41_latent_query_rope_v1",
+            ),
+        ] {
+            let ops = super::super::Ops::prepare_set(&kernels, &shape, KvStorage::Native, experts);
+            let glue = ops
+                .glue
+                .as_ref()
+                .unwrap_or_else(|| panic!("{:?}", ops.missing));
+            let calls = glue
+                .query_rope(
+                    Phase::Verify {
+                        items: 12,
+                        rows: 60,
+                    },
+                    &views,
+                )
+                .unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].launch.symbol, symbol);
+        }
+    }
 
     /// A ratio-2 source's page holds half the positions of a ratio-1
     /// source's, and the window-only attention keeps the window's.

@@ -198,6 +198,18 @@ for matched-input arithmetic. Find the first differing stage before changing
 precision or tolerance. Eager synchronized dumps cannot clear a graph-only
 failure. Keep captures outside the repository and bound to the producer.
 
+A host built with `linux-cuda-host` also exposes
+`chopinfer fixed-batch replay --config FILE`. It runs the same recorder and
+comparison checks as the fixed-batch device test, using the native executable's
+identity. This lets a replay use that executable's weight-keeper content proof.
+The JSON configuration accepts `weight_keeper`, `weight_keeper_policy` and
+`weight_keeper_identity`, with the same meanings and validation as the serving
+options. Stage the proof with the actual package, checkpoint and instance
+configuration; do not reuse a proof from another executable. The optional
+`temperature` field controls sampled rows and is recorded as part of comparison
+identity. Omission preserves 0.8; greedy rows remain at zero. Keep GPU selection,
+trace limits, baseline repeat controls and capture locations unchanged.
+
 ## Measuring a change
 
 First establish [accuracy](numerics.md#a-speedup-that-changes-bits). Use the

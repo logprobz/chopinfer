@@ -10,6 +10,86 @@ use std::path::PathBuf;
 struct Scratch(PathBuf);
 
 #[test]
+fn native_replay_command_preserves_the_config_path_and_refuses_surplus_options() {
+    let parse = |words: &[&str]| {
+        crate::parse_host_command_v1(&words.iter().map(|word| (*word).into()).collect::<Vec<_>>())
+    };
+    assert_eq!(
+        parse(&["fixed-batch", "replay", "--config", "trace.json"]).unwrap(),
+        crate::HostCommandV1::FixedBatchReplay {
+            configuration: "trace.json".into(),
+        }
+    );
+    for words in [
+        vec!["fixed-batch"],
+        vec!["fixed-batch", "replay", "--config"],
+        vec!["fixed-batch", "replay", "--config", ""],
+        vec![
+            "fixed-batch",
+            "replay",
+            "--config",
+            "trace.json",
+            "--unknown",
+        ],
+    ] {
+        assert!(parse(&words).is_err(), "{words:?}");
+    }
+}
+
+#[test]
+fn replay_temperature_keeps_the_old_default_and_greedy_mode() {
+    let trace = Trace::construct(vec![vec![3; 128]], 1024, false);
+    let step = trace
+        .steps
+        .iter()
+        .find(|step| step.mode == Mode::Seeded)
+        .unwrap();
+    let default = step.model_items(None);
+    let explicit_default = step.model_items_at_temperature(None, 0.8);
+    let sampled = step.model_items_at_temperature(None, 1.0);
+    assert_eq!(
+        default[0]
+            .sampling()
+            .unwrap()
+            .parameters
+            .temperature()
+            .to_bits(),
+        0.8_f64.to_bits()
+    );
+    assert_eq!(
+        metadata(
+            &default[0],
+            SamplingDispatch {
+                rows: 1,
+                simple: true,
+                top: false,
+                greedy: false
+            }
+        ),
+        metadata(
+            &explicit_default[0],
+            SamplingDispatch {
+                rows: 1,
+                simple: true,
+                top: false,
+                greedy: false
+            }
+        )
+    );
+    assert_eq!(
+        sampled[0]
+            .sampling()
+            .unwrap()
+            .parameters
+            .temperature()
+            .to_bits(),
+        1.0_f64.to_bits()
+    );
+    let greedy = trace.steps[0].model_items_at_temperature(None, 1.0);
+    assert_eq!(greedy[0].sampling().unwrap().parameters.temperature(), 0.0);
+}
+
+#[test]
 fn fixed_depth_replay_covers_wide_buckets_and_rejects_unsupported_depth() {
     for concurrency in [16, 32] {
         for depth in [2, 3] {

@@ -5083,6 +5083,18 @@ mod tests {
 #[path = "executor_sampling_tests.rs"]
 mod sampling_tests;
 
-#[cfg(test)]
+#[cfg(any(test, all(target_os = "linux", feature = "linux-cuda-host")))]
 #[path = "fixed_batch/mod.rs"]
 mod fixed_batch;
+
+pub(crate) fn replay_fixed_batch(configuration: &std::path::Path) -> Result<String, String> {
+    #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
+    {
+        fixed_batch::replay(configuration)
+    }
+    #[cfg(not(all(target_os = "linux", feature = "linux-cuda-host")))]
+    {
+        let _ = configuration;
+        Err("fixed-batch replay requires the Linux CUDA host".into())
+    }
+}

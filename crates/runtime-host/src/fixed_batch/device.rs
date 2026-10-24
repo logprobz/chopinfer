@@ -73,6 +73,87 @@ struct Config {
     /// KV pages of a mixed decode replay, the same for every compared arm.
     #[serde(default)]
     kv_pages: Option<usize>,
+    /// Omitted configurations preserve the historical seeded temperature.
+    #[serde(default)]
+    temperature: Option<f64>,
+    #[serde(default)]
+    weight_keeper: Option<PathBuf>,
+    #[serde(default)]
+    weight_keeper_policy: Option<String>,
+    #[serde(default)]
+    weight_keeper_identity: Option<PathBuf>,
+}
+
+impl Config {
+    fn serve_arguments(&self) -> Vec<String> {
+        let mut arguments = vec![
+            "serve".into(),
+            "--bundle".into(),
+            self.bundle.to_string_lossy().into_owned(),
+            "--checkpoint".into(),
+            self.checkpoint.to_string_lossy().into_owned(),
+        ];
+        for (flag, path) in [
+            ("--weight-keeper", self.weight_keeper.as_ref()),
+            (
+                "--weight-keeper-identity",
+                self.weight_keeper_identity.as_ref(),
+            ),
+        ] {
+            if let Some(path) = path {
+                arguments.extend([flag.into(), path.to_string_lossy().into_owned()]);
+            }
+        }
+        if let Some(policy) = &self.weight_keeper_policy {
+            arguments.extend(["--weight-keeper-policy".into(), policy.clone()]);
+        }
+        arguments
+    }
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::*;
+
+    #[test]
+    fn replay_forwards_keeper_options_through_the_serving_parser() {
+        let mut value = json!({
+            "bundle":"bundle", "checkpoint":"checkpoint", "topology":"topology",
+            "trace":"trace.json", "output":"capture", "concurrency":16,
+            "verify":true, "owned":false, "source":{}
+        });
+        let original: Config = serde_json::from_value(value.clone()).unwrap();
+        assert!(original.temperature.is_none());
+        assert!(original.weight_keeper.is_none());
+        assert!(original.weight_keeper_identity.is_none());
+        value["temperature"] = 1.0.into();
+        value["weight_keeper"] = "keeper".into();
+        value["weight_keeper_policy"] = "require".into();
+        value["weight_keeper_identity"] = "content.json".into();
+        let config: Config = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(config.temperature, Some(1.0));
+        let crate::HostCommandV1::Serve {
+            weight_keeper,
+            weight_keeper_identity,
+            direct_checkpoint,
+            ..
+        } = crate::parse_host_command_v1(&config.serve_arguments()).unwrap()
+        else {
+            panic!("expected the serving parser");
+        };
+        assert_eq!(
+            weight_keeper,
+            Some((
+                "keeper".into(),
+                crate::weight_keeper::KeeperPolicyV1::Require
+            ))
+        );
+        assert_eq!(weight_keeper_identity, Some("content.json".into()));
+        assert_eq!(direct_checkpoint, Some("checkpoint".into()));
+        value["weight_keeper_policy"] = "unknown".into();
+        let bad: Config = serde_json::from_value(value).unwrap();
+        assert!(crate::parse_host_command_v1(&bad.serve_arguments()).is_err());
+    }
 }
 
 struct RecordingSampler {
@@ -175,8 +256,17 @@ impl DeviceLogitsSamplerV1 for RecordingSampler {
 #[test]
 #[ignore = "requires a direct package, its checkpoint, a recorded trace configuration, and an exclusive TP4 slot"]
 fn replay_installed_trace_gpu() -> Result<()> {
-    let config: Config =
-        serde_json::from_reader(File::open(std::env::var("CHOPINFER_BATCH_REPLAY_CONFIG")?)?)?;
+    replay(&PathBuf::from(std::env::var(
+        "CHOPINFER_BATCH_REPLAY_CONFIG",
+    )?))
+}
+
+/// The native host entry uses this same recorder so content proofs bind to
+/// the executable that plans weights and replays the trace.
+pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
+    let config: Config = serde_json::from_reader(File::open(configuration)?)?;
+    let temperature = config.temperature.unwrap_or(0.8);
+    runtime_sampling::SamplingParameters::new(temperature)?;
     // One distinct ordinal per rank.
     let devices = std::env::var("CHOPINFER_KERNEL_GPUS")?
         .split(',')
@@ -232,19 +322,25 @@ fn replay_installed_trace_gpu() -> Result<()> {
     {
         return Err("unsupported trace concurrency".into());
     }
-    let arguments = vec![
-        "serve".into(),
-        "--bundle".into(),
-        config.bundle.to_string_lossy().into_owned(),
-    ];
+    let arguments = config.serve_arguments();
     let crate::HostCommandV1::Serve {
         selection: crate::preparation::ServeSelection::Bundle(selection),
         host,
+        weight_keeper,
+        weight_keeper_identity,
         ..
     } = crate::parse_host_command_v1(&arguments)?
     else {
         unreachable!()
     };
+    if let Some(path) = weight_keeper_identity {
+        crate::weight_keeper::content::select(&path)?;
+    }
+    if let Some((directory, policy)) = weight_keeper {
+        crate::weight_keeper::select_arena_source_v1(
+            crate::weight_keeper::ArenaSourceV1::Borrow { directory, policy },
+        )?;
+    }
     crate::direct::select_checkpoint_v1(&config.checkpoint)?;
     let loaded = crate::load_selected_topology_bundle_v1(&selection, &host, &config.topology)?;
     let deployment =
@@ -369,6 +465,9 @@ fn replay_installed_trace_gpu() -> Result<()> {
             return Err("the package or KV pages cannot hold the mixed decode trace".into());
         }
     }
+    if config.temperature.is_some() {
+        identity["sampling_temperature_bits"] = temperature.to_bits().into();
+    }
     if std::env::var_os("CHOPINFER_BATCH_REPLAY_DRY_RUN").is_some_and(|v| v == "1") {
         // Everything above runs without a device; nothing is written.
         println!(
@@ -404,11 +503,15 @@ fn replay_installed_trace_gpu() -> Result<()> {
         let metadata = trace.metadata_bound() + serde_json::to_vec(&identity)?.len() as u64 + 1;
         options.limits.check_metadata(metadata)?;
         eprintln!("fixed trace maximum frame metadata: {metadata} bytes");
-        let description = Description {
-            invariants: json!({"host":config.source,"trace":diagnostic::digest(&config.trace)?,
+        let mut invariants = json!({"host":config.source,"trace":diagnostic::digest(&config.trace)?,
                 "vocabulary":vocabulary,"topology":config.topology,"ranks":rank_count,"fold":false,
                 "capacity":{"sequences":max_sequences,"verify_tokens":maximum_verify_tokens},
-                "sampling":"fixed-batch-v1"}),
+                "sampling":"fixed-batch-v1"});
+        if config.temperature.is_some() {
+            invariants["sampling_temperature_bits"] = temperature.to_bits().into();
+        }
+        let description = Description {
+            invariants,
             manifest: diagnostic::manifest_identity(&manifest),
             environment: options.environment.clone(),
             source_checkpoint: None,
@@ -510,7 +613,7 @@ fn replay_installed_trace_gpu() -> Result<()> {
     let mut boundary_splits = 0;
     let result = (|| -> Result<()> {
         for (index, step) in trace.steps.iter().enumerate() {
-            let items = step.model_items(Some(&constraint));
+            let items = step.model_items_at_temperature(Some(&constraint), temperature);
             let appends = step
                 .items
                 .iter()

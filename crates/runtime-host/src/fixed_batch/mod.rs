@@ -7,3 +7,9 @@ mod record;
 #[cfg(test)]
 mod tests;
 mod trace;
+
+#[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
+pub(super) fn replay(configuration: &std::path::Path) -> Result<String, String> {
+    device::replay(configuration).map_err(|error| error.to_string())?;
+    Ok("fixed-batch replay passed".into())
+}

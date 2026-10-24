@@ -410,9 +410,18 @@ impl Step {
         self.items.iter().map(|item| 1 + item.drafts).sum()
     }
 
+    #[cfg(test)]
     pub fn model_items(
         &self,
         constraint: Option<&runtime_engine::RowConstraint>,
+    ) -> Vec<ModelBatchItem> {
+        self.model_items_at_temperature(constraint, 0.8)
+    }
+
+    pub fn model_items_at_temperature(
+        &self,
+        constraint: Option<&runtime_engine::RowConstraint>,
+        temperature: f64,
     ) -> Vec<ModelBatchItem> {
         self.items
             .iter()
@@ -427,8 +436,12 @@ impl Step {
                 } else {
                     self.mode
                 };
-                let mut parameters =
-                    SamplingParameters::new(if mode == Mode::Greedy { 0.0 } else { 0.8 }).unwrap();
+                let mut parameters = SamplingParameters::new(if mode == Mode::Greedy {
+                    0.0
+                } else {
+                    temperature
+                })
+                .expect("validated replay temperature");
                 if matches!(mode, Mode::Filtered | Mode::Grammar) {
                     parameters = parameters
                         .with_top_p(0.95)

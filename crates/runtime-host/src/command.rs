@@ -135,6 +135,7 @@ bundle check-frontend --bundle DIR [--topology ID] [--render FILE]... [--tokeniz
   [--streaming FILE]... (bundle check-frontend --help describes the vector files)
 kernel build --manifest FILE [--cache-dir DIR]
 kernel inspect --manifest FILE [--cache-dir DIR]
+fixed-batch replay --config FILE
 serve --model DIR [--tensor-parallel-size N] [--model-cache-dir DIR] [--activation-policy auto|checkpoint|bf16]
   [--modalities auto|all|text[,image][,video][,audio]] [--load-threads N]
 verify --model DIR [--manifest FILE[#ENTRY]] [--allow-unrecorded] [--jobs N]
@@ -800,6 +801,10 @@ pub enum HostCommandV1 {
         manifest: PathBuf,
         cache_dir: Option<PathBuf>,
     },
+    /// Replay a bounded diagnostic trace using this executable's identity.
+    FixedBatchReplay {
+        configuration: PathBuf,
+    },
     /// `verify --model DIR`: the checkpoint's files against their recorded
     /// SHA-256 values.
     CheckpointVerify {
@@ -1033,6 +1038,18 @@ fn parse_named_command_v1(
         }),
         "bundle" => parse_bundle_command_v1(&arguments[1..]),
         "kernel" => parse_kernel_command_v1(&arguments[1..]),
+        "fixed-batch" => {
+            if arguments.len() != 4
+                || arguments[1] != "replay"
+                || arguments[2] != "--config"
+                || arguments[3].is_empty()
+            {
+                return Err(usage_error("usage: fixed-batch replay --config FILE"));
+            }
+            Ok(HostCommandV1::FixedBatchReplay {
+                configuration: PathBuf::from(&arguments[3]),
+            })
+        }
         "serve" => parse_serve_command_v1(&arguments[1..]),
         "verify" => parse_checkpoint_verify_command_v1(&arguments[1..]),
         "weights" => parse_weights_command_v1(&arguments[1..]),
@@ -2007,6 +2024,9 @@ fn run_host_command_from_v1(
             None => kernel::build(manifest),
         }
         .map_err(run_error),
+        HostCommandV1::FixedBatchReplay { configuration } => {
+            crate::executor::replay_fixed_batch(configuration).map_err(run_error)
+        }
         HostCommandV1::KernelInspect {
             manifest,
             cache_dir,

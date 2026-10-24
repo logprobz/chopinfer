@@ -27,6 +27,7 @@ pub mod fold_fused;
 pub mod fold_local_rows;
 mod fold_local_rows_serving;
 pub mod fold_verify;
+pub mod fold_verify_local;
 pub mod hc_cols;
 pub mod hc_completion;
 pub mod hc_expand_mix;
@@ -775,6 +776,7 @@ impl crate::Kernels {
             && cubin != allocate_entries::CUBIN
             && cubin != allocated_acceptance_entries::CUBIN
             && cubin != fold_verify::CUBIN
+            && cubin != fold_verify_local::CUBIN
             && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))

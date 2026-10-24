@@ -159,6 +159,8 @@ mod fold_local_rows;
 #[allow(dead_code)]
 mod fold_verify;
 #[allow(dead_code)]
+mod fold_verify_local;
+#[allow(dead_code)]
 mod head_last;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -699,6 +701,7 @@ pub fn selection(
     specs.extend(fold_cluster::cubins(geometries).expect("measured cluster fold cubin"));
     specs.extend(fold_fused::cubins(geometries).expect("measured status fold cubin"));
     specs.extend(fold_verify::cubins(geometries).expect("wide status fold cubin"));
+    specs.extend(fold_verify_local::cubins(geometries).expect("tiled local fold cubin"));
     specs.extend(head_last::cubins(geometries).expect("qualified ordered head cubin"));
     specs.extend(f32_split::cubins(geometries).expect("fused split F32 cubins"));
     specs.extend(

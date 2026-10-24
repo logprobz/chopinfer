@@ -652,9 +652,9 @@ mod tests {
                         .implementation
                         .ends_with("+native_mxf8f6f4_prefill_v1")
                 );
-                // A served cubin holds each symbol, or the row-tiled build
-                // serving launches in its place over the TP4 backbone
-                // gate/up bank (`moe_row_tiles_op`).
+                // A served cubin holds each symbol, or the build for the
+                // served tile order that serving launches in its place over
+                // the TP4 backbone gate/up bank (`moe_row_tiles_op`).
                 let tiled = crate::sm120::moe_row_tiles::symbols(&FLASH).unwrap();
                 for (symbol, _) in &op.info().symbols {
                     let served = tiled.get(symbol).unwrap_or(symbol);

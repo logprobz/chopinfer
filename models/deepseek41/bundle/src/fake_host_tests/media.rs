@@ -416,7 +416,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// releases. The column-block HC pair's modules add fourteen resolves and
 /// sixteen releases per rank and shift ids only.
 /// The status folds change the TP4 history as in `FLASH_JOURNALS`, and so
-/// do the row-tiled gate/up builds at both rank counts.
+/// do the row-tiled gate/up builds and then their quad-lane builds at both
+/// rank counts.
 /// Scratch regions (`buffers::REGIONS`) remove ten allocations and their
 /// releases per rank, as in the text lifecycle; audited against the image
 /// lifecycle bound without regions, every other line is equal once ids are
@@ -440,8 +441,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The packed fold codes change both histories as in `FLASH_JOURNALS`; the
 /// C1 dual fold binds its two projections' views as their packed banks.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (19835, 0x15d7c16008bfce0b)),
-    (Ranks::TP4, (50503, 0xef3c3d419bce8a25)),
+    (Ranks::TP2, (19835, 0x7e98b22150ec56f3)),
+    (Ranks::TP4, (50503, 0x913c05bd1e9a4fcf)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

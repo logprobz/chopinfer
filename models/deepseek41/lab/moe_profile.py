@@ -34,9 +34,13 @@ def check_profile(report, bank, rows):
         prefix = f"before_{kind}_e{experts}k{top_k}_n{n}_k{k}_r"
         suffixes = [f"{old_tile}_t{old_capacity}{clamp}_v1",
                     f"16_t{active_capacity}{clamp}_active_bw4_v1"]
+        if bank == 0 and kind == "gateup" and old_tile == 64:
+            suffixes[0] = suffixes[0][:-3] + "_lanes_v1"
         suffixes += [f"64_t{stream_capacity}{clamp}_stream_{stage}_v1" for stage in
                      (["pack", "small", "merge"] if rows <= 8 else ["pack", "small", "wide", "merge"])]
         for suffix in suffixes:
+            if bank == 0 and kind == "gateup" and suffix.endswith(("_stream_small_v1", "_stream_wide_v1")):
+                suffix = suffix[:-3] + "_lanes_v1"
             assert prefix + suffix in report, prefix + suffix
 
 

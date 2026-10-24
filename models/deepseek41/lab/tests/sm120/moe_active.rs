@@ -107,8 +107,9 @@ impl Arm {
             ["pack", "small", "merge"].into_iter().all(|stage| {
                 self.launches.iter().any(|op| {
                     op.symbol.contains(&format!("before_{part}_"))
-                        && (op.symbol.ends_with(&format!("_stream_{stage}_v1"))
-                            || op.symbol.ends_with(&format!("_stream_{stage}_tiles_v1")))
+                        && ["", "_tiles", "_lanes"]
+                            .into_iter()
+                            .any(|build| op.symbol.ends_with(&format!("_stream_{stage}{build}_v1")))
                 })
             })
         })

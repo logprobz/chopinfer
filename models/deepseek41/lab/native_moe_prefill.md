@@ -187,10 +187,11 @@ chunk 0's 1005 ms. The serving A/B (criterion 8) measures it.
 ## The row-tiled bank (2026-10-23)
 
 Flash TP4 serves its backbone gate/up bank in 64-row by 128-K row tiles,
-and the bundle embeds the fused ceil and scanned gate/up tiles and the
-column gate/up only as their row-tiled builds. The harnesses upload a
-tiled copy of the gate/up bank (`pipeline::gate_tiles`) and run both arms'
-launches of those entries as their row-tiled builds over it. The target
+each 64-byte block of the codes in quad-lane order, and the bundle embeds
+the fused ceil and scanned gate/up tiles and the column gate/up only as
+their builds for that layout. The harnesses upload a copy of the gate/up
+bank in the served layout (`pipeline::gate_tiles`) and run both arms'
+launches of those entries as those builds over it. The target
 bank's wrapper check compares the lab's launches with the served wrapper
 (`moe_row_tiles_op`) over the tiled bank. The lab and tune entries, the
 raw entry and the tile variants keep the row-major bank, so the serving

@@ -109,14 +109,14 @@ pub enum RoutedLayout {
 }
 
 impl RoutedLayout {
-    /// The layout [`plan`] stores for geometry `g` at `ranks`: tiles for
-    /// Flash at TP4, where every routed consumer of the backbone gate/up
-    /// bank reads them (the bundle's `sm120::moe_row_tiles`), rows for
-    /// every other geometry and rank count.
+    /// The layout [`plan`] stores for geometry `g` at `ranks`: quad-lane
+    /// tiles for Flash at TP4, where every routed consumer of the backbone
+    /// gate/up bank reads them (the bundle's `sm120::moe_row_tiles`), rows
+    /// for every other geometry and rank count.
     #[must_use]
     pub fn served(g: &Geometry, ranks: u32) -> Self {
         if g.id == crate::geometry::FLASH.id && ranks == 4 {
-            Self::Tiles
+            Self::Lanes
         } else {
             Self::Rows
         }

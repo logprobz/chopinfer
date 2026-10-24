@@ -102,8 +102,8 @@ fn every_rank_prepares_from_the_headers() {
 /// tiles, changes nothing but its own records' parameters (the packing
 /// layout), its views' index layouts and so every rank's identity: the
 /// arena, every view's place and size and every other record stay as the
-/// row-major plan's. The served plan stores tiles at TP4, where every
-/// routed consumer reads them, and rows at TP1 and TP2. The host prepares
+/// row-major plan's. The served plan stores quad-lane tiles at TP4, where
+/// every routed consumer reads them, and rows at TP1 and TP2. The host prepares
 /// each plan from the headers at every supported rank count.
 #[test]
 fn row_tiles_change_only_the_backbone_gate_up_records_and_identity() {
@@ -111,7 +111,7 @@ fn row_tiles_change_only_the_backbone_gate_up_records_and_identity() {
     let root = sparse(geometry);
     for &ranks in SUPPORTED_RANKS {
         let layout = if ranks == 4 {
-            RoutedLayout::Tiles
+            RoutedLayout::Lanes
         } else {
             RoutedLayout::Rows
         };

@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp4120000041200000_r2w6s3_tiles_scanned_row_tiles_v1",
+        "symbol": "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp4120000041200000_r2w6s3_tiles_scanned_lanes_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -209,10 +209,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "a84229d85c3bdb06fb4d8b186f77cae860eeaece92d8d66a82b811f1c52a280b",
+    "cubin_sha256": "e75ea83eb941d3bb734fcdd471643b7b385dc3a6366c3479e851b264d4d220d2",
     "resources": [
       {
-        "symbol": "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp4120000041200000_r2w6s3_tiles_scanned_row_tiles_v1",
+        "symbol": "chop_moe_native_gateup_e384k6_n576_k5120_t8192_clamp4120000041200000_r2w6s3_tiles_scanned_lanes_v1",
         "registers": 165,
         "shared_static_bytes": 1024,
         "local_bytes": 0,

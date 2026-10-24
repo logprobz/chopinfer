@@ -42,7 +42,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_tiles_v1",
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_lanes_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -260,7 +260,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_tiles_v1",
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_lanes_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -313,7 +313,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_tiles_v1",
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_lanes_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1098,7 +1098,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "c373f90c9d110324bf9783db52146e05992f0fb0c3e322102cfc21837f33372d",
+    "cubin_sha256": "5055c2df87c805a774d6ddbf75edc982069e159d59bea315fa32c7183aa29cc1",
     "resources": [
       {
         "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_pack_v1",
@@ -1110,8 +1110,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_tiles_v1",
-        "registers": 80,
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_lanes_v1",
+        "registers": 72,
         "shared_static_bytes": 3232,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1164,8 +1164,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_tiles_v1",
-        "registers": 80,
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_lanes_v1",
+        "registers": 72,
         "shared_static_bytes": 3232,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1173,8 +1173,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_tiles_v1",
-        "registers": 166,
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_lanes_v1",
+        "registers": 162,
         "shared_static_bytes": 18688,
         "local_bytes": 0,
         "stack_bytes": 0,

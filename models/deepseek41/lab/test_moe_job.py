@@ -101,7 +101,8 @@ class TimingGate(unittest.TestCase):
         for bank in [0,1]:
             for rows in moe_profile.ROWS:
                 moe_profile.check_profile(report,bank,rows)
-        for suffix in ["_active_bw4_v1", "_stream_pack_v1", "_stream_small_v1", "_stream_wide_v1", "_stream_merge_v1"]:
+        for suffix in ["_active_bw4_v1", "_stream_pack_v1", "_stream_small_v1", "_stream_wide_v1", "_stream_merge_v1",
+                       "_stream_small_lanes_v1", "_stream_wide_lanes_v1", "_clamp4120000041200000_lanes_v1"]:
             incomplete = "\n".join(s for s in symbols if not s.endswith(suffix))
             with self.assertRaises(AssertionError):
                 moe_profile.check_profile(incomplete,0,48)

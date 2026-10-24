@@ -373,11 +373,12 @@ fn checkpoint_routed_down_records_round_trip_through_chained_addresses() {
 
 /// Flash is always compiled, so this checks the fused gate/up bank even
 /// when no optional geometry enables the full checkpoint-view test. TP4
-/// stores the bank in 64-row by 128-K row tiles; each expert's rows are
-/// whole strips, so its bytes read back as rows through the tile offsets.
+/// stores the bank in 64-row by 128-K row tiles with the codes in quad-lane
+/// order; each expert's rows are whole strips, so its bytes read back as
+/// rows through the lane order and the tile offsets.
 #[test]
 fn flash_gate_up_records_round_trip_through_chained_addresses() {
-    use kernel_core::transform::RowTileLayout;
+    use kernel_core::transform::{QuadLaneLayout, RowTileLayout};
     let geometry = &model_deepseek41_contract::geometry::FLASH;
     let root = fixture(geometry, &["w1", "w3"]);
     let (header, data) = header(&root);
@@ -385,7 +386,7 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
     let (image, plans) = prepare(&root, ranks).unwrap();
     let n = geometry.shape.moe.intermediate as usize / ranks as usize;
     let k = geometry.shape.hidden as usize;
-    assert_eq!(RoutedLayout::served(geometry, ranks), RoutedLayout::Tiles);
+    assert_eq!(RoutedLayout::served(geometry, ranks), RoutedLayout::Lanes);
     // An expert's tiled bytes as rows of `row_bytes`.
     let rows = |bytes: &[u8], row_bytes: usize, tile_bytes: usize| -> Vec<u8> {
         let layout = RowTileLayout {
@@ -423,6 +424,11 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
                     &mut actual_scales,
                 )
                 .unwrap();
+            QuadLaneLayout {
+                bytes: actual_codes.len(),
+            }
+            .unpack_in_place(&mut actual_codes)
+            .unwrap();
             let actual_codes = rows(&actual_codes, k / 2, 64);
             let actual_scales = rows(&actual_scales, k / 32, 4);
             for (half, operand) in ["w1", "w3"].into_iter().enumerate() {
@@ -468,7 +474,7 @@ fn flash_gate_up_records_round_trip_through_chained_addresses() {
                 }
             }
         }
-        let [code_layout, scale_layout] = RoutedLayout::Tiles.view_layouts().unwrap();
+        let [code_layout, scale_layout] = RoutedLayout::Lanes.view_layouts().unwrap();
         assert_eq!(codes.layout_id, code_layout);
         assert_eq!(scales.layout_id, scale_layout);
         assert_eq!(

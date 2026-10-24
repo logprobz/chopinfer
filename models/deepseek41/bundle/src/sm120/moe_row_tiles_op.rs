@@ -388,7 +388,7 @@ mod tests {
         let [target, drafter] = [(384, 6), (128, 3)].map(|(count, top_k)| Experts { count, top_k });
         assert!(moe::expert_sets(&FLASH).contains(&target));
         assert_eq!(layout(&FLASH, 4, target), RoutedLayout::served(&FLASH, 4));
-        assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Tiles);
+        assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Lanes);
         for (ranks, set) in [(4, drafter), (2, target), (1, target)] {
             assert_eq!(layout(&FLASH, ranks, set), RoutedLayout::Rows);
         }

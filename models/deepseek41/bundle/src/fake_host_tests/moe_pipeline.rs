@@ -39,12 +39,13 @@ fn check_native_gate_up_tiles() {
                 ("r2w6s3", "r2w4s3")
             };
             assert_eq!(launches(&format!("{gate_up}{tile}_pack_v1 ")), 4 * 40);
-            // The backbone gate/up bank is in row tiles at TP4, which the
-            // compute tiles' row-tiled builds read (`sm120::moe_row_tiles`).
+            // The backbone gate/up bank is in quad-lane row tiles at TP4,
+            // which the compute tiles' quad-lane builds read
+            // (`sm120::moe_row_tiles`).
             let tiles = if fused {
                 "_tiles_ceil"
             } else {
-                "_tiles_scanned_row_tiles_v1 "
+                "_tiles_scanned_lanes_v1 "
             };
             assert_eq!(launches(&format!("{gate_up}{tile}{tiles}")), 4 * 40);
             assert_eq!(launches(&format!("{gate_up}{tile}_tiles_")), 4 * 40);

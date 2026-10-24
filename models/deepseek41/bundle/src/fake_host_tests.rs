@@ -1216,38 +1216,41 @@ fn journal_steps(host: &Rc<Host>) {
 /// builds of its gate/up entries replace the row-major ones in place, so
 /// every rank count's resolves of the column module and the TP4 launches
 /// of those entries name the tiled builds. No other line changes.
+/// Its codes are in quad-lane order: the quad-lane builds replace the
+/// row-tiled ones the same way, renaming the same resolves and launches.
+/// No other line changes.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15864, 0xd6f761a0d2d1c1c5),
+        (15864, 0x0ecdca5645c278de),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15718, 0xdff8b5aaaf4755cd),
+        (15718, 0x7b4ce841cbca7856),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (31603, 0x263c2153e345793b),
+        (31603, 0x5ac02bac440c0073),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (31311, 0xa8e2922e2e11527a),
+        (31311, 0x9174be3bab2de486),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (78523, 0xf5c923e08bff7e43),
+        (78523, 0xf33b345096e954c9),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (76167, 0x4ba0022bb34b76ec),
+        (76167, 0xed6ed1816ec5122c),
     ),
 ];
 
@@ -1390,8 +1393,8 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
 
 /// Opting out of native MoE prefill refuses a Flash TP4 instance, and says
 /// why: its exact prefill kernels read the backbone gate/up bank as rows,
-/// which TP4 stores in row tiles (`sm120::moe_row_tiles_op`). Nothing stays
-/// held.
+/// which TP4 stores in quad-lane row tiles (`sm120::moe_row_tiles_op`).
+/// Nothing stays held.
 #[test]
 fn native_moe_prefill_opt_out_refuses_the_row_tiled_tp4_bank() {
     crate::sm120::moe_native::with_native(false, || {
@@ -1506,27 +1509,36 @@ fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
 
 /// Create refuses a rank index that stores a backbone expert bank in
 /// another layout than its routed ops read: at TP4 the gate/up consumers
-/// read row tiles and the down consumers rows, at TP2 both read rows (the
-/// drafter's bank: `dspark`).
+/// read quad-lane row tiles (codes in row tiles alone are another layout)
+/// and the down consumers rows, at TP2 both read rows (the drafter's bank:
+/// `dspark`).
 #[test]
 fn create_refuses_an_expert_bank_its_routed_ops_read_in_another_layout() {
     let rows = RoutedLayout::Rows.view_layouts().unwrap();
     let tiles = RoutedLayout::Tiles.view_layouts().unwrap();
-    assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Tiles);
+    let lanes = RoutedLayout::Lanes.view_layouts().unwrap();
+    assert_eq!(RoutedLayout::served(&FLASH, 4), RoutedLayout::Lanes);
     for (ranks, view, part, stored, read) in [
         (
             Ranks::TP4,
             "layers.0.ffn.experts.gate_up.weight",
             0,
             rows,
+            lanes,
+        ),
+        (
+            Ranks::TP4,
+            "layers.0.ffn.experts.gate_up.weight",
+            0,
             tiles,
+            lanes,
         ),
         (
             Ranks::TP4,
             "layers.7.ffn.experts.gate_up.scale",
             1,
             rows,
-            tiles,
+            lanes,
         ),
         (
             Ranks::TP4,

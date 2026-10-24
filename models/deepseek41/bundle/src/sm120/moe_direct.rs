@@ -495,12 +495,13 @@ mod tests {
                             set.count == 384 && matches!(rows, 16 | 32) && point == Point::Down;
                         assert!(!(absorbed && call.launch.symbol.contains("_wide_")));
                         assert!(!(strips && call.launch.symbol.contains("_wide_")));
-                        // TP4 stores the backbone gate/up bank in row tiles:
-                        // its gate queues launch their row-tiled builds.
+                        // TP4 stores the backbone gate/up bank in quad-lane
+                        // row tiles: its gate queues launch their quad-lane
+                        // builds.
                         let queue = call.launch.symbol.contains("_small_")
                             || call.launch.symbol.contains("_wide_");
                         assert_eq!(
-                            queue && call.launch.symbol.contains("_tiles"),
+                            queue && call.launch.symbol.contains("_lanes"),
                             queue && set.count == 384 && point == Point::Gate,
                             "{}",
                             call.launch.symbol

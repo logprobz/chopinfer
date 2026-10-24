@@ -1058,7 +1058,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8192_clamp4120000041200000_row_tiles_v1",
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8192_clamp4120000041200000_lanes_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1406,7 +1406,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "72970ba449b395629c4a4a4ca73de8cb9407a0932c8b059fdd900d5ac9c61a56",
+    "cubin_sha256": "fefd3834f619a7474c4ebdf71368381ce5a7839be4711d8dd8ff9880013b9e45",
     "resources": [
       {
         "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n4608_k5120_r16_t32_clamp4120000041200000_v1",
@@ -1571,8 +1571,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8192_clamp4120000041200000_row_tiles_v1",
-        "registers": 204,
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8192_clamp4120000041200000_lanes_v1",
+        "registers": 198,
         "shared_static_bytes": 28932,
         "local_bytes": 0,
         "stack_bytes": 0,

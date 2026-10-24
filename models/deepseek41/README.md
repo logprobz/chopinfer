@@ -41,15 +41,21 @@ HF corpus `tokenizer_goldens.py corpus` writes, named by
 
 Flash TP4 prefill uses native block-scaled expert tiles. At TP4 the rank
 image stores the backbone's routed gate/up bank in 64-row by 128-K row
-tiles, which the native tiles read and the exact BF16 expert path does
-not. `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` unset or `1` selects native;
-`0` or any other value selects the exact path, so a TP4 create refuses and
-logs why. TP1 and TP2 store rows and run the exact path. The native tiles
-use the trained operand grids and change the F32 accumulation order within
-each 32-K group. Decode, verify and draft experts keep their existing
-paths; at TP4 the backbone's decode and verify gate/up kernels read the
-row tiles too, bit for bit as they read rows. See [native MoE prefill qualification](lab/native_moe_prefill.md)
-for the numerical contract and fixed gates.
+tiles with each 64-byte block of the codes in quad-lane order
+(`row-tiles-64x128-lanes`), which the native tiles read and the exact BF16
+expert path does not. `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` unset or
+`1` selects native; `0` or any other value selects the exact path, so a TP4
+create refuses and logs why. TP1 and TP2 store rows and run the exact path.
+The native tiles use the trained operand grids and change the F32
+accumulation order within each 32-K group. Decode, verify and draft experts
+keep their existing paths; at TP4 the backbone's decode and verify gate/up
+kernels read the quad-lane tiles too, bit for bit as they read rows: each
+lane of a quad loads the code bytes it converts together, so no shuffle
+forms its MMA operands. Native prefill restores the row-tiled order in
+shared memory, which costs it up to 3.3% of its MoE time against row tiles
+(2048 to 8192 live rows, sustained at 300 W, 2026-10-23). See
+[native MoE prefill qualification](lab/native_moe_prefill.md) for the
+numerical contract and fixed gates.
 
 The routed expert scale banks of the main layers are stored encoded
 (`scale-row-offset-v1`, [encoded expert scale banks](../../docs/kernel-library.md#encoded-expert-scale-banks)).

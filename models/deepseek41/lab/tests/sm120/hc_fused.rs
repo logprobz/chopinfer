@@ -95,7 +95,7 @@ fn gpu_drafter_split() {
             }
             set_inputs(s, rows, "finite", &input)?;
             upload(&input.live, &rows.to_le_bytes(), &s.stream)?;
-            let paired = kernel_harness::time_ab(s, 2, 7, [EvictionMode::Read; 2], |arm, stream|
+            let paired = kernel_harness::time_ab(s, 2, 7, [EvictionMode::Write; 2], |arm, stream|
                 graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
             println!("DSPARK_HC_TIMING rows={rows} old_us={} new_us={} ratio={}",
                 paired.arms[0].median_ms*1000., paired.arms[1].median_ms*1000., paired.paired_ratio);

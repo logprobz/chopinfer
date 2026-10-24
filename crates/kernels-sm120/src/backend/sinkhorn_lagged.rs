@@ -152,20 +152,29 @@ pub(super) fn mix_collapse(
         LAGGED_MIX_COLLAPSE,
         need,
     )?;
-    let entries: Vec<_> = selection
-        .lagged_split
-        .iter()
-        .filter(|entry| {
-            entry.reference.op == lagged::Op::MixCollapse { probe: false }
-                && uncapped(entry.query()) == uncapped(*op)
-        })
-        .collect();
-    let capacity = entries
+    let matching = |entry: &&lagged_split::Entry| {
+        entry.reference.op == lagged::Op::MixCollapse { probe: false }
+            && uncapped(entry.query()) == uncapped(*op)
+    };
+    let mut entries: Vec<_> = selection.lagged_split.iter().filter(matching).collect();
+    let mut capacity = entries
         .iter()
         .filter_map(|entry| entry.reference.capacity().ok())
         .max()
         .unwrap_or(0)
         .min(need.capacity);
+    if capacity < need.capacity {
+        let bounded: Vec<_> = selection
+            .lagged_split_bounded
+            .iter()
+            .filter(matching)
+            .filter(|entry| entry.reference.capacity().is_ok_and(|c| c >= need.capacity))
+            .collect();
+        if !bounded.is_empty() {
+            entries = bounded;
+            capacity = need.capacity;
+        }
+    }
     if capacity > 0 {
         let candidates = entries
             .into_iter()
@@ -602,6 +611,76 @@ mod tests {
             .sinkhorn_lagged_mix_collapse(&mix_collapse(8), Need::rows(8))
             .unwrap();
         assert!(op.launches(&short, View::EMPTY, Counts::rows(1)).is_err());
+    }
+
+    /// A bounded split serves an op prepared for at most its capacity
+    /// where the ordinary split holds fewer rows; every other preparation,
+    /// including the prefill route over the same mixer, keeps its routes.
+    #[test]
+    fn bounded_splits_serve_only_ops_they_hold_whole() {
+        let split = |capacity| {
+            lagged_split::entry(
+                LAB_PROFILE,
+                sinkhorn_hc::Geometry { capacity, ..LAB },
+                false,
+            )
+        };
+        let backend = backend()
+            .with_sinkhorn_lagged_split([split(32)])
+            .with_sinkhorn_lagged_split_bounded([split(80)]);
+        let symbol = split(32).symbol();
+        let buffers = LaggedMixCollapseBuffers {
+            x: view(1, u64::MAX),
+            mixer: MixerWeights {
+                fn_: view(2, u64::MAX),
+                base: view(3, u64::MAX),
+                scale: view(4, u64::MAX),
+            },
+            pre_in: view(5, u64::MAX),
+            collapsed: view(6, u64::MAX),
+            pre: view(7, u64::MAX),
+            post: view(8, u64::MAX),
+            comb: view(9, u64::MAX),
+            scratch: MixScratch {
+                partials: Some(view(10, u64::MAX)),
+                tickets: Some(view(11, u64::MAX)),
+            },
+            live_rows: view(12, 4),
+        };
+        for (capacity, split_rows) in [(32, 32), (40, 40), (80, 80), (81, 32), (8192, 32)] {
+            let op = backend
+                .sinkhorn_lagged_mix_collapse(&mix_collapse(capacity), Need::rows(capacity))
+                .unwrap();
+            let partials = op
+                .info()
+                .bytes
+                .iter()
+                .find(|(path, _)| path == "scratch.partials")
+                .map(|&(_, bytes)| bytes);
+            assert_eq!(partials, Some(split::partials_bytes(LAB.mix, split_rows)));
+            for rows in [1, 32, 33, 40, 80, 81]
+                .into_iter()
+                .filter(|r| *r <= capacity)
+            {
+                let launches = op
+                    .launches(&buffers, View::EMPTY, Counts::rows(rows))
+                    .unwrap();
+                assert_eq!(
+                    launches[0].symbol == symbol,
+                    rows <= split_rows,
+                    "{capacity} {rows}"
+                );
+            }
+            let prefill = backend
+                .sinkhorn_lagged_prefill(&mix_collapse(capacity), Need::rows(capacity))
+                .unwrap();
+            for rows in [32, 33, 40].into_iter().filter(|r| *r <= capacity) {
+                let launches = prefill
+                    .launches(&buffers, View::EMPTY, Counts::rows(rows))
+                    .unwrap();
+                assert_eq!(launches[0].symbol == symbol, rows <= split_rows);
+            }
+        }
     }
 
     #[test]

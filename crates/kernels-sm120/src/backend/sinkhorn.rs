@@ -68,6 +68,9 @@ pub(super) struct Selection {
     /// entries (`super::sinkhorn_lagged`).
     pub(super) lagged: Vec<sinkhorn_hc::lagged::Entry>,
     pub(super) lagged_split: Vec<sinkhorn_hc::lagged_split::Entry>,
+    /// Split lagged mixers that serve only an op they hold whole: one
+    /// prepared for at most their capacity.
+    pub(super) lagged_split_bounded: Vec<sinkhorn_hc::lagged_split::Entry>,
     pub(super) lagged_tiled: Vec<sinkhorn_hc::lagged_tiled::Entry>,
     pub(super) lagged_warp: Vec<sinkhorn_hc::lagged_warp::Entry>,
     pub(super) lagged_prefill: Vec<(sinkhorn_hc::prefill_warp::Entry, Vec<u32>)>,

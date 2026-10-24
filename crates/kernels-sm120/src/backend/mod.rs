@@ -1070,6 +1070,18 @@ impl Sm120 {
         self
     }
 
+    /// Register split lagged mixers that serve only an op prepared for at
+    /// most their capacity, every row of it, where the split mixers above
+    /// hold fewer rows than the op. Ops prepared for more rows, a
+    /// prefill's included, keep their routes.
+    pub fn with_sinkhorn_lagged_split_bounded(
+        mut self,
+        entries: impl IntoIterator<Item = crate::sinkhorn_hc::lagged_split::Entry>,
+    ) -> Self {
+        self.sinkhorn.lagged_split_bounded.extend(entries);
+        self
+    }
+
     /// Register row-tiled lagged mixers for the model's prefill buckets.
     pub fn with_sinkhorn_lagged_tiled(
         mut self,

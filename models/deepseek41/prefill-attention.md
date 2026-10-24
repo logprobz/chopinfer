@@ -579,5 +579,25 @@ symbols, grids, threads and shared bytes.
 Served packed prefill steps of 8 and 14 prompts (about 560 tokens each)
 spent about 0.25 ms per token in the target at TP4 on 2026-10-24, of which
 the reference attention plan accounts for about 0.14 ms by the lab costs.
-The lab qualification on packed multi-prompt shapes and the served
-exactness and batch-invariance checks are still to run.
+
+Lab qualification at TP4 on two GPUs, 2026-10-24. The packings were 12
+shapes: the served C8, C16 and C1 steps, odd counts, prompt boundaries on
+both rows of a paired CTA, and 4096 + 4095. Each ran plain and
+adversarial, under live-count graph replays, on all three entries. Every
+live row's partials and output were bitwise equal to the reference plan.
+At 4 to 129 rows of three interleaved items, both plans were bitwise equal
+and inside the f64 oracle's gate, so the paired error is the reference
+error. The paired plan took 0.16 to 0.22 of the reference time per layer:
+35.9 against 7.45 ms for a mixed layer of 14 prompts of 554 tokens.
+
+Served check, same day: coding workload, prompts of 49 to 938 tokens,
+DSpark depth 3, sampled at temperature 1, borrowed weights, one ABBA
+block. Prefill steps fell from 1542 to 1306 ms at C8 (8 prompts), and from
+2548 to 2052 ms and 911 to 747 ms for the two C16 steps. That is 0.05 to
+0.09 ms per token, below the 0.14 ms lab estimate above. Request
+throughput rose 7.4% at C8 and 11.5% at C16, and every sampled output was
+bitwise equal to the previous route. Batch invariance also held: every
+prompt of a packed step of 8 or 16 produced the same first token,
+logprobs, logits row and state as the same prompt prefilled alone. State
+here means window ring, compressor tail and every committed KV page,
+excluding bytes no prefill writes.

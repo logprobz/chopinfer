@@ -443,6 +443,10 @@ fn the_manifest_declares_each_topology_s_resources() {
             ),
             ranks == 4,
         );
+        assert_eq!(
+            capabilities.contains(&runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1),
+            ranks == 4,
+        );
         let kv = topology.kv_layout();
         assert_eq!(kv.id().as_str().as_bytes(), KV_LAYOUT_NATIVE);
         assert_eq!(kv.page_bytes(), page_bytes);
@@ -845,6 +849,10 @@ fn native_packages_advertise_full_block_drafting_and_bounded_verify_rows() {
         let speculation = topology.speculation().unwrap();
         assert!(speculation.bundle_drafter());
         assert_eq!(speculation.drafter_kind(), Some("dspark"));
+        assert_eq!(
+            speculation.confidence_contract(),
+            Some(model_deepseek41_contract::own_ops::dspark::CONFIDENCE_CONTRACT),
+        );
         assert_eq!(
             speculation.drafter_component().unwrap().as_str(),
             RANK_IMAGE_COMPONENT

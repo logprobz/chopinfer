@@ -349,6 +349,7 @@ fn topology_draft(
         capabilities.push(id(
             runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
         )?);
+        capabilities.push(id(runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1)?);
     }
     if media {
         capabilities.push(id(model_deepseek41_contract::encoder::MEDIA_CAPABILITY)?);
@@ -381,7 +382,10 @@ fn topology_draft(
             (2..=model_deepseek41_contract::serving::MAX_VERIFY_ROWS).collect(),
             Some(id(RANK_IMAGE_COMPONENT)?),
         )?
-        .with_drafter_kind(Some(id("dspark")?))?,
+        .with_drafter_kind(Some(id("dspark")?))?
+        .with_confidence_contract(Some(id(
+            model_deepseek41_contract::own_ops::dspark::CONFIDENCE_CONTRACT,
+        )?))?,
     )
     .with_recurrent_state_layouts(vec![recurrent_state_layout(geometry)?])
     .with_batch_limits(

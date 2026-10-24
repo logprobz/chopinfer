@@ -335,7 +335,7 @@ fn frozen_modules_are_complete() {
             serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        let coverage = json!({"entries": compared().iter().map(|p| json!({"old":p[0].symbol(),"new":p[1].symbol(),"width":p[0].width()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
+        let coverage = json!({"entries": compared().iter().map(|p| json!({"old":p[0].symbol(),"new":p[1].symbol(),"width":p[0].width(),"rows":p[1].rows()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
             "bitwise_cases":compared_rows()*PATTERNS.len(), "timing_cases":compared_rows(), "negative_controls":compared_rows()*3});
         std::fs::write(
             dir.join("coverage.json"),

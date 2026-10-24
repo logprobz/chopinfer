@@ -162,9 +162,17 @@ pub(crate) fn rank_buffers_within(
         .then(|| crate::buffers::DrafterBuffers::allocate(shape, &mut allocate).unwrap());
     let retained =
         StatePools::retained_bytes(shape, format, extent).map(|bytes| allocate(bytes).unwrap());
-    let state = StatePools::new(shape, format, extent, retained, tail, &mut allocate)
-        .unwrap()
-        .unwrap();
+    let state = StatePools::new(
+        shape,
+        format,
+        extent,
+        model_glm5next_contract::contract::head_rows(),
+        retained,
+        tail,
+        &mut allocate,
+    )
+    .unwrap()
+    .unwrap();
     RankBuffers {
         scratch,
         comm,
@@ -596,6 +604,8 @@ fn every_backend_and_own_record_lowers() {
 // after them). Re-pinned when the MoE took the F32 routed sum: its symbol,
 // the F32 MLP output (its length and the handles after it), and the F32
 // outputs of the experts' down and the shared expert's down records.
+// Compact KDA checkpoints change only allocation lengths, layer views and
+// commit-copy strides. Kernel order, grids and all other arguments match.
 // Re-pinned when the drafter's gathered hidden inputs joined the scratch
 // (one more allocation per rank). Re-pinned when the drafter's four
 // scratch buffers moved to the formats that hold its layer (four fewer
@@ -627,12 +637,12 @@ fn every_backend_and_own_record_lowers() {
 #[test]
 fn journals_are_pinned_per_kv_format_and_phase() {
     let pinned: [((LatentKvFormat, Phase), (usize, u64)); 6] = [
-        ((FORMATS[0], PHASES[0]), (5792, 0x44b9d4094d13023a)),
-        ((FORMATS[0], PHASES[1]), (5044, 0xe502cc638f4ef151)),
-        ((FORMATS[0], PHASES[2]), (5044, 0x7a52b349bda17d64)),
-        ((FORMATS[1], PHASES[0]), (5792, 0x76651e8ef1143ddc)),
-        ((FORMATS[1], PHASES[1]), (5044, 0xac9d640261911eaf)),
-        ((FORMATS[1], PHASES[2]), (5044, 0x56d5cc0b43d1c0d2)),
+        ((FORMATS[0], PHASES[0]), (5792, 0x36d1_aa0b_f823_140c)),
+        ((FORMATS[0], PHASES[1]), (5044, 0x31d8_adcc_ae60_76e1)),
+        ((FORMATS[0], PHASES[2]), (5044, 0x5806_06d2_0fa9_ff9e)),
+        ((FORMATS[1], PHASES[0]), (5792, 0xfcfd_cfa2_9e8e_752e)),
+        ((FORMATS[1], PHASES[1]), (5044, 0x9a3e_2727_ed5e_21a3)),
+        ((FORMATS[1], PHASES[2]), (5044, 0x808a_fba1_d3ad_1280)),
     ];
     let mut failures = Vec::new();
     for ((kv, phase), expected) in pinned {
@@ -699,9 +709,13 @@ fn drafter_journals_are_pinned_per_pass() {
         (
             DraftPass::Extend,
             Phase::Verify { rows: 32, items: 8 },
-            (576, 0x727bd523d4167f39),
+            (576, 0x5143_48f1_7083_f081),
         ),
-        (DraftPass::Step, Phase::Decode(8), (552, 0x4d9bfb042adf4cd2)),
+        (
+            DraftPass::Step,
+            Phase::Decode(8),
+            (552, 0x3643_40c1_617c_74aa),
+        ),
     ] {
         let lines = journal_of(kv, phase, Some(pass));
         // The drafter's layer is the twelfth paged layer: its latent KV

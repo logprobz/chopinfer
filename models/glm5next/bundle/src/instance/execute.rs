@@ -2034,9 +2034,7 @@ impl Instance {
         };
         let state = &self.buffers[0].state;
         let copies =
-            match crate::step::commit_copies(&state.state, state.extent, plan.items(), |item| {
-                step.verify_index(item)
-            }) {
+            match crate::step::commit_copies(&state.state, state.extent, plan.items(), &step) {
                 Ok(copies) => copies,
                 Err(error) => {
                     self.log(&error);

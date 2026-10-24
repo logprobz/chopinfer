@@ -6,10 +6,10 @@
 //! create allocates the recurrent state before the pool
 //! (docs/numerics.md#recurrent-state, `chop.recurrent-state.preallocated.v1`),
 //! and the host subtracts a 1 GiB reserve and divides the rest by the page
-//! bytes. The plan conservatively counts 90 % of that rest. A slot holds one state copy without speculation and `rows + 1` with
-//! it, `rows = draft_tokens + 1` (the committed copy and a checkpoint per
-//! verify row), so drafting costs a full state copy per verify row; the
-//! [`ANCHOR_ITEMS`] anchor spares hold one more copy each.
+//! bytes. The plan conservatively counts 90 % of that rest. Each slot
+//! holds its committed KDA state; verify checkpoints share the total
+//! verify-row budget. The indexer retains its fixed per-bucket-item tail
+//! checkpoints, and the [`ANCHOR_ITEMS`] spares hold one state copy each.
 //!
 //! The weights are those of the checkpoint's quantization layout: NVFP4
 //! routed experts leave about 30 GiB more per rank for state and KV pages
@@ -182,14 +182,15 @@ pub struct Capacity {
     /// One copy of a slot's recurrent state: KDA delta and conv state of
     /// every linear layer, and the indexer tail of every sparse layer.
     pub state_per_slot: u64,
-    /// Copies held per slot: 1 without speculation, else `rows + 1`.
-    pub state_copies: u32,
+    /// KDA checkpoint rows shared by all slots, zero without speculation.
+    pub checkpoint_rows: u32,
     /// The anchor spares, one copy for each of the [`ANCHOR_ITEMS`]
     /// prompt-ending items a step keeps at its anchor:
     /// `ANCHOR_ITEMS * state_per_slot`.
     pub anchors: u64,
     /// The state create allocates before the KV pool:
-    /// `slots * state_copies * state_per_slot + anchors`.
+    /// Committed KDA slots, packed verify checkpoints, fixed indexer tails
+    /// and anchor spares. Retained drafter rows remain in the allowance.
     pub state: u64,
     /// Bytes of one rank's page.
     pub page_bytes: u64,
@@ -426,19 +427,31 @@ impl<'g> Planner<'g> {
         let encoder = if serving.vision { encoder_bytes() } else { 0 };
         let workspace = workspace(g, self.ranks, n);
         let state_per_slot = state_per_slot(g, self.ranks, drafting);
-        // The committed copy, and with speculation a checkpoint per verify
-        // row (`draft_tokens + 1`).
-        let state_copies = if drafting {
-            serving.draft_tokens + 2
+        let checkpoint_rows = if drafting {
+            serving
+                .slots
+                .min(crate::contract::DRAFT_ITEMS)
+                .saturating_mul(serving.draft_tokens + 1)
+                .min(crate::contract::head_rows())
         } else {
-            1
+            0
         };
+        let tail = u64::from(kv_layers(g, drafting)) * pooling(g).tail_state_elements() * 2;
+        let kda = state_per_slot - tail;
+        let bucket = serving
+            .slots
+            .checked_next_power_of_two()
+            .ok_or("state bucket overflows")?;
         let anchors = u64::from(ANCHOR_ITEMS) * state_per_slot;
-        let state = u64::from(serving.slots) * u64::from(state_copies) * state_per_slot + anchors;
+        // The host's per-item tail reservation always includes all six
+        // checkpoints, even when the instance does not verify.
+        let state = (u64::from(serving.slots) + u64::from(checkpoint_rows)) * kda
+            + u64::from(bucket) * u64::from(crate::contract::MAX_VERIFY_ROWS + 1) * tail
+            + anchors;
         let used = weights + encoder + workspace.total() + device.reserve + state;
         let free = device.bytes.checked_sub(used).ok_or_else(|| {
             format!(
-                "{} at TP{} does not fit {:.2} GiB: weights {:.2} GiB, encoder {:.2} GiB, workspace {:.2} GiB, reserve {:.2} GiB and state {:.2} GiB ({} slots x {state_copies} copies and {ANCHOR_ITEMS} anchors) leave no KV pool",
+                "{} at TP{} does not fit {:.2} GiB: weights {:.2} GiB, encoder {:.2} GiB, workspace {:.2} GiB, reserve {:.2} GiB and state {:.2} GiB ({} slots, {checkpoint_rows} checkpoint rows and {ANCHOR_ITEMS} anchors) leave no KV pool",
                 g.id,
                 self.ranks,
                 gib(device.bytes),
@@ -465,7 +478,7 @@ impl<'g> Planner<'g> {
             encoder,
             workspace,
             state_per_slot,
-            state_copies,
+            checkpoint_rows,
             anchors,
             state,
             page_bytes,
@@ -490,7 +503,7 @@ impl<'g> Planner<'g> {
         };
         let mut out = format!(
             "{name} TP{}, {:.2} GiB per rank; weights {:.2} GiB (AR) / {:.2} GiB (MTP); encoder {:.2} GiB with images (image {:.2} GiB, buffers {:.2} GiB); workspace {:.2} GiB (DCP 1), context-parallel buffers {:.2} / {:.2} GiB (DCP 2 / 4)\n\n\
-             | slots | MTP K | KV | state copies | state GiB | KV GiB | pages | tokens DCP 1 | tokens DCP 2 | tokens DCP 4 | images DCP 1 | images DCP 2 | images DCP 4 |\n\
+             | slots | MTP K | KV | checkpoint rows | state GiB | KV GiB | pages | tokens DCP 1 | tokens DCP 2 | tokens DCP 4 | images DCP 1 | images DCP 2 | images DCP 4 |\n\
              |---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
             self.ranks,
             gib(device.bytes),
@@ -538,7 +551,7 @@ impl<'g> Planner<'g> {
                     let tokens = format!("{} | {}", tokens(&plans), tokens(&images));
                     let (copies, state, kv_gib, pages) = match &plans[0] {
                         Ok(c) => (
-                            c.state_copies.to_string(),
+                            c.checkpoint_rows.to_string(),
                             format!("{:.2}", gib(c.state)),
                             format!("{:.2}", gib(c.kv_bytes)),
                             c.pages.to_string(),
@@ -627,23 +640,29 @@ mod tests {
         assert_eq!(planner.weights(false, true), 83_370_801_144 - 1_942_986_368);
     }
 
-    /// Without speculation a slot holds its committed copy only; with it,
-    /// one checkpoint more per verify row. The anchor spares hold
-    /// `ANCHOR_ITEMS` copies more either way.
+    /// Verify rows share a bounded pool. Increasing draft depth beyond
+    /// that pool changes neither state nor KV capacity.
     #[test]
-    fn verify_checkpoints_cost_a_state_copy_per_row() {
+    fn verify_checkpoints_share_the_total_row_budget() {
         let planner = Planner::new(&FLASH, 4).unwrap();
         let ar = planner.plan(serving(32, 0, FP8, 1), DEVICE).unwrap();
         let k3 = planner.plan(serving(32, 3, FP8, 1), DEVICE).unwrap();
         let k5 = planner.plan(serving(32, 5, FP8, 1), DEVICE).unwrap();
         assert_eq!(
-            (ar.state_copies, k3.state_copies, k5.state_copies),
-            (1, 5, 7)
+            (ar.checkpoint_rows, k3.checkpoint_rows, k5.checkpoint_rows),
+            (0, 32, 32)
         );
         assert_eq!(k3.anchors, 16 * k3.state_per_slot);
-        assert_eq!(k3.state, (32 * 5 + 16) * k3.state_per_slot);
-        assert_eq!(ar.state, (32 + 16) * ar.state_per_slot);
-        assert!(ar.kv_tokens > k3.kv_tokens && k3.kv_tokens > k5.kv_tokens);
+        assert_eq!(
+            k3.state,
+            (32 + 32 + 16) * 36_904_960 + (32 * 7 + 16) * 12 * 1536
+        );
+        assert_eq!(ar.state, (32 + 16) * 36_904_960 + (32 * 7 + 16) * 11 * 1536);
+        assert_eq!(k3.state, k5.state);
+        assert_eq!(k3.kv_tokens, k5.kv_tokens);
+        assert!(ar.kv_tokens > k3.kv_tokens);
+        let small = planner.plan(serving(2, 3, FP8, 1), DEVICE).unwrap();
+        assert_eq!(small.checkpoint_rows, 8);
         assert!(
             planner
                 .plan(serving(32, MAX_DRAFT_TOKENS + 1, FP8, 1), DEVICE)
@@ -668,21 +687,8 @@ mod tests {
         );
     }
 
-    /// The plan's risk estimate: FP8 KV with MTP (three draft tokens) at 32
-    /// slots leaves about 0.5M KV tokens at DCP 1 and 2M at DCP 4. For a
-    /// text package the formula gives 0.67M, 1.22M and 2.25M at DCP 1, 2
-    /// and 4: 6.05 GiB of state (five copies of 35.2 MiB per slot and 16
-    /// anchor copies) and 5.46 GiB of workspace leave 4.41 GiB of KV at
-    /// 7,104 B per token in 12 KV
-    /// layers, and the group buffers take 0.42 GiB at DCP 2 and 0.76 GiB at
-    /// DCP 4 of it. (0.59M, 1.07M and 1.95M while the plan held the vision
-    /// tower's weights in every package; 1.11M and 2.21M at DCP 2 and 4
-    /// before the group buffers were counted; 0.73M, 1.36M and 2.52M before
-    /// the routed experts split over the ranks, whose activated rows take a
-    /// quarter of the memory, and the MoE sublayers' F32 all-reduce took
-    /// its own state; 0.74M, 1.37M and 2.56M while that state's term
-    /// counted only the inbox of its prefill rows; 0.74M, 1.37M and 2.55M
-    /// before the anchor spares were counted.)
+    /// The bounded verify pool holds 32 KDA checkpoints instead of 128.
+    /// The fixed indexer tail reservation is counted independently.
     #[test]
     fn flash_fp8_mtp_at_32_slots_matches_the_plan_estimate() {
         let planner = Planner::new(&FLASH, 4).unwrap();
@@ -690,20 +696,18 @@ mod tests {
         let two = planner.plan(serving(32, 3, FP8, 2), DEVICE).unwrap();
         let four = planner.plan(serving(32, 3, FP8, 4), DEVICE).unwrap();
         assert_eq!(one.state_per_slot, 36_923_392);
-        assert_eq!(one.state, 6_498_516_992);
+        assert_eq!(one.state, 2_956_820_480);
         assert_eq!(one.workspace.total(), 5_860_325_916);
         assert_eq!(one.page_bytes, 64 * 7104);
         assert_eq!(one.encoder, 0);
-        assert_eq!((one.pages, one.kv_tokens), (10_403, 665_792));
-        assert_eq!((two.pages, two.kv_tokens), (9_520, 1_218_560));
-        assert_eq!((four.pages, four.kv_tokens), (8_787, 2_249_472));
+        assert_eq!((one.pages, one.kv_tokens), (17_414, 1_114_496));
+        assert_eq!((two.pages, two.kv_tokens), (16_531, 2_115_968));
+        assert_eq!((four.pages, four.kv_tokens), (15_798, 4_044_288));
         assert_eq!(four.workspace.total() - one.workspace.total(), 816_387_400);
     }
 
-    /// At 94 GiB every configuration of the table that fits at DCP 1 also
-    /// fits at DCP 2 and 4 with the group buffers counted. Where the KV
-    /// pool is already small they take a large share of it: 32 slots with
-    /// five draft tokens gain 1.6x at DCP 2 and 2.6x at DCP 4.
+    /// The context-parallel buffers fit for every supported table entry
+    /// that leaves KV capacity at DCP 1.
     #[test]
     fn context_parallel_buffers_fit_at_94_gib() {
         let planner = Planner::new(&FLASH, 4).unwrap();
@@ -728,15 +732,12 @@ mod tests {
         };
         assert_eq!(
             (tight(1), tight(2), tight(4)),
-            (366_400, 619_776, 1_051_904)
+            (1_114_496, 2_115_968, 4_044_288)
         );
     }
 
-    /// A package serving images also holds the encoder's image (the vision
-    /// tower, 1.05 GiB) and buffers (2.26 GiB) on each rank, which leave
-    /// FP8 KV with three draft tokens at 32 slots 215,744 tokens at DCP 1
-    /// against the text package's 665,792; five draft tokens at 32 slots no
-    /// longer fit.
+    /// Images still subtract the encoder's image and buffers. A deeper
+    /// draft does not enlarge an already full verify checkpoint pool.
     #[test]
     fn images_hold_the_encoder_image_and_buffers() {
         let planner = Planner::new(&FLASH, 4).unwrap();
@@ -756,9 +757,9 @@ mod tests {
             image.kv_bytes,
             free(&image) / 10 * 9 + free(&image) % 10 * 9 / 10
         );
-        assert_eq!((image.pages, image.kv_tokens), (3_371, 215_744));
-        let error = planner.plan(images(32, 5, FP8, 1), DEVICE).unwrap_err();
-        assert!(error.contains("encoder 3.31 GiB"), "{error}");
+        assert_eq!((image.pages, image.kv_tokens), (10_382, 664_448));
+        let deeper = planner.plan(images(32, 5, FP8, 1), DEVICE).unwrap();
+        assert_eq!(deeper.kv_tokens, image.kv_tokens);
     }
 
     #[test]

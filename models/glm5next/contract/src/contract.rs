@@ -131,8 +131,8 @@ pub const ANCHOR_ITEMS: u32 = 16;
 /// `max_batch_tokens`).
 pub const PREFILL_TOKENS: u32 = 8192;
 /// The package maximum of served sequences and items per step: the
-/// profiles' 32 `max_sequences`. KDA state with its verify checkpoints
-/// (about 180 MB per slot and GPU at three drafts) bounds it.
+/// profiles' 32 `max_sequences`. KDA committed state and the shared
+/// verify-row checkpoint pool are allocated before the KV pool.
 pub const DECODE_BATCH: u32 = 32;
 /// Verify rows one item may carry: the bonus token and up to five drafts
 /// (the MTP drafter is benchmarked at three and five).
@@ -404,9 +404,10 @@ impl Shape {
             .next_multiple_of(256)
     }
 
-    /// Bytes one sequence takes on one rank at `rows` verify rows (1
-    /// without speculation): `rows + 1` KDA copies, the committed one and a
-    /// checkpoint per verify row, and the per-item indexer tail.
+    /// The unpooled upper bound for one sequence at `rows` verify rows:
+    /// its committed KDA copy, a checkpoint per row and the indexer tail.
+    /// `request_state` bounds the instance's shared checkpoint pool by its
+    /// total verify-row budget, so this bound is not multiplied by slots.
     pub fn state_slot_bytes(self, mtp: bool, rows: u32) -> u64 {
         let copy: u64 = self
             .recurrent_state_layouts()

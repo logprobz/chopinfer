@@ -427,11 +427,9 @@ mod tests {
     /// The default package declares the contract's five drafts, and each
     /// profile serves its own count within them: tp4-mtp three, tp4-mtp-k5
     /// five. The state create allocates follows the served count and the
-    /// host reserves none, so tp4-mtp's state is the one a three-draft
-    /// package gives, and the capacity plan at its count is a three-draft
-    /// package's (665,792 KV tokens at 32 slots with FP8 KV for a text
-    /// package, against tp4-mtp-k5's 366,400; a package serving images does
-    /// not fit five drafts at 32 slots).
+    /// host reserves none. Both profiles share the same total verify-row
+    /// budget, so their checkpoint pools and capacity estimates agree at
+    /// 32 slots. This does not qualify new profile or modality combinations.
     #[test]
     fn profiles_serve_their_draft_count_within_the_package_maximum() {
         use model_glm5next_contract::capacity::{DEVICE, Planner, Serving};
@@ -483,10 +481,14 @@ mod tests {
             )
         };
         let three = plan(MTP_DRAFTS, false).unwrap();
-        assert_eq!((three.state_copies, three.kv_tokens), (5, 665_792));
+        assert_eq!(three.checkpoint_rows, 32);
         let five = plan(MAX_DRAFT_TOKENS, false).unwrap();
-        assert_eq!((five.state_copies, five.kv_tokens), (7, 366_400));
-        assert!(plan(MAX_DRAFT_TOKENS, true).is_err());
+        assert_eq!(five.checkpoint_rows, 32);
+        assert_eq!(five.kv_tokens, three.kv_tokens);
+        assert_eq!(
+            plan(MAX_DRAFT_TOKENS, true).unwrap().kv_tokens,
+            plan(MTP_DRAFTS, true).unwrap().kv_tokens
+        );
     }
 
     /// No serving profile asserts a checkpoint layout, so through the host's

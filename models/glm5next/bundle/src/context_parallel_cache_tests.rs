@@ -405,8 +405,8 @@ fn cached(size: u32) -> Cached {
 fn striped_prefix_reuse_offload_and_preemption_match_size_one() {
     let single = cached(1);
     let pinned = [
-        (2, (11388, 0xd3b2cb1c17e4a430)),
-        (4, (11652, 0x1b6268c1341d4de6)),
+        (2, (11388, 0x71fc_ca59_96b6_a0be)),
+        (4, (11652, 0x4265_e741_ea61_e078)),
     ];
     let mut failures = Vec::new();
     for (size, expected) in pinned {
@@ -577,33 +577,33 @@ fn served_groups_capture_and_replay_every_bucket() {
         (
             2,
             [
-                (4708, 0xa0509b596528bd70),
-                (4708, 0xab7307aff4b24df7),
-                (4708, 0x88dacfa878c7bbc5),
-                (4708, 0xb6290f7f9dda0d49),
-                (4708, 0xdf41bca14746c474),
-                (4708, 0x0725e6d4a1a20517),
-                (4708, 0x058e51a8428f2f35),
-                (4708, 0xfee7485470ff48ef),
-                (4708, 0x8170f5280aa06765),
-                (4708, 0x85fec9749447d256),
-                (4708, 0x586fc88220a80d53),
+                (4708, 0xbf8d_8ee1_b52a_1d74),
+                (4708, 0x97b6_58e1_2850_05bb),
+                (4708, 0x4613_01cb_d15e_a3f7),
+                (4708, 0x7a87_23e7_11de_ca35),
+                (4708, 0xf662_6630_2fdf_7d90),
+                (4708, 0xe3bc_bb39_e7cc_ed23),
+                (4708, 0x89cf_374c_2763_e3db),
+                (4708, 0x5ffb_9a32_fc4c_21d7),
+                (4708, 0x5f07_8067_5d7e_9a83),
+                (4708, 0x076c_3c33_9bdd_3c04),
+                (4708, 0xb6e0_59f6_be8a_f659),
             ],
         ),
         (
             4,
             [
-                (4884, 0xe8d803671b36cd1a),
-                (4884, 0x2b76817fbb507c3d),
-                (4884, 0xb367e922372a3891),
-                (4884, 0xc8fa6d403f8bab95),
-                (4884, 0x5a7f4489ea500332),
-                (4884, 0x1bdaf29262a71463),
-                (4884, 0x9ee9758182e079c7),
-                (4884, 0xa5c1080167f3abff),
-                (4884, 0x51ad7ce1fc2bbd73),
-                (4884, 0x20512e56c303a91a),
-                (4884, 0xab085d18524d4197),
+                (4884, 0xd5a0_8e57_0d0e_e96a),
+                (4884, 0x68f7_bf0f_6ef8_c695),
+                (4884, 0x4f26_b5f5_3694_f6ff),
+                (4884, 0xe55b_5efc_5230_aa4d),
+                (4884, 0xe15c_dc7e_94d5_3850),
+                (4884, 0xe5e1_2c4e_6f1b_7753),
+                (4884, 0xbcb6_0bb8_0df3_b4c1),
+                (4884, 0x1c20_2127_52e6_982f),
+                (4884, 0x83fd_15b9_26f5_fec5),
+                (4884, 0xdd06_f391_f414_4ab6),
+                (4884, 0x9ae9_3c71_3d48_3b99),
             ],
         ),
     ];

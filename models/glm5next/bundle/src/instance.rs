@@ -571,11 +571,19 @@ impl Instance {
             let (_, pool, stream) = ranks[rank];
             let mut pools = Vec::new();
             let retained = drafter.map(|(_, retained)| retained);
-            let state = StatePools::new(shape, &format, extent, retained, tail, |bytes| {
-                let span = allocate_span(services, pool, stream, bytes, held)?;
-                pools.push(span);
-                Ok::<_, BundleAbiError>(span)
-            })?
+            let state = StatePools::new(
+                shape,
+                &format,
+                extent,
+                self.verify.rows_per_step,
+                retained,
+                tail,
+                |bytes| {
+                    let span = allocate_span(services, pool, stream, bytes, held)?;
+                    pools.push(span);
+                    Ok::<_, BundleAbiError>(span)
+                },
+            )?
             .map_err(|error| {
                 let _ = services.log(error.as_bytes());
                 BundleAbiError::InvalidRange("glm5next request state")

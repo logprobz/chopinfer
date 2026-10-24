@@ -55,7 +55,7 @@
       },
       "max_sequences": 32,
       "qualified_max_sequences": null,
-      "qualification": "Experimental, never the default: tp4-mtp at five draft tokens on the zai-org FP8 checkpoint, served on the text package (--modalities text). Create allocates seven KDA state copies per slot instead of tp4-mtp's five, which the capacity plan puts at 366,400 KV tokens for 32 slots against 665,792; the plan leaves no KV pool for five drafts at 32 slots in a package serving images. qual.json's k5 configuration passed its checks in GATES4 (part A, the autoregressive arms, at cab96b599; part B at 8c75e90bd), adopted by the operator on 2026-10-11, but the profile stays experimental: a benchmark arm, never selected by default.",
+      "qualification": "Experimental, never the default: tp4-mtp at five draft tokens on the zai-org FP8 checkpoint, served on the text package (--modalities text). KDA checkpoints share the total verify-row budget, so five and three drafts use the same checkpoint pool at 32 slots. The historical qualification below covers the text package only. qual.json's k5 configuration passed its checks in GATES4 (part A, the autoregressive arms, and part B), adopted by the operator on 2026-10-11, but the profile stays experimental: a benchmark arm, never selected by default.",
       "kv_cache_dtype": "auto",
       "prefix_cache": true,
       "max_batch_tokens": 8192,

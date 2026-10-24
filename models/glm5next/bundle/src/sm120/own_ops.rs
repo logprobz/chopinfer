@@ -922,9 +922,17 @@ mod tests {
         let drafter = mtp.then(|| DrafterBuffers::allocate(SHAPE, &mut allocate).unwrap());
         let retained =
             StatePools::retained_bytes(SHAPE, format, extent).map(|bytes| allocate(bytes).unwrap());
-        let state = StatePools::new(SHAPE, format, extent, retained, tail, &mut allocate)
-            .unwrap()
-            .unwrap();
+        let state = StatePools::new(
+            SHAPE,
+            format,
+            extent,
+            model_glm5next_contract::contract::head_rows(),
+            retained,
+            tail,
+            &mut allocate,
+        )
+        .unwrap()
+        .unwrap();
         RankBuffers {
             scratch,
             comm,

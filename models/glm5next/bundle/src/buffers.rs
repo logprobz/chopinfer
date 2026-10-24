@@ -829,12 +829,18 @@ impl StatePools {
         shape: Shape,
         format: &KvFormat,
         extent: Extent,
+        verify_tokens: u32,
         retained: Option<DeviceBufferSpanV1>,
         tail: DeviceBufferSpanV1,
         mut allocate: impl FnMut(u64) -> Result<DeviceBufferSpanV1, E>,
     ) -> Result<Result<Self, String>, E> {
         let drafter = retained.is_some() && has_mtp_layer(format);
-        let state = request_state(shape, format, drafter);
+        let state = model_glm5next_contract::state::request_state_with_verify_tokens(
+            shape,
+            format,
+            drafter,
+            verify_tokens,
+        );
         // The separate anchor spares follow the last pool create allocates,
         // in its allocation.
         let spare_bytes = state
@@ -987,10 +993,18 @@ mod tests {
         let handle = |slot| runtime_abi_handle(slot);
         let mut next = 0;
         let tail = DeviceBufferSpanV1::new(handle(999), 0, 1 << 30);
-        let pools = StatePools::new(shape, &format, extent, None, tail, |bytes| {
-            next += 1;
-            Ok::<_, ()>(DeviceBufferSpanV1::new(handle(next), 0, bytes))
-        })
+        let pools = StatePools::new(
+            shape,
+            &format,
+            extent,
+            model_glm5next_contract::contract::head_rows(),
+            None,
+            tail,
+            |bytes| {
+                next += 1;
+                Ok::<_, ()>(DeviceBufferSpanV1::new(handle(next), 0, bytes))
+            },
+        )
         .unwrap()
         .unwrap();
         let index = pools

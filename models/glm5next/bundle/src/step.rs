@@ -4,8 +4,7 @@
 //!
 //! Decode advances each slot's KDA and indexer tail entries in place. A
 //! verify phase writes every row's state to checkpoints instead: the KDA
-//! checkpoints of the step's verify items in their verify order
-//! (`CheckpointItems::Drafting`), the tail's at the item's slot (every slot
+//! checkpoints packed in the step's verify-row order, the tail's at the item's slot (every slot
 //! of the bucket owns `MAX_VERIFY_ROWS` of them). The verify kernels write
 //! a checkpoint for every row of every item, so a single-row item's one
 //! "checkpoint" is its slot's own entry: it advances in place, as in
@@ -15,7 +14,7 @@
 
 use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::ledger::{Committed, Item, Step};
-use bundle_runtime::state::{Commit, Extent, RequestState, Rollback};
+use bundle_runtime::state::{CheckpointRows, Commit, Extent, RequestState, Rollback, StateBuffer};
 
 use crate::buffers::checkpoint_table;
 
@@ -217,9 +216,37 @@ fn buffer<'a>(
         .ok_or_else(|| format!("no state buffer {name}"))
 }
 
+/// Keep every item's original row reservation through commit, even when
+/// an earlier item keeps a shorter prefix. Decode siblings consume no checkpoint.
+fn verify_row_bases(step: &Step) -> Result<Vec<Option<u32>>, String> {
+    let mut next = 0_u32;
+    step.items
+        .iter()
+        .map(|item| {
+            if !item.verify {
+                return Ok(None);
+            }
+            let first = next;
+            next = next
+                .checked_add(item.rows)
+                .ok_or("verify-row offsets overflow")?;
+            Ok(Some(first))
+        })
+        .collect()
+}
+
+fn checkpoint_owner(buffer: &StateBuffer, verify: u32, row_base: u32) -> u32 {
+    if matches!(buffer.rollback, Rollback::Checkpoint(c) if matches!(c.rows, CheckpointRows::Packed(_)))
+    {
+        row_base
+    } else {
+        verify
+    }
+}
+
 /// The side inputs of the open `step`'s items `first..first + rows.len()`,
 /// each of `rows[item]` rows. Verify items take KDA checkpoints at their
-/// verify index and tail checkpoints at their slot; any other item's rows
+/// packed row offset and tail checkpoints at their slot; any other item's rows
 /// write its slot's own entry. The two KDA buffers share one table.
 pub fn side_inputs(
     state: &RequestState,
@@ -236,6 +263,7 @@ pub fn side_inputs(
     let conv = buffer(state, KDA[0])?;
     let delta = buffer(state, KDA[1])?;
     let tails = buffer(state, TAIL)?;
+    let bases = verify_row_bases(step)?;
     for (offset, &count) in rows.iter().enumerate() {
         let index = first + offset;
         let placed = step
@@ -252,10 +280,20 @@ pub fn side_inputs(
             tail_ids.push(placed.slot as i32);
         }
         if let Some(verify) = step.verify_index(index) {
+            if count != placed.rows {
+                return Err(format!(
+                    "verify item {index} has {count} rows, expected {}",
+                    placed.rows
+                ));
+            }
+            let row_base = bases[index].ok_or("verify item has no row offset")?;
+            let owner = checkpoint_owner(conv, verify, row_base);
             for row in 0..count {
                 let missing = || format!("item {index} row {row} has no checkpoint");
-                let entry = conv.checkpoint(extent, verify, row).ok_or_else(missing)?;
-                if delta.checkpoint(extent, verify, row) != Some(entry) {
+                let entry = conv.checkpoint(extent, owner, row).ok_or_else(missing)?;
+                if delta.checkpoint(extent, checkpoint_owner(delta, verify, row_base), row)
+                    != Some(entry)
+                {
                     return Err("the KDA buffers' checkpoints differ".into());
                 }
                 kda_ids.push(entry as i32);
@@ -316,17 +354,27 @@ pub fn checkpoint_layers(state: &RequestState) -> Vec<(usize, u64)> {
 
 /// The copies a commit makes: each verify item that keeps rows takes the
 /// last kept row's checkpoint into its slot in every checkpointing buffer,
-/// in the layers the target writes (`target_layers`). `verify_index` is
-/// each committed item's verify index in the step.
+/// in the layers the target writes (`target_layers`). Assignments use the
+/// original step's rows, so acceptance does not move another item's state.
 pub fn commit_copies(
     state: &RequestState,
     extent: Extent,
     committed: &[Committed],
-    verify_index: impl Fn(usize) -> Option<u32>,
+    step: &Step,
 ) -> Result<Vec<EntryCopy>, String> {
     let mut copies = Vec::new();
+    let bases = verify_row_bases(step)?;
+    if committed.len() != step.items.len() {
+        return Err("commit and checkpoint step have different item counts".into());
+    }
     for (item, done) in committed.iter().enumerate() {
-        let Some(verify) = verify_index(item) else {
+        if done.request != step.items[item].request
+            || done.rows != step.items[item].rows
+            || done.slot != step.items[item].slot
+        {
+            return Err("commit does not name its checkpoint owner".into());
+        }
+        let Some(verify) = step.verify_index(item) else {
             continue;
         };
         if done.kept == 0 {
@@ -339,7 +387,11 @@ pub fn commit_copies(
             let owner = match buffer.rollback {
                 Rollback::Checkpoint(checkpoints) => match checkpoints.items {
                     bundle_runtime::state::CheckpointItems::Bucket => done.slot,
-                    bundle_runtime::state::CheckpointItems::Drafting(_) => verify,
+                    bundle_runtime::state::CheckpointItems::Drafting(_) => checkpoint_owner(
+                        buffer,
+                        verify,
+                        bases[item].ok_or("verify item has no row offset")?,
+                    ),
                 },
                 _ => continue,
             };
@@ -387,6 +439,104 @@ mod tests {
             rows,
             verify,
         }
+    }
+
+    #[test]
+    fn compact_checkpoints_keep_mixed_width_assignments_after_rejection() {
+        let state = state();
+        let mut ledger = ledger();
+        ledger
+            .begin(
+                &[
+                    item(7, 3, 0, 2, true),
+                    item(8, 5, 0, 1, false),
+                    item(9, 1, 0, 3, true),
+                    item(10, 8, 0, 4, true),
+                ],
+                Vec::new(),
+            )
+            .unwrap();
+        let step = ledger.step().unwrap().clone();
+        let side =
+            side_inputs(&state, EXTENT, &step, 0, &[2, 1, 3, 4], 8, MAX_VERIFY_ROWS).unwrap();
+        assert_eq!(&side.checkpoint_ids[..2], &[32, 33]);
+        assert_eq!(side.checkpoint_ids[8], 5);
+        assert_eq!(&side.checkpoint_ids[16..19], &[34, 35, 36]);
+        assert_eq!(&side.checkpoint_ids[24..28], &[37, 38, 39, 40]);
+        assert!(ledger.plan_commit(&[(7, 0), (9, 1), (10, 4)]).is_err());
+        let committed = ledger.plan_commit(&[(7, 1), (9, 1), (10, 4)]).unwrap();
+        let copies = commit_copies(&state, EXTENT, committed.items(), &step).unwrap();
+        let kda = copies
+            .iter()
+            .filter(|copy| copy.buffer == 0)
+            .map(|copy| (copy.from, copy.to))
+            .collect::<Vec<_>>();
+        assert_eq!(kda, [(32, 3), (34, 1), (40, 8)]);
+        let sliced = side_inputs(&state, EXTENT, &step, 2, &[3, 4], 8, MAX_VERIFY_ROWS).unwrap();
+        assert_eq!(&sliced.checkpoint_ids[..3], &[34, 35, 36]);
+        assert_eq!(&sliced.checkpoint_ids[8..12], &[37, 38, 39, 40]);
+    }
+
+    #[test]
+    fn sixteen_two_row_items_fill_the_compact_budget() {
+        let state = state();
+        let mut ledger = ledger();
+        let items = (0..16)
+            .map(|i| item(100 + u64::from(i), 31 - i, 0, 2, true))
+            .collect::<Vec<_>>();
+        ledger.begin(&items, Vec::new()).unwrap();
+        let step = ledger.step().unwrap();
+        let side = side_inputs(&state, EXTENT, step, 0, &[2; 16], 8, MAX_VERIFY_ROWS).unwrap();
+        let writes = side
+            .checkpoint_ids
+            .into_iter()
+            .filter(|&v| v >= 0)
+            .collect::<Vec<_>>();
+        assert_eq!(writes, (32..64).collect::<Vec<_>>());
+        let mut smaller = state;
+        for buffer in &mut smaller.buffers[..2] {
+            if let Rollback::Checkpoint(ref mut c) = buffer.rollback {
+                c.rows = CheckpointRows::Packed(31);
+            }
+        }
+        assert!(side_inputs(&smaller, EXTENT, step, 0, &[2; 16], 8, MAX_VERIFY_ROWS).is_err());
+    }
+
+    #[test]
+    fn six_row_items_keep_their_reservations_through_commit() {
+        let state = state();
+        let extent = Extent {
+            verify_rows: MAX_VERIFY_ROWS,
+            ..EXTENT
+        };
+        let mut ledger = ledger();
+        let widths = [6, 6, 6, 6, 6, 2];
+        let items = widths
+            .iter()
+            .enumerate()
+            .map(|(i, &rows)| item(100 + i as u64, 31 - i as u32, 0, rows, true))
+            .collect::<Vec<_>>();
+        ledger.begin(&items, Vec::new()).unwrap();
+        let step = ledger.step().unwrap().clone();
+        let side = side_inputs(&state, extent, &step, 0, &widths, 8, MAX_VERIFY_ROWS).unwrap();
+        assert_eq!(
+            side.checkpoint_ids
+                .iter()
+                .copied()
+                .filter(|&v| v >= 0)
+                .collect::<Vec<_>>(),
+            (32..64).collect::<Vec<_>>()
+        );
+        let committed = ledger
+            .plan_commit(&[(100, 1), (101, 2), (102, 3), (103, 4), (104, 5), (105, 1)])
+            .unwrap();
+        let copies = commit_copies(&state, extent, committed.items(), &step).unwrap();
+        let sources = copies
+            .iter()
+            .filter(|c| c.buffer == 0)
+            .map(|c| c.from)
+            .collect::<Vec<_>>();
+        assert_eq!(sources, [32, 39, 46, 53, 60, 62]);
     }
 
     /// A decode item's one row writes its slot's own entry.
@@ -443,8 +593,7 @@ mod tests {
         assert_eq!(side.tail_checkpoint_ids[12..14], [served + 6, served + 7]);
         // Item 7 keeps 2 rows, item 9 keeps 4.
         let committed = ledger.commit(&[(7, 2), (9, 4)]).unwrap();
-        let copies =
-            commit_copies(&state, EXTENT, &committed, |item| step.verify_index(item)).unwrap();
+        let copies = commit_copies(&state, EXTENT, &committed, &step).unwrap();
         let (linear, sparse) = (Shape::TP4.linear_layers(), Shape::TP4.sparse_layers());
         let expected = [
             EntryCopy {
@@ -505,10 +654,7 @@ mod tests {
         let step = ledger.step().unwrap().clone();
         for kept in 1..=4 {
             let committed = ledger.plan_commit(&[(7, kept)]).unwrap();
-            let copies = commit_copies(&state, EXTENT, committed.items(), |item| {
-                step.verify_index(item)
-            })
-            .unwrap();
+            let copies = commit_copies(&state, EXTENT, committed.items(), &step).unwrap();
             let tail = state
                 .buffers
                 .iter()

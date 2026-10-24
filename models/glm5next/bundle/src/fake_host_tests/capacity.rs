@@ -66,7 +66,7 @@ fn a_text_image_package_plans_the_kv_pool_create_leaves() {
     // The same device after the create naming the encoder.
     let image_free = text_free - (image_held - text_held) / 4;
     assert_eq!(host_pages(image_free, image.page_bytes), image.pages);
-    assert_eq!(image.pages, 3_371);
+    assert_eq!(image.pages, 10_382);
 }
 
 /// At a KV memory fraction of 1.0 the host's pool takes every byte a rank

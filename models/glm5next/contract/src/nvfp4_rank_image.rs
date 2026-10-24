@@ -188,11 +188,11 @@ fn nvfp4_weights_free_kv_capacity() {
         kv: LatentKvFormat::Fp8E4M3Block128,
         vision: false,
     };
-    // A text package; block FP8 holds 665,792 and 2,249,472 tokens here.
+    // A text package; block FP8 holds 1,114,496 and 4,044,288 tokens here.
     let one = planner.plan(serving(1), DEVICE).unwrap();
     let four = planner.plan(serving(4), DEVICE).unwrap();
-    assert_eq!((one.pages, one.kv_tokens), (74_729, 4_782_656));
-    assert_eq!(four.kv_tokens, 18_716_928);
+    assert_eq!((one.pages, one.kv_tokens), (81_739, 5_231_296));
+    assert_eq!(four.kv_tokens, 20_511_488);
     assert!(
         planner
             .table(DEVICE)

@@ -190,12 +190,12 @@ fn lowered(kv: LatentKvFormat, phase: Phase, size: u32) -> (Vec<String>, Vec<Vec
 fn group_journals_are_pinned_per_size_and_phase() {
     let kv = FORMATS[0];
     let pinned: [((u32, Phase), (usize, u64)); 6] = [
-        ((2, PHASES[0]), (6564, 0xdaa8937d4850e02f)),
-        ((2, PHASES[1]), (5860, 0x4d3a4633c8145a10)),
-        ((2, PHASES[2]), (5860, 0x8b0d03b9a30ddc7e)),
-        ((4, PHASES[0]), (6652, 0xb88539f7070059d1)),
-        ((4, PHASES[1]), (6036, 0x883f61d637e077ec)),
-        ((4, PHASES[2]), (6036, 0xdfc3f3b73cc94ab8)),
+        ((2, PHASES[0]), (6564, 0x498b_21fb_c5e9_f199)),
+        ((2, PHASES[1]), (5860, 0x3e57_b613_055d_9e62)),
+        ((2, PHASES[2]), (5860, 0x3aa6_6526_25a3_39e4)),
+        ((4, PHASES[0]), (6652, 0xf2e0_8b95_66b8_067f)),
+        ((4, PHASES[1]), (6036, 0x7289_eac2_3de3_1716)),
+        ((4, PHASES[2]), (6036, 0x13ca_668a_ef27_76da)),
     ];
     let mut failures = Vec::new();
     for ((size, phase), expected) in pinned {

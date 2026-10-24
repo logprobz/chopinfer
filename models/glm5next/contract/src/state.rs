@@ -59,6 +59,22 @@ fn sparse_streams(shape: Shape, kv: LatentKvFormat) -> Vec<KvStream> {
 /// request, with the MTP drafter loaded or not. Only a format with the
 /// drafter's layer serves the drafter.
 pub fn request_state(shape: Shape, format: &KvFormat, drafter: bool) -> RequestState {
+    request_state_with_verify_tokens(shape, format, drafter, crate::contract::head_rows())
+}
+
+/// The instance's state with its enabled total verify-row budget. A zero
+/// budget describes the package bound; an AR extent allocates no checkpoints.
+pub fn request_state_with_verify_tokens(
+    shape: Shape,
+    format: &KvFormat,
+    drafter: bool,
+    verify_tokens: u32,
+) -> RequestState {
+    let verify_tokens = if verify_tokens == 0 {
+        crate::contract::head_rows()
+    } else {
+        verify_tokens
+    };
     let kv = latent_format(format);
     let mtp = has_mtp_layer(format) && shape.mtp_layers() > 0;
     let mut pages = vec![PagedLayers {
@@ -95,7 +111,7 @@ pub fn request_state(shape: Shape, format: &KvFormat, drafter: bool) -> RequestS
         capture: Capture::Full,
         rollback: Rollback::Checkpoint(Checkpoints {
             items: CheckpointItems::Drafting(DRAFT_ITEMS),
-            rows: CheckpointRows::Verify,
+            rows: CheckpointRows::Packed(verify_tokens),
             pooled: true,
         }),
         cancel: Cancel::Invalidate,
@@ -200,6 +216,52 @@ mod tests {
     }
 
     #[test]
+    fn kda_checkpoints_follow_the_total_verify_budget() {
+        use bundle_runtime::state::Extent;
+        let shape = Shape::TP4;
+        let state = request_state(shape, &shape.kv_formats()[1], true);
+        let extent = Extent {
+            served: 32,
+            bucket: 32,
+            verify_rows: 4,
+        };
+        for buffer in &state.buffers[..2] {
+            assert_eq!(buffer.checkpoint_entries(extent), 32);
+            assert_eq!(buffer.own_entries(extent), 32);
+        }
+    }
+
+    #[test]
+    fn an_instance_uses_its_enabled_verify_budget_and_preserves_anchor_size() {
+        use bundle_runtime::state::Extent;
+        let shape = Shape::TP4;
+        let format = &shape.kv_formats()[1];
+        let default = request_state(shape, format, true);
+        let extent = Extent {
+            served: 32,
+            bucket: 32,
+            verify_rows: 4,
+        };
+        for budget in [2, 8, 16, 32] {
+            let state = request_state_with_verify_tokens(shape, format, true, budget);
+            assert_eq!(state.validate(), Ok(()));
+            assert_eq!(state.validate_extent(extent), Ok(()));
+            assert_eq!(state.snapshot_bytes(), default.snapshot_bytes());
+            assert_eq!(state.snapshot_pages(), default.snapshot_pages());
+            for buffer in &state.buffers[..2] {
+                assert_eq!(buffer.checkpoint_entries(extent), u64::from(budget));
+                assert_eq!(
+                    buffer.checkpoint_entries(Extent {
+                        verify_rows: 0,
+                        ..extent
+                    }),
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
     fn verify_rows_take_a_checkpoint_of_every_slot_buffer() {
         use bundle_runtime::state::{Commit, Extent};
         let shape = Shape::TP4;
@@ -216,16 +278,15 @@ mod tests {
         for buffer in &state.buffers[..2] {
             assert_eq!(
                 buffer.checkpoint_entries(extent),
-                u64::from(DECODE_BATCH) * 4
+                u64::from(crate::contract::head_rows())
             );
         }
         assert_eq!(
             state.buffers[2].checkpoint_entries(extent),
             u64::from(DECODE_BATCH * MAX_VERIFY_ROWS)
         );
-        // The host's KDA reservation (the committed entry and four
-        // checkpoints for each served item) and its per-item tail, then the
-        // KDA anchor spares, which come from the memory the KV pool leaves.
+        // Committed KDA entries, the total verify-row budget and anchor
+        // spares, plus the unchanged per-slot indexer-tail checkpoints.
         let reserved: u64 = state.buffers[..3]
             .iter()
             .map(|buffer| buffer.bytes(extent))
@@ -237,8 +298,8 @@ mod tests {
             .sum();
         assert_eq!(
             reserved,
-            u64::from(DECODE_BATCH) * shape.state_slot_bytes(true, 4)
-                + u64::from(ANCHOR_ITEMS) * copy
+            u64::from(DECODE_BATCH + crate::contract::head_rows() + ANCHOR_ITEMS) * copy
+                + state.buffers[2].bytes(extent)
         );
     }
 
@@ -263,7 +324,7 @@ mod tests {
             for (index, buffer) in state.buffers.iter().enumerate() {
                 let entry = served
                     + match buffer.name {
-                        "kda.conv" | "kda.state" => served * 4,
+                        "kda.conv" | "kda.state" => u64::from(crate::contract::head_rows()),
                         _ => 0,
                     }
                     + u64::from(anchor);

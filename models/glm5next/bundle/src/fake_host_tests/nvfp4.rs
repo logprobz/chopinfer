@@ -75,11 +75,11 @@ pub(super) const ROUTED: Mix = Mix {
         "chop_moe_chain_gateup_mxfp8_e288k8_n1024_k4096_r16",
         "chop_moe_chain_down_mxfp8_e288k8_n4096_k512_r16",
     ],
-    create: (2938, 0x26cf3fcbde3fd01e),
-    decode: (4296, 0x80381b7c7ab0dc3e),
-    verify: (4296, 0x5b973ea31625166c),
-    prefill: (6192, 0xe43d33282a3355a6),
-    drafted: (4720, 0xcc4279d22e19710b),
+    create: (2938, 0xcde7_e59f_164e_ebe2),
+    decode: (4296, 0xc700_ff51_1444_12ca),
+    verify: (4296, 0x26af_6f1a_cd65_8e92),
+    prefill: (6192, 0x0d09_4c3a_bdbc_49cc),
+    drafted: (4720, 0x6911_5ce0_cc56_da43),
 };
 
 pub(super) const DENSE_ROUTED: Mix = Mix {
@@ -96,11 +96,11 @@ pub(super) const DENSE_ROUTED: Mix = Mix {
         "chop_moe_chain_gateup_bf16_e288k8_n1024_k4096_r16",
         "chop_moe_chain_down_bf16_e288k8_n4096_k512_r16",
     ],
-    create: (2978, 0xe047e98c6693b572),
-    decode: (4296, 0xce3320d82429ae4c),
-    verify: (4296, 0xa20f429f73da8334),
-    prefill: (6192, 0x306b4039cc90b0ec),
-    drafted: (4720, 0xf96d9fbb9bd14d0f),
+    create: (2978, 0xaaeb_9b6d_e283_0a96),
+    decode: (4296, 0x08eb_cfa7_0d39_73b8),
+    verify: (4296, 0x8781_dce1_7fde_5f5a),
+    prefill: (6192, 0xe91f_6fb6_bc28_3952),
+    drafted: (4720, 0x0c36_7f7e_a707_525f),
 };
 
 /// Block FP8 everywhere but the main layers' routed experts, which are
@@ -119,11 +119,11 @@ pub(super) const FP8_ROUTED: Mix = Mix {
         "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r16",
         "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16",
     ],
-    create: (3498, 0x51bfde7e8ca1a4de),
-    decode: (4296, 0xd63d9647f9b03bca),
-    verify: (4296, 0x4a04e72f1a333406),
-    prefill: (6192, 0x4525bace171e3b16),
-    drafted: (4720, 0xb36012fe07f868ff),
+    create: (3498, 0x328d_459c_e187_80a2),
+    decode: (4296, 0xef30_c9cf_123a_856a),
+    verify: (4296, 0x21f7_08ff_0b8c_4408),
+    prefill: (6192, 0xb27c_a292_a085_8900),
+    drafted: (4720, 0xb9da_373e_de16_adf3),
 };
 
 impl Mix {

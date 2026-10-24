@@ -390,8 +390,8 @@ pub(crate) fn outside_the_group(launches: &[String]) -> Vec<Vec<(String, String)
 fn served_groups_run_full_target_steps() {
     let single = run(1, false);
     let pinned = [
-        (2, (16548, 0x7ffd74fedf71998f)),
-        (4, (17076, 0x455c71639e015357)),
+        (2, (16548, 0xfbf6_9320_feed_2df3)),
+        (4, (17076, 0x1c31_ad08_0fe4_d4f3)),
     ];
     let mut failures = Vec::new();
     for (size, expected) in pinned {
@@ -456,8 +456,8 @@ fn served_groups_run_full_target_steps() {
 fn served_groups_run_the_drafters_passes() {
     let single = run(1, true);
     let pinned = [
-        (2, (11712, 0x7b877079e9c893a9)),
-        (4, (12000, 0x4fea46b842694b1b)),
+        (2, (11712, 0x0012_db09_4403_46b7)),
+        (4, (12000, 0xe564_a818_07b2_33f1)),
     ];
     let mut failures = Vec::new();
     for (size, expected) in pinned {

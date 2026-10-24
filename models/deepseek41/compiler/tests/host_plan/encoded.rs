@@ -164,6 +164,16 @@ fn check_banks(
                     }
                 });
             }
+            if raw_view.layout_id == kernel_core::precision::layout::ROW_TILE_SCALES_VIEW {
+                kernel_core::transform::RowTileLayout {
+                    rows: decoded.len() / bank.groups as usize,
+                    row_bytes: bank.groups as usize,
+                    tile_rows: 64,
+                    tile_bytes: 4,
+                }
+                .pack_in_place(&mut decoded, &mut Vec::new())
+                .unwrap();
+            }
             same(&decoded, &raw, &at);
         }
         assert!(banks > 0, "tp{ranks} rank {rank}: no routed scale bank");
@@ -236,24 +246,37 @@ fn official_routed_scale_banks_round_trip() {
                 .unwrap()
         })
         .collect();
-    let plans: Vec<_> = requests
-        .iter()
-        .map(|request| plan(request).unwrap().unwrap())
-        .collect();
     let raw_image = image(checkpoint.clone(), raw_plans.clone());
-    let encoded_image = image(checkpoint, plans.clone());
-    let totals = check_banks(
-        &FLASH,
-        &raw_image,
-        &raw_plans,
-        &encoded_image,
-        &plans,
-        &censuses,
-        false,
-    );
-    for (rank, (raw, encoded)) in totals.iter().enumerate() {
-        eprintln!("tp4 rank {rank}: routed scale banks {raw} raw bytes, {encoded} encoded");
+    let mut checked = 0;
+    for format in [ScaleFormat::RowOffsetV1, ScaleFormat::RowTilesOffsetV1] {
+        let plans: Vec<_> = requests
+            .iter()
+            .map(|request| {
+                plan_with_scale_format(request, None, format)
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect();
+        let encoded_image = image(checkpoint.clone(), plans.clone());
+        let totals = check_banks(
+            &FLASH,
+            &raw_image,
+            &raw_plans,
+            &encoded_image,
+            &plans,
+            &censuses,
+            false,
+        );
+        assert_eq!(totals.len(), ranks as usize);
+        for (rank, (raw, encoded)) in totals.iter().enumerate() {
+            eprintln!(
+                "{format:?} tp4 rank {rank}: routed scale banks {raw} raw bytes, {encoded} encoded"
+            );
+            checked += 1;
+        }
     }
+    assert_eq!(checked, 8);
+    eprintln!("OFFICIAL_SCALE_PLAN_COMPLETE formats=2 ranks=4");
     eprintln!("census of four ranks: {census_seconds:.2} s");
 }
 

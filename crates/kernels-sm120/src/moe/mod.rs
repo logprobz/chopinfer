@@ -18,6 +18,7 @@ pub mod native_grouped;
 pub mod parallel;
 pub mod scale_expand;
 pub mod scale_tiles;
+pub mod scale_tiles_expand;
 pub mod sigmoid_route;
 pub mod template;
 

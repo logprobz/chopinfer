@@ -178,11 +178,23 @@ pub fn pair_arguments(
     active: Option<View>,
     experts: u32,
 ) -> Result<ArgumentList, Refusal> {
+    pair_arguments_with(banks, active, experts, |bank, experts| {
+        bank.query(experts).minimum_bank_bytes()
+    })
+}
+
+/// The common paired ABI with an encoding-specific minimum input extent.
+pub(super) fn pair_arguments_with(
+    banks: [Option<(PairBank, View, View)>; 2],
+    active: Option<View>,
+    experts: u32,
+    minimum: fn(PairBank, u32) -> Result<u64, Refusal>,
+) -> Result<ArgumentList, Refusal> {
     pair_plan(banks.map(|bank| bank.map(|(bank, _, _)| bank)), experts, 1)?;
     let mut handles = Vec::new();
     for (bank, encoded, output) in banks.iter().flatten() {
         let query = bank.query(experts);
-        if encoded.bytes < query.minimum_bank_bytes()? || encoded.bytes > u64::from(u32::MAX) {
+        if encoded.bytes < minimum(*bank, experts)? || encoded.bytes > u64::from(u32::MAX) {
             return Err(Refusal("encoded scale bank extent is invalid"));
         }
         if output.bytes < query.output_bytes()? {
@@ -275,7 +287,7 @@ pub fn pair_tiles_arguments(
 
 /// The paired entry's ABI, calling `function` (`run_pair` or
 /// `run_pair_tiles` of `chop::moe::scale_expand`).
-fn pair_entry(symbol: &str, function: &str) -> EntrySpec {
+pub(super) fn pair_entry(symbol: &str, function: &str) -> EntrySpec {
     let params = ["first", "second"]
         .into_iter()
         .map(|bank| super::ptr(bank, "const uint8_t"))

@@ -13,6 +13,23 @@ use std::path::PathBuf;
 
 pub const PAIR_SYMBOL: &str = "chop_moe_scale_tiles_expand_pair_v1";
 pub const PAIR_TILES_SYMBOL: &str = "chop_moe_scale_tiles_expand_pair_tiles_v1";
+pub const COALESCED_SYMBOL: &str = "chop_moe_scale_tiles_expand_pair_coalesced_v1";
+
+/// A separate candidate for tiled first outputs, with the same validated
+/// spans and launch plan as `PAIR_TILES_SYMBOL`.
+pub fn coalesced_cubin_spec(name: &str) -> CubinSpec {
+    CubinSpec {
+        name: name.into(),
+        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
+        include_dirs: vec![],
+        headers: vec!["#include \"moe/scale_tiles_expand_coalesced.cuh\"".into()],
+        defines: vec![],
+        entries: vec![scale_expand::pair_entry(
+            COALESCED_SYMBOL,
+            "run_tiles_pair_coalesced",
+        )],
+    }
+}
 
 pub fn minimum_bank_bytes(bank: PairBank, experts: u32) -> Result<u64, Refusal> {
     ScaleTilesQuery {

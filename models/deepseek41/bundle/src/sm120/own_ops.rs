@@ -31,6 +31,16 @@ impl Sm120Own {
 }
 
 impl OwnOps for Sm120Own {
+    fn dspark_retain_rows(
+        &self,
+        op: &model_deepseek41_contract::own_ops::retain_rows::RetainRows,
+        need: Need,
+    ) -> Result<
+        Prepared<model_deepseek41_contract::own_ops::retain_rows::RetainRowsBuffers<View>>,
+        Refused,
+    > {
+        super::retain_rows::prepare(*op, need)
+    }
     fn dspark_acceptance(
         &self,
         op: &model_deepseek41_contract::own_ops::acceptance::Acceptance,

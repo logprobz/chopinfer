@@ -202,6 +202,8 @@ pub mod moe_row_tiles;
 pub mod moe_row_tiles_op;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
+pub mod retain_rows;
+pub mod retain_rows_entries;
 pub mod ring_gather;
 pub mod ring_gather_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -919,6 +921,7 @@ impl crate::Kernels {
             || cubin == engram_hash_entries::CUBIN
             || cubin == engram_hash_rows::CUBIN
             || cubin == ring_gather_entries::CUBIN
+            || cubin == retain_rows_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)
                 .iter()

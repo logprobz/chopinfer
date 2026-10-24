@@ -117,6 +117,8 @@ mod query_prefill;
 mod query_window;
 #[allow(dead_code)]
 mod replicated_embedding;
+mod retain_rows_cubin;
+mod retain_rows_entries;
 mod ring_gather_cubin;
 mod ring_gather_entries;
 #[allow(dead_code)]
@@ -266,6 +268,10 @@ pub fn selection(
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        retain_rows_entries::FAMILY,
+        retain_rows_cubin::cubin_spec(manifest),
     ));
     specs.push((
         engram_hash_entries::FAMILY,

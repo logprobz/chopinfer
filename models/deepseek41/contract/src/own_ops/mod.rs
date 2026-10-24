@@ -17,6 +17,7 @@ pub mod dspark;
 pub mod engram;
 pub mod engram_hash;
 pub mod prefill_cache;
+pub mod retain_rows;
 pub mod ring_gather;
 pub mod rope;
 pub mod widen;
@@ -95,6 +96,16 @@ pub trait OwnOps: Send + Sync {
         op: &ring_gather::RingGather,
         need: Need,
     ) -> Result<Prepared<ring_gather::RingGatherBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Copy a host-validated list of disjoint retained raw-row segments.
+    fn dspark_retain_rows(
+        &self,
+        op: &retain_rows::RetainRows,
+        need: Need,
+    ) -> Result<Prepared<retain_rows::RetainRowsBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }

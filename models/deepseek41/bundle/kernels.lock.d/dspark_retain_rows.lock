@@ -1,0 +1,65 @@
+[
+  {
+    "name": "deepseek41_dspark_retain_rows_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_dspark_retain_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "source",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "segments",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "destination",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "row_bytes"
+          },
+          {
+            "kind": "U32",
+            "name": "source_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "destination_rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "a767e3ef4ffd7a42eb487613d23c988f07e2ed7906a93d0da057073c80fb567d",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_dspark_retain_rows_v1",
+        "registers": 40,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

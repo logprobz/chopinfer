@@ -29,6 +29,10 @@ serde_json.workspace = true
 name = "sm120"
 path = "tests/sm120/main.rs"
 
+[[test]]
+name = "retention_pair"
+path = "tests/sm120/retention_pair.rs"
+
 [[example]]
 name = "build_moe"
 path = "examples/sm120/build_moe.rs"
@@ -52,6 +56,10 @@ path = "examples/sm120/build_ceil_parallel.rs"
 [[example]]
 name = "build_dspark_ring_gather"
 path = "examples/sm120/build_dspark_ring_gather.rs"
+
+[[example]]
+name = "build_dspark_retain_rows"
+path = "examples/sm120/build_dspark_retain_rows.rs"
 
 [[example]]
 name = "build_engram_hash"

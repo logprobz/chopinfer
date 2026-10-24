@@ -26,7 +26,7 @@ fn large_gathers_bypass_resident_metadata_but_preserve_every_byte() {
     .unwrap();
     for (mapping, width) in [(&codes, 256), (&scales, 8)] {
         let cache = &mapping.resident.get().unwrap().cache;
-        for count in [24, 192, 768, 6144, 65535, 65536, 196608] {
+        for count in [24, 192, 768, 6144, 8191, 8192, 8193, 65535, 65536, 196608] {
             let rows = (0..count)
                 .map(|i| ((i * 37) % 100) as u32)
                 .collect::<Vec<_>>();
@@ -46,14 +46,14 @@ fn large_gathers_bypass_resident_metadata_but_preserve_every_byte() {
             let copies = cache.copies.load(Ordering::Relaxed) - before;
             assert_eq!(
                 copies,
-                if count < 65536 || cache_large {
+                if count < 8192 || cache_large {
                     count as u64
                 } else {
                     0
                 },
                 "rows={count}"
             );
-            if count >= 65536 && !cache_large {
+            if count >= 8192 && !cache_large {
                 // Upload-slot and worker pieces must use the whole gather's
                 // threshold, including pieces that split a row.
                 out.fill(0x5a);
@@ -88,7 +88,7 @@ fn asynchronous_gathers_preserve_large_row_cache_admission() {
         attach(&registry, vec![(Arc::clone(&mapping), width)]).unwrap();
         let cache = &mapping.resident.get().unwrap().cache;
         let plane = gather_plane(Arc::clone(&mapping), width, 0);
-        for count in [24, 65_535, 65_536, 196_608, 192] {
+        for count in [24, 8191, 8192, 8193, 65_535, 65_536, 196_608, 192] {
             let rows: Vec<u32> = (0..count).map(|i| ((i * 37) % 100) as u32).collect();
             let input: Vec<u8> = rows.iter().flat_map(|row| row.to_le_bytes()).collect();
             let expected: Vec<u8> = rows
@@ -104,7 +104,7 @@ fn asynchronous_gathers_preserve_large_row_cache_admission() {
             crate::device::mapped_gather::gather_plane_v1(&plane, &input, &mut output).unwrap();
             assert_eq!(output, expected);
             let copies = cache.copies.load(Ordering::Relaxed) - before;
-            if count >= 65_536 && !cache_large {
+            if count >= 8192 && !cache_large {
                 assert_eq!(copies, 0, "large asynchronous gather used resident lookup");
             } else {
                 assert!(
@@ -112,6 +112,38 @@ fn asynchronous_gathers_preserve_large_row_cache_admission() {
                     "small or explicitly cached gather bypassed lookup"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn prefill_sized_gathers_match_resident_and_descriptor_reads() {
+    let registry = registry(1);
+    for width in [8, 97, 256] {
+        let mapping = mapping(
+            &format!("prefill-route-pair-{width}"),
+            &source(257, width),
+            39,
+        );
+        attach(&registry, vec![(Arc::clone(&mapping), width)]).unwrap();
+        let plane = mapping.resident_plane(width).unwrap();
+        let cache = &mapping.resident.get().unwrap().cache;
+        let mut fanout = crate::host_rows::fetch::LargeFanout::default();
+        for count in [8192, 8193, 43600] {
+            let rows: Vec<_> = (0..count).map(|i| ((i * 37 + 11) % 257) as u32).collect();
+            let mut resident = vec![0xa5; count * width];
+            for (&row, bytes) in rows.iter().zip(resident.chunks_mut(width)) {
+                plane.copy(mapping.bytes(), row, 0, bytes);
+            }
+            let before = cache.copies.load(Ordering::Relaxed);
+            let large = fanout.rows(&mapping, width, &rows, 3).unwrap();
+            assert_eq!(*large, resident);
+            for _ in 0..3 {
+                let later = fanout.rows(&mapping, width, &rows, 3).unwrap();
+                assert!(Arc::ptr_eq(&large, &later));
+                assert_eq!(*later, resident);
+            }
+            assert_eq!(cache.copies.load(Ordering::Relaxed), before);
         }
     }
 }

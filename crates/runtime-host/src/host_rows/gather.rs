@@ -1,11 +1,11 @@
 //! Adaptive read-ahead for checked host-mapped row copies.
 mod policy;
 
-/// Large streaming gathers use the authenticated mapping directly. Count
+/// Large streaming gathers bypass resident lookup for bulk reads. Count
 /// complete row IDs, not bytes, so all planes of a row set choose one route.
 /// Smaller decode and verification gathers retain the resident cache.
 pub(crate) fn use_resident(rows: usize) -> bool {
-    const LARGE_GATHER_ROWS: usize = 65_536;
+    const LARGE_GATHER_ROWS: usize = 8_192;
     if rows < LARGE_GATHER_ROWS {
         return true;
     }

@@ -17,6 +17,9 @@ use model_deepseek41_contract::weight_plan::{RoutedLayout, encoded_scale_layout}
 use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
 use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
 
+#[path = "moe_graph_export.rs"]
+mod graph_export;
+
 const VIEWS: [&str; 14] = [
     "ffn.gate.weight",
     "ffn.gate.weight.f32_domain",

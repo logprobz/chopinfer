@@ -64,6 +64,28 @@ struct Op {
 }
 
 impl PreparedOp<LaggedMixCollapseBuffers<View>> for Op {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        if self.choices.is_empty() {
+            return self.inner.route(counts, launch);
+        }
+        let selected = self.choices.contains_key(&counts.rows);
+        Some(branch(
+            &launch.symbol,
+            if selected {
+                RouteClass::Fast
+            } else {
+                RouteClass::Baseline
+            },
+            "sinkhorn_mix",
+            if selected {
+                "prefill"
+            } else {
+                "prefill-fallback"
+            },
+            self.choices.keys().map(|&r| r..=r),
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

@@ -17,6 +17,10 @@ pub struct F32ProjectionOffers {
 }
 
 impl F32ProjectionOffers {
+    pub(super) fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        self.entries.iter().flat_map(Entry::route_tags).collect()
+    }
+
     pub fn new(
         entries: Vec<Entry>,
         available: BTreeSet<String>,
@@ -123,6 +127,11 @@ pub(super) fn prepare(
     Ok(Binding {
         identity: binding.identity,
         handle: Box::new(Projection {
+            routes: entry.route_tags(),
+            reuse: entry
+                .route_at(0, entry.baseline_symbol())
+                .filter(|t| t.family == "f32_reuse")
+                .map(|t| t.admitted),
             entry,
             capacity: need.capacity,
             info,
@@ -131,11 +140,36 @@ pub(super) fn prepare(
 }
 
 struct Projection {
+    routes: Vec<kernel_core::route::RouteTag>,
+    reuse: Option<Vec<std::ops::RangeInclusive<u32>>>,
     entry: Entry,
     capacity: u32,
     info: OpInfo,
 }
 impl PreparedOp<ProjectionBuffers<View>> for Projection {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        if let Some(admitted) = &self.reuse {
+            let entry = self.entry.entry_for_rows(counts.rows);
+            let selected = self.entry.uses_bounded_reuse(counts.rows)
+                || entry.decode_last(counts.rows).is_some()
+                || entry.uses_decode_reuse(counts.rows);
+            return Some(kernel_core::route::branch(
+                &launch.symbol,
+                if selected {
+                    kernel_core::route::RouteClass::Fast
+                } else {
+                    kernel_core::route::RouteClass::Baseline
+                },
+                "f32_reuse",
+                if selected { "reuse" } else { "reuse-fallback" },
+                admitted.clone(),
+            ));
+        }
+        self.routes
+            .iter()
+            .find(|t| t.symbol == launch.symbol)
+            .cloned()
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

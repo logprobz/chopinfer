@@ -121,6 +121,7 @@ mod mxfp8_prefill_tma_matrix;
 mod mxfp8_prefill_tma_scales;
 mod mxfp8_rows;
 mod packed_fold;
+mod routes;
 pub use packed_fold::packed_op;
 pub mod own;
 mod pooled_indexer;
@@ -191,6 +192,7 @@ pub fn check_plan(plan: &LaunchPlan) -> Result<(), Refusal> {
 /// The SM120 backend over a model's selection.
 #[derive(Default)]
 pub struct Sm120 {
+    route_tags: Vec<kernel_core::route::RouteTag>,
     fp4_writes: Vec<crate::gated_pooling::key_write::Entry>,
     pooling: Vec<crate::gated_pooling::Entry>,
     f32_norms: Vec<(crate::gated_pooling::F32Norm, String)>,
@@ -1473,6 +1475,10 @@ impl Sm120 {
 
 /// Families in the trait's sections and order; each delegates to its module.
 impl Backend for Sm120 {
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        Sm120::route_tags(self)
+    }
+
     fn name(&self) -> &str {
         "sm120"
     }
@@ -1503,7 +1509,43 @@ impl Backend for Sm120 {
         } else {
             mxfp8_fold::prepare(&self.mxfp8_folds, op, need)
         };
-        self.fold_weights(prepared?)
+        let prepared = prepared?;
+        let rows: Vec<_> = self
+            .mxfp8_fold_reuse
+            .iter()
+            .filter(|(e, _)| routes::same_fold_shape(e.ticket.query, *op))
+            .map(|(e, _)| e.ticket.query.m_capacity)
+            .collect();
+        let selected = self
+            .mxfp8_fold_reuse
+            .iter()
+            .any(|(e, _)| e.ticket.query == *op);
+        let (class, wrapper, admitted) = if rows.is_empty() {
+            (
+                kernel_core::route::RouteClass::Fast,
+                "general",
+                vec![1..=need.capacity],
+            )
+        } else {
+            (
+                if selected {
+                    kernel_core::route::RouteClass::Fast
+                } else {
+                    kernel_core::route::RouteClass::Baseline
+                },
+                if selected { "reuse" } else { "reuse-fallback" },
+                rows.into_iter().map(|r| r..=r).collect(),
+            )
+        };
+        let tags = prepared
+            .info()
+            .symbols
+            .iter()
+            .map(|(symbol, _)| {
+                kernel_core::route::branch(symbol, class, "mxfp8_fold", wrapper, admitted.clone())
+            })
+            .collect();
+        self.fold_weights(kernel_core::route::tagged(prepared, tags))
     }
 
     fn mxfp8_prefill_gemm(

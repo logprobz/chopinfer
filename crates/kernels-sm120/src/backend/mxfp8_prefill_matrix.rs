@@ -55,6 +55,32 @@ struct Op {
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, RouteTag};
+        let rows: Vec<_> = self.plans.keys().map(|&r| r..=r).collect();
+        if self.plans.contains_key(&counts.rows) {
+            return Some(
+                RouteTag::new(
+                    launch.symbol.clone(),
+                    RouteClass::Fast,
+                    "mxfp8_prefill",
+                    rows,
+                )
+                .with_wrapper("matrix"),
+            );
+        }
+        let mut tag = self.fallback.route(counts, launch).unwrap_or_else(|| {
+            RouteTag::new(
+                launch.symbol.clone(),
+                RouteClass::Baseline,
+                "mxfp8_prefill",
+                [],
+            )
+        });
+        tag.admitted.extend(rows);
+        tag.wrappers.push("matrix");
+        Some(tag)
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

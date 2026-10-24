@@ -281,6 +281,88 @@ struct Op {
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        let fallback_tail = launch.symbol == self.entry.mixer.symbols()[1]
+            || self
+                .norm
+                .info()
+                .symbols
+                .iter()
+                .any(|(s, _)| *s == launch.symbol);
+        if !self.buckets.contains(&counts.rows) && fallback_tail {
+            return Some(branch(
+                &launch.symbol,
+                RouteClass::Baseline,
+                "sinkhorn_finish_norm",
+                "unfused-tail",
+                self.buckets.iter().map(|&r| r..=r),
+            ));
+        }
+        if self.buckets.contains(&counts.rows) {
+            let mut admitted: Vec<_> = self
+                .cols
+                .iter()
+                .flat_map(|c| c.buckets.iter().map(|b| b.rows))
+                .collect();
+            admitted.extend(
+                self.completion
+                    .iter()
+                    .flat_map(|(_, b)| b.iter().map(|&(r, _)| r)),
+            );
+            admitted.extend(
+                self.twin
+                    .iter()
+                    .flat_map(|(_, b)| b.iter().map(|&(r, _)| r)),
+            );
+            let selected = if self
+                .cols
+                .as_ref()
+                .is_some_and(|c| c.buckets.iter().any(|b| b.rows == counts.rows))
+            {
+                Some("columns")
+            } else if self
+                .twin
+                .as_ref()
+                .is_some_and(|(_, b)| b.iter().any(|&(r, _)| r == counts.rows))
+            {
+                Some("twin")
+            } else if self
+                .completion
+                .as_ref()
+                .is_some_and(|(_, b)| b.iter().any(|&(r, _)| r == counts.rows))
+            {
+                Some("completion")
+            } else {
+                None
+            };
+            let displaced = self.cols.is_some()
+                || self.completion.is_some()
+                || selected.is_some()
+                || launch.symbol == self.entry.symbols()[1];
+            if !admitted.is_empty() && displaced {
+                return Some(branch(
+                    &launch.symbol,
+                    if selected.is_some() {
+                        RouteClass::Fast
+                    } else {
+                        RouteClass::Baseline
+                    },
+                    "sinkhorn_finish_norm",
+                    selected.unwrap_or("fusion-fallback"),
+                    admitted.into_iter().map(|r| r..=r),
+                ));
+            }
+            return Some(branch(
+                &launch.symbol,
+                RouteClass::Fast,
+                "sinkhorn_finish_norm",
+                "fused",
+                self.buckets.iter().map(|&r| r..=r),
+            ));
+        }
+        self.hc.route(counts, launch)
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

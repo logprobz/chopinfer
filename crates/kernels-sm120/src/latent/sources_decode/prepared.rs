@@ -62,6 +62,34 @@ struct RoutedSources {
 }
 
 impl PreparedOp<LatentSourcesBuffers<View>> for RoutedSources {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        if self
+            .reference
+            .info()
+            .symbols
+            .last()
+            .is_some_and(|(s, _)| *s == launch.symbol)
+        {
+            return None;
+        }
+        let selected = self.selected.contains_key(&counts.rows);
+        Some(branch(
+            &launch.symbol,
+            if selected {
+                RouteClass::Fast
+            } else {
+                RouteClass::Baseline
+            },
+            "latent_sources",
+            if selected {
+                "staging"
+            } else {
+                "staging-fallback"
+            },
+            self.selected.keys().map(|&r| r..=r),
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

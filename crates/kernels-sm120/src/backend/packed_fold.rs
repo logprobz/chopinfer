@@ -211,6 +211,22 @@ pub(super) fn wrap<B: 'static>(
 }
 
 impl<B> PreparedOp<B> for Op<B> {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        let mut original = launch.clone();
+        if let Some(symbol) = original.symbol.strip_suffix("_packed_v1") {
+            original.symbol = symbol.to_owned();
+        }
+        let mut tag = self.inner.route(counts, &original)?;
+        tag.symbol = launch.symbol.clone();
+        if original.symbol != launch.symbol {
+            // Preserve the selected branch while translating its CUDA symbol.
+            tag.entry = tag.entry.strip_suffix(&original.symbol).map_or_else(
+                || format!("{}/packed", tag.entry),
+                |prefix| format!("{prefix}{}", launch.symbol),
+            );
+        }
+        Some(tag)
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }
@@ -412,5 +428,70 @@ mod tests {
                 .mxfp8_fold_gemm(&odd, Need::rows(8))
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod route_identity_tests {
+    use super::*;
+    use kernel_core::backend::Need;
+    use kernel_core::contract::{ArgumentList, LaunchPlan};
+    use kernel_core::properties::Invariance;
+    use kernel_core::route::{RouteClass, branch, tagged};
+
+    struct Identity(OpInfo);
+    impl PreparedOp<()> for Identity {
+        fn info(&self) -> &OpInfo {
+            &self.0
+        }
+        fn launches(&self, _: &(), _: View, _: Counts) -> Result<Vec<Launch>, Refusal> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn packed_translation_keeps_distinct_branches_of_one_symbol() {
+        let launch = Launch {
+            symbol: "shared_packed_v1".into(),
+            rows: 1,
+            plan: LaunchPlan {
+                grid: [1; 3],
+                block: [32, 1, 1],
+                cluster: [1; 3],
+                pdl: true,
+                dynamic_shared_bytes: 0,
+                workspace_bytes: 0,
+            },
+            arguments: ArgumentList(vec![]),
+            collective: false,
+            persistent: false,
+        };
+        let conversions = Conversions(Arc::new(BTreeMap::from([(
+            "shared".into(),
+            Conversion::Rename,
+        )])));
+        let mut tags = Vec::new();
+        for (class, wrapper) in [
+            (RouteClass::Fast, "standalone"),
+            (RouteClass::Baseline, "fallback"),
+        ] {
+            let info = OpInfo::new(
+                "identity",
+                Invariance::any_rows(1),
+                vec![("shared".into(), 0)],
+            );
+            Need::rows(1).check(&info).unwrap();
+            let op = tagged(
+                Box::new(Identity(info)),
+                vec![branch("shared", class, "projection", wrapper, [1..=1])],
+            );
+            let op = wrap(op, &conversions).unwrap();
+            let tag = op.route(Counts::rows(1), &launch).unwrap();
+            assert_eq!(tag.entry, format!("projection/{wrapper}/shared_packed_v1"));
+            assert_eq!(tag.symbol, launch.symbol);
+            assert_eq!(tag.class, class);
+            tags.push(tag);
+        }
+        assert_eq!(kernel_core::route::merge(tags).unwrap().len(), 2);
     }
 }

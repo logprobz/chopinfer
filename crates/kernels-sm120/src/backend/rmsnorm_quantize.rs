@@ -127,6 +127,39 @@ struct Op {
     info: OpInfo,
 }
 impl PreparedOp<RmsNormQuantizeBuffers<View>> for Op {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        if self.tiled.is_none() && self.cached.is_none() {
+            return None;
+        }
+        let rows = counts.rows.max(counts.padded_rows);
+        let admitted = self
+            .tiled
+            .iter()
+            .flat_map(|(_, b)| b.iter().copied())
+            .chain(
+                self.cached
+                    .iter()
+                    .flat_map(|(_, b)| b.iter().map(|&(r, _)| r)),
+            )
+            .map(|r| r..=r);
+        let selected = self.tiled.as_ref().is_some_and(|(_, b)| b.contains(&rows))
+            || self
+                .cached
+                .as_ref()
+                .is_some_and(|(_, b)| b.iter().any(|&(r, _)| r == rows));
+        Some(branch(
+            &launch.symbol,
+            if selected {
+                RouteClass::Fast
+            } else {
+                RouteClass::Baseline
+            },
+            "rmsnorm_quantize",
+            if selected { "selected" } else { "fallback" },
+            admitted,
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

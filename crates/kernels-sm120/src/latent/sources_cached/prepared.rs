@@ -103,6 +103,18 @@ struct Cached {
 }
 
 impl PreparedOp<Buffers> for Cached {
+    fn route(&self, _counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        if launch.symbol == self.entry.source.merge_symbol() {
+            return None;
+        }
+        Some(kernel_core::route::branch(
+            &launch.symbol,
+            kernel_core::route::RouteClass::Fast,
+            "latent_sources",
+            "selected-cache",
+            self.selected.iter().map(|&r| r..=r),
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

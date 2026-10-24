@@ -291,6 +291,21 @@ pub(super) fn mix_collapse(
 }
 
 impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBuffers<View>> {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        let entry = self.warp.as_ref()?;
+        let selected = entry.buckets.contains(&counts.rows);
+        Some(kernel_core::route::branch(
+            &launch.symbol,
+            if selected {
+                kernel_core::route::RouteClass::Fast
+            } else {
+                kernel_core::route::RouteClass::Baseline
+            },
+            "sinkhorn_mix",
+            if selected { "warp" } else { "warp-fallback" },
+            entry.buckets.iter().map(|&r| r..=r),
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

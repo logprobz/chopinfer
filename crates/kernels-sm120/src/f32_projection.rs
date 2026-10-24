@@ -59,6 +59,68 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The fallback and the rows admitted by this registration's tile routes.
+    pub fn route_tag(&self, symbol: &str) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, RouteTag};
+        let rows: Vec<_> = self
+            .prefill_buckets
+            .iter()
+            .chain(&self.blocked_buckets)
+            .chain(&self.wide_buckets)
+            .map(|&(r, _)| r..=r)
+            .collect();
+        if rows.is_empty() {
+            return None;
+        }
+        let class = if symbol == self.baseline_symbol() {
+            RouteClass::Baseline
+        } else {
+            RouteClass::Fast
+        };
+        Some(RouteTag::new(symbol, class, "f32_projection", rows))
+    }
+
+    pub fn route_at(&self, rows: u32, symbol: &str) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        let admitted: Vec<_> = self
+            .reuse_rows
+            .iter()
+            .chain(&self.last_rows)
+            .chain(&self.bounded_reuse_rows)
+            .map(|&r| r..=r)
+            .collect();
+        if admitted.is_empty() {
+            return self.route_tag(symbol);
+        }
+        let entry = self.entry_for_rows(rows);
+        let selected = self.uses_bounded_reuse(rows)
+            || entry.decode_last(rows).is_some()
+            || entry.uses_decode_reuse(rows);
+        Some(branch(
+            symbol,
+            if selected {
+                RouteClass::Fast
+            } else {
+                RouteClass::Baseline
+            },
+            "f32_reuse",
+            if selected { "reuse" } else { "reuse-fallback" },
+            admitted,
+        ))
+    }
+
+    pub fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        let mut tags: Vec<_> = self
+            .runtime_symbols()
+            .iter()
+            .filter_map(|symbol| self.route_tag(symbol))
+            .collect();
+        if let Some(tag) = self.route_at(0, self.baseline_symbol()) {
+            tags.push(tag);
+        }
+        tags
+    }
+
     pub fn new(query: GemmQuery, usage: OperationUse, stem: &str) -> Result<Self, Refusal> {
         query.validate()?;
         if query.activation != ActivationFormat::F32

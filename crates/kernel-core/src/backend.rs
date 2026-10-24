@@ -347,6 +347,14 @@ pub struct DeferredBf16Round {
 pub trait PreparedOp<B>: Send + Sync {
     fn info(&self) -> &OpInfo;
 
+    /// Metadata for the branch that produced this launch at these counts.
+    /// The default is Fast. Wrappers report their selected branch, so a
+    /// fallback may reuse a symbol that is Fast at another call site.
+    /// This method must not change state, plans, arguments or numerical bits.
+    fn route(&self, _counts: Counts, _launch: &Launch) -> Option<crate::route::RouteTag> {
+        None
+    }
+
     /// Expose an exact final BF16 round for a consumer to perform. `None`
     /// keeps the ordinary launches. Success preserves every preceding
     /// launch, allocation, state transition and refusal of `launches`.
@@ -422,6 +430,11 @@ impl std::error::Error for Refused {}
 pub trait Backend: Send + Sync {
     /// The backend's name in refusals and reports, such as `sm120`.
     fn name(&self) -> &str;
+
+    /// Registration metadata for CPU coverage and optional launch counters.
+    fn route_tags(&self) -> Vec<crate::route::RouteTag> {
+        Vec::new()
+    }
 
     // Rows: norms, embeddings, argmax, hyper-connection, n-gram and PLE rows.
 
@@ -2900,7 +2913,7 @@ mod tests {
             .lines()
             .filter_map(|line| line.strip_prefix("    fn "))
             .map(|line| line.split(['(', '<']).next().unwrap())
-            .filter(|&method| method != "name")
+            .filter(|&method| !["name", "route_tags"].contains(&method))
             .collect();
         assert_eq!(methods, TESTED);
     }

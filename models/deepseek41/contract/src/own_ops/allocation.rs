@@ -7,7 +7,10 @@
 //! and the computed layout (one row plus its verified drafts per item):
 //! `rows[w]`, the reserved row computed row `w` verifies, and `expand[r]`,
 //! the computed row reserved row `r` takes, its item's last verified row
-//! past its verified drafts. Integers and the rule's rounded f32 sigmoid
+//! past its verified drafts. It then compacts the target's per-row inputs
+//! in place, from the reserved to the computed layout (each computed row
+//! takes its reserved row's values), and writes each item's computed first
+//! row over its reserved one. Integers and the rule's rounded f32 sigmoid
 //! only, so every rank and the oracle agree bit for bit.
 use kernel_core::backend::Need;
 use kernel_core::contract::Refusal;
@@ -58,8 +61,11 @@ kernel_core::scratch_record! {
     /// U32 items `[items, ITEM_WORDS]`, F32 confidence `[draft rows,
     /// BLOCK]`, U32 rule `[RULE_WORDS]` and the device U32 live item count;
     /// outputs U32 status `[1]`, verified drafts and computed first rows
-    /// `[items]`, `rows` `[width]` and `expand` `[reserved_rows]`. No output
-    /// aliases an input.
+    /// `[items]`, `rows` `[width]` and `expand` `[reserved_rows]`; compacted
+    /// in place, 4-byte `token_ids`, `positions`, `token_batch`,
+    /// `window_rows` and `index_visible` `[reserved_rows]`, `q_start`
+    /// `[items]` and the optional byte `text` `[reserved_rows]` (zero
+    /// bytes when absent). No two views alias.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct VerifyAllocateBuffers {
         pub items: value,
@@ -71,6 +77,13 @@ kernel_core::scratch_record! {
         pub starts: value,
         pub rows: value,
         pub expand: value,
+        pub token_ids: value,
+        pub positions: value,
+        pub token_batch: value,
+        pub window_rows: value,
+        pub index_visible: value,
+        pub q_start: value,
+        pub text: value,
     }
 }
 
@@ -121,6 +134,17 @@ pub struct Allocation {
     pub starts: Vec<u32>,
     pub rows: Vec<u32>,
     pub expand: Vec<u32>,
+}
+
+impl Allocation {
+    /// A per-row array in the computed layout: each computed row takes its
+    /// reserved row's value.
+    pub fn compact<T: Copy>(&self, reserved: &[T]) -> Vec<T> {
+        self.rows
+            .iter()
+            .map(|&row| reserved[row as usize])
+            .collect()
+    }
 }
 
 fn check(rule: &[u32; RULE_WORDS], items: &[Item], scores: &[[f32; BLOCK]]) -> Result<(), Refusal> {

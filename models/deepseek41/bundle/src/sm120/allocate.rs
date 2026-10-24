@@ -54,21 +54,56 @@ impl PreparedOp<VerifyAllocateBuffers<View>> for Allocate {
         b.starts.covers(items * 4)?;
         b.rows.covers(u64::from(op.width) * 4)?;
         b.expand.covers(u64::from(op.reserved_rows) * 4)?;
-        let inputs = [b.items, b.scores, b.rule, b.live_items];
-        let outputs = [b.status, b.verified, b.starts, b.rows, b.expand];
-        if outputs
-            .iter()
-            .any(|output| inputs.iter().any(|input| input.handle == output.handle))
-        {
-            return Err(Refusal("verify allocation output aliases an input"));
+        let reserved = u64::from(op.reserved_rows) * 4;
+        for view in [
+            b.token_ids,
+            b.positions,
+            b.token_batch,
+            b.window_rows,
+            b.index_visible,
+        ] {
+            view.covers(reserved)?;
         }
-        let mut arguments: Vec<_> = inputs
+        b.q_start.covers(items * 4)?;
+        // The text mask is optional: absent (zero bytes) or every reserved row.
+        let text_rows = if b.text.bytes == 0 {
+            0
+        } else {
+            b.text.covers(u64::from(op.reserved_rows))?;
+            op.reserved_rows
+        };
+        let views = [
+            b.items,
+            b.scores,
+            b.rule,
+            b.live_items,
+            b.status,
+            b.verified,
+            b.starts,
+            b.rows,
+            b.expand,
+            b.token_ids,
+            b.positions,
+            b.token_batch,
+            b.window_rows,
+            b.index_visible,
+            b.q_start,
+            b.text,
+        ];
+        let bound: Vec<_> = views.iter().filter(|view| view.bytes > 0).collect();
+        if bound
+            .iter()
+            .enumerate()
+            .any(|(i, view)| bound[..i].iter().any(|other| other.handle == view.handle))
+        {
+            return Err(Refusal("verify allocation views alias"));
+        }
+        let mut arguments: Vec<_> = views
             .into_iter()
-            .chain(outputs)
             .map(|view| Argument::DeviceBuffer(view.handle))
             .collect();
         arguments.extend(
-            [op.items, op.items, op.reserved_rows, op.width]
+            [op.items, op.items, op.reserved_rows, op.width, text_rows]
                 .into_iter()
                 .map(Argument::U32),
         );

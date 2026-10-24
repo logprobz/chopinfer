@@ -62,6 +62,41 @@
             "cxx_type": "uint32_t"
           },
           {
+            "kind": "DevicePointer",
+            "name": "token_ids",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "token_batch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "window_rows",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "index_visible",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "q_start",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "text",
+            "cxx_type": "uint8_t"
+          },
+          {
             "kind": "U32",
             "name": "item_capacity"
           },
@@ -76,6 +111,10 @@
           {
             "kind": "U32",
             "name": "width_capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "text_rows"
           }
         ],
         "max_threads": 256,
@@ -83,12 +122,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "c79d6587ff02eef53ad336cd31a4577857d95964f94c3010536640c4a280bd71",
+    "cubin_sha256": "9fed71cfb7a6388954482d4560552d40a4c1a2d64b3cd36ea0bf4cbbb914b7af",
     "resources": [
       {
         "symbol": "chop_deepseek41_verify_allocate_v1",
-        "registers": 40,
-        "shared_static_bytes": 2576,
+        "registers": 64,
+        "shared_static_bytes": 6612,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,

@@ -1,12 +1,27 @@
 //! The verify allocation kernel against the SDK rule (the contract's
-//! oracle), bit for bit, under poisoned relaunch, graph replay and a PDL
-//! producer that rewrites every input.
+//! oracle), bit for bit, with its in-place compaction of the target's
+//! per-row inputs, under poisoned relaunch, graph replay and a PDL producer
+//! that rewrites every input.
 use kernel_core::backend::{Counts, Need, View};
 use model_deepseek41_contract::own_ops::allocation::*;
 
-fn views(op: VerifyAllocate) -> VerifyAllocateBuffers<View> {
+/// The in-place arrays: five 4-byte rows, the per-item first rows and the
+/// byte text mask.
+const IN_PLACE: [&str; 7] = [
+    "token_ids",
+    "positions",
+    "token_batch",
+    "window_rows",
+    "index_visible",
+    "q_start",
+    "text",
+];
+const OUTPUTS: [&str; 5] = ["status", "verified", "starts", "rows", "expand"];
+
+fn views(op: VerifyAllocate, text: bool) -> VerifyAllocateBuffers<View> {
     let v = |handle, bytes| View { handle, bytes };
     let items = u64::from(op.items);
+    let reserved = u64::from(op.reserved_rows);
     VerifyAllocateBuffers {
         items: v(1, items * ITEM_WORDS as u64 * 4),
         scores: v(2, items * BLOCK as u64 * 4),
@@ -16,8 +31,36 @@ fn views(op: VerifyAllocate) -> VerifyAllocateBuffers<View> {
         verified: v(6, items * 4),
         starts: v(7, items * 4),
         rows: v(8, u64::from(op.width) * 4),
-        expand: v(9, u64::from(op.reserved_rows) * 4),
+        expand: v(9, reserved * 4),
+        token_ids: v(10, reserved * 4),
+        positions: v(11, reserved * 4),
+        token_batch: v(12, reserved * 4),
+        window_rows: v(13, reserved * 4),
+        index_visible: v(14, reserved * 4),
+        q_start: v(15, items * 4),
+        text: v(16, if text { reserved } else { 0 }),
     }
+}
+
+fn fields(b: &mut VerifyAllocateBuffers<View>) -> [&mut View; 16] {
+    [
+        &mut b.items,
+        &mut b.scores,
+        &mut b.rule,
+        &mut b.live_items,
+        &mut b.status,
+        &mut b.verified,
+        &mut b.starts,
+        &mut b.rows,
+        &mut b.expand,
+        &mut b.token_ids,
+        &mut b.positions,
+        &mut b.token_batch,
+        &mut b.window_rows,
+        &mut b.index_visible,
+        &mut b.q_start,
+        &mut b.text,
+    ]
 }
 
 const NO_VIEW: View = View {
@@ -68,48 +111,51 @@ fn allocate_preparation_checks_spans_aliases_and_capacity() {
         );
     }
     let prepared = crate::allocate::prepare(op, Need::rows(4)).unwrap();
-    let b = views(op);
-    let calls = prepared.launches(&b, NO_VIEW, Counts::rows(4)).unwrap();
-    assert_eq!(calls.len(), 1);
-    assert!(calls[0].plan.pdl);
-    assert_eq!(calls[0].plan.grid, [1, 1, 1]);
-    // The launch is the same for every live count, so one graph serves all.
-    assert_eq!(
-        format!("{:?}", calls[0].arguments),
-        format!(
-            "{:?}",
-            prepared.launches(&b, NO_VIEW, Counts::rows(1)).unwrap()[0].arguments
-        )
-    );
-    for index in 0..9 {
-        let mut short = b;
-        let fields = [
-            &mut short.items,
-            &mut short.scores,
-            &mut short.rule,
-            &mut short.live_items,
-            &mut short.status,
-            &mut short.verified,
-            &mut short.starts,
-            &mut short.rows,
-            &mut short.expand,
-        ];
-        fields[index].bytes -= 1;
-        assert!(prepared.launches(&short, NO_VIEW, Counts::rows(4)).is_err());
-    }
-    for handle in 1..=4 {
-        let aliased = VerifyAllocateBuffers {
-            rows: View { handle, bytes: 64 },
-            ..b
-        };
-        assert!(
-            prepared
-                .launches(&aliased, NO_VIEW, Counts::rows(4))
-                .is_err()
+    for text in [false, true] {
+        let b = views(op, text);
+        let calls = prepared.launches(&b, NO_VIEW, Counts::rows(4)).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].plan.pdl);
+        assert_eq!(calls[0].plan.grid, [1, 1, 1]);
+        // The launch is the same for every live count, so one graph serves
+        // all.
+        assert_eq!(
+            format!("{:?}", calls[0].arguments),
+            format!(
+                "{:?}",
+                prepared.launches(&b, NO_VIEW, Counts::rows(1)).unwrap()[0].arguments
+            )
         );
-    }
-    for items in [0, 5] {
-        assert!(prepared.launches(&b, NO_VIEW, Counts::rows(items)).is_err());
+        for index in 0..16 {
+            let mut short = b;
+            let field = &mut fields(&mut short)[index];
+            if field.bytes == 0 {
+                continue;
+            }
+            field.bytes -= 1;
+            assert!(
+                prepared.launches(&short, NO_VIEW, Counts::rows(4)).is_err(),
+                "short {index}"
+            );
+        }
+        for index in 0..16 {
+            let mut aliased = b;
+            let handle = if index == 0 { 2 } else { 1 };
+            let field = &mut fields(&mut aliased)[index];
+            if field.bytes == 0 {
+                continue;
+            }
+            field.handle = handle;
+            assert!(
+                prepared
+                    .launches(&aliased, NO_VIEW, Counts::rows(4))
+                    .is_err(),
+                "alias {index}"
+            );
+        }
+        for items in [0, 5] {
+            assert!(prepared.launches(&b, NO_VIEW, Counts::rows(items)).is_err());
+        }
     }
 }
 
@@ -220,33 +266,48 @@ fn allocate_gpu_matches_the_sdk_rule_under_poison_graph_and_dependency_replay() 
             Ok::<_, String>(buffer)
         };
         let live = upload(&1_u32.to_le_bytes())?;
+        let op = VerifyAllocate {
+            items: 32,
+            reserved_rows: 192,
+            width: 192,
+        };
+        let (items_cap, reserved_cap) = (op.items as usize, op.reserved_rows as usize);
         let mut rng = Rng(0x2545_f491_4f6c_dd1d);
         let mut cases = 0;
         for count in [1_u32, 2, 8, 16, 32] {
             for index in 0..24 {
                 let (rule, mut items, scores) = case(&mut rng, count);
-                // The last cases of each count break an item, which only the
-                // status may report.
+                // The last case of each count breaks an item, which only the
+                // status reports; every other array keeps its bytes.
                 let broken = index == 23;
                 if broken {
                     items.last_mut().unwrap().first_row += 1;
                 }
-                let op = VerifyAllocate {
-                    items: 32,
-                    reserved_rows: 192,
-                    width: 192,
-                };
+                let text = index % 2 == 0;
                 let expected = if broken {
                     None
                 } else {
                     Some(allocate_reference(&rule, &items, &scores).map_err(|e| e.to_string())?)
                 };
+                // Reserved rows: distinct values per array and row, so a row
+                // taken from the wrong place shows.
+                let reserved: Vec<Vec<u32>> = (0..5)
+                    .map(|array| {
+                        (0..reserved_cap as u32)
+                            .map(|row| (array << 24) | (row << 8) | rng.below(256) as u32)
+                            .collect()
+                    })
+                    .collect();
+                let q_start: Vec<u32> = (0..items_cap as u32)
+                    .map(|item| 0xdead_0000 | item)
+                    .collect();
+                let mask: Vec<u8> = (0..reserved_cap).map(|_| rng.below(2) as u8).collect();
                 let mut score_rows = scores.clone();
-                score_rows.resize(op.items as usize, [0.0; BLOCK]);
+                score_rows.resize(items_cap, [0.0; BLOCK]);
                 let images = [
                     {
                         let mut padded = words(items.iter().flat_map(|item| item.encode()));
-                        padded.resize(op.items as usize * ITEM_WORDS * 4, 0);
+                        padded.resize(items_cap * ITEM_WORDS * 4, 0);
                         padded
                     },
                     score_rows
@@ -267,7 +328,6 @@ fn allocate_gpu_matches_the_sdk_rule_under_poison_graph_and_dependency_replay() 
                     .collect::<Result<Vec<_>, _>>()?;
                 let pairs = staged.iter().zip(&inputs).collect::<Vec<_>>();
                 let rewrites = Rewrites::new(session, &pairs)?;
-                let reserved_rows: u32 = items.iter().map(|item| 1 + item.reserved).sum();
                 let written: [Vec<u8>; 5] = match &expected {
                     Some(allocation) => [
                         words([OK]),
@@ -280,23 +340,49 @@ fn allocate_gpu_matches_the_sdk_rule_under_poison_graph_and_dependency_replay() 
                 };
                 let capacities = [
                     4,
-                    op.items as usize * 4,
-                    op.items as usize * 4,
+                    items_cap * 4,
+                    items_cap * 4,
                     op.width as usize * 4,
-                    op.reserved_rows as usize * 4,
+                    reserved_cap * 4,
                 ];
                 let outputs = capacities
                     .iter()
                     .map(|&bytes| session.allocate(bytes))
                     .collect::<Result<Vec<_>, _>>()?;
+                // In place: each array's initial image, and the computed rows
+                // it ends with (none when broken or, for the text mask, when
+                // it is unbound).
+                let initial: Vec<Vec<u8>> = reserved
+                    .iter()
+                    .map(|values| words(values.iter().copied()))
+                    .chain([words(q_start.iter().copied()), mask.clone()])
+                    .collect();
+                let mut compacted: Vec<Vec<u8>> = match &expected {
+                    Some(allocation) => reserved
+                        .iter()
+                        .map(|values| words(allocation.compact(values)))
+                        .chain([
+                            words(allocation.starts.iter().copied()),
+                            allocation.compact(&mask),
+                        ])
+                        .collect(),
+                    None => vec![Vec::new(); 7],
+                };
+                if !text {
+                    compacted[6].clear();
+                }
+                let states = initial
+                    .iter()
+                    .map(|bytes| upload(bytes))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let prepared =
                     crate::allocate::prepare(op, Need::rows(32)).map_err(|e| format!("{e:?}"))?;
                 let call = prepared
-                    .launches(&views(op), NO_VIEW, Counts::rows(32))
+                    .launches(&views(op, text), NO_VIEW, Counts::rows(32))
                     .map_err(|e| e.to_string())?
                     .remove(0);
                 let mut buffers = BTreeMap::new();
-                for (handle, buffer) in (1..).zip(inputs.iter().chain(&outputs)) {
+                for (handle, buffer) in (1..).zip(inputs.iter().chain(&outputs).chain(&states)) {
                     buffers.insert(handle, buffer);
                 }
                 let bindings = Bindings { buffers };
@@ -318,10 +404,21 @@ fn allocate_gpu_matches_the_sdk_rule_under_poison_graph_and_dependency_replay() 
                     let mut image = bytes.clone();
                     image.resize(capacity, 0);
                     replay = replay.output_complement(
-                        ["status", "verified", "starts", "rows", "expand"][k],
+                        OUTPUTS[k],
                         output,
                         WriteMap::of(DType::U8).prefix(bytes.len())?,
                         image,
+                    );
+                }
+                for (k, ((state, image), result)) in
+                    states.iter().zip(&initial).zip(&compacted).enumerate()
+                {
+                    replay = replay.state(
+                        IN_PLACE[k],
+                        state,
+                        image.clone(),
+                        WriteMap::of(DType::U8).none()?,
+                        std::iter::once(0..result.len()).collect(),
                     );
                 }
                 replay.eager(|| invoke(&session.stream))?;
@@ -334,22 +431,31 @@ fn allocate_gpu_matches_the_sdk_rule_under_poison_graph_and_dependency_replay() 
                     || invoke(&session.stream),
                     call.plan.pdl,
                 )?;
-                for (output, bytes) in outputs.iter().zip(&written) {
+                let differs = |label: &str| {
+                    format!("{label} differs at count={count} case={index}: {rule:?} {items:?}")
+                };
+                for (k, (buffer, bytes)) in outputs
+                    .iter()
+                    .zip(&written)
+                    .chain(states.iter().zip(&compacted))
+                    .enumerate()
+                {
                     let mut actual = vec![0; bytes.len()];
-                    output
+                    buffer
                         .copy_to_bytes(&mut actual, &session.stream)
                         .map_err(|e| e.to_string())?;
                     if &actual != bytes {
-                        return Err(format!(
-                            "allocation differs at count={count} case={index}: {rule:?} {items:?}"
-                        ));
+                        let label = if k < 5 { OUTPUTS[k] } else { IN_PLACE[k - 5] };
+                        return Err(differs(label));
                     }
                 }
+                let reserved_rows: u32 = items.iter().map(|item| 1 + item.reserved).sum();
                 let mut receipt = BTreeMap::from([
                     ("items".into(), serde_json::json!(count)),
                     ("case".into(), serde_json::json!(index)),
                     ("width".into(), serde_json::json!(rule[0])),
                     ("reserved_rows".into(), serde_json::json!(reserved_rows)),
+                    ("text".into(), serde_json::json!(text)),
                     ("broken".into(), serde_json::json!(broken)),
                     ("bitwise_oracle".into(), serde_json::json!(true)),
                 ]);

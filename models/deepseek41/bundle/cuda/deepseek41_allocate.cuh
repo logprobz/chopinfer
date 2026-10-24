@@ -2,7 +2,8 @@
 #include <stdint.h>
 // Verify allocation (deepseek41.verify-allocation.f32-rn.v1): one block
 // computes every item's verified drafts and the reserved/computed row maps,
-// as model_deepseek41_contract::own_ops::allocation::allocate_ranked does.
+// as model_deepseek41_contract::own_ops::allocation::allocate_ranked does,
+// then compacts the target's per-row inputs in place.
 // Every float operation is an explicitly rounded intrinsic, so no
 // contraction changes a bit against runtime_bundle_sdk::sigmoid_v1.
 namespace chop::deepseek41 {
@@ -10,6 +11,8 @@ constexpr uint32_t kAllocateBlock = 5;
 constexpr uint32_t kAllocateItems = 32;
 constexpr uint32_t kAllocateItemWords = 4;
 constexpr uint32_t kAllocateNone = 0xffffffffu;
+constexpr uint32_t kAllocateRows = kAllocateItems * (kAllocateBlock + 1);
+constexpr uint32_t kAllocateArrays = 5;
 
 __device__ __forceinline__ float allocate_sigmoid(float z) {
   if (z != z) return 0.0f;
@@ -31,16 +34,24 @@ __device__ __forceinline__ float allocate_sigmoid(float z) {
 // items [count, 4]: reserved drafts, kind, confidence row, first reserved
 // row. scores [score_rows, 5]. rule: width, floor, then (scale, offset)
 // bits per position for greedy and then sampled items.
+// token_ids, positions, token_batch, window_rows and index_visible hold
+// the reserved rows and are compacted in place; q_start takes each item's
+// computed first row; text (text_rows bytes, zero when absent) is
+// compacted like the 4-byte rows.
 __device__ __forceinline__ void verify_allocate(const uint32_t* items, const float* scores,
     const uint32_t* rule, const uint32_t* live_items, uint32_t* status, uint32_t* verified,
-    uint32_t* starts, uint32_t* rows, uint32_t* expand, uint32_t item_capacity,
-    uint32_t score_rows, uint32_t reserved_capacity, uint32_t width_capacity) {
+    uint32_t* starts, uint32_t* rows, uint32_t* expand, uint32_t* token_ids,
+    uint32_t* positions, uint32_t* token_batch, uint32_t* window_rows, uint32_t* index_visible,
+    uint32_t* q_start, uint8_t* text, uint32_t item_capacity, uint32_t score_rows,
+    uint32_t reserved_capacity, uint32_t width_capacity, uint32_t text_rows) {
   asm volatile("griddepcontrol.wait;" ::: "memory");
   __shared__ float survival[kAllocateItems * kAllocateBlock];
   __shared__ uint32_t candidate[kAllocateItems * kAllocateBlock];
   __shared__ uint32_t counts[kAllocateItems];
   __shared__ uint32_t first[kAllocateItems];
-  __shared__ uint32_t bad, count, floor_drafts, left;
+  __shared__ uint32_t reserved_values[kAllocateArrays][kAllocateRows];
+  __shared__ uint8_t reserved_text[kAllocateRows];
+  __shared__ uint32_t bad, count, floor_drafts, left, reserved_total;
   const uint32_t tid = threadIdx.x;
   if (tid == 0) {
     const uint32_t n = *live_items;
@@ -57,7 +68,7 @@ __device__ __forceinline__ void verify_allocate(const uint32_t* items, const flo
     }
     const uint32_t width = rule[0];
     invalid = invalid || width < n || width > next || next > reserved_capacity
-        || width > width_capacity;
+        || width > width_capacity || (text_rows != 0 && text_rows < next);
     uint32_t f = 0, used = 0;
     if (!invalid) {
       // The largest floor up to the rule's at which every item fits; a
@@ -70,6 +81,7 @@ __device__ __forceinline__ void verify_allocate(const uint32_t* items, const flo
     }
     bad = invalid;
     count = n;
+    reserved_total = next;
     floor_drafts = f;
     left = invalid ? 0 : width - used;
   }
@@ -97,6 +109,12 @@ __device__ __forceinline__ void verify_allocate(const uint32_t* items, const flo
     candidate[t] = j < item[0] && j >= f;
   }
   for (uint32_t i = tid; i < n; i += blockDim.x) counts[i] = min(f, items[i * kAllocateItemWords]);
+  uint32_t* const arrays[kAllocateArrays] = {token_ids, positions, token_batch, window_rows,
+                                             index_visible};
+  for (uint32_t r = tid; r < reserved_total; r += blockDim.x) {
+    for (uint32_t a = 0; a < kAllocateArrays; ++a) reserved_values[a][r] = arrays[a][r];
+    if (text_rows != 0) reserved_text[r] = text[r];
+  }
   __syncthreads();
   for (uint32_t t = tid; t < n * kAllocateBlock; t += blockDim.x) {
     if (!candidate[t]) continue;
@@ -122,7 +140,12 @@ __device__ __forceinline__ void verify_allocate(const uint32_t* items, const flo
     const uint32_t k = counts[i], start = first[i], row = item[3];
     verified[i] = k;
     starts[i] = start;
-    for (uint32_t o = 0; o <= k; ++o) rows[start + o] = row + o;
+    q_start[i] = start;
+    for (uint32_t o = 0; o <= k; ++o) {
+      rows[start + o] = row + o;
+      for (uint32_t a = 0; a < kAllocateArrays; ++a) arrays[a][start + o] = reserved_values[a][row + o];
+      if (text_rows != 0) text[start + o] = reserved_text[row + o];
+    }
     for (uint32_t o = 0; o <= item[0]; ++o) expand[row + o] = start + min(o, k);
   }
 }

@@ -17,6 +17,13 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
         pointer("starts", "uint32_t"),
         pointer("rows", "uint32_t"),
         pointer("expand", "uint32_t"),
+        pointer("token_ids", "uint32_t"),
+        pointer("positions", "uint32_t"),
+        pointer("token_batch", "uint32_t"),
+        pointer("window_rows", "uint32_t"),
+        pointer("index_visible", "uint32_t"),
+        pointer("q_start", "uint32_t"),
+        pointer("text", "uint8_t"),
     ];
     params.extend(
         [
@@ -24,6 +31,7 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
             "score_rows",
             "reserved_capacity",
             "width_capacity",
+            "text_rows",
         ]
         .into_iter()
         .map(|name| EntryParam::U32 { name: name.into() }),
@@ -38,7 +46,8 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
             SYMBOL.into(),
             params,
             "chop::deepseek41::verify_allocate(items,scores,rule,live_items,status,verified,\
-             starts,rows,expand,item_capacity,score_rows,reserved_capacity,width_capacity);"
+             starts,rows,expand,token_ids,positions,token_batch,window_rows,index_visible,\
+             q_start,text,item_capacity,score_rows,reserved_capacity,width_capacity,text_rows);"
                 .into(),
             THREADS,
             1,

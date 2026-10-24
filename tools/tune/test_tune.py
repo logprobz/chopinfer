@@ -303,7 +303,7 @@ class Tuner(unittest.TestCase):
                     f'1200 MiB free' for i in range(2)]
             for x in steps:
                 log += ['step ' + json.dumps(x), 'bundle: ' + json.dumps({
-                    'schema': 'chopinfer.deepseek41.commit-shape.v1',
+                    'schema': 'chopinfer.fixture.commit-shape.v1',
                     'instance_id': '1', 'step_id': str(x['batch']), 'micros': {'total': 100}})]
             (server / 'server.log').write_text('\n'.join(log) + '\n')
             (server / 'final.prom').write_text('vllm:num_preemptions_total 0\nchop_prefix_cache_evictions_total 0\n')
@@ -423,7 +423,7 @@ class Calibration(unittest.TestCase):
             confidence_log(path, self.TRUTH, records=250)
             original, dropped = calibrate.records(path)
             lines = path.read_text().splitlines()
-            commit = json.dumps({'schema': 'chopinfer.deepseek41.commit-shape.v1',
+            commit = json.dumps({'schema': 'chopinfer.fixture.commit-shape.v1',
                                  'instance_id': '1', 'step_id': '1', 'micros': {'total': 100}})
             path.write_text('\n'.join(line + '\nbundle: ' + commit for line in lines) + '\n')
             after, after_dropped = calibrate.records(path)

@@ -147,10 +147,10 @@ fn run_case(ranks: Ranks, layout: KvLayout, reference: bool) {
             *end += u64::from(width);
         }
     }
-    // The served contract caps a verification step at 32 rows. Reject a
-    // wider request before launching, even when the host advertises 48.
+    // An instance verifies at most the rows its host asks for, 48 here.
+    // Reject a wider request before launching.
     let tokens = [7; 6];
-    let too_wide = (0..8)
+    let too_wide = (0..9)
         .map(|slot| (slot as u64 + 1, slot as u64, ends[slot], tokens.as_slice()))
         .collect::<Vec<_>>();
     let from = host.device.journal.borrow().len();

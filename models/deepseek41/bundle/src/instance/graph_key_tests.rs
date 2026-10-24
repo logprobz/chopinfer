@@ -15,7 +15,7 @@ use super::*;
 use crate::config::{KV_LAYOUTS, KvLayout};
 use crate::fake_host_tests::indexer_workloads::complete_host;
 use bundle_runtime::dispatch;
-use bundle_runtime::geometry::{Items, Ranks};
+use bundle_runtime::geometry::Ranks;
 use model_deepseek41_contract::state::KvStorage;
 
 /// One verify phase: each item's rows, request end and physical slot,
@@ -333,10 +333,11 @@ fn sweep(
 
 fn unchanged(_: &mut Run) {}
 
-/// The most verify rows at `served` items.
+/// The most verify rows at `served` items: every item at its deepest
+/// block, within the rows `complete_host`'s instance serves (the default,
+/// the widest decode bucket).
 fn widest(served: u32) -> u32 {
-    let tokens = bundle_runtime::graphs::verify_tokens::<DeepSeek>(Items::new(served).unwrap());
-    tokens.min(served * MAX_VERIFY_ROWS)
+    (served * MAX_VERIFY_ROWS).min(model_deepseek41_contract::serving::DECODE_BATCH)
 }
 
 /// Every reachable phase of each row count at `served` items.

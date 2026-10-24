@@ -681,3 +681,123 @@ fn sanitized_real_rows_on_gpu() {
     assert!(result.is_ok(), "{result:?}");
     assert!(result.unwrap().is_some(), "sanitizer matrix cannot skip");
 }
+
+/// Wide rows of the same authenticated sites, checked against both the
+/// ordered-chain pair and the captured per-row outputs. The reference pair
+/// is an arithmetic control, not the serving latency baseline above32 rows.
+#[test]
+#[ignore = "requires frozen HC artifacts, the complete corpus and an allocated GPU pair"]
+fn wide_verify_bitwise_graphs_and_timing_on_gpu() {
+    let result = kernel_harness::gpu_test_with(artifacts::timing_cubins().unwrap(), 1 << 30, |s| {
+        let (corpus, cases, sha) = cases::load_wide()?;
+        let k = Kernels::load(s)?;
+        let candidate = device::variant("cols_r4tx_w32")?;
+        let mut run = Run { s, k: &k, checks: Vec::new() };
+        let mut reports = 0;
+        let mut negatives = 0;
+        let mut timings = 0;
+        for case in &cases {
+            let rows = case.size();
+            let map = (0..rows).collect::<Vec<_>>();
+            let input = cases::input(s, &corpus, case, &map)?;
+            let old = Output::new(s, rows)?;
+            let new = Output::new(s, rows)?;
+            old.assert_disjoint(&new)?;
+            let site_widen = cases::widening(&corpus, case);
+            for (widen, alias) in [(site_widen, true), (!site_widen, false)] {
+                let expected = run.eager(&input, &old, None, widen, alias, 0, None)?;
+                let actual = run.eager(&input, &new, Some(&candidate), widen, alias, 0, None)?;
+                let failures = compare(&actual, &expected, Some(&candidate));
+                if !failures.is_empty() { return Err(format!("{}: {failures:?}", case.id)); }
+                if alias {
+                    let captured = cases::captured(&corpus, case)?;
+                    let mut compared = 0;
+                    for (role, values) in captured.iter().filter(|(r, _)| r.as_str() != "partials") {
+                        let bytes = &actual[role];
+                        let stride = bytes.len() / rows;
+                        if values.iter().enumerate().any(|(row, value)| bytes[row*stride..(row+1)*stride] != value[..]) {
+                            return Err(format!("{}: captured {role} differs", case.id));
+                        }
+                        compared += 1;
+                    }
+                    if compared != 8 + usize::from(site_widen) { return Err("missing captured HC outputs".into()); }
+                }
+                if case.site == 0 {
+                    controls(&mut run, &corpus, case, &case.id, &candidate, widen, alias, &actual)?;
+                    // Invalid inputs, sticky status and inactive rows also
+                    // replay through captured graphs with unchanged pointers.
+                    let varied = cases::input(s, &corpus, case, &map)?;
+                    let outputs = [Output::new(s, rows)?, Output::new(s, rows)?];
+                    let graphs = (0..2).map(|arm| s.capture(|stream| {
+                        device::launch(stream, &k, &varied, &outputs[arm],
+                            (arm == 1).then_some(&candidate), widen, alias, None).map(|_| ())
+                    })).collect::<LabResult<Vec<_>>>()?;
+                    for pattern in std::iter::once("finite").chain(SPECIALS) {
+                        // Restore all operands before the next mutation.
+                        for (role, data) in &input.data {
+                            let mut bytes = vec![0; data.byte_len()];
+                            data.copy_to_bytes(&mut bytes, &s.stream).map_err(|e| e.to_string())?;
+                            varied.data[role].copy_from_bytes(&bytes, &s.stream).map_err(|e| e.to_string())?;
+                        }
+                        if pattern != "finite" { alter(&varied, &s.stream, pattern)?; }
+                        for live in [rows, 0, rows - 1, rows] {
+                            set_live(&varied, s, live)?;
+                            for prior in [0, 0x80] {
+                                for arm in 0..2 {
+                                    device::reset(&s.stream, &varied, &outputs[arm], prior, alias)?;
+                                    graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?;
+                                }
+                                let reference = device::read(&s.stream, &outputs[0])?;
+                                let observed = device::read(&s.stream, &outputs[1])?;
+                                if !compare(&observed, &reference, Some(&candidate)).is_empty() {
+                                    return Err(format!("{} graph pattern={pattern} live={live} prior={prior}", case.id));
+                                }
+                            }
+                        }
+                    }
+                    if alias { negatives += mutations(&mut run, &corpus, case, widen)?; }
+                }
+                reports += 1;
+            }
+            if case.site.is_multiple_of(artifacts::TIMING_STRIDE) {
+                // Independent coefficient spans make repeated graphs idempotent.
+                for output in [&old, &new] { device::reset(&s.stream, &input, output, 0, false)?; }
+                let reference = s.capture(|stream| device::launch(stream, &k, &input, &old, None,
+                    site_widen, false, None).map(|_| ()))?;
+                for (name, selected) in [("AA", None), ("AB", Some(&candidate))] {
+                    let graph = s.capture(|stream| device::launch(stream, &k, &input, &new, selected,
+                        site_widen, false, None).map(|_| ()))?;
+                    for hot in [false, true] {
+                        let graphs = [&reference, &graph];
+                        let time = kernel_harness::time_ab_prepared(s, 2, 7,
+                            [kernel_harness::eviction::EvictionMode::Read; 2],
+                            |arm, stream| {
+                                if hot { graphs[arm].launch(stream).map_err(|e| e.to_string())?; }
+                                Ok(())
+                            },
+                            |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()))?;
+                        println!("WIDE_HC_COLS_TIMING {}", json!({"case":case.id,"rows":rows,
+                            "arm":name,"hot":hot,"old_us":time.arms[0].median_ms*1000.,
+                            "new_us":time.arms[1].median_ms*1000.,"ratio":time.paired_ratio,
+                            "reference":"ordered-chain arithmetic control"}));
+                        timings += 1;
+                    }
+                }
+            }
+            println!("WIDE_HC_COLS_CASE {}", json!({"case":case.id,"rows":rows,"reports":reports}));
+        }
+        assert_eq!(cases.len(), cases::SITES * cases::WIDE_ROWS.len());
+        assert_eq!(reports, 2 * cases.len());
+        assert_eq!(timings, cases::SITES.div_ceil(artifacts::TIMING_STRIDE) * cases::WIDE_ROWS.len() * 4);
+        assert_eq!(negatives, cases::WIDE_ROWS.len() * (MUTATIONS.len() + device::controls().len()));
+        assert!(!run.checks.is_empty() && run.checks.iter().all(|r| r["passed"] == true));
+        s.receipt("wide-hc-cols", BTreeMap::from([
+            ("corpus_sha256".into(), json!(sha)), ("cases".into(), json!(cases.len())),
+            ("reports".into(), json!(reports)), ("checks".into(), json!(run.checks)),
+            ("negatives".into(), json!(negatives)), ("timings".into(), json!(timings)),
+        ]))?;
+        println!("WIDE_HC_COLS_COMPLETE cases={} reports={reports} negatives={negatives} timings={timings}", cases.len());
+        Ok(())
+    }).unwrap();
+    assert!(result.is_some(), "an idle GPU is required");
+}

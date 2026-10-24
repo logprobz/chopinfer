@@ -13,9 +13,21 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// Decode buckets, then drafter forwards of 6, 8 and 12 items. A pair runs
-/// the rows its parallel entry holds ([`Entry::rows`]).
-const ROWS: [u32; 6] = [1, 8, DECODE_BATCH, 30, 40, SMALL_DRAFT_ROWS];
+/// Decode buckets, drafter forwards and wide verify rows. Each pair runs
+/// only the rows its parallel entry holds ([`Entry::rows`]).
+const ROWS: [u32; 11] = [
+    1,
+    8,
+    DECODE_BATCH,
+    30,
+    33,
+    40,
+    48,
+    56,
+    SMALL_DRAFT_ROWS,
+    63,
+    64,
+];
 const PATTERNS: [&str; 15] = [
     "finite",
     "wide",
@@ -121,7 +133,22 @@ fn dspark_pairs() -> Vec<[Entry; 2]> {
     pairs.into_values().collect()
 }
 fn compared() -> Vec<[Entry; 2]> {
-    pairs().into_iter().chain(dspark_pairs()).collect()
+    let pairs = pairs();
+    let cached = pairs
+        .iter()
+        .filter_map(|pair| {
+            let [Entry::Quant(old), Entry::Quant(parallel)] = pair else {
+                return None;
+            };
+            bundle_deepseek41::sm120::ceil_cached::cached(parallel)
+                .map(|new| [Entry::Quant(old.clone()), Entry::Quant(new)])
+        })
+        .collect::<Vec<_>>();
+    pairs
+        .into_iter()
+        .chain(cached)
+        .chain(dspark_pairs())
+        .collect()
 }
 fn artifacts() -> PathBuf {
     PathBuf::from(
@@ -536,7 +563,7 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
                         }
                     }
                     bitwise+=1;
-                    eprintln!("CEIL_BITWISE {} rows={rows} pattern={pattern} PASS",pair[0].symbol());
+                    eprintln!("CEIL_BITWISE {} candidate={} rows={rows} pattern={pattern} PASS",pair[0].symbol(),pair[1].symbol());
                 }
                 upload(&input,&inputs(&pair[0],rows,"finite",0x195a_dafe),&s.stream)?;
                 if matches!(&pair[0],Entry::Silu(_)) { upload(&up,&inputs(&pair[0],rows,"finite",0x7777),&s.stream)?; }
@@ -555,8 +582,8 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
                 }
                 let label=format!("ceil:{}:rows={rows}",pair[0].symbol());
                 let timing=kernel_harness::with_timing_label(&label,||kernel_harness::time_ab(s,3,15,[EvictionMode::Read;2],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string())))?;
-                eprintln!("CEIL_TIMING {} rows={rows} old_us={} new_us={} ratio={}",pair[0].symbol(),timing.arms[0].median_ms*1000.,timing.arms[1].median_ms*1000.,timing.paired_ratio);
-                timings.push(json!({"symbol":pair[0].symbol(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
+                eprintln!("CEIL_TIMING {} candidate={} rows={rows} old_us={} new_us={} ratio={}",pair[0].symbol(),pair[1].symbol(),timing.arms[0].median_ms*1000.,timing.arms[1].median_ms*1000.,timing.paired_ratio);
+                timings.push(json!({"symbol":pair[0].symbol(),"candidate":pair[1].symbol(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
             }
         }
         assert_eq!(bitwise,compared_rows()*PATTERNS.len());

@@ -34,6 +34,16 @@ const MIXES: usize = 24;
 #[test]
 #[ignore = "requires a staged directory named by CHOPINFER_F32_DECODE_ARTIFACTS"]
 fn gpu_drafter_split() {
+    split_matrix(&[30, 40, 60, 80], "DSPARK_HC");
+}
+
+#[test]
+#[ignore = "requires a frozen timing probe and an allocated GPU pair"]
+fn gpu_wide_verify_split() {
+    split_matrix(&[32, 33, 40, 48, 56, 63, 64], "WIDE_HC");
+}
+
+fn split_matrix(row_counts: &[u32], label: &str) {
     use bundle_deepseek41::sm120::fold_cubin_for_symbol;
     use runtime_cuda::KernelArgument as A;
     let result = kernel_harness::gpu_test_with(super::f32_decode::timing_cubins(), 1 << 30, |s| {
@@ -44,7 +54,7 @@ fn gpu_drafter_split() {
         let functions = modules.iter().zip(&symbols).map(|(m, symbol)| m.function(symbol)
             .map_err(|e| e.to_string())).collect::<LabResult<Vec<_>>>()?;
         let mut cases = 0;
-        for rows in [30, 40, 60, 80] {
+        for &rows in row_counts {
             let r = rows as usize;
             let input = Input {
                 x: s.allocate(r*N*H*2)?, y: s.allocate(r*H*2)?, fn_: s.allocate(MIXES*N*H*4)?,
@@ -72,8 +82,8 @@ fn gpu_drafter_split() {
                             o.reset(s, rows, pattern)?;
                             upload(&o.tickets, &vec![0; r*4], &s.stream)?;
                         }
-                        for arm in 0..2 {
-                            if graph { graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?; }
+                        for (arm, captured) in graphs.iter().enumerate() {
+                            if graph { captured.launch(&s.stream).map_err(|e| e.to_string())?; }
                             else { invoke(arm, &s.stream)?; }
                         }
                         let old = outputs[0].read(s)?;
@@ -89,17 +99,17 @@ fn gpu_drafter_split() {
                     }
                 }
                 cases += 1;
-                println!("DSPARK_HC_BITWISE rows={rows} pattern={pattern} PASS");
+                println!("{label}_BITWISE rows={rows} pattern={pattern} PASS");
             }
             set_inputs(s, rows, "finite", &input)?;
             upload(&input.live, &rows.to_le_bytes(), &s.stream)?;
             let paired = kernel_harness::time_ab(s, 2, 7, [EvictionMode::Write; 2], |arm, stream|
                 graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
-            println!("DSPARK_HC_TIMING rows={rows} old_us={} new_us={} ratio={}",
+            println!("{label}_TIMING rows={rows} old_us={} new_us={} ratio={}",
                 paired.arms[0].median_ms*1000., paired.arms[1].median_ms*1000., paired.paired_ratio);
         }
-        assert_eq!(cases, 4*PATTERNS.len());
-        println!("DSPARK_HC_COMPLETE cases={cases}");
+        assert_eq!(cases, row_counts.len()*PATTERNS.len());
+        println!("{label}_COMPLETE cases={cases}");
         Ok(())
     }).unwrap();
     assert!(result.is_some(), "an idle GPU is required");

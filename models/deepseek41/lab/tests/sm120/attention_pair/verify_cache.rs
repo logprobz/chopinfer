@@ -223,9 +223,12 @@ fn compare(session: &Session, modules: &Modules, host: &Fixture, graph: bool) ->
 }
 
 fn sliced(host: &Fixture, first: usize, rows: usize) -> Fixture {
-    assert!(rows > 0 && first + rows <= host.case.rows() && rows % host.case.sequences == 0);
+    assert!(rows > 0 && first + rows <= host.case.rows());
     let mut result = host.clone();
-    result.case.verify_width = rows / host.case.sequences;
+    // Query rows are an arbitrary contiguous range of the original KV
+    // sequences. Keep the physical KV bounds in Fixture::kv_sequences.
+    result.case.sequences = 1;
+    result.case.verify_width = rows;
     result.case.inactive = rows - host.case.live().saturating_sub(first).min(rows);
     for name in [
         "q",
@@ -257,8 +260,8 @@ fn partition(session: &Session, modules: &Modules, host: &Fixture) -> LabResult<
     let expected = output(session, &device, 0xa5)?;
     let mut joined = [Vec::new(), Vec::new()];
     let half = host.case.rows() / 2;
-    for first in [0, half] {
-        let part = sliced(host, first, half);
+    for (first, count) in [(0, half), (half, host.case.rows() - half)] {
+        let part = sliced(host, first, count);
         let device = DeviceFixture::new(session, &part)?;
         reset(session, &device, 0xa5)?;
         device.run(session, modules, &calls(&part, true)?, &session.stream)?;
@@ -274,8 +277,19 @@ fn partition(session: &Session, modules: &Modules, host: &Fixture) -> LabResult<
 
 fn controls(session: &Session, modules: &Modules, capture: &Capture, small: bool) -> LabResult<()> {
     let host = fixture(capture);
-    compare(session, modules, &host, !small)?;
-    partition(session, modules, &host)?;
+    controls_fixture(session, modules, &host, &capture.id, &capture.digest, small)
+}
+
+fn controls_fixture(
+    session: &Session,
+    modules: &Modules,
+    host: &Fixture,
+    id: &str,
+    digest: &str,
+    small: bool,
+) -> LabResult<()> {
+    compare(session, modules, host, !small)?;
+    partition(session, modules, host)?;
     for mode in [
         "changed_query",
         "one_inactive",
@@ -326,14 +340,14 @@ fn controls(session: &Session, modules: &Modules, capture: &Capture, small: bool
             }
             _ => unreachable!(),
         }
-        compare(session, modules, &varied, false)?;
+        compare(session, modules, &varied, !small)?;
     }
-    if capture.case.ratio != 0 {
-        let device = DeviceFixture::new(session, &host)?;
+    if host.case.ratio != 0 {
+        let device = DeviceFixture::new(session, host)?;
         reset(session, &device, 0xa5)?;
-        device.run(session, modules, &calls(&host, true)?, &session.stream)?;
+        device.run(session, modules, &calls(host, true)?, &session.stream)?;
         let expected = output(session, &device, 0xa5)?;
-        let mut wrong = calls(&host, true)?;
+        let mut wrong = calls(host, true)?;
         wrong[0].symbol = entry(host.case).decode_symbol(true);
         reset(session, &device, 0xa5)?;
         device.run(session, modules, &wrong, &session.stream)?;
@@ -343,18 +357,28 @@ fn controls(session: &Session, modules: &Modules, capture: &Capture, small: bool
     }
     println!(
         "VERIFY_CACHE_OK {}",
-        json!({"id":capture.id,"sha256":capture.digest,"rows":capture.case.rows(),"ratio":capture.case.ratio,
-        "poison_replays":14,"partition":true,"graph":!small,"negative":capture.case.ratio!=0})
+        json!({"id":id,"sha256":digest,"rows":host.case.rows(),"ratio":host.case.ratio,
+        "poison_replays":14,"partition":true,"graph":!small,"negative":host.case.ratio!=0})
     );
     Ok(())
 }
 
 fn timing(session: &Session, modules: &Modules, capture: &Capture) -> LabResult<()> {
     let host = fixture(capture);
-    compare(session, modules, &host, true)?;
-    let device = DeviceFixture::new(session, &host)?;
-    let old = calls(&host, current_cached(host.case))?;
-    let new = calls(&host, true)?;
+    timing_fixture(session, modules, &host, &capture.id, &capture.digest)
+}
+
+fn timing_fixture(
+    session: &Session,
+    modules: &Modules,
+    host: &Fixture,
+    id: &str,
+    digest: &str,
+) -> LabResult<()> {
+    compare(session, modules, host, true)?;
+    let device = DeviceFixture::new(session, host)?;
+    let old = calls(host, current_cached(host.case))?;
+    let new = calls(host, true)?;
     for mode in ["cold_sources", "cold_attention", "warm_attention"] {
         let repeats = if mode == "warm_attention" { 32 } else { 1 };
         let graphs = [&old, &new]
@@ -378,12 +402,12 @@ fn timing(session: &Session, modules: &Modules, capture: &Capture) -> LabResult<
         )?;
         println!(
             "VERIFY_CACHE_TIMING {}",
-            json!({"id":capture.id,"sha256":capture.digest,"mode":mode,"rows":host.case.rows(),
+            json!({"id":id,"sha256":digest,"mode":mode,"rows":host.case.rows(),
             "ratio":host.case.ratio,"current_cached":current_cached(host.case),"old_us":pair.arms[0].median_ms*1000.0/repeats as f32,
             "new_us":pair.arms[1].median_ms*1000.0/repeats as f32,"paired_ratio":pair.paired_ratio})
         );
     }
-    compare(session, modules, &host, true)?;
+    compare(session, modules, host, true)?;
     Ok(())
 }
 
@@ -426,6 +450,89 @@ fn gpu_verify_cache_time() {
 #[ignore = "requires frozen captured verify selections and an allocated GPU pair"]
 fn gpu_verify_cache_memcheck() {
     run(false, true);
+}
+
+const WIDE_ROWS: [usize; 7] = [32, 33, 40, 48, 56, 63, 64];
+
+/// A subset of a 16-item, four-row verify fixture. The KV sequences and
+/// each query's batch/key metadata stay intact even at odd row counts.
+fn wide_fixture(context: usize, rows: usize, ratio: usize) -> Fixture {
+    let case = Case {
+        context,
+        sequences: 16,
+        verify: true,
+        verify_width: 4,
+        ratio,
+        holes: false,
+        inactive: 0,
+    };
+    let e = entry(case);
+    let mut host = Fixture::new(case, &e.source);
+    let (bytes, valid) = e.cache_bytes(64).unwrap();
+    host.data.insert("decoded", vec![0xa5; bytes as usize]);
+    host.data.insert("cache_valid", vec![0xa5; valid as usize]);
+    sliced(&host, 0, rows)
+}
+
+#[test]
+fn wide_fixture_partitions_preserve_every_query_and_kv_sequence() {
+    for rows in WIDE_ROWS {
+        for ratio in 0..=2 {
+            let host = wide_fixture(1024, rows, ratio);
+            assert_eq!(host.case.rows(), rows);
+            assert_eq!(host.kv_sequences, 16);
+            let half = rows / 2;
+            let first = sliced(&host, 0, half);
+            let last = sliced(&host, half, rows - half);
+            for name in [
+                "q",
+                "row_batch",
+                "window_keys",
+                "compressed_keys",
+                "cos_sin",
+            ] {
+                assert_eq!(
+                    [first.data[name].as_slice(), last.data[name].as_slice()].concat(),
+                    host.data[name]
+                );
+            }
+            for part in [&first, &last] {
+                assert_eq!(part.kv_sequences, host.kv_sequences);
+                assert_eq!(part.data["window_items"], host.data["window_items"]);
+                assert_eq!(part.data["tables"], host.data["tables"]);
+                assert!(!calls(part, true).unwrap().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires frozen attention cubins and an allocated GPU pair"]
+fn gpu_wide_verify_cache() {
+    let ran = kernel_harness::gpu_test_with(cubins().unwrap(), 1 << 30, |session| {
+        let modules = Modules::load(session)?;
+        let mut count = 0;
+        for context in [1024, 8192] {
+            for rows in WIDE_ROWS {
+                for ratio in 0..=2 {
+                    let host = wide_fixture(context, rows, ratio);
+                    let id = format!("synthetic_c{context}_r{rows}_p{ratio}");
+                    let digest = kernel_build::digest(&host.data["q"]);
+                    controls_fixture(session, &modules, &host, &id, &digest, false)?;
+                    timing_fixture(session, &modules, &host, &id, &digest)?;
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 42);
+        println!(
+            "WIDE_VERIFY_CACHE_COMPLETE cases={count} timings={}",
+            count * 3
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(ran.is_some(), "an idle GPU is required");
 }
 
 #[test]

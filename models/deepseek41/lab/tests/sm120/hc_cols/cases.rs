@@ -12,6 +12,7 @@ const WEIGHTS: [&str; 4] = ["fn", "base", "scale", "norm_weight"];
 pub const KINDS: [(&str, usize); 3] = [("decode8x2", 16), ("verify32h", 16), ("verify32", 32)];
 /// Eligible HC boundaries per captured forward.
 pub const SITES: usize = 77;
+pub const WIDE_ROWS: [usize; 7] = [32, 33, 40, 48, 56, 63, 64];
 
 pub struct Composite {
     pub id: String,
@@ -106,10 +107,41 @@ fn check(cases: &[corpus::Case], c: &Composite) -> LabResult<()> {
             }
         }
     }
-    if !KINDS.contains(&(c.kind, c.size())) {
+    if !(KINDS.contains(&(c.kind, c.size()))
+        || c.kind == "verify_wide" && WIDE_ROWS.contains(&c.size()))
+    {
         return Err(format!("{}: row count differs from its kind", c.id));
     }
     Ok(())
+}
+
+/// Concatenate the two authenticated Verify32 captures of each site. No
+/// weight or row value is synthesized, and every output row remains pinned.
+pub fn load_wide() -> LabResult<(Vec<corpus::Case>, Vec<Composite>, String)> {
+    let (cases, original, sha) = load()?;
+    let mut result = Vec::new();
+    for site in 0..SITES {
+        let pair: Vec<_> = original
+            .iter()
+            .filter(|c| c.site == site && c.kind == "verify32")
+            .collect();
+        if pair.len() != 2 {
+            return Err("wide HC needs two captured forwards per site".into());
+        }
+        let all: Vec<_> = pair.iter().flat_map(|c| c.rows.iter().copied()).collect();
+        for rows in WIDE_ROWS {
+            let composite = Composite {
+                id: format!("verify-wide-{rows}:{}", pair[0].id),
+                kind: "verify_wide",
+                site,
+                rows: all[..rows].to_vec(),
+            };
+            check(&cases, &composite)?;
+            result.push(composite);
+        }
+    }
+    assert_eq!(result.len(), SITES * WIDE_ROWS.len());
+    Ok((cases, result, sha))
 }
 
 pub fn widening(cases: &[corpus::Case], c: &Composite) -> bool {

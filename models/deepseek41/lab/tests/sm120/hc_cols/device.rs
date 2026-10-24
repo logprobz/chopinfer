@@ -153,8 +153,12 @@ fn backend() -> LabResult<Sm120> {
 /// What the bundle asks of the op (`ops::exact::every_phase` at the decode
 /// capacity).
 fn need() -> Need {
-    Need::rows(DECODE_BATCH).with_exact(Invariance {
-        rows: Rows::OneRow { max: DECODE_BATCH },
+    need_rows(DECODE_BATCH)
+}
+
+fn need_rows(rows: u32) -> Need {
+    Need::rows(rows).with_exact(Invariance {
+        rows: Rows::OneRow { max: rows },
         chunk: Chunk::Granule(PREFILL_GRANULE),
         ..Invariance::NONE
     })
@@ -218,7 +222,7 @@ pub fn plans(
         return Err("an HC plan needs 22 views".into());
     }
     let op = backend()?
-        .sinkhorn_round_expand_mix_norm(&query(), need())
+        .sinkhorn_round_expand_mix_norm(&query(), need_rows(rows.max(DECODE_BATCH)))
         .map_err(|e| format!("{e:?}"))?;
     let mut plans = op
         .launches(&buffers(views, widen), views[21], Counts::rows(rows))

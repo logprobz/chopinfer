@@ -57,6 +57,8 @@ impl Case {
 #[derive(Clone)]
 pub struct Fixture {
     pub case: Case,
+    /// Physical KV sequences, retained when only query rows are sliced.
+    pub kv_sequences: usize,
     pub data: BTreeMap<&'static str, Vec<u8>>,
     pub budget: usize,
     pub page_stride: usize,
@@ -243,6 +245,7 @@ impl Fixture {
             + compressed_reads.len() * (WIDTH / 2 + WIDTH / 16);
         Self {
             case,
+            kv_sequences: case.sequences,
             data,
             budget,
             page_stride,
@@ -268,8 +271,8 @@ impl Fixture {
             codes: self.view("window_codes"),
             scales: self.view("window_scales"),
             item_slots: self.view("window_items"),
-            items: self.case.sequences as u32,
-            sequences: self.case.sequences as u32,
+            items: self.kv_sequences as u32,
+            sequences: self.kv_sequences as u32,
             code_stride: self.code_stride as u64,
             scale_stride: self.scale_stride as u64,
             storage: LatentWindowStorage::Staged {
@@ -287,7 +290,7 @@ impl Fixture {
             },
             block_tables: BlockTables {
                 tables: self.view("tables"),
-                sequences: self.case.sequences as u32,
+                sequences: self.kv_sequences as u32,
                 max_pages: self.max_pages as u32,
             },
             key_lists: self.view("compressed_keys"),

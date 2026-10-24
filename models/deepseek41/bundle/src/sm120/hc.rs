@@ -5,7 +5,8 @@
 //! head, which the final norm reads, in a cubin of its own so adding it
 //! kept the first cubin's bytes. The contracts are the model's
 //! (`model_deepseek41_contract::hc`). A separate split family serves
-//! buckets of at most 32 rows. Prefill buckets from 256 rows share fn
+//! buckets of at most 32 rows, and the same entry, bounded, a drafter
+//! forward's decode and verify rows. Prefill buckets from 256 rows share fn
 //! loads across eight rows; intermediate buckets keep the original mixer.
 
 use kernel_build::CubinSpec;
@@ -64,6 +65,22 @@ pub fn split_entry(g: &Geometry) -> lagged_split::Entry {
         super::rows::profile(g),
         Mixer {
             capacity: SPLIT_ROWS,
+            ..mixer(g)
+        },
+        false,
+    )
+}
+
+/// The split entry at a drafter forward's rows, registered bounded so only
+/// an op prepared for at most those rows takes it (the draft-rows mixer).
+/// It launches [`split_entry`]'s compiled symbol: the finishing CTA folds
+/// each row's chains in K order, so a row's bits do not depend on the
+/// rows, and capacity is not compiled.
+pub fn draft_split_entry(g: &Geometry) -> lagged_split::Entry {
+    lagged_split::entry(
+        super::rows::profile(g),
+        Mixer {
+            capacity: model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS,
             ..mixer(g)
         },
         false,
@@ -150,6 +167,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     let sm120 = sm120
         .with_sinkhorn_lagged(registered_entries(g))
         .with_sinkhorn_lagged_split([split_entry(g)])
+        .with_sinkhorn_lagged_split_bounded([draft_split_entry(g)])
         .with_sinkhorn_lagged_tiled([prefill_entry(g)]);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         sm120.with_sinkhorn_lagged_warp(kernels_sm120::sinkhorn_hc::lagged_warp::Entry {

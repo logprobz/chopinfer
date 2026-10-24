@@ -12,8 +12,9 @@ use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
     WeightedStreamHeadBuffers,
 };
+use model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS;
 use model_deepseek41_contract::hc;
-use model_deepseek41_contract::serving::PREFILL_TOKENS;
+use model_deepseek41_contract::serving::{DECODE_BATCH, PREFILL_TOKENS};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
@@ -28,6 +29,9 @@ pub(crate) struct HcOps {
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
     prefill_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     decode_mix: Prepared<LaggedMixCollapseBuffers<View>>,
+    /// Decode and verify rows above `DECODE_BATCH` up to a drafter
+    /// forward's small-row limit (`SMALL_DRAFT_ROWS`), on the bounded split.
+    draft_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
@@ -43,6 +47,16 @@ pub(crate) struct HcOps {
 pub(crate) struct MixScratchBytes {
     pub partials: Option<u64>,
     pub tickets: Option<u64>,
+}
+
+impl MixScratchBytes {
+    /// The most of each role `self` and `other` list.
+    pub(crate) fn most(self, other: Self) -> Self {
+        Self {
+            partials: self.partials.max(other.partials),
+            tickets: self.tickets.max(other.tickets),
+        }
+    }
 }
 
 /// A step's spans of a lagged mix-collapse: the streams and the sublayer's
@@ -115,6 +129,12 @@ impl HcOps {
             decode_mix: {
                 let need = exact::need(32, exact::every_phase(32));
                 asks.ask("hc.decode_mix", need, |need| {
+                    backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
+                })?
+            },
+            draft_mix: {
+                let need = exact::need(SMALL_DRAFT_ROWS, exact::every_phase(SMALL_DRAFT_ROWS));
+                asks.ask("hc.draft_mix", need, |need| {
                     backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
                 })?
             },
@@ -336,13 +356,23 @@ impl HcOps {
 
     /// The mixer scratch every rank allocates for the mix-collapse.
     pub(crate) fn scratch(&self) -> MixScratchBytes {
+        self.scratch_of(&[&self.mix])
+    }
+
+    /// The mixer scratch a drafter's ops bind: [`Self::scratch`] or the
+    /// draft-rows mixer's, whichever is more.
+    pub(crate) fn draft_scratch(&self) -> MixScratchBytes {
+        self.scratch_of(&[&self.mix, &self.draft_mix])
+    }
+
+    fn scratch_of(&self, mixers: &[&Prepared<LaggedMixCollapseBuffers<View>>]) -> MixScratchBytes {
         let bytes = |role: &str| {
-            self.mix
-                .info()
-                .bytes
+            mixers
                 .iter()
-                .find(|(path, _)| path == role)
+                .flat_map(|op| op.info().bytes.iter())
+                .filter(|(path, _)| path == role)
                 .map(|&(_, bytes)| bytes)
+                .max()
         };
         // A one-launch finish/norm boundary elects its tail with the same
         // zeroed tickets; every use runs on the main stream and leaves them
@@ -372,6 +402,8 @@ impl HcOps {
                 }
         ) {
             &self.decode_mix
+        } else if phase.rows() > DECODE_BATCH && phase.rows() <= SMALL_DRAFT_ROWS {
+            &self.draft_mix
         } else {
             &self.mix
         }
@@ -515,6 +547,12 @@ mod tests {
                         assert_eq!(new[0].plan.grid, [rows.div_ceil(8), 1, 1]);
                         assert_eq!(new[0].plan.block, [256, 1, 1]);
                         assert_eq!(new[0].plan.dynamic_shared_bytes, 0);
+                    } else if !phase.prefill() && rows <= SMALL_DRAFT_ROWS {
+                        // A drafter forward's rows take the bounded split.
+                        assert_eq!(new.len(), 1);
+                        assert!(new[0].symbol.ends_with("_lagged_mix_collapse_split_v1"));
+                        assert_eq!(new[0].plan.grid[1], rows);
+                        assert_eq!(new[0].arguments.0.len(), old[0].arguments.0.len() + 2);
                     } else {
                         assert_eq!(new, old, "{phase:?}");
                     }
@@ -768,6 +806,14 @@ mod tests {
             }
             assert_eq!(ops.scratch().partials, Some(32 * 15360));
             assert_eq!(ops.scratch().tickets, Some(32 * 4));
+            assert_eq!(
+                ops.draft_scratch().partials,
+                Some(u64::from(SMALL_DRAFT_ROWS) * 15360)
+            );
+            assert_eq!(
+                ops.draft_scratch().tickets,
+                Some(u64::from(SMALL_DRAFT_ROWS) * 4)
+            );
         }
     }
 }

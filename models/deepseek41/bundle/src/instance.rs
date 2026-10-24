@@ -392,13 +392,21 @@ impl Instance {
             services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
             scratch.push(bound);
             // The mixer scratch the mix-collapse lists; its tickets start
-            // zeroed.
+            // zeroed. A drafter's forwards above the decode batch split
+            // their mixer over the same scratch.
             let bytes = self
                 .ops
                 .hc
                 .as_ref()
                 .map(|ops| ops.scratch())
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .most(
+                    self.dspark
+                        .as_ref()
+                        .and_then(|drafter| drafter.ops.hc.as_ref())
+                        .map(|ops| ops.draft_scratch())
+                        .unwrap_or_default(),
+                );
             let partials = bytes
                 .partials
                 .map(|bytes| allocate_span(services, pool, stream, bytes, held))

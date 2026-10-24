@@ -27,8 +27,9 @@ def main(stage):
     root = stage / 'validation' / f'argv-{time.time_ns()}'
     root.mkdir(parents=True)
     rows = []
-    for depth in range(model['max_depth'] + 1):
-        arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}']
+    for depth in model.get('depths') or range(model['max_depth'] + 1):
+        arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}',
+                     *model.get('extra_arguments', [])]
         server = r.Server(root / f'd{depth}', install['install'], install['cache'], arguments)
         argv = server.server_command + ['--list-model-options']
         if any('kv-memory-fraction' in x for x in argv):

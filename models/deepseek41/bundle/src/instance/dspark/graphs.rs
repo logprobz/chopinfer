@@ -131,3 +131,40 @@ impl Instance {
         Ok(())
     }
 }
+
+/// One drafter launch as the journal export prints it: symbol, rows,
+/// grid, block, dynamic shared bytes and whether it is a collective.
+#[cfg(test)]
+pub(crate) type DrafterLaunch = (String, u32, [u32; 3], [u32; 3], u32, bool);
+
+/// Each rank's complete drafter program for `items` drafting items, as the
+/// draft graph would capture it.
+#[cfg(test)]
+pub(crate) fn drafter_launches_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    items: u32,
+) -> Result<Vec<Vec<DrafterLaunch>>, String> {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).ok_or("no live instance")?;
+        Ok(instance
+            .drafter_programs(items)?
+            .into_iter()
+            .map(|rank| {
+                rank.into_iter()
+                    .map(|op| {
+                        let plan = op.launch.plan;
+                        (
+                            op.launch.symbol,
+                            op.launch.rows,
+                            plan.grid,
+                            plan.block,
+                            plan.dynamic_shared_bytes,
+                            op.collective,
+                        )
+                    })
+                    .collect()
+            })
+            .collect())
+    })
+}

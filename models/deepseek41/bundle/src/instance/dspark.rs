@@ -9,6 +9,8 @@ mod features;
 mod graph_budget;
 pub(crate) use features::PrefillFeatureRange;
 mod graphs;
+#[cfg(test)]
+pub(crate) use graphs::drafter_launches_for_test;
 mod launch;
 pub(crate) mod prefetch;
 mod results;

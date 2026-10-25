@@ -11,7 +11,10 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> TaskResult {
     let mut arguments = arguments.into_iter();
     match arguments.next().as_deref() {
         Some("check-portable") if arguments.next().is_none() => check_portable(),
-        _ => Err("usage: xtask check-portable".to_owned()),
+        Some("check-portable-build") if arguments.next().is_none() => portable_build(),
+        Some("check-portable-lint") if arguments.next().is_none() => portable_lint(),
+        Some("check-portable-test") if arguments.next().is_none() => portable_test(),
+        _ => Err("usage: xtask check-portable[-build|-lint|-test]".to_owned()),
     }
 }
 
@@ -48,6 +51,41 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
 ];
 
 fn check_portable() -> TaskResult {
+    portable_build()?;
+    portable_lint()?;
+    portable_test()
+}
+
+fn command(label: &str, program: &str, args: &[&str]) -> TaskResult {
+    let started = Instant::now();
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .map_err(|error| format!("{label}: {error}"))?;
+    eprintln!("portable {label}: {:.3}s", started.elapsed().as_secs_f64());
+    if !status.success() {
+        return Err(format!("{label} failed: {status}"));
+    }
+    Ok(())
+}
+
+fn portable_build() -> TaskResult {
+    command(
+        "build",
+        "cargo",
+        &["test", "--workspace", "--no-run", "--locked", "--offline"],
+    )
+}
+
+fn portable_test() -> TaskResult {
+    command(
+        "tests",
+        "python3",
+        &["-B", "ci/rust_tests.py", "--workspace"],
+    )
+}
+
+fn portable_lint() -> TaskResult {
     let started = Instant::now();
     audit_unsafe(Path::new("crates"))?;
     audit_unsafe(Path::new("models"))?;
@@ -77,22 +115,8 @@ fn check_portable() -> TaskResult {
                 "warnings",
             ],
         ),
-        // cargo-nextest and the doctests, or cargo test without nextest.
-        (
-            "tests",
-            "python3",
-            vec!["-B", "ci/rust_tests.py", "--workspace"],
-        ),
     ] {
-        let started = Instant::now();
-        let status = Command::new(program)
-            .args(args)
-            .status()
-            .map_err(|error| format!("{label}: {error}"))?;
-        eprintln!("portable {label}: {:.3}s", started.elapsed().as_secs_f64());
-        if !status.success() {
-            return Err(format!("{label} failed: {status}"));
-        }
+        command(label, program, &args)?;
     }
     Ok(())
 }

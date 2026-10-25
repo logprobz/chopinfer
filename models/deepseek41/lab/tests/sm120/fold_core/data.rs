@@ -44,12 +44,18 @@ fn pattern(n: u64, salt: u32, scale: bool) -> Vec<u8> {
     bytes
 }
 pub fn synthetic(base: &mxfp8_fold::Entry, rows: u32) -> Input {
+    synthetic_rank(base, rows, 0)
+}
+/// Distinct deterministic local operands for each logical TP4 rank.
+pub fn synthetic_rank(base: &mxfp8_fold::Entry, rows: u32, rank: u32) -> Input {
+    assert!(rank < 4);
     let size = base.bytes(rows);
     let mut input = empty(base, rows);
-    input.codes = pattern(size.activations, 173, false);
-    input.scales = pattern(size.activation_scales, 33, true);
-    input.weights = pattern(size.weights, 731, false);
-    input.weight_scales = pattern(size.weight_scales, 381, true);
+    let salt = rank * 7919;
+    input.codes = pattern(size.activations, 173 + salt, false);
+    input.scales = pattern(size.activation_scales, 33 + salt, true);
+    input.weights = pattern(size.weights, 731 + salt, false);
+    input.weight_scales = pattern(size.weight_scales, 381 + salt, true);
     input
 }
 /// Weights of a pair's second bank: the synthetic pattern with other salts.

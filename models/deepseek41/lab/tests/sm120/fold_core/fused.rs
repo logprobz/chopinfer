@@ -33,6 +33,8 @@
 //! arm, warm and cold). `CHOPINFER_FOLD_FUSED_ROWS` keeps one row tile and
 //! `CHOPINFER_FOLD_FUSED_CASES` (`wo` or `status`) one group.
 use super::*;
+#[path = "tails.rs"]
+mod tails;
 use kernel_core::contract::{Argument, Refusal};
 use kernels_sm120::{
     gemm::mxfp8_fold_cluster_fused::{Quantized, Quantizer},
@@ -320,6 +322,7 @@ fn wo_build(
     weights: [&[u8]; 4],
     input: &[u16],
 ) -> LabResult<Wo> {
+    tails::start_case();
     let oa = base_of(1024, 4096, 2);
     let ob = base_of(5120, 2048, 1);
     let weights = if a.session.is_some() {
@@ -350,11 +353,15 @@ fn wo_build(
     let served_b = sm120::fold_cluster::served("attention.o-b", tile);
     let fused_a = if tile == 64 {
         sm120::fold_verify::entry("attention.o-a").unwrap()
+    } else if tails::active() {
+        sm120::fold_fused::fused("attention.o-a", tile).unwrap()
     } else {
         fused_family::fused("attention.o-a", tile)
     };
     let fused_b = if tile == 64 {
         sm120::fold_verify::entry("attention.o-b").unwrap()
+    } else if tails::active() {
+        sm120::fold_fused::fused("attention.o-b", tile).unwrap()
     } else {
         fused_family::fused("attention.o-b", tile)
     };
@@ -362,14 +369,18 @@ fn wo_build(
     let mut arms = Vec::new();
     {
         let (fa, fb) = wo_buffers(a, &oa, &ob, &weights, rows)?;
-        let old_a = if tile == 64 {
+        let old_a = if tails::active() {
+            tails::reference(a, &oa, &fa, rows)?
+        } else if tile == 64 {
             wide_reference(a, &oa, &fa, rows)?
         } else {
             let entry = served_a.as_ref().ok_or("served o-a")?;
             let work = a.filled(entry.workspace(), 0)?;
             entry.launches(&fa, work, rows).map_err(err)?
         };
-        let old_b = if tile == 64 {
+        let old_b = if tails::active() {
+            tails::reference(a, &ob, &fb, rows)?
+        } else if tile == 64 {
             wide_reference(a, &ob, &fb, rows)?
         } else {
             let entry = served_b.as_ref().ok_or("served o-b")?;
@@ -403,7 +414,9 @@ fn wo_build(
             controls: None,
         });
     }
-    let first: Vec<Option<Quantizer>> = if tile == 64 {
+    let first: Vec<Option<Quantizer>> = if tails::active() && tile <= 32 {
+        vec![None, sm120::fold_fused::sliced(tile)]
+    } else if tile == 64 {
         let mut sliced = sm120::fold_fused::sliced(32).unwrap();
         sliced.capacity = 64;
         vec![None, Some(sliced)]
@@ -415,13 +428,13 @@ fn wo_build(
     for q in first {
         let (mut fa, mut fb) = wo_buffers(a, &oa, &ob, &weights, rows)?;
         let raw_weights = [fa.weights, fb.weights];
-        if tile == 64 {
+        if tile == 64 || tails::active() {
             fa = packed_views(a, &oa, &fa)?;
             fb = packed_views(a, &ob, &fb)?;
         }
         let flags = a.filled(u64::from(rows) * u64::from(OUTPUT_A / 32), 0xa5)?;
-        let work_a = a.filled(fused_a.workspace(), 0)?;
-        let work_b = a.filled(fused_b.workspace(), 0)?;
+        let work_a = tails::work(a, fused_a.workspace())?;
+        let work_b = tails::work(a, fused_b.workspace())?;
         let quantize = match &q {
             None => quantize_launch(&q8, input, fa.activations, fa.activation_scales, &fa, rows)?,
             Some(q) => q
@@ -447,7 +460,7 @@ fn wo_build(
         let mut launch_b = fused_b
             .launch(&fb, None, Some(flags), work_b, rows)
             .map_err(err)?;
-        if tile == 64 {
+        if tile == 64 || tails::active() {
             launch_a.symbol = fused_a.packed_spec().map_err(err)?.symbol;
             launch_b.symbol = fused_b.packed_spec().map_err(err)?.symbol;
         }
@@ -460,18 +473,33 @@ fn wo_build(
             l.arguments.0[2] = Argument::DeviceBuffer(raw.handle);
             l
         };
-        let controls = [
-            vec![
-                quantize.clone(),
-                ignore(&launch_a, &fused_a, raw_weights[0]),
-                launch_b.clone(),
-            ],
-            vec![
-                quantize.clone(),
-                launch_a.clone(),
-                ignore(&launch_b, &fused_b, raw_weights[1]),
-            ],
-        ];
+        let controls = if tails::active() {
+            [
+                vec![
+                    quantize.clone(),
+                    tails::ignore_status(a, &launch_a, rows)?,
+                    launch_b.clone(),
+                ],
+                vec![
+                    quantize.clone(),
+                    launch_a.clone(),
+                    tails::ignore_status(a, &launch_b, rows)?,
+                ],
+            ]
+        } else {
+            [
+                vec![
+                    quantize.clone(),
+                    ignore(&launch_a, &fused_a, raw_weights[0]),
+                    launch_b.clone(),
+                ],
+                vec![
+                    quantize.clone(),
+                    launch_a.clone(),
+                    ignore(&launch_b, &fused_b, raw_weights[1]),
+                ],
+            ]
+        };
         arms.push(WoArm {
             label: q.as_ref().map_or("fused".into(), fused_family::label),
             a: fa,
@@ -513,6 +541,7 @@ fn wo_reset(
     live: u32,
     bad: bool,
 ) -> LabResult<()> {
+    tails::poison(a)?;
     let rows = wo.rows;
     let mut values = input.to_vec();
     let width = ATTENTION as usize;
@@ -682,17 +711,19 @@ fn wo_case(
     let mut record = json!({"case":"wo","tile":tile,"rows":rows,"source":source,
         "served":symbols(&wo.arms[0].calls),"served_modules":served_modules(&wo.arms[0].calls),
         "arms":wo.arms.iter().map(|arm| json!({"label":arm.label,"calls":arm.calls.iter().map(|c| json!({"symbol":c.symbol,"grid":c.plan.grid,"block":c.plan.block,"cluster":c.plan.cluster})).collect::<Vec<_>>()})).collect::<Vec<_>>()});
-    let graphs =
-        if mode == Mode::Check || mode == Mode::Time || tile == 64 && mode == Mode::Memcheck {
-            Some(
-                wo.arms
-                    .iter()
-                    .map(|arm| s.capture(|stream| issue(s, &a, &f, &arm.calls, stream)))
-                    .collect::<LabResult<Vec<_>>>()?,
-            )
-        } else {
-            None
-        };
+    let graphs = if mode == Mode::Check
+        || mode == Mode::Time
+        || (tile == 64 || tails::active()) && mode == Mode::Memcheck
+    {
+        Some(
+            wo.arms
+                .iter()
+                .map(|arm| s.capture(|stream| issue(s, &a, &f, &arm.calls, stream)))
+                .collect::<LabResult<Vec<_>>>()?,
+        )
+    } else {
+        None
+    };
     let configurations: Vec<(u32, bool)> = match mode {
         Mode::Racecheck | Mode::Memcheck => vec![(rows, true), (rows.saturating_sub(1), false)],
         _ => vec![
@@ -728,7 +759,7 @@ fn wo_case(
     }
     record["comparisons"] = json!(comparisons);
     record["bitwise"] = json!(true);
-    if mode == Mode::Racecheck || mode == Mode::Memcheck || rows < 3 {
+    if mode == Mode::Racecheck || mode == Mode::Memcheck && !tails::active() || rows < 3 {
         return Ok(record);
     }
     // Admitting every live row must change WO_a's output (the NaN and preset
@@ -763,9 +794,18 @@ fn wo_case(
     {
         wo_reset(&a, &wo, input, [weights[0], weights[1]], rows, false)?;
         for (name, cold) in [("warm", false), ("cold", true)] {
-            record[name] = timing::arms(s, cold, graphs.len(), |arm, stream| {
-                graphs[arm].launch(stream).map_err(|e| e.to_string())
+            let count = graphs.len() + usize::from(tails::active());
+            record[name] = timing::arms(s, cold, count, |arm, stream| {
+                let selected = if tails::active() {
+                    arm.saturating_sub(1)
+                } else {
+                    arm
+                };
+                graphs[selected].launch(stream).map_err(|e| e.to_string())
             })?;
+            if tails::active() {
+                record["aa_arms"] = json!([0, 1]);
+            }
         }
         record["labels"] = json!(wo.arms.iter().map(|arm| &arm.label).collect::<Vec<_>>());
     }
@@ -897,6 +937,9 @@ fn status_build(
     rows: u32,
     input: &data::Input,
 ) -> LabResult<StatusCase> {
+    if tails::active() {
+        return tails::status_build(a, id, tile, rows, input);
+    }
     let err = |e: Refusal| e.to_string();
     let arms = if id == "attention.q-b" && tile != 64 {
         2 + fused_family::WIDE.len()
@@ -999,6 +1042,7 @@ fn status_reset(
     bad: bool,
     zeroed: bool,
 ) -> LabResult<()> {
+    tails::poison(a)?;
     let q = base_of(input.n, input.k, input.groups).query;
     let stride = q.activation_row_stride as usize;
     let rejected: Vec<(u32, u32)> = if bad && live > 1 {
@@ -1060,16 +1104,18 @@ fn status_case(
     let mut record = json!({"case":"status","projection":id,"tile":tile,"rows":rows,"source":input.id,
         "served":symbols(&c.served),"served_modules":served_modules(&c.served),
         "candidates":c.candidates.iter().map(|(label, calls)| json!({"label":label,"calls":symbols(calls)})).collect::<Vec<_>>()});
-    let graphs =
-        if mode == Mode::Check || mode == Mode::Time || tile == 64 && mode == Mode::Memcheck {
-            Some(
-                arms.iter()
-                    .map(|calls| s.capture(|stream| issue(s, &a, &f, calls, stream)))
-                    .collect::<LabResult<Vec<_>>>()?,
-            )
-        } else {
-            None
-        };
+    let graphs = if mode == Mode::Check
+        || mode == Mode::Time
+        || (tile == 64 || tails::active()) && mode == Mode::Memcheck
+    {
+        Some(
+            arms.iter()
+                .map(|calls| s.capture(|stream| issue(s, &a, &f, calls, stream)))
+                .collect::<LabResult<Vec<_>>>()?,
+        )
+    } else {
+        None
+    };
     let configurations: Vec<(u32, bool)> = match mode {
         Mode::Racecheck | Mode::Memcheck => vec![(rows, true)],
         _ => vec![
@@ -1120,7 +1166,7 @@ fn status_case(
     }
     record["comparisons"] = json!(comparisons);
     record["bitwise"] = json!(true);
-    if mode == Mode::Racecheck || mode == Mode::Memcheck || rows < 2 {
+    if mode == Mode::Racecheck || mode == Mode::Memcheck && !tails::active() || rows < 2 {
         return Ok(record);
     }
     // Rejected rows that keep their codes: every arm still clears them by
@@ -1152,9 +1198,18 @@ fn status_case(
     {
         status_reset(&a, &c, input, rows, rows, false, true)?;
         for (name, cold) in [("warm", false), ("cold", true)] {
-            record[name] = timing::arms(s, cold, graphs.len(), |arm, stream| {
-                graphs[arm].launch(stream).map_err(|e| e.to_string())
+            let count = graphs.len() + usize::from(tails::active());
+            record[name] = timing::arms(s, cold, count, |arm, stream| {
+                let selected = if tails::active() {
+                    arm.saturating_sub(1)
+                } else {
+                    arm
+                };
+                graphs[selected].launch(stream).map_err(|e| e.to_string())
             })?;
+            if tails::active() {
+                record["aa_arms"] = json!([0, 1]);
+            }
         }
     }
     Ok(record)

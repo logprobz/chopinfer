@@ -102,8 +102,9 @@ def attempt_paths(output: Path, part) -> tuple[Path, Path]:
 
 
 def command(binary: Path, test: str, timing: Path) -> list[str]:
+    capture = timing.parent.name or binary.stem
     return [
-        "bash", str(ROOT / "tools/dev/heavy.sh"), "--label", f"route-guard:{test}:{timing.stem}",
+        "bash", str(ROOT / "tools/dev/heavy.sh"), "--label", f"route-guard:{capture}:{test}:{timing.stem}",
         "systemd-run", "--user", "--scope", "--quiet",
         "--property=MemoryMax=24G", "--property=MemorySwapMax=0",
         "timeout", "--kill-after=10s", "880s",

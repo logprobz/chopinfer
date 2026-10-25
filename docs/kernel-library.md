@@ -455,6 +455,12 @@ and its smallest and largest shapes. Complete boundary triples rotate among
 eligible secondary profile/mode combinations; extra dense probes rotate
 among single-prompt profiles. No triple is split between combinations.
 
+Verify capacity and warmup widths follow the profile's `speculation.rows`,
+`widths` and `graph_rows` together with the package's row limits. Changing a
+profile's default row budget changes its envelope automatically. Supported
+nondefault serving overrides and their ranges are a separate envelope
+extension; explicit override route tests do not establish full-profile coverage.
+
 The CPU plan repeats after the printed `rotation_period`: currently 36 runs
 for DeepSeek and Qwen, 30 for GLM, and 24 for MiMo. Every eligible combination
 of every boundary triple is covered within that many consecutive seeds for a
@@ -479,10 +485,10 @@ It discovers models through their required allowlist file. Quick sweeps run
 up to four models in parallel. The runner warns loudly when a model exceeds
 20 seconds in quick or 60 seconds in CPU, and prints the route stage's total
 added wall time. The CPU stage runs models serially. Its measured added time
-on eight admitted CPUs is 184 to 188 seconds: DeepSeek 85 to 86, GLM 27 to
-28, MiMo 33 and Qwen 40 seconds (2026-10-25). The model warnings remain active. `ci/quick.sh`
-always selects quick; `ci/cpu.sh` selects CPU. Missing executed cases or peak
-RSS reports fail the stage.
+on eight admitted CPUs is 184 to 194 seconds: DeepSeek 85 to 91, GLM 27 to
+29, MiMo 33 to 34 and Qwen 40 to 42 seconds (2026-10-25). The model warnings
+remain active. `ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
+Missing executed cases or peak RSS reports fail the stage.
 
 Full and exhaustive sweeps run only in bounded pieces. Build the bundle test
 executable through `tools/dev/heavy.sh`, then run the coordinator outside a
@@ -515,6 +521,26 @@ verdict. The final audit requires every expected shape from the same
 executable and seed, then checks neighbours, islands across piece boundaries
 and stale allowlist entries over the complete profile.
 
+After interruption, use `--resume` with the same test, tier, seed and part
+count, `--binary "$CAPTURE/sweep-test"` and `--out "$CAPTURE"`. The runner
+verifies completed receipts and their successful test/RSS logs before
+retaining them. It preserves prior attempt logs and admits each unfinished
+piece separately. Heavy labels include the capture name and piece number so
+quiet windows can identify the current admission. Wait for a requested quiet-window resume
+before restarting an interrupted capture.
+
+A reviewed metadata-only correction can re-audit a complete capture with
+`--metadata-audit "$CAPTURE"`, a new `--out`, the corrected `--binary`,
+`--journal-proof "$PROOF"` and a nonempty `--reason`. The proof is JSON with
+schema `chopinfer.route-journal-proof.v1`, the corrected executable's
+`build_sha256`, and its freshly run journal-pin `tests` (each with `name`,
+`exit_code: 0`, `passed: 1`, `failed: 0`, `ignored: 0`). The runner seals
+copies of every receipt, records receipt hashes and both executable
+identities, and requires the complete case plan to match. Counts remain
+those of the original capture. This is not execution evidence for changes
+to routing, kernels, numerics or the served envelope; those need fresh
+captures. The re-audit itself has the same memory and time limits as a piece.
+
 `kernel_core::route::RouteClass` distinguishes Fast, Baseline and Reference.
 Tags are registration metadata. `Launch`, `OpInfo`, kernel locks and the
 bundle ABI carry no new field. A wrapper reports its actual selected branch
@@ -523,6 +549,13 @@ bindings. A symbol can be Fast at one call site and Baseline in a wrapper's
 fallback branch. Those are distinct entry identities, never a global
 Baseline label on the reused symbol. Conflicting classes for one entry
 are refused.
+
+For every symbol with a Baseline or Reference registration, the sweep requires
+its raw journal launch count to equal the sum of its selected-entry counts,
+including standalone Fast uses of that symbol. Missing or duplicated entry
+evidence fails before allowance checks. A profile or journal checker given
+both raw captures and step records also rejects incomplete selected evidence;
+an allowance cannot repair missing instrumentation.
 
 Nested MXFP8 wrappers use the canonical family `mxfp8_prefill`. The registered
 admitted rows are combined, and reports retain the wrapper path: compact,
@@ -592,10 +625,10 @@ Adding a model:
    performance evidence.
 5. For served jobs, set `CHOPINFER_ROUTE_COUNTERS=1` and enable step tracing.
    The optional `step.v1` `route` object reports fallback launches, families
-   and selected entries. Counts include graph replays and add no device
-   synchronization or readback. The tune runner enables these counters and
-   rejects missing evidence or a nonzero family without a reason in the
-   job's `allow_fallbacks` object.
+   and selected entries. Counts combine execute and commit callbacks, include
+   graph replays and add no device synchronization or readback. The tune runner
+   enables these counters and rejects missing evidence or a nonzero family
+   without a reason in the job's `allow_fallbacks` object.
 
 For profile review, set `CHOPINFER_ROUTE_TAGS_OUT` to a fresh existing directory
 outside the repository when running a sweep. It writes one tag JSON per

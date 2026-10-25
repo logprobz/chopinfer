@@ -150,9 +150,16 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
     fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
         if let Some(admitted) = &self.reuse {
             let entry = self.entry.entry_for_rows(counts.rows);
-            let selected = self.entry.uses_bounded_reuse(counts.rows)
-                || entry.decode_last(counts.rows).is_some()
-                || entry.uses_decode_reuse(counts.rows);
+            let early = self.entry.uses_bounded_reuse(counts.rows)
+                || entry.decode_last(counts.rows).is_some();
+            if counts.rows > 0 && !early && entry.uses_prefill_tiles() {
+                return self
+                    .routes
+                    .iter()
+                    .find(|t| t.symbol == launch.symbol)
+                    .cloned();
+            }
+            let selected = early || entry.uses_decode_reuse(counts.rows);
             return Some(kernel_core::route::branch(
                 &launch.symbol,
                 if selected {

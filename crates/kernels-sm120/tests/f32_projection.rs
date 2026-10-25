@@ -98,6 +98,55 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 }
 
 #[test]
+fn prefill_tile_route_takes_precedence_over_reuse_fallback() {
+    use kernel_core::route::RouteClass;
+    let seed = entry(WeightFormat::Bf16);
+    let routed = Entry::new(
+        GemmQuery {
+            m_capacity: 512,
+            ..seed.query()
+        },
+        OperationUse {
+            capacity: 512,
+            ..seed.usage()
+        },
+        "reuse_and_prefill",
+    )
+    .unwrap()
+    .with_split_decode()
+    .with_prefill_buckets(vec![(257, 32)])
+    .unwrap()
+    .with_bounded_reuse(vec![35])
+    .unwrap();
+    let prepared = backend(vec![routed.clone()])
+        .projection(&operation(&routed), routed.usage(), Need::rows(512))
+        .unwrap()
+        .handle;
+    let mut b = buffers(&routed);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: routed.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: prepared.info().workspace,
+    };
+    for (rows, class, family) in [
+        (257, RouteClass::Fast, "f32_projection"),
+        (35, RouteClass::Fast, "f32_reuse"),
+        (36, RouteClass::Baseline, "f32_reuse"),
+    ] {
+        let launches = prepared.launches(&b, work, Counts::rows(rows)).unwrap();
+        assert!(!launches.is_empty());
+        for launch in launches {
+            let tag = prepared.route(Counts::rows(rows), &launch).unwrap();
+            assert_eq!((tag.class, tag.family), (class, family), "rows={rows}");
+            assert_eq!(routed.route_at(rows, &launch.symbol).unwrap(), tag);
+        }
+    }
+}
+
+#[test]
 fn routed_prefill_preserves_decode_and_bounds_every_measured_bucket() {
     let seed = entry(WeightFormat::Bf16);
     let q = GemmQuery {

@@ -93,9 +93,12 @@ impl Entry {
             return self.route_tag(symbol);
         }
         let entry = self.entry_for_rows(rows);
-        let selected = self.uses_bounded_reuse(rows)
-            || entry.decode_last(rows).is_some()
-            || entry.uses_decode_reuse(rows);
+        let early = self.uses_bounded_reuse(rows) || entry.decode_last(rows).is_some();
+        // Launch selection reaches registered prefill tiles before decode reuse.
+        if rows > 0 && !early && entry.uses_prefill_tiles() {
+            return self.route_tag(symbol);
+        }
+        let selected = early || entry.uses_decode_reuse(rows);
         Some(branch(
             symbol,
             if selected {

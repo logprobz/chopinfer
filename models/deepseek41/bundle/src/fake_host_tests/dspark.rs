@@ -630,7 +630,7 @@ fn full_budget_prefill_then_maximum_dspark_verify() {
 
 /// An instance asked for the package's widest verify rows serves every
 /// item at its deepest block, 192 rows, and widths between. Above the
-/// default graph rows the steps run eagerly; with `verify_graph_rows` 64
+/// explicitly restricted graph rows the steps run eagerly; with the default 64
 /// the 48- and 64-row steps capture target graphs and wider ones do not.
 #[test]
 fn requested_verify_rows_serve_every_item_at_its_deepest_block() {
@@ -649,16 +649,16 @@ fn requested_verify_rows_serve_every_item_at_its_deepest_block() {
     };
     let eager = prefill_then_verify(
         widest,
-        |shape, host| crate::config::tests::record(shape, host.kv, 32, false),
+        |shape, host| {
+            let record = crate::config::tests::record(shape, host.kv, 32, false);
+            crate::config::tests::with_option(record, GRAPH_ROWS, 32.into())
+        },
         &cases,
     );
     assert!(eager.iter().all(|lines| !captured(lines)), "{eager:?}");
     let graphed = prefill_then_verify(
         widest,
-        |shape, host| {
-            let record = crate::config::tests::record(shape, host.kv, 32, false);
-            crate::config::tests::with_option(record, GRAPH_ROWS, 64.into())
-        },
+        |shape, host| crate::config::tests::record(shape, host.kv, 32, false),
         &cases,
     );
     assert_eq!(

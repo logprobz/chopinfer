@@ -1,4 +1,6 @@
 # Served route gaps. Remove each entry when its tracked range is qualified.
+# The backbone router finish covers Decode-2/4 and Verify-2..32; its eight
+# unfused-stage exceptions are retired. HC and drafter entries remain separate.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-ar-upper-skip-2048", "tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
@@ -1171,26 +1173,6 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-ar-upper-skip-2048", "tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "decode"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_deepseek41_moe_floor_e384_k6_metadata_v1"
-symbol = "chop_deepseek41_moe_floor_e384_k6_metadata_v1"
-rows = [[2, 2], [4, 4]]
-reason = "moe_router_finish::qualified admits backbone decode rows 1, 8, 16 and 32; decode buckets 2 and 4 retain these unfused router stages until the fused finish passes full-MoE equality and crossover qualification at those two buckets"
-task = "OMR5-ROUTER-finish-decode-2-4"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-ar-upper-skip-2048", "tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "decode"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_e384k6_t64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_e384k6_t64_v1"
-rows = [[2, 2], [4, 4]]
-reason = "moe_router_finish::qualified admits backbone decode rows 1, 8, 16 and 32; decode buckets 2 and 4 retain these unfused router stages until the fused finish passes full-MoE equality and crossover qualification at those two buckets"
-task = "OMR5-ROUTER-finish-decode-2-4"
-
-[[allow]]
 profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
 phase = "verify"
 family = "sinkhorn_finish_norm"
@@ -1279,66 +1261,6 @@ symbol = "chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
 rows = [[9, 15], [17, 31]]
 reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. instance::dspark::batch splits at eight items, and partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception"
 task = "ODR-DRAFTER-router-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_deepseek41_moe_floor_e384_k6_metadata_v1"
-symbol = "chop_deepseek41_moe_floor_e384_k6_metadata_v1"
-rows = [[5, 5]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_e384k6_t64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_e384k6_t64_v1"
-rows = [[5, 5]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_decode_e384l384k6_t8_p64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_route_decode_e384l384k6_t8_p64_v1"
-rows = [[3, 3], [7, 7]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t64_p64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t64_p64_v1"
-rows = [[9, 15], [17, 31]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t64_p64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t64_p64_v1"
-rows = [[9, 15], [17, 31]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
-phase = "verify"
-family = "moe_router_finish"
-entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t64_p64_v1"
-symbol = "chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t64_p64_v1"
-rows = [[9, 15], [17, 31]]
-reason = "moe_router_finish::qualified admits backbone verify widths 4, 6, 8, 16 and 32 only when the direct MoE path is admitted; these exact verify widths retain the original unfused stages and need full-MoE equality and crossover qualification"
-task = "OMR5-ROUTER-finish-verify-tails"
 
 [[allow]]
 profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]

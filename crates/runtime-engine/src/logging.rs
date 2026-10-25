@@ -459,9 +459,63 @@ pub fn record_route(message: &[u8]) {
             .expect("route object")
             .remove("schema");
         ROUTE.with(|r| {
-            r.replace(Some(value));
+            let mut slot = r.borrow_mut();
+            let total = slot.get_or_insert_with(|| {
+                serde_json::json!({
+                    "fallback_launches": 0, "families": {}, "entries": {}
+                })
+            });
+            if accumulate_route(total, &value).is_none() {
+                // Keep the whole step invalid if a callback supplies inconsistent
+                // metadata. A later callback cannot turn partial counts into proof.
+                *total = serde_json::json!({"invalid": true});
+            }
         });
     }
+}
+
+fn accumulate_route(total: &mut serde_json::Value, next: &serde_json::Value) -> Option<()> {
+    total["fallback_launches"] = total["fallback_launches"]
+        .as_u64()?
+        .checked_add(next["fallback_launches"].as_u64()?)?
+        .into();
+    for (family, count) in next["families"].as_object()? {
+        let count = count.as_u64()?;
+        let previous = total["families"]
+            .as_object_mut()?
+            .entry(family.clone())
+            .or_insert(0.into());
+        *previous = previous.as_u64()?.checked_add(count)?.into();
+    }
+    for (entry, count) in next["entries"].as_object()? {
+        let launches = count["launches"].as_u64()?;
+        for field in ["symbol", "class", "family"] {
+            count[field].as_str()?;
+        }
+        let wrappers = count["wrappers"].as_array()?;
+        if wrappers.iter().any(|value| !value.is_string()) {
+            return None;
+        }
+        let entries = total["entries"].as_object_mut()?;
+        if let Some(previous) = entries.get_mut(entry) {
+            if ["symbol", "class", "family"]
+                .iter()
+                .any(|field| previous[*field] != count[*field])
+            {
+                return None;
+            }
+            previous["launches"] = previous["launches"].as_u64()?.checked_add(launches)?.into();
+            let previous_wrappers = previous["wrappers"].as_array_mut()?;
+            for wrapper in wrappers {
+                if !previous_wrappers.contains(wrapper) {
+                    previous_wrappers.push(wrapper.clone());
+                }
+            }
+        } else {
+            entries.insert(entry.clone(), count.clone());
+        }
+    }
+    Some(())
 }
 
 pub(crate) fn take_route() -> Option<serde_json::Value> {
@@ -471,6 +525,27 @@ pub(crate) fn take_route() -> Option<serde_json::Value> {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    #[test]
+    fn route_records_add_execute_and_commit_launches_until_step_end() {
+        assert!(take_route().is_none());
+        for count in [2, 3] {
+            record_route(
+                serde_json::json!({"schema": "chopinfer.route.v1",
+                "fallback_launches": count, "families": {"norm": count},
+                "entries": {"norm/fallback": {"symbol": "norm", "class": "Baseline",
+                    "family": "norm", "wrappers": ["fallback"], "launches": count}}})
+                .to_string()
+                .as_bytes(),
+            );
+        }
+        let route = take_route().unwrap();
+        assert_eq!(route["fallback_launches"], 5);
+        assert_eq!(route["families"]["norm"], 5);
+        assert_eq!(route["entries"]["norm/fallback"]["launches"], 5);
+        assert_eq!(route["entries"]["norm/fallback"]["class"], "Baseline");
+        assert!(take_route().is_none());
+    }
 
     #[test]
     fn route_record_is_retained_on_the_stepping_thread_until_taken() {

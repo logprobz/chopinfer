@@ -348,7 +348,8 @@ impl conformance::Startup for Served {
         envelope
     }
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
-        crate::Kernels::route_tags(&self.host.shape)
+        let shape = self.host.shape.with_verify_rows(self.serving.verify_rows());
+        crate::Kernels::route_tags(&shape)
     }
     fn route_threads(tier: conformance::route_guard::Tier) -> usize {
         if tier == conformance::route_guard::Tier::Quick {
@@ -562,52 +563,97 @@ impl conformance::Startup for Served {
 fn route_records_cover_legacy_and_negotiated_prefill() {
     use conformance::Startup;
     bundle_runtime::routes::with_logging(|| {
-        let serving = Served::servings()
-            .into_iter()
-            .find(|s| s.profile == "tp4-ar")
-            .unwrap();
-        let adapter = Served::new(&serving);
-        adapter.host.device.symbols_only.set(true);
-        let mut instance = adapter.create().unwrap();
-        for (request, negotiated) in [(701, false), (702, true)] {
-            let items = [conformance::Item {
-                request,
-                slot: 0,
-                start: 0,
-                tokens: (1..=789).collect(),
-                phase: Phase::Prefill,
-            }];
-            let from = adapter.host.logs.borrow().len();
-            let mut sink = RecordingSink::<Limits>::default();
-            if negotiated {
-                adapter
-                    .execute_route_step(&mut instance, &items, &[789], &mut sink)
-                    .unwrap();
-            } else {
-                instance.execute(&adapter.step(&items), &mut sink).unwrap();
+        for profile in ["tp4-ar", "tp4-dspark"] {
+            let serving = Served::servings()
+                .into_iter()
+                .find(|s| s.profile == profile)
+                .unwrap();
+            let adapter = Served::new(&serving);
+            adapter.host.device.symbols_only.set(true);
+            let mut instance = adapter.create().unwrap();
+            for (request, negotiated) in [(701, false), (702, true)] {
+                let items = [conformance::Item {
+                    request,
+                    slot: 0,
+                    start: 0,
+                    tokens: (1..=789).collect(),
+                    phase: Phase::Prefill,
+                }];
+                let from = adapter.host.logs.borrow().len();
+                let mut sink = RecordingSink::<Limits>::default();
+                if negotiated {
+                    adapter
+                        .execute_route_step(&mut instance, &items, &[789], &mut sink)
+                        .unwrap();
+                } else {
+                    instance.execute(&adapter.step(&items), &mut sink).unwrap();
+                }
+                instance.commit().unwrap();
+                let logs = adapter.host.logs.borrow();
+                let records: Vec<serde_json::Value> = logs[from..]
+                    .iter()
+                    .filter_map(|s| serde_json::from_str(s).ok())
+                    .filter(|v: &serde_json::Value| v["schema"] == "chopinfer.route.v1")
+                    .collect();
+                assert_eq!(
+                    records.len(),
+                    2,
+                    "execute and commit, negotiated={negotiated}"
+                );
+                if serving.draft_tokens > 0 {
+                    assert!(
+                        !records[1]["entries"].as_object().unwrap().is_empty(),
+                        "batched prefill commit launches must be counted"
+                    );
+                }
+                let route = &records[0];
+                assert!(route["fallback_launches"].as_u64().unwrap() > 0);
+                assert_eq!(
+                    route["fallback_launches"].as_u64().unwrap(),
+                    route["families"]
+                        .as_object()
+                        .unwrap()
+                        .values()
+                        .map(|n| n.as_u64().unwrap())
+                        .sum::<u64>()
+                );
+                drop(logs);
+                if serving.draft_tokens > 0 {
+                    let from = adapter.host.logs.borrow().len();
+                    let rows = serving.draft_tokens + 1;
+                    let verify = [conformance::Item {
+                        request,
+                        slot: 0,
+                        start: 789,
+                        tokens: (790..790 + rows).collect(),
+                        phase: Phase::Verify,
+                    }];
+                    instance
+                        .execute(
+                            &adapter.step(&verify),
+                            &mut RecordingSink::<Limits>::default(),
+                        )
+                        .unwrap();
+                    instance
+                        .commit_accepted(&[BundleKeptRowsV1 {
+                            struct_size: std::mem::size_of::<BundleKeptRowsV1>() as u32,
+                            reserved: 0,
+                            request_id: request,
+                            kept_rows: rows,
+                            reserved_tail: 0,
+                        }])
+                        .unwrap();
+                    let records = adapter.host.logs.borrow()[from..]
+                        .iter()
+                        .filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                        .filter(|v| v["schema"] == "chopinfer.route.v1")
+                        .count();
+                    assert_eq!(records, 2, "verify execute and accepted commit");
+                }
+                instance.retire_request(request).unwrap();
             }
-            instance.commit().unwrap();
-            instance.retire_request(request).unwrap();
-            let logs = adapter.host.logs.borrow();
-            let records: Vec<serde_json::Value> = logs[from..]
-                .iter()
-                .filter_map(|s| serde_json::from_str(s).ok())
-                .filter(|v: &serde_json::Value| v["schema"] == "chopinfer.route.v1")
-                .collect();
-            assert_eq!(records.len(), 1, "negotiated={negotiated}");
-            let route = &records[0];
-            assert!(route["fallback_launches"].as_u64().unwrap() > 0);
-            assert_eq!(
-                route["fallback_launches"].as_u64().unwrap(),
-                route["families"]
-                    .as_object()
-                    .unwrap()
-                    .values()
-                    .map(|n| n.as_u64().unwrap())
-                    .sum::<u64>()
-            );
+            instance.destroy().unwrap();
+            adapter.assert_released();
         }
-        instance.destroy().unwrap();
-        adapter.assert_released();
     });
 }

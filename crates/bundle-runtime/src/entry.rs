@@ -121,7 +121,7 @@ pub fn create<T: Bundle>(services: HostServicesV1, configuration: &[u8]) -> Bund
     })
 }
 
-/// Account for every execution export, including negotiated prefill callbacks.
+/// Account for execution and commit exports, including negotiated prefill callbacks.
 pub fn with_route_counter<T: Bundle>(
     instance: &mut T,
     execute: impl FnOnce(&mut T) -> BundleStatusV1,
@@ -151,7 +151,11 @@ pub fn execute<T: Bundle>(
 }
 
 pub fn commit<T: Bundle>(handle: BundleHandleV1) -> BundleStatusV1 {
-    T::instances().with(|instances| with_instance(instances, handle, T::commit))
+    T::instances().with(|instances| {
+        with_instance(instances, handle, |instance| {
+            with_route_counter(instance, T::commit)
+        })
+    })
 }
 
 pub fn commit_accepted<T: Bundle>(
@@ -160,7 +164,7 @@ pub fn commit_accepted<T: Bundle>(
 ) -> BundleStatusV1 {
     T::instances().with(|instances| {
         with_instance(instances, handle, |instance| {
-            instance.commit_accepted(records)
+            with_route_counter(instance, |instance| instance.commit_accepted(records))
         })
     })
 }

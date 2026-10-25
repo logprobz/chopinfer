@@ -295,3 +295,7 @@ path = "examples/sm120/build_moe_router64.rs"
 [[example]]
 name = "prepare_moe_wide"
 path = "examples/sm120/prepare_moe_wide.rs"
+
+[[test]]
+name = "norm_small_rows"
+path = "tests/sm120/norm_small_rows/main.rs"

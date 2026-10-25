@@ -10,6 +10,7 @@ license.workspace = true
 bundle-runtime.workspace = true
 encoder-spec.workspace = true
 frontend-format.workspace = true
+kernel-build.workspace = true
 kernel-core = { workspace = true, features = ["precision-serde"] }
 model-compiler-sdk.workspace = true
 projection-spec.workspace = true
@@ -27,7 +28,6 @@ serde_json.workspace = true
 kernel-harness.workspace = true
 runtime-cuda.workspace = true
 kernel-lab-families.workspace = true
-kernel-build.workspace = true
 kernels-sm120.workspace = true
 
 [[test]]

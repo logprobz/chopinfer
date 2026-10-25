@@ -378,4 +378,25 @@ fn main() {
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     fs::write(out.join("geometries.rs"), output).unwrap();
+
+    let tuning = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("tuning/flash");
+    let mut tables = String::from("pub(crate) static TABLES: &[(Family, &str)] = &[\n");
+    for (variant, family) in [
+        ("DenseFold", "dense_fold"),
+        ("Reuse", "reuse"),
+        ("DensePrefill", "dense_prefill"),
+        ("F32", "f32"),
+        ("Moe", "moe"),
+        ("Hc", "hc"),
+        ("Norm", "norm"),
+        ("Latent", "latent"),
+        ("Indexer", "indexer"),
+    ] {
+        let path = tuning.join(format!("{family}.json"));
+        println!("cargo:rerun-if-changed={}", path.display());
+        let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        tables += &format!("    (Family::{variant}, {text:?}),\n");
+    }
+    tables += "];\n";
+    fs::write(out.join("tuning.rs"), tables).unwrap();
 }

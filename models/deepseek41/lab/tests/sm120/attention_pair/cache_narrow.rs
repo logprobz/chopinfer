@@ -342,6 +342,16 @@ fn gpu_narrow_cache_timing() {
             "NARROW_CACHE_TIMING_COMPLETE {}",
             json!({"shard":shard,"scope":scope,"cases":count,"aa_identical_inputs":true})
         );
+        let receipt = session.receipt(
+            "attention_cache_narrow",
+            BTreeMap::from([
+                ("scope".into(), json!(scope)),
+                ("shard".into(), json!(shard)),
+                ("measurements".into(), json!(count)),
+                ("execution_mode".into(), json!("graph")),
+            ]),
+        )?;
+        println!("NARROW_CACHE_TIMING_RECEIPT {}", receipt.display());
         Ok(())
     })
     .unwrap();

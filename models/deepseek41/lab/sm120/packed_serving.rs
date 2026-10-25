@@ -149,7 +149,7 @@ impl Entry {
                     }),
             ],
             Self::Matrix(e) => vec![
-                sm120::prefill_matrix::ROWS
+                sm120::prefill_matrix::rows()
                     .into_iter()
                     .find(|&r| sm120::prefill_matrix::choice(q, r) == Some((e.tile_rows, e.stages)))
                     .unwrap_or(192),

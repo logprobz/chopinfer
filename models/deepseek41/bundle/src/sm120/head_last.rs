@@ -49,7 +49,21 @@ pub fn head(g: &Geometry, ranks: u32, entry: Entry) -> Result<Entry, String> {
         // SM120, 250 W, 2026-10-20: all real-input/device/cache pairs win
         // by more than 3%. Do not infer a crossover for unmeasured rows.
         entry
-            .with_decode_last(vec![1, 8, 32])
+            .with_decode_last(
+                super::f32_prefill::rows_for(
+                    g,
+                    "f32.head_last.decode",
+                    super::f32_head::query(g, ranks),
+                    Some(ranks),
+                )
+                .into_iter()
+                .flat_map(|row| {
+                    assert_eq!(row.schedule, "last");
+                    let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+                    lo..=hi
+                })
+                .collect(),
+            )
             .map_err(|e| e.to_string())
     } else {
         Ok(entry)

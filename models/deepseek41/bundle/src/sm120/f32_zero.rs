@@ -16,7 +16,25 @@ pub const ROWS: &[u32] = &[
     2048, 2112, 2240, 2368, 2496, 4095, 4096, 8150, 8191, 8192,
 ];
 pub fn selected(g: &Geometry, ranks: u32, experts: u32) -> bool {
-    g.id == FLASH.id && ranks == 4 && experts == 384
+    choice(g, ranks, experts, 8192).is_some()
+}
+
+pub fn choice(
+    g: &Geometry,
+    ranks: u32,
+    experts: u32,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    use model_deepseek41_contract::tuning::{Family, select};
+    select(
+        g,
+        Family::F32,
+        "f32.router_zero.prefill",
+        "bf16",
+        &[("ranks", ranks), ("experts", experts)],
+        8192,
+        rows,
+    )
 }
 pub fn entry() -> Entry {
     Entry::new(

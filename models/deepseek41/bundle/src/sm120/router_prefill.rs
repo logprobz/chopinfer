@@ -62,7 +62,14 @@ impl PreparedOp<ProjectionBuffers<View>> for Router {
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         let old = self.base.launches(b, workspace, counts)?;
-        if !(family::ROWS[0]..=8192).contains(&counts.rows) {
+        if family::choice(
+            &model_deepseek41_contract::geometry::FLASH,
+            4,
+            384,
+            counts.rows,
+        )
+        .is_none()
+        {
             return Ok(old);
         }
         let e = family::entry();

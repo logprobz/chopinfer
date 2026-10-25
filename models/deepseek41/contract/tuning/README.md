@@ -51,8 +51,66 @@ out of tables, including native MoE prefill tiles versus base tiles and
 BF16 all-reduce partials. A row may choose only schedules that preserve
 the operation's arithmetic.
 
-The initial tables are empty and do not change serving selection. Each
-family's owner fills its table and replaces its stub in
-`bundle/src/tuning_tests/<family>.rs` with served-key coverage. That test
-pins the served keys with no row, so a newly untuned bucket produces a
-test diff. Keep each family's table and tests in its own files.
+Each family's `bundle/src/tuning_tests/<family>.rs` pins the served keys
+with no row. Missing keys select the existing baseline. The pins enumerate
+the operation, shape, capacity and uncovered launch ranges, so a newly
+untuned bucket produces a test diff.
+
+## Latent, indexer, F32 and dense prefill
+
+These operation sites retain the existing schedule choices:
+
+| Family | Sites and phases |
+| --- | --- |
+| `latent` | `sources`, `cache`, `staging` in decode and verify; `query` in decode and verify; `paired` in prefill |
+| `indexer` | `hierarchy` in decode; `query` in verify; `cached`, `candidate_scores`, `compressed_scores` in prefill |
+| `f32` | `exact`, `band`, `blocked`, `wide`, `router_zero`, `router_norm` in prefill; `head_last` in decode; `bounded_reuse`, `cached` in verify |
+| `dense_prefill` | `compact`, `matrix`, `tma_scales` in prefill |
+
+The sites identify the existing registration or preparation stage. Small-row
+F32 and latent query registrations also serve callers of other phases through
+the existing prepared-op lookup. Bank eligibility stays at those callers.
+The F32 head's projection-reuse choice belongs to `reuse.json`.
+
+Exact F32 rows take precedence over bands. Blocked and wide overrides retain
+their existing order, followed by head reuse, head-last and optional bounded
+reuse at registration. Their separate sites retain the original entry
+metadata as well as the final launch. The shared split-F32 construction and
+its 33-256-row baseline stay in code for every geometry.
+
+Latent source qualification still checks the attention dimensions, kernel
+tag, base geometry and topology. Draft-block exclusion, native-KV checks,
+source compatibility, available caches and scratch remain code gates. The
+selected cache precedes decoded prefill, optional shared heads and the base
+attention. Cached rows are clipped by both the prepared capacity and the
+instance's verification budget. The query table selects the parallel registration. Its 48-row capacity stays
+shared with the generic prepared-op adapter, whose capacity lookup also
+serves baseline geometries. The paired prefill registration needs
+the full 8192-row capacity and serves every valid launch count within it.
+Native prefill finish, staged cache, query-window fusion, sequence count,
+chunk offsets, origins and storage/layout checks remain in code.
+
+Indexer hierarchy retains native-KV, exact geometry and runtime-MMA gates.
+Its scratch limits remain resource checks. Diagnostic verify routing,
+source-layer eligibility, positions, score-byte limits, eager execution,
+FP4 storage, candidate availability and 512/4096-row batching remain in
+code. Candidate and compressed scoring sites are selected only after their
+source/layout gates. Cached selection retains compression-ratio and width
+compatibility; its table enumerates each actual bounded preparation capacity
+and uses ranges for the admitted launch rows. Wide query and F32 preparation
+still require the target bank and available operations; resource bounds are
+checked independently of schedule selection.
+
+The certified router retains weight-domain, workspace, aliasing and
+verification-overlap checks. Router-in-norm retains its producer and
+certificate ABI checks. Its route metadata and the zero router's historical
+measurement domain remain unchanged pending the separate route-tag refactor.
+
+Dense-prefill registration keeps compact's `ROWS` domain, which is also
+consumed by dense-fold registration. Kernel catalogs retain every qualified
+control and unused variant. `mxfp8_fold::prefill_tail_policy` remains a code
+gate: its shape thresholds and row-remainder evaluator decide the split
+tail. `lower/dense.rs` retains fused/local precedence, layer and bank gates.
+`ops/dense.rs` retains prefill, short-prefill, wide Engram, stream and workspace
+precedence, including the 128-row prefill threshold and the qualified
+1-64-row short-prefill path. These rules are outside the table lookup.

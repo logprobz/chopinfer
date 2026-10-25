@@ -9,18 +9,23 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "f32_blocked_prefill";
 pub const SERVING_FAMILY: &str = "f32_blocked_serving";
 
-pub fn selected_rows(n: u32, k: u32) -> &'static [u32] {
-    match (n, k) {
-        (384, 5120) => &[
-            320, 448, 512, 576, 704, 832, 960, 1088, 1216, 1344, 1472, 1600, 1728, 1856, 1984,
-            2048, 2112, 2240, 2368, 2496, 4096, 8191, 8192,
-        ],
-        (512, 5120) => &[512, 2048, 4096, 8191, 8192],
-        (32, 5120) => &[448, 512, 960, 1472, 1984, 2048, 2496, 8191, 8192],
-        (128, 5120) => &[512, 2048, 8191, 8192],
-        (128, 512) => &[2048, 8191, 8192],
-        _ => &[],
-    }
+pub fn selected_rows(n: u32, k: u32) -> Vec<u32> {
+    let q = crate_query(n, k);
+    super::f32_prefill::rows_for(&FLASH, "f32.blocked.prefill", q, None)
+        .into_iter()
+        .flat_map(|row| {
+            assert_eq!(row.schedule, "blocked");
+            let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            lo..=hi
+        })
+        .collect()
+}
+
+fn crate_query(n: u32, k: u32) -> kernel_core::contract::GemmQuery {
+    let mut q = super::f32_head::query(&FLASH, 4);
+    q.n = n;
+    q.k = k;
+    q
 }
 
 pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {

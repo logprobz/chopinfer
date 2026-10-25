@@ -32,7 +32,17 @@ fn enabled(shape: &Shape, storage: KvStorage, phase: Phase) -> bool {
     shape.geometry == &FLASH
         && storage == KvStorage::Native
         && shape.runtime.indexer_mma
-        && matches!(phase, Phase::Decode(1..=32))
+        && matches!(phase, Phase::Decode(_))
+        && model_deepseek41_contract::tuning::select(
+            shape.geometry,
+            model_deepseek41_contract::tuning::Family::Indexer,
+            "indexer.hierarchy.decode",
+            "fp4",
+            &[("ranks", shape.ranks())],
+            32,
+            phase.rows(),
+        )
+        .is_some()
 }
 
 /// The score allocation is 256 MiB. Decode uses at most 128 MiB (32 rows

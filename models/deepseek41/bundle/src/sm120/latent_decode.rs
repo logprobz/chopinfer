@@ -57,12 +57,28 @@ pub fn loads(cubin: &str, g: &Geometry, ranks: u32, storage: KvStorage) -> bool 
 }
 
 pub fn selection(phase: AttentionPhase) -> Option<(u32, u32, u32, bool)> {
-    let rows = match phase {
-        AttentionPhase::Decode => 8,
-        AttentionPhase::Verify => 32,
+    let (op, bucket) = match phase {
+        AttentionPhase::Decode => ("latent.staging.decode", 32),
+        AttentionPhase::Verify => ("latent.staging.verify", 192),
         _ => return None,
     };
-    Some((rows, 64, 0, false))
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{Family, table},
+    };
+    let row = table(&FLASH, Family::Latent)?
+        .rows()
+        .iter()
+        .find(|row| row.key.op == op && row.key.bucket == bucket && row.key.shape["ranks"] == 4)?;
+    assert_eq!(row.schedule, "staged");
+    let [lo, hi] = row.key.rows?;
+    assert_eq!(lo, hi, "staging prepares one measured launch size");
+    Some((
+        lo,
+        row.knobs["stage_keys"].count()?,
+        row.knobs["head_group"].count()?,
+        row.knobs["packed"].flag()?,
+    ))
 }
 
 /// Only these exact phase/row pairs were timed. In particular, 16 rows and

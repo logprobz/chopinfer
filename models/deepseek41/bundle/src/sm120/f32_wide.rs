@@ -7,7 +7,17 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "f32_wide_serving";
 pub fn selected(n: u32, k: u32, rows: u32) -> bool {
-    matches!(n, 128 | 384 | 512) && k == 5120 && rows == 8192
+    use model_deepseek41_contract::tuning::{Family, select};
+    select(
+        &FLASH,
+        Family::F32,
+        "f32.wide.prefill",
+        "bf16",
+        &[("n", n), ("k", k)],
+        8192,
+        rows,
+    )
+    .is_some_and(|row| row.schedule == "wide")
 }
 pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
     let q = entry.query();
@@ -15,7 +25,15 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
         return Ok(entry);
     }
     entry
-        .with_wide_prefill_buckets(vec![(8192, 64)])
+        .with_wide_prefill_buckets(
+            super::f32_prefill::rows_for(g, "f32.wide.prefill", q, None)
+                .into_iter()
+                .flat_map(|row| {
+                    let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+                    (lo..=hi).map(move |rows| (rows, row.knobs["tile"].count().unwrap()))
+                })
+                .collect(),
+        )
         .map_err(|e| e.to_string())
 }
 pub fn cubin_name(g: &Geometry) -> String {

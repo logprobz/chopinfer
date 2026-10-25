@@ -21,7 +21,22 @@ impl crate::Kernels {
     }
 
     pub(crate) fn prefill_tile_selected(compact: bool, ratio2: bool, rows: u32) -> bool {
-        rows == if compact || ratio2 { 4096 } else { 512 }
+        let (op, capacity) = if compact || ratio2 {
+            ("indexer.compressed_scores.prefill", 4096)
+        } else {
+            ("indexer.candidate_scores.prefill", 512)
+        };
+        use model_deepseek41_contract::tuning::{Family, select};
+        select(
+            &FLASH,
+            Family::Indexer,
+            op,
+            "fp4",
+            &[("top_k", 512)],
+            capacity,
+            rows,
+        )
+        .is_some()
     }
 
     pub(crate) fn prefill_tile_scores(

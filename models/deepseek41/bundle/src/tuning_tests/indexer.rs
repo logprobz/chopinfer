@@ -93,12 +93,14 @@ fn cases(mut visit: impl FnMut(Key, Vec<bool>, &'static str)) {
         }
     }
 }
-fn generated() -> Table {
+fn generated() -> (Table, std::collections::BTreeSet<Key>) {
+    let mut domain = std::collections::BTreeSet::new();
     let mut out = Table::new(Target {
         compute_capability: 120,
         sm_count: 188,
     });
     cases(|key, selected, schedule| {
+        domain.insert(key.clone());
         let mut start = None;
         for (index, chosen) in selected.iter().copied().chain([false]).enumerate() {
             if chosen {
@@ -119,7 +121,7 @@ fn generated() -> Table {
             }
         }
     });
-    out
+    (out, domain)
 }
 #[test]
 #[ignore = "one-time selector migration generator"]
@@ -127,12 +129,19 @@ fn generate() {
     let out = std::path::PathBuf::from(
         std::env::var_os("C9_TUNING_OUT").expect("external output directory"),
     );
-    std::fs::write(out.join("indexer.json"), generated().render()).unwrap();
+    let (table, domain) = generated();
+    std::fs::write(out.join("indexer.json"), table.render()).unwrap();
+    let domain: Vec<_> = domain.into_iter().map(|key| serde_json::json!({"op":key.op,"weights":key.weights,"shape":key.shape,"bucket":key.bucket})).collect();
+    std::fs::write(
+        out.join("indexer-domain.json"),
+        serde_json::to_string_pretty(&domain).unwrap(),
+    )
+    .unwrap();
 }
 #[test]
 fn differential() {
     let committed = table(&FLASH, Family::Indexer).unwrap();
-    assert_eq!(committed.render(), generated().render());
+    assert_eq!(committed.render(), generated().0.render());
     let mut count = 0;
     cases(|key, expected, schedule| {
         for (index, selected) in expected.into_iter().enumerate() {

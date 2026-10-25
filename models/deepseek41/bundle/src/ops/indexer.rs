@@ -63,7 +63,7 @@ impl IndexerOps {
             backend.position_indexer_query(&query_spec, need)
         })?;
         let rows = shape.verify_decode_rows();
-        let wide_query = if target && rows > 32 {
+        let wide_query = if target && crate::Kernels::wide_index_query_rows(rows, rows) {
             Some(asks.ask(
                 "indexer.query wide verify",
                 exact::need(rows, exact::verify(rows)),
@@ -95,7 +95,9 @@ impl IndexerOps {
             quantizer_status_row_offset: 0,
         };
         let counts = Counts::rows(rows).with_positions(table_rows);
-        let op = if matches!(phase, crate::program::Phase::Verify { rows: 33..=64, .. }) {
+        let op = if matches!(phase, crate::program::Phase::Verify { .. })
+            && crate::Kernels::wide_index_query_rows(64, rows)
+        {
             self.wide_query.as_ref()
         } else {
             None

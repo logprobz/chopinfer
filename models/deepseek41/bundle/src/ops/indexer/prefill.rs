@@ -17,6 +17,8 @@ pub(crate) struct BatchOps {
     select: Prepared<PositionSelectBuffers<View>>,
     producer: Option<Prepared<CandidateBlockIdsBuffers<View>>>,
     cached: bool,
+    cached_capacity: u32,
+    cached_width: u32,
 }
 
 impl Factory {
@@ -108,6 +110,8 @@ impl Factory {
             select,
             producer,
             cached,
+            cached_capacity: rows,
+            cached_width: width,
         })
     }
 }
@@ -125,7 +129,13 @@ impl BatchOps {
         views: &SelectViews,
     ) -> Result<Vec<Lowered>, Refusal> {
         let calls = SelectOps::select_prepared(&self.select, rows, width, views)?;
-        if self.cached && rows >= 32 {
+        if self.cached
+            && crate::Kernels::cached_prefill_indexer_rows(
+                self.cached_width,
+                self.cached_capacity,
+                rows,
+            )
+        {
             crate::Kernels::cached_prefill_indexer_select(calls)
         } else {
             Ok(calls)

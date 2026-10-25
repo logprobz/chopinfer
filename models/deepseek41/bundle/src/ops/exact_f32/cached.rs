@@ -128,6 +128,9 @@ impl CachedProjectionStages {
 /// A qualified wide projection, prepared only for an instance that admits it.
 pub(crate) struct Wide {
     maximum_rows: u32,
+    n: u32,
+    k: u32,
+    ranks: u32,
     op: Box<dyn CachedProjection>,
 }
 
@@ -149,13 +152,32 @@ pub(crate) fn prepare(
     let need = crate::ops::exact::need(maximum_rows, crate::ops::exact::verify(maximum_rows));
     need.check(&info)?;
     asks.record(name, need, &info);
-    Ok(Some(Wide { maximum_rows, op }))
+    Ok(Some(Wide {
+        maximum_rows,
+        n,
+        k,
+        ranks: shape.ranks(),
+        op,
+    }))
 }
 
 impl Wide {
     pub(crate) fn for_phase(&self, phase: crate::program::Phase) -> bool {
-        matches!(phase, crate::program::Phase::Verify { rows: 33..=64, .. })
-            && phase.rows() <= self.maximum_rows
+        use model_deepseek41_contract::{
+            geometry::FLASH,
+            tuning::{Family, select},
+        };
+        matches!(phase, crate::program::Phase::Verify { .. })
+            && select(
+                &FLASH,
+                Family::F32,
+                "f32.cached.verify",
+                "bf16",
+                &[("n", self.n), ("k", self.k), ("ranks", self.ranks)],
+                self.maximum_rows,
+                phase.rows(),
+            )
+            .is_some()
     }
 
     pub(crate) fn project(

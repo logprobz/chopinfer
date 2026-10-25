@@ -12,8 +12,25 @@ impl crate::Kernels {
     ) -> bool {
         matches!(ratio, 1 | 2)
             && u64::from(width) * u64::from(ratio) == 131072
-            && rows >= 32
             && top_k == 512
+            && Self::cached_prefill_indexer_rows(width, rows, rows)
+    }
+
+    pub(crate) fn cached_prefill_indexer_rows(width: u32, capacity: u32, rows: u32) -> bool {
+        use model_deepseek41_contract::{
+            geometry::FLASH,
+            tuning::{Family, select},
+        };
+        select(
+            &FLASH,
+            Family::Indexer,
+            "indexer.cached.prefill",
+            "f32",
+            &[("width", width), ("top_k", 512)],
+            capacity,
+            rows,
+        )
+        .is_some()
     }
 
     pub(crate) fn cached_prefill_indexer_select(

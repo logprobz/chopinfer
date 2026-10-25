@@ -20,11 +20,25 @@ pub fn eligible(g: &Geometry, ranks: u32, storage: KvStorage) -> bool {
 }
 
 pub fn rows(phase: AttentionPhase) -> Vec<u32> {
-    match phase {
-        AttentionPhase::Decode => vec![1, 2, 4, 8],
-        AttentionPhase::Verify => [4, 6, 16, 32].into_iter().chain(33..=MAX_ROWS).collect(),
-        _ => Vec::new(),
-    }
+    let (op, bucket) = match phase {
+        AttentionPhase::Decode => ("latent.cache.decode", 32),
+        AttentionPhase::Verify => ("latent.cache.verify", 192),
+        _ => return Vec::new(),
+    };
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{Family, table},
+    };
+    table(&FLASH, Family::Latent)
+        .unwrap()
+        .rows()
+        .iter()
+        .filter(|row| row.key.op == op && row.key.bucket == bucket && row.key.shape["ranks"] == 4)
+        .flat_map(|row| {
+            let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            lo..=hi
+        })
+        .collect()
 }
 
 pub fn selected(phase: AttentionPhase, count: u32) -> bool {
@@ -32,19 +46,34 @@ pub fn selected(phase: AttentionPhase, count: u32) -> bool {
     if REFERENCE.with(std::cell::Cell::get) {
         return false;
     }
-    match phase {
-        AttentionPhase::Decode => matches!(count, 1 | 2 | 4 | 8),
-        AttentionPhase::Verify => matches!(count, 4 | 6 | 16) || (32..=MAX_ROWS).contains(&count),
-        _ => false,
-    }
+    cache_row(phase, count).is_some()
+}
+
+fn cache_row(phase: AttentionPhase, rows: u32) -> Option<&'static kernel_build::tuning::Row> {
+    let (op, bucket) = match phase {
+        AttentionPhase::Decode => ("latent.cache.decode", 32),
+        AttentionPhase::Verify => ("latent.cache.verify", 192),
+        _ => return None,
+    };
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{Family, select},
+    };
+    select(
+        &FLASH,
+        Family::Latent,
+        op,
+        "fp8",
+        &[("ranks", 4)],
+        bucket,
+        rows,
+    )
 }
 
 pub fn head_group(phase: AttentionPhase, rows: u32) -> u32 {
-    if phase == AttentionPhase::Verify && rows == 4 {
-        8
-    } else {
-        0
-    }
+    cache_row(phase, rows)
+        .and_then(|row| row.knobs["head_group"].count())
+        .unwrap_or(0)
 }
 
 /// Keep the qualified lab module byte-for-byte, including its unused controls.

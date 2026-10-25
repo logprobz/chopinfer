@@ -11,6 +11,7 @@ pub const ROWS: [u32; 5] = [128, 512, 2048, 4096, 8192];
 // d2-0381: event and exclusive median ratios must both be below 0.97 on
 // both devices. Select the winning stage count with the best worst-device
 // speedup. Zero retains the baseline. See mxfp8_compact.md for the timings.
+#[cfg(test)]
 const CHOICES: &[(u32, u32, u32, [u32; 5])] = &[
     (512, 5120, 1, [2, 2, 2, 2, 2]),
     (576, 5120, 1, [2, 2, 2, 2, 2]),
@@ -34,6 +35,22 @@ const CHOICES: &[(u32, u32, u32, [u32; 5])] = &[
 ];
 
 pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
+    use model_deepseek41_contract::tuning::{Family, select};
+    let row = select(
+        g,
+        Family::DensePrefill,
+        "dense_prefill.compact.prefill",
+        "mxfp8",
+        &[("n", q.n), ("k", q.k), ("groups", q.groups)],
+        q.m_capacity,
+        rows,
+    )?;
+    assert_eq!(row.schedule, "compact");
+    row.knobs["stages"].count()
+}
+
+#[cfg(test)]
+pub fn legacy_stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     if g.id != FLASH.id {
         return None;
     }

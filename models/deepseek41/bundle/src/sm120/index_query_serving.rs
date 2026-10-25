@@ -5,6 +5,20 @@ use kernels_sm120::backend::Sm120;
 use model_deepseek41_contract::geometry::FLASH;
 
 impl crate::Kernels {
+    pub(crate) fn wide_index_query_rows(capacity: u32, rows: u32) -> bool {
+        use model_deepseek41_contract::tuning::{Family, select};
+        select(
+            &FLASH,
+            Family::Indexer,
+            "indexer.query.verify",
+            "f32",
+            &[("ranks", 4)],
+            capacity,
+            rows,
+        )
+        .is_some()
+    }
+
     pub(crate) fn wide_index_query(
         shape: &crate::shape::Shape,
         query: &PositionIndexerQuery,
@@ -12,7 +26,7 @@ impl crate::Kernels {
     ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
         if shape.geometry.id != FLASH.id
             || shape.ranks() != 4
-            || !(33..=shape.verify_decode_rows()).contains(&need.capacity)
+            || !Self::wide_index_query_rows(shape.verify_decode_rows(), need.capacity)
         {
             return Err(Refused::Unsupported);
         }

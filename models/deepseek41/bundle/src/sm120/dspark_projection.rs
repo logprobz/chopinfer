@@ -4,10 +4,7 @@ use kernels_sm120::f32_projection::{
     Entry,
     bounded_reuse::{self, Candidate},
 };
-use model_deepseek41_contract::{
-    dspark_options::SMALL_DRAFT_ROWS,
-    geometry::{FLASH, Geometry},
-};
+use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "dspark_f32_reuse";
 pub const CUBIN: &str = "dspark_f32_reuse_deepseek41_sm120";
@@ -23,7 +20,16 @@ pub fn route(g: &Geometry, ranks: u32, entry: Entry) -> Result<Entry, String> {
         && [g.shape.vocab / ranks, g.shape.dspark.experts].contains(&q.n)
     {
         entry
-            .with_bounded_reuse((35..=SMALL_DRAFT_ROWS).step_by(5).collect())
+            .with_bounded_reuse(
+                super::f32_prefill::rows_for(g, "f32.bounded_reuse.verify", q, Some(ranks))
+                    .into_iter()
+                    .flat_map(|row| {
+                        assert_eq!(row.schedule, "bounded_reuse");
+                        let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+                        lo..=hi
+                    })
+                    .collect(),
+            )
             .map_err(|e| e.to_string())
     } else {
         Ok(entry)

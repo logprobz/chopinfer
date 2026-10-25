@@ -64,7 +64,7 @@
 //! | 128 | 5120 | 4096 | 32 | 2402.304 | 536.544 | 0.223155 |
 use kernel_build::CubinSpec;
 use kernels_sm120::f32_projection::{Entry, PrefillBand, cubin_spec};
-use model_deepseek41_contract::geometry::Geometry;
+use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "f32_prefill";
 pub const TILE_FEATURES: [u32; 2] = [32, 64];
@@ -109,6 +109,7 @@ pub struct Bucket {
     pub features: u32,
 }
 
+#[cfg(test)]
 pub const BUCKETS: &[Bucket] = &[
     Bucket {
         n: 384,
@@ -442,17 +443,64 @@ pub const BUCKETS: &[Bucket] = &[
     },
 ];
 
+/// Rows for one registered projection. The caller retains branch precedence.
+pub fn rows_for(
+    g: &Geometry,
+    op: &str,
+    q: kernel_core::contract::GemmQuery,
+    ranks: Option<u32>,
+) -> Vec<&'static kernel_build::tuning::Row> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    let Some(table) = table(g, Family::F32) else {
+        return Vec::new();
+    };
+    let mut shape: std::collections::BTreeMap<String, u32> =
+        [("n".into(), q.n), ("k".into(), q.k)].into();
+    if let Some(ranks) = ranks {
+        shape.insert("ranks".into(), ranks);
+    }
+    table
+        .rows()
+        .iter()
+        .filter(|row| {
+            row.key.op == op
+                && row.key.weights == "bf16"
+                && row.key.shape == shape
+                && row.key.bucket == q.m_capacity
+        })
+        .collect()
+}
+
+pub fn exact_buckets() -> Vec<Bucket> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    table(&FLASH, Family::F32)
+        .unwrap()
+        .rows()
+        .iter()
+        .filter(|row| row.key.op == "f32.exact.prefill")
+        .flat_map(|row| {
+            let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            (lo..=hi).map(move |rows| Bucket {
+                n: row.key.shape["n"],
+                k: row.key.shape["k"],
+                rows,
+                features: row.knobs["tile"].count().unwrap(),
+            })
+        })
+        .collect()
+}
+
 pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
     if g.id != model_deepseek41_contract::geometry::FLASH.id {
         return Ok(entry);
     }
     let q = entry.query();
-    let mut buckets: Vec<_> = BUCKETS
+    let mut buckets: Vec<_> = exact_buckets()
         .iter()
         .filter(|bucket| (bucket.n, bucket.k) == (q.n, q.k))
         .map(|bucket| (bucket.rows, bucket.features))
         .collect();
-    for &rows in super::f32_blocked::selected_rows(q.n, q.k) {
+    for rows in super::f32_blocked::selected_rows(q.n, q.k) {
         if !buckets.iter().any(|&(r, _)| r == rows) {
             buckets.push((rows, 32));
         }
@@ -460,21 +508,19 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
     let entry = entry
         .with_prefill_buckets(buckets)
         .map_err(|e| e.to_string())?;
-    let bands: &[(u32, u32, u32)] = match (q.n, q.k) {
-        (512, 5120) => &[(257, 1023, 32), (1024, 8192, 64)],
-        (32, 5120) => &[(257, 8192, 64)],
-        (128, 512) => &[(257, 4095, 32), (4096, 8192, 64)],
-        (384, 5120) => &[(257, 319, 32)],
-        _ => &[],
-    };
-    let entry = entry
-        .with_prefill_bands(
-            bands
-                .iter()
-                .map(|&(lo, hi, features)| PrefillBand { lo, hi, features })
-                .collect(),
-        )
-        .map_err(|e| e.to_string())?;
+    let bands = rows_for(g, "f32.band.prefill", q, None)
+        .into_iter()
+        .map(|row| {
+            assert_eq!(row.schedule, "tiled");
+            let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            PrefillBand {
+                lo,
+                hi,
+                features: row.knobs["tile"].count().unwrap(),
+            }
+        })
+        .collect();
+    let entry = entry.with_prefill_bands(bands).map_err(|e| e.to_string())?;
     let entry = super::f32_blocked::serving_entry(g, entry)?;
     super::f32_wide::serving_entry(g, entry)
 }

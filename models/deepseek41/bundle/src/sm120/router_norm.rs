@@ -19,7 +19,6 @@ use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernels_sm120::f32_projection::certified;
 use model_deepseek41_contract::geometry::Geometry;
 
-use super::f32_zero;
 pub use super::router_norm_entries::{
     CUBIN, FAMILY, FEATURES, TILE_ROWS, cubins, norm, router, router_symbol,
 };
@@ -30,9 +29,17 @@ pub const ROWS: u32 = 8192;
 /// Whether a prefill step of `rows` rows of `g` at `ranks` ranks runs the
 /// router in the norm: Flash TP4's zero-component router at 8192 rows.
 pub fn applies(g: &Geometry, ranks: u32, rows: u32) -> bool {
-    rows == ROWS
-        && f32_zero::selected(g, ranks, g.shape.moe.experts)
-        && f32_zero::ROWS.contains(&rows)
+    use model_deepseek41_contract::tuning::{Family, select};
+    select(
+        g,
+        Family::F32,
+        "f32.router_norm.prefill",
+        "bf16",
+        &[("ranks", ranks), ("experts", g.shape.moe.experts)],
+        8192,
+        rows,
+    )
+    .is_some_and(|row| row.schedule == "certified")
 }
 
 /// The certifying norm's launch: the served norm launch `served` (its

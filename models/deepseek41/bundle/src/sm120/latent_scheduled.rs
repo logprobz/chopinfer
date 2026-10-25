@@ -27,7 +27,63 @@ pub fn qualified(g: &Geometry, ranks: u32) -> bool {
 }
 
 pub fn paired_prefill_enabled(g: &Geometry, ranks: u32, capacity: u32) -> bool {
-    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4 && capacity >= 8192
+    use model_deepseek41_contract::tuning::{Family, select};
+    select(
+        g,
+        Family::Latent,
+        "latent.paired.prefill",
+        "fp8",
+        &[("ranks", ranks)],
+        capacity,
+        1,
+    )
+    .is_some()
+}
+
+pub fn wide_query(capacity: u32, rows: u32) -> bool {
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{Family, select},
+    };
+    select(
+        &FLASH,
+        Family::Latent,
+        "latent.query.verify",
+        "f32",
+        &[("ranks", 4)],
+        capacity,
+        rows,
+    )
+    .is_some()
+}
+
+fn independent(g: &Geometry, ranks: u32, query: &LatentAttentionQuery) -> bool {
+    let LatentAttentionQuery::Attention {
+        phase, capacity, ..
+    } = query
+    else {
+        return false;
+    };
+    let op = match phase {
+        AttentionPhase::Decode => "latent.sources.decode",
+        AttentionPhase::Verify => "latent.sources.verify",
+        _ => return false,
+    };
+    // Preserve the existing baseline for other qualified geometry IDs.
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
+        return true;
+    }
+    use model_deepseek41_contract::tuning::{Family, select};
+    select(
+        g,
+        Family::Latent,
+        op,
+        "fp8",
+        &[("ranks", ranks)],
+        *capacity,
+        1,
+    )
+    .is_some()
 }
 
 pub fn serving_entries(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
@@ -36,13 +92,7 @@ pub fn serving_entries(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
         .map(|mut entry| {
             if qualified(g, ranks)
                 && !entry.name.ends_with("_draft_block")
-                && matches!(
-                    entry.query,
-                    LatentAttentionQuery::Attention {
-                        phase: AttentionPhase::Decode | AttentionPhase::Verify,
-                        ..
-                    }
-                )
+                && independent(g, ranks, &entry.query)
             {
                 entry.schedule = Schedule::IndependentHeads;
             }
@@ -59,7 +109,22 @@ pub fn register_sources(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm12
 }
 
 pub fn register_query(backend: Sm120, g: &Geometry, ranks: u32) -> Sm120 {
-    if qualified(g, ranks) {
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{Family, select},
+    };
+    let selected = g.id != FLASH.id
+        || select(
+            g,
+            Family::Latent,
+            "latent.query.decode",
+            "f32",
+            &[("ranks", ranks)],
+            QUERY_ROWS,
+            QUERY_ROWS,
+        )
+        .is_some();
+    if qualified(g, ranks) && selected {
         let mut entry = query().binding();
         entry.capacity = QUERY_ROWS;
         backend.with_latent_glue(entry)

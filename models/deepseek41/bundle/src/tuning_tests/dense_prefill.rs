@@ -22,10 +22,10 @@ fn cases(mut visit: impl FnMut(Key, Option<(&'static str, BTreeMap<String, Knob>
                         shape.insert("ranks".into(), ranks);
                     }
                     let choice = match site {
-                        "compact" => mxfp8_fold::compact::stages(&FLASH, q, rows)
+                        "compact" => mxfp8_fold::compact::legacy_stages(&FLASH, q, rows)
                             .map(|s| ("compact", [("stages".into(), Knob::Count(s))].into())),
                         "matrix" => (ranks == 4)
-                            .then(|| prefill_matrix::choice(q, rows))
+                            .then(|| prefill_matrix::legacy_choice(q, rows))
                             .flatten()
                             .map(|(m, s)| {
                                 (
@@ -37,7 +37,7 @@ fn cases(mut visit: impl FnMut(Key, Option<(&'static str, BTreeMap<String, Knob>
                                     .into(),
                                 )
                             }),
-                        _ => prefill_tma_scales::choice(&FLASH, ranks, q, rows)
+                        _ => prefill_tma_scales::legacy_choice(&FLASH, ranks, q, rows)
                             .then(|| ("tma_scales", BTreeMap::new())),
                     };
                     visit(
@@ -56,12 +56,16 @@ fn cases(mut visit: impl FnMut(Key, Option<(&'static str, BTreeMap<String, Knob>
     }
 }
 
-fn generated() -> Table {
+fn generated() -> (Table, std::collections::BTreeSet<Key>) {
+    let mut domain = std::collections::BTreeSet::new();
     let mut result = Table::new(Target {
         compute_capability: 120,
         sm_count: 188,
     });
     cases(|key, choice| {
+        let mut group = key.clone();
+        group.rows = None;
+        domain.insert(group);
         if let Some((schedule, knobs)) = choice {
             result
                 .upsert(Row {
@@ -72,7 +76,7 @@ fn generated() -> Table {
                 .unwrap();
         }
     });
-    result
+    (result, domain)
 }
 
 #[test]
@@ -81,13 +85,20 @@ fn generate() {
     let out = std::path::PathBuf::from(
         std::env::var_os("C9_TUNING_OUT").expect("external output directory"),
     );
-    std::fs::write(out.join("dense_prefill.json"), generated().render()).unwrap();
+    let (table, domain) = generated();
+    std::fs::write(out.join("dense_prefill.json"), table.render()).unwrap();
+    let domain: Vec<_> = domain.into_iter().map(|key| serde_json::json!({"op":key.op,"weights":key.weights,"shape":key.shape,"bucket":key.bucket})).collect();
+    std::fs::write(
+        out.join("dense_prefill-domain.json"),
+        serde_json::to_string_pretty(&domain).unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]
 fn differential() {
     let committed = table(&FLASH, Family::DensePrefill).unwrap();
-    assert_eq!(committed.render(), generated().render());
+    assert_eq!(committed.render(), generated().0.render());
     let mut count = 0;
     cases(|key, expected| {
         let actual = committed.select(

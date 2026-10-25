@@ -65,7 +65,7 @@ fn cpu_build_blocked_prefill() {
 }
 fn old(entry: &Entry, rows: u32) -> Entry {
     let q = entry.query();
-    let tile = f32_prefill::BUCKETS
+    let tile = f32_prefill::exact_buckets()
         .iter()
         .find(|b| (b.n, b.k, b.rows) == (q.n, q.k, rows))
         .map_or(64, |b| b.features);

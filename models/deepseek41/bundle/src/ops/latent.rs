@@ -202,15 +202,16 @@ impl GlueOps {
             |need| backend.latent_query_rope(&query, need),
         )?;
         let wide_rows = shape.verify_decode_rows();
-        let query_rope_wide = if target && wide_rows > small {
-            Some(asks.ask(
-                "glue.query_rope wide verify",
-                exact::need(wide_rows, exact::verify(wide_rows)),
-                |need| crate::Kernels::wide_query_rope(shape, &query, need),
-            )?)
-        } else {
-            None
-        };
+        let query_rope_wide =
+            if target && crate::sm120::latent_scheduled::wide_query(wide_rows, wide_rows) {
+                Some(asks.ask(
+                    "glue.query_rope wide verify",
+                    exact::need(wide_rows, exact::verify(wide_rows)),
+                    |need| crate::Kernels::wide_query_rope(shape, &query, need),
+                )?)
+            } else {
+                None
+            };
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
         let window_write = RowBuckets::prepare(asks, "glue.window_write", every, shape, |need| {
@@ -329,7 +330,9 @@ impl GlueOps {
         let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = query_rope_buffers(&mut bind, views);
-        let op = if matches!(phase, crate::program::Phase::Verify { rows: 49..=64, .. }) {
+        let op = if matches!(phase, crate::program::Phase::Verify { .. })
+            && crate::sm120::latent_scheduled::wide_query(64, rows)
+        {
             self.query_rope_wide.as_ref()
         } else {
             None

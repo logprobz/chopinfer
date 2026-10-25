@@ -148,9 +148,13 @@ fn cases(mut visit: impl FnMut(Key, Option<(&'static str, u32)>)) {
     }
 }
 
-fn generated() -> Table {
+fn generated() -> (Table, std::collections::BTreeSet<Key>) {
+    let mut domain = std::collections::BTreeSet::new();
     let mut cells = BTreeMap::new();
     cases(|key, choice| {
+        let mut group = key.clone();
+        group.rows = None;
+        domain.insert(group);
         if let Some(choice) = choice {
             cells.insert(key, choice);
         }
@@ -191,7 +195,7 @@ fn generated() -> Table {
     if let Some(row) = pending {
         result.upsert(row).unwrap();
     }
-    result
+    (result, domain)
 }
 
 #[test]
@@ -200,13 +204,20 @@ fn generate() {
     let out = std::path::PathBuf::from(
         std::env::var_os("C9_TUNING_OUT").expect("external output directory"),
     );
-    std::fs::write(out.join("f32.json"), generated().render()).unwrap();
+    let (table, domain) = generated();
+    std::fs::write(out.join("f32.json"), table.render()).unwrap();
+    let domain: Vec<_> = domain.into_iter().map(|key| serde_json::json!({"op":key.op,"weights":key.weights,"shape":key.shape,"bucket":key.bucket})).collect();
+    std::fs::write(
+        out.join("f32-domain.json"),
+        serde_json::to_string_pretty(&domain).unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]
 fn differential() {
     let committed = table(&FLASH, Family::F32).unwrap();
-    assert_eq!(committed.render(), generated().render());
+    assert_eq!(committed.render(), generated().0.render());
     let mut count = 0;
     cases(|key, expected| {
         let actual = committed.select(

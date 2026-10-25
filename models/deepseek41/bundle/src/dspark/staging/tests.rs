@@ -5,6 +5,8 @@ use crate::shape::Shape;
 use runtime_bundle_abi::{HostServicesBackendV1, HostServicesTableV1};
 
 mod host;
+#[cfg(feature = "state-capture")]
+mod nontext;
 
 #[test]
 fn mixed_target_hashes_use_disjoint_fixed_staging_regions() {

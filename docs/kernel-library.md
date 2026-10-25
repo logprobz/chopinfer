@@ -412,8 +412,11 @@ example as well as production catalogs; `ci/cpu.sh` builds its `cuda-probe`,
 verifies locks and runs selection tests. Follow the
 [example's template lock procedure](../examples/external-model/README.md)
 for an intentional source update. Never repair a pinned consumer by bypassing
-its lock. A structural refactor must preserve every existing record; an
-arithmetic change needs numerical evidence before a lock update.
+its lock. An identity-only refactor must preserve every existing lock
+record. Declared replacements that follow
+[candidate adoption](#adopting-a-candidate) may retire a symbol and its
+superseded lock records after kernel-lab twin and served bitwise evidence.
+An arithmetic change needs numerical evidence before a lock update.
 
 ## GPU access
 

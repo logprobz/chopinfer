@@ -2074,3 +2074,43 @@ symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
 rows = [[193, 193], [257, 258]]
 reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Disjoint aligned prompt-logit intervals retain a separate 64-row inner projection, outside the qualified ticket reuse choices. The ordinary AR and DSpark profiles use the same fallback. Qualify these inner rows before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
+
+[[allow]]
+profiles = ["tp4-ar", "tp4-ar-full-prefill"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/ar_prefill"
+symbol = "host.gather_mapped_rows"
+rows = [[1, 8192]]
+reason = "Ordinary AR prefill keeps prepared Engram gathers off by default"
+task = "ar-prefill-engram"
+
+[[allow]]
+profiles = ["tp4-ar-upper-skip-2048"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/ar_prefill"
+symbol = "host.gather_mapped_rows"
+rows = [[1, 2048]]
+reason = "Ordinary AR prefill keeps prepared Engram gathers off by default"
+task = "ar-prefill-engram"
+
+[[allow]]
+profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-ar-upper-skip-2048"]
+phase = "decode"
+family = "engram_gather"
+entry = "engram/sync/ar_decode_disabled"
+symbol = "host.gather_mapped_rows"
+rows = [[1, 32]]
+reason = "AR_ENGRAM is forced off by its cfg(test) default; C6a switches tests to the served prepared route"
+task = "c6a-test-default"
+
+[[allow]]
+profiles = ["tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
+phase = "decode"
+family = "engram_gather"
+entry = "engram/sync/undrafted_disabled"
+symbol = "host.gather_mapped_rows"
+rows = [[1, 32]]
+reason = "Undrafted DSpark inherits the AR_ENGRAM cfg(test) default off; C6a switches it to the served prepared route"
+task = "c6a-test-default"

@@ -93,10 +93,23 @@ fn cluster(
     {
         return Some(entry);
     }
-    super::fold_fused::fused(id, rows)
+    super::fold_tails::cluster(id, rows).or_else(|| super::fold_fused::fused(id, rows))
 }
 
 impl crate::Kernels {
+    /// Drafter blocks reuse the input/query norm quantizers and private
+    /// scratch, including WO_a's block flags. Only their measured complete
+    /// five-position blocks may use the additional status folds.
+    pub(crate) fn drafter_status_fold(shape: &crate::shape::Shape, id: &str, rows: u32) -> bool {
+        super::fold_fused::selected(shape.geometry, shape.ranks())
+            && matches!(
+                id,
+                "attention.q-a" | "attention.q-b" | "attention.o-a" | "attention.o-b"
+            )
+            && (5..=60).contains(&rows)
+            && rows.is_multiple_of(5)
+    }
+
     /// WO_a's or WO_b's status fold over its fused buffers at
     /// `need.capacity` rows, if one serves (`fold_fused`).
     pub(crate) fn prepare_fused_fold(
@@ -134,17 +147,16 @@ impl crate::Kernels {
         if !super::fold_fused::selected(shape.geometry, shape.ranks()) {
             return Vec::new();
         }
-        super::fold_fused::ROWS
-            .into_iter()
-            .chain(33..=shape.verify_decode_rows())
+        (1..=Self::dense_decode_capacity())
             .filter_map(|rows| {
+                cluster(shape, "attention.o-a", rows)?;
                 let q = if rows > 32 {
                     super::fold_fused::sliced(32).map(|mut q| {
                         q.capacity = 64;
                         q
                     })
                 } else {
-                    super::fold_fused::sliced(rows)
+                    super::fold_fused::sliced(super::fold_tails::tile(rows).unwrap_or(rows))
                 };
                 q.map(|q| {
                     (
@@ -169,8 +181,12 @@ impl crate::Kernels {
         // WQ_a's and WKV's cluster folds without their admission launch.
         if super::fold_fused::selected(shape.geometry, shape.ranks()) {
             if id == "attention.q-b"
-                && super::fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
-                && (33..=shape.verify_decode_rows()).contains(&need.capacity)
+                && (super::fold_tails::wide_rows(need.capacity)
+                    || (super::fold_verify::enabled(
+                        shape.geometry,
+                        shape.ranks(),
+                        shape.verify_rows,
+                    ) && (33..=shape.verify_decode_rows()).contains(&need.capacity)))
             {
                 let entry = super::fold_verify_local::entry()?;
                 if !matches(entry.query(), query, need) {
@@ -182,7 +198,9 @@ impl crate::Kernels {
                 )?));
             }
             if id == "attention.q-b"
-                && let Some(entry) = super::fold_fused::wide(need.capacity)
+                && let Some(entry) = super::fold_fused::wide(
+                    super::fold_tails::tile(need.capacity).unwrap_or(need.capacity),
+                )
             {
                 if !matches(entry.base.query, query, need) {
                     return Err(Refusal("a status fold differs from its projection").into());

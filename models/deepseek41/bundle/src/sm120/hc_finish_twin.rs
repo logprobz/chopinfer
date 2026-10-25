@@ -126,7 +126,7 @@ mod tests {
             let backend = norm_quantize::register(Sm120::new(), &FLASH).unwrap();
             let backend = norm_quantize_cached::register(backend, &FLASH);
             let backend = hc_round_expand_mix::register(backend, &FLASH);
-            let backend = hc_round_chain::register(backend, &FLASH);
+            let backend = hc_round_chain::register(backend, &FLASH, 4);
             hc_finish_norm::register_pair(backend, &FLASH).with_sinkhorn_finish_norm_completion(
                 hc_completion::served(),
                 vec![(1, 16), (8, 8)],

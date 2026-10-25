@@ -148,13 +148,21 @@ use super::*;
 // moves before the first gate, whose PDL flag becomes a full dependency.
 // Every other journal operation and the other five verify widths are
 // unchanged by this admission.
+// Small-row status folds replace 160 instances of each query projection,
+// WO projection and WO_a input quantizer at rows 6 and 12. Their captures
+// lose 640 and 800 nodes respectively. `lab/audit_small_row_verify.py`
+// checks the ordered operands, flags, slab spans, launch geometry and
+// capture totals, retaining every other operation and the full creation
+// and prefill histories. Rows 4, 8, 16 and 32 remain identical after typed
+// handle mapping for the two added wide-fold modules per rank. Mutation
+// controls reject changed operands, row counts and launch dimensions.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x02b988c53189c1d7)),
-    (6, (8680, 0x5ce7c69be4a88e47)),
-    (8, (7720, 0xae22d9223652187d)),
-    (12, (9016, 0xb8e496eb1e07963a)),
-    (16, (7892, 0x86275aaee8de74c2)),
-    (32, (7744, 0xc2c91ffeaa26163a)),
+    (4, (7880, 0xf558e75d5fbeb67d)),
+    (6, (8040, 0xb0a797eb3eb64709)),
+    (8, (7720, 0x599af21d324e3aeb)),
+    (12, (8216, 0xaa274fcbbf815032)),
+    (16, (7892, 0xe2ae7ef2e89dcd72)),
+    (32, (7744, 0xcfee4fa88e7bcbaa)),
 ];
 
 #[test]

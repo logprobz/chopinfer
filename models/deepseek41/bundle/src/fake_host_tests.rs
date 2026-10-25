@@ -1240,6 +1240,13 @@ fn journal_steps(host: &Rc<Host>) {
 /// after the shared-expert join were audited against the previous journal;
 /// all other calls, captures, allocations and releases are identical.
 /// TP1 and TP2 journals are unchanged in both KV layouts.
+/// The small-row admission changes exactly 308 two-row HC producers in
+/// each TP4 history, retaining their operands and allocations. Two existing
+/// wide-fold modules per rank add 56 resolves, 12 shared-memory settings and
+/// 64 releases. `lab/audit_small_row_lifecycle.py` checks every retained
+/// record through typed handle bijections and rejects mutated operands,
+/// launch geometry, retained bindings and missing lifecycle operations.
+/// TP1 and TP2 remain byte-identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1266,12 +1273,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77443, 0xcc4dc0dba494b2db),
+        (77575, 0x5fea922ff08b9517),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75847, 0xc69514a5606363ac),
+        (75979, 0x5f2932c8be9b0823),
     ),
 ];
 

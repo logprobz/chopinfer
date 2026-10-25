@@ -43,7 +43,7 @@ fn backend() -> LabResult<Sm120> {
     let backend = b::norm_quantize::register(Sm120::new(), &FLASH)?;
     let backend = b::norm_quantize_cached::register(backend, &FLASH);
     let backend = b::hc_round_expand_mix::register(backend, &FLASH);
-    let backend = b::hc_round_chain::register(backend, &FLASH);
+    let backend = b::hc_round_chain::register(backend, &FLASH, 4);
     Ok(b::hc_finish_norm::register_pair(backend, &FLASH))
 }
 

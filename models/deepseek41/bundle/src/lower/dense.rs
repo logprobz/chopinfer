@@ -39,7 +39,10 @@ impl Lowering<'_> {
         // WO_a and WO_b as status folds (`sm120::fold_fused`): the sliced
         // quantizer, WO_a quantizing WO_b's input in its merge, then WO_b
         // over those codes. The two fuse at the same buckets and layers.
-        let fused = layer < self.shape.geometry.layers() && ops.fuses(id, phase);
+        let qualified_layer = layer < self.shape.geometry.layers()
+            || (layer < self.shape.geometry.layers() + self.shape.geometry.dspark_stages()
+                && crate::Kernels::drafter_status_fold(self.shape, id, phase.rows()));
+        let fused = qualified_layer && ops.fuses(id, phase);
         let quantized = |input: DeviceBufferSpanV1,
                          codes: DeviceBufferSpanV1,
                          scales: DeviceBufferSpanV1,
@@ -198,7 +201,7 @@ impl Lowering<'_> {
             );
             return Ok(Some(launches));
         }
-        let local = if layer < self.shape.geometry.layers() {
+        let local = if qualified_layer {
             ops.local(id, phase, &views, self.buffers.workspace)
                 .map_err(error)?
         } else {

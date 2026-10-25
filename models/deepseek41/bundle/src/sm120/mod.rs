@@ -27,6 +27,7 @@ pub mod fold_cluster;
 pub mod fold_fused;
 pub mod fold_local_rows;
 mod fold_local_rows_serving;
+pub(crate) mod fold_tails;
 pub mod fold_verify;
 pub mod fold_verify_local;
 pub mod hc_cols;
@@ -82,6 +83,8 @@ pub mod query_prefill;
 pub mod query_window;
 mod query_window_serving;
 pub mod replicated_embedding;
+#[cfg(test)]
+mod small_row_qualification;
 #[cfg(test)]
 pub(crate) mod test_symbols;
 pub mod window_fused;
@@ -969,9 +972,11 @@ impl crate::Kernels {
             && cubin != allocate_entries::CUBIN
             && cubin != allocated_acceptance_entries::CUBIN
             && (cubin != fold_verify::CUBIN
-                || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+                || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
+                || fold_tails::enabled(shape.geometry, shape.ranks()))
             && (cubin != fold_verify_local::CUBIN
-                || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+                || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
+                || fold_tails::enabled(shape.geometry, shape.ranks()))
             && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
@@ -1081,7 +1086,7 @@ impl crate::Kernels {
         let sm120 = hc_prefill_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
-        let sm120 = hc_round_chain::register(sm120, shape.geometry);
+        let sm120 = hc_round_chain::register(sm120, shape.geometry, shape.ranks());
         let sm120 = hc_finish_norm::register(sm120, shape.geometry);
         let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;

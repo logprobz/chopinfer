@@ -13,7 +13,7 @@
 //! keeps the dual fold for WQ_a and WKV. Then the producers whose
 //! rejected-row zeroing the status folds rely on.
 use super::*;
-use crate::sm120::fold_fused;
+use crate::sm120::{fold_fused, fold_tails};
 use std::collections::BTreeSet;
 
 /// A run's records and its allocations (slot, rank, bytes) in order.
@@ -23,6 +23,10 @@ struct Run {
 }
 
 fn run(kv: KvLayout) -> Run {
+    run_counts(kv, &[1, 2, 4, 8, 16, 32], false)
+}
+
+fn run_counts(kv: KvLayout, counts: &[u64], verify_tails: bool) -> Run {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, kv);
     if kv.storage == KvStorage::Native {
@@ -45,7 +49,7 @@ fn run(kv: KvLayout) -> Run {
             ends[0] = 32;
         }
     }
-    for count in [1, 2, 4, 8, 16, 32] {
+    for &count in counts {
         let from = host.device.journal.borrow().len();
         let items = (0..count)
             .map(|i| (i + 1, i, ends[i as usize], 7))
@@ -61,17 +65,45 @@ fn run(kv: KvLayout) -> Run {
         // Four rows per item: verify 32 on slots 0..8, verify 16 on slots
         // 8..12, verify 8 on slots 12..14 and verify 4 on slot 14; then
         // verify 2, two rows on slot 15.
-        for (first, count, per) in [
+        let mut batches: Vec<(u64, Vec<u32>)> = [
             (0_u64, 8_u64, 4_u32),
             (8, 4, 4),
             (12, 2, 4),
             (14, 1, 4),
             (15, 1, 2),
-        ] {
+        ]
+        .into_iter()
+        .map(|(first, count, per)| (first, vec![per; count as usize]))
+        .collect();
+        if verify_tails {
+            // Decode pads item counts to powers of two. Verify preserves
+            // each exact row count, including the odd and balanced tails.
+            batches.extend(
+                fold_tails::ROWS
+                    .into_iter()
+                    .filter(|&rows| rows <= 32)
+                    .map(|rows| {
+                        let widths = if rows == 6 {
+                            vec![6]
+                        } else {
+                            (0..rows / 2)
+                                .map(|item| if item == 0 && rows % 2 == 1 { 3 } else { 2 })
+                                .collect()
+                        };
+                        (0, widths)
+                    }),
+            );
+        }
+        for (first, widths) in batches {
             let from = host.device.journal.borrow().len();
-            let tokens = vec![7; per as usize];
+            let count = widths.len() as u64;
+            let tokens = widths
+                .iter()
+                .map(|&per| vec![7; per as usize])
+                .collect::<Vec<_>>();
             let items = (first..first + count)
-                .map(|i| (i + 1, i, ends[i as usize], tokens.as_slice()))
+                .zip(&tokens)
+                .map(|(i, tokens)| (i + 1, i, ends[i as usize], tokens.as_slice()))
                 .collect::<Vec<_>>();
             instance
                 .execute(&verify(&items), &mut Views::default())
@@ -79,13 +111,17 @@ fn run(kv: KvLayout) -> Run {
             instance
                 .commit_accepted(
                     &(first + 1..=first + count)
-                        .map(|i| kept(i, per))
+                        .zip(&widths)
+                        .map(|(i, &per)| kept(i, per))
                         .collect::<Vec<_>>(),
                 )
                 .unwrap();
-            records.push(format!("case verify {}", count * u64::from(per)));
+            records.push(format!("case verify {}", widths.iter().sum::<u32>()));
             records.extend_from_slice(&host.device.journal.borrow()[from..]);
-            for end in &mut ends[first as usize..(first + count) as usize] {
+            for (end, per) in ends[first as usize..(first + count) as usize]
+                .iter_mut()
+                .zip(widths)
+            {
                 *end += u64::from(per);
             }
         }
@@ -336,6 +372,15 @@ struct Fold {
     workspace: Option<u64>,
 }
 
+fn admitted(id: &str, rows: u32) -> bool {
+    fold_fused::ROWS.contains(&rows)
+        || id != "attention.kv" && rows <= 32 && fold_tails::ROWS.contains(&rows)
+}
+
+fn tile(rows: u32) -> u32 {
+    fold_tails::tile(rows).unwrap_or(rows)
+}
+
 /// Every projection's status fold at every bucket, built once: each entry
 /// builds fold catalogs, which the audits would otherwise rebuild for every
 /// changed line.
@@ -345,18 +390,20 @@ fn folds() -> &'static [Fold] {
         PROJECTIONS
             .into_iter()
             .flat_map(|id| {
-                fold_fused::ROWS.into_iter().map(move |rows| Fold {
-                    id,
-                    rows,
-                    status: crate::sm120::test_symbols::packed_fold_symbol(
-                        &if id == "attention.q-b" {
-                            fold_fused::wide(rows).unwrap().symbol()
+                (1..=32)
+                    .filter(move |&rows| admitted(id, rows))
+                    .map(move |rows| Fold {
+                        id,
+                        rows,
+                        status: crate::sm120::test_symbols::packed_fold_symbol(&if id
+                            == "attention.q-b"
+                        {
+                            fold_fused::wide(tile(rows)).unwrap().symbol()
                         } else {
-                            fold_fused::fused(id, rows).unwrap().symbol()
-                        },
-                    ),
-                    workspace: fold_fused::fused(id, rows).map(|e| e.workspace()),
-                })
+                            fold_fused::fused(id, tile(rows)).unwrap().symbol()
+                        }),
+                        workspace: fold_fused::fused(id, tile(rows)).map(|e| e.workspace()),
+                    })
             })
             .collect()
     })
@@ -470,14 +517,11 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
             Some(("decode" | "verify", rows)) => rows.parse::<u32>().unwrap(),
             _ => return Err(format!("{case} changed: {a}\n{b}")),
         };
-        if !fold_fused::ROWS.contains(&rows)
-            || !a.starts_with("launch ")
-            || !b.starts_with("launch ")
-        {
+        if !(1..=32).contains(&rows) || !a.starts_with("launch ") || !b.starts_with("launch ") {
             return Err(format!("{case} changed: {a}\n{b}"));
         }
         if symbol(a) == WO_A_INPUT {
-            let sliced = fold_fused::sliced(rows).unwrap();
+            let sliced = fold_fused::sliced(tile(rows)).unwrap();
             if symbol(b) != sliced.symbol || spans(a) != spans(b) {
                 return Err(format!(
                     "WO_a's input at {case} is not sliced on its spans: {b}"
@@ -489,6 +533,11 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
             continue;
         }
         if let Some((id, Kind::Packed { states })) = served(a) {
+            if !admitted(id, rows) {
+                return Err(format!(
+                    "{id} at {case} changed without admission: {a}\n{b}"
+                ));
+            }
             // A stream or direct fold, which admits rows itself and binds the
             // layer's weights as its packed bank, becomes the status fold
             // over those weights, WO_a's also in place of WO_b's input
@@ -572,6 +621,11 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         let Some((id, Kind::Admit)) = served(a) else {
             return Err(format!("{case} changed an unrelated operation: {a}\n{b}"));
         };
+        if !admitted(id, rows) {
+            return Err(format!(
+                "{id} at {case} changed without admission: {a}\n{b}"
+            ));
+        }
         // The admission's fold: one launch, or a split fold's partials and
         // merge.
         let folds = before[i + 1..]
@@ -704,6 +758,65 @@ fn status_folds_change_only_native_decode_and_verify_projections() {
 #[test]
 fn status_folds_change_only_bf16_decode_projections() {
     check_projection_changes(layout(KvStorage::Bf16));
+}
+
+/// Audit every additional <=32-row admission on all ranks and layers,
+/// including its producers, retained operations and capture node totals.
+#[test]
+fn status_fold_tails_preserve_operands_and_zeroing_producers() {
+    let counts = [16];
+    let kv = layout(KvStorage::Native);
+    let before = fold_fused::with_reference(|| run_counts(kv, &counts, true));
+    let after = run_counts(kv, &counts, true);
+    let names = names(&before, &after);
+    let before = canonical(&before.records, &names[0]);
+    let after = canonical(&after.records, &names[1]);
+    if let Some(root) = std::env::var_os("CHOPINFER_STATUS_TAIL_JOURNALS") {
+        let root = std::path::PathBuf::from(root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("reference.journal"), before.join("\n")).unwrap();
+        std::fs::write(root.join("status.journal"), after.join("\n")).unwrap();
+    }
+    let changed = audit(&before, &after).unwrap();
+    let cases = counts
+        .iter()
+        .map(|&rows| (format!("decode {rows}"), rows))
+        .chain(
+            fold_tails::ROWS
+                .into_iter()
+                .filter(|&rows| rows <= 32)
+                .map(|rows| (format!("verify {rows}"), u64::from(rows))),
+        );
+    for (case, rows) in cases {
+        for id in PROJECTIONS.into_iter().chain(["attention.o-a input"]) {
+            let count = changed
+                .iter()
+                .filter(|(c, p)| c == &case && p == id)
+                .count();
+            let expected = if id == "attention.kv" && rows != 16 {
+                0
+            } else {
+                4 * FLASH.layers() as usize
+            };
+            assert_eq!(count, expected, "{case}: {id}");
+        }
+    }
+    check_zeroing_records(&after);
+    let at = after
+        .iter()
+        .position(|line| line == "case verify 3")
+        .unwrap();
+    let at = at
+        + after[at..]
+            .iter()
+            .position(|line| symbol(line) == status_fold("attention.q-a", 3))
+            .unwrap();
+    let mut bad = after.clone();
+    bad[at] = bad[at].replacen("offset: 0,", "offset: 64,", 1);
+    assert!(audit(&before, &bad).is_err(), "moved tail operand escaped");
+    bad = after.clone();
+    bad.remove(at);
+    assert!(audit(&before, &bad).is_err(), "omitted tail fold escaped");
 }
 
 fn check_projection_changes(kv: KvLayout) {
@@ -974,6 +1087,11 @@ fn status_folds_read_bf16_codes_only_from_zeroing_producers() {
 }
 
 fn check_zeroing_producers(kv: KvLayout) {
+    let [_, after] = journals(kv);
+    check_zeroing_records(&after);
+}
+
+fn check_zeroing_records(after: &[String]) {
     for (header, statement) in ZEROING {
         assert!(
             kernel_source(header).contains(statement),
@@ -989,15 +1107,17 @@ fn check_zeroing_producers(kv: KvLayout) {
         }
     }
     let bodies = bodies();
-    let folds: BTreeMap<u32, Vec<(&str, String)>> = fold_fused::ROWS
-        .iter()
-        .map(|&rows| {
-            let folds = PROJECTIONS.map(|id| (id, status_fold(id, rows)));
-            (rows, folds.to_vec())
+    let folds: BTreeMap<u32, Vec<(&str, String)>> = (1..=32)
+        .map(|rows| {
+            let folds = PROJECTIONS
+                .into_iter()
+                .filter(|&id| admitted(id, rows))
+                .map(|id| (id, status_fold(id, rows)))
+                .collect();
+            (rows, folds)
         })
         .collect();
     let mut producers = BTreeSet::new();
-    let [_, after] = journals(kv);
     let mut case = String::new();
     let mut first = 0;
     for (at, line) in after.iter().enumerate() {
@@ -1010,7 +1130,7 @@ fn check_zeroing_producers(kv: KvLayout) {
             .split_once(' ')
             .filter(|(kind, _)| *kind != "prefill")
             .and_then(|(_, rows)| rows.parse::<u32>().ok())
-            .filter(|rows| fold_fused::ROWS.contains(rows))
+            .filter(|rows| (1..=32).contains(rows))
         else {
             continue;
         };
@@ -1029,6 +1149,11 @@ fn check_zeroing_producers(kv: KvLayout) {
             .rev()
             .filter(|l| l.starts_with("launch ") && spans(l).iter().any(overlaps))
             .find(|l| {
+                // WKV keeps its packed fallback at the added rows. Its
+                // admission and fold read these codes without writing them.
+                if matches!(served(l), Some(("attention.q-a" | "attention.kv", _))) {
+                    return false;
+                }
                 !folds[&rows].iter().any(|(twin, fold)| {
                     matches!(*twin, "attention.q-a" | "attention.kv") && symbol(l) == fold
                 })
@@ -1037,7 +1162,7 @@ fn check_zeroing_producers(kv: KvLayout) {
         let p = symbol(producer);
         match id {
             "attention.o-a" => {
-                assert_eq!(p, fold_fused::sliced(rows).unwrap().symbol, "{case}")
+                assert_eq!(p, fold_fused::sliced(tile(rows)).unwrap().symbol, "{case}")
             }
             "attention.o-b" => assert_eq!(p, status_fold("attention.o-a", rows), "{case}"),
             _ => {

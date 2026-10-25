@@ -25,6 +25,48 @@ use crate::{program::Phase, shape::Shape};
 const PARTIALS: &str = "scratch.partials";
 const TICKETS: &str = "scratch.tickets";
 
+pub(crate) fn finish_selected(phase: Phase, finish_rows: u32) -> bool {
+    matches!(
+        phase,
+        Phase::Decode(1 | 8 | 16 | 32)
+            | Phase::Verify {
+                rows: 4 | 6 | 8 | 12 | 16 | 32,
+                ..
+            }
+    ) || wide_selected(phase, finish_rows)
+}
+
+pub(crate) fn wide_selected(phase: Phase, finish_rows: u32) -> bool {
+    matches!(phase, Phase::Verify { rows: 33..=64, .. }) && phase.rows() <= finish_rows
+}
+
+pub(crate) fn decode_selected(phase: Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Decode(1 | 8)
+            | Phase::Verify {
+                rows: 4 | 6 | 8 | 12 | 16 | 32,
+                ..
+            }
+    )
+}
+
+pub(crate) fn draft_selected(phase: Phase) -> bool {
+    phase.rows() > DECODE_BATCH && phase.rows() <= SMALL_DRAFT_ROWS
+}
+
+#[cfg(test)]
+impl super::Ops {
+    pub(crate) fn migration_hc_choices(phase: Phase, capacity: u32) -> [bool; 4] {
+        [
+            finish_selected(phase, capacity),
+            wide_selected(phase, capacity),
+            decode_selected(phase),
+            draft_selected(phase),
+        ]
+    }
+}
+
 pub(crate) struct HcOps {
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
     prefill_mix: Prepared<LaggedMixCollapseBuffers<View>>,
@@ -324,16 +366,7 @@ impl HcOps {
     // rounded expansion mixer and input norm it replaces, memcheck clean,
     // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
-        (matches!(
-            phase,
-            Phase::Decode(1 | 8 | 16 | 32)
-                | Phase::Verify {
-                    rows: 4 | 6 | 8 | 12 | 16 | 32,
-                    ..
-                }
-        ) || matches!(phase, Phase::Verify { rows: 33..=64, .. })
-            && phase.rows() <= self.finish_rows)
-            && self.finish_norm.is_some()
+        finish_selected(phase, self.finish_rows) && self.finish_norm.is_some()
     }
 
     pub(crate) fn round_expand_mix_norm(
@@ -411,21 +444,13 @@ impl HcOps {
     fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
         if phase.prefill() {
             &self.prefill_mix
-        } else if matches!(phase, Phase::Verify { rows: 33..=64, .. })
-            && phase.rows() <= self.finish_rows
+        } else if wide_selected(phase, self.finish_rows)
             && let Some(op) = &self.verify_mix
         {
             op
-        } else if matches!(
-            phase,
-            Phase::Decode(1 | 8)
-                | Phase::Verify {
-                    rows: 4 | 6 | 8 | 12 | 16 | 32,
-                    ..
-                }
-        ) {
+        } else if decode_selected(phase) {
             &self.decode_mix
-        } else if phase.rows() > DECODE_BATCH && phase.rows() <= SMALL_DRAFT_ROWS {
+        } else if draft_selected(phase) {
             &self.draft_mix
         } else {
             &self.mix

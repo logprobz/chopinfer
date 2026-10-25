@@ -62,25 +62,38 @@ pub fn register_pair(
 ) -> kernels_sm120::backend::Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         backend
-            .with_sinkhorn_finish_norm(
-                entry(g),
-                [1, 4, 6, 8, 12, 16, 32]
-                    .into_iter()
-                    .chain(33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
-                    .collect(),
-            )
-            .with_sinkhorn_finish_norm_chain(
-                super::hc_round_chain::entry(g),
-                [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
-                    .into_iter()
-                    .chain(
-                        (33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
-                            .map(|rows| (rows, 4)),
-                    )
-                    .collect(),
-            )
-            .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), vec![(32, 2)])
+            .with_sinkhorn_finish_norm(entry(g), pair_buckets())
+            .with_sinkhorn_finish_norm_chain(super::hc_round_chain::entry(g), chain_buckets())
+            .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), row_buckets())
     } else {
         backend
     }
+}
+
+pub(crate) fn pair_buckets() -> Vec<u32> {
+    [1, 4, 6, 8, 12, 16, 32]
+        .into_iter()
+        .chain(33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
+        .collect()
+}
+
+pub(crate) fn chain_buckets() -> Vec<(u32, u32)> {
+    [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
+        .into_iter()
+        .chain((33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS).map(|rows| (rows, 4)))
+        .collect()
+}
+
+pub(crate) fn row_buckets() -> Vec<(u32, u32)> {
+    vec![(32, 2)]
+}
+
+#[cfg(test)]
+pub(crate) fn migration_mixer_buckets() -> Vec<u32> {
+    super::hc::warp_buckets()
+}
+
+#[cfg(test)]
+pub(crate) fn migration_prefill_buckets() -> Vec<((u32, u32), Vec<u32>)> {
+    super::hc_prefill::buckets()
 }

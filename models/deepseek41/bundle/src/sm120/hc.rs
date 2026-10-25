@@ -184,11 +184,15 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         sm120.with_sinkhorn_lagged_warp(kernels_sm120::sinkhorn_hc::lagged_warp::Entry {
             source: super::hc_mixer_probe::entry(g),
-            buckets: vec![1, 4, 6, 8, 12, 16, 32],
+            buckets: warp_buckets(),
         })
     } else {
         sm120
     }
+}
+
+pub(super) fn warp_buckets() -> Vec<u32> {
+    vec![1, 4, 6, 8, 12, 16, 32]
 }
 
 /// `g`'s original entries: the first cubin's, then the F32 head.

@@ -33,22 +33,25 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// separate A/A controls differed by less than 0.4% (2026-10-25).
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
-        let buckets = if ranks == 4 {
-            vec![
-                (1, 8),
-                (2, 8),
-                (3, 8),
-                (4, 8),
-                (5, 4),
-                (6, 4),
-                (7, 4),
-                (8, 4),
-            ]
-        } else {
-            vec![(1, 8), (8, 4)]
-        };
-        backend.with_sinkhorn_round_chain(entry(g), buckets)
+        backend.with_sinkhorn_round_chain(entry(g), buckets(ranks))
     } else {
         backend
+    }
+}
+
+pub(crate) fn buckets(ranks: u32) -> Vec<(u32, u32)> {
+    if ranks == 4 {
+        vec![
+            (1, 8),
+            (2, 8),
+            (3, 8),
+            (4, 8),
+            (5, 4),
+            (6, 4),
+            (7, 4),
+            (8, 4),
+        ]
+    } else {
+        vec![(1, 8), (8, 4)]
     }
 }

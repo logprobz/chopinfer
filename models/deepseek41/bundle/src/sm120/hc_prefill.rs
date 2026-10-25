@@ -78,13 +78,19 @@ pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
     }
     // Two devices at 250 W: select only measured buckets with a clear gain.
     // Each row retains the original butterfly, norm tree and Sinkhorn order.
-    backend
-        .with_sinkhorn_lagged_prefill(
-            prefill::pipeline(profile(), mixer(), 8, 8, false),
-            vec![64, 192],
-        )
-        .with_sinkhorn_lagged_prefill(
-            prefill::pipeline(profile(), mixer(), 8, 4, false),
-            vec![2240, 2496, 2624, 8192],
-        )
+    buckets()
+        .into_iter()
+        .fold(backend, |backend, ((tile, chains), rows)| {
+            backend.with_sinkhorn_lagged_prefill(
+                prefill::pipeline(profile(), mixer(), tile, chains, false),
+                rows,
+            )
+        })
+}
+
+pub(super) fn buckets() -> Vec<((u32, u32), Vec<u32>)> {
+    vec![
+        ((8, 8), vec![64, 192]),
+        ((8, 4), vec![2240, 2496, 2624, 8192]),
+    ]
 }

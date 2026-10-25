@@ -163,6 +163,41 @@ as its class says: it changes the launches (`Launch`), is a limit the key
 holds (`Bound`), changes nothing (`Inert`, `Unread`) or no longer matches
 the op (`Selects`).
 
+Performance choices must pass
+[step-time acceptance](contributing.md#step-time-acceptance) in the served
+bucket, including the separate power and energy rules under measuring a
+change.
+
+## Adopting a candidate
+
+A candidate starts as a kernel-lab family or behind one declared opt-in
+model option. Establish the required [accuracy](numerics.md#a-speedup-that-changes-bits)
+and [step-time acceptance](contributing.md#step-time-acceptance) evidence
+before adoption.
+
+Adoption is one commit series that completes all of these steps:
+
+1. Add a tuning table row or a knob on an existing template for the served
+   route.
+2. Flip the test default to the served route and audit its journal pin
+   change. Make one switch or route flip per commit, with a proof for that
+   commit, so each pin change is attributable.
+3. Delete the candidate option, its test overrides and any old-path code
+   that serves nothing else. The default tests must exercise the adopted
+   route.
+
+Use knobs before variants. Extend an existing template when it can express
+the candidate's structure. A new engine is allowed only for a different
+structure; record what differs and why existing templates cannot express
+it.
+
+Shared templates expose four separate policies: activation, scale format
+and order, chain, and reduction. Knobs that preserve the arithmetic belong
+in tuning tables. A policy that changes the arithmetic is part of the
+entry's numerical identity and is never a tuning knob. Another model adopts
+a shared template only when its current entries are bitwise equal under
+the chosen policies. Sharing is never forced.
+
 ## Adding a GPU backend
 
 Implement `kernel_core::backend::Backend` for the target. Generic model code
@@ -402,8 +437,9 @@ performance evidence. See [kernel-lab](../crates/kernel-lab/README.md).
   entry; lookups, quantizers and gathers keep compiled shapes, since their
   launch-shape forms measured slower
   ([generated projections](../crates/kernels-sm120/src/precision/README.md)).
-  Planners never allocate, kernels support graph capture, and qualified
-  symbols are append-only.
+  Planners never allocate and kernels support graph capture. A qualified
+  name never changes content. Retire a symbol only after kernel-lab twin
+  and served bitwise evidence for its replacement.
 - Pool-scaled offsets are 64-bit. The kernel-lab `high_ids` tests hold pool
   ids past the 32-bit lines; a kernel that scales a new id into a pool offset
   adds a case there and a row to `crates/kernel-lab/tests/common/pool_offsets.rs`.

@@ -31,6 +31,44 @@ pub fn cubin() -> Result<CubinSpec, String> {
     .map_err(|e| e.to_string())
 }
 
+pub fn route_tags() -> Result<Vec<kernel_core::route::RouteTag>, String> {
+    let mut tags = Vec::new();
+    for entry in super::prefill_attention::entries()? {
+        let decoded = cache::decoded_entry(&entry).map_err(|e| e.to_string())?;
+        let LatentAttentionQuery::Attention {
+            latent,
+            page_size,
+            second_fp4_keys,
+            ..
+        } = entry.query
+        else {
+            unreachable!()
+        };
+        let mut symbols = vec![
+            sources_prefill::reuse_symbol(&decoded, 2),
+            cache::CLEAR.into(),
+            cache::window_symbol(latent),
+        ];
+        if second_fp4_keys {
+            symbols.extend([
+                heads::asynchronous::symbol(&decoded, false),
+                super::prefill_heads::finish_symbol(&decoded),
+                cache::mark_symbol(page_size),
+                cache::pages_symbol(latent, page_size),
+            ]);
+        }
+        tags.extend(symbols.into_iter().map(|symbol| {
+            kernel_core::route::RouteTag::new(
+                symbol,
+                kernel_core::route::RouteClass::Fast,
+                FAMILY,
+                [super::prefill_attention::ROWS..=super::prefill_attention::ROWS],
+            )
+        }));
+    }
+    Ok(tags)
+}
+
 /// A dedicated arena is shared only by successive attention layers on one stream.
 pub fn layout(slots: u32, page: u32, pages: u32) -> Result<cache::Layout, Refusal> {
     cache::Layout::new(512, slots, 1, page, pages)
@@ -78,12 +116,26 @@ pub fn prepare(
             .push((cache::pages_symbol(latent, page_size), 0));
     }
     need.check(&info)?;
-    Ok(Box::new(Cached {
-        reference,
-        entry,
-        decoded,
-        info,
-    }))
+    let tags = info.symbols[reference.info().symbols.len()..]
+        .iter()
+        .map(|(symbol, _)| {
+            kernel_core::route::RouteTag::new(
+                symbol,
+                kernel_core::route::RouteClass::Fast,
+                FAMILY,
+                [super::prefill_attention::ROWS..=super::prefill_attention::ROWS],
+            )
+        })
+        .collect();
+    Ok(kernel_core::route::tagged(
+        Box::new(Cached {
+            reference,
+            entry,
+            decoded,
+            info,
+        }),
+        tags,
+    ))
 }
 
 struct Cached {
@@ -111,6 +163,10 @@ fn producer(symbol: String, items: u64, rows: u32, arguments: Vec<A>) -> Result<
 impl PreparedOp<Buffers> for Cached {
     fn info(&self) -> &OpInfo {
         &self.info
+    }
+
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        self.reference.route(counts, launch)
     }
 
     fn launches(

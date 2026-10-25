@@ -60,7 +60,14 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
     if g != &FLASH {
         return Ok(backend);
     }
-    Ok(backend.with_rmsnorm_quantize(selected()?.reference))
+    let entry = selected()?.reference;
+    let tag = kernel_core::route::RouteTag::new(
+        &entry.symbol,
+        kernel_core::route::RouteClass::Fast,
+        FAMILY,
+        [PREFILL_TOKENS..=PREFILL_TOKENS],
+    );
+    Ok(backend.with_rmsnorm_quantize(entry).with_route_tags([tag]))
 }
 
 /// Both strategies passed bitwise; reread ties cold and wins more hot cases.

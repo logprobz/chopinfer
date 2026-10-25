@@ -215,6 +215,7 @@ mod scale_expand_tiles;
 pub(crate) mod scale_inplace;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod shared;
+mod wide_routes;
 mod widen;
 
 /// The serving latent cubins and symbols, for the model's kernel lab.
@@ -324,6 +325,7 @@ impl crate::Kernels {
             .expect("registered route metadata")
             .backend
             .route_tags();
+        tags.extend(wide_routes::catalogue(shape).expect("qualified wide route metadata"));
         if f32_zero::selected(
             shape.geometry,
             shape.ranks(),
@@ -1058,6 +1060,11 @@ impl crate::Kernels {
         let sm120 = norm_query_cached::register(sm120, shape.geometry);
         let sm120 = norm_prefill::register(sm120, shape.geometry)?;
         let sm120 = query_prefill::register(sm120, shape.geometry)?;
+        let sm120 = if prefill_cache::eligible(shape.geometry, shape.ranks(), storage) {
+            sm120.with_route_tags(prefill_cache::route_tags()?)
+        } else {
+            sm120
+        };
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = if crate::ops::bf16_partials_requested(shape, storage) {

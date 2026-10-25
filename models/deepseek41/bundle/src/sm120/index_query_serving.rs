@@ -16,8 +16,9 @@ impl crate::Kernels {
         {
             return Err(Refused::Unsupported);
         }
-        super::indexer_query::register(Sm120::new(), shape.geometry)
+        let op = super::indexer_query::register(Sm120::new(), shape.geometry)
             .with_parallel_position_query_rows(64)?
-            .position_indexer_query(query, need)
+            .position_indexer_query(query, need)?;
+        Ok(super::wide_routes::tagged(op, "indexer_query", 33))
     }
 }

@@ -17,6 +17,7 @@ fn argument(call: &Lowered, index: usize) -> DeviceBufferSpanV1 {
 
 #[test]
 fn every_wide_router_binds_the_named_producer_and_disjoint_metadata_tail() {
+    let _metadata = kernel_core::route::Metadata::enable();
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
     let kernels = crate::Kernels::new(&shape).unwrap();
     let ops = Ops::prepare_set(
@@ -91,9 +92,28 @@ fn every_wide_router_binds_the_named_producer_and_disjoint_metadata_tail() {
                 head_rows: 1,
                 prefill_hc_fusion: true,
             };
-            let lower = |stage| lowering.moe_direct_stage(phase, stage).unwrap().unwrap();
+            let lower = |stage| {
+                let mut calls = lowering.moe_direct_stage(phase, stage).unwrap().unwrap();
+                lowering.tag_routes(phase, stage, &mut calls);
+                calls
+            };
             let projected = lower(Stage::Project(0, "moe.router"));
             assert_eq!(projected.len(), 2);
+            for (call, family) in projected
+                .iter()
+                .zip(["moe_router_finish", "f32_projection"])
+            {
+                let tag = call
+                    .launch
+                    .bindings
+                    .route()
+                    .expect("selected wide router entry");
+                assert_eq!(
+                    (tag.class, tag.family),
+                    (kernel_core::route::RouteClass::Fast, family)
+                );
+                assert!(tag.admitted.iter().any(|range| range.contains(&rows)));
+            }
             assert!(projected[0].launch.symbol.ends_with("_prepare_v1"));
             assert!(
                 projected[1]

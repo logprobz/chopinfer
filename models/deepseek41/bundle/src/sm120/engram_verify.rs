@@ -22,9 +22,10 @@ impl crate::Kernels {
                     && (e.tile_rows, e.stages) == (64, 2)
             })
             .ok_or_else(|| Refused::Rule("missing qualified wide Engram tile".into()))?;
-        Ok(Some(kernels_sm120::backend::packed_op(
+        let op = kernels_sm120::backend::packed_op(
             entry.prepare(rows)?,
             [entry.symbol(entry.tile_rows)],
-        )?))
+        )?;
+        Ok(Some(super::wide_routes::tagged(op, "mxfp8_prefill", 33)))
     }
 }

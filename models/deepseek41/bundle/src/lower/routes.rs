@@ -21,6 +21,20 @@ impl Lowering<'_> {
                     .with_route(moe.router_route(phase, &item.launch.symbol));
             }
         }
+        if matches!(stage, Stage::Project(_, "moe.router"))
+            && let Some(moe) = &self.ops.moe
+            && moe.direct(phase).is_some_and(|op| op.fuses_router())
+        {
+            for item in launches
+                .iter_mut()
+                .filter(|item| item.launch.bindings.route().is_none())
+            {
+                item.launch.bindings = item
+                    .launch
+                    .bindings
+                    .with_route(moe.router_route(phase, &item.launch.symbol));
+            }
+        }
         if !phase.prefill() {
             return;
         }

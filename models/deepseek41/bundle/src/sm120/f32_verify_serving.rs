@@ -32,12 +32,14 @@ impl CachedProjection for Projection {
             output: bind.view(spans.output),
         };
         let stages = self.candidate.stages(buffers, rows)?;
-        CachedProjectionStages::new(
-            bind.lowered_launches(stages.into_launches().into()),
-            self.candidate.symbols(),
-            rows,
-            spans,
-        )
+        let mut calls = bind.lowered_launches(stages.into_launches().into());
+        if kernel_core::route::Metadata::enabled() {
+            for call in &mut calls {
+                let tag = super::wide_routes::tag(&call.launch.symbol, "f32_projection", 33);
+                call.launch.bindings = call.launch.bindings.with_route(Some(tag));
+            }
+        }
+        CachedProjectionStages::new(calls, self.candidate.symbols(), rows, spans)
     }
 }
 impl crate::Kernels {
@@ -111,6 +113,7 @@ mod tests {
 
     #[test]
     fn router_keeps_three_named_stages_and_disjoint_domain_span() {
+        let _metadata = kernel_core::route::Metadata::enable();
         let op = crate::Kernels::cached_verify_projection(384, 5120).unwrap();
         assert_eq!(op.info().workspace, 256 + 64 * 61440);
         for rows in 33..=64 {
@@ -118,6 +121,16 @@ mod tests {
             assert_eq!(op.partial_bytes(rows).unwrap(), s.partials.length);
             let calls = op.lower(rows, s).unwrap().into_launches();
             assert_eq!(calls.len(), 3);
+            for call in &calls {
+                let tag = call
+                    .launch
+                    .bindings
+                    .route()
+                    .expect("selected cached projection entry");
+                assert_eq!(tag.class, kernel_core::route::RouteClass::Fast);
+                assert_eq!(tag.family, "f32_projection");
+                assert!(tag.admitted.iter().any(|range| range.contains(&rows)));
+            }
             assert!(calls[0].launch.symbol.ends_with("_rows_v1"));
             assert!(calls[1].launch.symbol.ends_with("_compute_v1"));
             assert!(calls[2].launch.symbol.ends_with("_reduce_v1"));

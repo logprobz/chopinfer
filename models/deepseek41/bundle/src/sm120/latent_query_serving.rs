@@ -14,8 +14,9 @@ impl crate::Kernels {
         {
             return Err(Refused::Unsupported);
         }
-        Sm120::new()
+        let op = Sm120::new()
             .with_latent_glue(super::latent_scheduled::query().binding())
-            .latent_query_rope(op, need)
+            .latent_query_rope(op, need)?;
+        Ok(super::wide_routes::tagged(op, "latent_query", 49))
     }
 }

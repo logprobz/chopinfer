@@ -171,6 +171,28 @@ impl Program for Work<'_> {
         Ok(true)
     }
 
+    fn sync_engram_reason(
+        &self,
+        hashed: &crate::engram_rows::Hashed,
+        prefill: bool,
+    ) -> crate::engram_rows::SyncReason {
+        use crate::engram_rows::SyncReason;
+        if prefill {
+            return self.instance.prefill_engram_fallback;
+        }
+        let Some(device) = &self.instance.dspark else {
+            return SyncReason::NoPreparedGather;
+        };
+        let cycle = &device.cycle;
+        if !cycle.undrafted {
+            SyncReason::UndraftedDisabled
+        } else if !cycle.layers.is_empty() && hashed.rows() > cycle.hash.shape.stride as usize {
+            SyncReason::GatherCapacity
+        } else {
+            SyncReason::NoPreparedGather
+        }
+    }
+
     fn prefetches_engram(&self) -> bool {
         self.instance
             .dspark

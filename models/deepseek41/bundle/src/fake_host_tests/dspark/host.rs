@@ -78,6 +78,48 @@ impl MappedHost {
             ..Self::new(host)
         }
     }
+    fn emulate_mapped_rows(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        gather: MappedRowGatherV1<'_>,
+    ) -> HostServiceResultV1<()> {
+        if self.host.capturing_on_device_of(stream.slot()) {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let g = self.host.shape.geometry;
+        let e = &g.shape.engram;
+        let table = e.layers.iter().enumerate().find_map(|(index, layer)| {
+            ["weight", "scale"].into_iter().find_map(|part| {
+                (gather.view_id == format!("layers.{layer}.engram.embed.{part}").as_bytes())
+                    .then_some((
+                        e.rows[index],
+                        if part == "weight" {
+                            e.head_dim
+                        } else {
+                            e.head_dim / 32
+                        },
+                    ))
+            })
+        });
+        let (rows, width) = table.ok_or(BundleStatusV1::NotFound)?;
+        if gather.image.raw == 0
+            || gather.rank >= self.host.shape.ranks()
+            || gather.row_bytes != u64::from(width)
+            || gather.rows.is_empty()
+            || gather.rows.iter().any(|&row| row >= rows)
+            || (gather.rows.len() as u64).checked_mul(gather.row_bytes) != Some(destination.length)
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        self.host.note(format!(
+            "mapped gather {} {}",
+            gather.rank,
+            String::from_utf8_lossy(gather.view_id)
+        ));
+        self.host
+            .copy_host_to_device(stream, destination, &vec![0; destination.length as usize])
+    }
 }
 
 macro_rules! forward {
@@ -302,7 +344,7 @@ impl HostServicesBackendV1 for MappedHost {
                 plane.destination.offset,
                 rows * plane.row_bytes,
             );
-            self.gather_mapped_rows(
+            self.emulate_mapped_rows(
                 stream,
                 destination,
                 MappedRowGatherV1 {
@@ -362,40 +404,7 @@ impl HostServicesBackendV1 for MappedHost {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
-        if self.host.capturing_on_device_of(stream.slot()) {
-            return Err(BundleStatusV1::InvalidState);
-        }
-        let g = self.host.shape.geometry;
-        let e = &g.shape.engram;
-        let table = e.layers.iter().enumerate().find_map(|(index, layer)| {
-            ["weight", "scale"].into_iter().find_map(|part| {
-                (gather.view_id == format!("layers.{layer}.engram.embed.{part}").as_bytes())
-                    .then_some((
-                        e.rows[index],
-                        if part == "weight" {
-                            e.head_dim
-                        } else {
-                            e.head_dim / 32
-                        },
-                    ))
-            })
-        });
-        let (rows, width) = table.ok_or(BundleStatusV1::NotFound)?;
-        if gather.image.raw == 0
-            || gather.rank >= self.host.shape.ranks()
-            || gather.row_bytes != u64::from(width)
-            || gather.rows.is_empty()
-            || gather.rows.iter().any(|&row| row >= rows)
-            || (gather.rows.len() as u64).checked_mul(gather.row_bytes) != Some(destination.length)
-        {
-            return Err(BundleStatusV1::InvalidArgument);
-        }
-        self.host.note(format!(
-            "mapped gather {} {}",
-            gather.rank,
-            String::from_utf8_lossy(gather.view_id)
-        ));
-        self.host
-            .copy_host_to_device(stream, destination, &vec![0; destination.length as usize])
+        self.host.count_mapped_gather();
+        self.emulate_mapped_rows(stream, destination, gather)
     }
 }

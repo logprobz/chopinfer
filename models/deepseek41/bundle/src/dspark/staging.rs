@@ -76,6 +76,11 @@ pub trait Program {
         Ok(false)
     }
 
+    /// The saved preparation gate after a deferred or prefill offer was declined.
+    fn sync_engram_reason(&self, _hashed: &Hashed, _prefill: bool) -> engram_rows::SyncReason {
+        engram_rows::SyncReason::NoPreparedGather
+    }
+
     /// Whether drafted steps read each item's first Engram rows while the
     /// drafter runs (`prefetch_engram`).
     fn prefetches_engram(&self) -> bool {
@@ -133,6 +138,7 @@ pub struct Gathered {
     phases: Vec<GatheredPhase>,
     /// Every target row is a decode row without drafts.
     undrafted: bool,
+    mixed: bool,
 }
 
 impl Gathered {
@@ -149,6 +155,7 @@ struct GatheredPhase {
     prefill: bool,
     hashed: Hashed,
     destinations: Vec<Vec<Destination>>,
+    reason: engram_rows::SyncReason,
 }
 
 fn prefix(span: Span, bytes: u64) -> Result<Span, String> {
@@ -267,7 +274,14 @@ impl Staging {
             && rows
                 .iter()
                 .all(|row| matches!(row.rows.kind, Kind::Decode { drafts: 0 }));
-        Ok(Gathered { phases, undrafted })
+        let mixed = rows.windows(2).any(|pair| {
+            std::mem::discriminant(&pair[0].rows.kind) != std::mem::discriminant(&pair[1].rows.kind)
+        });
+        Ok(Gathered {
+            phases,
+            undrafted,
+            mixed,
+        })
     }
 
     fn hash_phase(
@@ -332,6 +346,7 @@ impl Staging {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(GatheredPhase {
+            reason: engram_rows::SyncReason::HostTarget,
             prefill,
             hashed,
             destinations,
@@ -474,6 +489,7 @@ impl<P> Adapter<'_, P> {
                         },
                         destinations,
                         &phase.hashed,
+                        phase.reason,
                     )
                     .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
             }
@@ -658,13 +674,21 @@ impl<P: Program> Host for Adapter<'_, P> {
             Ok(true) => Ok(()),
             Ok(false) => {
                 let mut phases = Vec::new();
-                for phase in gathered.phases {
+                for mut phase in gathered.phases {
                     if phase.prefill
                         && phase.hashed.rows() > 0
                         && self.program.stage_prefill_engram(&phase.hashed)?
                     {
                         continue;
                     }
+                    phase.reason = if phase.prefill || gathered.undrafted {
+                        self.program
+                            .sync_engram_reason(&phase.hashed, phase.prefill)
+                    } else if gathered.mixed {
+                        engram_rows::SyncReason::MixedTarget
+                    } else {
+                        engram_rows::SyncReason::HostTarget
+                    };
                     phases.push(phase);
                 }
                 gathered.phases = phases;

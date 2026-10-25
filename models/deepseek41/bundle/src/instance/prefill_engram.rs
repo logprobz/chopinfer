@@ -111,6 +111,7 @@ impl Gathers {
                 upload_bytes(services, producer, layer.indices, bytes)?;
             }
             for layer in &self.layers {
+                crate::engram_rows::PreparedGather::Prefill.submitted();
                 services.enqueue_mapped_gather(layer.gather, (rows * self.columns) as u64)?;
             }
             Ok(())

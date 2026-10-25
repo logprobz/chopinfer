@@ -476,16 +476,36 @@ fn the_host_gathers_both_planes_and_reads_back_draft_ids() {
     };
     for (destinations, hashed) in [(&short, &hashed), (&destinations, &empty)] {
         assert_eq!(
-            rows.gather(services, stream, mapped(2, &layers), destinations, hashed),
+            rows.gather(
+                services,
+                stream,
+                mapped(2, &layers),
+                destinations,
+                hashed,
+                SyncReason::HostTarget
+            ),
             Err(Error::Refused(
                 "an Engram staging span is not rows * columns * row bytes"
             ))
         );
     }
     assert_eq!(backend.uploads.get(), 0);
-    rows.gather(services, stream, mapped(2, &layers), &destinations, &hashed)
-        .unwrap();
+    let route_count = bundle_runtime::routes::RouteCounter::begin(true);
+    rows.gather(
+        services,
+        stream,
+        mapped(2, &layers),
+        &destinations,
+        &hashed,
+        SyncReason::HostTarget,
+    )
+    .unwrap();
     assert_eq!(backend.uploads.get(), 2 * layers.len());
+    let route_count = route_count.finish().unwrap();
+    assert_eq!(
+        route_count.entries["engram/sync/host_target"].1,
+        2 * layers.len() as u64
+    );
     let width = FLASH.shape.engram.layers.len() * columns;
     for (layer, (table, destination)) in layers.iter().zip(&destinations).enumerate() {
         for (plane, span) in [
@@ -519,7 +539,8 @@ fn the_host_gathers_both_planes_and_reads_back_draft_ids() {
             stream,
             mapped(2, &layers),
             &[short, destinations[1]],
-            &hashed
+            &hashed,
+            SyncReason::HostTarget,
         ),
         Err(Error::Refused(_))
     ));
@@ -529,14 +550,22 @@ fn the_host_gathers_both_planes_and_reads_back_draft_ids() {
             stream,
             mapped(2, &layers[..1]),
             &destinations[..1],
-            &hashed
+            &hashed,
+            SyncReason::HostTarget,
         ),
         Err(Error::Refused(_))
     ));
     assert_eq!(backend.uploads.get(), uploads);
     // A rank the image maps nothing for is the host's refusal.
     assert_eq!(
-        rows.gather(services, stream, mapped(0, &layers), &destinations, &hashed),
+        rows.gather(
+            services,
+            stream,
+            mapped(0, &layers),
+            &destinations,
+            &hashed,
+            SyncReason::HostTarget
+        ),
         Err(Error::Host(BundleAbiError::Status(
             BundleStatusV1::NotFound
         )))

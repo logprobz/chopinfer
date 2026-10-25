@@ -374,7 +374,9 @@ impl conformance::Startup for Served {
     }
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
         let shape = self.host.shape.with_verify_rows(self.serving.verify_rows());
-        crate::Kernels::route_tags(&shape)
+        let mut tags = crate::Kernels::route_tags(&shape);
+        tags.extend(crate::engram_rows::route_tags());
+        tags
     }
     fn route_threads(tier: conformance::route_guard::Tier) -> usize {
         if tier == conformance::route_guard::Tier::Quick {
@@ -467,6 +469,8 @@ impl conformance::Startup for Served {
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
         if self.host.device.symbols_only.get() {
+            // The mapped index also serves AR. Speculation is negotiated separately.
+            self.host.drafter.set(true);
             self.host
                 .kv_pages
                 .set(1024 * u64::from(self.serving.sequences));
@@ -703,4 +707,121 @@ fn route_records_cover_legacy_and_negotiated_prefill() {
             adapter.assert_released();
         }
     });
+}
+
+#[test]
+fn engram_route_counts_cover_prepared_and_synchronous_calls() {
+    use conformance::Startup;
+    for (profile, prepared) in [
+        ("tp4-ar", false),
+        ("tp4-ar", true),
+        ("tp4-dspark", false),
+        ("tp4-dspark", true),
+    ] {
+        bundle_runtime::routes::with_logging(|| {
+            let serving = Served::servings()
+                .into_iter()
+                .find(|s| s.profile == profile)
+                .unwrap();
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            host.drafter.set(true);
+            if serving.draft_tokens > 0 {
+                host.speculation
+                    .set(Some((serving.draft_tokens, serving.verify_rows())));
+            }
+            let mut instance = crate::instance::ar_engram::with_enabled(prepared, || {
+                crate::instance::prefill_engram::with_enabled(prepared, || {
+                    api()
+                        .create(
+                            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
+                                Rc::clone(&host),
+                            ))),
+                            &crate::config::tests::record(
+                                &host.shape,
+                                host.kv,
+                                serving.sequences,
+                                false,
+                            ),
+                        )
+                        .unwrap()
+                })
+            });
+            for (phase, start, tokens, sync, fast) in [
+                (
+                    Phase::Prefill,
+                    0,
+                    vec![1, 2, 3],
+                    if serving.draft_tokens > 0 {
+                        "prefill_disabled"
+                    } else {
+                        "ar_prefill"
+                    },
+                    "prefill",
+                ),
+                (
+                    Phase::Decode,
+                    3,
+                    vec![4],
+                    if serving.draft_tokens > 0 {
+                        "undrafted_disabled"
+                    } else {
+                        "ar_decode_disabled"
+                    },
+                    if serving.draft_tokens > 0 {
+                        "dspark_undrafted"
+                    } else {
+                        "ar_decode"
+                    },
+                ),
+            ] {
+                let before = host.mapped_gather_calls.get();
+                let from = host.logs.borrow().len();
+                let batch = step_with_stride(
+                    &[(701, 0, start, tokens.as_slice(), phase)],
+                    serving.bundle_drafts(),
+                    8,
+                    None,
+                );
+                instance
+                    .execute(&batch, &mut RecordingSink::<Limits>::default())
+                    .unwrap();
+                instance.commit().unwrap();
+                let logs = host.logs.borrow();
+                let records: Vec<serde_json::Value> = logs[from..]
+                    .iter()
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .filter(|value: &serde_json::Value| value["schema"] == "chopinfer.route.v1")
+                    .collect();
+                assert_eq!(records.len(), 2);
+                let selected: u64 = records
+                    .iter()
+                    .flat_map(|record| record["entries"].as_object().unwrap().values())
+                    .filter(|entry| entry["symbol"] == "host.gather_mapped_rows")
+                    .map(|entry| entry["launches"].as_u64().unwrap())
+                    .sum();
+                assert_eq!(host.mapped_gather_calls.get() - before, selected);
+                let entry = if prepared {
+                    format!("engram/prepared/{fast}")
+                } else {
+                    format!("engram/sync/{sync}")
+                };
+                let calls = records[0]["entries"][&entry]["launches"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{profile} prepared={prepared}: missing {entry}"));
+                let layers = host.shape.geometry.engram_layers() as u64;
+                assert_eq!(
+                    calls,
+                    if prepared {
+                        layers
+                    } else {
+                        2 * layers * u64::from(serving.tensor_parallel)
+                    }
+                );
+                assert_eq!(selected == 0, prepared);
+            }
+            instance.retire_request(701).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        });
+    }
 }

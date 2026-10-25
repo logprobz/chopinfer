@@ -127,6 +127,8 @@ pub struct Instance {
     prefill_engram: Option<prefill_engram::Gathers>,
     /// AR decode's per-layer Engram uploads, when switched on.
     ar_engram: Option<ar_engram::State>,
+    ar_engram_fallback: crate::engram_rows::SyncReason,
+    prefill_engram_fallback: crate::engram_rows::SyncReason,
     /// AR steps' one status readback, when switched on.
     ar_status: Option<execute::ar_status::Packet>,
     /// Kept upper-skip plans of short prompts.
@@ -768,9 +770,20 @@ impl Instance {
             self.media = Some(media);
         }
         memory.take("encoder");
-        if prefill_engram::enabled(self.dspark.is_some()).map_err(BundleAbiError::Status)?
-            && services.has_async_mapped_gather()
-        {
+        let prefill_enabled =
+            prefill_engram::enabled(self.dspark.is_some()).map_err(BundleAbiError::Status)?;
+        self.prefill_engram_fallback = if !services.has_async_mapped_gather() {
+            crate::engram_rows::SyncReason::NoAsyncService
+        } else if !prefill_enabled {
+            if self.dspark.is_some() {
+                crate::engram_rows::SyncReason::PrefillDisabled
+            } else {
+                crate::engram_rows::SyncReason::ArPrefill
+            }
+        } else {
+            crate::engram_rows::SyncReason::NoPreparedGather
+        };
+        if prefill_enabled && services.has_async_mapped_gather() {
             let layers = self
                 .engram
                 .as_ref()
@@ -1021,6 +1034,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         prefill_engram_inputs: Vec::new(),
         prefill_engram: None,
         ar_engram: None,
+        ar_engram_fallback: crate::engram_rows::SyncReason::NoPreparedGather,
+        prefill_engram_fallback: crate::engram_rows::SyncReason::NoPreparedGather,
         ar_status: None,
         plans,
         partial,

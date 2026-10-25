@@ -172,10 +172,15 @@ impl Instance {
     /// codes and scales staging, sized for the widest decode bucket, when
     /// the switch is on and the instance serves AR with mapped tables.
     pub(super) fn prepare_ar_engram(&mut self) -> Result<(), BundleAbiError> {
-        if !enabled().map_err(BundleAbiError::Status)?
-            || self.dspark.is_some()
-            || !self.services.has_async_mapped_gather()
-        {
+        let enabled = enabled().map_err(BundleAbiError::Status)?;
+        self.ar_engram_fallback = if !self.services.has_async_mapped_gather() {
+            crate::engram_rows::SyncReason::NoAsyncService
+        } else if !enabled {
+            crate::engram_rows::SyncReason::ArDecodeDisabled
+        } else {
+            crate::engram_rows::SyncReason::NoPreparedGather
+        };
+        if !enabled || self.dspark.is_some() || !self.services.has_async_mapped_gather() {
             return Ok(());
         }
         let Some(tables) = self
@@ -337,6 +342,7 @@ impl Instance {
             // Count before enqueueing: a refused enqueue may still hold
             // transfers, which release fences.
             state.enqueued += 1;
+            crate::engram_rows::PreparedGather::ArDecode.submitted();
             services.enqueue_mapped_gather(layer.gather, rows)?;
         }
         Ok(())

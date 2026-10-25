@@ -157,6 +157,7 @@ impl Engram {
     /// Has the host gather `hashed`'s table rows of every Engram layer into
     /// rank `rank`'s staging buffers on `stream`; nothing when the image
     /// maps no table or the phase has no rows.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn gather(
         &self,
         services: &HostServicesV1,
@@ -165,6 +166,7 @@ impl Engram {
         rank: u32,
         destinations: &[Destination],
         hashed: &Hashed,
+        reason: engram_rows::SyncReason,
     ) -> Result<(), engram_rows::Error> {
         let Some(tables) = &self.tables else {
             return Ok(());
@@ -175,7 +177,7 @@ impl Engram {
             tables,
         };
         self.rows
-            .gather(services, stream, mapped, destinations, hashed)
+            .gather(services, stream, mapped, destinations, hashed, reason)
     }
 
     /// Holds the step's tokens of every phase until the step ends.

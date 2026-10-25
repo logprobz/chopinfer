@@ -373,6 +373,7 @@ impl Instance {
             .map_err(|e| format!("Engram device hash launch: {e:?}"))?;
         }
         for layer in &device.cycle.layers {
+            crate::engram_rows::PreparedGather::DsparkTarget.submitted();
             self.services
                 .enqueue_mapped_gather(
                     layer.gather,
@@ -421,6 +422,7 @@ impl Instance {
         upload_bytes(services, stream, early.ids, &ids).map_err(|e| e.to_string())?;
         let rows = (hashed.rows() * columns) as u64;
         for &gather in &early.gathers {
+            crate::engram_rows::PreparedGather::DsparkEarly.submitted();
             services
                 .enqueue_mapped_gather(gather, rows)
                 .map_err(|e| e.to_string())?;
@@ -474,6 +476,7 @@ impl Instance {
         upload_bytes(services, stream, memory.ids, &deferred.ids).map_err(|e| e.to_string())?;
         let rows = u64::from(deferred.rows) * cycle.hash.shape.columns();
         for layer in &cycle.layers {
+            crate::engram_rows::PreparedGather::DsparkUndrafted.submitted();
             services
                 .enqueue_mapped_gather(layer.gather, rows)
                 .map_err(|e| e.to_string())?;

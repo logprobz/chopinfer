@@ -815,6 +815,26 @@ impl Instance {
                         .filter(|_| run.prefill_engram.is_none() && !run.ar_engram),
                     self.image,
                 ) {
+                    use crate::engram_rows::SyncReason;
+                    let reason = if run.phase.prefill() {
+                        if run.media.is_some() {
+                            SyncReason::Media
+                        } else if self.taps.text() {
+                            SyncReason::Taps
+                        } else if run.dma.is_some()
+                            || run.skip.as_ref().is_some_and(|skip| skip.uses_dma())
+                            || run.micro.is_some()
+                            || run.overlap.is_some()
+                        {
+                            SyncReason::PrefillSchedule
+                        } else {
+                            self.prefill_engram_fallback
+                        }
+                    } else if run.arena == DECODE {
+                        self.ar_engram_fallback
+                    } else {
+                        SyncReason::HostTarget
+                    };
                     engram
                         .gather(
                             &self.services,
@@ -823,6 +843,7 @@ impl Instance {
                             rank as u32,
                             &self.engram_destinations(scratch, hashed.rows() as u32)?,
                             hashed,
+                            reason,
                         )
                         .map_err(|error| match error {
                             crate::engram_rows::Error::Host(error) => error,

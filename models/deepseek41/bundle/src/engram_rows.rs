@@ -25,6 +25,120 @@ use runtime_bundle_abi::{
     HostServicesV1, MappedRowGatherV1,
 };
 
+/// The preparation gate that kept a bundle-facing gather synchronous.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyncReason {
+    ArPrefill,
+    Media,
+    Taps,
+    PrefillSchedule,
+    NoAsyncService,
+    ArDecodeDisabled,
+    PrefillDisabled,
+    UndraftedDisabled,
+    MixedTarget,
+    HostTarget,
+    NoPreparedGather,
+    GatherCapacity,
+}
+
+impl SyncReason {
+    #[cfg(test)]
+    const ALL: [Self; 12] = [
+        Self::ArPrefill,
+        Self::Media,
+        Self::Taps,
+        Self::PrefillSchedule,
+        Self::NoAsyncService,
+        Self::ArDecodeDisabled,
+        Self::PrefillDisabled,
+        Self::UndraftedDisabled,
+        Self::MixedTarget,
+        Self::HostTarget,
+        Self::NoPreparedGather,
+        Self::GatherCapacity,
+    ];
+
+    fn entry(self) -> &'static str {
+        match self {
+            Self::ArPrefill => "engram/sync/ar_prefill",
+            Self::Media => "engram/sync/media",
+            Self::Taps => "engram/sync/taps",
+            Self::PrefillSchedule => "engram/sync/prefill_schedule",
+            Self::NoAsyncService => "engram/sync/no_async_service",
+            Self::ArDecodeDisabled => "engram/sync/ar_decode_disabled",
+            Self::PrefillDisabled => "engram/sync/prefill_disabled",
+            Self::UndraftedDisabled => "engram/sync/undrafted_disabled",
+            Self::MixedTarget => "engram/sync/mixed_target",
+            Self::HostTarget => "engram/sync/host_target",
+            Self::NoPreparedGather => "engram/sync/no_prepared_gather",
+            Self::GatherCapacity => "engram/sync/gather_capacity",
+        }
+    }
+
+    fn tag(self) -> kernel_core::route::RouteTag {
+        kernel_core::route::RouteTag::new(
+            "host.gather_mapped_rows",
+            kernel_core::route::RouteClass::Baseline,
+            "engram_gather",
+            [],
+        )
+        .with_entry(self.entry())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PreparedGather {
+    ArDecode,
+    Prefill,
+    DsparkTarget,
+    DsparkEarly,
+    DsparkUndrafted,
+}
+
+impl PreparedGather {
+    #[cfg(test)]
+    const ALL: [Self; 5] = [
+        Self::ArDecode,
+        Self::Prefill,
+        Self::DsparkTarget,
+        Self::DsparkEarly,
+        Self::DsparkUndrafted,
+    ];
+
+    fn tag(self) -> kernel_core::route::RouteTag {
+        let entry = match self {
+            Self::ArDecode => "engram/prepared/ar_decode",
+            Self::Prefill => "engram/prepared/prefill",
+            Self::DsparkTarget => "engram/prepared/dspark_target",
+            Self::DsparkEarly => "engram/prepared/dspark_early",
+            Self::DsparkUndrafted => "engram/prepared/dspark_undrafted",
+        };
+        kernel_core::route::RouteTag::new(
+            "host.enqueue_mapped_gather",
+            kernel_core::route::RouteClass::Fast,
+            "engram_gather",
+            [],
+        )
+        .with_entry(entry)
+    }
+
+    pub(crate) fn submitted(self) {
+        if bundle_runtime::routes::active() {
+            bundle_runtime::routes::submitted(Some(&self.tag()));
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn route_tags() -> Vec<kernel_core::route::RouteTag> {
+    SyncReason::ALL
+        .into_iter()
+        .map(SyncReason::tag)
+        .chain(PreparedGather::ALL.into_iter().map(PreparedGather::tag))
+        .collect()
+}
+
 /// Why staging failed: a refused input, or the host's answer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -205,6 +319,7 @@ impl EngramRows {
         mapped: Mapped<'_>,
         destinations: &[Destination],
         hashed: &Hashed,
+        reason: SyncReason,
     ) -> Result<()> {
         let layers = self.hash.engram().layers.len();
         let columns = self.hash.columns();
@@ -247,6 +362,9 @@ impl EngramRows {
                 (&table.codes, destination.codes),
                 (&table.scales, destination.scales),
             ] {
+                if bundle_runtime::routes::active() {
+                    bundle_runtime::routes::submitted(Some(&reason.tag()));
+                }
                 services.gather_mapped_rows(
                     stream,
                     span,

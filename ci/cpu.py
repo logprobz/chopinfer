@@ -173,7 +173,8 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("benchmark-loop", PY + ["tests/test_benchmark_loop.py"]),
         step("startup-timing", PY + ["tools/dev/test_startup_timing.py", "-v"]),
         step("depth-tuner", PY + ["tools/tune/test_tune.py", "-v"]),
-        step("model-inventory", PY + ["tests/test_model_inventory.py"]),
+        # Model inventory loads qualification tests that score during import.
+        step("model-inventory", PY + ["tests/test_model_inventory.py"], readers, **scoring),
         step("kernel-lab-inventory", PY + ["ci/kernel_lab_inventory.py"]),
         step("model-check-plans", PY + ["tests/test_model_checks.py"]),
         step("external-model-policy", PY + ["tests/test_external_model_policy.py"]),

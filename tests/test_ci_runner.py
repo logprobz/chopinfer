@@ -358,7 +358,8 @@ class RequiredCoverage(unittest.TestCase):
 
 
 class ScorerDependencies(unittest.TestCase):
-    READERS = ("validation-report", "spec-bench", "deploy-artifacts", "profile-tools", "release-gate")
+    READERS = ("validation-report", "spec-bench", "deploy-artifacts", "profile-tools", "release-gate",
+               "model-inventory")
 
     def planned(self, work):
         # An inherited evaluator can implement an older CLI than this source.

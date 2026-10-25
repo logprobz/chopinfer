@@ -128,7 +128,8 @@ pub(crate) fn logging_enabled() -> bool {
     if let Some(enabled) = LOGGING_OVERRIDE.get() {
         return enabled;
     }
-    std::env::var("CHOPINFER_ROUTE_COUNTERS").as_deref() == Ok("1")
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("CHOPINFER_ROUTE_COUNTERS").as_deref() == Ok("1"))
 }
 
 #[cfg(any(test, feature = "test-support"))]

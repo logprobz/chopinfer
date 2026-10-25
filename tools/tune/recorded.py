@@ -90,5 +90,129 @@ def main(recorded, output):
           f'{output}')
 
 
+def closed_loop(recorded, output):
+    """Replay historical closed-loop receipts through the paired verdict core.
+
+    Historical admission gaps stay explicit. These receipts cannot certify a
+    new contract A job, even when their numerical verdict agrees.
+    """
+    import csv
+    import hashlib
+    import math
+    import faults
+    root, output = Path(recorded).resolve(), Path(output).resolve()
+    evidence = {}
+
+    def read(path):
+        path = Path(path).resolve()
+        if root not in path.parents:
+            raise ValueError('recorded input escapes its run directory')
+        body = path.read_bytes()
+        evidence[str(path.relative_to(root))] = hashlib.sha256(body).hexdigest()
+        return json.loads(body)
+
+    summary, original = read(root / 'summary.json'), read(root / 'comparison.json')
+    if summary['status'] != 'passed' or original['passed'] is not True or original.get('mechanics_only'):
+        raise ValueError('historical run did not pass its harness')
+    arms = summary['abba']['AR-vs-DSpark']
+    labels = ('A1', 'B1', 'B2', 'A2')
+    counts = set(original['rows'])
+    if not counts or any(set(arms[label]['decode']) != counts for label in labels):
+        raise ValueError('wrong historical visit or cell counts')
+    power = summary['telemetry']['before']['power']['enforced_power_limits_w']
+    if power != summary['telemetry']['after']['power']['enforced_power_limits_w']:
+        raise ValueError('void historical job: changed power limits')
+    samples = root / 'gpu-samples.csv'
+    evidence[samples.name] = hashlib.sha256(samples.read_bytes()).hexdigest()
+    seen = set()
+    with samples.open() as stream:
+        for row in csv.reader(stream):
+            index = int(row[1])
+            if float(row[5]) != power[index]:
+                raise ValueError('void historical job: changed sampled power limits')
+            if float(row[4]) <= 0:
+                raise ValueError('missing historical clocks')
+            seen.add(index)
+    if seen != set(range(len(power))):
+        raise ValueError('incomplete historical GPU samples')
+    result, gaps = {}, set()
+    servers = [arms[label]['server'] for label in labels]
+    if len(set(servers)) != 4:
+        gaps.add('Historical paired DSpark visits reused a process.')
+    mapping = {'decisive gain': 'resolved gain', 'decisive regression': 'resolved regression',
+               'no change (within the A/A or B/B spread)': 'neutral'}
+    for label in labels:
+        if summary['servers'][arms[label]['server']]['weights']['source'] != 'borrowed':
+            raise ValueError('historical visit did not borrow keeper weights')
+        faults.validate(faults.combine([w['faults'] for w in arms[label]['decode'].values()]))
+    for c in sorted(counts, key=int):
+        rates, identities, durations, energies = [], [], [], []
+        for label in labels:
+            window = arms[label]['decode'][c]
+            start, end = window['window_monotonic_seconds']
+            if end <= start or not math.isclose(end - start, window['window_seconds'], abs_tol=1e-6):
+                raise ValueError('inconsistent historical window boundaries')
+            durations.append(end - start)
+            if not 14.9 <= end - start <= 15.2:
+                gaps.add('Historical windows include durations other than 15 seconds.')
+            faults.validate(window['faults'])
+            actual_faults = faults.difference(window['fault_counters_before'], window['fault_counters_after'])
+            if actual_faults != window['faults']:
+                raise ValueError('historical fault counters disagree')
+            requests = read(window['requests_path'])
+            if len(requests) != window['requests']['total'] or len(requests) != window['requests']['completed']:
+                raise ValueError('incomplete historical requests')
+            identities_for_visit = {}
+            tokens = 0
+            for request in requests:
+                usage, body = request['usage'], request['request']
+                if request['error'] or request['finish_reason'] != 'length':
+                    raise ValueError('failed historical request')
+                if usage['prompt_tokens_details']['cached_tokens'] != 0:
+                    raise ValueError('cached historical prompt tokens')
+                if body['temperature'] != 1.0 or usage['completion_tokens'] != window['output_tokens']:
+                    raise ValueError('wrong historical sampling or output count')
+                key = (request['slot'], request['sequence'])
+                if key in identities_for_visit:
+                    raise ValueError('duplicate historical slot sequence')
+                identities_for_visit[key] = (body['seed'], body['prompt'])
+                if sum(n for _, n in request['events']) != window['output_tokens']:
+                    raise ValueError('incomplete historical token events')
+                tokens += sum(n for at, n in request['events'] if start <= at < end)
+            if tokens != window['tokens']:
+                raise ValueError('historical timed token count differs')
+            rate = tokens / (end - start)
+            if not math.isclose(rate, original['rows'][c]['arms'][label]['window_tok_s'], rel_tol=1e-10):
+                raise ValueError('historical reported rate differs from events')
+            rates.append(rate)
+            identities.append(identities_for_visit)
+            energies.append(window['energy']['j_per_token'])
+        for a, b in ((0, 1), (2, 3)):
+            common = identities[a].keys() & identities[b].keys()
+            if len(common) < int(c) or any(identities[a][k] != identities[b][k] for k in common):
+                raise ValueError('mismatched historical paired seeds or prompts')
+        if {v[0] for v in identities[0].values()} & {v[0] for v in identities[2].values()}:
+            raise ValueError('historical pairs share a seed set')
+        decision = report.paired(rates)
+        expected = mapping[original['rows'][c]['window_tok_s']['verdict']]
+        if decision['verdict'] != expected:
+            raise ValueError(f'C{c}: paired verdict differs from recorded harness')
+        result[c] = {**decision, 'rates': rates, 'window_seconds': durations,
+                     'joules_per_token': energies, 'harness_verdict': expected}
+    output.mkdir(parents=True, exist_ok=False)
+    value = {'status': 'historical replay', 'passed': True, 'contract_a_admissible': False,
+             'limitations': sorted(gaps | {'Historical records do not contain per-seed exact output proofs.'}),
+             'pairs': {'AR/DSpark': result}, 'enforced_power_limits_w': power, 'evidence': evidence,
+             'windows': len(counts) * 4, 'excluded_probes': sorted(set(arms) - set(labels))}
+    r.write(output / 'ab.json', value)
+    r.write(output / 'recorded-check.json', value)
+    print(json.dumps({'passed': True, 'windows': value['windows'],
+                      'verdicts': {c: v['verdict'] for c, v in result.items()}}))
+    return value
+
+
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    if sys.argv[1:2] == ['--closed-loop']:
+        closed_loop(*sys.argv[2:4])
+    else:
+        main(*sys.argv[1:3])

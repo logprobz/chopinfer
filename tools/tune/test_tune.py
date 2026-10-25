@@ -540,6 +540,44 @@ class Tuner(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 recorded.main(run, Path(directory) / 'short')
 
+    def test_closed_loop_adapter_rebuilds_rates_and_rejects_bad_seeds(self):
+        import faults
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'recorded'
+            root.mkdir()
+            power = {'enforced_power_limits_w': [250]}
+            summary = {'status': 'passed', 'telemetry': {k: {'power': power} for k in ('before', 'after')},
+                       'servers': {}, 'abba': {'AR-vs-DSpark': {}}}
+            original = {'passed': True, 'mechanics_only': False, 'rows': {'1': {
+                'arms': {}, 'window_tok_s': {'verdict': 'decisive gain'}}}}
+            for label, seed, count in [('A1', 1, 100), ('B1', 1, 110), ('B2', 2, 110), ('A2', 2, 100)]:
+                request = {'slot': 0, 'sequence': 0, 'request': {'seed': seed, 'prompt': 'sample', 'temperature': 1.0},
+                           'error': None, 'finish_reason': 'length', 'usage': {'completion_tokens': 120,
+                           'prompt_tokens_details': {'cached_tokens': 0}}, 'events': [[1, count], [16, 120-count]]}
+                path = root / (label + '.json')
+                path.write_text(json.dumps([request]))
+                snapshot = {'process_group': 1, 'processes': {}}
+                fault = faults.difference(snapshot, snapshot)
+                window = {'window_monotonic_seconds': [0, 15], 'window_seconds': 15,
+                          'faults': fault, 'fault_counters_before': snapshot, 'fault_counters_after': snapshot,
+                          'requests_path': str(path), 'requests': {'total': 1, 'completed': 1}, 'output_tokens': 120,
+                          'tokens': count, 'energy': {'j_per_token': 1}}
+                summary['servers'][label] = {'weights': {'source': 'borrowed'}}
+                summary['abba']['AR-vs-DSpark'][label] = {'server': label, 'decode': {'1': window}}
+                original['rows']['1']['arms'][label] = {'window_tok_s': count / 15}
+            (root / 'summary.json').write_text(json.dumps(summary))
+            (root / 'comparison.json').write_text(json.dumps(original))
+            (root / 'gpu-samples.csv').write_text('time,0,100,100,1800,250\n')
+            result = recorded.closed_loop(root, Path(directory) / 'out')
+            self.assertEqual(result['pairs']['AR/DSpark']['1']['verdict'], 'resolved gain')
+            self.assertEqual(result['windows'], 4)
+            self.assertFalse(result['contract_a_admissible'])
+            path = root / 'B1.json'
+            row = json.loads(path.read_text())
+            row[0]['request']['seed'] = 9
+            path.write_text(json.dumps(row))
+            with self.assertRaisesRegex(ValueError, 'mismatched'):
+                recorded.closed_loop(root, Path(directory) / 'bad')
 
     def test_model_configs_measure_sampled_windows_only(self):
         # Temperature 1.0 is the serving workload: tuner jobs measure and

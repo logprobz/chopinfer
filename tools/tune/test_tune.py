@@ -41,7 +41,7 @@ def priming_fixture(c):
 def warmup_fixture(config):
     return {'completed': True, 'windows': [{'concurrency': c, 'repeat': repeat,
         'seed_set': tune.seed_set(config, repeat, c), 'cached_prompt_tokens': 0,
-        'requests': c, 'ended': 1} for c in config['model']['concurrencies'] for repeat in (0, 1)]}
+        'requests': c, 'ended': 1} for c, repeat in tune.warmup_windows(config)]}
 
 
 def ab_fixture(root, **overrides):
@@ -263,6 +263,79 @@ class Tuner(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'warm-up'):
                 report.ab(root)
 
+    def test_single_repeat_concurrency_warms_only_its_used_seed_set(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root, concurrencies=[8, 16], concurrency_repeats={'8': 1})
+            summary['page_cache_warmup']['windows'] = [w for w in summary['page_cache_warmup']['windows']
+                                                       if (w['concurrency'], w['repeat']) != (8, 1)]
+            tune.r.write(root / 'summary.json', summary)
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            config['tokens'] = {'default': 64}
+            state = {'tokens': [[1]]}
+            result = {'started': 0, 'ended': 1, 'requests': [None] * 16,
+                      'cached_prompt_tokens': 0, 'priming': {}}
+            with patch.object(tune, 'SEAL', {'config': config}, create=True), \
+                    patch.object(tune, 'closed_loop', return_value=result) as controller:
+                tune.page_cache_warmup(None, {'label': 'w0'}, state, None)
+            self.assertEqual([call.args[1] for call in controller.call_args_list], ['w0-c8-r0', 'w0-c16-r0', 'w0-c16-r1'])
+
+    def test_a1_control_offset_invalidates_timing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root, control_shapes={'8': ['i8-r16']})
+            def controls(values):
+                for visit, value in zip(tune.visits(config), values):
+                    path = root / visit['label'] / 'windows/c8.json'
+                    row = json.loads(path.read_text())
+                    row['cells']['i8-r16'] = {'cycle_ms': [value] * 20, 'execution_ms': []}
+                    tune.r.write(path, row)
+            for values in ([11, 10, 10.01, 10], [9, 10, 10.01, 10]):
+                with self.subTest(values=values):
+                    controls(values)
+                    rows = report.load(root)[1]
+                    validity = report.ab_validity(config, rows, summary)
+                    self.assertEqual(validity['status'], 'invalid')
+                    self.assertIn('A1 offset', validity['reason'])
+                    self.assertFalse(report.ab(root)['contract_a_admissible'])
+                    self.assertEqual(report.ab(root)['pairs'], {})
+            controls([10.05, 10, 10, 10])
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            controls([11, 10, 10, 11])
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            # Undrafted controls are discovered without an explicit list.
+            config['model'].pop('control_shapes')
+            tune.r.write(root / 'config.json', config)
+            for visit, value in zip(tune.visits(config), [11, 10, 10, 10]):
+                path = root / visit['label'] / 'windows/c8.json'
+                row = json.loads(path.read_text())
+                row['cells']['i8-r8'] = {'cycle_ms': [value] * 20, 'execution_ms': []}
+                tune.r.write(path, row)
+            self.assertEqual(report.ab(root)['status'], 'invalid')
+
+    def test_cold_pause_timeout_does_not_resume_requests(self):
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        original_wait = threading.Event.wait
+        def wait(event, timeout=None):
+            return False if timeout == 120 else original_wait(event, timeout)
+        event = {'usage': {'completion_tokens': 1, 'prompt_tokens': 1,
+                          'prompt_tokens_details': {'cached_tokens': 0}},
+                 'choices': [{'token_ids': [1], 'logprobs': {'token_logprobs': [-.1]}, 'finish_reason': 'length'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            server = SimpleNamespace(directory=Path(directory), dry=True, url='stub')
+            (server.directory / 'server.log').touch()
+            with patch.object(threading.Event, 'wait', wait), \
+                    patch.object(tune.r, 'remaining', return_value=120), \
+                    patch.object(tune.r, 'stream', return_value=[event]) as stream:
+                with self.assertRaisesRegex(RuntimeError, 'cold priming pause timed out'):
+                    tune.closed_loop(server, 'timeout', lambda i: [1], 1,
+                                     {'temperature': 1, 'top_p': 1}, [1], None,
+                                     before_measure=lambda: self.fail('timed-out priming reached preparation'))
+            self.assertEqual(stream.call_count, 1)
+
     def test_stage_refuses_work_and_cold_prompt_overruns(self):
         model = {**MODEL, 'mode': 'ab', 'concurrencies': [1],
                  'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}], 'pairs': [['a', 'b']],
@@ -377,6 +450,8 @@ class Tuner(unittest.TestCase):
                     self.assertEqual(len(rows), 4 if case == 'valid' else 8)
                     self.assertTrue(all(r['priming']['window_started'] >= r['priming']['last_completed'] for r in rows))
                     self.assertTrue(all(r['full']['steps'] > 0 for r in rows))
+                    self.assertTrue(all(.15 <= r['window_seconds'] < 1 for r in rows))
+                    self.assertTrue(all(r['window_seconds'] == r['request_seconds'] for r in rows))
                     if case == 'standard':
                         self.assertEqual(len(summary['page_cache_warmup']['windows']), 4)
                         continue
@@ -597,7 +672,11 @@ class Tuner(unittest.TestCase):
         for field, value in [('seed_set', [9]), ('cached_prompt_tokens', 1),
                              ('faults', {'complete': False, 'major_faults': 0}),
                              ('faults', {'complete': True, 'major_faults': 1001}), ('visit', 9),
-                             ('window_seconds', 20)]:
+                             ('window_seconds', 20), ('request_seconds', 14.9),
+                             ('priming', {}), ('priming', {**priming_fixture(1), 'window_started': .5}),
+                             ('priming', {**priming_fixture(1), 'per_slot_completed': {}}),
+                             ('replacement_submissions', None), ('replacement_submissions', -1),
+                             ('replacement_submissions', 1.5)]:
             altered = copy.deepcopy(rows)
             altered[0][field] = value
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):

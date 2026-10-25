@@ -322,11 +322,11 @@ def ab_validity(config, rows, summary):
         raise ValueError('missing per-seed exactness evidence')
     if not config.get('cold_engram'):
         warmup = summary.get('page_cache_warmup', {})
-        expected_warm = {(c, repeat) for c in config['model']['concurrencies'] for repeat in (0, 1)}
+        expected_warm = set(tune.warmup_windows(config))
         windows = warmup.get('windows', [])
         if (warmup.get('completed') is not True or len(windows) != len(expected_warm)
                 or {(w['concurrency'], w['repeat']) for w in windows} != expected_warm):
-            raise ValueError('missing page-cache warm-up for both seed sets')
+            raise ValueError('missing page-cache warm-up for measured seed sets')
         first = min(row.get('priming', {}).get('window_started', 0) for row in rows)
         for window in windows:
             if (window.get('seed_set') != tune.seed_set(config, window['repeat'], window['concurrency'])
@@ -361,10 +361,15 @@ def ab_validity(config, rows, summary):
             raise ValueError('wrong visit identity')
         if row.get('seed_set') != tune.seed_set(config, row['repeat'], row['concurrency']):
             raise ValueError('mismatched seeds')
-        if row.get('window_seconds') != 15 or row.get('temperature') != 1.0:
-            raise ValueError('A/B requires 15-second temperature 1.0 windows')
-        if not row.get('synthetic') and not math.isclose(row.get('request_seconds', 0), 15, abs_tol=1e-6):
-            raise ValueError('measured interval differs from 15 seconds')
+        duration = row.get('window_seconds', 0)
+        target = .15 if row.get('synthetic') else 15
+        tolerance = .15  # At most 1% overrun on a real 15-second window.
+        if (not target <= duration <= target + tolerance or row.get('temperature') != 1.0
+                or not math.isclose(row.get('request_seconds', 0), duration, abs_tol=1e-6)):
+            raise ValueError('measured interval differs from the required A/B window')
+        if 'window_ended' in row and not math.isclose(row['window_ended'] - row['priming']['window_started'],
+                                                     duration, abs_tol=1e-6):
+            raise ValueError('window duration disagrees with measured boundaries')
         if row.get('cached_prompt_tokens') != 0:
             raise ValueError('cached prompt tokens in measured window')
         priming = row.get('priming', {})
@@ -391,9 +396,11 @@ def ab_validity(config, rows, summary):
         measured = faults.combine([r['faults'] for r in rows if r['label'] == visit['label']])
         if any(measured[k] != processes[visit['label']]['faults'][k] for k in ('complete', 'major_faults')):
             raise ValueError('incomplete visit faults')
-    return {'status': 'void' if changed or summary.get('status') == 'void' else 'valid',
-            'enforced_power_limits_w': limits,
-            'reason': 'power limits changed within job' if changed or summary.get('status') == 'void' else None}
+    control = control_offsets(config, rows)
+    return {'status': 'void' if changed else 'invalid' if control['status'] == 'offset' else 'valid',
+            'enforced_power_limits_w': limits, 'a1_control_check': control,
+            'reason': 'power limits changed within job' if changed else
+                      'A1 offset on control shapes' if control['status'] == 'offset' else None}
 
 
 def distribution(values):
@@ -452,7 +459,8 @@ def decision_cells(model, selected, c, change):
                      for n, fraction in zip(counts, shares)]
         paired_shape = len(selected) == 4 and all(supported)
         eligible = items == c and paired_shape
-        cell = {'steps': counts, 'time_share': shares, 'nominal_weight': nominal,
+        cell = {'steps': counts, 'time_share': shares, 'cycle_ms_median': [median(v) for v in values],
+                'nominal_weight': nominal,
                 'supported': supported, 'weight': nominal if eligible else 0, 'decision': eligible and nominal > 0}
         if shape in required and not eligible:
             raise ValueError(f'required shape {shape} is missing, unpaired or insufficiently sampled')
@@ -466,6 +474,43 @@ def decision_cells(model, selected, c, change):
             cell.update(paired([1 / median(v) for v in values], change))
         result[shape] = cell
     return result
+
+
+def control_offsets(config, rows):
+    """Check the first visit against the variation in later control visits."""
+    if config.get('cold_engram'):
+        return {'status': 'not applicable', 'cells': {}}
+    model, checks = config['model'], {}
+    declared = model.get('control_shapes', {})
+    if not set(declared) <= {str(c) for c in model['concurrencies']}:
+        raise ValueError('invalid control shape concurrency')
+    for baseline, treatment in model['pairs']:
+        for c in model['concurrencies']:
+            selected = sorted((row for row in rows if row['arm'] in (baseline, treatment)
+                               and row['concurrency'] == c), key=lambda row: row['visit'])
+            shapes = declared.get(str(c), [f'i{c}-r{c}'])
+            if any(not re.fullmatch(rf'i{c}-r[1-9]\d*', shape) for shape in shapes):
+                raise ValueError('control shapes must be full-concurrency step shapes')
+            candidates = [dict(row, cells=row.get('cells', {})) for row in selected]
+            cells = decision_cells({**model, 'required_shapes': {}}, candidates, c, 'speedup')
+            for shape in shapes:
+                key = f'{baseline}/{treatment}/c{c}/{shape}'
+                cell = cells.get(shape, {})
+                if len(selected) != 4 or not all(cell.get('supported', [False])):
+                    checks[key] = {'status': 'unavailable', 'reason': 'needs support in all four visits'}
+                    continue
+                values = cell['cycle_ms_median']
+                a1, later = values[0], values[1:]
+                offset = a1 / median(later) - 1
+                noise = max(later) / min(later) - 1
+                threshold = max(noise, .005)
+                detected = ((a1 < min(later) or a1 > max(later)) and abs(offset) > threshold
+                            and not math.isclose(abs(offset), threshold, abs_tol=1e-12))
+                checks[key] = {'status': 'offset' if detected else 'clear', 'cycle_ms_median': values,
+                               'offset': offset, 'later_spread': noise, 'threshold': threshold}
+    statuses = [cell['status'] for cell in checks.values()]
+    return {'status': 'offset' if 'offset' in statuses else 'clear' if 'clear' in statuses else 'unavailable',
+            'cells': checks}
 
 
 def validate_cell_weights(model):
@@ -504,6 +549,8 @@ def ab(run):
     if cold:
         out['cold_prompt_assignment'] = summary.get('cold_prompt_assignment', {})
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
+             'A1 control check: ' + validity.get('a1_control_check', {}).get('status', 'unavailable') + '.',
+             validity.get('reason') or '', '',
              '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
              '|---|---:|---:|---:|---:|---|---:|']
     if validity['status'] == 'valid':

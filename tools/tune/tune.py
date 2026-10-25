@@ -659,7 +659,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                         primed[number] = row['completed']
                     condition.notify_all()
                 if sequence == 0 and before_measure is not None:
-                    resume.wait(timeout=r.remaining(120))
+                    if not resume.wait(timeout=r.remaining(120)):
+                        raise RuntimeError('cold priming pause timed out before measurement')
                 sequence += 1
         except BaseException as error:
             with condition:
@@ -682,6 +683,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                         raise RuntimeError('priming wave exceeded its deadline')
                     condition.wait(.01)
             cold_state = before_measure() if before_measure else None
+            if errors:
+                raise errors[0]
             before = scrape(server)
             initial = faults.snapshot(server)
             started, start_ns = time.monotonic(), time.time_ns()
@@ -692,6 +695,7 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                     raise errors[0]
                 stop.wait(min(.01, max(0, deadline - time.monotonic())))
             final = faults.snapshot(server)
+            ended, end_ns = final['monotonic_seconds'], time.time_ns()
             after = scrape(server)
         finally:
             stop.set()
@@ -699,43 +703,48 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
         for future in futures:
             future.result()
     steps = settle(server, offset)
-    end_ns = start_ns + round(duration * 1e9)
+    duration = ended - started
     measured = [s for s in steps if start_ns <= s['completed_unix_ns'] < end_ns]
-    emitted = sum(n for at, n in events if started <= at < deadline)
+    emitted = sum(n for at, n in events if started <= at < ended)
     if (not emitted and before_measure is None) or not requests:
         raise RuntimeError('empty closed-loop window')
     requests.sort(key=lambda x: x['index'])
-    in_flight = sum(max(0, min(row['completed'], deadline) - max(row['submitted'], started))
+    in_flight = sum(max(0, min(row['completed'], ended) - max(row['submitted'], started))
                     for row in requests) / duration
     if not server.dry and in_flight < .95 * count:
         raise RuntimeError('underfilled closed-loop window')
-    energy = power.window(started, deadline, max(emitted, 1))
+    energy = power.window(started, ended, max(emitted, 1))
     if not emitted:
         energy['joules_per_token'] = None
-    return {'started': started, 'ended': deadline, 'steps': measured, 'requests': requests,
+    return {'started': started, 'ended': ended, 'steps': measured, 'requests': requests,
             'cold_steps': [s for s in steps if s['completed_unix_ns'] >= start_ns],
             'faults': faults.difference(initial, final), 'tokens': emitted,
-            'energy': energy, 'window_seconds': seconds,
+            'energy': energy, 'window_seconds': duration,
             'cached_prompt_tokens': sum(row['cached_prompt_tokens'] for row in requests),
             'priming': {'completed_requests': len(primed), 'per_slot_completed': primed,
                         'last_completed': max(primed.values()), 'window_started': started},
-            'replacement_submissions': sum(row['sequence'] > 0 and started <= row['submitted'] < deadline for row in requests),
+            'replacement_submissions': sum(row['sequence'] > 0 and started <= row['submitted'] < ended for row in requests),
             'prefill_share': sum(s['execution_us'] for s in measured if s['prefill_items']) / (duration * 1e6),
             'cold_preparation': cold_state, 'synthetic': server.dry, 'acceptance': acceptance(before, after)}
+
+
+def warmup_windows(config):
+    model = config['model']
+    return [(c, repeat) for repeat in (0, 1) for c in model['concurrencies']
+            if repeat < model.get('concurrency_repeats', {}).get(str(c), model['repeats'])]
 
 
 def page_cache_warmup(server, arm, state, power):
     config = SEAL['config']
     rows = []
-    for repeat in (0, 1):
-        for c in config['model']['concurrencies']:
-            seeds = seed_set(config, repeat, c)
-            tokens = config['tokens'].get(str(c), config['tokens']['default'])
-            w = closed_loop(server, f'w0-c{c}-r{repeat}', lambda i: state['tokens'][i % len(state['tokens'])],
-                            tokens, config['sampling'], seeds, power)
-            rows.append({'concurrency': c, 'repeat': repeat, 'seed_set': seeds,
-                         'started': w['started'], 'ended': w['ended'], 'requests': len(w['requests']),
-                         'cached_prompt_tokens': w['cached_prompt_tokens'], 'priming': w['priming']})
+    for c, repeat in warmup_windows(config):
+        seeds = seed_set(config, repeat, c)
+        tokens = config['tokens'].get(str(c), config['tokens']['default'])
+        w = closed_loop(server, f'w0-c{c}-r{repeat}', lambda i: state['tokens'][i % len(state['tokens'])],
+                        tokens, config['sampling'], seeds, power)
+        rows.append({'concurrency': c, 'repeat': repeat, 'seed_set': seeds,
+                     'started': w['started'], 'ended': w['ended'], 'requests': len(w['requests']),
+                     'cached_prompt_tokens': w['cached_prompt_tokens'], 'priming': w['priming']})
     state['page_cache_warmup'] = {'completed': True, 'windows': rows, 'process': arm['label']}
 
 
@@ -766,6 +775,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': arm['depth'],
                      'arm': arm['arm'], 'visit': arm['visit'], 'repeat': repeat, 'seed_set': seeds,
                      'temperature': config['sampling']['temperature'], 'window_seconds': w['window_seconds'],
+                     'window_ended': w['ended'],
                      'cached_prompt_tokens': w['cached_prompt_tokens'],
                      'priming': w['priming'], 'replacement_submissions': w['replacement_submissions'],
                      'prefill_share': w['prefill_share'], 'request_tokens_per_second': w['tokens'] / (w['ended'] - w['started']),
@@ -1233,7 +1243,11 @@ def main(args):
             if state['mode'] == 'costs':
                 state['costs'] = report.costs(run)['summary']
             elif state['mode'] == 'ab':
-                state['ab'] = report.ab(run)['pairs']
+                result = report.ab(run)
+                state['ab'] = result['pairs']
+                if result['status'] != 'valid':
+                    state['status'] = 'void' if result['status'] == 'void' else 'failed'
+                    state['errors'].append('report: ' + result['reason'])
             elif state['mode'] == 'exact':
                 state['costs'] = report.costs(run)['summary']
             else:

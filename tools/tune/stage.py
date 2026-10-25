@@ -128,7 +128,7 @@ def estimate(config):
         arms = {arm['label']: arm for arm in tune.arms(config)}
         if not config.get('cold_engram'):
             rates = rate_for(tune.arms(config)[0])
-            total += startup + 2 * sum(closed(c, rates[str(c)]) for c in model['concurrencies'])
+            total += startup + sum(closed(c, rates[str(c)]) for c, _ in tune.warmup_windows(config))
             total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
         for baseline in dict.fromkeys(a for a, _ in model['pairs']):
             total += startup

@@ -1,5 +1,14 @@
 {
   "schema": "chopinfer-tuning-v1",
   "target": {"compute_capability": 120, "sm_count": 188},
-  "rows": []
+  "rows": [
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 1280, "n": 8192, "paired": 0}, "bucket": 64, "rows": [9, 12], "schedule": "reuse", "knobs": {"folds": 4, "tile_n": 64}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 2048, "n": 5120, "paired": 0}, "bucket": 64, "rows": [17, 23], "schedule": "reuse", "knobs": {"folds": 8, "tile_n": 32}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 2048, "n": 5120, "paired": 0}, "bucket": 64, "rows": [25, 28], "schedule": "reuse", "knobs": {"folds": 8, "tile_n": 32}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 2048, "n": 5120, "paired": 0}, "bucket": 64, "rows": [29, 32], "schedule": "reuse", "knobs": {"folds": 2, "tile_n": 32}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 5120, "n": 1280, "paired": 0}, "bucket": 64, "rows": [17, 21], "schedule": "reuse", "knobs": {"folds": 4, "tile_n": 32}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 1, "k": 5120, "n": 1280, "paired": 0}, "bucket": 64, "rows": [23, 24], "schedule": "reuse", "knobs": {"folds": 4, "tile_n": 32}},
+    {"op": "reuse.fold.decode", "weights": "mxfp8", "shape": {"groups": 2, "k": 4096, "n": 1024, "paired": 0}, "bucket": 64, "rows": [17, 32], "schedule": "reuse", "knobs": {"folds": 4, "tile_n": 32}},
+    {"op": "reuse.head.decode", "weights": "bf16", "shape": {"k": 5120, "n": 32320, "ranks": 4}, "bucket": 8192, "rows": [9, 32], "schedule": "reuse", "knobs": {}}
+  ]
 }

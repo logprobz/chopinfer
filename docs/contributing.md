@@ -220,7 +220,10 @@ the recorder derives it from committed inputs and accepted bundle proposals.
 `kept` includes the input row and any accepted draft rows; `emitted` counts
 the current history's generated tokens before the proposed rows. Every
 proposal, resulting history, sampling record and logits byte remains part of
-the exact comparison. Versions 1 through 5 retain their existing rules.
+the exact comparison. Transition traces forward the native seed, generated
+index and temperature envelope when the package declares sampled drafting.
+Their comparison invariants bind that wire behavior. Versions 1 through 5
+retain their existing rules and wire records.
 
 Version 7 adds bounded request lifetimes to transition traces. Its optional
 `lifecycle` list contains ordered, one-based `before_step` boundaries, each

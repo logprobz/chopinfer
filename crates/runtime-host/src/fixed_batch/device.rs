@@ -24,6 +24,25 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type Backend = HostServicesV1Backend<crate::cuda::CudaHostDeviceV1>;
 mod lifecycle;
 
+fn write_replay_request(
+    request: &mut Vec<u8>,
+    items: &[ModelBatchItem],
+    plan: &runtime_kv::PreparedAppendBatch,
+    wire: BatchWireCapabilityV1,
+    slots: Option<&crate::recurrent::StateSlotPoolV1>,
+    draft_sampling: bool,
+) -> std::result::Result<(), runtime_engine::ExecutorError> {
+    crate::executor::write_draft_sampling_v1(request, items, draft_sampling, |request, trailing| {
+        if let Some(slots) = slots {
+            write_state_slots_v1(request, items, slots, trailing, |request, trailing| {
+                write_batch_request_v1(request, items, plan, wire, trailing)
+            })
+        } else {
+            write_batch_request_v1(request, items, plan, wire, trailing)
+        }
+    })
+}
+
 fn memory(backend: &Backend) -> Result<Value> {
     use crate::probe::{HostDeviceMemoryUsageV1, HostDeviceRankMemoryUsageV1};
     backend.with_device(|device| {
@@ -107,6 +126,7 @@ impl Config {
         }
         if self.transitions {
             invariants["capacity"]["kv_pages"] = pages.into();
+            invariants["drafter_sampling_wire"] = "native-v6-when-declared".into();
         }
         invariants
     }
@@ -140,6 +160,67 @@ impl Config {
 #[cfg(test)]
 mod configuration_tests {
     use super::*;
+
+    #[test]
+    fn transition_wire_carries_drafter_seed_position_and_temperature() {
+        use runtime_bundle_sdk::{BatchCodecV1, DraftSamplingV1};
+        let trace = super::super::trace::Trace::construct_fixed_depth(vec![vec![7; 16]], 1024, 1);
+        let items = trace.steps[3].model_items_at_temperature(None, 1.0);
+        let mut kv =
+            runtime_kv::KvPool::new(runtime_kv::KvGeometry::new(4, 32).unwrap(), 1).unwrap();
+        let handle = kv.create_sequence(64).unwrap();
+        let plan = kv.prepare_append_batch(&[(handle, 2)]).unwrap();
+        let mut slots = crate::recurrent::StateSlotPoolV1::for_test(1);
+        slots.allocate(RequestId::new(1)).unwrap();
+        let mut bytes = Vec::new();
+        write_replay_request(
+            &mut bytes,
+            &items,
+            &plan,
+            BatchWireCapabilityV1::V3MediaSpeculative,
+            Some(&slots),
+            true,
+        )
+        .unwrap();
+        let decoded = BatchCodecV1::decode(&bytes).unwrap();
+        let work = items[0].sampling().unwrap();
+        assert_eq!(
+            decoded
+                .draft_sampling()
+                .expect("transition drafter sampling record"),
+            [DraftSamplingV1::new(
+                work.state.seed(),
+                work.state.generated(),
+                1.0,
+                1.0,
+                0.0,
+                0,
+                0
+            )
+            .unwrap()]
+        );
+        let mut legacy = Vec::new();
+        write_replay_request(
+            &mut legacy,
+            &items,
+            &plan,
+            BatchWireCapabilityV1::V3MediaSpeculative,
+            Some(&slots),
+            false,
+        )
+        .unwrap();
+        assert!(
+            BatchCodecV1::decode(&legacy)
+                .unwrap()
+                .draft_sampling()
+                .is_none()
+        );
+        let old = BatchCodecV1::decode(&legacy).unwrap();
+        assert_eq!(decoded.items(), old.items());
+        assert_eq!(decoded.appends(), old.appends());
+        assert_eq!(decoded.state_slots(), old.state_slots());
+        assert_eq!(decoded.media(), old.media());
+    }
 
     #[test]
     fn transition_comparisons_reject_changed_kv_capacity() {
@@ -501,6 +582,8 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         32
     };
     let manifest = serde_json::from_slice::<Value>(&loaded.manifest().to_canonical_json()?)?;
+    let draft_sampling =
+        transitions && crate::executor::draft_sampling_capability_v1(loaded.manifest());
     let mut identity = json!({"format":"fixed-batch-logits-v1","source":config.source,
         "manifest":manifest,
         "topology":config.topology,"trace":trace});
@@ -601,7 +684,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         identity = json!({"format":"fixed-batch-transitions-v1","source":config.source,
             "topology":config.topology,"ranks":rank_count,"trace":trace,
             "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens,
-            "kv_pages":pages});
+            "kv_pages":pages,"native_draft_sampling":draft_sampling});
     }
     if config.temperature.is_some() {
         identity["sampling_temperature_bits"] = temperature.to_bits().into();
@@ -822,13 +905,14 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 batch_wire_capability_v1(loaded.manifest())
             };
             let mut request = Vec::new();
-            if let Some(slots) = &slots {
-                write_state_slots_v1(&mut request, &items, slots, 0, |request, trailing| {
-                    write_batch_request_v1(request, &items, &plan, wire, trailing)
-                })?;
-            } else {
-                write_batch_request_v1(&mut request, &items, &plan, wire, 0)?;
-            }
+            write_replay_request(
+                &mut request,
+                &items,
+                &plan,
+                wire,
+                slots.as_ref(),
+                draft_sampling,
+            )?;
             let limits = ResultSinkLimitsV1::new(
                 step.rows() as u64,
                 vocabulary as u64,

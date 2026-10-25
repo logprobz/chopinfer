@@ -34,6 +34,7 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+
     def test_ab_seed_sets_match_pairs_and_differ_between_pairs(self):
         config = {'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
         first, second = (tune.seed_set(config, repeat, 8) for repeat in (0, 1))
@@ -41,13 +42,11 @@ class Tuner(unittest.TestCase):
         self.assertFalse(set(first) & set(second))
         self.assertEqual(len(set(first)), 8)
 
-
     def test_ab_requires_keeper_for_speculative_visits(self):
         model = {'mode': 'ab', 'speculation_mode': 'balanced'}
         with self.assertRaisesRegex(RuntimeError, 'keeper'):
             tune.require_keeper(model, None)
         tune.require_keeper(model, {'directory': 'synthetic'})
-
 
     def test_visit_fault_evidence_is_complete_and_bounded(self):
         import faults
@@ -56,7 +55,6 @@ class Tuner(unittest.TestCase):
                          {'complete': True, 'major_faults': 1001}):
             with self.assertRaisesRegex(ValueError, 'fault'):
                 faults.validate(evidence)
-
 
     def test_missing_optional_route_counts_are_unknown_in_reports(self):
         row = {'request_tokens_per_second': 1,
@@ -159,10 +157,14 @@ class Tuner(unittest.TestCase):
     def test_ab_report_keeps_arm_identity_order_and_refuses_missing_repeats(self):
         model = {**MODEL, 'mode': 'ab', 'concurrencies': [8],
                  'arms': [{'label': label, 'depth': 3} for label in ('a', 'b')], 'pairs': [['a', 'b']]}
-        config = {**CONFIG, 'model': model, 'kinds': {'sampled': 1.0}}
+        config = {**CONFIG, 'model': model, 'kinds': {'sampled': 1.0},
+                  'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'config.json').write_text(json.dumps(config))
+            power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
+            summary = {'power': {'before': power, 'after': power}, 'processes': {},
+                       'exactness': {'passed': True}}
             for visit in tune.visits(config):
                 label, repeat = visit['arm'], visit['passes'][0][0]
                 window(root, visit['label'], 'sampled', 8, 3, (400 if label == 'a' else 440) + repeat,
@@ -170,23 +172,83 @@ class Tuner(unittest.TestCase):
                 path = root / visit['label'] / 'windows' / 'sampled-c8.json'
                 row = json.loads(path.read_text())
                 row.update(arm=label, visit=visit['visit'], repeat=repeat,
+                           seed_set=tune.seed_set(config, repeat, 8), window_seconds=15,
+                           temperature=1.0, cached_prompt_tokens=0, request_seconds=15,
+                           faults={'complete': True, 'major_faults': 0},
                            allocated_steps=2 if label == 'b' else 0,
                            cells={'i8-r32-v8-R48' if label == 'b' else 'i8-r32':
                                   {'cycle_ms': [20, 22], 'execution_ms': [19, 21]}})
                 row['full'].update(steps=2, tokens=40, allocated_steps=row['allocated_steps'])
+                row['energy'].update(sm_mhz_range=[[1700, 1900]], enforced_power_limits_w=[250])
+                summary['processes'][visit['label']] = {'weights': {'source': 'borrowed'},
+                    'process_group': visit['visit'] + 1,
+                    'faults': row['faults'], 'power_before': power, 'power_after': power}
                 path.write_text(json.dumps(row))
+            (root / 'summary.json').write_text(json.dumps(summary))
             out = report.ab(root)['pairs']['a/b']['8']
             self.assertEqual(out['order'], ['a', 'b', 'b', 'a'])
             self.assertEqual(out['arms']['b']['request'], [440, 441])
             self.assertEqual(out['arms']['b']['allocated_share'], 1.0)
             self.assertEqual(out['arms']['b']['tokens_per_step'], 20)
-            self.assertTrue(out['nonoverlapping_gain'])
+            self.assertEqual(out['verdict'], 'resolved gain')
             costs = report.costs(root)['cells']
             self.assertEqual(costs['i8-r32-v8-R48']['reserved'], 48)
             self.assertIn('i8-r32', costs)
             path.unlink()
             with self.assertRaisesRegex(ValueError, 'visit order'):
                 report.ab(root)
+
+    def test_paired_verdict_thresholds_and_regression_floor(self):
+        self.assertEqual(report.paired([100, 102, 102, 100])['verdict'], 'resolved gain')
+        self.assertEqual(report.paired([100, 101, 99, 100])['verdict'], 'neutral')
+        self.assertEqual(report.paired([100, 99.6, 99.6, 100])['verdict'], 'neutral')
+        self.assertEqual(report.paired([100, 99, 99, 100])['verdict'], 'resolved regression')
+        self.assertFalse(report.paired([100, 101, 101, 100], 'variant')['accepted'])
+        self.assertTrue(report.paired([100, 102, 102, 100], 'table_row')['accepted'])
+        self.assertTrue(report.paired([100, 101.5, 101.5, 100], 'variant')['accepted'])
+        self.assertFalse(report.paired([100, 99, 99, 100], 'simplification')['accepted'])
+
+    def test_ab_validity_refuses_corrupted_evidence_and_voids_changed_power(self):
+        import copy
+        model = {**MODEL, 'mode': 'ab', 'concurrencies': [1],
+                 'arms': [{'label': label, 'depth': 0} for label in ('a', 'b')], 'pairs': [['a', 'b']]}
+        config = {'model': model, 'kinds': {'sampled': 1}, 'sampling': {'seed': 3}}
+        power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
+        summary = {'power': {'before': power, 'after': power}, 'processes': {}, 'exactness': {'passed': True}}
+        rows = []
+        for visit in tune.visits(config):
+            repeat = visit['passes'][0][0]
+            row = {'label': visit['label'], 'arm': visit['arm'], 'visit': visit['visit'],
+                   'kind': 'sampled', 'concurrency': 1, 'repeat': repeat,
+                   'seed_set': tune.seed_set(config, repeat, 1), 'window_seconds': 15, 'temperature': 1.0,
+                   'cached_prompt_tokens': 0, 'request_seconds': 15, 'faults': {'complete': True, 'major_faults': 0},
+                   'energy': {'sm_mhz_range': [[1800, 1800]], 'enforced_power_limits_w': [250]}}
+            rows.append(row)
+            summary['processes'][visit['label']] = {'weights': {'source': 'borrowed'}, 'faults': row['faults'],
+                                                   'process_group': visit['visit'] + 1,
+                                                   'power_before': power, 'power_after': power}
+        self.assertEqual(report.ab_validity(config, rows, summary)['status'], 'valid')
+        for field, value in [('seed_set', [9]), ('cached_prompt_tokens', 1),
+                             ('faults', {'complete': False, 'major_faults': 0}),
+                             ('faults', {'complete': True, 'major_faults': 1001}), ('visit', 9),
+                             ('window_seconds', 20)]:
+            altered = copy.deepcopy(rows)
+            altered[0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                report.ab_validity(config, altered, summary)
+        for altered in (rows[:-1], rows + rows[:1]):
+            with self.assertRaisesRegex(ValueError, 'counts'):
+                report.ab_validity(config, altered, summary)
+        altered = copy.deepcopy(summary)
+        altered['processes']['b-r0']['weights']['source'] = 'loaded'
+        with self.assertRaisesRegex(ValueError, 'keeper'):
+            report.ab_validity(config, rows, altered)
+        altered = copy.deepcopy(summary)
+        altered['power']['after'] = {**power, 'enforced_power_limits_w': [249]}
+        self.assertEqual(report.ab_validity(config, rows, altered)['status'], 'void')
+
+
+
 
     def test_every_prompt_prefix_keeps_the_mix(self):
         mix = [{'kind': 'completion', 'weight': 5}, {'kind': 'edit', 'weight': 3}, {'kind': 'chat', 'weight': 2}]
@@ -366,6 +428,7 @@ class Tuner(unittest.TestCase):
             (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')
             with self.assertRaises(SystemExit):
                 recorded.main(run, Path(directory) / 'short')
+
 
     def test_model_configs_measure_sampled_windows_only(self):
         # Temperature 1.0 is the serving workload: tuner jobs measure and

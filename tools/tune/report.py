@@ -281,74 +281,207 @@ def costs(run):
     return out
 
 
+def paired(values, change='speedup'):
+    """Values are rates in chronological A1, B1, B2, A2 order."""
+    if len(values) != 4 or any(not math.isfinite(v) or v <= 0 for v in values):
+        raise ValueError('paired verdict needs four positive finite rates')
+    a1, b1, b2, a2 = values
+    d1, d2 = b1 / a1 - 1, b2 / a2 - 1
+    mean, noise = (d1 + d2) / 2, abs(d1 - d2)
+    gain = d1 > 0 and d2 > 0 and mean > noise
+    regression = d1 < 0 and d2 < 0 and mean < -max(noise, .005)
+    verdict = 'resolved gain' if gain else 'resolved regression' if regression else 'neutral'
+    return {'d1': d1, 'd2': d2, 'mean': mean, 'spread': noise, 'verdict': verdict,
+            'accepted': (not regression if change == 'simplification' else
+                         gain and (change not in ('variant', 'table_row') or mean >= .015
+                                   or math.isclose(mean, .015, abs_tol=1e-12)))}
+
+
+def ab_validity(config, rows, summary):
+    """Validate counts and provenance before any pair can be pooled."""
+    import faults
+    import tune
+    visits = tune.visits(config)
+    if summary.get('status', 'passed') != 'passed':
+        raise ValueError('A/B job did not pass its runtime checks')
+    expected = {(v['label'], kind, c, repeat): v for v in visits
+                for repeat, windows in v['passes'] for kind, c in windows}
+    actual = [(r['label'], r['kind'], r['concurrency'], r['repeat']) for r in rows]
+    if len(actual) != len(expected) or set(actual) != set(expected):
+        raise ValueError('wrong visit or cell counts / visit order')
+    processes = summary.get('processes', {})
+    if set(processes) != {v['label'] for v in visits}:
+        raise ValueError('wrong process visit counts')
+    groups = [processes[v['label']].get('process_group') for v in visits]
+    if any(type(group) is not int or group <= 0 for group in groups) or len(set(groups)) != len(visits):
+        raise ValueError('A/B visits must use fresh process groups')
+    if summary.get('exactness', {}).get('passed') is not True:
+        raise ValueError('missing per-seed exactness evidence')
+    snapshots = list(summary.get('power', {}).values())
+    if not {'before', 'after'} <= set(summary.get('power', {})):
+        raise ValueError('missing job power boundaries')
+    for visit in visits:
+        process = processes[visit['label']]
+        if config['model'].get('speculation_mode') != 'off' and process.get('weights', {}).get('source') != 'borrowed':
+            raise ValueError('DSpark visit lacks keeper borrowing')
+        faults.validate(process.get('faults', {}))
+        for boundary in ('power_before', 'power_after'):
+            if boundary not in process:
+                raise ValueError('missing visit power boundary')
+            snapshots.append(process[boundary])
+    limits = None
+    changed = False
+    for snapshot in snapshots:
+        current, clocks = snapshot.get('enforced_power_limits_w'), snapshot.get('sm_clock_mhz')
+        count = config['model'].get('tensor_parallel_size', 1)
+        if (not current or len(current) != count or not clocks or len(clocks) != count
+                or any(not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in current + clocks)):
+            raise ValueError('incomplete power or clock evidence')
+        limits = current if limits is None else limits
+        changed |= current != limits
+    for row in rows:
+        visit = expected[(row['label'], row['kind'], row['concurrency'], row['repeat'])]
+        if row['arm'] != visit['arm'] or row['visit'] != visit['visit']:
+            raise ValueError('wrong visit identity')
+        if row.get('seed_set') != tune.seed_set(config, row['repeat'], row['concurrency']):
+            raise ValueError('mismatched seeds')
+        if row.get('window_seconds') != 15 or row.get('temperature') != 1.0:
+            raise ValueError('A/B requires 15-second temperature 1.0 windows')
+        if not row.get('synthetic') and not math.isclose(row.get('request_seconds', 0), 15, abs_tol=1e-6):
+            raise ValueError('measured interval differs from 15 seconds')
+        if row.get('cached_prompt_tokens') != 0:
+            raise ValueError('cached prompt tokens in measured window')
+        faults.validate(row.get('faults', {}))
+        clocks = row.get('energy', {}).get('sm_mhz_range')
+        if not clocks or len(clocks) != len(limits) or any(len(x) != 2 or x[0] <= 0 or x[1] < x[0] for x in clocks):
+            raise ValueError('missing per-window clocks')
+        window_limits = row.get('energy', {}).get('enforced_power_limits_w')
+        if not window_limits or len(window_limits) != len(limits):
+            raise ValueError('missing per-window enforced limits')
+        if window_limits != limits:
+            changed = True
+    for visit in visits:
+        measured = faults.combine([r['faults'] for r in rows if r['label'] == visit['label']])
+        if any(measured[k] != processes[visit['label']]['faults'][k] for k in ('complete', 'major_faults')):
+            raise ValueError('incomplete visit faults')
+    return {'status': 'void' if changed or summary.get('status') == 'void' else 'valid',
+            'enforced_power_limits_w': limits,
+            'reason': 'power limits changed within job' if changed or summary.get('status') == 'void' else None}
+
+
 def ab(run):
-    """Report declared pairs, preserving chronological ABBA visits and
-    keeping short single-repeat controls distinct from decision windows."""
+    """Contract A decisions preserve matched pairs and never pool void jobs."""
     run = Path(run)
     config, rows = load(run)
-    model = config['model']
-    if set(config['kinds']) != {'sampled'} or not model.get('pairs'):
-        raise ValueError('ab requires sampled windows and declared pairs')
-    pairs = {}
-    lines = [f"# {config['name']}: confidence A/B", '',
-             'One ABBA block per decision window. Short controls have one window per arm.', '',
-             '| Pair / C | Arm | Visit tok/s | Range | J/token | Tokens/step | Allocated share | Fallback launches |',
-             '|---|---|---|---|---:|---:|---:|---:|']
-    for baseline, treatment in model['pairs']:
-        pair = pairs[f'{baseline}/{treatment}'] = {}
-        for c in model['concurrencies']:
-            expected = model.get('concurrency_repeats', {}).get(str(c), model['repeats'])
-            selected = sorted((r for r in rows if r.get('arm', r['label']) in (baseline, treatment)
-                               and r['concurrency'] == c and r['kind'] == 'sampled'), key=lambda r: r['visit'])
-            order = [r['arm'] for r in selected]
-            wanted = [baseline, treatment, treatment, baseline] if expected == 2 else [baseline, treatment]
-            if expected not in (1, 2) or order != wanted:
-                raise ValueError(f'{baseline}/{treatment} C{c}: visit order {order}, expected {wanted}')
-            result = pair[str(c)] = {'order': order, 'abba': expected == 2, 'arms': {}}
-            for label in (baseline, treatment):
-                windows = [r for r in selected if r['arm'] == label]
-                if sorted(r['repeat'] for r in windows) != list(range(expected)):
-                    raise ValueError(f'{label} C{c}: missing or repeated repeat')
-                value = measure(windows)
-                rates = value['request']
-                steps = sum(r['full']['steps'] for r in windows)
-                if not steps:
-                    raise ValueError(f'{label} C{c}: no full-concurrency steps')
-                cells = {}
-                for row in windows:
-                    for key, cell in row['cells'].items():
-                        into = cells.setdefault(key, {'cycle_ms': [], 'execution_ms': []})
-                        for field in into:
-                            into[field] += cell[field]
-                value.update(range=[min(rates), max(rates)],
-                             tokens_per_step=sum(r['full']['tokens'] for r in windows) / steps,
-                             allocated_steps=sum(r['allocated_steps'] for r in windows),
-                             allocated_share=sum(r['full']['allocated_steps'] for r in windows) / steps,
-                             cells={k: {field + '_median': median(v) for field, v in cell.items()}
-                                    for k, cell in sorted(cells.items())})
-                result['arms'][label] = value
-                lines.append(f"| {baseline}/{treatment} C{c} | {label} | " +
-                             ', '.join(f'{x:.1f}' for x in rates) +
-                             f" | {min(rates):.1f}-{max(rates):.1f} | {value['joules_median']:.3f} | "
-                             f"{value['tokens_per_step']:.3f} | {value['allocated_share']:.1%} | {value['fallback_launches'] if value['fallback_launches'] is not None else 'unknown'} |")
-            base, head = (result['arms'][x] for x in (baseline, treatment))
-            result['throughput_ratio'] = head['request_median'] / base['request_median']
-            result['nonoverlapping_gain'] = min(head['request']) > max(base['request'])
-            result['energy_ratio'] = head['joules_median'] / base['joules_median']
-    lines += ['', 'Allocated share uses full-concurrency decode/verify steps; allocated_steps counts every '
-              'allocated step in the measured windows. Position counts below are accepted over verified.', '']
-    for pair, concurrencies in pairs.items():
-        for c, result in concurrencies.items():
-            for label, value in result['arms'].items():
-                lines += [f'## {pair}, C{c}, {label}', '',
-                          'Accepted/verified: ' + ', '.join(
-                              f"p{p} {a['accepted']}/{a['drafted']}" for p, a in value['acceptance'].items()
-                              if a['drafted']), '',
-                          '| Shape | Median cycle ms | Median execution ms |', '|---|---:|---:|']
-                for shape, cell in value['cells'].items():
-                    lines.append(f"| {shape} | {cell['cycle_ms_median']} | {cell['execution_ms_median']} |")
-                lines.append('')
-    out = {'pairs': pairs}
+    summary = json.loads((run / 'summary.json').read_text())
+    validity = ({'status': 'void', 'reason': 'power limits changed within job'}
+                if summary.get('status') == 'void' else ab_validity(config, rows, summary))
+    out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
+           'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False)}
+    lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
+             '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
+             '|---|---:|---:|---:|---:|---|---:|']
+    if validity['status'] == 'valid':
+        model = config['model']
+        if (any(not isinstance(w, (int, float)) or not math.isfinite(w) or w < 0
+                for w in model.get('cell_weights', {}).values())
+                or not set(model.get('required_shapes', {})) <= {str(c) for c in model['concurrencies']}):
+            raise ValueError('invalid served cell weights or target concurrencies')
+        change = model.get('change', 'speedup')
+        if change not in ('speedup', 'simplification', 'variant', 'table_row'):
+            raise ValueError('unknown A/B change class')
+        for baseline, treatment in model['pairs']:
+            key = f'{baseline}/{treatment}'
+            pair = out['pairs'][key] = {}
+            decisions = []
+            unmatched = []
+            for c in model['concurrencies']:
+                selected = sorted((r for r in rows if r['arm'] in (baseline, treatment)
+                                   and r['concurrency'] == c), key=lambda r: r['visit'])
+                repeats = model.get('concurrency_repeats', {}).get(str(c), model['repeats'])
+                order = [r['arm'] for r in selected]
+                wanted = [baseline, treatment, treatment, baseline] if repeats == 2 else [baseline, treatment]
+                if order != wanted:
+                    raise ValueError(f'{key} C{c}: visit order {order}, expected {wanted}')
+                result = pair[str(c)] = {'order': order, 'abba': repeats == 2, 'arms': {}, 'cells': {}}
+                if config.get('cold_engram'):
+                    result['cold_engram'] = {row['label']: {'residency': row['cold_engram'],
+                        'ttft_seconds': row['ttft_seconds'], 'mapped_gather_us': row['mapped_gather_us'],
+                        'prefill_execution_us': row['prefill_execution_us']} for row in selected}
+                for label in (baseline, treatment):
+                    windows = [r for r in selected if r['arm'] == label]
+                    value = measure(windows)
+                    steps = sum(r['full']['steps'] for r in windows)
+                    if not steps:
+                        raise ValueError('no full-concurrency steps')
+                    value.update(tokens_per_step=sum(r['full']['tokens'] for r in windows) / steps,
+                                 allocated_share=sum(r['full'].get('allocated_steps', 0) for r in windows) / steps)
+                    result['arms'][label] = value
+                # Energy is separate and comparable only after all limits match.
+                base, head = (result['arms'][x] for x in (baseline, treatment))
+                result['energy_ratio'] = (head['joules_median'] / base['joules_median']
+                                          if head['joules_median'] and base['joules_median'] else None)
+                if repeats != 2:
+                    result['verdict'] = 'short control'
+                    continue
+                result.update(paired([r['request_tokens_per_second'] for r in selected], change))
+                weight = model.get('cell_weights', {}).get(f'decode:c{c}', 1 if c in (1, 2, 4, 8, 16, 32) else 0)
+                result['weight'] = weight
+                result['target'] = f'decode:c{c}' in model.get('target_cells', [f'decode:c{c}'])
+                if weight > 0:
+                    decisions.append((weight, result))
+                normalized = []
+                for row in selected:
+                    cells = {}
+                    for shape, data in row['cells'].items():
+                        if not re.fullmatch(r'i\d+-r\d+(?:-v\d+-R\d+)?', shape):
+                            raise ValueError('invalid served cell shape')
+                        cells.setdefault(shape.split('-v')[0], []).extend(data['cycle_ms'])
+                    normalized.append(cells)
+                shapes = set().union(*normalized)
+                required = model.get('required_shapes', {}).get(str(c), [])
+                if not set(required) <= shapes:
+                    raise ValueError('missing required served cells')
+                for shape in sorted(shapes):
+                    values = [median(cells.get(shape, [])) for cells in normalized]
+                    match = re.fullmatch(r'i(\d+)-r(\d+)(?:-v\d+-R\d+)?', shape)
+                    if not match:
+                        raise ValueError('invalid served cell shape')
+                    items, width = map(int, match.groups())
+                    weight = (model.get('cell_weights', {}).get(f'verify:r{width}',
+                               1 if width in (6, 8, 16, 32, 64) and width > items else 0) if items == c else 0)
+                    if any(v is None for v in values):
+                        if shape in required:
+                            raise ValueError('missing required served cells in a visit')
+                        result['cells'][shape] = {'verdict': 'unmatched', 'weight': 0}
+                        if weight > 0:
+                            unmatched.append(f'c{c}/{shape}')
+                        continue
+                    decision = {**paired([1 / v for v in values], change), 'weight': weight}
+                    decision['target'] = f'c{c}/{shape}' in model.get('target_cells', [f'c{c}/{shape}'])
+                    result['cells'][shape] = decision
+                    if weight > 0:
+                        decisions.append((weight, decision))
+                for cell, decision in [(f'decode:c{c}', result), *result['cells'].items()]:
+                    if 'd1' in decision:
+                        lines.append(f"| {key} {cell} | {decision['d1']:.2%} | {decision['d2']:.2%} | "
+                                     f"{decision['mean']:.2%} | {decision['spread']:.2%} | "
+                                     f"{decision['verdict']} | {decision['weight']} |")
+            if not decisions or any(not isinstance(w, (int, float)) or not math.isfinite(w) or w <= 0 for w, _ in decisions):
+                raise ValueError('no valid weighted served cells')
+            total = sum(w for w, _ in decisions)
+            targets = [d for _, d in decisions if d['target']]
+            if change != 'simplification' and not targets:
+                raise ValueError('no weighted target cells')
+            # A weighted average cannot hide a resolved cell regression.
+            out['weighted'][key] = {'mean': sum(w * d['mean'] for w, d in decisions) / total,
+                                    'cells': len(decisions), 'weight': total,
+                                    'unmatched_served_cells': unmatched,
+                                    'accepted': not unmatched and all(d['verdict'] != 'resolved regression' for _, d in decisions)
+                                                and (change == 'simplification' or all(d['accepted'] for d in targets)),
+                                    'verdict': ('resolved regression' if any(d['verdict'] == 'resolved regression' for _, d in decisions)
+                                                else 'resolved gain' if not unmatched and all(d['verdict'] == 'resolved gain' for _, d in decisions)
+                                                else 'neutral')}
     (run / 'ab.json').write_text(json.dumps(out, indent=2) + '\n')
     (run / 'ab.md').write_text('\n'.join(lines) + '\n')
     return out

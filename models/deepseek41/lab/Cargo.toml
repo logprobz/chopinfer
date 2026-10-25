@@ -33,10 +33,6 @@ path = "tests/sm120/main.rs"
 name = "retention_pair"
 path = "tests/sm120/retention_pair.rs"
 
-[[example]]
-name = "prefill_attention"
-path = "examples/sm120/prefill_attention.rs"
-
 [lints]
 workspace = true
 

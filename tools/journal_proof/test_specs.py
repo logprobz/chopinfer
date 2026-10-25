@@ -172,6 +172,19 @@ class Records(unittest.TestCase):
             with self.assertRaises(Invalid, msg=line):
                 build.removals_only([line], ids)
 
+    def test_mapped_gather_records_cannot_reuse_added_or_removed_ids(self):
+        for verb in ('async mapped create', 'async mapped release'):
+            for spacing in (' ', '  '):
+                line = spacing + spacing.join(verb.split() + ['301'])
+                with self.subTest(line=line):
+                    with self.assertRaisesRegex(Invalid, 'an added ID'):
+                        build.additions([line], ADDED)
+                    with self.assertRaisesRegex(Invalid, 'a removed ID'):
+                        build.removals_only([line], {301: OLD_A})
+        for line in ('async mapped create 299', 'async mapped release 299', 'async mapped ids 301 302'):
+            self.assertEqual(build.additions([line], ADDED), {})
+            build.removals_only([line], {301: OLD_A, 302: OLD_B})
+
     def test_head_records_naming_a_removed_symbol_are_refused(self):
         for line in (f'resolve 9 {OLD_A}', launch(OLD_B)):
             with self.assertRaises(Invalid, msg=line):

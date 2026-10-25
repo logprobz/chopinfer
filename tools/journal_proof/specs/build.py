@@ -56,7 +56,8 @@ FIELDS = {'schema', 'description', 'module', 'removed_symbols', 'added_module', 
 RULE_FIELDS = {'from_symbol', 'to_symbol', 'spans', 'append', 'flags', 'expect'}
 # Record verbs whose following words may be issued IDs.
 RECORDS = ('resolve', 'module', 'configure', 'release', 'stream', 'event', 'launch', 'upload', 'copy',
-           'download', 'zero', 'synchronize', 'record', 'wait', 'capture', 'captured', 'replay')
+           'download', 'zero', 'synchronize', 'record', 'wait', 'capture', 'captured', 'replay',
+           'async mapped create', 'async mapped release')
 
 
 def read_declaration(path):
@@ -211,7 +212,12 @@ def additions(lines, added):
 
 def refuse_ids(line, ids, what):
     words = line.split()
-    named = [int(w) for w in words[1:3] if w.isdigit()] if words and words[0] in RECORDS else []
+    named = []
+    for record in RECORDS:
+        prefix = record.split()
+        if words[:len(prefix)] == prefix:
+            named = [int(w) for w in words[len(prefix):len(prefix) + 2] if w.isdigit()]
+            break
     if words[:2] == ['release', 'graph'] and len(words) > 2 and words[2].isdigit():
         named.append(int(words[2]))
     need(not any(i in ids for i in named), f'a record names {what}: {line[:200]}')

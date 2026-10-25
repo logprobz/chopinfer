@@ -42,3 +42,56 @@ ordering, accounting or routing. Tests of advice being disabled select that
 setting explicitly. DeepSeek's verify-width lab sets the shared switch to
 `0`, which continues to disable both paths. No in-tree production caller
 requires the old async default; external bundle consumers were not audited.
+
+## Engram route guard
+
+The `engram_gather` family records host calls in the selected-entry `route`
+object of `chopinfer.step.v1` when `CHOPINFER_ROUTE_COUNTERS=1`. The field
+named `launches` counts host calls for this family, not CUDA launches or
+rows. One synchronous call copies one layer's codes or scales on one rank.
+One prepared enqueue can cover both planes and every rank for a layer.
+Neither count measures I/O time, page faults or read-ahead activity.
+
+Prepared calls are Fast with symbol `host.enqueue_mapped_gather` and entries
+`engram/prepared/ar_decode`, `engram/prepared/prefill`,
+`engram/prepared/dspark_target`, `engram/prepared/dspark_early` and
+`engram/prepared/dspark_undrafted`. Synchronous calls are Baseline with
+symbol `host.gather_mapped_rows` and entry `engram/sync/<reason>`:
+
+| Reason | Synchronous selection |
+| --- | --- |
+| `ar_prefill` | AR prefill preparation is off by default. |
+| `media` | A prefill has media. |
+| `taps` | A prefill records text taps. |
+| `prefill_schedule` | A prefill uses an alternate DMA, micro or overlap schedule. |
+| `no_async_service` | The host lacks prepared mapped-gather services. |
+| `ar_decode_disabled` | The AR decode preparation switch is off. |
+| `prefill_disabled` | DSpark prefill preparation is off. |
+| `undrafted_disabled` | DSpark undrafted decode preparation is off. |
+| `mixed_target` | A host target combines different input kinds. |
+| `host_target` | Other host-target phases, including supplied verify rows. |
+| `no_prepared_gather` | No prepared gather state serves the phase. |
+| `gather_capacity` | Undrafted hashes exceed the prepared gather capacity. |
+
+Prefill reasons take precedence in this order: media, taps, alternate
+schedule, missing async service, then disabled or unavailable preparation.
+Reasons are carried from preparation state or the selected phase, never
+inferred from journal text. A graph reservation failure keeps the prepared
+gather and executes eagerly, so it is not a synchronous fallback.
+
+The shared route sweep independently counts synchronous host calls in every
+fake-host journal mode and resets the count before each measured execute and
+commit. DeepSeek's prepared-wait emulator does not add synchronous evidence.
+Raw `host.gather_mapped_rows` counts must exactly match selected entries,
+including when no tag was declared. Missing and duplicated selections fail
+before allowance checks. Every synchronous shape needs an allowance with a
+reason and removal task, including a constant synchronous route. AR prefill
+uses `ar-prefill-engram`; old test-default routes name the chunk that removes
+them. Other models with no mapped gathers need no tags or allowances.
+
+The [profile checker](../tools/route_guard/check.py) accepts `host.` symbols
+from step records without Nsight kernel evidence. It still validates entry
+metadata, family totals and allowances, and retains raw-evidence checks for
+kernels in a mixed capture. The raw synchronous count is a fake-host sweep
+check, not an independent counter in serving step records. No synthetic CUDA
+launch or new journal line is introduced by this guard.

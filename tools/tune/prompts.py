@@ -30,8 +30,9 @@ def exhausted():
 
 
 class VisitPool:
-    def __init__(self, tokens):
+    def __init__(self, tokens, assignment=None):
         self.remaining = tokens
+        self.assignment = assignment
 
     def reserve(self, count):
         if count < 1 or count > len(self.remaining):
@@ -40,24 +41,41 @@ class VisitPool:
         return values
 
 
+def arm_visits(visits):
+    arms = {}
+    for visit in visits:
+        arms.setdefault(visit.get('arm', visit['label']), []).append(visit['label'])
+    return arms
+
+
+def visit_pool_sizes(count, visits):
+    """Nearest-length groups lose only the final incomplete arm group."""
+    arms = arm_visits(visits)
+    per_arm = count // len(arms)
+    return {label: (per_arm + len(members) - 1 - index) // len(members)
+            for members in arms.values() for index, label in enumerate(members)}
+
+
 def visit_pools(tokens, visits):
-    """Assign equal length histograms to arms, then split by visit index."""
+    """Pair nearest lengths across arms, preserving source order per arm."""
     if len({tuple(p) for p in tokens}) != len(tokens):
         raise ValueError('cold prompt pool contains duplicates')
-    arms = list(dict.fromkeys(v.get('arm', v['label']) for v in visits))
-    by_length, by_arm = {}, {arm: [] for arm in arms}
-    for prompt in tokens:
-        by_length.setdefault(len(prompt), []).append(prompt)
-    for _, group in sorted(by_length.items()):
-        # Leave an incomplete length group unused so every arm has the same
-        # distribution. Inputs retain their original order within each length.
-        for index, prompt in enumerate(group[:len(group) // len(arms) * len(arms)]):
-            by_arm[arms[index % len(arms)]].append(prompt)
+    arms = arm_visits(visits)
+    ordered = sorted(range(len(tokens)), key=lambda i: (len(tokens[i]), i))
+    by_arm = {arm: [] for arm in arms}
+    for start in range(0, len(ordered) - len(arms) + 1, len(arms)):
+        group = ordered[start:start + len(arms)]
+        span = len(tokens[group[-1]]) - len(tokens[group[0]])
+        for arm, index in zip(arms, group):
+            by_arm[arm].append((index, span))
     result = {}
-    for arm in arms:
-        members = [v for v in visits if v.get('arm', v['label']) == arm]
-        for index, visit in enumerate(members):
-            result[visit['label']] = VisitPool(by_arm[arm][index::len(members)])
+    for arm, members in arms.items():
+        for index, label in enumerate(members):
+            assigned = sorted(by_arm[arm])[index::len(members)]
+            indices = [i for i, _ in assigned]
+            result[label] = VisitPool([tokens[i] for i in indices], {
+                'indices': indices, 'lengths': [len(tokens[i]) for i in indices],
+                'neighbor_span_tokens': [span for _, span in assigned]})
     return result
 
 

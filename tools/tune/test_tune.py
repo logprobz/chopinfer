@@ -232,6 +232,23 @@ class Tuner(unittest.TestCase):
         again = prompts.visit_pools(tokens, visits)
         self.assertEqual(assigned, [again[str(i)].reserve(3) for i in range(4)])
 
+    def test_cold_nearest_lengths_preserve_source_order_and_pool_capacity(self):
+        tokens = [[i] * (32 + (i * 73) % 257) for i in range(256)]
+        visits = [{'label': label, 'arm': label[0]} for label in ('a0', 'b0', 'b1', 'a1')]
+        pools = prompts.visit_pools(tokens, visits)
+        self.assertEqual([len(pool.remaining) for pool in pools.values()], [64] * 4)
+        used = []
+        for pool in pools.values():
+            indices = [p[0] for p in pool.remaining]
+            self.assertEqual(indices, sorted(indices))
+            self.assertEqual(pool.assignment['indices'], indices)
+            self.assertLessEqual(max(pool.assignment['neighbor_span_tokens']), 2)
+            self.assertNotEqual([len(p) for p in pool.remaining], sorted(len(p) for p in pool.remaining))
+            used.extend(indices)
+        self.assertEqual(sorted(used), list(range(256)))
+        again = prompts.visit_pools(tokens, visits)
+        self.assertEqual({k: p.remaining for k, p in pools.items()}, {k: p.remaining for k, p in again.items()})
+
     def test_page_cache_warmup_is_required_before_measurement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -261,6 +278,10 @@ class Tuner(unittest.TestCase):
             stage.check_budget(config, count - 1)
         self.assertLess(stage.check_budget(config, count), config['work_seconds'])
         self.assertEqual(config['cold_engram']['prompts_required'], count)
+        sizes = config['cold_engram']['balanced_pool_sizes']
+        actual = prompts.visit_pools([[i] * (i + 1) for i in range(count)], tune.visits(config))
+        self.assertEqual(sizes, {label: len(pool.remaining) for label, pool in actual.items()})
+        self.assertTrue(all(sizes[label] >= need for label, need in config['cold_engram']['prompt_needs'].items()))
 
     def test_cold_file_seal_detects_changed_metadata_without_reading_pages(self):
         import faults
@@ -322,13 +343,15 @@ class Tuner(unittest.TestCase):
                                 'planning': {'process_reserve_seconds': 1}}}
             seal = {'ready': False, 'config': config, 'install': {'install': str(root / 'install'),
                     'cache': str(root / 'cache'), 'revision': 'synthetic'}, 'harness_source': str(HERE.parents[1]),
-                    'prompts': [{'prompt': f'Write a function for case {i}', 'sha256': str(i)} for i in range(128)],
+                    'prompts': [{'prompt': f'Case {i}: ' + 'x' * (128 + (i * 73) % 257 * 8),
+                                 'sha256': str(i)} for i in range(128)],
                     'sha256': {}}
             body = json.dumps(seal).encode()
             (harness.parent / 'runtime-seal.json').write_bytes(body)
             payload = hashlib.sha256(body).hexdigest()
             env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
-            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'), TUNE_STUB_RESIDENCY='0.8')
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       TUNE_STUB_RESIDENCY='0.8', TUNE_STUB_TOKEN_BYTES='4')
             for case, changes, expected in [('valid', {}, 'passed'),
                                             ('keeper', {'CHOPINFER_WEIGHT_KEEPER_DIR': ''}, 'failed'),
                                             ('cached', {'TUNE_STUB_CACHED': 'a-r0'}, 'failed'),
@@ -365,6 +388,9 @@ class Tuner(unittest.TestCase):
                     prompts_used = [tuple(q['prompt']) for r in rows for q in r['requests']]
                     self.assertEqual(len(prompts_used), len(set(prompts_used)))
                     self.assertTrue(all(r['mapped_gather_us'] for r in rows))
+                    lengths = [len(q['prompt']) for r in rows for q in r['requests']]
+                    self.assertGreater(max(lengths) - min(lengths), 100)
+                    self.assertEqual(sum(len(p['indices']) for p in summary['cold_prompt_assignment'].values()), 128)
                 if case == 'power':
                     self.assertEqual(json.loads((out / 'ab.json').read_text())['pairs'], {})
                 if case == 'slowcold':

@@ -93,9 +93,13 @@ def cold_budget(config):
         rate = max(plan['tokens_per_second'][str(c)], plan['ar_tokens_per_second'][str(c)])
         tokens = config['tokens'].get(str(c), config['tokens']['default'])
         budgets[str(c)] = 2 * c + 2 * math.ceil(15 * rate / tokens)
-    needs = [sum(config['warm']) + sum(budgets[str(c)] for _, part in visit['passes'] for _, c in part)
-             for visit in tune.visits(config)]
-    return {'request_budgets': budgets, 'prompts_required': len(needs) * max(needs)}
+    visits = tune.visits(config)
+    needs = {visit['label']: sum(config['warm']) + sum(budgets[str(c)] for _, part in visit['passes'] for _, c in part)
+             for visit in visits}
+    arms = builder.arm_visits(visits)
+    per_arm = max((needs[label] - 1) * len(members) + index + 1
+                  for members in arms.values() for index, label in enumerate(members) if needs[label])
+    return {'request_budgets': budgets, 'prompt_needs': needs, 'prompts_required': len(arms) * per_arm}
 
 
 def estimate(config):
@@ -149,9 +153,12 @@ def check_budget(config, prompts):
     if seconds > config['work_seconds']:
         raise ValueError(f'estimated {seconds:.1f} seconds exceeds work budget {config["work_seconds"]}')
     if config.get('cold_engram'):
+        import tune
         needed = cold_budget(config)
-        if prompts < needed['prompts_required']:
-            raise ValueError(f'cold prompt pool has {prompts}, needs {needed["prompts_required"]}')
+        sizes = builder.visit_pool_sizes(prompts, tune.visits(config))
+        if any(sizes[label] < count for label, count in needed['prompt_needs'].items()):
+            raise ValueError(f'balanced cold prompt pool has {prompts}, needs {needed["prompts_required"]}')
+        needed['balanced_pool_sizes'] = sizes
         config['cold_engram'].update(needed)
     return seconds
 

@@ -501,6 +501,8 @@ def ab(run):
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
            'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and not cold}
+    if cold:
+        out['cold_prompt_assignment'] = summary.get('cold_prompt_assignment', {})
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
              '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
              '|---|---:|---:|---:|---:|---|---:|']

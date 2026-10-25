@@ -1083,6 +1083,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
             state['tokens'] = tokenize(server, SEAL['prompts'])
             if cold:
                 state['cold_pools'] = prompt_builder.visit_pools(state['tokens'], visits(config))
+                state['cold_prompt_assignment'] = {label: pool.assignment for label, pool in state['cold_pools'].items()}
                 budgets = config['cold_engram'].get('request_budgets', {})
                 for visit in visits(config):
                     needed = sum(config['warm']) + sum(budgets.get(str(c), 2 * c)

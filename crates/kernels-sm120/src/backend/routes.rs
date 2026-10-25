@@ -12,6 +12,19 @@ impl Sm120 {
 
     pub fn route_tags(&self) -> Vec<RouteTag> {
         let mut tags = self.route_tags.clone();
+        // fused_all_reduce::push_symbol selects these shared entries for its
+        // continuous decode range, including exact uses at low-latency rows.
+        for symbol in [
+            crate::comm::DECODE_SYMBOL_V2,
+            crate::comm::DECODE_COMBINE_SYMBOL,
+        ] {
+            tags.push(RouteTag::new(
+                symbol,
+                RouteClass::Fast,
+                "fused_all_reduce",
+                [1..=crate::comm::DECODE_MAX_ROWS],
+            ));
+        }
         if let Some(offers) = &self.f32_projections {
             tags.extend(offers.route_tags());
         }

@@ -6,7 +6,7 @@ Usage: identity_spec.py --repo REPO --model ID --revision REV --index INDEX [--o
 
 Proving a revision against another with this spec claims that no journal,
 create or device history changed. A fixture's `create` is its journal named
-*-create.txt when it has one, else its first journal by name.
+*-create.txt or *-create.journal when it has one, else its first journal by name.
 """
 import argparse
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pins import snapshot
+from pins import is_create, snapshot
 
 EMPTY = {'added_resolves': [], 'added_modules': [], 'create_policy': {}}
 
@@ -27,7 +27,7 @@ def identity_spec(repo, model, revision, index):
     fixtures = []
     for fixture, names in sorted(groups.items()):
         names = sorted(names)
-        creates = [n for n in names if n.endswith('-create.txt')]
+        creates = [n for n in names if is_create(n)]
         fixtures.append(dict(name=fixture, create=creates[0] if len(creates) == 1 else names[0], journals=names))
     return dict(schema='chopinfer.journal-proof.spec.v1',
                 description=f'Identity spec of {len(snap["pins"])} journals in {len(fixtures)} fixtures at {snap["commit"]}.',

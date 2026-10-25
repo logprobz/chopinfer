@@ -254,7 +254,7 @@ def launch_rules(lines, declaration):
 def generate(repo, model, base_rev, head_rev, base_index, head_index, declaration):
     from auxproof import inventory, load
     from history import owners
-    from pins import snapshot
+    from pins import is_create, snapshot
     from proof import SCHEMA as SPEC_SCHEMA
     base, b, bo = snapshot(repo, base_rev, model, base_index)
     head, h, ho = snapshot(repo, head_rev, model, head_index)
@@ -266,7 +266,7 @@ def generate(repo, model, base_rev, head_rev, base_index, head_index, declaratio
     for name, pin in head['pins'].items():
         need(sorted(groups[pin['fixture']]) == sorted(n for n, p in head['pins'].items() if p['fixture'] == pin['fixture']),
              f'{name}: fixture membership changed')
-    fixtures = [dict(name=name, create=next((n for n in sorted(names) if n.endswith('-create.txt')), sorted(names)[0]),
+    fixtures = [dict(name=name, create=next((n for n in sorted(names) if is_create(n)), sorted(names)[0]),
                      journals=sorted(names)) for name, names in sorted(groups.items())]
     head_locks = locks(repo, head['commit'], head['root'])
     changed = check_locks(locks(repo, base['commit'], base['root']), head_locks, declaration)

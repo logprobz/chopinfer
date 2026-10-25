@@ -138,7 +138,7 @@ class CaptureTests(Harness):
         serial = self.capture(self.base, revision)
         parallel = self.capture(self.base, revision, runner='nextest', jobs=8)
         files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))  # check-inputs: walks outside the repository
-                              if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.pin', '.site') or p.name == 'index.json')}
+                              if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.journal', '.pin', '.site') or p.name == 'index.json')}
         self.assertEqual(files(serial[1]), files(parallel[1]))
         self.assertEqual((serial[2]['runner'], parallel[2]['runner']), ('libtest', 'nextest'))
         code, report = self.prove(serial[:2], parallel[:2], dict(
@@ -736,7 +736,7 @@ class RepeatTests(Harness):
             write_dump(out, self.base, test='a::synthetic')
         _, two, _ = self.capture(self.base, revision, dump=reverse)
         files = lambda root: {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*'))  # check-inputs: walks outside the repository
-                              if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.pin', '.site'))}
+                              if p.is_file() and (p.parent != root or p.suffix in ('.txt', '.journal', '.pin', '.site'))}
         self.assertEqual(files(one), files(two))
         index = lambda root: {k: v for k, v in json.loads((root / 'index.json').read_text()).items() if k != 'attestation'}
         self.assertEqual(index(one), index(two))

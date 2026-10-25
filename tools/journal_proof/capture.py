@@ -304,7 +304,7 @@ def merge_checks(out):
             need(JOURNAL.fullmatch(name) is not None, f'unsafe journal name {name}')
             checkpoint = out / 'aux/tests' / directory.name / f'{name}.checkpoint.json'
             need(checkpoint.is_file(), f'{name}: no trace checkpoint for its check in {directory.name}')
-            test = json.loads(checkpoint.read_text())['test']
+            test = json.loads(read_regular(checkpoint))['test']
             need(test.replace('::', '.') == directory.name, f'{name}: checkpoint test {test} is not {directory.name}')
             for suffix in ('.pin', '.site'):
                 need((directory / f'{name}{suffix}').is_file(), f'{name}: no {suffix} sidecar for its check in {test}')
@@ -319,8 +319,8 @@ def merge_checks(out):
         test, directory, checkpoint = made[-1]
         for suffix in ('', '.pin', '.site'):
             need(not (out / f'{name}{suffix}').exists(), f'{name}: dumped outside a test check directory')
-            shutil.copyfile(directory / f'{name}{suffix}', out / f'{name}{suffix}')
-        shutil.copyfile(checkpoint, out / 'aux' / f'{name}.checkpoint.json')
+            (out / f'{name}{suffix}').write_bytes(read_regular(directory / f'{name}{suffix}'))
+        (out / 'aux' / f'{name}.checkpoint.json').write_bytes(read_regular(checkpoint))
         if made[:-1]:
             repeated[name] = [[other, *read_site(path / f'{name}.site')] for other, path, _ in made[:-1]]
     if root.exists():

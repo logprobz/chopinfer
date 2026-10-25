@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the `text_edits` policy that turns one text journal body into another.
 
-Usage: text_edits.py BASE.txt HEAD.txt [--out POLICY.json]
+Usage: text_edits.py BASE_JOURNAL HEAD_JOURNAL [--out POLICY.json]
 
 The output is a journal policy, {"text_edits": [...]}, for the spec's
 `journals` entry of that journal: every removed base line and every added

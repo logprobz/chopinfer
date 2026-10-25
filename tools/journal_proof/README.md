@@ -45,6 +45,13 @@ the crate in `models/MODEL/bundle`. A capture index names every journal the
 revision's tests checked and seals each body's SHA-256. Each body's line
 count and FNV-1a is its pin.
 
+Journal names end in `.txt` or `.journal`, start with an ASCII letter or
+digit, and contain only ASCII letters, digits, underscores, dots and
+hyphens. Both suffixes use appended `.pin`, `.site` and `.checkpoint.json`
+sidecars. Capture reads refuse symlinks and nonregular files. Create journals
+use `-create` before either suffix; the fixture and spec writers apply the
+same rules to both.
+
 The revision's sources must hold exactly those pins: the literal
 `(lines, 0x<fnv>)` tuples of the Rust files under the bundle directory that
 call `check_journal` must equal, as a multiset, the captured journals' pins.

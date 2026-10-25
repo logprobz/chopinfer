@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from common import need
 from provenance import digest
+from pins import is_create
 
 
 def subsequence(want,notes):
@@ -97,7 +98,7 @@ def collect(root,snapshot,bodies):
             start_event,start_note,end_event,end_note=mark[1:]
             create_notes=notes[start_note:end_note]
             kind='instance-create'
-        elif name.endswith('-create.txt'):
+        elif is_create(name):
             start_event=start_note=0
             end_event=descriptor['records']
             end_note=positions[-1]+1
@@ -107,7 +108,7 @@ def collect(root,snapshot,bodies):
             first_launch=next((i for i,line in enumerate(notes) if line.startswith('launch ')),None)
             if first_launch is None or not all(line.startswith('allocate ') for line in notes[:first_launch]):
                 # Encoder steps share the same device as their pinned create.
-                siblings=[n for n in bodies if n.endswith('-create.txt') and tests.get(n)==cp['test']]
+                siblings=[n for n in bodies if is_create(n) and tests.get(n)==cp['test']]
                 matches=[n for n in siblings if notes[:len(bodies[n])]==bodies[n]]
                 if len(matches)==1:
                     start_event=start_note=0

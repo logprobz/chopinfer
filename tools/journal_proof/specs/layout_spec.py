@@ -32,6 +32,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import git, need, resolve  # noqa: E402
+from pins import is_create  # noqa: E402
 import layout as declared  # noqa: E402
 from text_edits import edits as text_edits  # noqa: E402
 
@@ -45,7 +46,7 @@ def fixtures_of(base, head):
     for name, pin in head['pins'].items():
         need(sorted(groups[pin['fixture']]) == sorted(n for n, p in head['pins'].items() if p['fixture'] == pin['fixture']),
              f'{name}: fixture membership changed')
-    return [dict(name=name, create=next((n for n in sorted(names) if n.endswith('-create.txt')), sorted(names)[0]),
+    return [dict(name=name, create=next((n for n in sorted(names) if is_create(n)), sorted(names)[0]),
                  journals=sorted(names)) for name, names in sorted(groups.items())]
 
 

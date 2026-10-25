@@ -39,12 +39,17 @@ EMPTY_FNV = int(fnv(b''), 16)
 PIN = r'\(\s*(\d[\d_]*)\s*,\s*0x([0-9a-fA-F_]+)\s*\)'
 CAPTURE_SCHEMAS = ('chopinfer.journal-captures.v2', 'chopinfer.journal-captures.v3')
 SIDECAR = re.compile(r'\((\d+), 0x([0-9a-f]{16})\) expected \((\d+), 0x([0-9a-f]{16})\)\n?')
-JOURNAL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*\.txt')
+JOURNAL_SUFFIXES = ('.txt', '.journal')
+JOURNAL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*(?:' + '|'.join(map(re.escape, JOURNAL_SUFFIXES)) + ')')
 CALL = re.compile(r'(?<![.\w])check_journal\b')
 PLACE = r'[&*]*\s*(?:self|[A-Za-z_]\w*)(?:\s*(?:\.\s*\w+|::\s*\w+|\[[^\[\]()]*\]))*'
 PLACE_PIN = re.compile(rf'{PLACE}|\(\s*{PLACE}\s*,\s*{PLACE}\s*\)')
 PIN_START = re.compile(r'\(\s*\d[\d_]*\s*,\s*0x[0-9a-fA-F_]+')
 IMPORT = re.compile(r'\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?use\b')
+
+
+def is_create(name):
+    return name.endswith(tuple('-create' + suffix for suffix in JOURNAL_SUFFIXES))
 
 
 def bundle_root(repo, commit, model):
@@ -208,8 +213,8 @@ def dumped(out, repo, commit, root, repeated=None):
     exactly the revision's source pins, checked at its call sites, with
     every call site reached (`repeated`: capture.merge_checks)."""
     out = Path(out)
-    names = sorted(p.name for p in out.glob('*.txt'))
-    sidecars = sorted(p.name.removesuffix('.pin') for p in out.glob('*.txt.pin'))
+    names = sorted(p.name for suffix in JOURNAL_SUFFIXES for p in out.glob('*' + suffix))
+    sidecars = sorted(p.name.removesuffix('.pin') for suffix in JOURNAL_SUFFIXES for p in out.glob('*' + suffix + '.pin'))
     need(names == sidecars, f'dumped journals and pin sidecars differ: {sorted(set(names) ^ set(sidecars))[:5]}')
     pins, bodies, checked = {}, {}, {}
     for name in names:

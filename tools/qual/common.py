@@ -559,6 +559,8 @@ def not_applicable(server, modality):
 def require_qualified_model_options(server):
     """Refuse advertised options unless the host marks its defaults qualified.
     Legacy servers and receipts omit both fields."""
+    if "experimental_determinism" in server:
+        raise ValueError("experimental determinism is not release qualification")
     serving = ((server.get("health") or {}).get("serving")
                or server.get("serving") or server)
     if "model_options" not in serving and "model_options_qualified" not in serving:
@@ -601,7 +603,7 @@ def served_checkpoint(log, url):
             "server_log_sha256": hashlib.sha256(Path(log).read_bytes()).hexdigest()}
 
 
-def bind_checkpoint(server, log, url, config=None):
+def bind_checkpoint(server, log, url, config=None, *, experimental_pin=None):
     """Record in `server` the checkpoint the live server reports from
     /health, refusing any but the gate's pin. A startup log, when given, must
     be the live process's: the same checkpoint and startup nonce, so a log
@@ -609,7 +611,10 @@ def bind_checkpoint(server, log, url, config=None):
     name alone does not identify a checkpoint."""
     pin = checkpoint_pin(config)
     live = live_identity(server)
-    require_qualified_model_options(server)
+    if experimental_pin is None:
+        require_qualified_model_options(server)
+    else:
+        experimental_pin.validate(server)
     if live["checkpoint_identity"] != pin["checkpoint_identity"]:
         raise ValueError(f"the server loaded checkpoint {live['checkpoint_identity']}, "
                          f"not the pinned {pin['checkpoint_identity']}")
@@ -625,6 +630,8 @@ def bind_checkpoint(server, log, url, config=None):
                              "nonce differs from /health")
         evidence.update(server_log=logged["server_log"], server_log_sha256=logged["server_log_sha256"])
     server["checkpoint"] = evidence
+    if experimental_pin is not None:
+        server["experimental_determinism"] = experimental_pin.marker()
     return server
 
 
@@ -647,7 +654,7 @@ def bound_live(server, config=None):
             and startup_nonce(checkpoint.get("startup_nonce")) and "rescored_from" not in server)
 
 
-def confirm_live(client, server):
+def confirm_live(client, server, *, experimental_pin=None):
     """Refuse results scored on a bound server unless the bound process wrote
     every response: each one's identity headers, and /health read again after
     scoring, must name the bound checkpoint and startup nonce. A response
@@ -659,7 +666,11 @@ def confirm_live(client, server):
         return
     try:
         identity = client.identity(server["model"])
-        require_qualified_model_options(identity)
+        if experimental_pin is None:
+            require_qualified_model_options(identity)
+        else:
+            experimental_pin.validate(server)
+            experimental_pin.validate(identity)
         live = live_identity(identity)
     except (RuntimeError, ValueError) as error:
         raise SystemExit(f"refused: the server at {server.get('url')} no longer reports its identity: {error}")
@@ -890,8 +901,11 @@ def receipt(check, identity, result, mechanics_only=False, load_samples=None, lo
     with path.open("x") as output:
         json.dump(value, output, indent=2, sort_keys=True)
         output.write("\n")
-    print(json.dumps({"receipt": str(path), "passed": value.get("passed"),
-                      "skipped": value.get("skipped"), "errors": value.get("errors", [])}))
+    written = {"receipt": str(path), "passed": value.get("passed"),
+               "skipped": value.get("skipped"), "errors": value.get("errors", [])}
+    if "experimental_determinism" in value:
+        written.update(qualified=False, experimental_determinism=True)
+    print(json.dumps(written))
     return path
 
 

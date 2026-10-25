@@ -18,6 +18,9 @@ use crate::kinds::{applied_constants, invalid};
 use crate::limits::{ANSWER_FIELDS, POSITION_FIELDS, first_difference};
 use crate::repr;
 
+mod experimental;
+pub(crate) use experimental::score_capture;
+
 pub struct Determinism;
 
 /// The short completions, by name (`determinism.SHORT_PROMPTS`).
@@ -950,8 +953,12 @@ impl Kind for Determinism {
         value: &Value,
         reference: Option<&Value>,
         _check: &Check,
-        _mechanics: bool,
+        mechanics: bool,
     ) -> Result<Map<String, Value>, KindError> {
+        crate::kind::admit(value, mechanics)?;
+        if let Some(reference) = reference {
+            crate::kind::admit(reference, mechanics)?;
+        }
         compare(value, reference.unwrap_or(&Value::Null))
     }
 
@@ -964,7 +971,10 @@ impl Kind for Determinism {
         let passed = metrics
             .get("passed")
             .ok_or_else(|| MissingMetric("'passed'".into()))?;
-        let status = if truthy(passed) {
+        let status = if truthy(passed)
+            && metrics.get("qualified") != Some(&Value::Bool(false))
+            && !metrics.contains_key("experimental_determinism")
+        {
             Status::Pass
         } else {
             Status::Fail

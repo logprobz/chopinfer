@@ -269,6 +269,8 @@ def admit(value, mechanics=False):
     run, or errors."""
     if not isinstance(value, dict):
         raise ValueError("expected a JSON object receipt")
+    if "experimental_determinism" in value:
+        raise ValueError("experimental determinism is not release qualification")
     if isinstance(value.get("server"), dict):
         import common
         common.require_qualified_model_options(value["server"])

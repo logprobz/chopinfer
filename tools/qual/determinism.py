@@ -54,6 +54,7 @@ import uuid
 import zlib
 
 from common import Client, answer_control, arguments, bind_checkpoint, confirm_live, receipt
+import experimental_determinism
 
 SHORT_PROMPTS = {
     "capital": "The capital of France is",
@@ -222,10 +223,11 @@ def tokenize(client, model, prompt):
 
 
 def record(args):
+    experimental_pin = experimental_determinism.selected(args)
     client = Client(args.url, args.timeout)
     server = client.identity(args.model)
     if getattr(args, "server_log", None):
-        bind_checkpoint(server, args.server_log, args.url)
+        bind_checkpoint(server, args.server_log, args.url, experimental_pin=experimental_pin)
     requests = request_set(args.image, answer_control() if args.image else None)
     # One request at a time: C1.
     rows = [send(client, server["model"], name, path, body) for name, path, body in requests]
@@ -249,10 +251,13 @@ def record(args):
                                                        else "the server does not serve image inputs")},
              "cold_repeat": COLD_REPEAT, "prefix_hit": dict(PREFIX_HIT, anchors=list(HIT_ANCHORS)),
              "requests": rows, "passed": True}
+    if experimental_pin is not None:
+        value.update(experimental_determinism=experimental_pin.marker(), qualified=False, server=server)
     check(value)
-    confirm_live(client, server)
-    value["cold_repeat"] = dict(COLD_REPEAT, **repeat_difference(value))
-    value["prefix_hit"] = dict(value["prefix_hit"], **hit_difference(value))
+    confirm_live(client, server, experimental_pin=experimental_pin)
+    compared = compare(value, value, experimental=experimental_pin is not None)
+    value["cold_repeat"] = dict(COLD_REPEAT, **compared["cold_repeat"]["left"])
+    value["prefix_hit"] = dict(value["prefix_hit"], **compared["prefix_hit"]["left"])
     # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
     # samples bound them and the receipt's timing reads informational.
     receipt(f"determinism-{args.arm}", server, value, False)
@@ -330,12 +335,13 @@ def hit_difference(value):
     return compare(value, value)["prefix_hit"]["left"]
 
 
-def compare(left, right):
+def compare(left, right, *, experimental=False):
     """Bit-identical answers across two records, between the cold long sends
     within each, and between each prefix hit and its record's cold token-ID
     send; see the module docstring."""
     import kinds
-    return kinds.call("score", kinds.KINDS["determinism"], left, right)["metrics"]
+    operation = "score_capture" if experimental else "score"
+    return kinds.call(operation, kinds.KINDS["determinism"], left, right)["metrics"]
 
 
 def describe(result):
@@ -361,7 +367,7 @@ def describe(result):
 
 def compare_command(args):
     left, right = (json.loads(Path(path).read_text()) for path in (args.left, args.right))
-    result = compare(left, right)
+    result = compare(left, right, experimental=getattr(args, "experimental", False))
     json.dump(dict(result, left=args.left, right=args.right), sys.stdout, indent=1)
     print()
     if not result["passed"]:
@@ -377,6 +383,11 @@ def main():
     parser.add_argument("--image", action="store_true", help="record: also send the image chat request")
     parser.add_argument("--image-reason", help="record: why the image request is or is not sent")
     parser.add_argument("--server-log", type=Path, help="record: bind the live server to the pin and this startup log")
+    parser.add_argument("--experimental", action="store_true",
+                        help="record or compare strictly pinned diagnostic captures, never release qualification")
+    parser.add_argument("--experimental-pin", type=Path,
+                        help="record: sealed complete option map, checkpoint identity and startup nonce")
+    parser.add_argument("--experimental-pin-sha256", help="record: SHA256 of the sealed pin file")
     parser.add_argument("left", nargs="?", help="compare: the first record")
     parser.add_argument("right", nargs="?", help="compare: the second record")
     args = parser.parse_args()
@@ -385,6 +396,8 @@ def main():
             parser.error("record needs --arm and --run-id")
         record(args)
     else:
+        if args.experimental_pin is not None or args.experimental_pin_sha256 is not None:
+            parser.error("compare uses the pins already recorded in its input receipts")
         if not args.left or not args.right:
             parser.error("compare needs two records")
         compare_command(args)

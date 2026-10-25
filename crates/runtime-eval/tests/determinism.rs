@@ -115,6 +115,169 @@ fn changed(side: &str, pointer: &str, value: Option<Value>) -> Value {
     case
 }
 
+fn experimental_record(mut value: Value, nonce: char) -> Value {
+    let pin = json!({
+        "model_options": {"verify_graph_rows": 64, "enabled": true, "mode": "capture-\u{03b1}"},
+        "checkpoint_identity": "a".repeat(64),
+        "startup_nonce": nonce.to_string().repeat(32),
+    });
+    let marker = json!({
+        "pin": pin,
+        "pin_sha256": canonical_sha256(&pin),
+        "file_sha256": "c".repeat(64),
+        "qualified": false,
+    });
+    let mut serving = pin.clone();
+    serving["model_options_qualified"] = json!(false);
+    value["server"] = json!({
+        "health": {"serving": serving},
+        "checkpoint": {
+            "checkpoint_identity": pin["checkpoint_identity"],
+            "startup_nonce": pin["startup_nonce"],
+        },
+        "experimental_determinism": marker,
+    });
+    value["experimental_determinism"] = marker;
+    value["qualified"] = json!(false);
+    value
+}
+
+fn diagnostic_call(operation: &str, left: &Value, right: &Value, mechanics: bool) -> Value {
+    let response = runtime_eval::rescore::respond(&json!({
+        "schema": runtime_eval::rescore::REQUEST,
+        "calls": [{"op": operation, "kind": "determinism", "receipt": left,
+                   "reference": right, "check": {}, "mechanics": mechanics}],
+    }))
+    .unwrap();
+    assert_eq!(response["results"].as_array().unwrap().len(), 1);
+    response["results"][0].clone()
+}
+
+#[test]
+fn release_scoring_refuses_either_experimental_arm_including_mechanics() {
+    let original = pass_vector();
+    for sides in [vec![0], vec![1], vec![0, 1]] {
+        for health in ["unchanged", "qualified", "absent"] {
+            for mechanics in [false, true] {
+                let mut pair = [original["receipt"].clone(), original["reference"].clone()];
+                for &side in &sides {
+                    pair[side]["experimental_determinism"] = Value::Null;
+                    if health == "qualified" {
+                        pair[side]["server"]["health"]["serving"] = json!({
+                            "model_options": {"x": 1}, "model_options_qualified": true,
+                        });
+                    } else if health == "absent" {
+                        pair[side].as_object_mut().unwrap().remove("server");
+                    }
+                }
+                for operation in ["score", "rescore"] {
+                    let result = diagnostic_call(operation, &pair[0], &pair[1], mechanics);
+                    assert!(
+                        result["error"]
+                            .to_string()
+                            .contains("not release qualification"),
+                        "{operation} {sides:?} {health} {mechanics}: {result}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn diagnostic_scoring_preserves_every_comparison_and_never_qualifies() {
+    let original = pass_vector();
+    let left = experimental_record(original["receipt"].clone(), 'a');
+    let right = experimental_record(original["reference"].clone(), 'b');
+    let result = diagnostic_call("score_capture", &left, &right, false);
+    assert_eq!(result["metrics"]["passed"], true, "{result}");
+    assert_eq!(result["metrics"]["qualified"], false);
+    let judged = runtime_eval::rescore::respond(&json!({
+        "schema": runtime_eval::rescore::REQUEST,
+        "calls": [{"op": "judge", "kind": "determinism", "check": {},
+                   "metrics": result["metrics"]}],
+    }))
+    .unwrap();
+    assert_eq!(judged["results"][0]["status"], "fail");
+    for field in [
+        "selected",
+        "top",
+        "signed-zero",
+        "token",
+        "repeat",
+        "hit-1024",
+        "hit-2000",
+    ] {
+        let (mut a, mut b) = (left.clone(), right.clone());
+        let next = |value: &Value| json!(f64::from_bits(value.as_f64().unwrap().to_bits() + 1));
+        match field {
+            "selected" => b["requests"][0]["logprobs"][1] = next(&b["requests"][0]["logprobs"][1]),
+            "top" => {
+                b["requests"][0]["top_logprobs"][0][0][1] =
+                    next(&b["requests"][0]["top_logprobs"][0][0][1])
+            }
+            "signed-zero" => {
+                a["requests"][0]["logprobs"][0] = json!(0.0);
+                b["requests"][0]["logprobs"][0] = json!(-0.0);
+            }
+            "token" => b["requests"][0]["token_ids"][0] = json!(98765),
+            _ => {
+                let index = match field {
+                    "repeat" => 5,
+                    "hit-1024" => 8,
+                    _ => 10,
+                };
+                let value = next(&a["requests"][index]["logprobs"][0]);
+                a["requests"][index]["logprobs"][0] = value.clone();
+                b["requests"][index]["logprobs"][0] = value;
+            }
+        }
+        let result = diagnostic_call("score_capture", &a, &b, false);
+        assert_eq!(result["metrics"]["passed"], false, "{field}: {result}");
+        assert_eq!(result["metrics"]["qualified"], false);
+    }
+}
+
+#[test]
+fn diagnostic_scoring_requires_complete_unchanged_identity_pins() {
+    let original = pass_vector();
+    let left = experimental_record(original["receipt"].clone(), 'a');
+    let right = experimental_record(original["reference"].clone(), 'b');
+    for field in [
+        "options",
+        "option-type",
+        "checkpoint",
+        "nonce",
+        "digest",
+        "qualification",
+        "errors",
+    ] {
+        let mut bad = right.clone();
+        match field {
+            "options" => {
+                bad["server"]["health"]["serving"]["model_options"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("enabled");
+            }
+            "option-type" => {
+                bad["server"]["health"]["serving"]["model_options"]["enabled"] = json!(1)
+            }
+            "checkpoint" => {
+                bad["server"]["health"]["serving"]["checkpoint_identity"] = json!("f".repeat(64))
+            }
+            "nonce" => bad["server"]["checkpoint"]["startup_nonce"] = json!("d".repeat(32)),
+            "digest" => bad["experimental_determinism"]["pin_sha256"] = json!("e".repeat(64)),
+            "qualification" => {
+                bad["server"]["health"]["serving"]["model_options_qualified"] = json!(true)
+            }
+            _ => bad["errors"] = json!(["failed capture"]),
+        }
+        let result = diagnostic_call("score_capture", &left, &bad, false);
+        assert!(result.get("error").is_some(), "{field}: {result}");
+    }
+}
+
 /// Rows of the pass vector by position: 0 capital, 4 long, 5
 /// long-cold-repeat, 6 long-ids, 7 long-primer-1024, 8 long-hit-1024, 10
 /// long-hit-2000.

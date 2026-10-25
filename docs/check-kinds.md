@@ -575,6 +575,23 @@ Verdict: pass when every request is equal across the arms, the two cold long
 sends are equal within each arm, and each prefix hit equals the cold
 `long-ids` send within each arm; else fail.
 
+For diagnostic work on nondefault model options, `determinism.py record
+--experimental --experimental-pin FILE --experimental-pin-sha256 SHA256
+--server-log LOG` requires an explicit pin containing exactly
+`model_options` (the complete typed option map), `checkpoint_identity` and
+`startup_nonce`. The bounded regular pin file must match the supplied digest
+and forbid group and world writes. Its identity must match both live health
+reads, the startup log and every response's identity headers. Ordinary
+recording continues to refuse unqualified model options.
+
+`determinism.py compare --experimental LEFT RIGHT` uses the same token,
+logprob, cold-repeat and prefix-hit comparisons. It additionally validates
+the recorded pins and requires identical options and checkpoints across
+arms. These records and comparison metrics report `qualified: false`.
+Release scoring rejects an `experimental_determinism` marker on either
+receipt or its server identity, including mechanics runs. A diagnostic
+comparison cannot establish release qualification.
+
 ## api (api.v1)
 
 Inputs: the declared `api_samples` (a captured completions response with

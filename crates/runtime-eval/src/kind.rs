@@ -287,6 +287,15 @@ pub fn admit(receipt: &Value, mechanics: bool) -> Result<(), KindError> {
     let Value::Object(map) = receipt else {
         return Err(KindError::Invalid("expected a JSON object receipt".into()));
     };
+    if map.contains_key("experimental_determinism")
+        || map
+            .get("server")
+            .is_some_and(|server| server.get("experimental_determinism").is_some())
+    {
+        return Err(KindError::Invalid(
+            "experimental determinism is not release qualification".into(),
+        ));
+    }
     if let Some(server) = map.get("server") {
         let serving = server
             .pointer("/health/serving")

@@ -301,6 +301,15 @@ class RescoreTests(unittest.TestCase):
                  "no build": records(build=lambda ar: ar["server"]["health"]["serving"].pop("source_commit")),
                  "unqualified options": records(options=lambda ar: ar["server"]["health"]["serving"].update(
                      model_options={"x": 1}, model_options_qualified=False))}
+        for sides in ((0,), (1,), (0, 1)):
+            for qualified in (False, True):
+                pair = records()
+                for index in sides:
+                    pair[index]["experimental_determinism"] = None
+                    if qualified:
+                        pair[index]["server"]["health"]["serving"].update(
+                            model_options={"x": 1}, model_options_qualified=True)
+                cases[f"experimental {sides} qualified {qualified}"] = pair
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "declaration.json"

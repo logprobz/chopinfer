@@ -161,6 +161,7 @@ fn call(value: &Value, implemented: &[Box<dyn Kind>]) -> Result<Value, String> {
             let result = match name {
                 "teacher_forced" => kinds::teacher::score_capture(receipt, reference, &check),
                 "media_forced" => kinds::media::score_capture(receipt, reference, &check),
+                "determinism" => kinds::determinism::score_capture(receipt, reference),
                 _ => return Err("call: this kind has no capture scorer".into()),
             };
             match result {

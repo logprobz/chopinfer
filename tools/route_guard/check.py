@@ -158,11 +158,20 @@ def check(args):
         for symbol, count in captures.items():
             required[symbol] = max(required[symbol], count)
             observed[symbol][0] = max(observed[symbol][0], count)
+    # Host calls have no CUDA activity. Their step entries supply call counts,
+    # while raw kernel captures retain their selected-entry coverage checks.
+    for symbol, count in selected_symbols.items():
+        if symbol.startswith('host.'):
+            observed[symbol][0] = max(observed[symbol][0], count)
     failures, ambiguous = [], []
     for symbol, (count, ns) in sorted(observed.items()):
         tags = classes.get(symbol, [])
         kinds = {tag['class'] for tag in tags}
-        if 'Fast' in kinds and len(kinds) > 1:
+        if symbol.startswith('host.'):
+            if selected_symbols[symbol] < required[symbol]:
+                ambiguous.append(symbol)
+            print(f'host symbol={symbol} calls={count} (selected-entry step evidence)')
+        elif 'Fast' in kinds and len(kinds) > 1:
             if selected_symbols[symbol] < required[symbol]:
                 ambiguous.append(symbol)
             print(f'ambiguous symbol={symbol} launches={count} device_ns={ns} (time unattributed)')

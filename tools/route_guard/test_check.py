@@ -146,6 +146,63 @@ class CheckTests(unittest.TestCase):
         steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
         self.assertEqual(self.run_check('--journal', first, '--journal', second, '--steps', steps), 0)
 
+    def host_steps(self, prepared=False):
+        tag = {'entry': 'engram/prepared/prefill' if prepared else 'engram/sync/ar_prefill',
+               'symbol': 'host.enqueue_mapped_gather' if prepared else 'host.gather_mapped_rows',
+               'class': 'Fast' if prepared else 'Baseline', 'family': 'engram_gather',
+               'admitted': [], 'wrappers': []}
+        self.tags.append(tag)
+        self.write_classes()
+        route = {'fallback_launches': 0 if prepared else 2,
+                 'families': {} if prepared else {'engram_gather': 2},
+                 'entries': {tag['entry']: {**tag, 'launches': 2}}}
+        path = self.root / 'host-steps'
+        path.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
+        return path, route
+
+    def test_host_calls_use_steps_without_nsys(self):
+        steps, _ = self.host_steps()
+        self.assertEqual(self.run_check('--steps', steps), 1)
+        allow = self.root / 'allow.json'
+        allow.write_text(json.dumps({'allow_fallbacks': {'engram_gather': 'AR prefill pending'}}))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(CHECK.main(['--classes', str(self.classes), '--steps', str(steps),
+                                        '--allow', str(allow)]), 0)
+        self.assertIn('host symbol=host.gather_mapped_rows calls=2', output.getvalue())
+        self.assertNotIn('device_ns', output.getvalue())
+        steps, _ = self.host_steps(prepared=True)
+        self.assertEqual(self.run_check('--steps', steps), 0)
+
+    def test_host_calls_require_metadata_and_consistent_totals(self):
+        steps, route = self.host_steps()
+        self.tags.pop()
+        self.write_classes()
+        self.assertEqual(self.run_check('--steps', steps), 2)
+        steps, route = self.host_steps()
+        for changed in ({'fallback_launches': 1}, {'families': {}}):
+            steps.write_text(json.dumps({'schema': 'chopinfer.step.v1',
+                                         'route': {**route, **changed}}) + '\n')
+            self.assertEqual(self.run_check('--steps', steps), 2)
+
+    def test_host_steps_do_not_cover_missing_kernel_evidence(self):
+        steps, route = self.host_steps(prepared=True)
+        capture = self.root / 'capture.sqlite'
+        with sqlite3.connect(capture) as db:
+            db.execute('CREATE TABLE StringIds(id INTEGER, value TEXT)')
+            db.execute('CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL(start INTEGER, end INTEGER, shortName INTEGER)')
+            db.execute('INSERT INTO StringIds VALUES (1, "shared")')
+            db.execute('INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (10, 30, 1)')
+        allow = self.root / 'allow.json'
+        allow.write_text(json.dumps({'allow_fallbacks': {'projection': 'Range work pending'}}))
+        self.assertEqual(self.run_check('--nsys', capture, '--steps', steps, '--allow', allow), 2)
+        tag = self.tags[0]
+        route['entries'][tag['entry']] = {**tag, 'launches': 1}
+        route['fallback_launches'] = 1
+        route['families'] = {'projection': 1}
+        steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
+        self.assertEqual(self.run_check('--nsys', capture, '--steps', steps, '--allow', allow), 0)
+
     def test_empty_or_missing_step_evidence_does_not_pass(self):
         path = self.root / 'steps'
         for content in ['', '{"schema":"chopinfer.step.v1"}\n']:

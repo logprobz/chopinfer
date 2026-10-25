@@ -79,6 +79,11 @@ def log_records(step, text):
                 raise ValueError(f"{step}: libtest case has no binary context: {match[1]}")
             tests.append({"step": scope(step), "kind": kind, "binary": binary,
                           "name": match[1], "outcome": outcome(match[2])})
+        if kind == "doctest" and (match := re.match(
+                r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", line)):
+            tests.append({"step": scope(step), "kind": "doctest-suite", "binary": binary,
+                          "name": "<suite>", "outcome": outcome(match[1]),
+                          "passed": int(match[2]), "failed": int(match[3]), "ignored": int(match[4])})
     ran, verdicts, skips, skipped = runner.unittest_outcome(text)
     if qualification:
         total = sum(item["ran"] for item in qualification.values())

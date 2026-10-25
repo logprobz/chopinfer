@@ -114,9 +114,8 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
 }
 
 /// DSpark profiles plan balanced drafts, which read no step time, from full
-/// five-proposal blocks, at the depths that measured faster than no
-/// drafting (none from C16), landed on the verify widths the package runs
-/// at its prepared speed.
+/// five-proposal blocks. C16 uses a 64-row target for three drafts per item;
+/// C32 keeps drafting disabled.
 #[test]
 fn dspark_profiles_keep_balanced_full_block_drafting() {
     let document = profiles(&FLASH, &[4]).unwrap();
@@ -128,8 +127,10 @@ fn dspark_profiles_keep_balanced_full_block_drafting() {
     ] {
         let speculation = &file["profiles"][name]["speculation"];
         assert_eq!(speculation["mode"], "balanced");
-        assert_eq!(speculation["depths"], "1:5,8:3,16:0");
-        assert_eq!(speculation["widths"], "6,8,16,32");
+        assert_eq!(speculation["depths"], "1:5,8:3,16:3,32:0");
+        assert_eq!(speculation["widths"], "6,8,16,32,64");
+        assert_eq!(speculation["rows"], 64);
+        assert_eq!(speculation["graph_rows"], 64);
         assert_eq!(speculation["tokens"], 5);
         assert_eq!(speculation["draft_cost"], "per-block");
         assert_eq!(speculation["drafter"], "dspark");

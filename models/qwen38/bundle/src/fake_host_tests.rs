@@ -801,10 +801,18 @@ impl FakePackage for Package {
     }
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
         assert_eq!(layout_id, self.layout().0);
-        Ok(KV_PAGES)
+        Ok(if self.device.symbols_only.get() {
+            1024 * 32
+        } else {
+            KV_PAGES
+        })
     }
     fn resolve_serving_kv_pool(&self, rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1> {
-        let bytes = KV_PAGES * self.layout().1;
+        let bytes = (if self.device.symbols_only.get() {
+            1024 * 32
+        } else {
+            KV_PAGES
+        }) * self.layout().1;
         self.extents.borrow_mut().insert(KV_SLOT + rank, bytes);
         Ok(DeviceBufferSpanV1::new(
             BundleDeviceBufferHandleV1::from_parts(1, KV_SLOT + rank),
@@ -883,7 +891,7 @@ impl FakePackage for Package {
         self.sim
             .borrow_mut()
             .write(destination, source, &self.extents.borrow());
-        if source.len() <= 1 << 20 {
+        if !self.device.symbols_only.get() && source.len() <= 1 << 20 {
             self.uploads
                 .borrow_mut()
                 .push((destination, source.to_vec()));
@@ -899,7 +907,9 @@ impl FakePackage for Package {
         destination: DeviceBufferSpanV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
-        self.copies.borrow_mut().push((source, destination));
+        if !self.device.symbols_only.get() {
+            self.copies.borrow_mut().push((source, destination));
+        }
         if self.fail_restore_rank.get() == destination.buffer.slot().checked_sub(STATE_SLOT)
             && source.offset
                 == destination.offset
@@ -949,12 +959,14 @@ impl FakePackage for Package {
         name: &str,
         spans: &[DeviceBufferSpanV1],
     ) -> HostServiceResultV1<()> {
-        self.launch_spans.borrow_mut().push(
-            spans
-                .iter()
-                .map(|span| (span.buffer.slot(), span.offset, span.length))
-                .collect(),
-        );
+        if !self.device.symbols_only.get() {
+            self.launch_spans.borrow_mut().push(
+                spans
+                    .iter()
+                    .map(|span| (span.buffer.slot(), span.offset, span.length))
+                    .collect(),
+            );
+        }
         if let Some((refused, from)) = &*self.refuse_launch.borrow()
             && *refused == name
             && self.launches.borrow().len() >= *from
@@ -978,11 +990,13 @@ impl FakePackage for Package {
             && let Some(launches) = captured.get_mut(&capture)
         {
             launches.push((stream.slot(), name.into(), grid, arguments.to_vec()));
-            self.captured_launches
-                .borrow_mut()
-                .entry(capture)
-                .or_default()
-                .push(self.launches.borrow().len());
+            if !self.device.symbols_only.get() {
+                self.captured_launches
+                    .borrow_mut()
+                    .entry(capture)
+                    .or_default()
+                    .push(self.launches.borrow().len());
+            }
         } else {
             self.sim.borrow_mut().launch(
                 stream.slot(),
@@ -1002,10 +1016,12 @@ impl FakePackage for Package {
             self.snapshot_op(|| SnapshotOp::Launch(stream.slot(), arguments.to_vec()));
             self.prefix_copy(arguments);
         }
-        self.launches
-            .borrow_mut()
-            .push((stream.slot(), name.into(), grid));
-        self.launch_arguments.borrow_mut().push(arguments.to_vec());
+        if !self.device.symbols_only.get() {
+            self.launches
+                .borrow_mut()
+                .push((stream.slot(), name.into(), grid));
+            self.launch_arguments.borrow_mut().push(arguments.to_vec());
+        }
         Ok(())
     }
     fn on_synchronize(&self, _stream: BundleStreamHandleV1) -> HostServiceResultV1<()> {
@@ -1024,20 +1040,24 @@ impl FakePackage for Package {
             .remove(&stream.slot())
             .unwrap_or_default();
         self.sim.borrow_mut().capture(graph.slot(), captured);
-        let indexes = self
-            .captured_launches
-            .borrow_mut()
-            .remove(&stream.slot())
-            .unwrap_or_default();
-        self.graph_launches
-            .borrow_mut()
-            .insert(graph.slot(), indexes);
+        if !self.device.symbols_only.get() {
+            let indexes = self
+                .captured_launches
+                .borrow_mut()
+                .remove(&stream.slot())
+                .unwrap_or_default();
+            self.graph_launches
+                .borrow_mut()
+                .insert(graph.slot(), indexes);
+        }
         self.captures.set(self.captures.get() + 1);
     }
     fn on_replay(&self, _stream: BundleStreamHandleV1, graph: BundleGraphHandleV1, _nodes: usize) {
-        self.graph_replays
-            .borrow_mut()
-            .push((self.launches.borrow().len(), graph.slot()));
+        if !self.device.symbols_only.get() {
+            self.graph_replays
+                .borrow_mut()
+                .push((self.launches.borrow().len(), graph.slot()));
+        }
         self.replays.set(self.replays.get() + 1);
         self.sim
             .borrow_mut()

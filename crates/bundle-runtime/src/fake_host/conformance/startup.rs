@@ -185,12 +185,35 @@ pub struct Coverage {
 /// A model's serving configurations over its CPU host. Every conformance
 /// [`super::Adapter`] names one, and its suite starts each profile once.
 pub trait Startup: Sized + 'static {
+    type Observer: super::super::JournalObserver;
     type Limits: SinkLimits;
 
     /// The model's profiles.json.
     fn profiles() -> &'static str;
     /// One configuration per profile.
     fn servings() -> Vec<Serving>;
+    /// Every shape the profile may serve, derived from its serving constants.
+    fn envelope(serving: &Serving) -> super::route_guard::Envelope;
+    /// The same registration metadata used by the bundle's route counters.
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag>;
+    /// Bound independent fake instances; expensive creation may favor fewer.
+    fn route_threads(tier: super::route_guard::Tier) -> usize {
+        if tier == super::route_guard::Tier::Quick {
+            1
+        } else {
+            8
+        }
+    }
+    /// Device journal used by the sweep. Enable symbol recording before create.
+    fn route_device(&self) -> &super::super::FakeDevice<Self::Observer>;
+    /// Called only after every request in the shape has retired. Keep graph
+    /// commands and resident upload state; drop per-request simulator history.
+    fn finish_route_case(&self) {
+        self.route_device().clear_route_journal();
+    }
+    fn launched(&self, from: usize) -> Vec<String> {
+        self.route_device().launch_symbols(from)
+    }
     /// A host serving `serving`: its served sequences, and the draft tokens
     /// and `Serving::verify_rows` it reports when the profile speculates.
     fn new(serving: &Serving) -> Self;
@@ -199,6 +222,17 @@ pub trait Startup: Sized + 'static {
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError>;
     /// The encoded step of `items`, with the KV pages each slot needs.
     fn step(&self, items: &[Item]) -> Vec<u8>;
+    /// Run the serving execution export. Prompt ends distinguish setup chunks
+    /// from final chunks when a bundle negotiates a prefill extension.
+    fn execute_route_step(
+        &self,
+        instance: &mut BundleInstanceV1,
+        items: &[Item],
+        _prompt_ends: &[u64],
+        sink: &mut RecordingSink<Self::Limits>,
+    ) -> Result<(), BundleAbiError> {
+        instance.execute(&self.step(items), sink)
+    }
     /// The token at `position` of every warmup request.
     fn token(&self, position: u64) -> u32;
     /// Check all successful acquisitions, including non-buffer resources.

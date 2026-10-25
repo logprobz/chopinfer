@@ -69,11 +69,16 @@ impl SinkLimits for Limits {
 /// The encoded step of `items`, `(request, slot, start, tokens, phase)`,
 /// each slot's KV pages eight from `slot * 8`. A bundle-drafted verify
 /// item supplies only its bonus token; host-drafted items supply every row.
-fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8> {
+fn step_with_stride(
+    items: &[(u64, u64, u64, &[u32], Phase)],
+    bundle_drafts: bool,
+    stride: u64,
+    prompt_ends: Option<&[u64]>,
+) -> Vec<u8> {
     let mut batch = Vec::new();
     let mut appends = Vec::new();
     let mut slots = Vec::new();
-    for &(request, slot, start, tokens, phase) in items {
+    for (index, &(request, slot, start, tokens, phase)) in items.iter().enumerate() {
         let rows = tokens.len() as u32;
         let end = start + u64::from(rows);
         batch.push(match phase {
@@ -83,13 +88,21 @@ fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8
                 bundle_drafts,
                 if bundle_drafts { &tokens[..1] } else { tokens }.to_vec(),
             ),
-            phase => BatchItemV1::new(request, phase == Phase::Decode, rows, true, tokens.to_vec()),
+            phase => BatchItemV1::new(
+                request,
+                phase == Phase::Decode,
+                rows,
+                prompt_ends.is_none_or(|ends| end == ends[index]),
+                tokens.to_vec(),
+            ),
         });
         appends.push(BatchAppendV1::new(
             start,
             u64::from(rows),
             end,
-            (0..end.div_ceil(64)).map(|page| slot * 8 + page).collect(),
+            (0..end.div_ceil(64))
+                .map(|page| slot * stride + page)
+                .collect(),
             None,
         ));
         slots.push(slot);
@@ -98,6 +111,10 @@ fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8
         .with_state_slots(slots)
         .encode()
         .unwrap()
+}
+
+fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8> {
+    step_with_stride(items, bundle_drafts, 8, None)
 }
 
 /// Checks that every acquisition through `observed` was released and that
@@ -311,6 +328,38 @@ struct Served {
 }
 
 impl conformance::Startup for Served {
+    type Observer = bundle_runtime::fake_host::NoObserver;
+
+    fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
+        let mut envelope = conformance::Envelope::served(
+            serving,
+            model_deepseek41_contract::serving::PREFILL_TOKENS,
+        );
+        if let Some(chunk) = serving
+            .model_options
+            .get("prefill_chunk_tokens")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&n| n > 0)
+        {
+            envelope.prefill_tokens = chunk.min(envelope.prefill_tokens);
+        }
+        envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
+        envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        envelope
+    }
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        crate::Kernels::route_tags(&self.host.shape)
+    }
+    fn route_threads(tier: conformance::route_guard::Tier) -> usize {
+        if tier == conformance::route_guard::Tier::Quick {
+            4
+        } else {
+            8
+        }
+    }
+    fn route_device(&self) -> &bundle_runtime::fake_host::FakeDevice<Self::Observer> {
+        &self.host.device
+    }
     type Limits = Limits;
 
     fn profiles() -> &'static str {
@@ -390,6 +439,11 @@ impl conformance::Startup for Served {
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
+        if self.host.device.symbols_only.get() {
+            self.host
+                .kv_pages
+                .set(1024 * u64::from(self.serving.sequences));
+        }
         let mut record = crate::config::tests::record(
             &self.host.shape,
             self.host.kv,
@@ -408,7 +462,14 @@ impl conformance::Startup for Served {
             record.extend_from_slice(&(options.len() as u32).to_le_bytes());
             record.extend_from_slice(&options);
         }
-        api().create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
+        let api = if self.host.device.symbols_only.get() {
+            api()
+                .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+                .expect("prefill API")
+        } else {
+            api()
+        };
+        api.create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {
         let items: Vec<_> = items
@@ -423,12 +484,129 @@ impl conformance::Startup for Served {
                 )
             })
             .collect();
-        step(&items, self.serving.bundle_drafts())
+        step_with_stride(
+            &items,
+            self.serving.bundle_drafts(),
+            if self.host.device.symbols_only.get() {
+                1024
+            } else {
+                8
+            },
+            None,
+        )
     }
+    fn execute_route_step(
+        &self,
+        instance: &mut BundleInstanceV1,
+        items: &[conformance::Item],
+        prompt_ends: &[u64],
+        sink: &mut RecordingSink<Self::Limits>,
+    ) -> Result<(), BundleAbiError> {
+        let chunk = self
+            .serving
+            .model_options
+            .get("prefill_chunk_tokens")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if items.iter().any(|i| i.phase != Phase::Prefill) {
+            return instance.execute(&self.step(items), sink);
+        }
+        let tuples: Vec<_> = items
+            .iter()
+            .map(|item| {
+                (
+                    item.request,
+                    item.slot,
+                    item.start,
+                    item.tokens.as_slice(),
+                    item.phase,
+                )
+            })
+            .collect();
+        let batch = step_with_stride(
+            &tuples,
+            self.serving.bundle_drafts(),
+            1024,
+            Some(prompt_ends),
+        );
+        if chunk == 0 {
+            return instance.execute(&batch, sink);
+        }
+        let boundaries: Vec<_> = items
+            .iter()
+            .zip(prompt_ends)
+            .map(
+                |(item, &prompt_tokens)| runtime_bundle_sdk::prefill::Boundary {
+                    request_id: item.request,
+                    prompt_tokens,
+                    chunk_end: item.start + item.tokens.len() as u64,
+                    chunk_tokens: chunk,
+                },
+            )
+            .collect();
+        let encoded = runtime_bundle_sdk::prefill::encode(&batch, &boundaries)
+            .expect("served prefill boundaries");
+        instance.execute_prefill(&encoded, sink)
+    }
+
     fn token(&self, position: u64) -> u32 {
         position as u32 + 1
     }
     fn assert_released(&self) {
         assert_host_released(&self.observed, &self.host, &self.serving.profile);
     }
+}
+
+#[test]
+fn route_records_cover_legacy_and_negotiated_prefill() {
+    use conformance::Startup;
+    bundle_runtime::routes::with_logging(|| {
+        let serving = Served::servings()
+            .into_iter()
+            .find(|s| s.profile == "tp4-ar")
+            .unwrap();
+        let adapter = Served::new(&serving);
+        adapter.host.device.symbols_only.set(true);
+        let mut instance = adapter.create().unwrap();
+        for (request, negotiated) in [(701, false), (702, true)] {
+            let items = [conformance::Item {
+                request,
+                slot: 0,
+                start: 0,
+                tokens: (1..=789).collect(),
+                phase: Phase::Prefill,
+            }];
+            let from = adapter.host.logs.borrow().len();
+            let mut sink = RecordingSink::<Limits>::default();
+            if negotiated {
+                adapter
+                    .execute_route_step(&mut instance, &items, &[789], &mut sink)
+                    .unwrap();
+            } else {
+                instance.execute(&adapter.step(&items), &mut sink).unwrap();
+            }
+            instance.commit().unwrap();
+            instance.retire_request(request).unwrap();
+            let logs = adapter.host.logs.borrow();
+            let records: Vec<serde_json::Value> = logs[from..]
+                .iter()
+                .filter_map(|s| serde_json::from_str(s).ok())
+                .filter(|v: &serde_json::Value| v["schema"] == "chopinfer.route.v1")
+                .collect();
+            assert_eq!(records.len(), 1, "negotiated={negotiated}");
+            let route = &records[0];
+            assert!(route["fallback_launches"].as_u64().unwrap() > 0);
+            assert_eq!(
+                route["fallback_launches"].as_u64().unwrap(),
+                route["families"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .map(|n| n.as_u64().unwrap())
+                    .sum::<u64>()
+            );
+        }
+        instance.destroy().unwrap();
+        adapter.assert_released();
+    });
 }

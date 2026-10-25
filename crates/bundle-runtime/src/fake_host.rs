@@ -183,6 +183,11 @@ pub struct FakeDevice<O = NoObserver> {
     pub next: Cell<u32>,
     /// Every service call that reaches the device, in issue order.
     pub journal: RefCell<Vec<String>>,
+    /// Route sweeps omit argument formatting and expand replayed graph symbols.
+    /// Ordinary journals, including their pins, keep their original bytes.
+    pub symbols_only: Cell<bool>,
+    route_names: RefCell<Vec<String>>,
+    graph_symbols: RefCell<BTreeMap<u32, Vec<String>>>,
     /// Sees each journal line while set.
     pub observer: RefCell<Option<O>>,
     /// Every message the bundle logged, in order.
@@ -299,6 +304,25 @@ impl<O: JournalObserver> FakeDevice<O> {
         self.logs
             .borrow_mut()
             .push(String::from_utf8_lossy(message).into_owned());
+    }
+
+    /// Bound sweep storage between steps, with no open graph capture.
+    pub fn clear_route_journal(&self) {
+        assert!(self.symbols_only.get());
+        assert!(self.capture_starts.borrow().is_empty());
+        self.journal.borrow_mut().clear();
+        self.launched.borrow_mut().clear();
+        self.route_names.borrow_mut().clear();
+        self.logs.borrow_mut().clear();
+        self.residency_queries.borrow_mut().clear();
+    }
+
+    pub fn launch_symbols(&self, from: usize) -> Vec<String> {
+        self.journal.borrow()[from..]
+            .iter()
+            .filter_map(|line| line.strip_prefix("launch ")?.split_whitespace().nth(1))
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Records `op` while the snapshot record is on.
@@ -540,10 +564,20 @@ impl<O: JournalObserver> FakeDevice<O> {
                 .entry(stream.slot())
                 .or_default() += 1;
         }
-        self.note(format!(
-            "launch {} {name} {config:?} {arguments:?}",
-            stream.slot()
-        ));
+        if self.symbols_only.get() {
+            self.route_names.borrow_mut().push(name.to_owned());
+            let kind = if self.capture_of(stream.slot()).is_none() {
+                "launch"
+            } else {
+                "capture-launch"
+            };
+            self.note(format!("{kind} {} {name}", stream.slot()));
+        } else {
+            self.note(format!(
+                "launch {} {name} {config:?} {arguments:?}",
+                stream.slot()
+            ));
+        }
         self.launched.borrow_mut().push((stream.slot(), comm));
     }
 
@@ -585,6 +619,19 @@ impl<O: JournalObserver> FakeDevice<O> {
             .copied()
             .collect::<Vec<_>>();
         let nodes = captured.len();
+        if self.symbols_only.get() {
+            let launches = self.launched.borrow();
+            let names = self.route_names.borrow();
+            self.graph_symbols.borrow_mut().insert(
+                id,
+                launches[start..]
+                    .iter()
+                    .zip(&names[start..])
+                    .filter(|((slot, _), _)| *slot == stream.slot() || members.contains(slot))
+                    .map(|(_, name)| name.clone())
+                    .collect(),
+            );
+        }
         self.graph_nodes.borrow_mut().insert(id, nodes);
         let mut collectives = BTreeMap::<u32, usize>::new();
         for (slot, comm) in captured {
@@ -616,6 +663,11 @@ impl<O: JournalObserver> FakeDevice<O> {
             *self.collectives.borrow_mut().entry(slot).or_default() += count;
         }
         self.note(format!("replay {} {}", stream.slot(), graph.slot()));
+        if self.symbols_only.get() {
+            for name in &self.graph_symbols.borrow()[&graph.slot()] {
+                self.note(format!("launch {} {name}", stream.slot()));
+            }
+        }
         Ok(nodes)
     }
 
@@ -623,6 +675,7 @@ impl<O: JournalObserver> FakeDevice<O> {
         self.note(format!("release graph {}", graph.slot()));
         self.graph_nodes.borrow_mut().remove(&graph.slot());
         self.graph_collectives.borrow_mut().remove(&graph.slot());
+        self.graph_symbols.borrow_mut().remove(&graph.slot());
     }
 
     /// The residency report for `symbol` at `config`, which must be the

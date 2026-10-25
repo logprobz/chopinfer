@@ -301,6 +301,57 @@ struct Served {
 }
 
 impl conformance::Startup for Served {
+    type Observer = bundle_runtime::fake_host::NoObserver;
+
+    fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
+        let mut envelope = conformance::Envelope::served(
+            serving,
+            model_glm5next_contract::contract::PREFILL_TOKENS,
+        );
+        envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
+        envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        envelope
+    }
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        crate::sm120::backend(
+            crate::sm120::engines::Engines::shared(
+                Shape::TP4,
+                &model_glm5next_contract::quantization::FP8_BLOCK128,
+            )
+            .expect("registered kernels"),
+            Shape::TP4,
+        )
+        .0
+        .route_tags()
+    }
+    fn route_threads(tier: conformance::route_guard::Tier) -> usize {
+        if tier == conformance::route_guard::Tier::Quick {
+            4
+        } else {
+            8
+        }
+    }
+    fn finish_route_case(&self) {
+        assert!(
+            self.host.upload_log.borrow().is_empty(),
+            "route sweep retained upload_log"
+        );
+        // No request or readback remains pending. Resident kernels and graph
+        // commands stay live, but this shape's upload snapshots can go.
+        self.host.uploaded.borrow_mut().clear();
+        assert!(
+            self.host.launch_log.borrow().is_empty(),
+            "route sweep retained launch_log"
+        );
+        assert!(
+            self.host.capture_log.borrow().is_empty(),
+            "route sweep retained capture_log"
+        );
+        self.host.device.clear_route_journal();
+    }
+    fn route_device(&self) -> &bundle_runtime::fake_host::FakeDevice<Self::Observer> {
+        &self.host.device
+    }
     type Limits = Limits;
 
     fn profiles() -> &'static str {
@@ -376,7 +427,11 @@ impl conformance::Startup for Served {
             self.host.format,
             &roles,
         );
-        api().create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
+        let result = api().create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record);
+        if result.is_err() && self.host.device.symbols_only.get() {
+            eprintln!("route create diagnostics: {:?}", self.host.logs.borrow());
+        }
+        result
     }
     /// Four KV pages per slot, each a stripe of the context-parallel group's
     /// pages; the drafter drafts from the bonus token alone.
@@ -389,7 +444,15 @@ impl conformance::Startup for Served {
             let rows = item.tokens.len() as u32;
             let end = item.start + u64::from(rows);
             let pages = (0..end.div_ceil(64 * size))
-                .map(|stripe| item.slot * 4 + stripe)
+                .map(|stripe| {
+                    item.slot
+                        * (if self.host.device.symbols_only.get() {
+                            1024
+                        } else {
+                            4
+                        })
+                        + stripe
+                })
                 .collect();
             batch.push(match item.phase {
                 conformance::Phase::Verify => {
@@ -430,4 +493,9 @@ impl conformance::Startup for Served {
             );
         }
     }
+}
+
+#[test]
+fn route_memory_reuses_state_across_varying_shapes() {
+    conformance::route_guard::memory_regression::<Served>();
 }

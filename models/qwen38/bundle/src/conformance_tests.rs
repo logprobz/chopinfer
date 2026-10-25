@@ -131,6 +131,59 @@ struct Served(
 );
 
 impl conformance::Startup for Served {
+    type Observer = lifecycle::Recorder;
+
+    fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
+        let mut envelope =
+            conformance::Envelope::served(serving, model_qwen38_contract::contract::PREFILL_TOKENS);
+        envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
+        envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        envelope
+    }
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        crate::sm120::backend(self.0.shape(), true).route_tags()
+    }
+    fn finish_route_case(&self) {
+        // Test-only row diagnostics have no consumer in an envelope sweep.
+        drop(crate::pipeline::take_recorded());
+        assert!(
+            self.0.launches.borrow().is_empty(),
+            "route sweep retained launches"
+        );
+        assert!(
+            self.0.launch_arguments.borrow().is_empty(),
+            "route sweep retained launch_arguments"
+        );
+        assert!(
+            self.0.launch_spans.borrow().is_empty(),
+            "route sweep retained launch_spans"
+        );
+        assert!(
+            self.0.uploads.borrow().is_empty(),
+            "route sweep retained uploads"
+        );
+        assert!(
+            self.0.copies.borrow().is_empty(),
+            "route sweep retained copies"
+        );
+        assert!(
+            self.0.graph_replays.borrow().is_empty(),
+            "route sweep retained graph_replays"
+        );
+        assert!(
+            self.0.captured_launches.borrow().is_empty(),
+            "route sweep retained captured_launches"
+        );
+        assert!(
+            self.0.graph_launches.borrow().is_empty(),
+            "route sweep retained graph_launches"
+        );
+        self.0.sim.borrow_mut().finish_route_case();
+        self.0.device.clear_route_journal();
+    }
+    fn route_device(&self) -> &bundle_runtime::fake_host::FakeDevice<Self::Observer> {
+        &self.0.device
+    }
     type Limits = speculation::SpeculativeLimits;
 
     fn profiles() -> &'static str {
@@ -222,7 +275,15 @@ impl conformance::Startup for Served {
                     let rows = item.tokens.len() as u32;
                     let end = item.start + u64::from(rows);
                     let pages = (0..end.div_ceil(PAGE_TOKENS * size))
-                        .map(|page| item.slot * 4 + page)
+                        .map(|page| {
+                            item.slot
+                                * (if self.0.device.symbols_only.get() {
+                                    1024
+                                } else {
+                                    4
+                                })
+                                + page
+                        })
                         .collect();
                     let batch = match item.phase {
                         conformance::Phase::Verify => {
@@ -277,4 +338,9 @@ fn startup_hosts_place_the_ngram_table_as_the_package_does() {
             serving.profile
         );
     }
+}
+
+#[test]
+fn route_memory_reuses_state_across_varying_shapes() {
+    conformance::route_guard::memory_regression::<Served>();
 }

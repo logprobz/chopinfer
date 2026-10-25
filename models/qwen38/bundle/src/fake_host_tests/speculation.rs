@@ -146,6 +146,18 @@ fn released_fake_buffers_drop_bytes_and_preserve_live_buffers() {
 }
 
 impl Sim {
+    /// All requests have retired. Keep graph commands, spans and resident
+    /// bytes: the bundle may upload only deltas to their block tables.
+    pub(super) fn finish_route_case(&mut self) {
+        self.histories.clear();
+        self.tags.clear();
+        self.programs.clear();
+        self.program_parts.clear();
+        self.suspended.clear();
+        self.drafter_rows.clear();
+        self.qsa_blocks.clear();
+    }
+
     pub(super) fn release_graph(&mut self, graph: u32) {
         // The ABI pins the host, so graph-owned arguments must follow the
         // graph handle's lifetime rather than the simulator's lifetime.

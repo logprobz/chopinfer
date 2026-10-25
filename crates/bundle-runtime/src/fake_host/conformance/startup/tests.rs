@@ -200,9 +200,20 @@ impl SinkLimits for Limits {
 
 type Backend = HostServicesV1Backend<FakeHostDeviceV1>;
 
-struct Adapter<const REFUSE: u8>(Rc<Backend>, Serving);
+struct Adapter<const REFUSE: u8>(Rc<Backend>, Serving, crate::fake_host::FakeDevice);
 
 impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
+    type Observer = crate::fake_host::NoObserver;
+    fn envelope(serving: &Serving) -> crate::fake_host::conformance::Envelope {
+        crate::fake_host::conformance::Envelope::served(serving, 8192)
+    }
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        Vec::new()
+    }
+    fn route_device(&self) -> &crate::fake_host::FakeDevice {
+        &self.2
+    }
+
     type Limits = Limits;
 
     fn profiles() -> &'static str {
@@ -244,6 +255,7 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
         Self(
             Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config)),
             serving.clone(),
+            Default::default(),
         )
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {

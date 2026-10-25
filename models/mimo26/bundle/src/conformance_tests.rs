@@ -113,6 +113,84 @@ struct Served(
 );
 
 impl conformance::Startup for Served {
+    type Observer = bundle_runtime::fake_host::NoObserver;
+
+    fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
+        let mut envelope =
+            conformance::Envelope::served(serving, model_mimo26_contract::serving::PREFILL_TOKENS);
+        envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
+        envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        envelope
+    }
+    fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
+        crate::sm120::backend(self.0.tp(), crate::switches::Switches::configured(), true)
+            .expect("registered kernels")
+            .route_tags()
+    }
+    fn finish_route_case(&self) {
+        // Test-only row diagnostics have no consumer in an envelope sweep.
+        drop(crate::pipeline::take_recorded());
+        assert!(
+            self.0.host_copy_offsets.borrow().is_empty(),
+            "route sweep retained host_copy_offsets"
+        );
+        assert!(
+            self.0.latest_uploads.borrow().is_empty(),
+            "route sweep retained latest_uploads"
+        );
+        assert!(
+            self.0.host_copies.borrow().is_empty(),
+            "route sweep retained host_copies"
+        );
+        assert!(
+            self.0.device_copies.borrow().is_empty(),
+            "route sweep retained device_copies"
+        );
+        assert!(
+            self.0.copies.borrow().is_empty(),
+            "route sweep retained copies"
+        );
+        assert!(
+            self.0.stream_launches.borrow().is_empty(),
+            "route sweep retained stream_launches"
+        );
+        assert!(
+            self.0.event_ops.borrow().is_empty(),
+            "route sweep retained event_ops"
+        );
+        assert!(
+            self.0.launch_records.borrow().is_empty(),
+            "route sweep retained launch_records"
+        );
+        assert!(
+            self.0.launch_symbols.borrow().is_empty(),
+            "route sweep retained launch_symbols"
+        );
+        assert!(
+            self.0.graph_launches.borrow().is_empty(),
+            "route sweep retained graph_launches"
+        );
+        assert!(
+            self.0.gather_launches.borrow().is_empty(),
+            "route sweep retained gather_launches"
+        );
+        assert!(
+            self.0.retain_launches.borrow().is_empty(),
+            "route sweep retained retain_launches"
+        );
+        assert!(
+            self.0.prefix_copies.borrow().is_empty(),
+            "route sweep retained prefix_copies"
+        );
+        assert!(
+            self.0.dflash_copy_outputs.borrow().is_empty(),
+            "route sweep retained dflash_copy_outputs"
+        );
+        self.0.device.clear_route_journal();
+    }
+    fn route_device(&self) -> &bundle_runtime::fake_host::FakeDevice<Self::Observer> {
+        &self.0.device
+    }
     type Limits = Limits;
 
     fn profiles() -> &'static str {
@@ -189,6 +267,10 @@ impl conformance::Startup for Served {
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
         let host = &self.0;
+        if host.device.symbols_only.get() {
+            host.pool_pages
+                .set(Some(1024 * u64::from(self.2.sequences)));
+        }
         // The package's encoders serve the media of the served modalities.
         let modalities = self.2.modalities();
         let encoders = model_mimo26_contract::encoders::Encoders::named(
@@ -229,7 +311,15 @@ impl conformance::Startup for Served {
                 let rows = item.tokens.len() as u32;
                 let end = item.start + u64::from(rows);
                 let pages = (0..end.div_ceil(PAGE_TOKENS))
-                    .map(|page| item.slot * 2 + page)
+                    .map(|page| {
+                        item.slot
+                            * (if self.0.device.symbols_only.get() {
+                                1024
+                            } else {
+                                2
+                            })
+                            + page
+                    })
                     .collect();
                 let batch = match item.phase {
                     conformance::Phase::Verify => {
@@ -259,4 +349,9 @@ impl conformance::Startup for Served {
     fn assert_released(&self) {
         self.1.accounting.assert_released();
     }
+}
+
+#[test]
+fn route_memory_reuses_state_across_varying_shapes() {
+    conformance::route_guard::memory_regression::<Served>();
 }

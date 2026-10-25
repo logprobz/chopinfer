@@ -95,6 +95,9 @@ def conformance_suite(root, model):
         invoked += [label] * len(SUITE.findall(text))
     if len(invoked) != 1:
         raise AssertionError(f'{bundle}: invoke conformance::suite! once in the bundle crate, found {invoked}')
+    allowlist = root / pathlib.PurePosixPath(model.directory) / 'bundle/route-allowlist.toml'
+    if not allowlist.is_file():
+        raise AssertionError(f'{model.directory}/bundle/route-allowlist.toml: declare justified route gaps (an empty file is valid)')
     return invoked[0]
 
 
@@ -103,7 +106,7 @@ class InventoryTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name).resolve()
-        for path in ("bundle/Cargo.toml", "compiler/Cargo.toml", "bundle/kernels.lock", "profiles.json", "asset", "reference.py"):
+        for path in ("bundle/Cargo.toml", "bundle/route-allowlist.toml", "compiler/Cargo.toml", "bundle/kernels.lock", "profiles.json", "asset", "reference.py"):
             self.write("models/m3/" + path, "")
 
     def write(self, relative, text):

@@ -15,6 +15,7 @@ runtime-bundle-sdk.workspace = true
 kernel-core = { workspace = true, features = ["precision-serde"] }
 encoder-spec.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 # SM120 offers and catalogs the projection and encoder tests prepare and
@@ -28,8 +29,6 @@ kernel-build.workspace = true
 runtime-host.workspace = true
 # The package maximum a manifest may declare, checked against MAX_ITEMS.
 runtime-bundle.workspace = true
-# A test registered encoder variant, decoded as the registry decodes one.
-serde.workspace = true
 
 [lints]
 workspace = true

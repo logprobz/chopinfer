@@ -629,11 +629,23 @@ impl FakePackage for FakeHost {
         if self.backing.get() {
             self.write(destination, source);
         }
-        let line = self.device.journal.borrow().len();
-        self.upload_log
-            .borrow_mut()
-            .push((line, destination, source.to_vec()));
-        self.uploaded.borrow_mut().insert(
+        if !self.device.symbols_only.get() {
+            let line = self.device.journal.borrow().len();
+            self.upload_log
+                .borrow_mut()
+                .push((line, destination, source.to_vec()));
+        }
+        let mut uploaded = self.uploaded.borrow_mut();
+        if self.device.symbols_only.get() {
+            // Payload admission reads the current upload back during create.
+            // Do not retain older lengths of an overwritten staging span.
+            uploaded.retain(|&(buffer, offset, length), _| {
+                buffer != destination.buffer.slot()
+                    || offset + length <= destination.offset
+                    || destination.offset + destination.length <= offset
+            });
+        }
+        uploaded.insert(
             (
                 destination.buffer.slot(),
                 destination.offset,
@@ -748,14 +760,16 @@ impl FakePackage for FakeHost {
         config: LaunchConfigV1,
         arguments: &[KernelArgumentV1],
     ) -> HostServiceResultV1<()> {
-        let log = match self.device.capture_of(stream.slot()) {
-            None => &self.launch_log,
-            Some(_) => &self.capture_log,
-        };
-        log.borrow_mut()
-            .push((stream.slot(), name.to_owned(), config, arguments.to_vec()));
-        if let Some(launches) = self.launch_args.borrow_mut().as_mut() {
-            launches.push((stream.slot(), name.to_owned(), arguments.to_vec()));
+        if !self.device.symbols_only.get() {
+            let log = match self.device.capture_of(stream.slot()) {
+                None => &self.launch_log,
+                Some(_) => &self.capture_log,
+            };
+            log.borrow_mut()
+                .push((stream.slot(), name.to_owned(), config, arguments.to_vec()));
+            if let Some(launches) = self.launch_args.borrow_mut().as_mut() {
+                launches.push((stream.slot(), name.to_owned(), arguments.to_vec()));
+            }
         }
         if self.backing.get() && name == model_glm5next_contract::sm120::state_copy::SYMBOL {
             let [
@@ -783,10 +797,18 @@ impl FakePackage for FakeHost {
         self.device.note(format!("serving kv {KV_PAGES}"));
         self.kv_acquired.set(true);
         self.held_at_kv.set(self.extents.borrow().values().sum());
-        Ok(KV_PAGES)
+        Ok(if self.device.symbols_only.get() {
+            1024 * 32
+        } else {
+            KV_PAGES
+        })
     }
     fn resolve_serving_kv_pool(&self, rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1> {
-        let bytes = KV_PAGES * self.format.page_bytes;
+        let bytes = (if self.device.symbols_only.get() {
+            1024 * 32
+        } else {
+            KV_PAGES
+        }) * self.format.page_bytes;
         self.extents.borrow_mut().insert(KV_SLOT + rank, bytes);
         Ok(DeviceBufferSpanV1::new(
             BundleDeviceBufferHandleV1::from_parts(1, KV_SLOT + rank),

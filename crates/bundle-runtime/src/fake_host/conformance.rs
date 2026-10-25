@@ -2,7 +2,9 @@
 //! Models supply requests, raw validation callbacks and release accounting.
 
 mod accounting;
+pub mod route_guard;
 mod startup;
+pub use route_guard::Envelope;
 
 pub use accounting::ObservedHost;
 pub use startup::{
@@ -384,6 +386,17 @@ macro_rules! conformance_suite {
                 #[test]
                 fn $profile() {
                     $crate::fake_host::conformance::serving_startup_of::<$startup>($name);
+                }
+            )+
+        }
+        mod route_sweep {
+            use super::*;
+            $(
+                #[test]
+                fn $profile() {
+                    $crate::fake_host::conformance::route_guard::sweep::<$startup>(
+                        $name, include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")), env!("CARGO_PKG_NAME"),
+                    );
                 }
             )+
         }

@@ -637,9 +637,11 @@ impl FakePackage for Package {
         Ok(())
     }
     fn on_event(&self, stream: BundleStreamHandleV1, event: BundleEventHandleV1, wait: bool) {
-        self.event_ops
-            .borrow_mut()
-            .push((stream.slot(), event.slot(), wait));
+        if !self.device.symbols_only.get() {
+            self.event_ops
+                .borrow_mut()
+                .push((stream.slot(), event.slot(), wait));
+        }
     }
     fn admit_upload(
         &self,
@@ -687,14 +689,20 @@ impl FakePackage for Package {
                 );
             }
         }
-        self.host_copy_offsets.borrow_mut().push(destination.offset);
-        self.latest_uploads.borrow_mut().insert(
-            (destination.buffer.raw, destination.offset),
-            recorded.to_vec(),
-        );
-        self.host_copies
-            .borrow_mut()
-            .push((destination.length, source[..source.len().min(512)].to_vec()));
+        if !self.device.symbols_only.get() {
+            self.host_copy_offsets.borrow_mut().push(destination.offset);
+        }
+        if !self.device.symbols_only.get() || self.offload.borrow().is_some() {
+            self.latest_uploads.borrow_mut().insert(
+                (destination.buffer.raw, destination.offset),
+                recorded.to_vec(),
+            );
+        }
+        if !self.device.symbols_only.get() {
+            self.host_copies
+                .borrow_mut()
+                .push((destination.length, source[..source.len().min(512)].to_vec()));
+        }
         Ok(())
     }
     fn admit_download(
@@ -764,7 +772,9 @@ impl FakePackage for Package {
         if let Some(probe) = self.offload.borrow_mut().as_mut() {
             probe.hidden_copy(stream.slot(), source);
         }
-        self.device_copies.borrow_mut().push((source, destination));
+        if !self.device.symbols_only.get() {
+            self.device_copies.borrow_mut().push((source, destination));
+        }
         let mut memory = self.snapshot_memory.borrow_mut();
         let bytes = memory
             .range(
@@ -780,9 +790,11 @@ impl FakePackage for Package {
         for (offset, byte) in bytes {
             memory.insert((destination.buffer.raw, destination.offset + offset), byte);
         }
-        self.copies
-            .borrow_mut()
-            .push((source.offset, destination.offset, source.length));
+        if !self.device.symbols_only.get() {
+            self.copies
+                .borrow_mut()
+                .push((source.offset, destination.offset, source.length));
+        }
         Ok(())
     }
     fn copy_peer_to_peer(
@@ -800,9 +812,11 @@ impl FakePackage for Package {
             source_context.slot(),
             destination_context.slot()
         ));
-        self.copies
-            .borrow_mut()
-            .push((source.offset, destination.offset, source.length));
+        if !self.device.symbols_only.get() {
+            self.copies
+                .borrow_mut()
+                .push((source.offset, destination.offset, source.length));
+        }
         Ok(())
     }
     fn on_zero(&self, _stream: BundleStreamHandleV1, _destination: DeviceBufferSpanV1) {
@@ -818,15 +832,17 @@ impl FakePackage for Package {
         config: LaunchConfigV1,
         arguments: &[KernelArgumentV1],
     ) -> HostServiceResultV1<()> {
-        self.stream_launches
-            .borrow_mut()
-            .push((stream.slot(), name.into(), config.grid_x));
-        self.launch_records.borrow_mut().push((
-            stream.slot(),
-            name.into(),
-            [config.grid_x, config.grid_y, config.grid_z],
-            arguments.to_vec(),
-        ));
+        if !self.device.symbols_only.get() {
+            self.stream_launches
+                .borrow_mut()
+                .push((stream.slot(), name.into(), config.grid_x));
+            self.launch_records.borrow_mut().push((
+                stream.slot(),
+                name.into(),
+                [config.grid_x, config.grid_y, config.grid_z],
+                arguments.to_vec(),
+            ));
+        }
         // Wide rings' copies end in `_s{slots}_v1`.
         if name.contains("_ring_prefix_copy_") {
             self.snapshot_op(|| SnapshotOp::Launch(stream.slot(), arguments.to_vec()));
@@ -870,7 +886,9 @@ impl FakePackage for Package {
             let KernelArgumentV1::DeviceBuffer(output) = arguments[1] else {
                 panic!("DFlash row copy output must be a device buffer");
             };
-            self.dflash_copy_outputs.borrow_mut().push(output.offset);
+            if !self.device.symbols_only.get() {
+                self.dflash_copy_outputs.borrow_mut().push(output.offset);
+            }
         } else if name == crate::retain::retain_rows_symbol(self.tp()) {
             assert_eq!(arguments.len(), 12);
             let (
@@ -881,19 +899,25 @@ impl FakePackage for Package {
             else {
                 panic!("retained-row launch arguments");
             };
-            self.retain_launches
-                .borrow_mut()
-                .push((*history, *capacity, *width));
+            if !self.device.symbols_only.get() {
+                self.retain_launches
+                    .borrow_mut()
+                    .push((*history, *capacity, *width));
+            }
         } else if name == crate::retain::gather_rows_symbol(self.tp()) {
             assert_eq!(arguments.len(), 11);
-            self.gather_launches.borrow_mut().push(arguments.to_vec());
+            if !self.device.symbols_only.get() {
+                self.gather_launches.borrow_mut().push(arguments.to_vec());
+            }
         } else if name.ends_with("_ring_prefix_copy_v1") {
             assert_eq!(arguments.len(), 9);
             self.inject(PrefixFault::Launch)?;
             self.prefix_in_flight.borrow_mut().insert(stream.slot());
-            self.prefix_copies
-                .borrow_mut()
-                .push((stream.slot(), arguments.to_vec()));
+            if !self.device.symbols_only.get() {
+                self.prefix_copies
+                    .borrow_mut()
+                    .push((stream.slot(), arguments.to_vec()));
+            }
         } else {
             assert!(!arguments.is_empty());
         }
@@ -908,7 +932,9 @@ impl FakePackage for Package {
                 probe.launch(self, stream.slot(), name, arguments);
             }
         }
-        self.launch_symbols.borrow_mut().push(name.into());
+        if !self.device.symbols_only.get() {
+            self.launch_symbols.borrow_mut().push(name.into());
+        }
         self.launches.set(self.launches.get() + 1);
         Ok(())
     }
@@ -931,9 +957,11 @@ impl FakePackage for Package {
             probe.replay(self, stream.slot(), graph.slot());
         }
         self.graph_replays.set(self.graph_replays.get() + 1);
-        self.graph_launches
-            .borrow_mut()
-            .push((stream.slot(), graph.slot()));
+        if !self.device.symbols_only.get() {
+            self.graph_launches
+                .borrow_mut()
+                .push((stream.slot(), graph.slot()));
+        }
     }
 }
 impl Package {

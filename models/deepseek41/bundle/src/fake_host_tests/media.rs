@@ -443,9 +443,17 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// TP4 pairs the 5- and 13-row prefill attention launches as in
 /// `FLASH_JOURNALS` (320 launches), then fuses the 304 mixed ones with their
 /// merges as there; no other line changes.
+/// Additional small-row fold admission loads two existing wide-fold modules
+/// per TP4 rank: 56 resolves, 12 shared-memory configurations and 64 releases
+/// add 132 journal lines. A full media lifecycle audit retains all 26,992
+/// launches and every other operation after typed handle mapping, including
+/// operands, geometry, allocations, streams, events and capture counts.
+/// No media launch changes: this fixture decodes one row. Four mutation
+/// controls reject changed operands, geometry, capture counts and shared
+/// memory. The TP2 history and resource inventory remain byte-identical.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (19835, 0x7e98b22150ec56f3)),
-    (Ranks::TP4, (50199, 0x64d21806f9848631)),
+    (Ranks::TP4, (50331, 0x847ec07c34b950a1)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

@@ -494,13 +494,8 @@ pub fn inherit<'a>(
         .flat_map(|(id, table)| table.rows().iter().map(move |row| (id, row)))
         .filter(|(_, row)| {
             row.key.op == key.op && row.key.weights == key.weights && row.key.bucket == key.bucket
-        });
-    let rows = nearest_first(
-        own,
-        rows,
-        |(id, _)| id,
-        |(_, row)| shape_distance(key, &row.key),
-    );
+        })
+        .collect::<Vec<_>>();
     for (id, row) in &rows {
         if row.key.rows.is_some() {
             return Err(error(format!(
@@ -509,6 +504,12 @@ pub fn inherit<'a>(
             )));
         }
     }
+    let rows = nearest_first(
+        own,
+        rows,
+        |(id, _)| id,
+        |(_, row)| shape_distance(key, &row.key),
+    );
     Ok(rows.into_iter().find_map(|(id, row)| {
         let status = format!("inherited {id} row {}", row.key);
         let row = Row {
@@ -695,6 +696,15 @@ mod tests {
         let error = inherit(None, &key("a.op", 16), [("source", &source)], |_| true).unwrap_err();
         assert!(error.0.contains("source row"));
         assert!(error.0.contains("cannot inherit a ranged tuning row"));
+        let mut different_shape = ranged(Some([2, 4]));
+        different_shape.key.shape = [("width".into(), 16)].into();
+        source.upsert(different_shape).unwrap();
+        assert!(
+            inherit(None, &key("a.op", 16), [("source", &source)], |_| true)
+                .unwrap_err()
+                .0
+                .contains("cannot inherit a ranged tuning row")
+        );
         assert!(
             inherit(None, &key("other.op", 16), [("source", &source)], |_| true)
                 .unwrap()

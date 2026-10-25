@@ -17,7 +17,6 @@ use runtime_cuda::{DeviceBuffer, Function, Module, Stream};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
 mod arena;
-mod cluster;
 #[path = "../../../sm120/fold_cluster.rs"]
 mod cluster_family;
 mod data;
@@ -460,7 +459,6 @@ fn check_case(
     c: &Candidate,
     rows: u32,
     input: &data::Input,
-    timed: bool,
     mem: bool,
 ) -> LabResult<()> {
     let base = c.base();
@@ -544,17 +542,7 @@ fn check_case(
         }
         compare(&a, &b, input, rows, rows, true, calls[1].state)?;
     }
-    let mut record = json!({"phase":if is_decode(){"decode"}else{"prefill"},"n":input.n,"k":input.k,"groups":input.groups,"rows":rows,"variant":c.label(),"source":input.id,"comparisons":comparisons,"bitwise":true,"negative":true,"delayed_admission":is_decode(),"memcheck":mem,"reference":calls[0].run.iter().map(|v|&v.symbol).collect::<Vec<_>>()});
-    if timed {
-        for buffer in &b {
-            reset(&a, buffer, input, rows, rows, false)?;
-        }
-        for (name, cold) in [("warm", false), ("cold", true)] {
-            record[name] = timing::pair(s, cold, |arm, stream| {
-                graphs[arm].launch(stream).map_err(|e| e.to_string())
-            })?;
-        }
-    }
+    let record = json!({"phase":if is_decode(){"decode"}else{"prefill"},"n":input.n,"k":input.k,"groups":input.groups,"rows":rows,"variant":c.label(),"source":input.id,"comparisons":comparisons,"bitwise":true,"negative":true,"delayed_admission":is_decode(),"memcheck":mem,"reference":calls[0].run.iter().map(|v|&v.symbol).collect::<Vec<_>>()});
     println!("FOLD_CORE_CASE {record}");
     Ok(())
 }
@@ -565,7 +553,7 @@ fn gpu(s: &Session) -> LabResult<()> {
         let base = c.base();
         for rows in row_counts(mem) {
             let input = data::synthetic(&base, rows);
-            check_case(s, &c, rows, &input, !mem, mem)?;
+            check_case(s, &c, rows, &input, mem)?;
             count += 1;
         }
         if !mem || local_rows() {
@@ -574,7 +562,7 @@ fn gpu(s: &Session) -> LabResult<()> {
                     continue;
                 }
                 let rows = input.rows;
-                check_case(s, &c, rows, &input, !mem, mem)?;
+                check_case(s, &c, rows, &input, mem)?;
                 count += 1;
             }
         }

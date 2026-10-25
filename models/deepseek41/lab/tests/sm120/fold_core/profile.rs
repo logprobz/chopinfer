@@ -5,13 +5,10 @@
 //! otherwise. The Flash TP4 32-row query projection is the row-local fold
 //! the bundle selects for that bucket (`DenseOps::local_query`).
 //!
-//! Each case also runs every deep ring fold (`deep_family`) of its shape on
-//! the same buffers, which must reproduce the served output bit for bit.
-//!
 //! `CHOPINFER_FOLD_CORE_PROFILE=time` replays each case's graph after warm
-//! and cold caches, A/A for the served fold and served/deep for each deep
-//! fold; `=eager` launches each case's calls once without programmatic
-//! serialization and no graph, for a launch-filtered profiler.
+//! and cold caches, A/A for the served fold; `=eager` launches each case's
+//! calls once without programmatic serialization and no graph, for a
+//! launch-filtered profiler.
 //! `CHOPINFER_FOLD_CORE_PROFILE_ROWS=16` or `=32` keeps one bucket.
 use super::*;
 
@@ -84,20 +81,6 @@ pub fn deep(base: &mxfp8_fold::Entry) -> Vec<kernels_sm120::gemm::mxfp8_fold_loc
         .collect()
 }
 
-fn deep_calls(
-    a: &mut Arena<'_>,
-    e: &kernels_sm120::gemm::mxfp8_fold_local_rows::Entry,
-    b: &Buffers<View>,
-    rows: u32,
-) -> LabResult<Calls> {
-    let work = a.filled(e.workspace(), 0)?;
-    Ok(Calls {
-        init: vec![],
-        run: e.launches(b, work, rows).map_err(|e| e.to_string())?,
-        state: None,
-    })
-}
-
 fn eager_issue(s: &Session, a: &Arena<'_>, f: &Functions, calls: &[Launch]) -> LabResult<()> {
     let mut plain = calls.to_vec();
     for op in &mut plain {
@@ -112,30 +95,19 @@ fn case(s: &Session, base: &mxfp8_fold::Entry, rows: u32, eager: bool) -> LabRes
     let mut a = Arena::new(Some(s));
     let b = common(&mut a, base, rows, &input)?;
     let calls = served(&mut a, base, &b, rows)?;
-    let deep = deep(base)
-        .into_iter()
-        .map(|e| Ok((deep_family::label(&e), deep_calls(&mut a, &e, &b, rows)?)))
-        .collect::<LabResult<Vec<_>>>()?;
     let all = calls
         .init
         .iter()
         .chain(&calls.run)
-        .chain(deep.iter().flat_map(|(_, c)| &c.run))
         .cloned()
         .collect::<Vec<_>>();
     let f = functions(s, &all)?;
     issue(s, &a, &f, &calls.init, &s.stream)?;
     reset(&a, &b, &input, rows, rows, false)?;
     let mut record = json!({"n":input.n,"k":input.k,"groups":input.groups,"rows":rows,"source":input.id,
-        "served":calls.run.iter().map(|c|json!({"symbol":c.symbol,"grid":c.plan.grid,"block":c.plan.block})).collect::<Vec<_>>(),
-        "deep":{}});
+        "served":calls.run.iter().map(|c|json!({"symbol":c.symbol,"grid":c.plan.grid,"block":c.plan.block})).collect::<Vec<_>>()});
     if eager {
         eager_issue(s, &a, &f, &calls.run)?;
-        for (label, c) in &deep {
-            eager_issue(s, &a, &f, &c.run)?;
-            record["deep"][label] =
-                json!({"symbols":c.run.iter().map(|c|&c.symbol).collect::<Vec<_>>()});
-        }
     } else {
         let graph = s.capture(|stream| issue(s, &a, &f, &calls.run, stream))?;
         graph.launch(&s.stream).map_err(|e| e.to_string())?;
@@ -155,28 +127,6 @@ fn case(s: &Session, base: &mxfp8_fold::Entry, rows: u32, eager: bool) -> LabRes
             record[name] = timing::pair(s, cold, |_, stream| {
                 graph.launch(stream).map_err(|e| e.to_string())
             })?;
-        }
-        for (label, c) in &deep {
-            let deep_graph = s.capture(|stream| issue(s, &a, &f, &c.run, stream))?;
-            reset(&a, &b, &input, rows, rows, false)?;
-            deep_graph.launch(&s.stream).map_err(|e| e.to_string())?;
-            s.stream.synchronize().map_err(|e| e.to_string())?;
-            let out = a.read(b.output)?;
-            if out != served_out {
-                return Err(format!(
-                    "{label} differs from the served fold: {} byte {:?}",
-                    input.id,
-                    out.iter().zip(&served_out).position(|(x, y)| x != y)
-                ));
-            }
-            let mut entry = json!({"symbols":c.run.iter().map(|c|&c.symbol).collect::<Vec<_>>(),"bitwise":true});
-            for (name, cold) in [("warm", false), ("cold", true)] {
-                entry[name] = timing::pair(s, cold, |arm, stream| {
-                    let g = if arm == 0 { &graph } else { &deep_graph };
-                    g.launch(stream).map_err(|e| e.to_string())
-                })?;
-            }
-            record["deep"][label] = entry;
         }
     }
     println!("FOLD_PROFILE_CASE {record}");
@@ -222,18 +172,12 @@ fn served_profile_catalog() {
             let input = data::empty(&base, r);
             let b = common(&mut a, &base, r, &input).unwrap();
             let calls = served(&mut a, &base, &b, r).unwrap();
-            let deep = deep(&base)
-                .iter()
-                .map(|e| deep_calls(&mut a, e, &b, r))
-                .collect::<LabResult<Vec<_>>>()
-                .unwrap();
             let init = calls.init.iter().map(|c| (true, c));
-            let run = calls.run.iter().chain(deep.iter().flat_map(|c| &c.run));
+            let run = calls.run.iter();
             for (init, c) in init.chain(run.map(|c| (false, c))) {
                 c.plan.validate_geometry().unwrap();
                 assert!(
                     c.symbol.starts_with("chop_fold_local_")
-                        || c.symbol.starts_with("chop_fold_deep_")
                         || fold_cubin_for_symbol(&c.symbol).is_some(),
                     "{}",
                     c.symbol

@@ -34,6 +34,30 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+    def test_ab_seed_sets_match_pairs_and_differ_between_pairs(self):
+        config = {'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
+        first, second = (tune.seed_set(config, repeat, 8) for repeat in (0, 1))
+        self.assertEqual(first, tune.seed_set(config, 0, 8))
+        self.assertFalse(set(first) & set(second))
+        self.assertEqual(len(set(first)), 8)
+
+
+    def test_ab_requires_keeper_for_speculative_visits(self):
+        model = {'mode': 'ab', 'speculation_mode': 'balanced'}
+        with self.assertRaisesRegex(RuntimeError, 'keeper'):
+            tune.require_keeper(model, None)
+        tune.require_keeper(model, {'directory': 'synthetic'})
+
+
+    def test_visit_fault_evidence_is_complete_and_bounded(self):
+        import faults
+        faults.validate({'complete': True, 'major_faults': 1000})
+        for evidence in ({}, {'complete': False, 'major_faults': 0},
+                         {'complete': True, 'major_faults': 1001}):
+            with self.assertRaisesRegex(ValueError, 'fault'):
+                faults.validate(evidence)
+
+
     def test_missing_optional_route_counts_are_unknown_in_reports(self):
         row = {'request_tokens_per_second': 1,
                'full': {'tokens_per_second': 1, 'histogram': {}}}

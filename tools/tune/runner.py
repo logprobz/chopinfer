@@ -32,9 +32,12 @@ SERVE = []
 # the job must not inherit (each arm states its own options).
 KEPT = {'CHOPINFER_DATA'}
 WORK_DEADLINE = None
-# Power limits are recorded at the start and must not change; a given value
-# is also required on every GPU.
+# Power limits are recorded, may differ by GPU, and must not change in a job.
 EXPECTED_POWER_W = None
+
+
+class PowerChanged(RuntimeError):
+    """Changed enforced limits void the whole job."""
 
 
 def write(path, value):
@@ -244,7 +247,7 @@ class Server:
 
 
 def same_power(reference, limits):
-    return len(reference) == len(limits) and all(abs(a - b) <= .5 for a, b in zip(reference, limits))
+    return bool(reference) and reference == limits
 
 
 def power_snapshot(run, label, dry):
@@ -253,7 +256,8 @@ def power_snapshot(run, label, dry):
         watts = float(os.environ.get('TUNE_DRY_POWER_W', '300'))
         if os.environ.get('TUNE_DRY_POWER_CHANGE_LABEL') == label:
             watts -= 50
-        value = {'power_limits_w': [watts] * GPUS, 'enforced_power_limits_w': [watts] * GPUS, 'synthetic': True}
+        value = {'power_limits_w': [watts] * GPUS, 'enforced_power_limits_w': [watts] * GPUS,
+                 'sm_clock_mhz': [1800.0] * GPUS, 'synthetic': True}
         write(run / f'power-{label}.json', value)
         return value
     command(['nvidia-smi', '--query-gpu=index,power.limit,enforced.power.limit,power.draw,memory.used,clocks.sm,'
@@ -277,18 +281,18 @@ def power_snapshot(run, label, dry):
 
 def power_check(run, label, dry, reference=None):
     value = power_snapshot(run, label, dry)
-    limits = value['power_limits_w']
+    limits = value['enforced_power_limits_w']
     if EXPECTED_POWER_W is not None and not same_power([EXPECTED_POWER_W] * GPUS, limits):
         raise RuntimeError(f'{label}: power limits {limits} W differ from the expected {EXPECTED_POWER_W} W')
     if reference is not None and not same_power(reference, limits):
-        raise RuntimeError(f'{label}: power limits changed during the run: {reference} W at start, {limits} W now')
+        raise PowerChanged(f'{label}: power limits changed during the run: {reference} W at start, {limits} W now')
     return value
 
 
 def telemetry(run, when, dry, since, reference=None):
     power = power_check(run, when, dry, reference)
     if dry:
-        value = {'power_limits_w': power['power_limits_w'], 'power': power, 'xids': [], 'journal_checked': True,
+        value = {'power_limits_w': power['enforced_power_limits_w'], 'power': power, 'xids': [], 'journal_checked': True,
                  'synthetic': True}
         write(run / f'telemetry-{when}.json', value)
         return value
@@ -298,7 +302,7 @@ def telemetry(run, when, dry, since, reference=None):
     if code != 0 or re.search('permission|not seeing|No journal files', journal, re.I):
         raise RuntimeError('journalctl -k could not check kernel Xids')
     xids = [line for line in journal.splitlines() if re.search(r'\bNVRM:.*\bXid\b', line)]
-    value = {'power_limits_w': power['power_limits_w'], 'power': power, 'xids': xids, 'journal_checked': True}
+    value = {'power_limits_w': power['enforced_power_limits_w'], 'power': power, 'xids': xids, 'journal_checked': True}
     write(run / f'telemetry-{when}.json', value)
     if when == 'before':
         command(['nvidia-smi', '--query-compute-apps=pid,used_memory', '--format=csv,noheader,nounits'],

@@ -2,6 +2,18 @@
 from pathlib import Path
 import json,time
 
+def validate(evidence):
+    """Refuse an incomplete or over-budget measured visit."""
+    count = evidence.get('major_faults')
+    if evidence.get('complete') is not True or type(count) is not int or not 0 <= count <= 1000:
+        raise ValueError(f'invalid visit fault evidence: {evidence}')
+
+def combine(parts):
+    return {'complete': bool(parts) and all(p.get('complete') is True for p in parts),
+            'major_faults': sum(p['major_faults'] for p in parts),
+            'minor_faults': sum(p.get('minor_faults', 0) for p in parts),
+            'scope': 'Measured windows only; startup, warmup and drain excluded.'}
+
 def parse_stat(text):
     pid=int(text.split(' ',1)[0]); fields=text.rsplit(')',1)[1].split()
     return {'pid':pid,'state':fields[0],'pgrp':int(fields[2]),'start_ticks':int(fields[19]),

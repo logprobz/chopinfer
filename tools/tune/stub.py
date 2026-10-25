@@ -49,7 +49,7 @@ def stub(args):
     floor = confidence_floor(args.serve) or 0
     widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
     lent = '--weight-keeper' in args.serve
-    state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0}
+    state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0, 'live': 0}
     print(args.kv_line.replace('{pages}', str(args.kv_pages)), flush=True)
     print('startup speculation_confidence: ' + ('on, stub' if confidence or claim_confidence else 'off, stub'),
           flush=True)
@@ -98,16 +98,19 @@ def stub(args):
                 emitted.append(1 + accepted)
             state['verify_items'] += verify_items
             micros = 12_000 + 600 * rows + 4000 * bool(verify_items)
-            state['clock_ns'] += micros * 1000
+            state['clock_ns'] = time.time_ns() if os.environ.get('TUNE_STUB_CLOSED_LOOP') else state['clock_ns'] + micros * 1000
+            live = max(items, state['live']) if os.environ.get('TUNE_STUB_CLOSED_LOOP') else items
+            multiplier = live / items
             print(json.dumps({
                 'schema': 'chopinfer.step.v1', 'batch': state['batch'], 'prefill_tokens': prefill,
-                'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else items - verify_items,
-                'verify_items': verify_items, 'verify_rows': sum(drafts) + verify_items,
+                'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else int((items - verify_items) * multiplier),
+                'verify_items': int(verify_items * multiplier), 'verify_rows': int((sum(drafts) + verify_items) * multiplier),
                 'drafted_tokens': sum(drafts),
                 **({'reserved_rows': reserved} if allocated else {}),
                 'accepted_tokens': sum(emitted) - items,
                 'verify_emitted_tokens': sum(n for n, k in zip(emitted, drafts) if k or allocated),
                 'execution_us': micros, 'completed_unix_ns': state['clock_ns'],
+                'route': {'fallback_launches': 0, 'families': {}},
                 'speculation': {'mode': mode, 'items': items, 'reason': 'balanced'}}), flush=True)
         time.sleep(.0005)
         return [0] * items if prefill else emitted
@@ -160,7 +163,9 @@ def stub(args):
             sampled = body.get('temperature', 0) > 0
             keys = [f"{body.get('temperature')}/{body.get('seed')}/{p}" for p in prompts]
             usage = {'prompt_tokens': sum(map(len, prompts)), 'completion_tokens': out * len(prompts),
-                     'prompt_tokens_details': {'cached_tokens': 0}}
+                     'prompt_tokens_details': {'cached_tokens': int(os.environ.get('TUNE_STUB_CACHED') == label)}}
+            with lock:
+                state['live'] += len(keys)
             step(keys, [0] * len(keys), prefill=sum(map(len, prompts)))
             done = [0] * len(keys)
             if sampled:
@@ -183,6 +188,8 @@ def stub(args):
                     done[i] += take
             if sampled:
                 self.wfile.write(('data: ' + json.dumps({'choices': [], 'usage': usage}) + '\n\ndata: [DONE]\n\n').encode())
+                with lock:
+                    state['live'] -= len(keys)
                 return
             choices = []
             for i, key in enumerate(keys):
@@ -190,6 +197,8 @@ def stub(args):
                 choices.append({'index': i, 'token_ids': [x[0] for x in rows], 'finish_reason': 'length',
                                 'logprobs': {'token_logprobs': [x[1] for x in rows]}})
             self.respond({'choices': choices, 'usage': usage})
+            with lock:
+                state['live'] -= len(keys)
 
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     server.serve_forever()

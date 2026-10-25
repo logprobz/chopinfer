@@ -99,11 +99,21 @@ def estimate(config):
         rates = plan['ar_tokens_per_second'] if depth == 0 else plan['tokens_per_second']
         total += plan['startup_seconds'] + plan['process_overhead_seconds']
         total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
+        if model.get('mode') == 'ab':
+            for _, part in arm['passes']:
+                for _, c in part:
+                    # Includes one complete in-flight cohort's drain and a
+                    # conservative deferred baseline replay of every request.
+                    total += 15 + c * tokens(c) / rates[str(c)] + plan['settle_seconds']
+                    total += (15 * rates[str(c)] + c * tokens(c)) / plan['ar_tokens_per_second'][str(c)]
+            continue
         windows = (tune.windows_for(config, depth, True) if index == 0 else []) \
             + [window for _, part in arm['passes'] for window in part]
         for _, c in windows:
             groups = model.get('groups', {}).get(str(c), 1)
             total += groups * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])
+    if model.get('mode') == 'ab':
+        total += len({a for a, _ in model['pairs']}) * (plan['startup_seconds'] + plan['process_overhead_seconds'])
     return total
 
 
@@ -162,9 +172,11 @@ def main():
     import bench
     built = builder.build(workload, source, lambda i: bench.stream_prompt('diverse', i).strip())
     name = args.name or f"depth tune {model['model']}{' ' + args.job if args.job else ''} {install['revision'][:10]}"
-    keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'expected_power_w', 'work_seconds',
+    keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
+    if model.get('mode') == 'ab' and model.get('speculation_mode') != 'off' and not model.get('keeper', True):
+        raise SystemExit('A/B speculative visits require keeper staging')
     copy = stage / 'harness'
     if copy.exists():
         shutil.rmtree(copy)

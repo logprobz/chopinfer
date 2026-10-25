@@ -1234,6 +1234,12 @@ fn journal_steps(host: &Rc<Host>) {
 /// 1, 1), 256 threads and 83,200 shared bytes. Its arguments are the
 /// attention's with the partial workspace null, then the merge's sinks,
 /// RoPE and output. Audited line by line; every other line is identical.
+/// The small-router admission changes Decode-2 at TP4 only in this
+/// lifecycle. Across 160 layer/rank groups it removes 320 launches. The
+/// cached producer, fused operands, workspace shift and full dependency
+/// after the shared-expert join were audited against the previous journal;
+/// all other calls, captures, allocations and releases are identical.
+/// TP1 and TP2 journals are unchanged in both KV layouts.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1260,12 +1266,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77763, 0x0e657787086fdcc5),
+        (77443, 0xcc4dc0dba494b2db),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (76167, 0xed6ed1816ec5122c),
+        (75847, 0xc69514a5606363ac),
     ),
 ];
 

@@ -141,11 +141,18 @@ use super::*;
 // for line, including launches, operands, sizes, grids and ordering. Module
 // and resolve inventories are unchanged. The prefill-route batch through
 // 0d4905a7ea leaves these bodies and full histories byte-identical.
+// Verify-12 now uses the qualified fused router and direct expert stages.
+// Against the previous production journal, all 160 layer/rank groups
+// match the bitwise-qualified complete-MoE programs, removing 1120
+// launches. The cached producer is exact; the same shared-expert join
+// moves before the first gate, whose PDL flag becomes a full dependency.
+// Every other journal operation and the other five verify widths are
+// unchanged by this admission.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x02b988c53189c1d7)),
     (6, (8680, 0x5ce7c69be4a88e47)),
     (8, (7720, 0xae22d9223652187d)),
-    (12, (10136, 0x7d8f77788a71e758)),
+    (12, (9016, 0xb8e496eb1e07963a)),
     (16, (7892, 0x86275aaee8de74c2)),
     (32, (7744, 0xc2c91ffeaa26163a)),
 ];

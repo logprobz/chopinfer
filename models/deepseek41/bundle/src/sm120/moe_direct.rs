@@ -460,6 +460,7 @@ mod tests {
                                 ExecutionPhase::Decode => [1, 2, 4, 8, 16, 32].contains(&rows),
                                 ExecutionPhase::Verify => {
                                     [1, 2, 4, 5, 6, 8, 16, 32, 64].contains(&rows)
+                                        || (set.count == 384 && (2..=32).contains(&rows))
                                         || (set.count == 128 && rows == 48)
                                 }
                                 _ => false,

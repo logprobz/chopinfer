@@ -96,15 +96,13 @@ pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows:
 // gate starts early, and the pair gains 0.25 ms per C8 cycle and 0.29 ms per
 // C32 cycle (the finish saves 0.34 ms at C32; same profile, 2026-10-21).
 pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
-    if small_gap(set, phase, rows) {
-        return true;
-    }
     qualified(set, phase, rows)
-        && matches!(
-            (set.count, set.top_k, phase, rows),
-            (384, 6, ExecutionPhase::Decode, 1 | 8 | 16 | 32)
-                | (384, 6, ExecutionPhase::Verify, 4 | 6 | 16 | 32)
-        )
+        && (small_gap(set, phase, rows)
+            || matches!(
+                (set.count, set.top_k, phase, rows),
+                (384, 6, ExecutionPhase::Decode, 1 | 8 | 16 | 32)
+                    | (384, 6, ExecutionPhase::Verify, 4 | 6 | 16 | 32)
+            ))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -273,6 +271,38 @@ mod tests {
     use super::*;
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::{geometry::FLASH, moe};
+    #[test]
+    fn the_audit_restores_only_the_previous_narrow_admissions() {
+        let set = moe::expert_sets(&FLASH)[0];
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let inventory = || {
+            super::super::moe_direct::prepare_set(&shape, set)
+                .unwrap()
+                .into_iter()
+                .map(|(phase, rows, op)| (phase, rows, op.fuses_router()))
+                .collect::<Vec<_>>()
+        };
+        let candidate = inventory();
+        let reference = with_base_admission(inventory);
+        let changed = candidate
+            .iter()
+            .filter(|entry| !reference.contains(entry))
+            .collect::<Vec<_>>();
+        assert_eq!(changed.len(), 28);
+        assert!(
+            changed
+                .iter()
+                .all(|&&(phase, rows, fused)| { fused && small_gap(set, phase, rows) })
+        );
+        assert_eq!(candidate, inventory());
+        without_fusion(|| {
+            for rows in 1..=32 {
+                assert!(!r2(set, ExecutionPhase::Decode, rows));
+                assert!(!r2(set, ExecutionPhase::Verify, rows));
+            }
+        });
+    }
+
     #[test]
     fn router_finish_admits_only_measured_winners_inside_direct_buckets() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {

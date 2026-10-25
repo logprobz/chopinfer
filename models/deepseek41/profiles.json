@@ -88,8 +88,10 @@
       ],
       "speculation": {
         "mode": "balanced",
-        "depths": "1:5,8:3,16:0",
-        "widths": "6,8,16,32",
+        "depths": "1:5,8:3,16:3,32:0",
+        "widths": "6,8,16,32,64",
+        "rows": 64,
+        "graph_rows": 64,
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -127,8 +129,10 @@
       ],
       "speculation": {
         "mode": "balanced",
-        "depths": "1:5,8:3,16:0",
-        "widths": "6,8,16,32",
+        "depths": "1:5,8:3,16:3,32:0",
+        "widths": "6,8,16,32,64",
+        "rows": 64,
+        "graph_rows": 64,
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"
@@ -202,8 +206,10 @@
       ],
       "speculation": {
         "mode": "balanced",
-        "depths": "1:5,8:3,16:0",
-        "widths": "6,8,16,32",
+        "depths": "1:5,8:3,16:3,32:0",
+        "widths": "6,8,16,32,64",
+        "rows": 64,
+        "graph_rows": 64,
         "tokens": 5,
         "draft_cost": "per-block",
         "drafter": "dspark"

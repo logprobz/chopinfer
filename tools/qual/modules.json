@@ -167,6 +167,10 @@
    "TOLERANCE": "number",
    "TOP": "int"
   },
+  "experimental_determinism": {
+   "MARKER": "str",
+   "MAX_PIN_BYTES": "int"
+  },
   "fill_batch": {},
   "frontend_goldens": {
    "CAPTURE_SCHEMA": "str",

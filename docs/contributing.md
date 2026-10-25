@@ -296,13 +296,15 @@ GPUs and between jobs, but each GPU's limit must stay constant within one
 job. A job whose limits change mid-run is void: rerun it and never pool its
 measurements with valid jobs.
 
-Tuning tables, profiles and depth schedules are never keyed by power or
-clock. A candidate whose gain plausibly comes from power-cap behavior,
-such as lower draw without less work, needs a second verdict at a different
-limit before adoption. The operator controls that limit too.
+Nothing is keyed by power or clock, including route choices, tuning tables,
+profiles and depth schedules. A candidate whose gain plausibly comes from
+power-cap behavior, such as lower draw without less work, needs a second
+verdict at a different limit before adoption. The operator controls that
+limit too.
 
 Check energy (J/token) separately from the speed verdict, and compare it
-only between arms under identical per-GPU power limits. A J/token increase
-vetoes adoption only when it exceeds 3% and agrees in sign across the
-concurrencies where the candidate is active; otherwise report it as
-informational. Energy does not replace the timing or bitwise gates.
+only between arms under identical per-GPU power limits. Until a pooled noise
+model exists, a J/token increase vetoes adoption only when it exceeds 3% and
+agrees in sign across the concurrencies where the candidate is active;
+otherwise report it as informational. Energy does not replace the timing or
+bitwise gates.

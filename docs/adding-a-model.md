@@ -72,8 +72,11 @@ with that model, moving to shared code when another model needs them.
 Follow [kernel contribution rules](kernel-library.md#adding-an-op). Required
 conformance cases must prepare and run, with no refused or unexercised case
 counted as a pass. Verify-row equality needs a decode mapping; collectives
-need multi-rank cases. Preserve qualified symbols and lock bytes during a
-structural refactor. Geometry support is separate from measured tuning and
+need multi-rank cases. An identity-only refactor preserves qualified symbols
+and lock bytes. Declared replacements that follow
+[candidate adoption](kernel-library.md#adopting-a-candidate) may retire a
+symbol and its superseded lock records after kernel-lab twin and served
+bitwise evidence. Geometry support is separate from measured tuning and
 from qualification.
 
 ## Chat frontend

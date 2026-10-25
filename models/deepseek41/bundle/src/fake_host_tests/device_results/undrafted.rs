@@ -1,6 +1,7 @@
 use super::*;
 use crate::fake_host_tests::dspark::host::MappedHost;
 
+mod capacity;
 #[cfg(feature = "state-capture")]
 mod capture;
 

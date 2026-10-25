@@ -151,7 +151,7 @@ pub(super) fn status_build(
 fn rows() -> Vec<u32> {
     (3..=31)
         .filter(|r| ![4, 8, 16].contains(r))
-        .chain([35, 40])
+        .chain([35, 40, 45, 50, 55, 60])
         .collect()
 }
 
@@ -161,7 +161,17 @@ fn gpu(s: &Session) -> LabResult<()> {
     if !["q-a", "q-b", "wo", "drafter35", "calibration"].contains(&group.as_str()) {
         return Err("CHOPINFER_FOLD_TAIL_GROUP: q-a, q-b, wo, drafter35 or calibration".into());
     }
-    let counts = if group == "drafter35" {
+    let wide_only = match std::env::var("CHOPINFER_FOLD_TAIL_WIDE_ONLY") {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok(value) if value == "1" => true,
+        _ => return Err("CHOPINFER_FOLD_TAIL_WIDE_ONLY must be unset or 1".into()),
+    };
+    let counts = if wide_only {
+        if !["q-a", "q-b", "wo"].contains(&group.as_str()) {
+            return Err("wide-only qualification requires q-a, q-b or wo".into());
+        }
+        vec![45, 50, 55, 60]
+    } else if group == "drafter35" {
         vec![35]
     } else if group == "calibration" {
         vec![40]
@@ -274,7 +284,7 @@ fn tail_catalog_uses_current_packed_modules() {
                 }
             }
         }
-        assert_eq!(rows().len(), 28);
+        assert_eq!(rows().len(), 32);
     });
 }
 

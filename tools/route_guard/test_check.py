@@ -99,6 +99,22 @@ class CheckTests(unittest.TestCase):
         journal.write_text('launch 4 shared\nlaunch 4 other\n')
         self.assertEqual(self.run_check('--journal', journal), 2)
 
+    def test_multiple_captures_need_their_combined_selected_evidence(self):
+        self.tags.append({**self.tags[0], 'entry': 'projection/standalone/shared', 'class': 'Fast'})
+        self.write_classes()
+        first, second = self.root / 'first.journal', self.root / 'second.journal'
+        first.write_text('launch 4 shared\n')
+        second.write_text('launch 4 shared\n')
+        steps = self.root / 'steps'
+        route = {'fallback_launches': 0, 'families': {}, 'entries': {
+            'projection/standalone/shared': {'class': 'Fast', 'family': 'projection',
+                                             'symbol': 'shared', 'launches': 1}}}
+        steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
+        self.assertEqual(self.run_check('--journal', first, '--journal', second, '--steps', steps), 2)
+        route['entries']['projection/standalone/shared']['launches'] = 2
+        steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
+        self.assertEqual(self.run_check('--journal', first, '--journal', second, '--steps', steps), 0)
+
     def test_empty_or_missing_step_evidence_does_not_pass(self):
         path = self.root / 'steps'
         for content in ['', '{"schema":"chopinfer.step.v1"}\n']:

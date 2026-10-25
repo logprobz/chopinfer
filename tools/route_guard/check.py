@@ -144,11 +144,16 @@ def check(args):
     for entry, count in selected.items():
         selected_symbols[entries[entry]['symbol']] += count
     for paths, reader in ((args.journal, journal), (args.nsys, nsys)):
+        captures = collections.Counter()
         for path in paths:
             for symbol, (count, ns) in reader(path).items():
-                required[symbol] = max(required[symbol], count)
-                observed[symbol][0] += count
+                captures[symbol] += count
                 observed[symbol][1] += ns
+        # Separate captures add. A journal and an nsys export may describe
+        # the same launches, so their combined evidence uses the larger count.
+        for symbol, count in captures.items():
+            required[symbol] = max(required[symbol], count)
+            observed[symbol][0] = max(observed[symbol][0], count)
     failures, ambiguous = [], []
     for symbol, (count, ns) in sorted(observed.items()):
         tags = classes.get(symbol, [])

@@ -489,7 +489,11 @@ class Reports(unittest.TestCase):
                         reached.add(current)
                         pending.extend(reverse.get(current, ()))
                 names = {packages[key]['name'] for key in reached & members}
-                source = next(iter(sorted((Path(packages[seed]['manifest_path']).parent / 'src').rglob('*.rs'))))
+                # Test-only packages have no src directory. Keep every
+                # workspace member covered through its own Rust sources.
+                package_root = Path(packages[seed]['manifest_path']).parent
+                source = next(source for directory in ('src', 'tests')
+                              for source in sorted((package_root / directory).rglob('*.rs')))
                 report = self.report(source.relative_to(ROOT).as_posix())
                 expected = {key for key, package_targets in targets.items() if package_targets & names}
                 self.assertFalse(expected - self.ids(report), sorted(expected - self.ids(report)))

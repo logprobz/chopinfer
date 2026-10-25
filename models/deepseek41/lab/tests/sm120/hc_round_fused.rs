@@ -36,6 +36,8 @@ const ROLES: [&str; 6] = ["expanded", "collapsed", "pre", "post", "comb", "round
 const H: usize = 5120;
 const N: usize = 4;
 const MIXES: usize = 24;
+#[path = "hc_small_rows.rs"]
+mod small_rows;
 pub(super) fn symbols() -> Vec<String> {
     [
         "chop_row_rounding_round_deepseek41_w5120_v1".into(),

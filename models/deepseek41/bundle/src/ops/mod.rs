@@ -678,7 +678,12 @@ impl Bind {
         }
         Ok(launches
             .into_iter()
-            .map(|launch| self.lowered(launch))
+            .map(|launch| {
+                let route = kernel_core::route::selected(op.as_ref(), counts, &launch);
+                let mut lowered = self.lowered(launch);
+                lowered.launch.bindings = lowered.launch.bindings.with_route(route);
+                lowered
+            })
             .collect())
     }
 
@@ -756,7 +761,12 @@ impl Bind {
         let launches = op.launches(buffers, workspace, counts)?;
         Ok(launches
             .into_iter()
-            .map(|launch| self.lowered(launch))
+            .map(|launch| {
+                let route = kernel_core::route::selected(op, counts, &launch);
+                let mut lowered = self.lowered(launch);
+                lowered.launch.bindings = lowered.launch.bindings.with_route(route);
+                lowered
+            })
             .collect())
     }
 

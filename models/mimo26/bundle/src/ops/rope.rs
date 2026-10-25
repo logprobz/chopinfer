@@ -273,7 +273,7 @@ impl super::Ops {
             positions: table_rows(views.cos_sin, self.ropes.rotary[0])?,
             ..row_counts(phase, switches, self.row_buckets, live_tokens)?
         };
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 
     /// The ring write of a `phase` step's sliding-window K and V rows
@@ -304,7 +304,7 @@ impl super::Ops {
             live_rows: bind.view(views.live_tokens),
         };
         let counts = row_counts(phase, switches, self.row_buckets, live_tokens)?;
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 
     /// DFlash's RoPE of its Q (`q`) or K heads of a `phase` step's
@@ -338,7 +338,7 @@ impl super::Ops {
             positions: table_rows(cos_sin, self.ropes.rotary[1])?,
             ..Counts::rows(live)
         };
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 }
 

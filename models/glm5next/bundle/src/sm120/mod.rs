@@ -14,6 +14,7 @@ mod launch_tests;
 #[cfg(test)]
 mod moe_tests;
 pub mod own_ops;
+mod routes;
 #[cfg(test)]
 pub(crate) mod tables;
 mod target;
@@ -136,7 +137,8 @@ pub fn backend(engines: &Engines, shape: Shape) -> (Box<dyn Backend>, Served) {
     let own = own_ops::Sm120Own::new(shape);
     let served = Served(served, CommBackends(comm), Arc::new(own), Arc::new(own));
     let backend = with_rows(with_moe(backend, engines), engines)
-        .with_projections(Box::new(NamedOffers(Offers)));
+        .with_projections(Box::new(NamedOffers(Offers)))
+        .with_route_tags(routes::entries(engines));
     (Box::new(backend), served)
 }
 

@@ -256,7 +256,7 @@ impl super::Ops {
             padded_rows,
             ..Counts::rows(live_tokens)
         };
-        let mut launches = bind.launches(op.launches(&buffers, View::EMPTY, counts)?);
+        let mut launches = bind.lower(op.as_ref(), &buffers, counts)?;
         Ok(match part {
             Part::Partial if !launches.is_empty() => Some(launches.remove(0)),
             Part::Partial => return Err(Refusal("an attention launched nothing")),

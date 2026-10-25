@@ -365,6 +365,35 @@ impl MoeOps {
             .map(|(_, _, op)| op)
     }
 
+    pub(crate) fn router_route(
+        &self,
+        phase: Phase,
+        symbol: &str,
+    ) -> Option<kernel_core::route::RouteTag> {
+        let p = USES[kind_of(phase)].phase;
+        let admitted: Vec<_> = self
+            .direct
+            .iter()
+            .filter(|(of, _, op)| *of == p && op.fuses_router())
+            .map(|(_, r, _)| *r..=*r)
+            .collect();
+        if admitted.is_empty() {
+            return None;
+        }
+        let selected = self.direct(phase).is_some_and(|op| op.fuses_router());
+        Some(kernel_core::route::branch(
+            symbol,
+            if selected {
+                kernel_core::route::RouteClass::Fast
+            } else {
+                kernel_core::route::RouteClass::Baseline
+            },
+            "moe_router_finish",
+            if selected { "fused" } else { "unfused" },
+            admitted,
+        ))
+    }
+
     fn kind(&self, phase: Phase) -> &Kind {
         let index = kind_of(phase);
         self.buckets
@@ -541,7 +570,16 @@ impl MoeOps {
             bias_select: bind.view(views.bias_select),
             scores: bind.view(views.scores),
         };
-        bind.launch(op, &buffers, Counts::rows(phase.rows()))
+        let mut launches = bind.launch(op, &buffers, Counts::rows(phase.rows()))?;
+        if kernel_core::route::Metadata::enabled() {
+            for item in &mut launches {
+                item.launch.bindings = item
+                    .launch
+                    .bindings
+                    .with_route(self.router_route(phase, &item.launch.symbol));
+            }
+        }
+        Ok(launches)
     }
 
     /// The experts' gate/up (`gate_up`) or down projection of a `phase`
@@ -606,12 +644,47 @@ impl MoeOps {
                 unused: bind.view(views.output),
             },
         };
-        bind.launch_experts(
+        let mut launches = bind.launch_experts(
             op.as_ref(),
             &buffers,
             views.workspace,
             Counts::rows(phase.rows()),
-        )
+        )?;
+        if kernel_core::route::Metadata::enabled() && phase.prefill() {
+            let base = if gate_up {
+                &self.kinds[0].gate_up
+            } else {
+                &self.kinds[0].down
+            };
+            let admitted: Vec<_> = self
+                .buckets
+                .iter()
+                .filter(|(usage, kind)| {
+                    let candidate = if gate_up { &kind.gate_up } else { &kind.down };
+                    usage.phase == ExecutionPhase::Prefill
+                        && candidate.info().symbols != base.info().symbols
+                })
+                .map(|(usage, _)| usage.capacity..=usage.capacity)
+                .collect();
+            if !admitted.is_empty() {
+                let selected = op.info().symbols != base.info().symbols;
+                for item in &mut launches {
+                    let tag = kernel_core::route::branch(
+                        &item.launch.symbol,
+                        if selected {
+                            kernel_core::route::RouteClass::Fast
+                        } else {
+                            kernel_core::route::RouteClass::Baseline
+                        },
+                        "moe_prefill",
+                        if selected { "selected" } else { "general" },
+                        admitted.clone(),
+                    );
+                    item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                }
+            }
+        }
+        Ok(launches)
     }
 
     pub(crate) fn routed_sum(

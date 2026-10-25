@@ -245,7 +245,7 @@ impl super::Ops {
             ranks: peers(&mut bind, gathered, flags, epochs)?,
         };
         let counts = Counts::rows(phase.capacity()?);
-        Ok(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        bind.lower(op.as_ref(), &buffers, counts)
     }
 }
 

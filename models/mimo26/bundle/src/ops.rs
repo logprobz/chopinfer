@@ -564,6 +564,24 @@ fn one(mut launches: Vec<Lowered>) -> Result<Lowered, Refusal> {
 struct Bind(BufferBindings);
 
 impl Bind {
+    fn lower<B>(
+        self,
+        op: &dyn kernel_core::backend::PreparedOp<B>,
+        buffers: &B,
+        counts: Counts,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let launches = op.launches(buffers, View::EMPTY, counts)?;
+        let routes: Vec<_> = launches
+            .iter()
+            .map(|launch| kernel_core::route::selected(op, counts, launch))
+            .collect();
+        let mut lowered = self.launches(launches);
+        for (item, route) in lowered.iter_mut().zip(routes) {
+            item.launch.bindings = item.launch.bindings.with_route(route);
+        }
+        Ok(lowered)
+    }
+
     fn view(&mut self, span: DeviceBufferSpanV1) -> View {
         View {
             handle: self.0.bind(span),

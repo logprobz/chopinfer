@@ -301,9 +301,14 @@ impl Bind {
         Ok(launches
             .into_iter()
             .zip(facts)
-            .map(|(launch, facts)| Lowered {
-                launch: self.prepared(launch),
-                facts,
+            .map(|(launch, facts)| {
+                let route = kernel_core::route::selected(op, counts, &launch);
+                let mut prepared = self.prepared(launch);
+                prepared.bindings = prepared.bindings.with_route(route);
+                Lowered {
+                    launch: prepared,
+                    facts,
+                }
             })
             .collect())
     }

@@ -33,6 +33,22 @@ struct Router {
     info: OpInfo,
 }
 impl PreparedOp<ProjectionBuffers<View>> for Router {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, RouteTag};
+        let mut tag = if family::ROWS.contains(&counts.rows) {
+            RouteTag::new(
+                launch.symbol.clone(),
+                RouteClass::Fast,
+                "f32_projection",
+                [],
+            )
+        } else {
+            self.base.route(counts, launch)?
+        };
+        tag.admitted.extend(family::ROWS.iter().map(|&r| r..=r));
+        tag.wrappers.push("zero-router");
+        Some(tag)
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

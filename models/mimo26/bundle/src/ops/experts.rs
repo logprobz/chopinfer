@@ -2,7 +2,7 @@
 //! expert use, which MiMo's registered launcher launches
 //! (`crate::projection`).
 
-use kernel_core::backend::{Backend, Counts, Need, Refused, View};
+use kernel_core::backend::{Backend, Counts, Need, Refused};
 use kernel_core::contract::Refusal;
 use kernel_core::gated_mlp::GatedMlpProjectionQuery;
 use kernel_core::moe::RouteMetadata;
@@ -83,7 +83,7 @@ impl Experts {
                 unused: bind.view(views.unused),
             },
         };
-        Ok(bind.launches(op.launches(&buffers, View::EMPTY, Counts::rows(rows))?))
+        bind.lower(op.as_ref(), &buffers, Counts::rows(rows))
     }
 }
 

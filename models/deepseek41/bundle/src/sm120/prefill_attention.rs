@@ -50,6 +50,17 @@ pub fn prepare(
     need: Need,
 ) -> Result<Prepared<LatentSourcesBuffers<View>>, Refused> {
     let reference = backend.latent_attention_sources(query, need)?;
+    let source = reference.info().symbols[0].0.clone();
+    let reference = kernel_core::route::tagged(
+        reference,
+        vec![kernel_core::route::branch(
+            &source,
+            kernel_core::route::RouteClass::Reference,
+            "latent_prefill",
+            "reference",
+            [1..=need.capacity],
+        )],
+    );
     if geometry.id != FLASH.id || ranks != 4 || need.capacity < ROWS {
         return Ok(reference);
     }
@@ -85,6 +96,19 @@ struct PairedPrefill {
 }
 
 impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        if launch.symbol == sources_prefill::reuse_symbol(&self.entry, 2) {
+            Some(kernel_core::route::branch(
+                &launch.symbol,
+                kernel_core::route::RouteClass::Fast,
+                "latent_prefill",
+                "paired",
+                [1..=ROWS],
+            ))
+        } else {
+            self.reference.route(counts, launch)
+        }
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

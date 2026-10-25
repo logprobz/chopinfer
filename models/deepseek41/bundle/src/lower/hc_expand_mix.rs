@@ -11,7 +11,7 @@ use model_deepseek41_contract::geometry::Geometry;
 /// Only adjacent sublayers whose intervening stages preserve the streams.
 /// Engram modifies the next attention's streams, and the final expand feeds
 /// the head. Neither boundary can reuse the earlier projection partials.
-fn successor(g: &Geometry, layer: u32, sublayer: Sublayer) -> Option<(u32, Sublayer)> {
+pub(super) fn successor(g: &Geometry, layer: u32, sublayer: Sublayer) -> Option<(u32, Sublayer)> {
     if layer >= g.layers() {
         return None;
     }

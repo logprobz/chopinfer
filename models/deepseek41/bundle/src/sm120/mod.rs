@@ -318,6 +318,64 @@ fn register_f32_projections_for(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    #[cfg(test)]
+    pub(crate) fn route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::route::RouteTag> {
+        let mut tags = Self::new_for_kv(shape, model_deepseek41_contract::state::KvStorage::Native)
+            .expect("registered route metadata")
+            .backend
+            .route_tags();
+        if f32_zero::selected(
+            shape.geometry,
+            shape.ranks(),
+            shape.geometry.shape.moe.experts,
+        ) {
+            tags.push(
+                kernel_core::route::RouteTag::new(
+                    f32_zero::entry().baseline_symbol(),
+                    kernel_core::route::RouteClass::Baseline,
+                    "f32_projection",
+                    f32_zero::ROWS.iter().map(|&r| r..=r),
+                )
+                .with_wrapper("zero-router"),
+            );
+        }
+        if shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id && shape.ranks() == 4
+        {
+            tags.extend(
+                prefill_attention::entries()
+                    .expect("prefill source entries")
+                    .into_iter()
+                    .map(|e| {
+                        kernel_core::route::branch(
+                            &e.symbol(),
+                            kernel_core::route::RouteClass::Reference,
+                            "latent_prefill",
+                            "reference",
+                            [1..=prefill_attention::ROWS],
+                        )
+                    }),
+            );
+        }
+        tags
+    }
+
+    pub(crate) fn router_in_norm_route_rows() -> std::ops::RangeInclusive<u32> {
+        router_norm::ROWS..=router_norm::ROWS
+    }
+    pub(crate) fn norm_route_symbol(shape: &crate::shape::Shape) -> String {
+        rows::norm_symbol(shape.geometry, shape.dims().hidden)
+    }
+    pub(crate) fn prefill_hc_route_rows(
+        shape: &crate::shape::Shape,
+    ) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
+        hc_prefill_expand_mix::qualified(shape.geometry).then(|| {
+            hc_prefill_expand_mix::BUCKETS
+                .iter()
+                .flat_map(|(_, rows)| rows.iter().map(|&r| r..=r))
+                .collect()
+        })
+    }
+
     pub(crate) fn drafter_f32_backend(
         shape: &crate::shape::Shape,
     ) -> Result<Option<Sm120>, kernel_core::backend::Refused> {
@@ -722,6 +780,12 @@ impl crate::Kernels {
         rows: u32,
     ) -> Option<u64> {
         latent_cache::eligible(g, ranks, storage).then(|| latent_cache::bytes(rows))
+    }
+
+    pub(crate) fn selected_cache_admitted_rows(
+        phase: kernel_core::contract::AttentionPhase,
+    ) -> Vec<u32> {
+        latent_cache::rows(phase)
     }
 
     pub(crate) fn selected_cache_rows(

@@ -272,7 +272,7 @@ impl super::Ops {
         let mut bind = Bind::default();
         let buffers = route_buffers(&mut bind, views, true);
         let counts = Counts::rows(phase.row_grid(live_tokens, switches, self.row_buckets)?);
-        let mut launches = bind.launches(op.launches(&buffers, View::EMPTY, counts)?);
+        let mut launches = bind.lower(op.as_ref(), &buffers, counts)?;
         let range = match (launches.len(), part) {
             (1, RoutePart::Router) => 0..1,
             (5, RoutePart::Router) => 0..1,
@@ -311,7 +311,7 @@ impl super::Ops {
             semaphores: bind.view(semaphores),
         };
         let counts = Counts::rows(phase.row_grid(live_tokens, switches, self.row_buckets)?);
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 
     /// The combine of a `phase` step's routed rows (bucket `bucket` of
@@ -338,7 +338,7 @@ impl super::Ops {
             live_rows: bind.view(live_rows),
         };
         let counts = Counts::rows(phase.row_grid(live_tokens, switches, self.row_buckets)?);
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 }
 

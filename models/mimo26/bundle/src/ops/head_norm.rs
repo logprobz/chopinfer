@@ -112,7 +112,7 @@ impl super::Ops {
             live_rows: bind.view(live_tokens),
         };
         let counts = Counts::rows(phase.capacity()?);
-        one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(op.as_ref(), &buffers, counts)?)
     }
 }
 

@@ -105,7 +105,7 @@ fn launch(
         live_rows: bind.view(views.live_rows),
         table_rows,
     };
-    one(bind.launches(op.launches(&buffers, View::EMPTY, counts)?))
+    one(bind.lower(op.as_ref(), &buffers, counts)?)
 }
 
 /// One rank's sharded argmax partials: the MTP drafter's, over up to
@@ -184,7 +184,7 @@ fn partial(op: &Partial, rows: u32, views: &PartialViews, peer: bool) -> Result<
         },
         live_rows: bind.view(views.live_rows),
     };
-    one(bind.launches(op.launches(&buffers, View::EMPTY, Counts::rows(rows))?))
+    one(bind.lower(op.as_ref(), &buffers, Counts::rows(rows))?)
 }
 
 impl super::Ops {
@@ -252,7 +252,7 @@ impl super::Ops {
             scatter: Vec::new(),
             live_rows: bind.view(live_rows),
         };
-        one(bind.launches(op.launches(&buffers, View::EMPTY, Counts::rows(rows))?))
+        one(bind.lower(op.as_ref(), &buffers, Counts::rows(rows))?)
     }
 
     /// Rank `rank`'s argmax partial of a DFlash `phase` step (bucket

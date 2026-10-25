@@ -862,7 +862,46 @@ impl AttentionOps {
             } else {
                 op
             };
-            bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
+            let mut launches =
+                bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))?;
+            if kernel_core::route::Metadata::enabled()
+                && self.selected.iter().any(|(of, _)| *of == kind)
+            {
+                let admitted: Vec<_> = crate::Kernels::selected_cache_admitted_rows(phase)
+                    .into_iter()
+                    .map(|r| r..=r)
+                    .collect();
+                for item in &mut launches {
+                    if op
+                        .info()
+                        .symbols
+                        .last()
+                        .is_some_and(|(s, _)| *s == item.launch.symbol)
+                    {
+                        continue;
+                    }
+                    let tag = if let Some(tag) = item
+                        .launch
+                        .bindings
+                        .route()
+                        .filter(|t| t.class == kernel_core::route::RouteClass::Fast)
+                    {
+                        let mut tag = tag.clone();
+                        tag.wrappers.push("selected-cache");
+                        tag
+                    } else {
+                        kernel_core::route::branch(
+                            &item.launch.symbol,
+                            kernel_core::route::RouteClass::Baseline,
+                            "latent_sources",
+                            "cache-fallback",
+                            admitted.clone(),
+                        )
+                    };
+                    item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                }
+            }
+            Ok(launches)
         }
     }
 }

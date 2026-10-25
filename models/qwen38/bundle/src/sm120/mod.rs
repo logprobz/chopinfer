@@ -166,7 +166,69 @@ pub(crate) fn backend(shape: Shape, wide_comm: bool) -> Box<dyn Backend> {
     }
     // The generated projection uses of a precision component.
     backend = backend.with_projections(Box::new(NamedOffers(projection::Offers::new(shape))));
-    Box::new(backend)
+    Box::new(backend.with_route_tags(rounded_routes(shape)))
+}
+
+/// Rounded decode buckets cover a continuous interval, including the short
+/// continuation after a prefill's first token. Declare their fast entries so
+/// the island backstop can distinguish these buckets from an untagged selector.
+fn rounded_routes(shape: Shape) -> Vec<kernel_core::route::RouteTag> {
+    use kernel_core::route::{RouteClass, RouteTag};
+    use kernels_sm120::comm::hyper_connection_decode as hc;
+    let owner = catalog::geometry_owner(shape);
+    let shared = owner.model.at(4);
+    let bucket = |rows: u32| (if rows == 1 { 1 } else { rows / 2 + 1 })..=rows;
+    let mut tags = Vec::new();
+    for entry in catalog::qwen::entries().iter().filter(|entry| {
+        [shape.profile(), shared].contains(&entry.profile)
+            && crate::contract::DECODE_ENTRY_BUCKETS.contains(&entry.query.m_capacity)
+    }) {
+        tags.push(RouteTag::new(
+            &entry.symbol,
+            RouteClass::Fast,
+            "rounded_projection",
+            [bucket(entry.query.m_capacity)],
+        ));
+    }
+    for entry in catalog::moe::route_catalog().into_iter().filter(|entry| {
+        entry.profile == shape.profile()
+            && crate::contract::DECODE_ENTRY_BUCKETS.contains(&entry.tokens_capacity)
+            && entry.parallel.is_some() == use_parallel_route(entry.tokens_capacity)
+    }) {
+        tags.push(RouteTag::new(
+            entry.symbol,
+            RouteClass::Fast,
+            "rounded_moe_route",
+            [bucket(entry.tokens_capacity)],
+        ));
+    }
+    for entry in catalog::moe::variants().iter().filter(|entry| {
+        entry.profile == shape.profile() && entry.phase == catalog::moe::Phase::Decode
+    }) {
+        tags.push(RouteTag::new(
+            &entry.symbol,
+            RouteClass::Fast,
+            "rounded_experts",
+            [bucket(entry.tokens_capacity)],
+        ));
+    }
+    for weight in [DType::Bf16, DType::F32] {
+        if let Ok(transport) = owner.decode_for(weight) {
+            tags.push(RouteTag::new(
+                hc::symbol_v3(&transport, shape.ranks()).unwrap(),
+                RouteClass::Fast,
+                "hc_decode_transport",
+                [1..=hc::LL_MAX_ROWS],
+            ));
+            tags.push(RouteTag::new(
+                hc::symbol_v2(&transport, shape.ranks()).unwrap(),
+                RouteClass::Fast,
+                "hc_decode_transport",
+                [(hc::LL_MAX_ROWS + 1)..=hc::MAX_ROWS],
+            ));
+        }
+    }
+    tags
 }
 
 /// The comm state of a rank of `shape` serving `served`: the decode

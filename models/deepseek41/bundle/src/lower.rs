@@ -22,6 +22,7 @@ mod norm_prefill;
 mod norm_quantize;
 mod overlap;
 mod query_prefill;
+mod routes;
 
 pub use compressor::{TailUpload, tail_upload};
 
@@ -180,6 +181,9 @@ impl Lowering<'_> {
             }
             _ => self.stage_inner(phase, stage)?,
         };
+        if let Some(launches) = &mut lowered {
+            self.tag_routes(phase, stage, launches);
+        }
         let side = match stage {
             Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_) => true,
             // The window KV projection runs beside the query chain.

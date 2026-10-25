@@ -316,7 +316,7 @@ impl super::Ops {
             prefix_len: bind.view(views.prefix_len),
             live_items: bind.view(views.live_batch),
         };
-        one(bind.launches(op.launches(&buffers, View::EMPTY, Counts::rows(items))?))
+        one(bind.lower(op.as_ref(), &buffers, Counts::rows(items))?)
     }
 
     /// The restore of `items` items' rejected ring cells after a verify
@@ -336,7 +336,7 @@ impl super::Ops {
             counts: bind.view(views.counts),
             live_items: bind.view(views.live_items),
         };
-        one(bind.launches(op.launches(&buffers, View::EMPTY, Counts::rows(items))?))
+        one(bind.lower(op.as_ref(), &buffers, Counts::rows(items))?)
     }
 
     /// The copy `op` of `slot`'s prefix snapshot between the ring and
@@ -371,7 +371,7 @@ impl super::Ops {
             pages: bind.view(views.pages),
             slot,
         };
-        one(bind.launches(copy.launches(&buffers, View::EMPTY, Counts::rows(1))?))
+        one(bind.lower(copy.as_ref(), &buffers, Counts::rows(1))?)
     }
     /// The write of `op`'s columns of every row of a decode or verify
     /// `phase` step (bucket `bucket`) from `input` into its cell of the
@@ -398,7 +398,7 @@ impl super::Ops {
             live_rows: bind.view(inputs.live_tokens),
         };
         let counts = own.counts(phase.capacity()?);
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(prepared.as_ref(), &buffers, counts)?)
     }
 
     /// The gather of `op`'s columns of every row of a `phase` step (bucket
@@ -432,7 +432,7 @@ impl super::Ops {
             positions: bind.view(inputs.positions),
             live_rows: bind.view(inputs.live_tokens),
         };
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, own.counts(rows))?))
+        one(bind.lower(prepared.as_ref(), &buffers, own.counts(rows))?)
     }
     /// DFlash's copy `op` of `live_tokens` rows of a `phase` step (bucket
     /// `bucket`) from `input` (none zeroes them) into `output`, each view at
@@ -469,7 +469,7 @@ impl super::Ops {
         let counts = self
             .own
             .counts(phase.row_grid(live_tokens, switches, self.row_buckets)?);
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(prepared.as_ref(), &buffers, counts)?)
     }
 
     /// DFlash's mask embedding `mask` into the draft rows of a verify
@@ -494,7 +494,7 @@ impl super::Ops {
             live_rows: bind.view(inputs.live_tokens),
         };
         let counts = self.own.counts(phase.capacity()?);
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(prepared.as_ref(), &buffers, counts)?)
     }
 
     /// DFlash's write `op` of a `phase` step's context K and V rows (bucket
@@ -536,7 +536,7 @@ impl super::Ops {
             padded_rows: capacity,
             ..self.own.counts(rows)
         };
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(prepared.as_ref(), &buffers, counts)?)
     }
 
     /// DFlash's drafts of a verify `phase` step (bucket `bucket`): each
@@ -561,7 +561,7 @@ impl super::Ops {
             live_rows: bind.view(inputs.live_tokens),
         };
         let counts = self.own.counts(phase.capacity()?);
-        one(bind.launches(prepared.launches(&buffers, View::EMPTY, counts)?))
+        one(bind.lower(prepared.as_ref(), &buffers, counts)?)
     }
 }
 

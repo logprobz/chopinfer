@@ -752,6 +752,59 @@ mod tests {
     }
 
     #[test]
+    fn existing_tuning_v1_tables_keep_every_byte() {
+        for (name, text) in [
+            (
+                "qwen",
+                include_str!("../../../models/qwen38/contract/tuning/flash/schedules.json"),
+            ),
+            (
+                "glm",
+                include_str!("../../../models/glm5next/contract/tuning/flash/schedules.json"),
+            ),
+            (
+                "sm120",
+                include_str!("../../kernels-sm120/tuning/schedules.json"),
+            ),
+        ] {
+            let table = Table::parse(text).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(table.rows().is_empty(), name == "sm120", "{name}");
+            assert!(
+                table.rows().iter().all(|row| row.key.rows.is_none()),
+                "{name}"
+            );
+            assert_eq!(table.render().as_bytes(), text.as_bytes(), "{name}");
+        }
+
+        // MiMo wraps its canonical tables in a map keyed by geometry.
+        let text = include_str!("../../../models/mimo26/contract/tuning/schedules.json");
+        let files: BTreeMap<String, File> = serde_json::from_str(text).unwrap();
+        assert!(!files.is_empty());
+        let mut entries = Vec::new();
+        for (id, file) in files {
+            assert_eq!(file.schema, SCHEMA);
+            let table = Table {
+                target: file.target,
+                rows: file.rows,
+            };
+            assert!(!table.rows().is_empty(), "{id}: expected existing rows");
+            assert!(
+                table.rows().iter().all(|row| row.key.rows.is_none()),
+                "{id}"
+            );
+            let rendered = table.render();
+            assert_eq!(Table::parse(&rendered).unwrap(), table);
+            let indented = rendered.trim_end_matches('\n').replace('\n', "\n  ");
+            entries.push(format!(
+                "  {}: {indented}",
+                serde_json::to_string(&id).unwrap()
+            ));
+        }
+        let rendered = format!("{{\n{}\n}}\n", entries.join(",\n"));
+        assert_eq!(rendered.as_bytes(), text.as_bytes(), "mimo");
+    }
+
+    #[test]
     fn parse_refuses_non_canonical_tables() {
         let text = table().render();
         // Whitespace, order, repeats, schema and unknown fields.

@@ -175,6 +175,19 @@ def main():
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
+    cold = model.get('cold_engram', workload.get('cold_engram'))
+    if cold:
+        if model.get('mode') != 'ab':
+            raise SystemExit('cold_engram requires mode ab')
+        config['cold_engram'] = cold
+        for image in cold.get('images', []):
+            path = Path(image['path'])
+            import faults
+            fd = faults.open_regular(path)
+            os.close(fd)
+            files.add(path)
+        if not args.template and not cold.get('images'):
+            raise SystemExit('cold_engram needs explicit rank image sources and Engram view ranges')
     if model.get('mode') == 'ab' and model.get('speculation_mode') != 'off' and not model.get('keeper', True):
         raise SystemExit('A/B speculative visits require keeper staging')
     copy = stage / 'harness'

@@ -34,6 +34,57 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+    def test_cold_ab_cpu_stub_and_negative_controls(self):
+        import hashlib
+        import os
+        import shutil
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            harness = root / 'stage' / 'harness'
+            harness.mkdir(parents=True)
+            for name in stage.HARNESS:
+                shutil.copy2(HERE / name, harness / name)
+            config = {'name': 'CPU cold A/B', 'work_seconds': 90, 'kinds': {'sampled': 1},
+                      'tokens': {'default': 64}, 'warm': [], 'warm_tokens': 8,
+                      'sampling': {'seed': 7, 'temperature': 1.0, 'top_p': 1.0},
+                      'cold_engram': {'warm_fraction': .1},
+                      'model': {'mode': 'ab', 'repeats': 2, 'concurrencies': [1], 'speculation_mode': 'balanced',
+                                'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}], 'pairs': [['a', 'b']],
+                                'served_model_name': 'fixture', 'checkpoint_env': 'CHOPINFER_TEST_CHECKPOINT',
+                                'tensor_parallel_size': 1, 'kv_pages': 64, 'kv_pages_line': 'fixture: {pages} KV pages',
+                                'serve_arguments': [], 'max_depth': 1, 'verify_rows': 32,
+                                'planning': {'process_reserve_seconds': 1}}}
+            seal = {'ready': False, 'config': config, 'install': {'install': str(root / 'install'),
+                    'cache': str(root / 'cache'), 'revision': 'synthetic'}, 'harness_source': str(HERE.parents[1]),
+                    'prompts': [{'prompt': f'Write a function for case {i}', 'sha256': str(i)} for i in range(128)],
+                    'sha256': {}}
+            body = json.dumps(seal).encode()
+            (harness.parent / 'runtime-seal.json').write_bytes(body)
+            payload = hashlib.sha256(body).hexdigest()
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'), TUNE_STUB_RESIDENCY='0.8')
+            for case, changes, expected in [('valid', {}, 'passed'),
+                                            ('keeper', {'CHOPINFER_WEIGHT_KEEPER_DIR': ''}, 'failed'),
+                                            ('cached', {'TUNE_STUB_CACHED': 'a-r0'}, 'failed'),
+                                            ('power', {'TUNE_DRY_POWER_CHANGE_LABEL': 'after-a-r0'}, 'void')]:
+                out = root / case
+                result = subprocess.run([sys.executable, '-B', str(harness / 'tune.py'), '--dry-run',
+                                         '--output', str(out), '--payload-sha', payload],
+                                        env={**env, **changes}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                with self.subTest(case=case):
+                    self.assertEqual(summary['status'], expected, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode, 0 if expected == 'passed' else 1)
+                if case == 'valid':
+                    rows = report.load(out)[1]
+                    self.assertEqual(len(rows), 4)
+                    self.assertTrue(all(r['cold_engram']['state'] == 'partly warm' for r in rows))
+                    prompts_used = [tuple(q['prompt']) for r in rows for q in r['requests']]
+                    self.assertEqual(len(prompts_used), len(set(prompts_used)))
+                    self.assertTrue(all(r['mapped_gather_us'] for r in rows))
+                if case == 'power':
+                    self.assertEqual(json.loads((out / 'ab.json').read_text())['pairs'], {})
 
     def test_ab_seed_sets_match_pairs_and_differ_between_pairs(self):
         config = {'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
@@ -247,8 +298,68 @@ class Tuner(unittest.TestCase):
         altered['power']['after'] = {**power, 'enforced_power_limits_w': [249]}
         self.assertEqual(report.ab_validity(config, rows, altered)['status'], 'void')
 
+    def test_cold_prompts_never_repeat_and_exhaust_explicitly(self):
+        pool = prompts.Unseen([[1, 2], [3, 4]])
+        self.assertEqual(pool.take(), [1, 2])
+        self.assertEqual(pool.take(), [3, 4])
+        with self.assertRaisesRegex(RuntimeError, 'exhausted'):
+            pool.take()
+        with self.assertRaisesRegex(ValueError, 'duplicates'):
+            prompts.Unseen([[1, 2], [1, 2]])
 
+    def test_cold_residency_checks_bounds_and_refuses_symlinks(self):
+        import faults
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'rank.img'
+            path.write_bytes(bytes(8192))
+            fd = faults.open_regular(path)
+            try:
+                measured = faults.residency(fd, 1, 4096)
+                self.assertEqual(measured['pages'], 2)
+                self.assertTrue(0 <= measured['resident_fraction'] <= 1)
+                with self.assertRaises(ValueError):
+                    faults.residency(fd, 8192, 1)
+            finally:
+                os.close(fd)
+            link = path.with_suffix('.link')
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                faults.open_regular(link)
 
+    def test_cold_control_requires_ack_before_file_advice(self):
+        import faults
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'server.log').write_text('')
+            image = root / 'rank.img'
+            image.write_bytes(bytes(4096))
+            server = SimpleNamespace(directory=root, env={}, dry=True)
+            control = faults.ColdEngram(server, {'images': [{'path': str(image), 'bytes': 4096,
+                'views': [{'name': 'rows', 'offset': 0, 'bytes': 4096}]}]})
+            self.assertEqual(server.env['CHOPINFER_MAPPED_ROW_CONTROL'], str(control.path))
+
+            def acknowledge(unused):
+                command = json.loads(control.path.read_text())
+                self.assertTrue(command['reset_cache'] and command['release_page_tables'])
+                with (root / 'server.log').open('a') as log:
+                    log.write(json.dumps({'schema': 'chopinfer.mapped-row-policy.v1', 'status': 'applied',
+                                          'epoch': command['epoch'], 'reset_cache': True,
+                                          'released_mapping_bytes': 4096}) + '\n')
+
+            try:
+                with patch('faults.time.sleep', side_effect=acknowledge), patch('os.posix_fadvise') as advice:
+                    self.assertEqual(control.prepare()['epoch'], 1)
+                    self.assertEqual(control.prepare()['epoch'], 2)
+                    self.assertEqual(advice.call_count, 2)
+                with patch('runner.remaining', return_value=.01), patch('os.posix_fadvise') as advice:
+                    with self.assertRaisesRegex(RuntimeError, 'acknowledged'):
+                        control.prepare()
+                    advice.assert_not_called()
+            finally:
+                control.close()
 
     def test_every_prompt_prefix_keeps_the_mix(self):
         mix = [{'kind': 'completion', 'weight': 5}, {'kind': 'edit', 'weight': 3}, {'kind': 'chat', 'weight': 2}]

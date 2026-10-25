@@ -4,7 +4,8 @@
 Sweep, costs and exact modes use fixed-token batches and an initial warm
 reference pass. A/B uses matched-seed ABBA visits, each in a fresh process,
 15-second closed-loop windows, and deferred per-request exactness replay.
-Speculative A/B visits require the keeper.
+Speculative A/B visits require the keeper. Cold Engram windows acknowledge
+cache reset and page-table release, advise backing files and record residency.
 
 Usage: python3 -B STAGE/harness/tune.py --output RUN --payload-sha SHA [--dry-run]
 
@@ -30,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import faults
+import prompts as prompt_builder
 import report
 import runner as r
 
@@ -683,7 +685,7 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
             'synthetic': server.dry, 'acceptance': acceptance(before, scrape(server))}
 
 
-def run_ab_windows(server, arm, state, power, root):
+def run_ab_windows(server, arm, state, power, root, cold=None):
     config, model = SEAL['config'], SEAL['config']['model']
     record = state['processes'][arm['label']]
     for repeat, windows in arm['passes']:
@@ -691,8 +693,9 @@ def run_ab_windows(server, arm, state, power, root):
             name = f'{kind}-c{c}-r{repeat}'
             seeds = seed_set(config, repeat, c)
             tokens = config['tokens'].get(str(c), config['tokens']['default'])
+            cold_state = cold.prepare() if cold else None
             w = closed_loop(server, f"{arm['label']}-{name}",
-                            lambda i: state['tokens'][i % len(state['tokens'])], tokens,
+                            state['unseen'].take if cold else lambda i: state['tokens'][i % len(state['tokens'])], tokens,
                             config['sampling'], seeds, power)
             check_depth(name, w['steps'], arm['depth'])
             route = check_fallbacks(name, w['steps'], config.get('allow_fallbacks', {}))
@@ -709,6 +712,13 @@ def run_ab_windows(server, arm, state, power, root):
                      'allocated_steps': check_allocations(name, w['steps'], record['confidence']['enabled'],
                                                          allocation_possible(config, arm, c)),
                      'energy': w['energy'], 'requests': w['requests'], 'steps': w['steps']}
+            if cold:
+                cold_state['after_window'] = cold.sample()
+                value['cold_engram'] = cold_state
+                value['mapped_gather_us'] = [s['host']['mapped_gather_us'] for s in w['steps']
+                                            if 'mapped_gather_us' in s.get('host', {})]
+                value['prefill_execution_us'] = [s['execution_us'] for s in w['steps'] if s['prefill_items']]
+                value['ttft_seconds'] = [row['first_token'] - row['submitted'] for row in w['requests']]
             r.write(root / 'windows' / f'{name}.json', value)
             state.setdefault('deferred', []).append({'arm': arm['arm'], 'requests': w['requests']})
             record['windows'][name] = value
@@ -894,6 +904,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
     if keep:
         arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
     server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py')
+    cold = faults.ColdEngram(server, config['cold_engram']) if config.get('cold_engram') else None
     if model.get('mode') == 'ab' and dry:
         server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
     record = state['processes'][label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {},
@@ -928,21 +939,24 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
             raise RuntimeError(f'{label}: KV pages {found}, expected {r.KV_PAGES} per rank')
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
+            if cold:
+                state['unseen'] = prompt_builder.Unseen(state['tokens'])
             r.write(run / 'prompt-tokens.json', state['tokens'])
         # Warm windows run the measured kind (sampled when the job measures
         # it) on altered prompts, so they share no cached prefix.
         warm_kind = windows_for(config, depth, True)[0][0]
         for c in config['warm']:
-            warm = [list(x) for x in state['tokens'][:c]]
-            for x in warm:
-                x[1] = x[0]
+            warm = [list(state['unseen'].take()) for _ in range(c)] if cold else [list(x) for x in state['tokens'][:c]]
+            if not cold:
+                for x in warm:
+                    x[1] = x[0]
             window(server, f'warm-c{c}', warm_kind, warm, config['warm_tokens'], f'tune-{label}-warm-c{c}',
                    config['sampling'])
             memory(f'warm-c{c}')
         record['memory_after_warmup'] = memory_lines((server.directory / 'server.log').read_text(errors='replace'))
         record['metrics_after_warmup'] = counters(server, 'after-warmup')
         if model.get('mode') == 'ab':
-            run_ab_windows(server, arm, state, power, root)
+            run_ab_windows(server, arm, state, power, root, cold)
         elif reference_pass:
             run_windows(server, arm, state, power, root, [(0, windows_for(config, depth, True))], True)
         if model.get('mode') != 'ab':
@@ -959,6 +973,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
             try:
                 server.stop()
             finally:
+                if cold:
+                    cold.close()
                 power.stop()
                 save(run, state)
 

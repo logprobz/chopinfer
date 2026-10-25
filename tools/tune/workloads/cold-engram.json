@@ -1,0 +1,46 @@
+{
+  "schema": "chopinfer-depth-tune-workload.v1",
+  "name": "cold-engram-v1",
+  "description": "Cold Engram coding and chat prompt pool. Each prompt is used once before deferred exactness replay. Explicit rank image sources and Engram view ranges are supplied by the staged model configuration.",
+  "prompts": 256,
+  "mix": [
+    {
+      "kind": "completion",
+      "weight": 5
+    },
+    {
+      "kind": "edit",
+      "weight": 3
+    },
+    {
+      "kind": "chat",
+      "weight": 2
+    }
+  ],
+  "sources": {
+    "globs": [
+      "crates/*/src/*.rs",
+      "crates/*/src/*/*.rs",
+      "tools/qual/*.py",
+      "tools/dev/*.py"
+    ],
+    "min_bytes": 4000,
+    "max_bytes": 80000,
+    "excerpt_bytes": [
+      1200,
+      3200
+    ]
+  },
+  "system": "You are an expert software engineer. Answer with code first and keep explanations short.",
+  "edit_instructions": [
+    "Add handling for the error and edge cases this code does not handle yet, then show the full revised code.",
+    "Refactor this code for readability without changing its behavior, then show the full revised code.",
+    "Write unit tests that cover this code.",
+    "Add documentation comments to every function here, then show the full revised code.",
+    "Remove the repeated logic in this code, then show the full revised code.",
+    "Explain what this code does, then write one improvement."
+  ],
+  "cold_engram": {
+    "warm_fraction": 0.1
+  }
+}

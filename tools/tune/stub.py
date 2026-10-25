@@ -50,6 +50,22 @@ def stub(args):
     widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
     lent = '--weight-keeper' in args.serve
     state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0, 'live': 0}
+    control = os.environ.get('CHOPINFER_MAPPED_ROW_CONTROL')
+    if control:
+        def observe_control():
+            epoch = 0
+            while True:
+                try:
+                    value = json.loads(Path(control).read_text())
+                    if value['epoch'] > epoch:
+                        epoch = value['epoch']
+                        print(json.dumps({'schema': 'chopinfer.mapped-row-policy.v1', 'status': 'applied',
+                                          'epoch': epoch, 'reset_cache': value['reset_cache'],
+                                          'released_mapping_bytes': 4096, 'synthetic': True}), flush=True)
+                except (OSError, ValueError):
+                    pass
+                time.sleep(.01)
+        threading.Thread(target=observe_control, daemon=True).start()
     print(args.kv_line.replace('{pages}', str(args.kv_pages)), flush=True)
     print('startup speculation_confidence: ' + ('on, stub' if confidence or claim_confidence else 'off, stub'),
           flush=True)
@@ -110,6 +126,7 @@ def stub(args):
                 'accepted_tokens': sum(emitted) - items,
                 'verify_emitted_tokens': sum(n for n, k in zip(emitted, drafts) if k or allocated),
                 'execution_us': micros, 'completed_unix_ns': state['clock_ns'],
+                'host': {'mapped_gather_us': 300 if prefill else 10},
                 'route': {'fallback_launches': 0, 'families': {}},
                 'speculation': {'mode': mode, 'items': items, 'reason': 'balanced'}}), flush=True)
         time.sleep(.0005)

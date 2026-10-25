@@ -25,6 +25,24 @@ LANGUAGE = {'.rs': 'rust', '.py': 'python'}
 COMMENT = {'.rs': '//', '.py': '#'}
 
 
+class Unseen:
+    """A job-wide tokenized prompt pool, exhausted rather than reused."""
+
+    def __init__(self, tokens):
+        import threading
+        self.tokens, self.next, self.lock = tokens, 0, threading.Lock()
+        if len({tuple(p) for p in tokens}) != len(tokens):
+            raise ValueError('cold prompt pool contains duplicates')
+
+    def take(self, unused=None):
+        with self.lock:
+            if self.next == len(self.tokens):
+                raise RuntimeError('unseen cold prompt pool exhausted')
+            prompt = self.tokens[self.next]
+            self.next += 1
+            return prompt
+
+
 def order(mix, count):
     """Kinds in proportion for every prefix: smooth weighted round robin."""
     weights = {entry['kind']: entry['weight'] for entry in mix}

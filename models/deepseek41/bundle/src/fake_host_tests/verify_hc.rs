@@ -131,13 +131,23 @@ use super::*;
 // and 128 bytes to 921600 and 240. The allocations, ticket zeroing and
 // warp/split mixer spans use those sizes. Every other line matches after
 // mapping the handles shifted by one module and four functions per rank.
+// Commit a8c3d20af0 enables batched commit and prefill gathers by default:
+// create adds one 99588-byte commit input per rank, two 786432-byte gather
+// ID buffers on rank 0 and two async gather events. Commit feature codes
+// and scales grow from 1966080/61440 to 125829120/3932160 bytes per rank;
+// none of these new or resized buffers is bound by these verify bodies.
+// Full allocation and resource-creation histories map the shifted buffer,
+// stream, event and graph handles. All six verify bodies then match line
+// for line, including launches, operands, sizes, grids and ordering. Module
+// and resolve inventories are unchanged. The prefill-route batch through
+// 0d4905a7ea leaves these bodies and full histories byte-identical.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xd53c496e0aab902f)),
-    (6, (8680, 0xed990305b8839d35)),
-    (8, (7720, 0xcf94314df6903eca)),
-    (12, (10136, 0x48899f802f4e8c30)),
-    (16, (7892, 0x2e9a5a18258a879c)),
-    (32, (7744, 0xc5b015622e30434b)),
+    (4, (7880, 0x02b988c53189c1d7)),
+    (6, (8680, 0x5ce7c69be4a88e47)),
+    (8, (7720, 0xae22d9223652187d)),
+    (12, (10136, 0x7d8f77788a71e758)),
+    (16, (7892, 0x86275aaee8de74c2)),
+    (32, (7744, 0xc2c91ffeaa26163a)),
 ];
 
 #[test]

@@ -222,6 +222,22 @@ the current history's generated tokens before the proposed rows. Every
 proposal, resulting history, sampling record and logits byte remains part of
 the exact comparison. Versions 1 through 5 retain their existing rules.
 
+Version 7 adds bounded request lifetimes to transition traces. Its optional
+`lifecycle` list contains ordered, one-based `before_step` boundaries, each
+with `actions` and an optional `cancel: true`. Actions are `capture {slot}`,
+`retire {slot}`, and `restore {slot, from}`, encoded with an `action` tag.
+The slot identifies a logical request; physical state slots come from the
+normal host allocator. A canceled step still compares all logits, proposals
+and samples, then cancels the bundle, rolls back provisional KV and retires
+the touched requests. A later restore or prefill starts a new lifetime.
+Capture retains real KV anchors and bundle snapshot pages; restore validates
+their ownership and uses the bundle's state-slot restore API. All requests
+must be prefilled, and the trace must exercise capture, retirement, restore,
+cancellation and drafting. At most 16 boundaries and eight saved prefixes
+are allowed. Version 6 retains its original validation and wire records.
+Snapshot page requirements are checked after instance creation; a CPU dry
+run alone does not establish that the snapshot allocation fits.
+
 ## Measuring a change
 
 First establish [accuracy](numerics.md#a-speedup-that-changes-bits). Use the

@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type Backend = HostServicesV1Backend<crate::cuda::CudaHostDeviceV1>;
+mod lifecycle;
 
 fn memory(backend: &Backend) -> Result<Value> {
     use crate::probe::{HostDeviceMemoryUsageV1, HostDeviceRankMemoryUsageV1};
@@ -469,7 +470,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     if trace.concurrency != config.concurrency
         || (trace.version == MIXED_DECODE) != mixed
-        || (trace.version == transition::VERSION) != transitions
+        || trace.transitions() != transitions
         || trace.vocabulary != vocabulary
         || trace
             .steps
@@ -509,7 +510,10 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens});
     }
     let page_tokens = loaded.manifest().kv_layout().page_tokens() as usize;
-    let quota = if transitions {
+    let lifetimes = trace.version == super::lifecycle::VERSION;
+    let quota = if lifetimes {
+        trace.final_tokens()
+    } else if transitions {
         // Leave room for the provisional rows of the final verify step.
         trace.final_tokens()
             + trace
@@ -701,6 +705,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             maximum_drafts + 1,
         )?)
     };
+    if lifetimes && slots.is_none() {
+        return Err("lifecycle replay requires explicit request state slots".into());
+    }
     for slot in 0..config.concurrency {
         if let Some(pool) = &mut slots {
             assert_eq!(pool.allocate(RequestId::new(slot as u64 + 1))?, slot as u64);
@@ -710,7 +717,15 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         runtime_kv::KvGeometry::new(page_tokens, pages)?,
         max_sequences,
     )?;
-    let handles = (0..config.concurrency)
+    if lifetimes {
+        kv = kv.with_last_page_rewrites(
+            loaded
+                .manifest()
+                .batch_limits()
+                .is_some_and(runtime_bundle::BundleBatchLimitsV1::rewrites_last_page),
+        );
+    }
+    let mut handles = (0..config.concurrency)
         .map(|_| kv.create_sequence(quota))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut speculation = runtime_bundle_abi::BundleRawSpeculationV1::disabled();
@@ -746,8 +761,31 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let mut rank_rows: BTreeMap<u32, usize> = BTreeMap::new();
     let mut boundary_splits = 0;
     let mut history = transitions.then(|| transition::History::new(&trace));
+    let mut lifetime = lifecycle::Lifetimes::default();
     let result = (|| -> Result<()> {
+        if lifetimes {
+            lifecycle::Lifetimes::preflight(
+                &mut instance,
+                pages,
+                super::lifecycle::analyze(&trace)?.captures,
+            )?;
+        }
         for (index, step) in trace.steps.iter().enumerate() {
+            let boundary = trace.lifecycle.iter().find(|b| b.before_step == index + 1);
+            if lifetimes {
+                let mut context = lifecycle::Context {
+                    instance: &mut instance,
+                    kv: &mut kv,
+                    slots: slots.as_mut().ok_or("lifecycle state pool is absent")?,
+                    handles: &mut handles,
+                    history: history.as_mut().ok_or("lifecycle history is absent")?,
+                    quota,
+                };
+                if let Some(boundary) = boundary {
+                    lifetime.before(boundary, &mut context)?;
+                }
+                lifetime.prepare_prefills(step, &mut context)?;
+            }
             let materialized = history.as_ref().map(|h| h.materialize(step)).transpose()?;
             let step = materialized.as_ref().unwrap_or(step);
             let items = step.model_items_at_temperature(Some(&constraint), temperature);
@@ -867,6 +905,27 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 .as_ref()
                 .map(|h| h.prepare_commit(step, &frame.drafts))
                 .transpose()?;
+            if boundary.is_some_and(|b| b.cancel) {
+                instance.cancel()?;
+                kv.rollback_prepared(plan.id())?;
+                lifetime.canceled(
+                    index + 1,
+                    step,
+                    &mut lifecycle::Context {
+                        instance: &mut instance,
+                        kv: &mut kv,
+                        slots: slots.as_mut().ok_or("lifecycle state pool is absent")?,
+                        handles: &mut handles,
+                        history: history.as_mut().ok_or("lifecycle history is absent")?,
+                        quota,
+                    },
+                )?;
+                eprintln!(
+                    "fixed trace step {index}: {} rows, canceled after exact comparison",
+                    step.rows()
+                );
+                continue;
+            }
             let partial = step
                 .items
                 .iter()
@@ -894,6 +953,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             }
             kv.apply_prepared_commit(kv_commit)?;
             history = next_history;
+            if lifetimes {
+                kv.audit()?;
+            }
             eprintln!(
                 "fixed trace step {index}: {} rows, {:?}, exact records",
                 step.rows(),
@@ -910,6 +972,16 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             return Err("verify trace missed owner-boundary splits".into());
         }
         golden.finish(trace.steps.len())?;
+        if lifetimes {
+            lifetime.finish(&mut lifecycle::Context {
+                instance: &mut instance,
+                kv: &mut kv,
+                slots: slots.as_mut().ok_or("lifecycle state pool is absent")?,
+                handles: &mut handles,
+                history: history.as_mut().ok_or("lifecycle history is absent")?,
+                quota,
+            })?;
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -933,13 +1005,16 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     if backend.live_resource_count() != 0 {
         return Err("bundle left host resources live".into());
     }
-    let receipt = json!({"passed":true,"identity":identity,"reference":config.reference,
+    let mut receipt = json!({"passed":true,"identity":identity,"reference":config.reference,
         "mixed":mixed,"kv_pages":pages,
         "memory_after_create":memory_after_create,"memory_after_steps":memory_after_steps,
         "manifest":manifest,"verify_rows_per_item":config.verify_rows_per_item,
         "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens,
         "steps":golden.steps,"rows":golden.rows,"bytes_recorded_or_compared":golden.bytes_checked,
         "rank_rows":rank_rows,"owner_boundary_splits":boundary_splits,"live_resources":0});
+    if lifetimes {
+        receipt["lifecycle_events"] = json!(lifetime.events);
+    }
     serde_json::to_writer_pretty(create(&config.output.join("receipt.json"))?, &receipt)?;
     golden.publish(
         if config.reference.is_none() {

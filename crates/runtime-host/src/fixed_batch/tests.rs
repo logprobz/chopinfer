@@ -247,6 +247,7 @@ fn mixed_trace(prompts: &[Vec<u32>], groups: &[&[usize]], decode: &[usize], step
     };
     let mut histories = prompts.to_vec();
     let mut trace = Trace {
+        lifecycle: Vec::new(),
         version: MIXED_DECODE,
         concurrency: prompts.len(),
         vocabulary: 1024,

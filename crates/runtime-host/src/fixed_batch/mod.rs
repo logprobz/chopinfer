@@ -3,6 +3,7 @@
 #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
 mod device;
 mod diagnostic;
+mod lifecycle;
 mod record;
 #[cfg(test)]
 mod tests;

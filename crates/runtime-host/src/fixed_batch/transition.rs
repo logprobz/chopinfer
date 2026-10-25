@@ -83,6 +83,24 @@ pub struct History {
 }
 
 impl History {
+    pub fn tokens(&self, slot: usize) -> Result<&[u32], String> {
+        self.committed
+            .get(slot)
+            .map(Vec::as_slice)
+            .ok_or_else(|| "unknown history slot".into())
+    }
+
+    pub fn replace(&mut self, slot: usize, tokens: Vec<u32>) -> Result<(), String> {
+        if tokens
+            .iter()
+            .any(|&token| token as usize >= self.vocabulary)
+        {
+            return Err("invalid restored history token".into());
+        }
+        *self.committed.get_mut(slot).ok_or("unknown history slot")? = tokens;
+        Ok(())
+    }
+
     pub fn new(trace: &Trace) -> Self {
         Self {
             vocabulary: trace.vocabulary,

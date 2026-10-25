@@ -21,6 +21,8 @@ pub struct Trace {
     pub concurrency: usize,
     pub vocabulary: usize,
     pub steps: Vec<Step>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lifecycle: Vec<super::lifecycle::Boundary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,6 +60,13 @@ pub enum Mode {
 }
 
 impl Trace {
+    pub fn transitions(&self) -> bool {
+        matches!(
+            self.version,
+            super::transition::VERSION | super::lifecycle::VERSION
+        )
+    }
+
     /// An explicit input is never regenerated, including for a baseline arm.
     pub fn select(
         path: &std::path::Path,
@@ -158,6 +167,7 @@ impl Trace {
             concurrency,
             vocabulary,
             steps,
+            lifecycle: Vec::new(),
         }
     }
 
@@ -205,9 +215,12 @@ impl Trace {
         const FRAME_FIXED: u64 = 4096;
         let mask = NUMBER * (self.vocabulary as u64).div_ceil(32) + 16;
         let mut committed = vec![0; self.concurrency];
+        let lifecycle = (self.version == super::lifecycle::VERSION)
+            .then(|| super::lifecycle::analyze(self).expect("validated lifecycle trace"));
         self.steps
             .iter()
-            .map(|step| {
+            .enumerate()
+            .map(|(index, step)| {
                 // Only grammar steps constrain their rows; mixed steps
                 // sample seeded and filtered rows.
                 let grammar = step.mode == Mode::Grammar;
@@ -216,7 +229,9 @@ impl Trace {
                     .map(|item| {
                         let rows = 1 + item.drafts as u64;
                         // A row's history extends by at most the item's drafts.
-                        let history = if self.version == super::transition::VERSION {
+                        let history = if let Some(lifecycle) = &lifecycle {
+                            lifecycle.histories[index][item.slot]
+                        } else if self.version == super::transition::VERSION {
                             let history = committed[item.slot] + item.inputs.len();
                             committed[item.slot] += item.kept;
                             history
@@ -268,6 +283,11 @@ impl Trace {
 
     /// Tokens each request holds after the trace's last step.
     pub fn final_tokens(&self) -> usize {
+        if self.version == super::lifecycle::VERSION {
+            return super::lifecycle::analyze(self)
+                .expect("validated lifecycle trace")
+                .peak_tokens;
+        }
         if self.version == super::transition::VERSION {
             let mut committed = vec![0; self.concurrency];
             for item in self.steps.iter().flat_map(|step| &step.items) {
@@ -299,6 +319,12 @@ impl Trace {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.version == super::lifecycle::VERSION {
+            return super::lifecycle::analyze(self).map(|_| ());
+        }
+        if !self.lifecycle.is_empty() {
+            return Err("lifecycle actions require their own trace version".into());
+        }
         if self.version == super::transition::VERSION {
             return super::transition::validate(self);
         }

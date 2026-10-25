@@ -14,13 +14,12 @@ BF16 rounding epilogue. The existing ceil quantizer follows gate/up. Down
 retains F32 output. The separate shared expert and final routed sum keep
 their existing arithmetic and graph dependencies.
 
-The entries are compiled and locked under `routed_moe_streamed`. SM120
-Flash TP4 serves both expert banks with the streamed path for decode and
-verify through 64 rows, except DSpark Decode-1 uses compact columns.
-Separate preparation ranges retain that one-row crossover, select the
-8-row entry through eight rows and the 64-row entry above that. Verify-1
-still uses streamed. Prefill, verify above 64 rows, other ranks and other
-geometries retain the old path.
+The entries remain compiled and locked under `routed_moe_streamed`.
+Flash TP4 retains them as the baseline beneath the measured direct MoE
+admissions in `bundle/src/sm120/moe_direct.rs`. The direct route now covers
+the decode buckets and its qualified verify ranges; the historical streamed
+comparison below records the earlier adoption. The raw streamed registration
+retains compact columns for drafter Decode-1.
 
 On 2026-10-19 at 250 W, all 50 complete graph cases passed bitwise,
 including all 40 eligible streamed cases. Each compared 12 output views
@@ -47,15 +46,10 @@ despite its isolated projection wins:
 
 The second previous/streamed pair regresses 3.138%. The threshold crossing
 is small, but the 7-8 us loss repeats and compact columns are fastest in
-both runs. Serving therefore selects compact gate/up and down only for
-DSpark TP4 Decode-1. This is a whole-graph crossover with the current ceil
-quantizers; changes to those quantizers need new timing evidence.
-
-The job retains streamed as a diagnostic arm at that bucket and compares
-all six arms bitwise. It asserts the selected compact launch grids, while
-keeping both timing gates at 3%. A failure names whether it compares the
-serial baseline or previous overlapped serving selection. No threshold,
-sampling method or quantizer arithmetic changed for this fallback.
+both runs. The measured compact-column crossover became the drafter Decode-1
+baseline. Later direct MoE admissions supersede that baseline at their
+qualified buckets. The retained lab job still compares all six historical
+arms bitwise, with dropped-join controls and fixed timing gates.
 
 ## CPU audit, 2026-10-19
 
@@ -79,8 +73,7 @@ old gate/up has only 54 useful CTAs and down has 480. The active grid caps
 at 376 CTAs; gate/up uses 216. Streamed gate/up has 2,160 independent chain
 items and down has 2,400, with a small-queue grid capped at 1,504 CTAs.
 These counts and compiler resources suggest more load concurrency; they
-do not measure achieved occupancy or bandwidth. Register pressure in the
-wide gate/up entry and partial-buffer traffic still need device measurement.
+do not measure achieved occupancy or bandwidth. The paired device measurements above carry the timing evidence.
 
 ## Qualification and profiling
 
@@ -109,8 +102,5 @@ or require counter access. The previous profile attempt failed with
 failure was independent of kernel correctness. The CPU `--static` mode
 saves resource tables and SASS without using a GPU.
 
-The staged job runs two idle GPUs at a checked 250 W cap, records Xids via
-`journalctl -k`, and terminates child process groups on SIGTERM. Its dry run
-checks the pinned binary, test coverage and driver linkage without launching
-CUDA work. Restaging and routing validation use CPU checks only; the
-measurements above come from the completed qualification run.
+GPU qualification requires assigned idle devices. Restaging and routing
+validation use CPU checks only.

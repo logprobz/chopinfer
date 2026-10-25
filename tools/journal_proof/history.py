@@ -8,13 +8,13 @@ operation, so an operation cannot move across another owner's operation
 unless a declared rewrite removes or merges it."""
 import collections
 import re
-from engine import RAW, Unproven, require
+from engine import KERNEL_SYMBOL, RAW, Unproven, require
 from common import need
 
 _SPAN = r'DeviceBufferSpanV1 \{ buffer: BundleDeviceBufferHandleV1 \{ raw: \d+ \}, offset: \d+, length: \d+ \}'
 # Every FakeDevice operation form. Numbered groups are typed identities.
 FORMS = [
-    ('launch', re.compile(r'launch (\d+) chop_\w+ (?:rows \d+ )?LaunchConfigV1 \{.*\} \[.*\]'), ('stream',)),
+    ('launch', re.compile(r'launch (\d+) ' + KERNEL_SYMBOL + r' (?:rows \d+ )?LaunchConfigV1 \{.*\} \[.*\]'), ('stream',)),
     ('launch', re.compile(r'launch r\d+ .+'), ()),
     ('upload', re.compile(rf'upload (\d+) {_SPAN} [0-9a-f]{{16}}'), ('stream',)),
     ('upload', re.compile(r'upload (?:encoder )?arena \d+'), ()),
@@ -40,7 +40,15 @@ FORMS = [
     # The returned handle, when a journal records it, maps as a buffer.
     ('allocate', re.compile(r'allocate \d+ \d+(?: -> raw: \d+)?'), ()),
     ('state', re.compile(r'state \d+'), ()),
-    ('state', re.compile(r'serving kv \d+'), ()),
+    ('state', re.compile(r'serving kv(?: \d+)?'), ()),
+    # Gather handles use issued event proxies; waits name streams. Index
+    # byte lengths, row counts, ranks and view IDs are literal values.
+    ('mapped-gather', re.compile(r'async mapped create (\d+)'), ('issued',)),
+    ('mapped-gather', re.compile(r'async mapped release (\d+)'), ('issued',)),
+    ('mapped-gather', re.compile(r'async mapped wait (\d+)'), ('stream',)),
+    ('mapped-gather', re.compile(r'async mapped ids \d+ \d+'), ()),
+    ('mapped-gather', re.compile(r'async mapped complete'), ()),
+    ('mapped-gather', re.compile(r'mapped gather \d+ [A-Za-z0-9_.-]+'), ()),
     ('resolve', re.compile(r'resolve (\d+) \S+'), ('function',)),
     ('configure', re.compile(r'configure (\d+) \d+'), ('function',)),
     ('module', re.compile(r'module (\d+) \S+'), ('function',)),

@@ -7,6 +7,7 @@ ALLOC = re.compile(r'^allocate (\d+) (\d+)(?: -> raw: (\d+))?$')
 RESOLVE = re.compile(r'^resolve (\d+) (\S+)$')
 MODULE = re.compile(r'^module (\d+) (\S+)$')
 CONFIGURE = re.compile(r'^configure (\d+) (\d+)$')
+KERNEL_SYMBOL = r'(?:[A-Za-z_][A-Za-z0-9_]*_)?chop_\w+'
 
 
 class Unproven(ValueError):
@@ -23,7 +24,7 @@ def launch(line):
         return None
     at = line.index('LaunchConfigV1 {')
     prefix = line[:at]
-    match = re.fullmatch(r'launch (.+?) (chop_\w+) (?:rows (\d+) )?', prefix)
+    match = re.fullmatch(rf'launch (.+?) ({KERNEL_SYMBOL}) (?:rows (\d+) )?', prefix)
     require(match is not None, 'unknown launch prefix')
     config, end = balanced(line, line.index('{', at))
     suffix = line[end:].strip()

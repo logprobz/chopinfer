@@ -52,6 +52,13 @@ sidecars. Reads of these files refuse symlinks and nonregular files. Create jour
 use `-create` before either suffix; the fixture and spec writers apply the
 same rules to both.
 
+The operation grammar includes optional prefixes before `chop_` kernel
+symbols and mapped-gather records. Gather create/release handles use the
+issued-ID mapping, waits use the stream mapping, and index byte lengths,
+row counts, ranks and view IDs compare literally. A bare `serving kv`
+record compares literally too. These forms remain subject to the same
+resource and operation-order checks as other device records.
+
 The revision's sources must hold exactly those pins: the literal
 `(lines, 0x<fnv>)` tuples of the Rust files under the bundle directory that
 call `check_journal` must equal, as a multiset, the captured journals' pins.

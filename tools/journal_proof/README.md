@@ -55,6 +55,17 @@ same rules to both.
 The revision's sources must hold exactly those pins: the literal
 `(lines, 0x<fnv>)` tuples of the Rust files under the bundle directory that
 call `check_journal` must equal, as a multiset, the captured journals' pins.
+The only exception is a named alias for an excess check of a table pin:
+its call site (and every repeated check) must pass a plain place, its pin
+must occur among the source literals, and its body must match a retained
+journal with that pin by SHA-256. Literal-site checks cannot be aliases.
+The retained pins must still equal the entire source multiset. A v3 index
+records every alias in `pin_aliases`; the proof recomputes that map and
+names it in both its claim and coverage. All journals and device histories
+remain subject to comparison. Captures without aliases keep their existing
+index and report fields. V2 captures cannot carry aliases because they do
+not record call sites.
+
 An unreached literal pin, a captured pin that is not a literal, a missing
 body and an extra body are all invalid input. A journal of zero lines (a guard
 such as "no gaps remain") is pinned `(0, 0xcbf29ce484222325)`, the FNV-1a of no

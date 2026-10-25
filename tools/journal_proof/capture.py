@@ -7,8 +7,9 @@ Usage: capture.py --repo REPO --model ID --revision REV --out NEW_DIR
 
 The archive's bundle lib tests run once, with the journal dump and the
 fake-host trace patched into the archive copy only. Every dumped journal
-must match its pin, and the pins must be exactly the bundle sources'
-literal pin tuples. The bodies, the device traces (aux/) and a sealed
+must match its pin, and the pins, after explicit byte-identical table-read
+aliases, must be exactly the bundle sources' literal pin tuples.
+The bodies, the device traces (aux/) and a sealed
 v3 index (index.json) form the capture. A capture's journals, aux/ and
 index.json depend only on the revision and the helper, not on the runner
 or the number of jobs. See README.md.
@@ -428,7 +429,7 @@ def capture(repo, model, revision, out, local_env, runner='libtest', jobs=1, car
                     minimum_free_gib, allowed)
                 record['timings']['wall_seconds'] = round(time.monotonic() - started, 1)
                 repeated = merge_checks(out)
-                pins, bodies, sites = dumped(out, repo, commit, bundle + '/', repeated)
+                pins, bodies, sites, aliases = dumped(out, repo, commit, bundle + '/', repeated)
                 auxiliary = collect_auxiliary(out, dict(commit=commit, pins=set(pins)), bodies)
                 need(helper_identity(ROOT) == helper_at_start, 'helper files changed during capture; no provenance seal issued')
                 helper_digest, helper_files = helper_at_start
@@ -444,6 +445,8 @@ def capture(repo, model, revision, out, local_env, runner='libtest', jobs=1, car
                                auxiliary_files={str(p.relative_to(out)): digest(p)
                                                 for p in sorted((out / 'aux').rglob('*')) if p.is_file()},
                                patches=record['patches'], tests_passed=record['tests_passed'])
+                if aliases:
+                    payload['pin_aliases'] = aliases
                 if allowed is not None:
                     payload['allowed_ignored'] = dict(sha256=allowed['sha256'], tests=allowed['tests'])
                 (out / 'index.json').write_text(json.dumps(seal(payload), indent=2, sort_keys=True) + '\n')

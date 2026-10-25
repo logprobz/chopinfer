@@ -231,6 +231,8 @@ def check(repo,model,base_rev,head_rev,spec,base_index,head_index,declaration_re
                   # Declared span lengths in buffers the device never
                   # allocated: exact, but bounded by no allocation.
                   unbounded_host_span_lengths=sum(c.get('host_span_lengths',0) for c in (counts,auxiliary_counts,history_counts)))
+    if base.get('pin_aliases') or head.get('pin_aliases'):
+        coverage['pin_aliases'] = dict(base=base['pin_aliases'], head=head['pin_aliases'])
     return dict(schema='chopinfer.journal-proof.report.v1',passed=passed,status='PROVEN' if passed else 'NOT PROVEN',
                 model=model,base=base['commit'],head=head['commit'],manifest_counts=dict(base=len(b),head=len(h)),
                 layout_declaration=layout_record,
@@ -281,6 +283,11 @@ def claim(coverage=None):
     if coverage['text_fixtures']:
         compared['text_journals']=('Journals checked without a fake device (text fixtures '+', '.join(coverage['text_fixtures'])+
             '): each body byte for byte, or under its declared text_edits. They have no device history, create or handle mapping.')
+    if coverage.get('pin_aliases'):
+        compared['pin_aliases'] = ('Excess table-read checks share source literal pins and SHA-256-identical bodies: ' +
+            '; '.join(f'{side}: {alias} aliases {original}' for side, aliases in coverage['pin_aliases'].items()
+                      for alias, original in sorted(aliases.items())) +
+            '. Every named journal and its fixture remain in the proof.')
     if coverage.get('unloaded_module_fixtures'):
         not_compared.insert(0,'Symbols resolved from module handles the device never loaded (fixtures '+
                             ', '.join(coverage['unloaded_module_fixtures'])+') keep their literal handle; their module bytes are not authenticated.')

@@ -6,7 +6,8 @@ body's SHA-256 under the helper seal. Each body's (line count, FNV-1a) is
 its pin. The revision's own sources must hold exactly those pins: the
 literal `(lines, 0x<fnv>)` tuples of every Rust file under the model's
 bundle directory that calls `check_journal` must equal, as a multiset, the
-pins of the captured journals. A literal pin the tests never reached, a
+pins of the captured journals after accounting for explicit byte-identical
+table-read aliases (pin_aliases). A literal pin the tests never reached, a
 computed pin that is not a literal, or an extra captured body therefore
 fails closed.
 
@@ -104,6 +105,15 @@ def source_pins(repo, commit, root):
     return pins, sources, sites
 
 
+def validate_repeated(repeated, checked):
+    repeated = {} if repeated is None else repeated
+    need(isinstance(repeated, dict) and set(repeated) <= set(checked)
+         and all(isinstance(made, list) and made and all(isinstance(c, list) and len(c) == 3 and isinstance(c[0], str)
+                                                          and isinstance(c[1], str) and type(c[2]) is int for c in made)
+                 for made in repeated.values()), 'invalid repeated checks')
+    return repeated
+
+
 def check_sites(sites, checked, pins, repeated=None):
     """Every captured journal was checked at a found call site, with that
     site's literal pin if it has one, and every call site was reached. The
@@ -113,11 +123,7 @@ def check_sites(sites, checked, pins, repeated=None):
     `checked` maps each journal to its (path, line); `pins` to [lines, fnv];
     `repeated` to the [test, path, line] of its other checks, by other tests
     with the same body (capture.merge_checks)."""
-    repeated = repeated or {}
-    need(isinstance(repeated, dict) and set(repeated) <= set(checked)
-         and all(isinstance(made, list) and made and all(isinstance(c, list) and len(c) == 3 and isinstance(c[0], str)
-                                                          and isinstance(c[1], str) and type(c[2]) is int for c in made)
-                 for made in repeated.values()), 'invalid repeated checks')
+    repeated = validate_repeated(repeated, checked)
     calls = [(name, site) for name, site in checked.items()]
     calls += [(name, (path, line)) for name, made in repeated.items() for _, path, line in made]
     unknown = sorted({site for _, site in calls if site not in sites})
@@ -197,6 +203,40 @@ def check_literals(captured, literals):
          f'unreached {sorted((literals - captured).elements())[:5]}, unpinned {sorted((captured - literals).elements())[:5]}')
 
 
+def pin_aliases(pins, literals, sites, checked, hashes, repeated=None):
+    """Account for excess table-read checks of byte-identical bodies.
+
+    Keep every literal-site journal and at least one journal per SHA-256.
+    Only excess occurrences of a source literal can alias a retained body;
+    the retained pins must still equal the complete source multiset.
+    Shorter names, then lexical order, choose the representative. Every
+    call site, including repeated checks, is authenticated by check_sites.
+    """
+    calls = {name: [tuple(site)] for name, site in checked.items()}
+    for name, made in validate_repeated(repeated, checked).items():
+        calls.setdefault(name, []).extend((path, line) for _, path, line in made)
+    groups = collections.defaultdict(list)
+    for name, pin in pins.items():
+        groups[tuple(pin)].append(name)
+    retained, aliases = collections.Counter(), {}
+    for pin, names in sorted(groups.items()):
+        remaining = sorted(names, key=lambda n: (len(n), n))
+        removed = []
+        if literals[pin]:
+            for name in reversed(remaining[:]):
+                if len(remaining) <= literals[pin]:
+                    break
+                table = calls.get(name) and all(site in sites and sites[site] is None for site in calls[name])
+                if table and any(other != name and hashes[other] == hashes[name] for other in remaining):
+                    remaining.remove(name)
+                    removed.append(name)
+        retained[pin] = len(remaining)
+        for name in removed:
+            aliases[name] = next(other for other in remaining if hashes[other] == hashes[name])
+    check_literals(retained, literals)
+    return dict(sorted(aliases.items()))
+
+
 def read_site(path):
     """A `.site` sidecar: the source path and line of the check_journal call
     that checked the journal."""
@@ -209,25 +249,26 @@ def read_site(path):
 def dumped(out, repo, commit, root, repeated=None):
     """The journals a capture run dumped into `out`, each with the `.pin`
     sidecar of its check and the `.site` sidecar of its call:
-    {name: [lines, fnv]}, the bodies and {name: [path, line]}. They must be
-    exactly the revision's source pins, checked at its call sites, with
-    every call site reached (`repeated`: capture.merge_checks)."""
+    {name: [lines, fnv]}, the bodies, {name: [path, line]} and pin aliases.
+    After accounting for aliases they must be exactly the revision's source
+    pins, with every call site reached (`repeated`: capture.merge_checks)."""
     out = Path(out)
     names = sorted(p.name for suffix in JOURNAL_SUFFIXES for p in out.glob('*' + suffix))
     sidecars = sorted(p.name.removesuffix('.pin') for suffix in JOURNAL_SUFFIXES for p in out.glob('*' + suffix + '.pin'))
     need(names == sidecars, f'dumped journals and pin sidecars differ: {sorted(set(names) ^ set(sidecars))[:5]}')
-    pins, bodies, checked = {}, {}, {}
+    pins, bodies, checked, hashes = {}, {}, {}, {}
     for name in names:
         need(JOURNAL.fullmatch(name) is not None, f'unsafe journal name {name}')
         data, lines, value = body_pin(out / name, name)
         pins[name] = [lines, value]
         bodies[name] = body_lines(data)
+        hashes[name] = hashlib.sha256(data).hexdigest()
         need((out / f'{name}.site').is_file(), f'{name}: no call site was recorded')
         checked[name] = read_site(out / f'{name}.site')
     literals, _, sites = source_pins(repo, commit, root)
-    check_literals(collections.Counter(tuple(p) for p in pins.values()), literals)
+    aliases = pin_aliases(pins, literals, sites, checked, hashes, repeated)
     check_sites(sites, {name: tuple(site) for name, site in checked.items()}, pins, repeated)
-    return pins, bodies, checked
+    return pins, bodies, checked, aliases
 
 
 def bindings(payload, root):
@@ -281,17 +322,23 @@ def snapshot(repo, revision, model, index):
         origins[name] = dict(origin=str(path), sha256=sha, authenticated_origins=[str(path)])
     if 'pins' in payload:
         need(set(payload['pins']) == set(pins), 'sealed pins and captured journals differ')
-    check_literals(collections.Counter((p['lines'], p['fnv1a']) for p in pins.values()), literals)
+    aliases = {}
     if payload['schema'] == 'chopinfer.journal-captures.v2':
+        check_literals(collections.Counter((p['lines'], p['fnv1a']) for p in pins.values()), literals)
         coverage = ('not recorded: a v2 capture names no call sites; its helper authenticated the bodies '
                     'against a source manifest that covered every check_journal call')
     else:
         recorded = payload.get('sites')
         need(isinstance(recorded, dict) and set(recorded) == set(pins), 'v3 capture index does not name every call site')
+        aliases = pin_aliases({name: [pin['lines'], pin['fnv1a']] for name, pin in pins.items()}, literals, sites,
+                              recorded, {name: origin['sha256'] for name, origin in origins.items()},
+                              payload.get('repeated_checks'))
         check_sites(sites, {name: tuple(site) for name, site in recorded.items()},
                     {name: [pin['lines'], pin['fnv1a']] for name, pin in pins.items()}, payload.get('repeated_checks'))
         coverage = 'every call site (literal or table read) checked a captured journal'
         if payload.get('repeated_checks'):
             coverage += (f'; {len(payload["repeated_checks"])} journals were also checked by other tests, '
                          'each with the same body and pin')
-    return dict(commit=commit, model=model, root=root, pins=pins, sources=sources, call_sites=coverage), bodies, origins
+    need(payload.get('pin_aliases', {}) == aliases, 'sealed pin aliases differ from the authenticated source pins and bodies')
+    return dict(commit=commit, model=model, root=root, pins=pins, sources=sources, call_sites=coverage,
+                pin_aliases=aliases), bodies, origins

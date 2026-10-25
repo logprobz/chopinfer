@@ -299,6 +299,14 @@ fn paired_chain_timing_on_gpu() {
             }
         }
         assert_eq!(measured, 24);
+        s.receipt(
+            "hc-small-row-timing",
+            std::collections::BTreeMap::from([
+                ("cases".into(), json!(measured)),
+                ("calls_per_graph".into(), json!(32)),
+                ("correct".into(), json!(true)),
+            ]),
+        )?;
         eprintln!("HC_SMALL_TIMING_COMPLETE cases={measured}");
         Ok(())
     })

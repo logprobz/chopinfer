@@ -15,6 +15,7 @@ OUTPUT_DIR and tabulates it with report.costs, and fails unless every
 server and window parsed and the costs table holds every recorded
 full-concurrency shape.
 """
+import hashlib
 import json
 import re
 import sys
@@ -30,6 +31,13 @@ import tune  # noqa: E402
 def main(recorded, output):
     recorded, output = Path(recorded).resolve(), Path(output).resolve()
     config = json.loads((recorded / 'config.json').read_text())
+    source_path = recorded / 'summary.json'
+    source_body = source_path.read_bytes() if source_path.exists() else b'{}'
+    source_summary = json.loads(source_body)
+    if source_summary.get('status') == 'void' or source_summary.get('source_validity', {}).get('status') == 'void':
+        raise ValueError('void source cannot be adapted or pooled')
+    provenance = {'status': source_summary.get('status', 'unknown'),
+                  'summary_sha256': hashlib.sha256(source_body).hexdigest() if source_path.exists() else None}
     model = config['model']
     gpus = model['tensor_parallel_size']
     kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
@@ -78,12 +86,14 @@ def main(recorded, output):
     if not processes or not windows:
         raise SystemExit(f'{recorded}: no recorded servers or windows')
     r.write(output / 'config.json', config)
-    r.write(output / 'summary.json', {'processes': processes})
+    r.write(output / 'summary.json', {**source_summary, 'status': provenance['status'],
+                                     'source_validity': provenance, 'processes': processes})
     costs = report.costs(output)
     missing = sorted(shapes - set(costs['cells']))
     if missing:
         raise SystemExit(f'costs table lacks recorded shapes {missing}')
     result = {'passed': True, 'recorded': str(recorded), 'servers': len(processes), 'windows': windows,
+              'source_validity': provenance,
               'full_concurrency_shapes': len(shapes), 'cells': len(costs['cells'])}
     r.write(output / 'recorded-check.json', result)
     print(f"PASS: {len(processes)} recorded servers and {windows} windows parsed, {len(costs['cells'])} cost cells: "

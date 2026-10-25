@@ -473,6 +473,13 @@ def ab(run):
             if not decisions or any(not isinstance(w, (int, float)) or not math.isfinite(w) or w <= 0 for w, _ in decisions):
                 raise ValueError('no valid weighted served cells')
             total = sum(w for w, _ in decisions)
+            available = {f'decode:c{c}': value for c, value in pair.items()}
+            available.update({f'c{c}/{shape}': cell for c, value in pair.items()
+                              for shape, cell in value['cells'].items()})
+            for target in model.get('target_cells', []):
+                cell = available.get(target, {})
+                if cell.get('weight', 0) <= 0 or 'd1' not in cell or 'd2' not in cell:
+                    raise ValueError(f'target {target} is missing, unpaired or has no positive weight')
             targets = [d for _, d in decisions if d['target']]
             if change != 'simplification' and not targets:
                 raise ValueError('no weighted target cells')

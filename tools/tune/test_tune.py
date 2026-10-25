@@ -33,7 +33,55 @@ def window(run, label, kind, c, depth, rate, histogram):
     path.write_text(json.dumps(record))
 
 
+def ab_fixture(root, **overrides):
+    model = {**MODEL, 'mode': 'ab', 'concurrencies': [8], 'tensor_parallel_size': 1,
+             'arms': [{'label': label, 'depth': 3} for label in ('a', 'b')],
+             'pairs': [['a', 'b']], **overrides}
+    config = {**CONFIG, 'model': model, 'kinds': {'sampled': 1},
+              'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
+    power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
+    summary = {'status': 'passed', 'exactness': {'passed': True}, 'processes': {},
+               'power': {'before': power, 'after': power}}
+    for visit in tune.visits(config):
+        repeat = visit['passes'][0][0]
+        for _, c in visit['passes'][0][1]:
+            rate = 100 if visit['arm'] == 'a' else 110
+            row = {'arm': visit['arm'], 'visit': visit['visit'], 'repeat': repeat, 'kind': 'sampled',
+                   'concurrency': c, 'depth': 3, 'request_tokens_per_second': rate,
+                   'window_seconds': 15, 'request_seconds': 15, 'temperature': 1.0,
+                   'cached_prompt_tokens': 0, 'seed_set': tune.seed_set(config, repeat, c),
+                   'faults': {'complete': True, 'major_faults': 0},
+                   'full': {'tokens_per_second': rate, 'histogram': {}, 'steps': 20, 'tokens': 100,
+                            'allocated_steps': 0},
+                   'energy': {'joules_per_token': 1, 'sm_mhz_range': [[1800, 1800]],
+                              'enforced_power_limits_w': [250]},
+                   'cells': {f'i{c}-r32': {'cycle_ms': [100 / rate] * 20, 'execution_ms': [1] * 20}}}
+            tune.r.write(root / visit['label'] / 'windows' / f'c{c}.json', row)
+        summary['processes'][visit['label']] = {'process_group': visit['visit'] + 1,
+            'weights': {'source': 'borrowed'}, 'faults': {'complete': True, 'major_faults': 0},
+            'power_before': power, 'power_after': power}
+    tune.r.write(root / 'config.json', config)
+    tune.r.write(root / 'summary.json', summary)
+    return config, summary
+
+
 class Tuner(unittest.TestCase):
+    def test_declared_target_cannot_disappear(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ab_fixture(root, target_cells=['decode:c8', 'c8/i8-r64'])
+            with self.assertRaisesRegex(ValueError, 'target'):
+                report.ab(root)
+
+    def test_recorded_adapter_refuses_void_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tune.r.write(root / 'source/config.json', {'model': {'tensor_parallel_size': 1,
+                                                                  'kv_pages_line': 'fixture {pages}'}})
+            tune.r.write(root / 'source/summary.json', {'status': 'void', 'errors': ['power changed']})
+            with self.assertRaisesRegex(ValueError, 'void'):
+                recorded.main(root / 'source', root / 'output')
+
     def test_void_run_cannot_be_pooled_by_other_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -25,6 +25,7 @@ for model in ${checkpoint_envs}; do
     extra_var=CHOPINFER_${model}_EXTRA_CHECKPOINTS
     if [[ ${CHOPINFER_CI_CHECKPOINT_TESTS:-0} != 1 ]]; then unset "$checkpoint_var" "$extra_var"; fi
 done
+export CHOPINFER_ROUTE_SWEEP=quick
 # The CI Rust dev and test profile (ci/rust-profile.env).
 while IFS='=' read -r name value; do
     if [[ $name =~ ^[A-Z_]+$ ]]; then export "$name=${!name:-$value}"; fi

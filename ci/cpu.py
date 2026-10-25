@@ -202,6 +202,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         # import, before setUpModule. Pass the fresh copy to the interpreter.
         step("spec-bench", PY + ["tests/test_spec_bench.py"], readers, **scoring),
         step("spec-verify", PY + ["tests/test_spec_verify.py"]),
+        step("route-guard", PY + ["-m", "unittest", "discover", "-s", "tools/route_guard", "-p", "test_*.py"]),
         step("profile-tools", PY + ["-m", "unittest", "discover", "-s", "tools/profile", "-p", "test_*.py", "-v"],
              readers, **scoring),
         step("nvcc-cache", PY + ["-m", "unittest", "discover", "-s", "tools/nvcc_cache", "-p", "test_*.py", "-v"]),

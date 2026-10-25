@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+import route_sweeps
+
 PINNED = "0.9.146"
 LOCKED = ["--locked", "--offline"]
 
@@ -49,11 +51,11 @@ def one_process_libraries(selection, packages=None):
     return declared if selection == ["--workspace"] else [name for name in declared if name in selection[1::2]]
 
 
-def commands(selection, runner, threads, profile="ci", one_process=(), binaries_metadata=None):
+def commands(selection, runner, threads, profile="ci", one_process=(), binaries_metadata=None, skip_routes=False):
     """The commands that run `selection` (["--workspace"] or -p pairs).
     Library tests of the `one_process` packages are left out of nextest."""
     if runner == "cargo":
-        return [["cargo", "test", *selection, *LOCKED]]
+        return [["cargo", "test", *selection, *LOCKED, *(["--", "--skip", "route_sweep::"] if skip_routes else [])]]
     # The metadata already names the built selection; nextest refuses Cargo
     # build options when reusing it. Doctests still use the original selection.
     build_selection = [] if binaries_metadata else selection
@@ -61,8 +63,11 @@ def commands(selection, runner, threads, profile="ci", one_process=(), binaries_
     run = ["cargo", "nextest", "run", *build_selection, "--profile", profile, "--no-tests", "warn", *build_options]
     if threads:
         run[3:3] = ["--test-threads", str(threads)]
-    if one_process:
-        run += ["-E", "not (" + " | ".join(f"binary_id(={name})" for name in one_process) + ")"]
+    excluded = [f"binary_id(={name})" for name in one_process]
+    if skip_routes:
+        excluded.append("test(/route_sweep::/)")
+    if excluded:
+        run += ["-E", "not (" + " | ".join(excluded) + ")"]
     doc = selection if selection == ["--workspace"] else [
         argument for name in library_packages(selection[1::2]) for argument in ("-p", name)]
     return [run] + ([["cargo", "test", *doc, "--doc", *LOCKED]] if doc else [])
@@ -120,23 +125,30 @@ def run_nextest(selection, threads):
     """Nextest for everything, one-process libraries beside it; then doctests."""
     packages = workspace_packages()
     one_process = one_process_libraries(selection, packages)
-    run, *doc = commands(selection, "nextest", threads, one_process=one_process)
+    routes = route_sweeps.libraries(selection, packages)
+    run, *doc = commands(selection, "nextest", threads, one_process=one_process, skip_routes=bool(routes))
     children = []
     with tempfile.TemporaryDirectory(prefix="chopinfer-rust-tests-") as logs:
         try:
-            if one_process:
+            route_status = 0
+            if one_process or routes:
                 # Reuse the listed build so Cargo cannot replace a running test's executable.
                 metadata = os.path.join(logs, "binaries.json")
-                binaries = library_binaries(selection, one_process, packages, metadata)
+                binaries = library_binaries(selection, sorted(set(one_process) | set(routes)), packages, metadata)
                 run = commands(selection, "nextest", threads, one_process=one_process,
-                               binaries_metadata=metadata)[0]
-                for name, (binary, cwd, env) in binaries.items():
+                               binaries_metadata=metadata, skip_routes=bool(routes))[0]
+                route_status = route_sweeps.run({name: binaries[name] for name in routes},
+                                               os.environ.get("CHOPINFER_ROUTE_SWEEP", "quick"))
+                for name in one_process:
+                    binary, cwd, env = binaries[name]
                     log = open(os.path.join(logs, name + ".log"), "w+b")
                     print(f"rust tests: {name} library tests in one process beside nextest", file=sys.stderr, flush=True)
-                    children.append((name, subprocess.Popen([binary], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                    children.append((name, subprocess.Popen([binary, *(["--skip", "route_sweep::"] if routes else [])], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                                             stdout=log, stderr=subprocess.STDOUT), log))
             status = subprocess.run(run).returncode
             failed = [" ".join(run)] if status else []
+            if route_status:
+                failed.append("route envelopes")
             for name, child, log in children:
                 code = child.wait()
                 log.seek(0)
@@ -161,6 +173,31 @@ def run_nextest(selection, threads):
     return 1 if failed else 0
 
 
+def cargo_route_binaries(names, packages):
+    if not names:
+        return {}
+    selection = [item for name in names for item in ("-p", name)]
+    output = subprocess.check_output(["cargo", "test", *selection, "--lib", "--no-run",
+                                      "--message-format=json", *LOCKED], text=True)
+    directories = {p["name"]: os.path.dirname(p["manifest_path"]) for p in packages}
+    binaries = {}
+    for line in output.splitlines():
+        message = json.loads(line)
+        if message.get("reason") != "compiler-artifact" or not message.get("executable"):
+            continue
+        target = message.get("target", {})
+        for name in names:
+            if target.get("name") == name.replace("-", "_") and message.get("profile", {}).get("test"):
+                binary = message["executable"]
+                env = dict(os.environ, CARGO_MANIFEST_DIR=directories[name], CARGO_PKG_NAME=name)
+                env["LD_LIBRARY_PATH"] = os.pathsep.join([os.path.dirname(binary),
+                    *([os.environ["LD_LIBRARY_PATH"]] if os.environ.get("LD_LIBRARY_PATH") else [])])
+                binaries[name] = (binary, directories[name], env)
+    if set(binaries) != set(names):
+        raise ValueError("missing model library binaries for route sweeps")
+    return binaries
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", action="store_true")
@@ -181,7 +218,12 @@ def run(selection, requested, threads):
     print(note, file=sys.stderr, flush=True)
     if runner == "nextest":
         return run_nextest(selection, threads)
-    status = subprocess.run(commands(selection, runner, threads)[0]).returncode
+    packages = workspace_packages()
+    routes = route_sweeps.libraries(selection, packages)
+    route_status = route_sweeps.run(cargo_route_binaries(routes, packages),
+                                   os.environ.get("CHOPINFER_ROUTE_SWEEP", "quick"))
+    status = subprocess.run(commands(selection, runner, threads, skip_routes=bool(routes))[0]).returncode
+    status = status or route_status
     if status:
         print(f"rust tests: cargo test failed with exit {status}", file=sys.stderr)
     return status

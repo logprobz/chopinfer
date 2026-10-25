@@ -23,6 +23,7 @@ import cpu
 import qualification
 import runner
 import rust_tests
+import route_sweeps
 
 
 def shell(script):
@@ -639,6 +640,79 @@ class Qualification(unittest.TestCase):
         directories = [line.split()[1:] for line in log.splitlines() if line.startswith("dirs ")]
         self.assertEqual(len(directories), 3)
         self.assertEqual(len({path for pair in directories for path in pair}), 6)
+
+
+class RouteSweeps(unittest.TestCase):
+    def test_new_model_is_discovered_from_its_required_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "route-allowlist.toml").write_text("")
+            packages = [{"name": "future-bundle", "manifest_path": str(root / "Cargo.toml")},
+                        {"name": "shared", "manifest_path": str(root / "shared/Cargo.toml")}]
+            self.assertEqual(route_sweeps.libraries(["--workspace"], packages), ["future-bundle"])
+            self.assertEqual(route_sweeps.libraries(["-p", "shared"], packages), [])
+
+    def test_budget_warns_loudly_and_missing_execution_fails(self):
+        output = "12 cases, 0.1s\npeak_rss_bytes=1024\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
+        with patch.object(sys, "stderr", new_callable=io.StringIO) as error:
+            self.assertEqual(route_sweeps.check("future", output, 0, 20.01, "quick"), 1)
+            self.assertIn("WARNING: ROUTE SWEEP BUDGET EXCEEDED", error.getvalue())
+        for changed, code in [(output, 101), (output.replace("1 passed", "0 passed"), 0),
+                              (output.replace("cases,", "missing"), 0),
+                              (output.replace("peak_rss_bytes=", "missing="), 0)]:
+            with self.assertRaises(RuntimeError):
+                route_sweeps.check("future", changed, code, 1, "quick")
+
+    def test_quick_models_start_in_parallel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            binaries = {}
+            for name in ("first", "second"):
+                binary = root / name
+                binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                    import pathlib, time
+                    root = pathlib.Path(__file__).parent
+                    pathlib.Path(__file__ + ".ready").touch()
+                    end = time.monotonic() + 5
+                    while len(list(root.glob("*.ready"))) < 2:
+                        if time.monotonic() > end:
+                            raise SystemExit(99)
+                        time.sleep(0.01)
+                    print("12 cases, 0.1s")
+                    print("peak_rss_bytes=1024")
+                    print("test result: ok. 1 passed; 0 failed; 0 ignored;")
+                    '''))
+                binary.chmod(0o755)
+                binaries[name] = (str(binary), str(root), dict(os.environ))
+            with patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(route_sweeps.run(binaries, "quick"), 0)
+                self.assertIn("parallel_models=2", output.getvalue())
+                self.assertIn("added_wall_seconds=", output.getvalue())
+
+    def test_cpu_runs_advance_per_model_and_pinned_reproductions_do_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"CHOPINFER_DATA": directory}
+            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 0)
+            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 1)
+            self.assertEqual(route_sweeps.rotation_seed("second", "cpu", env), 0)
+            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", {**env, "CHOPINFER_ROUTE_SEED": "41"}), 41)
+            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 2)
+            with route_sweeps.concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                values = list(pool.map(lambda _: route_sweeps.rotation_seed("parallel", "cpu", env), range(8)))
+            self.assertEqual(sorted(values), list(range(8)))
+            root = pathlib.Path(directory) / "route-guard" / "rotation"
+            key = route_sweeps.hashlib.sha256(b"linked").hexdigest()
+            (root / (key + ".lock")).symlink_to(root / (key + ".json"))
+            with self.assertRaises(OSError):
+                route_sweeps.rotation_seed("linked", "cpu", env)
+        with self.assertRaises(ValueError):
+            route_sweeps.rotation_seed("first", "cpu", {})
+
+    def test_separate_sweeps_are_excluded_from_both_normal_runners(self):
+        cargo = rust_tests.commands(["--workspace"], "cargo", 8, skip_routes=True)[0]
+        self.assertEqual(cargo[-3:], ["--", "--skip", "route_sweep::"])
+        nextest = rust_tests.commands(["--workspace"], "nextest", 8, skip_routes=True)[0]
+        self.assertEqual(nextest[-2:], ["-E", "not (test(/route_sweep::/))"])
 
 
 class RustTests(unittest.TestCase):

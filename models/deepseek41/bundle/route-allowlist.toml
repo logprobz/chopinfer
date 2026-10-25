@@ -1992,85 +1992,85 @@ rows = [[193, 193], [257, 258]]
 reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
 task = "MXFP8-fold-packed-cones"
 
-# Packed two-prompt upper-skip cones also reach these exact outer widths.
-# The small-row removal covered verify and decode only; these are prefill gaps.
+# Both upper-skip profiles reach these packed two-prompt prefill gaps.
+# The complete 36-phase CPU rotation observes every listed profile/entry/row pair.
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
-rows = [[191, 191], [255, 255]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Adjacent aligned prompt-logit intervals merge into 65 or 127 inner rows, between the short-prefill limit of 64 and staged-prefill threshold of 128. The ordinary AR and DSpark profiles use the same fallback. Qualify this inner-row range before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
-rows = [[191, 191], [255, 255]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Adjacent aligned prompt-logit intervals merge into 65 or 127 inner rows, between the short-prefill limit of 64 and staged-prefill threshold of 128. The ordinary AR and DSpark profiles use the same fallback. Qualify this inner-row range before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
-rows = [[191, 191], [255, 255]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Adjacent aligned prompt-logit intervals merge into 65 or 127 inner rows, between the short-prefill limit of 64 and staged-prefill threshold of 128. The ordinary AR and DSpark profiles use the same fallback. Qualify this inner-row range before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
-rows = [[191, 191], [255, 255]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Adjacent aligned prompt-logit intervals merge into 65 or 127 inner rows, between the short-prefill limit of 64 and staged-prefill threshold of 128. The ordinary AR and DSpark profiles use the same fallback. Qualify this inner-row range before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
 symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
-rows = [[193, 193], [257, 257]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[193, 193], [257, 258]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Disjoint aligned prompt-logit intervals retain a separate 64-row inner projection, outside the qualified ticket reuse choices. The ordinary AR and DSpark profiles use the same fallback. Qualify these inner rows before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
-rows = [[193, 193], [257, 257]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[193, 193], [257, 258]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Disjoint aligned prompt-logit intervals retain a separate 64-row inner projection, outside the qualified ticket reuse choices. The ordinary AR and DSpark profiles use the same fallback. Qualify these inner rows before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
 symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
-rows = [[193, 193], [257, 257]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[193, 193], [257, 258]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Disjoint aligned prompt-logit intervals retain a separate 64-row inner projection, outside the qualified ticket reuse choices. The ordinary AR and DSpark profiles use the same fallback. Qualify these inner rows before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-dspark-upper-skip-2048"]
+profiles = ["tp4-ar-upper-skip-2048", "tp4-dspark-upper-skip-2048"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
-rows = [[193, 193], [257, 257]]
-reason = "Known-gap ratchet: the CPU seed-6 packed-2 sweep splits these outer widths into unequal prompt lengths. Their aligned upper-skip cones retain this prefill fold. These exact entry and outer-row pairs remain reachable on main; qualify the packed cone widths before removing this exception"
+rows = [[193, 193], [257, 258]]
+reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2 upper-skip cones at these outer widths. Disjoint aligned prompt-logit intervals retain a separate 64-row inner projection, outside the qualified ticket reuse choices. The ordinary AR and DSpark profiles use the same fallback. Qualify these inner rows before removing this exact exception"
 task = "MXFP8-fold-packed-prefill-cone-tails"

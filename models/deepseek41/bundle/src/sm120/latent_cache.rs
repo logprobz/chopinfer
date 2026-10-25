@@ -22,7 +22,7 @@ pub fn eligible(g: &Geometry, ranks: u32, storage: KvStorage) -> bool {
 pub fn rows(phase: AttentionPhase) -> Vec<u32> {
     match phase {
         AttentionPhase::Decode => vec![1, 2, 4, 8],
-        AttentionPhase::Verify => [4, 6, 32].into_iter().chain(33..=MAX_ROWS).collect(),
+        AttentionPhase::Verify => [4, 6, 16, 32].into_iter().chain(33..=MAX_ROWS).collect(),
         _ => Vec::new(),
     }
 }
@@ -34,7 +34,7 @@ pub fn selected(phase: AttentionPhase, count: u32) -> bool {
     }
     match phase {
         AttentionPhase::Decode => matches!(count, 1 | 2 | 4 | 8),
-        AttentionPhase::Verify => matches!(count, 4 | 6) || (32..=MAX_ROWS).contains(&count),
+        AttentionPhase::Verify => matches!(count, 4 | 6 | 16) || (32..=MAX_ROWS).contains(&count),
         _ => false,
     }
 }
@@ -122,9 +122,18 @@ mod tests {
             );
             assert_eq!(
                 selected(AttentionPhase::Verify, count),
-                matches!(count, 4 | 6 | 32..=64)
+                matches!(count, 4 | 6 | 16 | 32..=64)
             );
             assert!(!selected(AttentionPhase::Prefill, count));
+        }
+    }
+
+    #[test]
+    fn verify_sixteen_uses_the_selected_cache() {
+        assert!(rows(AttentionPhase::Verify).contains(&16));
+        assert!(selected(AttentionPhase::Verify, 16));
+        for rows in [8, 12, 15, 17, 24, 31] {
+            assert!(!selected(AttentionPhase::Verify, rows));
         }
     }
 }

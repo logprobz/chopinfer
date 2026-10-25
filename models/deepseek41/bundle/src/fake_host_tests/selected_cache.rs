@@ -35,7 +35,7 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool, drafting: bool) -> Vec
         let selected = qualified
             && cached
             && if verify {
-                matches!(rows, 4 | 6 | 32)
+                matches!(rows, 4 | 6 | 16 | 32)
             } else {
                 matches!(rows, 1 | 2 | 4 | 8)
             };

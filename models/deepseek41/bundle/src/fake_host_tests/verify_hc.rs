@@ -162,12 +162,17 @@ use super::*;
 // verify records and 309,432 retained full-history records are identical.
 // Only the four declared resolves are added; allocation ranks and sizes
 // stay fixed. Twelve mutation controls cover operands, grids and ordering.
+// Verify-16 selected-key caching replaces each of 160 source launches with
+// its predecode and cached source, preserving every original operand and
+// ordered merge. Graph pieces retain their boundaries and gain 1/13/26 nodes
+// per rank. Every other operation, allocation and the five other verify
+// widths' complete histories remain identical.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
     (4, (7880, 0x443e61c169c2f30d)),
     (6, (8040, 0x30bfeec614beb9cd)),
     (8, (7720, 0x96949e0afba185c7)),
     (12, (8216, 0x596ae0c9990ae362)),
-    (16, (7892, 0x30b889ca72aeab84)),
+    (16, (8052, 0xa79edb9dad798ce2)),
     (32, (7744, 0xdca9260abd62a594)),
 ];
 

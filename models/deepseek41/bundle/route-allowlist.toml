@@ -1118,8 +1118,8 @@ phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_heads_v1"
-rows = [[1, 31]]
-reason = "Staged verify sources are qualified at 32 rows; the selected-key cache covers only the registered verify widths"
+rows = [[1, 3], [5, 5], [7, 15], [17, 31]]
+reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening verify widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]
@@ -1128,8 +1128,8 @@ phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_heads_v1"
-rows = [[1, 31]]
-reason = "Staged verify sources are qualified at 32 rows; the selected-key cache covers only the registered verify widths"
+rows = [[1, 3], [5, 5], [7, 15], [17, 31]]
+reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening verify widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]
@@ -1138,8 +1138,8 @@ phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_heads_v1"
-rows = [[1, 31]]
-reason = "Staged verify sources are qualified at 32 rows; the selected-key cache covers only the registered verify widths"
+rows = [[1, 3], [5, 5], [7, 15], [17, 31]]
+reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening verify widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]

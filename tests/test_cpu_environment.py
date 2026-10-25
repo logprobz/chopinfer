@@ -20,7 +20,8 @@ def isolated_workspace(root):
     # Execute the actual entrypoint in an isolated workspace so a local.env
     # in the developer's checkout cannot affect the test.
     (root / 'ci').mkdir()
-    for name in ('cpu.sh', 'cpu.py', 'runner.py', 'rust-profile.env', 'model_checks.py', 'preflight.py', 'rust_tests.py'):
+    for name in ('cpu.sh', 'cpu.py', 'runner.py', 'rust-profile.env', 'model_checks.py', 'preflight.py',
+                 'rust_tests.py', 'route_sweeps.py'):
         (root / 'ci' / name).write_bytes((ROOT / 'ci' / name).read_bytes())
     (root / 'local.env').write_text('')
     # The checkpoint variable stems come from the model inventories.

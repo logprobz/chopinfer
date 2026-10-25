@@ -699,9 +699,10 @@ mod tests {
                 .unwrap()
                 .launches(&hc, workspace, Counts::rows(rows))
                 .unwrap();
+            // TP4 serves the chain at rows 1-8 (`hc_round_chain::register`).
             let expected = match rows {
-                1 => "chop_deepseek41_hc_round_chain_w8_v1",
-                8 => "chop_deepseek41_hc_round_chain_w4_v1",
+                1..=4 => "chop_deepseek41_hc_round_chain_w8_v1",
+                5..=8 => "chop_deepseek41_hc_round_chain_w4_v1",
                 _ => "chop_deepseek41_hc_round_expand_mix_partials_v1",
             };
             assert_eq!(standalone[0].symbol, expected);
@@ -788,8 +789,14 @@ mod tests {
                         _ => "hc_round_chain_w4_v1",
                     }));
                 } else {
+                    // The tail keeps its own measured chain buckets
+                    // (`hc_finish_norm::register_pair`), so the standalone
+                    // small-row chain does not reach it.
                     assert_eq!(chain.len(), 3);
-                    assert_eq!(chain[0].symbol, standalone[0].symbol);
+                    assert_eq!(
+                        chain[0].symbol,
+                        "chop_deepseek41_hc_round_expand_mix_partials_v1"
+                    );
                 }
             }
         }

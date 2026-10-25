@@ -1716,9 +1716,23 @@ fn every_kv_layout_lowers_every_stage() {
                 0
             }
         );
+        // Commit e2292c26be replaces each native mixed prefill source/merge
+        // pair with one finish: 38 layers on four ranks save 152 launches.
+        // BF16 and the two window-only layers retain separate merges.
+        let fused_prefill = launches("_head_shared_finish_v1");
+        assert_eq!(
+            fused_prefill,
+            if kv.storage == KvStorage::Native {
+                38 * shape.ranks() as usize
+            } else {
+                0
+            }
+        );
         counts.push((
             kv.storage,
-            journal.iter().filter(|l| l.starts_with("launch")).count() + 2 * fused_candidates
+            journal.iter().filter(|l| l.starts_with("launch")).count()
+                + 2 * fused_candidates
+                + fused_prefill
                 - packed
                 - cache_producers
                 - hierarchical_groups,
@@ -1729,7 +1743,7 @@ fn every_kv_layout_lowers_every_stage() {
         assert_eq!(host.acquired.get(), host.released.get());
     }
     // After the validated query packs, cache producers, group/final merges
-    // and fused candidates, both layouts lower the same stages.
+    // and fused candidates and prefill finishes, both layouts lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

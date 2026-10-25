@@ -115,10 +115,14 @@ fn full_budget(starts: &[u64], counts: &[u32], decode_last: bool) {
             .filter(|line| line.starts_with("launch ") && line.contains(family))
             .count()
     };
-    // Every layer and rank reaches its source and merge. Mixed batches
-    // also execute one-row decode, with its selected-key cache producer.
+    // Commit e2292c26be fuses each mixed prefill layer's source and merge:
+    // 38 layers on four ranks save 152 launches. The two window layers
+    // retain their pairs. Mixed batches also execute one-row decode,
+    // with its selected-key cache producer.
+    let fused_prefill = launches("_head_shared_finish_v1");
+    assert_eq!(fused_prefill, 38 * 4);
     assert_eq!(
-        launches("chop_latent_sources_"),
+        launches("chop_latent_sources_") + fused_prefill,
         FLASH.layers() as usize * 4 * if decode_last { 5 } else { 2 },
     );
     assert_eq!(

@@ -28,6 +28,10 @@ impl Instance {
             std::mem::swap(&mut rank.status, &mut memory.status);
         }
         std::mem::swap(&mut self.draft_graphs, &mut device.prefetch.graphs);
+        std::mem::swap(
+            &mut device.computed_positions,
+            &mut device.prefetch.computed_positions,
+        );
     }
 
     fn prefetch_join(&self) -> Result<(), String> {
@@ -168,6 +172,7 @@ impl Instance {
             .as_mut()
             .expect("lifecycle")
             .adopt_projections(&plan.committed, &plan.projections)?;
+        device.computed_positions = device.prefetch.computed_positions;
         device.prefetch.reused = true;
         self.prefetch_trace("reused", plan.drafts.len(), started.elapsed().as_nanos());
         Ok(())

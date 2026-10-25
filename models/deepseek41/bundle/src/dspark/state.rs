@@ -69,7 +69,7 @@ pub enum Kind {
     Prefill {
         rows: u32,
     },
-    /// K=0 is an AR step; K>0 computes all five proposals and emits K.
+    /// K=0 is an AR step; K>0 runs the five-row backbone and emits K proposals.
     Decode {
         drafts: u32,
     },

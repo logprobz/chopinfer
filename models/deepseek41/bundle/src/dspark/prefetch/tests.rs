@@ -290,3 +290,42 @@ fn noise_records_keep_the_temperature_and_refuse_values_the_host_never_sends() {
         assert_eq!(Noise::sampled(9, 12, temperature), Noise::GREEDY);
     }
 }
+
+#[test]
+fn depth_three_successor_cannot_supply_five_positions_after_c8() {
+    for items in [3, 8] {
+        let (state, mut feedback) = pending(items, 3, 3);
+        outcome(&mut feedback, 2);
+        let plan = feedback.plan(&state, 100).unwrap().unwrap();
+        assert!(
+            plan.drafts
+                .iter()
+                .all(|d| d.block.compute_rows == 5 && d.block.emit_rows == 3)
+        );
+        let mut next: Vec<_> = plan
+            .drafts
+            .iter()
+            .map(|d| Input {
+                rows: Rows {
+                    request: d.block.request,
+                    slot: d.block.slot,
+                    start: d.block.main_rows,
+                    kind: Kind::Decode { drafts: 3 },
+                },
+                tokens: vec![d.bonus],
+                noise: d.noise,
+            })
+            .collect();
+        assert!(plan.matches(&plan.committed, &next));
+        next[0].rows.kind = Kind::Decode { drafts: 2 };
+        assert!(
+            !plan.matches(&plan.committed, &next),
+            "mixed depths cannot reuse compact heads"
+        );
+        next[0].rows.kind = Kind::Decode { drafts: 5 };
+        assert!(!plan.matches(&plan.committed, &next));
+        // When seven C8 requests finish, C1 may immediately use depth five.
+        next.truncate(1);
+        assert!(!plan.matches(&plan.committed, &next));
+    }
+}

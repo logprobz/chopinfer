@@ -36,6 +36,10 @@ pub fn encode(context: Context, diagnostic: &Diagnostic) -> Result<String, &'sta
     {
         return Err("confidence record requires a nonempty emitted prefix");
     }
+    let computed = diagnostic.computed_positions as usize;
+    if computed < emitted || computed > BLOCK_ROWS as usize {
+        return Err("confidence computed depth does not cover emitted positions");
+    }
     let prefix = &diagnostic.outcomes[..emitted];
     let completion = if prefix.iter().all(|&outcome| outcome == Outcome::Cancelled) {
         "cancelled"
@@ -54,8 +58,8 @@ pub fn encode(context: Context, diagnostic: &Diagnostic) -> Result<String, &'sta
     };
     // Only integers and fixed strings enter the JSON. IDs are strings so
     // readers using IEEE-754 numbers cannot silently round a u64 identity.
-    let outcomes = diagnostic
-        .outcomes
+    let outcomes = diagnostic.outcomes[..computed]
+        .iter()
         .map(|outcome| match outcome {
             Outcome::Accepted => "\"accepted\"",
             Outcome::Unknown => "\"unknown\"",
@@ -63,6 +67,7 @@ pub fn encode(context: Context, diagnostic: &Diagnostic) -> Result<String, &'sta
             Outcome::NotEmitted => "\"not_emitted\"",
             Outcome::Rejected => unreachable!("rejection was refused above"),
         })
+        .collect::<Vec<_>>()
         .join(",");
     Ok(format!(
         concat!(
@@ -79,12 +84,12 @@ pub fn encode(context: Context, diagnostic: &Diagnostic) -> Result<String, &'sta
         context.step_id,
         diagnostic.request,
         diagnostic.main_rows,
-        BLOCK_ROWS,
+        computed,
         emitted,
         emitted + 1,
         completion,
-        diagnostic.proposed,
-        diagnostic.confidence_bits,
+        &diagnostic.proposed[..computed],
+        &diagnostic.confidence_bits[..computed],
         outcomes,
     ))
 }

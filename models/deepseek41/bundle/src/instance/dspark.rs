@@ -13,7 +13,7 @@ mod graphs;
 #[cfg(feature = "diagnostic-taps")]
 mod head_capture;
 #[cfg(test)]
-pub(crate) use graphs::drafter_launches_for_test;
+pub(crate) use graphs::{drafter_launches_at_depth_for_test, drafter_launches_for_test};
 mod launch;
 pub(crate) mod prefetch;
 mod results;
@@ -67,6 +67,14 @@ impl Program for Work<'_> {
 
     fn draft(&mut self, inputs: &[crate::dspark::execution::DraftInput]) -> Result<(), String> {
         self.instance.dspark_draft(inputs)
+    }
+
+    fn computed_positions(&self) -> u32 {
+        self.instance
+            .dspark
+            .as_ref()
+            .expect("drafter")
+            .computed_positions
     }
 
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String> {

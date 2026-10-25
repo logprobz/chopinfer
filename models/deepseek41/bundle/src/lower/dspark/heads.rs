@@ -44,6 +44,7 @@ pub struct Heads {
     widen: Prepared<WidenRowsBuffers<View>>,
     reduce: Vec<Prepared<AllReduceBuffers<View>>>,
     logits_row: Prepared<GatherByIndexBuffers<View>>,
+    hidden_rows: Prepared<GatherByIndexBuffers<View>>,
     markov: Prepared<MarkovStepBuffers<View>>,
     /// Each rank's coupled noise on its Markov logits, in sampled mode.
     noise: Option<Vec<Prepared<DraftNoiseBuffers<View>>>>,
@@ -70,6 +71,15 @@ pub struct HeadViews {
     pub logits: Span,
     pub live_rows: Span,
     pub status: Span,
+}
+
+/// Position-major selection of normalized rows, after the full backbone.
+#[derive(Clone, Copy)]
+pub struct PackedHead {
+    pub rows: u32,
+    pub indices: Span,
+    pub live_rows: Span,
+    pub normalized_f32: Span,
 }
 
 pub struct Peer {
@@ -192,6 +202,14 @@ impl Heads {
             },
             need,
         )?;
+        let hidden_rows = backend.gather_by_index(
+            &GatherByIndex {
+                dtype: DType::F32,
+                width: g.shape.hidden,
+                alignment_bytes: 16,
+            },
+            Need::rows(24),
+        )?;
         let markov = own.dspark_markov_step(
             &MarkovStep {
                 rank: dim,
@@ -272,6 +290,7 @@ impl Heads {
             widen,
             reduce,
             logits_row,
+            hidden_rows,
             markov,
             noise,
             confidence,
@@ -288,6 +307,7 @@ impl Heads {
             self.vocabulary.info(),
             self.widen.info(),
             self.logits_row.info(),
+            self.hidden_rows.info(),
             self.markov.info(),
             self.confidence.info(),
             self.select.info(),
@@ -315,7 +335,17 @@ impl Heads {
         (&self.reduce[0].info().state, &self.gather[0].info().state)
     }
 
+    #[cfg(test)]
     pub fn vocabulary(&self, rows: u32, v: &HeadViews) -> Result<Vec<Lowered>, Refusal> {
+        self.vocabulary_packed(rows, v, None)
+    }
+
+    pub fn vocabulary_packed(
+        &self,
+        rows: u32,
+        v: &HeadViews,
+        packed: Option<PackedHead>,
+    ) -> Result<Vec<Lowered>, Refusal> {
         // These writes must not overwrite the raw hidden that every
         // confidence position reads after the vocabulary projection.
         for other in [v.streams, v.pre, v.normalized_f32, v.logits] {
@@ -353,13 +383,31 @@ impl Heads {
             status_row_offset: 0,
         };
         result.extend(bind.launch(&self.norm, &buffers, Counts::rows(rows))?);
+        let (project_rows, normalized, live_rows) = if let Some(packed) = packed {
+            if packed.rows == 0 || packed.rows > 24 || packed.rows >= rows {
+                return Err(Refusal(
+                    "DSpark packed head rows are outside the prepared shape",
+                ));
+            }
+            let mut bind = Bind::default();
+            let buffers = GatherByIndexBuffers {
+                source: bind.view(v.normalized_f32),
+                row_indices: bind.view(packed.indices),
+                count: bind.view(packed.live_rows),
+                destination: bind.view(packed.normalized_f32),
+            };
+            result.extend(bind.launch(&self.hidden_rows, &buffers, Counts::rows(packed.rows))?);
+            (packed.rows, packed.normalized_f32, packed.live_rows)
+        } else {
+            (rows, v.normalized_f32, v.live_rows)
+        };
         result.extend(exact_f32::project(
             &self.vocabulary,
-            rows,
-            v.normalized_f32,
+            project_rows,
+            normalized,
             v.vocabulary_weight,
             v.logits,
-            v.live_rows,
+            live_rows,
             v.projection_state,
         )?);
         Ok(result)
@@ -372,6 +420,7 @@ impl Heads {
     /// before the argmax; greedy items' logits keep their bits. The final
     /// argmax writes both the next predecessor and this position of the
     /// item-major five-ID output, with lower-ID ties.
+    #[cfg(test)]
     pub fn position(
         &self,
         rank: u32,
@@ -379,6 +428,18 @@ impl Heads {
         items: u32,
         v: &PositionViews,
         peers: &[Peer],
+    ) -> Result<Vec<Lowered>, String> {
+        self.position_packed(rank, position, items, v, peers, false)
+    }
+
+    pub fn position_packed(
+        &self,
+        rank: u32,
+        position: u32,
+        items: u32,
+        v: &PositionViews,
+        peers: &[Peer],
+        packed: bool,
     ) -> Result<Vec<Lowered>, String> {
         if rank >= self.shape.ranks()
             || position >= BLOCK_ROWS
@@ -451,7 +512,10 @@ impl Heads {
         // contiguous slice, so its step reads the row in place instead of
         // copying it first.
         let row_bytes = u64::from(self.shape.vocab_rows()) * 4;
-        let base = if items == 1 {
+        let base = if packed {
+            let bytes = u64::from(items) * row_bytes;
+            slice(v.block_logits, u64::from(position) * bytes, bytes)?
+        } else if items == 1 {
             slice(v.block_logits, u64::from(position) * row_bytes, row_bytes)?
         } else {
             let mut bind = Bind::default();

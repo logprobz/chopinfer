@@ -7,13 +7,13 @@ use bundle_runtime::pipeline::{self, PoisonOnUnwind, Unit};
 
 #[derive(Clone, Copy)]
 enum Program {
-    Draft,
+    Draft { positions: u32 },
     CatchUp,
 }
 
 impl Instance {
-    pub(super) fn replay_drafter(&mut self, items: u32) -> Result<(), String> {
-        self.replay_dspark_graph(Program::Draft, items)
+    pub(super) fn replay_drafter(&mut self, items: u32, positions: u32) -> Result<(), String> {
+        self.replay_dspark_graph(Program::Draft { positions }, items)
     }
 
     pub(super) fn replay_catch_up(&mut self, rows: u32) -> Result<(), String> {
@@ -23,13 +23,19 @@ impl Instance {
     fn replay_dspark_graph(&mut self, program: Program, count: u32) -> Result<(), String> {
         // Each exact row or item count owns a separate cache. Its sole key is an
         // opaque program unit, so no arithmetic row is padded for capture.
+        let bucket = match program {
+            // Two valid opaque buckets distinguish the head programs. Their
+            // values do not pad the captured arithmetic rows.
+            Program::Draft { positions } if positions != crate::dspark::state::BLOCK_ROWS => 2,
+            _ => 1,
+        };
         let key = |rank| GraphKey {
             rank,
-            bucket: 1,
+            bucket,
             items: 0,
         };
         let cached = match program {
-            Program::Draft => self.draft_graphs.get(&count),
+            Program::Draft { .. } => self.draft_graphs.get(&count),
             Program::CatchUp => self
                 .dspark
                 .as_ref()
@@ -50,7 +56,7 @@ impl Instance {
             (Vec::new(), Vec::new())
         } else {
             match program {
-                Program::Draft => self.drafter_programs(count)?,
+                Program::Draft { positions } => self.drafter_programs_at_depth(count, positions)?,
                 Program::CatchUp => self.catch_up_programs(count)?,
             }
             .into_iter()
@@ -66,7 +72,7 @@ impl Instance {
         }
         let streams: Vec<_> = self.ranks.iter().map(|rank| rank.2).collect();
         let caches = match program {
-            Program::Draft => &mut self.draft_graphs,
+            Program::Draft { .. } => &mut self.draft_graphs,
             Program::CatchUp => {
                 &mut self
                     .dspark
@@ -80,7 +86,7 @@ impl Instance {
             .or_insert_with(|| GraphCache::sharing(&self.graphs));
         cache.label(
             match program {
-                Program::Draft => "draft",
+                Program::Draft { .. } => "draft",
                 Program::CatchUp => "catch-up",
             },
             Some(count),
@@ -121,7 +127,7 @@ impl Instance {
             .record(
                 &self.collectives,
                 cache
-                    .replay_piece_major(&self.services, &streams, (1, 0), |_| {})
+                    .replay_piece_major(&self.services, &streams, (bucket, 0), |_| {})
                     .map_err(DispatchError::from),
             )
             .map_err(|e| format!("DSpark graph replay: {e:?}"))?;
@@ -144,27 +150,39 @@ pub(crate) fn drafter_launches_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
     items: u32,
 ) -> Result<Vec<Vec<DrafterLaunch>>, String> {
+    drafter_launches_at_depth_for_test(handle, items, crate::dspark::state::BLOCK_ROWS)
+}
+
+#[cfg(test)]
+pub(crate) fn drafter_launches_at_depth_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    items: u32,
+    positions: u32,
+) -> Result<Vec<Vec<DrafterLaunch>>, String> {
     crate::instance::INSTANCES.with(|table| {
         let mut table = table.borrow_mut();
         let instance = table.get_mut(handle).ok_or("no live instance")?;
-        Ok(instance
-            .drafter_programs(items)?
-            .into_iter()
-            .map(|rank| {
-                rank.into_iter()
-                    .map(|op| {
-                        let plan = op.launch.plan;
-                        (
-                            op.launch.symbol,
-                            op.launch.rows,
-                            plan.grid,
-                            plan.block,
-                            plan.dynamic_shared_bytes,
-                            op.collective,
-                        )
-                    })
-                    .collect()
-            })
-            .collect())
+        Ok((if positions == crate::dspark::state::BLOCK_ROWS {
+            instance.drafter_programs(items)?
+        } else {
+            instance.drafter_programs_at_depth(items, positions)?
+        })
+        .into_iter()
+        .map(|rank| {
+            rank.into_iter()
+                .map(|op| {
+                    let plan = op.launch.plan;
+                    (
+                        op.launch.symbol,
+                        op.launch.rows,
+                        plan.grid,
+                        plan.block,
+                        plan.dynamic_shared_bytes,
+                        op.collective,
+                    )
+                })
+                .collect()
+        })
+        .collect())
     })
 }

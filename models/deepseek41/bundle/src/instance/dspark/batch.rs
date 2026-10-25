@@ -5,6 +5,10 @@ use crate::dspark::execution::DraftInput;
 use crate::dspark::state::BLOCK_ROWS;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 
+fn compact_heads(inputs: &[DraftInput]) -> bool {
+    (3..=8).contains(&inputs.len()) && inputs.iter().all(|input| input.block.emit_rows == 3)
+}
+
 fn chunk_ranges(items: usize, maximum: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
     let chunks = items.div_ceil(maximum);
     let small = items / chunks.max(1);
@@ -30,7 +34,37 @@ impl Instance {
         crate::lower::dspark::metadata(device.shape.geometry, inputs)?;
         let chunk_items = device.draft_chunk_items;
         if inputs.len() <= chunk_items {
-            return self.dspark_draft_chunk(inputs);
+            let positions = if crate::sm120::dspark_projection::enabled(
+                &device.shape.geometry,
+                device.shape.ranks(),
+            ) && compact_heads(inputs)
+            {
+                3
+            } else {
+                BLOCK_ROWS
+            };
+            #[cfg(feature = "diagnostic-taps")]
+            let positions = if device
+                .head_capture
+                .as_ref()
+                .is_some_and(|c| c.pending(inputs.len() as u32 * BLOCK_ROWS))
+            {
+                BLOCK_ROWS
+            } else {
+                positions
+            };
+            #[cfg(feature = "diagnostic-taps")]
+            let reference = if positions != BLOCK_ROWS {
+                self.draft_reference(inputs)?
+            } else {
+                None
+            };
+            self.dspark_draft_chunk_at_depth(inputs, positions)?;
+            #[cfg(feature = "diagnostic-taps")]
+            if let Some(reference) = reference {
+                self.check_draft_prefix(inputs.len(), positions, &reference)?;
+            }
+            return Ok(());
         }
         #[cfg(feature = "diagnostic-taps")]
         let reference = self.draft_reference(inputs)?;
@@ -80,6 +114,38 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_head_boundary_requires_three_to_eight_uniform_items() {
+        use crate::dspark::{execution::Noise, state::DraftBlock};
+        for items in 0..=32 {
+            let mut inputs = (0..items)
+                .map(|i| DraftInput {
+                    block: DraftBlock {
+                        request: i as u64,
+                        slot: i,
+                        main_rows: 3,
+                        compute_rows: 5,
+                        emit_rows: 3,
+                        verify_rows: 4,
+                    },
+                    bonus: 7,
+                    noise: Noise::GREEDY,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(compact_heads(&inputs), (3..=8).contains(&items));
+            for index in 0..inputs.len() {
+                for depth in [1, 2, 4, 5] {
+                    inputs[index].block.emit_rows = depth;
+                    assert!(
+                        !compact_heads(&inputs),
+                        "items={items} mixed index={index} depth={depth}"
+                    );
+                }
+                inputs[index].block.emit_rows = 3;
+            }
+        }
+    }
 
     #[test]
     fn chunks_balance_work_and_cover_every_retained_item() {

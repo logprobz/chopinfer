@@ -55,12 +55,32 @@ impl Instance {
         items: usize,
         reference: &[Vec<u8>],
     ) -> Result<(), String> {
-        if self.draft_words(items)? != reference {
+        self.check_draft_prefix(items, BLOCK_ROWS, reference)
+    }
+
+    pub(super) fn check_draft_prefix(
+        &self,
+        items: usize,
+        positions: u32,
+        reference: &[Vec<u8>],
+    ) -> Result<(), String> {
+        let actual = self.draft_words(items)?;
+        let equal = actual.len() == reference.len()
+            && actual.iter().zip(reference).all(|(a, b)| {
+                a.len() == b.len()
+                    && a.chunks_exact(BLOCK_ROWS as usize * 4)
+                        .zip(b.chunks_exact(BLOCK_ROWS as usize * 4))
+                        .all(|(a, b)| {
+                            a[..positions as usize * 4] == b[..positions as usize * 4]
+                                && a[positions as usize * 4..].iter().all(|&byte| byte == 0)
+                        })
+            });
+        if !equal {
             return Err("DSpark chunked draft IDs or confidence bits differ".into());
         }
         self.log(&format!(
             "{{\"schema\":\"chopinfer.dspark-draft-parity.v1\",\"items\":{items},\"positions\":{},\"ranks\":{},\"bitwise\":true}}",
-            BLOCK_ROWS,
+            positions,
             reference.len()
         ));
         Ok(())

@@ -1,12 +1,15 @@
 DSpark confidence records use the schema
 `chopinfer.deepseek41.drafter-confidence.v1`. One record describes one
 draft block after commit, or its cancellation. K=0 steps produce no block
-record. Every record keeps all five computed positions, including positions
-outside the scheduler's emitted prefix.
+record. Every record keeps all computed positions, including any positions
+outside the scheduler's emitted prefix. `computed_positions` is three for
+uniform depth-three Flash TP4 batches of 3-8 items and five otherwise.
+Uncomputed tails are omitted from the record.
 
 The record carries opaque instance, execute-step and request IDs, the number
-of committed main rows, the emitted budget K, K+1 verify rows, five proposal
-token IDs, five raw F32 confidence bit patterns and five outcome labels.
+of committed main rows, the emitted budget K, K+1 verify rows, proposal
+token IDs, raw F32 confidence bit patterns and outcome labels. Each array
+has `computed_positions` entries.
 Instance and step IDs distinguish slot reuse and retries at the same token
 position. Confidence is an unnormalized score, not a probability. Integer
 IEEE-754 bit patterns preserve NaN, infinity and signed zero without invalid
@@ -48,7 +51,8 @@ fills the width even when every score is low. It is bypassed when only one
 item can compete for rows, when the floor fills the width, or when all
 reserved drafts already fit.
 
-The drafter computes five proposals and scores per block. The default
+The drafter keeps a five-row backbone and computes either three or five
+proposal heads as described above. The default
 profile already verifies up to five drafts at C1. At C4 its 16-row width
 leaves 12 draft rows to distribute, while the default 32-row capacity can
 reserve all five drafts per item. At C8 the same capacity fits only three

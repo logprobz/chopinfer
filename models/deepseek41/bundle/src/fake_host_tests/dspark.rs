@@ -1124,3 +1124,90 @@ fn the_declared_draft_chunk_reaches_the_drafter() {
         );
     }
 }
+
+#[test]
+fn used_depth_graphs_recompute_five_positions_after_depth_three() {
+    for count in [3_u64, 8] {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let (host, mut instance) = create_with_limits(shape, 8, 32);
+        for slot in 0..count {
+            execute(
+                &mut instance,
+                &host,
+                &super::prompt(slot + 1, slot, 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        let captured_head_depths = |from| {
+            let mut capturing = false;
+            let mut heads = 0;
+            let mut depths = Vec::new();
+            for line in &host.journal.borrow()[from..] {
+                if line.starts_with("capture ") {
+                    capturing = true;
+                    heads = 0;
+                }
+                if capturing
+                    && line.starts_with("launch ")
+                    && matches!(
+                        line.split_whitespace().nth(2),
+                        Some(
+                            "chop_deepseek41_dspark_markov_tiled_v1"
+                                | "chop_deepseek41_dspark_markov_row_v1"
+                                | "chop_deepseek41_dspark_markov_v1"
+                        )
+                    )
+                {
+                    heads += 1;
+                }
+                if line.starts_with("captured ") {
+                    capturing = false;
+                    if heads != 0 {
+                        depths.push(heads);
+                    }
+                }
+            }
+            depths
+        };
+        let from = host.journal.borrow().len();
+        execute(
+            &mut instance,
+            &host,
+            &verify_all(&(0..count).map(|s| (s + 1, s, 3)).collect::<Vec<_>>(), 3),
+        );
+        let depths = captured_head_depths(from);
+        assert!(
+            depths.len() >= shape.ranks() as usize && depths.iter().all(|&depth| depth == 3),
+            "main and successor depths: {depths:?}"
+        );
+        instance
+            .commit_accepted(&(1..=count).map(|r| kept(r, 1)).collect::<Vec<_>>())
+            .unwrap();
+        let next_count = if count == 8 { 1 } else { count };
+        for request in next_count + 1..=count {
+            instance.retire_request(request).unwrap();
+        }
+        let from = host.journal.borrow().len();
+        execute(
+            &mut instance,
+            &host,
+            &verify_all(
+                &(0..next_count).map(|s| (s + 1, s, 4)).collect::<Vec<_>>(),
+                5,
+            ),
+        );
+        let depths = captured_head_depths(from);
+        assert!(
+            depths.len() >= shape.ranks() as usize && depths.iter().all(|&depth| depth == 5),
+            "deeper main and successor graphs: {depths:?}"
+        );
+        instance
+            .commit_accepted(&(1..=next_count).map(|r| kept(r, 1)).collect::<Vec<_>>())
+            .unwrap();
+        for request in 1..=next_count {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}

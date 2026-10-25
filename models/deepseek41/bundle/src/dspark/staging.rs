@@ -40,6 +40,9 @@ pub trait Program {
     ) -> Result<(), String> {
         Ok(())
     }
+    fn computed_positions(&self) -> u32 {
+        BLOCK_ROWS
+    }
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String>;
     /// Detail of the most recent target callback, when its implementation records it.
     fn target_times(&self) -> super::timing::TargetTimes {
@@ -545,6 +548,9 @@ impl<P: Program> Host for Adapter<'_, P> {
             |t| &mut t.draft_us,
             || program.draft(inputs),
         )
+    }
+    fn computed_positions(&self) -> u32 {
+        self.program.computed_positions()
     }
     fn read_draft_ids(&mut self, ids: &mut [[u32; BLOCK_ROWS as usize]]) -> Result<(), String> {
         let source = prefix(

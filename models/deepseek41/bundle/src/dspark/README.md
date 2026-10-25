@@ -23,11 +23,13 @@ For each step:
    and one main projection serves all stages. A commit wider than 32 rows (a prefill chunk or restored window)
    catches up at the item's next step in the per-stage passes of an eager
    catch-up, so every projected row keeps its eager bits.
-2. `Host::draft` computes all five block positions, the sequential Markov
-   head and confidence scores. Use the shared `WindowBlockVisibility`
+2. `Host::draft` computes all five backbone rows. Uniform depth-three Flash
+   TP4 batches of 3-8 items project only the three used positions and run
+   their sequential Markov heads and confidence scores. Other batches
+   compute all five heads. Use the shared `WindowBlockVisibility`
    contract with `DraftBlock::main_rows` as its projected-row count. Draft
-   keys occupy separate scratch after the main ring. K changes only the
-   emitted prefix and the target's K+1 rows.
+   keys occupy separate scratch after the main ring. K selects the emitted
+   prefix and the target's K+1 rows.
 3. Bounded synchronous readback returns five IDs and five F32 confidence
    scores per drafting item. CPU Engram hash/gather uses the completed
    target ID rows, then upload finishes before target verification starts.
@@ -39,7 +41,8 @@ For each step:
    token limit can end verification without the extra row, so the retained
    count is not an exact accepted-proposal count.
 
-Diagnostics record all five scores. The commit callback exposes only retained
+Diagnostics record only computed scores. Uncomputed slots in the fixed
+five-slot output buffers are zero. The commit callback exposes only retained
 rows, not a stop reason or an independent acceptance count. The leading
 `kept_rows - 1` proposals are provably accepted; later emitted proposals are
 `Unknown`, including a possible accepted stop token. Un-emitted and cancelled
@@ -108,12 +111,14 @@ be updated in place. Confidence reads the F32 collapsed hidden row before
 vocabulary RMSNorm without BF16 rounding, and the predecessor token's
 exactly decoded BF16 Markov embedding.
 
-One launch processes one position across block items. Use a stride of five
-vocabulary rows for logits, five hidden rows for confidence inputs and five
-elements for confidence scores, with views starting at the chosen position.
-The device live count is the number of drafting items. Execute all five
-positions regardless of the scheduler's emitted prefix. The five Markov
-steps remain sequential because each consumes the previous sampled token.
+One launch processes one position across block items. Full heads gather
+vocabulary rows with a five-row item stride. Compact heads gather normalized
+F32 rows in position-major order, then read contiguous vocabulary rows for
+each position. Both use five hidden rows per item for confidence and five
+output slots per item. The device live count is the number of drafting items.
+The computed Markov steps remain sequential because each consumes the
+previous sampled token. Graph keys include computed depth, and a successor
+cannot be reused when the next step needs more positions than it computed.
 
 `model-deepseek41-lab` checks preparation and locked cubins with the
 `head_cpu` filter. Its `head_gpu_markov_and_confidence_match_oracles_and_replay`

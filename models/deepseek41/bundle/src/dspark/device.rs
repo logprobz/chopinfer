@@ -74,6 +74,7 @@ pub(crate) struct Device {
     /// Most drafting items per drafter forward, from the create record's
     /// `dspark_draft_chunk_items` model option.
     pub draft_chunk_items: usize,
+    pub computed_positions: u32,
     /// Opt-in until the packed commit passes state and served comparisons.
     pub batch_commit: bool,
     #[cfg(feature = "diagnostic-taps")]
@@ -114,6 +115,8 @@ pub(crate) struct Rank {
     pub pairs: Span,
     pub gathered: Span,
     pub live_items: Span,
+    pub head_indices: Span,
+    pub head_rows: Span,
     pub live_width: Span,
     pub noise: Span,
     pub reduce_state: Vec<Span>,
@@ -300,6 +303,7 @@ impl Device {
             verified: Vec::new(),
             step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
             draft_chunk_items,
+            computed_positions: BLOCK_ROWS,
             batch_commit: batch_commit_enabled(),
             #[cfg(feature = "diagnostic-taps")]
             draft_check: std::env::var_os("CHOPINFER_DSPARK_DRAFT_CHECK")
@@ -614,6 +618,8 @@ impl Device {
             pairs,
             gathered: alloc(items * 2 * 4 * u64::from(self.shape.ranks()))?,
             live_items: plane(metadata_layout.live_items)?,
+            head_indices: plane(metadata_layout.head_indices())?,
+            head_rows: plane(metadata_layout.head_rows())?,
             live_width,
             noise: plane(metadata_layout.noise)?,
             reduce_state,

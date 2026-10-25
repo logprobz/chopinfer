@@ -7,7 +7,7 @@ use crate::dspark::state::{CommitPlan, Projection, RowProjection};
 use crate::dspark::timing::{CommitTimes, ProjectionTimes, finish, measure};
 use crate::dspark::transfers::{self, ProjectionChunk};
 use crate::lower::Lowering;
-use crate::lower::dspark::heads::{HeadViews, Peer, PositionViews};
+use crate::lower::dspark::heads::{HeadViews, PackedHead, Peer, PositionViews};
 use crate::lower::dspark::{self, BlockViews, CatchUpViews, DraftMode};
 use crate::ops::{Bind, Lowered};
 use crate::program::Phase;
@@ -491,7 +491,18 @@ impl Instance {
         &mut self,
         inputs: &[crate::dspark::execution::DraftInput],
     ) -> Result<(), String> {
+        self.dspark_draft_chunk_at_depth(inputs, BLOCK_ROWS)
+    }
+
+    pub(super) fn dspark_draft_chunk_at_depth(
+        &mut self,
+        inputs: &[crate::dspark::execution::DraftInput],
+        positions: u32,
+    ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        if positions != BLOCK_ROWS && (positions != 3 || !(3..=8).contains(&inputs.len())) {
+            return Err("DSpark head depth is outside the prepared shape".into());
+        }
         let g = device.shape.geometry;
         let meta = dspark::metadata(g, inputs)?;
         let items = inputs.len() as u32;
@@ -533,6 +544,19 @@ impl Instance {
             ];
             arrays.push((stored.inputs.live_tokens, live.to_le_bytes().to_vec()));
             arrays.push((stored.live_items, items.to_le_bytes().to_vec()));
+            if positions != BLOCK_ROWS {
+                arrays.push((stored.head_rows, (items * positions).to_le_bytes().to_vec()));
+                arrays.push((
+                    stored.head_indices,
+                    words((0..positions).flat_map(|p| (0..items).map(move |i| i * BLOCK_ROWS + p))),
+                ));
+                // Uncomputed positions stay deterministic in the five-slot ABI.
+                for output in [stored.draft_ids, stored.confidence] {
+                    self.services
+                        .zero_device_buffer(stream, slice(output, 0, u64::from(live) * 4)?)
+                        .map_err(|e| format!("DSpark unused head clear: {e:?}"))?;
+                }
+            }
             if let Some(noise) = &noise {
                 arrays.push((stored.noise, noise.clone()));
             }
@@ -557,14 +581,27 @@ impl Instance {
                 )
                 .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
         }
-        self.replay_drafter(items)?;
+        self.replay_drafter(items, positions)?;
+        self.dspark.as_mut().expect("drafter").computed_positions = positions;
         self.drafter_status(live)?;
         #[cfg(feature = "diagnostic-taps")]
         self.capture_draft_head(inputs)?;
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn drafter_programs(&self, items: u32) -> Result<Vec<Vec<Lowered>>, String> {
+        self.drafter_programs_at_depth(items, BLOCK_ROWS)
+    }
+
+    pub(super) fn drafter_programs_at_depth(
+        &self,
+        items: u32,
+        positions: u32,
+    ) -> Result<Vec<Vec<Lowered>>, String> {
+        if positions != BLOCK_ROWS && (positions != 3 || !(3..=8).contains(&items)) {
+            return Err("DSpark head program depth is outside the prepared shape".into());
+        }
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let live = items * BLOCK_ROWS;
         let phase = Phase::Verify { rows: live, items };
@@ -635,7 +672,7 @@ impl Instance {
                 let scratch = &buffers.scratch;
                 device
                     .heads
-                    .vocabulary(
+                    .vocabulary_packed(
                         live,
                         &HeadViews {
                             streams: rows(scratch.streams, live),
@@ -652,6 +689,23 @@ impl Instance {
                             )?,
                             live_rows: stored.inputs.live_tokens,
                             status: rows(scratch.row_status, live),
+                        },
+                        if positions == BLOCK_ROWS {
+                            None
+                        } else {
+                            Some(PackedHead {
+                                rows: items * positions,
+                                indices: stored.head_indices,
+                                live_rows: stored.head_rows,
+                                // The full collapse and norm finished reading streams.
+                                normalized_f32: slice(
+                                    scratch.streams,
+                                    0,
+                                    u64::from(items * positions)
+                                        * u64::from(device.shape.geometry.shape.hidden)
+                                        * 4,
+                                )?,
+                            })
                         },
                     )
                     .map_err(|e| e.to_string())
@@ -674,14 +728,14 @@ impl Instance {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        for position in 0..BLOCK_ROWS {
+        for position in 0..positions {
             let programs = self
                 .buffers
                 .iter()
                 .zip(&device.ranks)
                 .enumerate()
                 .map(|(rank, (buffers, stored))| {
-                    device.heads.position(
+                    device.heads.position_packed(
                         rank as u32,
                         position,
                         items,
@@ -710,6 +764,7 @@ impl Instance {
                             draft_ids: stored.draft_ids,
                         },
                         &peers,
+                        positions != BLOCK_ROWS,
                     )
                 })
                 .collect::<Result<Vec<_>, String>>()?;

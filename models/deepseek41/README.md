@@ -416,8 +416,10 @@ exactness and timing windows to check execution ordering and performance.
 ### DSpark qualification
 
 The preview selects `tp4-dspark`, with both AR and speculative quick arms
-and exact greedy equality. DSpark computes all five proposals per block;
-scheduler budgets select the emitted prefix. For a sampled request the
+and exact greedy equality. DSpark keeps five backbone rows per block.
+Uniform depth-three batches of 3-8 items compute only their used heads;
+other batches compute all five proposals. Scheduler budgets select the
+emitted prefix. For a sampled request the
 drafter proposes from the target sampler's own noise at each draft
 position's generated index (model option `dspark_coupled_drafts`, default
 true; `false` drafts every request greedily); emitted tokens do not depend

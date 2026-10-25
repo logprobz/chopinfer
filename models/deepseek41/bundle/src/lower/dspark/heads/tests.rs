@@ -203,6 +203,61 @@ fn dispatch_positions(shape: Shape, mode: DraftMode) {
                     ..views[rank as usize]
                 };
                 let program = heads.position(rank, position, items, &v, &peers).unwrap();
+                if position < 3 {
+                    let packed = heads
+                        .position_packed(rank, position, items, &v, &peers, true)
+                        .unwrap();
+                    let ordinary: Vec<_> = program
+                        .iter()
+                        .filter(|op| op.launch.symbol != "chop_row_gather_by_index_v1")
+                        .collect();
+                    assert_eq!(packed.len(), ordinary.len());
+                    for (old, new) in ordinary.iter().zip(&packed) {
+                        assert_eq!(old.launch.symbol, new.launch.symbol);
+                        assert_eq!(old.launch.plan, new.launch.plan);
+                        assert_eq!(old.collective, new.collective);
+                        // Only the Markov base changes from a gathered position
+                        // to its contiguous position-major slice. Every other
+                        // scalar, view, confidence and Gumbel operand is exact.
+                        for (index, (a, b)) in old
+                            .launch
+                            .arguments
+                            .0
+                            .iter()
+                            .zip(&new.launch.arguments.0)
+                            .enumerate()
+                        {
+                            if old.launch.symbol == "chop_deepseek41_dspark_markov_tiled_v1"
+                                && index == 2
+                            {
+                                continue;
+                            }
+                            match (a, b) {
+                                (
+                                    kernel_core::contract::Argument::DeviceBuffer(a),
+                                    kernel_core::contract::Argument::DeviceBuffer(b),
+                                ) => assert_eq!(
+                                    old.launch.bindings.get(*a).unwrap(),
+                                    new.launch.bindings.get(*b).unwrap()
+                                ),
+                                _ => assert_eq!(a, b),
+                            }
+                        }
+                    }
+                    let step = packed
+                        .iter()
+                        .find(|op| op.launch.symbol == "chop_deepseek41_dspark_markov_tiled_v1")
+                        .unwrap();
+                    assert_eq!(
+                        argument_span(step, 2),
+                        slice(
+                            v.block_logits,
+                            u64::from(position * items) * vocab * 4,
+                            u64::from(items) * vocab * 4
+                        )
+                        .unwrap()
+                    );
+                }
                 // Sampled mode adds the noise between the Markov step and
                 // the argmax, on the Markov output, at this position and
                 // this rank's first global ID; greedy mode has none.

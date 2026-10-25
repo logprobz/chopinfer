@@ -8,6 +8,7 @@ const CONTEXT: Context = Context {
 
 fn diagnostic() -> Diagnostic {
     Diagnostic {
+        computed_positions: BLOCK_ROWS,
         request: u64::MAX - 2,
         main_rows: 128,
         proposed: [11, 12, 13, 14, 15],
@@ -149,4 +150,22 @@ fn log_failure_does_not_stop_later_records_and_empty_steps_log_nothing() {
     record(CONTEXT, &[], |_| -> Result<(), ()> {
         panic!("K=0 has no block to log")
     });
+}
+
+#[test]
+fn used_depth_diagnostics_never_report_uncomputed_tails() {
+    let mut input = diagnostic();
+    input.computed_positions = 3;
+    let value: Value = serde_json::from_str(&encode(CONTEXT, &input).unwrap()).unwrap();
+    assert_eq!(value["computed_positions"], 3);
+    assert_eq!(value["draft_ids"], json!(input.proposed[..3]));
+    assert_eq!(
+        value["confidence_f32_bits"],
+        json!(input.confidence_bits[..3])
+    );
+    assert_eq!(value["outcomes"].as_array().unwrap().len(), 3);
+    input.computed_positions = 2;
+    assert!(encode(CONTEXT, &input).is_err());
+    input.computed_positions = 6;
+    assert!(encode(CONTEXT, &input).is_err());
 }

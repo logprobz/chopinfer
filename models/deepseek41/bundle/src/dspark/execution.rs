@@ -126,6 +126,7 @@ pub struct Diagnostic {
     pub request: u64,
     pub main_rows: u64,
     pub proposed: [u32; WIDTH],
+    pub computed_positions: u32,
     /// Raw F32 score bits preserve even non-finite diagnostic values without
     /// using them to accept, reject or trim a proposal.
     pub confidence_bits: [u32; WIDTH],
@@ -161,9 +162,12 @@ pub trait Host {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
-    /// Compute all five positions, sequential Markov sampling and the
-    /// confidence head, regardless of each block's emitted prefix length.
+    /// Compute at least each block's emitted prefix. The output retains five
+    /// slots with deterministic unused tails when fewer heads are computed.
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error>;
+    fn computed_positions(&self) -> u32 {
+        BLOCK_ROWS
+    }
     /// Copy exactly five int32 IDs per drafting item, after drafting finishes.
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error>;
     fn read_confidence(&mut self, scores: &mut [[f32; WIDTH]]) -> Result<(), Self::Error>;
@@ -359,6 +363,15 @@ impl Runtime {
                 })
                 .collect::<Vec<_>>();
             self.host_result(host.draft(&draft_inputs))?;
+            let computed_positions = host.computed_positions();
+            if computed_positions > BLOCK_ROWS
+                || blocks.iter().any(|b| b.emit_rows > computed_positions)
+            {
+                self.state.poison();
+                return Err(Error::State(
+                    "DSpark computed head depth does not cover emitted positions",
+                ));
+            }
             let ids = match self.host_result(host.device_target(inputs, &draft_inputs))? {
                 Some(ids) => {
                     device_target = true;
@@ -395,6 +408,7 @@ impl Runtime {
                     request: block.request,
                     main_rows: block.main_rows,
                     proposed,
+                    computed_positions,
                     confidence_bits: [0; WIDTH],
                     outcomes,
                 });

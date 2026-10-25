@@ -17,6 +17,15 @@ pub(crate) struct Layout {
 }
 
 impl Layout {
+    /// Reserve the unused bytes after the live-item word without moving
+    /// any existing plane or growing the allocation. At most 8 * 3 rows.
+    pub fn head_indices(&self) -> (u64, u64) {
+        (self.live_items.0 + 16, 24 * 4)
+    }
+    pub fn head_rows(&self) -> (u64, u64) {
+        (self.live_items.0 + 4, 4)
+    }
+
     pub fn new(inputs: u64, items: u64, rows: u64, cells: u64) -> Result<Self, String> {
         if inputs == 0 || items == 0 || rows == 0 || cells == 0 {
             return Err("DSpark metadata layout is empty".into());
@@ -153,6 +162,9 @@ mod tests {
         assert!(ranges.iter().all(|&(start, _)| start % 128 == 0));
         assert_eq!(layout.bytes, layout.keys.0 + layout.keys.1);
         assert_eq!(layout.noise.1, 32 * 32);
+        assert_eq!(layout.head_rows(), (layout.live_items.0 + 4, 4));
+        assert_eq!(layout.head_indices(), (layout.live_items.0 + 16, 96));
+        assert!(layout.head_indices().0 + layout.head_indices().1 <= layout.noise.0);
         assert!(Layout::new(u64::MAX, 32, 160, 133).is_err());
         assert!(Layout::new(4096, u64::MAX, 160, 133).is_err());
     }

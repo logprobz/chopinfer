@@ -17,6 +17,7 @@ pub(crate) struct Cache {
     pub plan: Option<Plan>,
     pub feedback: Option<Feedback>,
     pub reused: bool,
+    pub computed_positions: u32,
     pub done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
 }
@@ -38,6 +39,7 @@ impl Cache {
             plan: None,
             feedback: None,
             reused: false,
+            computed_positions: BLOCK_ROWS,
             done: Vec::new(),
             joined: None,
         }
@@ -76,6 +78,13 @@ impl Feedback {
             return Ok(None);
         }
         super::results::validate_metadata(&self.metadata, &self.inputs, vocab, 0)?;
+        let positions = if (3..=8).contains(&self.inputs.len())
+            && self.inputs.iter().all(|i| i.rows.kind.drafts() == 3)
+        {
+            3
+        } else {
+            BLOCK_ROWS
+        };
         let mut kept = Vec::new();
         let mut drafts = Vec::new();
         for (index, (input, item)) in self.inputs.iter().zip(&self.metadata.items).enumerate() {
@@ -131,8 +140,8 @@ impl Feedback {
                     slot: input.rows.slot,
                     main_rows: end,
                     compute_rows: BLOCK_ROWS,
-                    emit_rows: BLOCK_ROWS,
-                    verify_rows: BLOCK_ROWS + 1,
+                    emit_rows: positions,
+                    verify_rows: positions + 1,
                 },
                 bonus,
                 // The successor drafts after the emitted rows: the accepted
@@ -214,7 +223,9 @@ impl Plan {
                     Kind::Decode {
                         drafts: 1..=BLOCK_ROWS
                     }
-                ) && input.rows.request == draft.block.request
+                ) && input.rows.kind.drafts() <= draft.block.emit_rows
+                    && (draft.block.emit_rows != 3 || input.rows.kind.drafts() == 3)
+                    && input.rows.request == draft.block.request
                     && input.rows.slot == draft.block.slot
                     && input.rows.start == draft.block.main_rows
                     && input.tokens == [draft.bonus]

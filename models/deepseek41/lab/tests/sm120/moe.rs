@@ -262,8 +262,8 @@ fn model_moe_native_cases_select_the_declared_tile() {
     }
 }
 
-/// The cubins `build_moe` stages are the bundle's routed MoE family: the
-/// modules and entries its lock pins, so the build verifies against it.
+/// `build_family bundle/routed_moe` stages the bundle's routed MoE modules
+/// and entries against the family's lock.
 #[test]
 fn model_moe_staged_cubins_are_the_locked_family() {
     let lock = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

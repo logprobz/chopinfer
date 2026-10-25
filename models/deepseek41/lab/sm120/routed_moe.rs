@@ -1,8 +1,8 @@
 //! The routed MoE family's cubins as the bundle builds them: the bundle's
 //! registration (`sm120/moe.rs`, `registration` beside this module) with
 //! each entry served on a row-tiled bank replaced in place by its row-tiled
-//! build (`moe_row_tiles`). `build_moe` builds them against the family's
-//! lock for the GPU snapshot.
+//! build (`moe_row_tiles`). `build_family bundle/routed_moe` builds them
+//! against the family's lock for the GPU snapshot.
 use bundle_deepseek41::sm120::moe_row_tiles;
 use kernel_build::CubinSpec;
 use model_deepseek41_contract::geometry::Geometry;

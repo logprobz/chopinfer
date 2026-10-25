@@ -4,7 +4,9 @@ cargo-nextest runs each test in its own process and tests from different
 binaries at once, within the groups in .config/nextest.toml. A package whose
 Cargo.toml sets package.metadata.chopinfer.lib-tests-in-one-process keeps its
 library tests in one libtest process, as cargo test runs them, beside nextest
-and from the same build. Nextest does not run doctests, so cargo test --doc
+and from the same build. CHOPINFER_CI_SERIAL_LIBRARIES=1 runs these libraries
+one at a time before nextest to bound their combined memory. Nextest does not
+run doctests, so cargo test --doc
 runs them afterwards. Where nextest is missing, cargo test runs the same
 tests one binary at a time, and the run says so."""
 import argparse
@@ -122,9 +124,10 @@ def library_binaries(selection, names, packages, metadata_path):
 
 
 def run_nextest(selection, threads):
-    """Nextest for everything, one-process libraries beside it; then doctests."""
+    """Nextest, one-process libraries beside or before it, then doctests."""
     packages = workspace_packages()
     one_process = one_process_libraries(selection, packages)
+    serial_libraries = os.environ.get("CHOPINFER_CI_SERIAL_LIBRARIES") == "1"
     routes = route_sweeps.libraries(selection, packages)
     run, *doc = commands(selection, "nextest", threads, one_process=one_process, skip_routes=bool(routes))
     children = []
@@ -142,9 +145,12 @@ def run_nextest(selection, threads):
                 for name in one_process:
                     binary, cwd, env = binaries[name]
                     log = open(os.path.join(logs, name + ".log"), "w+b")
-                    print(f"rust tests: {name} library tests in one process beside nextest", file=sys.stderr, flush=True)
+                    when = "before" if serial_libraries else "beside"
+                    print(f"rust tests: {name} library tests in one process {when} nextest", file=sys.stderr, flush=True)
                     children.append((name, subprocess.Popen([binary, *(["--skip", "route_sweep::"] if routes else [])], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                                             stdout=log, stderr=subprocess.STDOUT), log))
+                    if serial_libraries:
+                        children[-1][1].wait()
             status = subprocess.run(run).returncode
             failed = [" ".join(run)] if status else []
             if route_status:

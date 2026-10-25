@@ -716,6 +716,47 @@ class RouteSweeps(unittest.TestCase):
 
 
 class RustTests(unittest.TestCase):
+    def test_serial_libraries_finish_before_nextest_and_keep_failures(self):
+        for library_exit in (0, 7):
+            with self.subTest(library_exit=library_exit), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                packages, binaries = [], {}
+                for name in ("first", "second"):
+                    binary = root / name
+                    binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+                        import fcntl, pathlib, sys, time
+                        root = pathlib.Path(__file__).parent
+                        with (root / "library.lock").open("w") as lock:
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            time.sleep(0.05)
+                            (root / (pathlib.Path(__file__).name + ".finished")).touch()
+                        sys.exit(int(sys.argv[0].endswith("first")) * EXIT)
+                        ''').replace("EXIT", str(library_exit)))
+                    binary.chmod(0o755)
+                    packages.append({"name": name, "manifest_path": str(root / "Cargo.toml"),
+                                     "metadata": {"chopinfer": {"lib-tests-in-one-process": True}}})
+                    binaries[name] = (str(binary), str(root), dict(os.environ))
+                calls = []
+
+                def invoke(command):
+                    calls.append(command)
+                    self.assertTrue(all((root / (name + ".finished")).is_file() for name in binaries),
+                                    "nextest started before every library finished")
+                    return subprocess.CompletedProcess(command, 0)
+
+                output = io.BytesIO()
+                with io.TextIOWrapper(output, encoding="utf-8") as stdout, \
+                        patch.dict(os.environ, CHOPINFER_CI_SERIAL_LIBRARIES="1"), \
+                        patch.object(rust_tests, "workspace_packages", return_value=packages), \
+                        patch.object(rust_tests, "library_binaries", return_value=binaries), \
+                        patch.object(rust_tests.subprocess, "run", side_effect=invoke), \
+                        patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", new_callable=io.StringIO):
+                    self.assertEqual(rust_tests.run_nextest(["--workspace"], 2), int(library_exit != 0))
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(calls[0][:3], ["cargo", "nextest", "run"])
+                self.assertIn("--binaries-metadata", calls[0])
+                self.assertEqual(calls[1], ["cargo", "test", "--workspace", "--doc", *rust_tests.LOCKED])
+
     def test_a_parallel_library_can_spawn_itself_after_nextest_starts(self):
         # Cargo may replace an artifact during a second build. A live library
         # test must still be able to start its executable in a child process.
@@ -768,6 +809,7 @@ class RustTests(unittest.TestCase):
 
             output = io.BytesIO()
             with io.TextIOWrapper(output, encoding="utf-8") as stdout, \
+                    patch.dict(os.environ, CHOPINFER_CI_SERIAL_LIBRARIES="0"), \
                     patch.object(rust_tests, "workspace_packages", return_value=packages), \
                     patch.object(rust_tests.subprocess, "check_output", return_value=json.dumps(listed).encode()) as build, \
                     patch.object(rust_tests.subprocess, "run", side_effect=invoke), \

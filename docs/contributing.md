@@ -71,6 +71,10 @@ release builds are unchanged. kernel-core's one test that needs opt-level 0
 runs in the gate's `kernel-core-unoptimized` step. The gate's steps share
 `--jobs`, and no step counts for more than half of it, so the workspace tests
 start beside the long recipe steps whatever `--test-threads` says.
+For memory-limited runs, set `CHOPINFER_CI_SERIAL_LIBRARIES=1` to run the
+libraries marked `lib-tests-in-one-process` one at a time before nextest.
+`RUST_TEST_THREADS` still limits tests within each such library; nextest's
+`--test-threads` limit does not control those separate processes.
 
 ## Full CPU check prerequisites
 

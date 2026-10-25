@@ -236,6 +236,10 @@ fn shard<S: Startup>(
             audit::remember(&mut observed_tags, tag.into());
         }
         assert!(!symbols.is_empty(), "{label}: zero kernel launches");
+        let gathers = adapter.route_device().mapped_gather_calls.get();
+        if gathers > 0 {
+            symbols.insert("host.gather_mapped_rows".into(), gathers);
+        }
         result.push(audit::Sample {
             mode: case.mode.clone(),
             phase: match case.phase {

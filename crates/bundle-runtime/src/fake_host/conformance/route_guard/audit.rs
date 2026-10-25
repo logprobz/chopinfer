@@ -104,11 +104,11 @@ pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Fail
         .filter(|tag| tag.class != "Fast")
         .map(|tag| tag.symbol.as_str())
         .collect();
-    let mut entries = BTreeMap::<&str, Vec<&str>>::new();
-    for tag in tags
-        .iter()
-        .filter(|tag| fallback_symbols.contains(tag.symbol.as_str()))
-    {
+    // This reserved host symbol needs evidence even in models with no tags.
+    let mut entries = BTreeMap::<&str, Vec<&str>>::from([("host.gather_mapped_rows", Vec::new())]);
+    for tag in tags.iter().filter(|tag| {
+        fallback_symbols.contains(tag.symbol.as_str()) || tag.symbol == "host.gather_mapped_rows"
+    }) {
         entries.entry(&tag.symbol).or_default().push(&tag.entry);
     }
     let mut incomplete = BTreeMap::<(&str, &str, &str, u64, u64), Vec<u32>>::new();
@@ -181,7 +181,7 @@ pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Fail
                 let lo = group.partition_point(|s| s.rows < sample.rows.saturating_sub(radius));
                 let hi = group.partition_point(|s| s.rows <= sample.rows.saturating_add(radius));
                 let neighbour = !interior && (lo..hi).any(|j| less(j) && totals[j] < totals[i]);
-                if neighbour || interior {
+                if neighbour || interior || tag.symbol == "host.gather_mapped_rows" {
                     failed.insert(Failure {
                         entry: tag.entry.clone(),
                         mode: sample.mode.clone(),
@@ -348,6 +348,69 @@ mod tests {
     use super::super::allowlist::parse;
     use super::*;
     use kernel_core::route::RouteClass;
+
+    fn mapped_sample(raw: u64, selected: u64) -> Sample {
+        Sample {
+            mode: "single".into(),
+            phase: "prefill".into(),
+            rows: 7,
+            symbols: BTreeMap::from([
+                ("host.gather_mapped_rows".into(), raw),
+                ("engram/sync/ar_prefill".into(), selected),
+            ]),
+        }
+    }
+
+    fn mapped_tag() -> Tag {
+        RouteTag::new(
+            "host.gather_mapped_rows",
+            RouteClass::Baseline,
+            "engram_gather",
+            [],
+        )
+        .with_entry("engram/sync/ar_prefill")
+        .into()
+    }
+
+    #[test]
+    fn mapped_gather_requires_exact_selected_evidence() {
+        for (raw, selected) in [(2, 1), (1, 2)] {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    failures(
+                        &[mapped_sample(raw, selected)],
+                        &[mapped_tag()],
+                        Tier::Quick,
+                    )
+                })
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_gather_without_tags_is_refused() {
+        assert!(
+            std::panic::catch_unwind(|| { failures(&[mapped_sample(1, 0)], &[], Tier::Quick) })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mapped_gather_absence_needs_no_tags() {
+        for tier in [Tier::Quick, Tier::Cpu, Tier::Full] {
+            assert!(failures(&[mapped_sample(0, 0)], &[], tier).is_empty());
+        }
+    }
+
+    #[test]
+    fn mapped_gather_constant_route_still_requires_an_allowance() {
+        let failed = failures(&[mapped_sample(2, 2)], &[mapped_tag()], Tier::Quick);
+        assert_eq!(failed.len(), 1);
+        assert!(check("ar", &failed, &[], Tier::Quick, &[mapped_tag()]).is_err());
+        let allow = parse("[[allow]]\nprofiles = [\"ar\"]\nphase = \"prefill\"\nrows = [[7, 7]]\nfamily = \"engram_gather\"\nsymbol = \"host.gather_mapped_rows\"\nentry = \"engram/sync/ar_prefill\"\nreason = \"AR prefill uses synchronous gathers\"\ntask = \"ar-prefill-engram\"\n").unwrap();
+        assert!(check("ar", &failed, &allow, Tier::Full, &[mapped_tag()]).is_ok());
+    }
 
     #[test]
     fn registered_fallback_requires_complete_selected_entry_evidence() {

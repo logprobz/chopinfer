@@ -186,6 +186,8 @@ pub struct FakeDevice<O = NoObserver> {
     /// Route sweeps omit argument formatting and expand replayed graph symbols.
     /// Ordinary journals, including their pins, keep their original bytes.
     pub symbols_only: Cell<bool>,
+    /// Bundle-facing synchronous mapped calls, independent of journal formatting.
+    pub mapped_gather_calls: Cell<u64>,
     route_names: RefCell<Vec<String>>,
     graph_symbols: RefCell<BTreeMap<u32, Vec<String>>>,
     /// Sees each journal line while set.
@@ -306,10 +308,22 @@ impl<O: JournalObserver> FakeDevice<O> {
             .push(String::from_utf8_lossy(message).into_owned());
     }
 
+    /// Counts a synchronous host call without consuming IDs or journal lines.
+    /// Prepared-wait emulation must use an uncounted private gather helper.
+    pub fn count_mapped_gather(&self) {
+        self.mapped_gather_calls.set(
+            self.mapped_gather_calls
+                .get()
+                .checked_add(1)
+                .expect("mapped gather count overflow"),
+        );
+    }
+
     /// Bound sweep storage between steps, with no open graph capture.
     pub fn clear_route_journal(&self) {
         assert!(self.symbols_only.get());
         assert!(self.capture_starts.borrow().is_empty());
+        self.mapped_gather_calls.set(0);
         self.journal.borrow_mut().clear();
         self.launched.borrow_mut().clear();
         self.route_names.borrow_mut().clear();

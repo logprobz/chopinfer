@@ -621,6 +621,7 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
+        self.0.device().count_mapped_gather();
         if self.0.device().capturing_on_device_of(stream.slot()) {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -1079,6 +1080,42 @@ mod tests {
                 Err(BundleStatusV1::HostError)
             );
         }
+    }
+
+    #[test]
+    fn mapped_gather_counts_calls_in_both_journal_modes_and_resets() {
+        let mut journals = Vec::new();
+        for symbols_only in [false, true] {
+            let (host, stream, buffer) = host();
+            let device = host.device();
+            device.symbols_only.set(symbols_only);
+            let next = device.next.get();
+            let span = DeviceBufferSpanV1::new(buffer, 8, 16);
+            let gather = |rank| MappedRowGatherV1 {
+                image: BundleCompiledImageHandleV1::from_parts(1, 9),
+                rank,
+                view_id: b"rows",
+                row_bytes: 8,
+                rows: &[3, 0],
+            };
+            host.gather_mapped_rows(stream, span, gather(1)).unwrap();
+            assert_eq!(device.mapped_gather_calls.get(), 1);
+            let journal = device.journal.borrow().clone();
+            assert_eq!(
+                host.gather_mapped_rows(stream, span, gather(0)),
+                Err(BundleStatusV1::NotFound)
+            );
+            assert_eq!(device.mapped_gather_calls.get(), 2);
+            assert_eq!(*device.journal.borrow(), journal);
+            assert_eq!(device.next.get(), next);
+            journals.push(journal);
+            device.symbols_only.set(true);
+            device.clear_route_journal();
+            assert_eq!(device.mapped_gather_calls.get(), 0);
+            host.gather_mapped_rows(stream, span, gather(1)).unwrap();
+            assert_eq!(device.mapped_gather_calls.get(), 1);
+        }
+        assert_eq!(journals[0], journals[1]);
     }
 
     /// A gather uploads the named rows of the package's mapped view, checked

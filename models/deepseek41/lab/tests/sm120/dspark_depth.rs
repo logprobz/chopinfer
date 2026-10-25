@@ -35,27 +35,35 @@ fn read(s: &Session, b: &DeviceBuffer) -> LabResult<Vec<u32>> {
         .map(f32::to_bits)
         .collect())
 }
-fn modules(s: &Session, plans: &[Launch]) -> LabResult<Vec<Module>> {
+fn modules(s: &Session, plans: &[Launch]) -> LabResult<BTreeMap<&'static str, Module>> {
     let mut sources = BTreeMap::new();
     for p in plans {
         let (name, bytes) = fold_cubin_for_symbol(&p.symbol)
             .ok_or_else(|| format!("missing embedded depth-lab symbol {}", p.symbol))?;
         sources.insert(name, bytes);
     }
-    sources.into_values().map(|b| s.load_cubin(b)).collect()
+    sources
+        .into_iter()
+        .map(|(name, bytes)| s.load_cubin(bytes).map(|module| (name, module)))
+        .collect()
 }
 fn run(
     s: &Session,
-    modules: &[Module],
+    modules: &BTreeMap<&'static str, Module>,
     plans: &[Launch],
     bindings: &Bindings<'_>,
     stream: &Stream,
 ) -> LabResult<()> {
     for p in plans {
-        let f = modules
-            .iter()
-            .find_map(|m| m.function(&p.symbol).ok())
-            .ok_or_else(|| format!("missing depth-lab function {}", p.symbol))?;
+        // Resolve ownership from the authenticated catalog before calling
+        // CUDA. Probing unrelated modules reports CUDA_ERROR_NOT_FOUND to
+        // memcheck even when a later module contains the symbol.
+        let (owner, _) = fold_cubin_for_symbol(&p.symbol)
+            .ok_or_else(|| format!("undeclared depth-lab function {}", p.symbol))?;
+        let module = modules
+            .get(owner)
+            .ok_or_else(|| format!("missing depth-lab module {owner}"))?;
+        let f = module.function(&p.symbol).map_err(|e| e.to_string())?;
         launch(&s.context, &f, stream, p.plan, &p.arguments, bindings)?;
     }
     Ok(())
@@ -224,4 +232,24 @@ fn gpu_used_depth_head_is_bitwise_and_keeps_unused_rows_poisoned() {
         Ok(())
     }).unwrap();
     assert!(result.is_some(), "the depth comparison ran");
+}
+
+#[test]
+fn cpu_used_depth_symbols_have_declared_module_owners() {
+    let backend = sm120::register_dspark_f32_projections(Sm120::new(), &FLASH, 4).unwrap();
+    let entry = sm120::f32_head::entry(&FLASH, 4).unwrap();
+    let projection = backend
+        .projection(
+            &f32_projection::operation(&entry),
+            entry.usage(),
+            Need::rows(40),
+        )
+        .unwrap()
+        .handle;
+    for (symbol, _) in &projection.info().symbols {
+        let (name, bytes) =
+            fold_cubin_for_symbol(symbol).expect("projection symbol has a declared owner");
+        assert!(!name.is_empty() && !bytes.is_empty());
+    }
+    assert!(fold_cubin_for_symbol("undeclared_depth_lab_symbol").is_none());
 }

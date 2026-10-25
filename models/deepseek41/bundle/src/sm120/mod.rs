@@ -336,7 +336,7 @@ impl crate::Kernels {
                     f32_zero::entry().baseline_symbol(),
                     kernel_core::route::RouteClass::Baseline,
                     "f32_projection",
-                    f32_zero::ROWS.iter().map(|&r| r..=r),
+                    [f32_zero::ROWS[0]..=8192],
                 )
                 .with_wrapper("zero-router"),
             );

@@ -45,6 +45,46 @@ fn launches(e: &Entry, rows: u32) -> Vec<kernel_core::backend::Launch> {
 }
 
 #[test]
+fn band_route_metadata_follows_selected_tiles_and_preserves_gaps() {
+    use kernel_core::route::RouteClass;
+    let entry = seed()
+        .with_prefill_bands(vec![band(257, 319, 32), band(321, 512, 64)])
+        .unwrap();
+    let op = backend(vec![entry.clone()])
+        .projection(&operation(&entry), entry.usage(), Need::rows(8192))
+        .unwrap()
+        .handle;
+    let mut b = buffers(&entry);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: entry.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: op.info().workspace,
+    };
+    for rows in [257, 319, 320, 321, 512, 513] {
+        let counts = Counts::rows(rows);
+        for launch in op.launches(&b, work, counts).unwrap() {
+            let tag = op
+                .route(counts, &launch)
+                .expect("selected prefill band metadata");
+            assert_eq!(
+                tag.class,
+                if matches!(rows, 320 | 513) {
+                    RouteClass::Baseline
+                } else {
+                    RouteClass::Fast
+                }
+            );
+            assert!(tag.admitted.iter().any(|range| range.contains(&257)));
+            assert!(tag.admitted.iter().any(|range| range.contains(&512)));
+            assert!(!tag.admitted.iter().any(|range| range.contains(&320)));
+        }
+    }
+}
+
+#[test]
 fn inclusive_bands_preserve_exact_wide_blocked_and_tiled_entries() {
     let exact = seed()
         .with_prefill_buckets(vec![(512, 32), (1024, 64), (2048, 32)])

@@ -35,7 +35,7 @@ struct Router {
 impl PreparedOp<ProjectionBuffers<View>> for Router {
     fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
         use kernel_core::route::{RouteClass, RouteTag};
-        let mut tag = if family::ROWS.contains(&counts.rows) {
+        let mut tag = if (family::ROWS[0]..=8192).contains(&counts.rows) {
             RouteTag::new(
                 launch.symbol.clone(),
                 RouteClass::Fast,
@@ -45,7 +45,7 @@ impl PreparedOp<ProjectionBuffers<View>> for Router {
         } else {
             self.base.route(counts, launch)?
         };
-        tag.admitted.extend(family::ROWS.iter().map(|&r| r..=r));
+        tag.admitted.push(family::ROWS[0]..=8192);
         tag.wrappers.push("zero-router");
         Some(tag)
     }
@@ -198,6 +198,13 @@ mod tests {
             let counts = Counts::rows(rows);
             let launches = new.launches(&b, work, counts).unwrap();
             if (320..=8192).contains(&rows) {
+                for launch in &launches {
+                    let tag = new
+                        .route(counts, launch)
+                        .expect("selected continuous router entry");
+                    assert_eq!(tag.class, kernel_core::route::RouteClass::Fast);
+                    assert!(tag.admitted.iter().any(|range| range.contains(&rows)));
+                }
                 assert_eq!(launches.len(), 2);
                 assert_eq!(launches[0].symbol, zero::prepare_symbol(&family::entry()));
                 assert_eq!(launches[1].symbol, zero::symbol(&family::entry(), 32));

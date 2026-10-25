@@ -68,6 +68,7 @@ impl Entry {
             .chain(&self.blocked_buckets)
             .chain(&self.wide_buckets)
             .map(|&(r, _)| r..=r)
+            .chain(self.prefill_bands.iter().map(|band| band.lo..=band.hi))
             .collect();
         if rows.is_empty() {
             return None;

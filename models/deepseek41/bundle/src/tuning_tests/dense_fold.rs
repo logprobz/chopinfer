@@ -4,7 +4,10 @@ use crate::sm120::{
 };
 use kernel_build::tuning::{Key, Knob, Knobs, Row, Table, Target};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
-use model_deepseek41_contract::{geometry::FLASH, tuning::Family};
+use model_deepseek41_contract::{
+    geometry::FLASH,
+    tuning::{self, Family},
+};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -271,4 +274,71 @@ pub(super) fn generate(family: Family, cases: Vec<Case>) {
 #[ignore = "one-time extraction; set CHOPINFER_WRITE_TUNING to write, otherwise check bytes"]
 fn generate_dense_fold() {
     generate(Family::DenseFold, cases());
+}
+pub(super) fn differential(family: Family, cases: Vec<Case>) {
+    let count = cases.len();
+    let other = model_deepseek41_contract::geometry::Geometry {
+        id: "untuned",
+        ..FLASH
+    };
+    for c in cases {
+        let shape = c
+            .key
+            .shape
+            .iter()
+            .map(|(k, &v)| (k.as_str(), v))
+            .collect::<Vec<_>>();
+        let selected = tuning::select(
+            &FLASH,
+            family,
+            &c.key.op,
+            &c.key.weights,
+            &shape,
+            c.key.bucket,
+            c.rows,
+        )
+        .map(|r| Choice(r.schedule.clone(), r.knobs.clone()));
+        assert_eq!(selected, c.expected, "{} at {}", c.key, c.rows);
+        assert!(
+            tuning::select(
+                &other,
+                family,
+                &c.key.op,
+                &c.key.weights,
+                &shape,
+                c.key.bucket,
+                c.rows
+            )
+            .is_none()
+        );
+        assert!(
+            tuning::select(
+                &FLASH,
+                family,
+                &c.key.op,
+                &c.key.weights,
+                &shape,
+                c.key.bucket,
+                0
+            )
+            .is_none()
+        );
+        assert!(
+            tuning::select(
+                &FLASH,
+                family,
+                &c.key.op,
+                &c.key.weights,
+                &shape,
+                c.key.bucket,
+                c.key.bucket + 1
+            )
+            .is_none()
+        );
+    }
+    println!("{}: {count} differential cases passed", family.name());
+}
+#[test]
+fn dense_fold_matches_current_selectors() {
+    differential(Family::DenseFold, cases());
 }

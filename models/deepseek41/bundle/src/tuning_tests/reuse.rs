@@ -56,3 +56,8 @@ fn cases() -> Vec<Case> {
 fn generate_reuse() {
     generate(Family::Reuse, cases());
 }
+
+#[test]
+fn reuse_matches_current_selectors() {
+    super::dense_fold::differential(Family::Reuse, cases());
+}

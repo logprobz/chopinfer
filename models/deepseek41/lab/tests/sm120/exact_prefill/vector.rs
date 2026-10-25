@@ -5,7 +5,7 @@ use super::*;
 mod vector_family;
 const ENV: &str = "CHOPINFER_DEEPSEEK41_VECTOR_PREFILL_CUBINS";
 
-fn variants() -> Vec<family::Variant> {
+pub(super) fn variants() -> Vec<family::Variant> {
     vector_family::VARIANTS
         .iter()
         .map(|name| {

@@ -49,7 +49,7 @@ fn cpu_matrix() {
             assert!(!bytes.is_empty());
             embedded.insert(name);
         }
-        for v in family::VARIANTS {
+        for v in vector::variants() {
             let mut new = arm(&mut a, case, inputs).unwrap();
             candidate(&mut a, case, &mut new, v).unwrap();
             for op in new.launches.iter().chain(&new.clock_launches) {
@@ -88,7 +88,7 @@ fn queue_partition_and_resources() {
         }
     }
     for p in family::projections() {
-        for v in family::VARIANTS {
+        for v in vector::variants() {
             for r in family::tile_rows(v) {
                 assert!(family::shared_bytes(&p, v, r) <= 101376);
             }
@@ -130,9 +130,4 @@ fn queue_partition_and_resources() {
             );
         }
     }
-}
-#[test]
-#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_EXACT_PREFILL_CUBINS"]
-fn gpu_matrix() {
-    kernel_harness::gpu_test_with(kernel_harness::Cubins::NONE, 16 << 30, run).unwrap();
 }

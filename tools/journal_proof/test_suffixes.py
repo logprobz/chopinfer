@@ -55,6 +55,29 @@ class SuffixTests(Harness):
             snap = dict(pins={n: dict(fixture='host') for n in bodies})
             self.assertEqual(fixtures_of(snap, snap)[0]['create'], create)
 
+    def test_pinned_create_and_sibling_bindings_use_either_suffix(self):
+        for suffix in ('.txt', '.journal'):
+            with self.subTest(suffix=suffix):
+                create, bodies = self.renamed(suffix)
+                def dump(out):
+                    self.dump(out, bodies, create)
+                    trace = out / 'aux/tests/fixture/device-1.jsonl'
+                    records = [json.loads(line) for line in trace.read_text().splitlines()]
+                    self.assertEqual(sum(row[0] == 'created' for row in records), 1)
+                    trace.write_text(''.join(json.dumps(row) + '\n' for row in records if row[0] != 'created'))
+                    for name in bodies:
+                        path = trace.parent / f'{name}.checkpoint.json'
+                        cp = json.loads(path.read_text())
+                        cp['devices'][0]['records'] -= 1
+                        path.write_text(json.dumps(cp))
+                revision, out, _ = self.capture(bodies, dump=dump)
+                bindings = json.loads((out / 'aux/manifest.json').read_text())['bindings']
+                self.assertEqual(bindings[create]['create']['kind'], 'pinned-create')
+                self.assertEqual(bindings['toy-before-step' + suffix]['create']['kind'], 'sibling-pinned-create')
+                spec = identity_spec(self.repo.repo, MODEL, revision, out / 'index.json')
+                code, report = self.prove((revision, out), (revision, out), spec, '--require', 'identity')
+                self.assertEqual(code, 0, report)
+
     def test_mixed_suffixes_are_all_authenticated(self):
         bodies = {CREATE: self.base[CREATE], 'toy-step.journal': self.base[STEP]}
         revision, out, _ = self.capture(bodies)

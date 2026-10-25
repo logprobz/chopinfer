@@ -48,7 +48,7 @@ count and FNV-1a is its pin.
 Journal names end in `.txt` or `.journal`, start with an ASCII letter or
 digit, and contain only ASCII letters, digits, underscores, dots and
 hyphens. Both suffixes use appended `.pin`, `.site` and `.checkpoint.json`
-sidecars. Capture reads refuse symlinks and nonregular files. Create journals
+sidecars. Reads of these files refuse symlinks and nonregular files. Create journals
 use `-create` before either suffix; the fixture and spec writers apply the
 same rules to both.
 

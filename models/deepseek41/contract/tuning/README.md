@@ -3,7 +3,10 @@
 The `flash/` directory holds one `chopinfer-tuning-v1` table per family.
 `model_deepseek41_contract::tuning::table` returns these tables only for
 FLASH. Other geometries do not inherit them. A missing row means the
-model's baseline schedule.
+model's baseline schedule. The bundle build parses and validates every
+family table before compiling kernels, so malformed tables fail the build.
+The contract build generates `Family`, its names and the embedded texts
+from one family-to-file list.
 
 | File | Choices |
 | --- | --- |
@@ -20,14 +23,19 @@ model's baseline schedule.
 Operation names are `<family>.<site>.<phase>`. Replace `-` in a projection
 or stage ID with `_`, for example `dense_fold.attention_q_b.verify`.
 Shape keys come from `n`, `k`, `groups`, `paired`, `ranks`, `experts`,
-`top_k` and `width`. Weight format, shape and bucket match exactly.
+`top_k` and `width`. The loader checks this set and the exact three-part
+operation name, including its family prefix. Weight format, shape and
+bucket match exactly. Shape queries accept any order and reject duplicate
+names. Once the tables are initialized, lookup uses stack storage and
+allocates nothing.
 
 The bucket is the instance's row capacity. An optional `rows: [lo, hi]`
 selects an inclusive launch-row range, with `1 <= lo <= hi <= bucket`.
 For a given operation, weights, shape and bucket, either one row omits
 `rows` and covers the whole bucket, or all rows specify ascending,
-disjoint ranges. Gaps use the baseline. Queries outside `1..=bucket`
-return no row. Exact-key `get` and `require` retain exact-key lookup;
+disjoint ranges. A range `[1, bucket]` is refused: omit `rows` for
+whole-bucket coverage. A query outside every range or outside `1..=bucket`
+returns no row and uses the baseline. Exact-key `get` and `require` retain exact-key lookup;
 use `select` to match a launch row count.
 
 Rows sort by operation, weights, shape, bucket, then range. Shape entries

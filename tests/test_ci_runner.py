@@ -570,6 +570,24 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
         self.assertEqual(len(tests), 1)
         self.assertEqual((tests[0]["kind"], tests[0]["binary"], tests[0]["passed"]), ("doctest-suite", "sample", 0))
 
+    def test_python_inventory_separates_setup_skips_and_proves_merged_verdicts(self):
+        log = """setUpClass (sample.Optional) ... skipped 'optional input'
+test_case (sample.Checks.test_case) ... diagnostic without a newline
+more diagnosticok
+Ran 1 test in 0.1s
+OK (skipped=1)
+"""
+        _, _, recorded = test_inventory.log_records("check", log)
+        self.assertTrue(recorded["complete_names"])
+        self.assertEqual(recorded["passes_from_suite"], 1)
+        self.assertEqual(recorded["tests"], [{"name": "sample.Checks.test_case::test_case", "outcome": "passed"}])
+        self.assertEqual(len(recorded["fixtures"]), 1)
+        for changed in (log.replace("OK (skipped=1)", "FAILED (errors=1, skipped=1)"),
+                        log.replace("skipped=1", "skipped=2")):
+            _, _, unproven = test_inventory.log_records("check", changed)
+            self.assertFalse(unproven["complete_names"])
+            self.assertEqual(unproven["tests"][0]["outcome"], "unconfirmed")
+
 
 class ReferencePrerequisites(unittest.TestCase):
     def python(self, script):

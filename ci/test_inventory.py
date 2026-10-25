@@ -15,7 +15,7 @@ import runner
 
 PORTABLE = {"portable", "portable-test", "high-memory-tests"}
 RUST_CASE = re.compile(r"^test (.+?) \.\.\. (ok|FAILED|ignored)(?:$|,| )", re.M)
-PYTHON_CASE = re.compile(r"^(\w+) \(([^)]+)\)(.*)$")
+PYTHON_CASE = re.compile(r"^(test\w*|runTest|setUpClass|tearDownClass|setUpModule|tearDownModule) \(([^)]+)\)(.*)$")
 PYTHON_RESULT = re.compile(r"(?:^| \.\.\. )(ok|FAIL|ERROR|skipped[^\n]*|expected failure|unexpected success)$")
 ROUTE = re.compile(r"([\w.-]+): route sweep (\w+), seed=(\d+), (\d+) cases,")
 
@@ -34,8 +34,9 @@ def outcome(value):
 
 def log_records(step, text):
     """Named libtest/doctest cases, route records, and Python names/counts."""
-    tests, routes, named = [], [], []
+    tests, routes, named, fixtures = [], [], [], []
     python_name, python_suite = None, ""
+    python_fixture = False
     passed_routes = set()
     qualification, cells = {}, []
     binary, kind, model = None, "rust", None
@@ -51,12 +52,15 @@ def log_records(step, text):
                 key = f"{match[1]}#{occurrence}"
             qualification[key] = {"cells": int(match[2]), "ran": int(match[3]), "skipped": int(match[4])}
         if match := PYTHON_CASE.match(line):
+            if python_name:
+                (fixtures if python_fixture else named).append({"name": python_name, "outcome": "unconfirmed"})
             python_name = f"{python_suite}{match[2]}::{match[1]}"
+            python_fixture = match[1] in ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
             rest = match[3]
         else:
             rest = line
         if python_name and (match := PYTHON_RESULT.search(rest)):
-            named.append({"name": python_name, "outcome": outcome(match[1])})
+            (fixtures if python_fixture else named).append({"name": python_name, "outcome": outcome(match[1])})
             python_name = None
         if match := re.match(r"==> (\S+) library tests \(one process\)", line):
             binary, kind = match[1], "rust"
@@ -85,6 +89,8 @@ def log_records(step, text):
                           "name": "<suite>", "outcome": outcome(match[1]),
                           "passed": int(match[2]), "failed": int(match[3]), "ignored": int(match[4])})
     ran, verdicts, skips, skipped = runner.unittest_outcome(text)
+    if python_name:
+        (fixtures if python_fixture else named).append({"name": python_name, "outcome": "unconfirmed"})
     if qualification:
         total = sum(item["ran"] for item in qualification.values())
         if ran and ran != total:
@@ -94,8 +100,21 @@ def log_records(step, text):
         verdicts = ["OK" if cells and all(cell["exit"] == 0 for cell in cells) else "FAILED"]
     python = None
     if verdicts or ran:
+        skipped = max(skipped, len(skips))
+        inferred = 0
+        # A diagnostic without a final newline can merge with unittest's
+        # verdict ("diagnosticok"). Only an OK suite with every identity and
+        # every skip accounted for proves those remaining cases passed.
+        if (len(named) == ran and verdicts and all(v == "OK" for v in verdicts)
+                and sum(case["outcome"] == "skipped" for case in named + fixtures) == skipped):
+            for case in named:
+                if case["outcome"] == "unconfirmed":
+                    case["outcome"] = "passed"
+                    inferred += 1
         python = {"step": step, "ran": ran, "skipped": max(skipped, len(skips)),
-                  "verdicts": verdicts, "tests": named, "complete_names": len(named) == ran,
+                  "verdicts": verdicts, "tests": named, "fixtures": fixtures, "passes_from_suite": inferred,
+                  "complete_names": len(named) == ran and all(case["outcome"] != "unconfirmed"
+                                                              for case in named + fixtures),
                   "configurations": qualification, "cells": sorted(cells, key=lambda c: c["name"])}
     for route in routes:
         route["outcome"] = "passed" if route["model"] in passed_routes else "unconfirmed"
@@ -182,6 +201,9 @@ def compare(before, after, allow_added=()):
             else:
                 problems["python"].append(change)
         if left["complete_names"] and right["complete_names"]:
+            if counted(left.get("fixtures", [])) != counted(right.get("fixtures", [])):
+                problems["python"].append({"step": step, "before_fixtures": left.get("fixtures", []),
+                                           "after_fixtures": right.get("fixtures", [])})
             missing = difference(counted(left["tests"]), counted(right["tests"]))
             added = difference(counted(right["tests"]), counted(left["tests"]))
             if missing or (added and step not in allow_added):

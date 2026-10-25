@@ -598,6 +598,8 @@ def ab(run):
                             lines += [f"{arm} C{c} {field}: median {value['median']}, spread {value['spread']:.2%}."]
                     continue
                 if repeats != 2:
+                    if model.get('required_shapes', {}).get(str(c)):
+                        raise ValueError(f'required shape at C{c} needs all four visits')
                     result.update(verdict='short control', weight=0)
                     continue
                 result.update(paired([row['request_tokens_per_second'] for row in selected], change))

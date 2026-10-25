@@ -283,6 +283,8 @@ be present in all four visits, sufficiently sampled and positively weighted;
 a missing target cannot disappear from acceptance. Without explicit targets,
 every weighted cell is a target. `required_shapes`, for example
 `{"8": ["i8-r32"]}`, is a hard coverage and sampling requirement.
+Required shapes also need all four visits; a single-repeat control cannot
+satisfy that requirement.
 
 Model `change` is `speedup` (default), `variant`, `table_row` or
 `simplification`. Variants and table rows also need a 1.5% mean gain in

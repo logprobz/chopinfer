@@ -155,7 +155,8 @@ class Tuner(unittest.TestCase):
             self.assertTrue(result['weighted']['d0/d1-conf0']['timing_accepted'])
             cell = result['pairs']['d0/d1-conf0']['8']['cells']['i8-r8']
             self.assertEqual((cell['verdict'], cell['reason']), ('informational', 'arm-specific shape'))
-            for requirement in ({'target_cells': ['c8/i8-r8']}, {'required_shapes': {'8': ['i8-r8']}}):
+            for requirement in ({'target_cells': ['c8/i8-r8']}, {'required_shapes': {'8': ['i8-r8']}},
+                                {'required_shapes': {'1': ['i1-r1']}}):
                 with self.subTest(requirement=requirement):
                     tune.r.write(root / 'config.json', {**config, 'model': {**model, **requirement}})
                     with self.assertRaisesRegex(ValueError, 'target|required shape'):

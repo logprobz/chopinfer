@@ -72,11 +72,18 @@ pub fn entries() -> Vec<Entry> {
 
 /// The entry `SERVED` names for projection `id` at `rows` rows.
 pub fn served(id: &str, rows: u32) -> Option<Entry> {
-    SERVED.iter().find(|s| (s.0, s.1) == (id, rows)).map(
-        |&(_, rows, n, k, groups, tile_n, splits, stages)| {
-            entry(rows, n, k, groups, tile_n, splits, stages)
-        },
-    )
+    let q = query(id)?;
+    let op = format!("dense_fold.{}_cluster.decode", id.replace(['.', '-'], "_"));
+    let tuning = super::mxfp8_fold::status_tuning(&op, 32, rows)?;
+    Some(entry(
+        rows,
+        q.n,
+        q.k,
+        q.groups,
+        super::mxfp8_fold::tuning_count(tuning, "tile_n"),
+        super::mxfp8_fold::tuning_count(tuning, "splits"),
+        super::mxfp8_fold::tuning_count(tuning, "stages"),
+    ))
 }
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
@@ -91,4 +98,27 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
+}
+
+fn query(id: &str) -> Option<kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery> {
+    static QUERIES: std::sync::OnceLock<
+        std::collections::BTreeMap<String, kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery>,
+    > = std::sync::OnceLock::new();
+    let declaration = match id {
+        "attention.q-a" => "layer.wq_a",
+        "attention.kv" => "layer.wkv",
+        "attention.o-a" => "layer.wo_a",
+        "attention.o-b" => "layer.wo_b",
+        _ => return None,
+    };
+    QUERIES
+        .get_or_init(|| {
+            super::mxfp8_fold::registrations(&FLASH, 4, 0)
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.projection, r.entry.query))
+                .collect()
+        })
+        .get(declaration)
+        .copied()
 }

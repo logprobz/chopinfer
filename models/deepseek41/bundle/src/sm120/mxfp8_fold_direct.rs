@@ -22,14 +22,21 @@ const WINS: &[(u32, u32, u32, bool, u32, Schedule)] = &[
 ];
 
 pub fn selected(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> Option<Schedule> {
-    if g.id != FLASH.id {
-        return None;
+    match previous::tuning_row(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.direct.decode",
+        q,
+        paired,
+        rows,
+    )
+    .map(|r| r.schedule.as_str())
+    {
+        Some("n32k1") => Some(Schedule::Block),
+        Some("n8k4") => Some(Schedule::LocalSplit),
+        None => None,
+        Some(schedule) => panic!("unknown direct fold schedule {schedule}"),
     }
-    WINS.iter()
-        .find(|&&(n, k, groups, pair, count, _)| {
-            (n, k, groups, pair, count) == (q.n, q.k, q.groups, paired, rows)
-        })
-        .map(|row| row.5)
 }
 
 pub fn register(

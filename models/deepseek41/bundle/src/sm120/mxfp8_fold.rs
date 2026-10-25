@@ -221,13 +221,15 @@ const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
 /// The accepted ticket baseline: split folds for measured ties and the
 /// TP2 one/two-row regression. The lab also uses this to compare candidates.
 pub fn small_query(g: &Geometry, query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
-    let tied = query.groups == 1
-        && SPLIT_FOLD_TIES.iter().any(|(n, k, ranges)| {
-            (query.n, query.k) == (*n, *k) && ranges.iter().any(|range| range.contains(&rows))
-        });
-    let split = g.id == model_deepseek41_contract::geometry::FLASH.id
-        && (tied
-            || ((1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1)));
+    let split = tuning_row(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.split.decode",
+        query,
+        false,
+        rows,
+    )
+    .is_some();
     Mxfp8FoldGemmQuery {
         m_capacity: if split { 32 } else { SMALL_CAPACITY },
         ..query
@@ -613,4 +615,56 @@ pub fn prefill_tail_policy(
         },
         _ => TailPolicy::ALL,
     }
+}
+
+/// Select an exact-row registration from the 64-row fold catalog. Decode,
+/// verify and qualified short prefills share these offers; their precedence
+/// and prepared query bounds remain with the callers.
+pub fn tuning_row(
+    g: &Geometry,
+    family: model_deepseek41_contract::tuning::Family,
+    op: &str,
+    q: Mxfp8FoldGemmQuery,
+    paired: bool,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    model_deepseek41_contract::tuning::select(
+        g,
+        family,
+        op,
+        "mxfp8",
+        &[
+            ("n", q.n),
+            ("k", q.k),
+            ("groups", q.groups),
+            ("paired", u32::from(paired)),
+        ],
+        SMALL_CAPACITY,
+        rows,
+    )
+}
+
+/// Status sites have fixed Flash TP4 shapes. Their producer and bank gates
+/// are checked before these descriptors are used.
+pub fn status_tuning(
+    op: &str,
+    bucket: u32,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    model_deepseek41_contract::tuning::select(
+        &model_deepseek41_contract::geometry::FLASH,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        op,
+        "mxfp8",
+        &[("ranks", 4)],
+        bucket,
+        rows,
+    )
+}
+
+pub fn tuning_count(row: &kernel_build::tuning::Row, name: &str) -> u32 {
+    row.knobs
+        .get(name)
+        .and_then(|v| v.count())
+        .unwrap_or_else(|| panic!("{}: missing count {name}", row.key))
 }

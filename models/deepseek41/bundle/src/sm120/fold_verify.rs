@@ -25,9 +25,9 @@ pub fn enabled(g: &Geometry, ranks: u32, verify_rows: u32) -> bool {
 /// The query projection and sliced output chain won on both devices at
 /// every wide row count tested. The window-KV prefetch path remains faster.
 pub fn served(id: &str, rows: u32) -> Option<Entry> {
-    ((33..=64).contains(&rows) && id != "attention.kv")
-        .then(|| entry(id))
-        .flatten()
+    let op = format!("dense_fold.{}_status.verify", id.replace(['.', '-'], "_"));
+    super::mxfp8_fold::status_tuning(&op, 64, rows)?;
+    entry(id)
 }
 
 pub fn entry(id: &str) -> Option<Entry> {
@@ -37,6 +37,18 @@ pub fn entry(id: &str) -> Option<Entry> {
         "attention.o-a" => (1024, 4096, 2, 64, 8, 3, 0, true),
         "attention.o-b" => (5120, 2048, 1, 32, 2, 4, 64, false),
         _ => return None,
+    };
+    let (tile_n, splits, stages) = if id == "attention.kv" {
+        // This lab descriptor is not a served wide status route.
+        (tile_n, splits, stages)
+    } else {
+        let op = format!("dense_fold.{}_status.verify", id.replace(['.', '-'], "_"));
+        let tuning = super::mxfp8_fold::status_tuning(&op, 64, 64)?;
+        (
+            super::mxfp8_fold::tuning_count(tuning, "tile_n"),
+            super::mxfp8_fold::tuning_count(tuning, "splits"),
+            super::mxfp8_fold::tuning_count(tuning, "stages"),
+        )
     };
     let q = Mxfp8FoldGemmQuery {
         n,

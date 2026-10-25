@@ -106,8 +106,8 @@ impl crate::Kernels {
                 id,
                 "attention.q-a" | "attention.q-b" | "attention.o-a" | "attention.o-b"
             )
-            && (5..=60).contains(&rows)
-            && rows.is_multiple_of(5)
+            && super::mxfp8_fold::status_tuning("dense_fold.status_blocks.decode", 64, rows)
+                .is_some()
     }
 
     /// WO_a's or WO_b's status fold over its fused buffers at
@@ -186,7 +186,13 @@ impl crate::Kernels {
                         shape.geometry,
                         shape.ranks(),
                         shape.verify_rows,
-                    ) && (33..=shape.verify_decode_rows()).contains(&need.capacity)))
+                    ) && need.capacity <= shape.verify_decode_rows()
+                        && super::mxfp8_fold::status_tuning(
+                            "dense_fold.status_wide.verify",
+                            64,
+                            need.capacity,
+                        )
+                        .is_some()))
             {
                 let entry = super::fold_verify_local::entry()?;
                 if !matches(entry.query(), query, need) {

@@ -100,11 +100,8 @@ const ATTENTION: u32 = 8192;
 /// The row tile bucket `rows` launches: 1, 2, 4 and 8 rows run the 16-row
 /// tile.
 pub fn tile(rows: u32) -> Option<u32> {
-    match rows {
-        1 | 2 | 4 | 8 | 16 => Some(16),
-        32 => Some(32),
-        _ => None,
-    }
+    super::mxfp8_fold::status_tuning("dense_fold.status.decode", 32, rows)
+        .map(|r| super::mxfp8_fold::tuning_count(r, "tile_rows"))
 }
 
 /// The fused twin of `id`'s served cluster fold at the tile of `rows`
@@ -136,7 +133,7 @@ pub fn fused(id: &str, rows: u32) -> Option<Entry> {
 
 /// WQ_b's wide fold, which every bucket launches.
 pub fn wide(rows: u32) -> Option<mxfp8_fold_local_wide::Entry> {
-    tile(rows)?;
+    let tuning = super::mxfp8_fold::status_tuning("dense_fold.status.decode", 32, rows)?;
     let base = super::mxfp8_fold::prefill_entries(&FLASH, 4)
         .unwrap()
         .into_iter()
@@ -146,25 +143,24 @@ pub fn wide(rows: u32) -> Option<mxfp8_fold_local_wide::Entry> {
     q.m_capacity = 32;
     Some(mxfp8_fold_local_wide::Entry {
         base: mxfp8_fold::Entry::new(q, "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32").unwrap(),
-        tile_n: WIDE.0,
-        stages: WIDE.1,
+        tile_n: super::mxfp8_fold::tuning_count(tuning, "tile_n"),
+        stages: super::mxfp8_fold::tuning_count(tuning, "stages"),
     })
 }
 
 /// WO_a's input quantizer at the tile of `rows` rows.
 pub fn sliced(rows: u32) -> Option<Quantizer> {
-    let tile = tile(rows)?;
-    SLICED
-        .iter()
-        .find(|s| s.0 == tile)
-        .map(|&(_, slices, warps)| Quantizer {
-            width: ATTENTION,
-            slices,
-            warps,
-            f32_input: false,
-            capacity: 32,
-            symbol: format!("chop_deepseek41_dense_ceil_w{ATTENTION}_sliced_s{slices}w{warps}_v1"),
-        })
+    let tuning = super::mxfp8_fold::status_tuning("dense_fold.status.decode", 32, rows)?;
+    let slices = super::mxfp8_fold::tuning_count(tuning, "slices");
+    let warps = super::mxfp8_fold::tuning_count(tuning, "warps");
+    Some(Quantizer {
+        width: ATTENTION,
+        slices,
+        warps,
+        f32_input: false,
+        capacity: 32,
+        symbol: format!("chop_deepseek41_dense_ceil_w{ATTENTION}_sliced_s{slices}w{warps}_v1"),
+    })
 }
 
 pub fn entries() -> Vec<Entry> {
@@ -280,4 +276,9 @@ mod tests {
             "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1"
         );
     }
+}
+
+/// Exact launch rows represented by the status-fold table.
+pub fn rows() -> Vec<u32> {
+    (1..=32).filter(|&rows| tile(rows).is_some()).collect()
 }

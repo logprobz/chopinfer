@@ -48,19 +48,19 @@ const PREFETCH_WINS: &[MeasuredRows] = &[
 ];
 
 pub fn decode_path(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> DecodePath {
-    // Shape matches do not qualify a different checkpoint geometry.
-    if g.id != FLASH.id {
-        return DecodePath::Ticket;
-    }
-    if small_query(g, q, rows).m_capacity == 32 {
-        return DecodePath::Split;
-    }
-    if PREFETCH_WINS.iter().any(|(n, k, groups, pair, ranges)| {
-        (q.n, q.k, q.groups, paired) == (*n, *k, *groups, *pair)
-            && ranges.iter().any(|range| range.contains(&rows))
-    }) {
-        DecodePath::Prefetch
-    } else {
-        DecodePath::Ticket
+    match super::tuning_row(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.fold.decode",
+        q,
+        paired,
+        rows,
+    )
+    .map(|r| r.schedule.as_str())
+    {
+        Some("split") => DecodePath::Split,
+        Some("prefetch") => DecodePath::Prefetch,
+        None => DecodePath::Ticket,
+        Some(schedule) => panic!("unknown fold schedule {schedule}"),
     }
 }

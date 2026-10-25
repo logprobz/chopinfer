@@ -61,5 +61,13 @@ const WINS: &[(u32, u32, u32, bool, u32)] = &[
  ];
 
 pub fn qualified(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> bool {
-    g.id == FLASH.id && WINS.contains(&(q.n, q.k, q.groups, paired, rows))
+    super::previous::tuning_row(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.stream.decode",
+        q,
+        paired,
+        rows,
+    )
+    .is_some()
 }

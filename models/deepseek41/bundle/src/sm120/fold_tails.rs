@@ -21,15 +21,12 @@ pub(crate) fn enabled(g: &Geometry, ranks: u32) -> bool {
 }
 
 pub(crate) fn tile(rows: u32) -> Option<u32> {
-    ROWS.contains(&rows).then_some(match rows {
-        0..=16 => 16,
-        17..=32 => 32,
-        _ => 64,
-    })
+    super::mxfp8_fold::status_tuning("dense_fold.status_tails.decode", 64, rows)
+        .map(|r| super::mxfp8_fold::tuning_count(r, "tile_rows"))
 }
 
 pub(crate) fn wide_rows(rows: u32) -> bool {
-    matches!(rows, 35 | 40 | 45 | 50 | 55 | 60)
+    super::mxfp8_fold::status_tuning("dense_fold.status_wide_tails.decode", 64, rows).is_some()
 }
 
 pub(crate) fn cluster(id: &str, rows: u32) -> Option<Entry> {
@@ -40,4 +37,9 @@ pub(crate) fn cluster(id: &str, rows: u32) -> Option<Entry> {
         64 => super::fold_verify::entry(id),
         tile => super::fold_fused::fused(id, tile),
     }
+}
+
+/// Exact tail rows in table order, including the measured gaps.
+pub(crate) fn rows() -> Vec<u32> {
+    (1..=64).filter(|&rows| tile(rows).is_some()).collect()
 }

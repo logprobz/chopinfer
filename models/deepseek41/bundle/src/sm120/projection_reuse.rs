@@ -24,14 +24,18 @@ const SHAPES: [(u32, u32, u32); 4] = [
 // paired samples: three real input sets, two devices, cold and warm L2.
 // No crossover is inferred for omitted rows. C1, C8 and verify-6 stay put.
 pub fn choice(q: Mxfp8FoldGemmQuery, rows: u32) -> Option<(u32, u32)> {
-    match (q.n, q.k, q.groups) {
-        (1280, 5120, 1) if (17..=21).contains(&rows) || (23..=24).contains(&rows) => Some((32, 4)),
-        (8192, 1280, 1) if (9..=12).contains(&rows) => Some((64, 4)),
-        (1024, 4096, 2) if (17..=32).contains(&rows) => Some((32, 4)),
-        (5120, 2048, 1) if (17..=23).contains(&rows) || (25..=28).contains(&rows) => Some((32, 8)),
-        (5120, 2048, 1) if (29..=32).contains(&rows) => Some((32, 2)),
-        _ => None,
-    }
+    let row = super::mxfp8_fold::tuning_row(
+        &FLASH,
+        model_deepseek41_contract::tuning::Family::Reuse,
+        "reuse.fold.decode",
+        q,
+        false,
+        rows,
+    )?;
+    Some((
+        super::mxfp8_fold::tuning_count(row, "tile_n"),
+        super::mxfp8_fold::tuning_count(row, "folds"),
+    ))
 }
 
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
@@ -104,9 +108,22 @@ pub fn head(
     entry: f32_projection::Entry,
 ) -> Result<f32_projection::Entry, String> {
     if selected(g, ranks) && entry.query() == super::f32_head::query(g, ranks) {
-        entry
-            .with_decode_reuse((9..=32).collect())
-            .map_err(|e| e.to_string())
+        let q = entry.query();
+        let rows = (1..=q.m_capacity)
+            .filter(|&rows| {
+                model_deepseek41_contract::tuning::select(
+                    g,
+                    model_deepseek41_contract::tuning::Family::Reuse,
+                    "reuse.head.decode",
+                    "bf16",
+                    &[("n", q.n), ("k", q.k), ("ranks", ranks)],
+                    q.m_capacity,
+                    rows,
+                )
+                .is_some()
+            })
+            .collect();
+        entry.with_decode_reuse(rows).map_err(|e| e.to_string())
     } else {
         Ok(entry)
     }

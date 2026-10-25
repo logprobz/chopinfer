@@ -94,6 +94,13 @@ def run(binaries, tier, threads=8):
 
     def model(item):
         name, (binary, cwd, env) = item
+        # Reproduce a gate whose per-model rotation counters differed. Each
+        # child still receives the ordinary single-model seed variable.
+        if seeds := env.get("CHOPINFER_ROUTE_SEEDS"):
+            recorded = json.loads(seeds)
+            if name not in recorded or type(recorded[name]) is not int:
+                raise ValueError(f"no integer route seed recorded for {name}")
+            env = {**env, "CHOPINFER_ROUTE_SEED": str(recorded[name])}
         seed = rotation_seed(name, tier, env)
         reproduce = ["env", f"CHOPINFER_ROUTE_SWEEP={tier}", f"CHOPINFER_ROUTE_SEED={seed}",
                      "bash", "tools/dev/heavy.sh", "cargo", "test", "--locked", "--offline",

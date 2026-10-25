@@ -285,7 +285,9 @@ def _account(step, result):
 
 
 def _report(step, result, out, label):
-    if step.echo or result.status != "ok":
+    # Qualification deletes its cell logs on exit, including under env -i in
+    # qual-clean. Retain the executed identities in its enclosing step's log.
+    if step.echo or result.status != "ok" or label == "qualification":
         with open(result.log, errors="replace") as log:
             text = log.read()
         out.write(f"==> {step.name} ({result.status})\n{text}")

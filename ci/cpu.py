@@ -32,6 +32,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import model_checks
 import preflight
 import runner
+import test_inventory
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PY = ["python3", "-B"]
@@ -109,6 +110,9 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
     env = os.environ.copy()
 
     def step(name, argv, after=(), weight=1, skips=None, exclusive=False, **variables):
+        if ("unittest" in argv or any(pathlib.Path(arg).name.startswith("test_") and arg.endswith(".py")
+                                     for arg in argv)) and "-v" not in argv:
+            argv = [*argv, "-v"]
         return runner.Step(name, argv, env={**env, **variables} if variables else None,
                            cwd=str(ROOT), weight=min(weight, max(jobs // 2, 1)), after=after, skips=skips,
                            exclusive=exclusive)
@@ -524,6 +528,21 @@ def main(arguments=None):
             watch.stop()
         failed = runner.failed(results)
         status = 1 if failed else 0
+        runner.write_summary(work / "results.json", results, jobs=args.jobs, test_threads=args.test_threads, started=began,
+                             seconds=time.monotonic() - started)
+        if any(item.name == "exhaustive-comparisons" for item in planned):
+            source = NEXTEST_REPORTS[1]
+            if source.is_file() and source.stat().st_mtime >= began:
+                (work / "junit").mkdir(exist_ok=True)
+                shutil.copy2(source, work / "junit/exhaustive.xml")
+        try:
+            inventory = test_inventory.collect(work, {"started": began, "steps": [vars(result) for result in results]})
+            test_inventory.write(work / "executed-tests.json", inventory)
+            if inventory["duplicate_portable_tests"]:
+                raise ValueError("duplicate portable test executions")
+        except (ValueError, OSError, ElementTree.ParseError) as error:
+            print(f"cpu-ci inventory failed: {error}", file=sys.stderr)
+            status = 1
         if args.summary:
             runner.write_summary(args.summary, results, jobs=args.jobs, test_threads=args.test_threads,
                                  seconds=time.monotonic() - started)

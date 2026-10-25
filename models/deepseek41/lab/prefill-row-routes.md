@@ -22,8 +22,7 @@ twelve counts. The candidate-to-baseline median ratios ranged from 0.0934
 to 0.1820, all below the fixed 0.97 gate. The power cap was 300 W; active
 clock samples reached 1792 MHz. Peak worker memory was 1480 MiB, and free
 memory returned to its initial value after both phases. There were no
-kernel Xids. This is kernel evidence; the combined serving comparison and
-packed-prompt invariance gate remain pending.
+kernel Xids. The combined serving comparison is reported below.
 
 The exact prefill tiles also cover row bands for four Flash projection
 shapes. Existing exact wide, blocked and tiled entries keep precedence;
@@ -52,8 +51,7 @@ to beat 0.97 at every timed point; the eligible tile with the lower summed
 candidate time won. Adjacent bands choosing the same tile were joined.
 The selected tiles' candidate-to-baseline ratios ranged from 0.1204 to
 0.3434. Measurements used a 300 W cap and an 1800 MHz clock lock. These
-kernel timings do not establish request throughput. Combined serving and
-packed-prompt invariance remain pending.
+kernel timings do not establish request throughput.
 
 CPU dispatch checks cover every row count through 8192, including exact
 entry precedence, the unchanged drafter shape and other geometries. The
@@ -64,3 +62,33 @@ baseline launches with the intended prepare/tile pair. The audit checks
 the launch geometry, original operands, scratch and initialized weight
 domain, with every other line unchanged. No journal pin or kernel lock
 changes.
+
+On 2026-10-25, the combined router and tile-band change passed the sampled
+serving gate against the preceding batch. Both builds used separate sealed
+installs on four RTX PRO 6000 GPUs, TP4, a 300 W cap and an 1800 MHz clock
+lock. Sampling used seed 9100, temperature 1, top-p 1, 128 output tokens and
+DSpark depth 3 with confidence disabled. A separate untimed baseline pass
+preceded eight measured windows in ABBA order, two per arm and concurrency.
+All sampled outputs matched exactly, with no preemptions or cache evictions.
+
+| Concurrency | Baseline request tok/s | Candidate request tok/s | Gain |
+|---|---:|---:|---:|
+| C8 | 347.30 | 371.34 | 6.92% |
+| C16 | 379.22 | 415.98 | 9.69% |
+
+These are medians of two windows per arm. The candidate's slower window
+exceeded the baseline's faster window at both concurrencies. Energy per
+output token fell by 4.74% at C8 and 8.19% at C16 in the same run.
+
+An explicit normal-load prelude passed both builds' C8/C16 controls before
+the borrowed run. Every borrowed server matched its own normal-load native
+control. All eight rank images stayed read-only under the same keeper
+process, with zero uploads, refusals or outstanding leases between servers.
+The keeper remained resident afterward.
+
+Packed-versus-alone checks passed separately with normal and borrowed
+weights. Each run executed 18 requests, 40 captures and 24 comparisons at
+C8/C16, checking output tokens and logprobs, full logits, full state and KV
+bytes with only the established unwritten-tail and ring masks. The normal
+prelude took 403 seconds and the borrowed gate took 339 seconds; both exited
+successfully with no Xids.

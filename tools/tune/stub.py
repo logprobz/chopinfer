@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import queue
 import struct
 import threading
 import time
@@ -115,12 +116,12 @@ def stub(args):
             state['verify_items'] += verify_items
             micros = 12_000 + 600 * rows + 4000 * bool(verify_items)
             state['clock_ns'] = time.time_ns() if os.environ.get('TUNE_STUB_CLOSED_LOOP') else state['clock_ns'] + micros * 1000
-            live = max(items, state['live']) if os.environ.get('TUNE_STUB_CLOSED_LOOP') else items
-            multiplier = live / items
+            if os.environ.get('TUNE_STUB_CLOSED_LOOP'):
+                micros = 1000
             print(json.dumps({
                 'schema': 'chopinfer.step.v1', 'batch': state['batch'], 'prefill_tokens': prefill,
-                'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else int((items - verify_items) * multiplier),
-                'verify_items': int(verify_items * multiplier), 'verify_rows': int((sum(drafts) + verify_items) * multiplier),
+                'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else items - verify_items,
+                'verify_items': verify_items, 'verify_rows': sum(drafts) + verify_items,
                 'drafted_tokens': sum(drafts),
                 **({'reserved_rows': reserved} if allocated else {}),
                 'accepted_tokens': sum(emitted) - items,
@@ -131,6 +132,37 @@ def stub(args):
                 'speculation': {'mode': mode, 'items': items, 'reason': 'balanced'}}), flush=True)
         time.sleep(.0005)
         return [0] * items if prefill else emitted
+
+    pending, active = [], []
+    scheduled = threading.Condition()
+
+    def batcher():
+        while True:
+            with scheduled:
+                while not pending and not active:
+                    scheduled.wait()
+                new, pending[:] = list(pending), []
+                active.extend(new)
+            if new:
+                time.sleep(float(os.environ.get('TUNE_STUB_PREFILL_DELAY_SECONDS', '0')))
+                step([row['key'] for row in new], [0] * len(new),
+                     prefill=sum(row['prompt_tokens'] for row in new))
+            if active:
+                emitted = step([row['key'] for row in active], [row['position'] for row in active])
+                keep = []
+                for row, n in zip(active, emitted):
+                    start = row['position']
+                    take = min(n, row['limit'] - start)
+                    row['position'] += take
+                    done = row['position'] == row['limit']
+                    row['queue'].put((row['index'], row['key'], start, take, done))
+                    if not done:
+                        keep.append(row)
+                active[:] = keep
+            time.sleep(.002)
+
+    if os.environ.get('TUNE_STUB_CLOSED_LOOP'):
+        threading.Thread(target=batcher, daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *unused):
@@ -181,6 +213,37 @@ def stub(args):
             keys = [f"{body.get('temperature')}/{body.get('seed')}/{p}" for p in prompts]
             usage = {'prompt_tokens': sum(map(len, prompts)), 'completion_tokens': out * len(prompts),
                      'prompt_tokens_details': {'cached_tokens': int(os.environ.get('TUNE_STUB_CACHED') == label)}}
+            if os.environ.get('TUNE_STUB_CLOSED_LOOP'):
+                events = queue.Queue()
+                if sampled:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/event-stream')
+                    self.end_headers()
+                with scheduled:
+                    pending.extend({'key': key, 'position': 0, 'limit': out, 'prompt_tokens': len(prompts[i]),
+                                    'index': i, 'queue': events} for i, key in enumerate(keys))
+                    scheduled.notify_all()
+                finished = 0
+                while finished < len(keys):
+                    i, key, start, take, done = events.get(timeout=60)
+                    finished += done
+                    if sampled:
+                        rows = [token(key, j) for j in range(start, start + take)]
+                        event = {'choices': [{'index': i, 'token_ids': [x[0] for x in rows],
+                                  'logprobs': {'token_logprobs': [x[1] for x in rows]},
+                                  'finish_reason': 'length' if done else None}]}
+                        self.wfile.write(('data: ' + json.dumps(event) + '\n\n').encode())
+                if sampled:
+                    self.wfile.write(('data: ' + json.dumps({'choices': [], 'usage': usage}) +
+                                      '\n\ndata: [DONE]\n\n').encode())
+                else:
+                    choices = []
+                    for i, key in enumerate(keys):
+                        rows = [token(key, j) for j in range(out)]
+                        choices.append({'index': i, 'token_ids': [x[0] for x in rows], 'finish_reason': 'length',
+                                        'logprobs': {'token_logprobs': [x[1] for x in rows]}})
+                    self.respond({'choices': choices, 'usage': usage})
+                return
             with lock:
                 state['live'] += len(keys)
             step(keys, [0] * len(keys), prefill=sum(map(len, prompts)))
@@ -217,7 +280,10 @@ def stub(args):
             with lock:
                 state['live'] -= len(keys)
 
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    class HTTPServer(ThreadingHTTPServer):
+        request_queue_size = 128
+
+    server = HTTPServer(('127.0.0.1', args.port), Handler)
     server.serve_forever()
 
 

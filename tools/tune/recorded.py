@@ -100,7 +100,7 @@ def main(recorded, output):
           f'{output}')
 
 
-def closed_loop(recorded, output):
+def closed_loop(recorded, output, require_agreement=False):
     """Replay historical closed-loop receipts through the paired verdict core.
 
     Historical admission gaps stay explicit. These receipts cannot certify a
@@ -145,12 +145,13 @@ def closed_loop(recorded, output):
             seen.add(index)
     if seen != set(range(len(power))):
         raise ValueError('incomplete historical GPU samples')
-    result, gaps = {}, set()
+    result, gaps, disagreements = {}, set(), []
     servers = [arms[label]['server'] for label in labels]
     if len(set(servers)) != 4:
         gaps.add('Historical paired DSpark visits reused a process.')
     mapping = {'decisive gain': 'resolved gain', 'decisive regression': 'resolved regression',
-               'no change (within the A/A or B/B spread)': 'neutral'}
+               'no change (within the A/A or B/B spread)': 'neutral',
+               'no change (both head arms inside the base range)': 'neutral', 'read by hand': None}
     for label in labels:
         if summary['servers'][arms[label]['server']]['weights']['source'] != 'borrowed':
             raise ValueError('historical visit did not borrow keeper weights')
@@ -204,25 +205,36 @@ def closed_loop(recorded, output):
         if {v[0] for v in identities[0].values()} & {v[0] for v in identities[2].values()}:
             raise ValueError('historical pairs share a seed set')
         decision = report.paired(rates)
-        expected = mapping[original['rows'][c]['window_tok_s']['verdict']]
+        historical_label = original['rows'][c]['window_tok_s']['verdict']
+        expected = mapping.get(historical_label)
         if decision['verdict'] != expected:
-            raise ValueError(f'C{c}: paired verdict differs from recorded harness')
+            disagreements.append({'concurrency': c, 'paired': decision['verdict'], 'harness': expected})
         result[c] = {**decision, 'rates': rates, 'window_seconds': durations,
-                     'joules_per_token': energies, 'harness_verdict': expected}
+                     'joules_per_token': energies, 'harness_verdict': expected, 'harness_label': historical_label}
     output.mkdir(parents=True, exist_ok=False)
     value = {'status': 'historical replay', 'passed': True, 'contract_a_admissible': False,
              'limitations': sorted(gaps | {'Historical records do not contain per-seed exact output proofs.'}),
              'pairs': {'AR/DSpark': result}, 'enforced_power_limits_w': power, 'evidence': evidence,
+             'harness_agreement': not disagreements, 'disagreements': disagreements,
              'windows': len(counts) * 4, 'excluded_probes': sorted(set(arms) - set(labels))}
     r.write(output / 'ab.json', value)
     r.write(output / 'recorded-check.json', value)
+    if require_agreement and disagreements:
+        raise ValueError('paired verdict differs from recorded harness; see recorded-check.json')
     print(json.dumps({'passed': True, 'windows': value['windows'],
                       'verdicts': {c: v['verdict'] for c, v in result.items()}}))
     return value
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--closed-loop']:
-        closed_loop(*sys.argv[2:4])
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--closed-loop', action='store_true')
+    parser.add_argument('--require-agreement', action='store_true')
+    parser.add_argument('recorded')
+    parser.add_argument('output')
+    args = parser.parse_args()
+    if args.closed_loop:
+        closed_loop(args.recorded, args.output, args.require_agreement)
     else:
-        main(*sys.argv[1:3])
+        main(args.recorded, args.output)

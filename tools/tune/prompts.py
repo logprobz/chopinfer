@@ -25,6 +25,42 @@ LANGUAGE = {'.rs': 'rust', '.py': 'python'}
 COMMENT = {'.rs': '//', '.py': '#'}
 
 
+def exhausted():
+    raise RuntimeError('unseen cold prompt budget exhausted')
+
+
+class VisitPool:
+    def __init__(self, tokens):
+        self.remaining = tokens
+
+    def reserve(self, count):
+        if count < 1 or count > len(self.remaining):
+            exhausted()
+        values, self.remaining = self.remaining[:count], self.remaining[count:]
+        return values
+
+
+def visit_pools(tokens, visits):
+    """Assign equal length histograms to arms, then split by visit index."""
+    if len({tuple(p) for p in tokens}) != len(tokens):
+        raise ValueError('cold prompt pool contains duplicates')
+    arms = list(dict.fromkeys(v.get('arm', v['label']) for v in visits))
+    by_length, by_arm = {}, {arm: [] for arm in arms}
+    for prompt in tokens:
+        by_length.setdefault(len(prompt), []).append(prompt)
+    for _, group in sorted(by_length.items()):
+        # Leave an incomplete length group unused so every arm has the same
+        # distribution. Inputs retain their original order within each length.
+        for index, prompt in enumerate(group[:len(group) // len(arms) * len(arms)]):
+            by_arm[arms[index % len(arms)]].append(prompt)
+    result = {}
+    for arm in arms:
+        members = [v for v in visits if v.get('arm', v['label']) == arm]
+        for index, visit in enumerate(members):
+            result[visit['label']] = VisitPool(by_arm[arm][index::len(members)])
+    return result
+
+
 class Unseen:
     """A job-wide tokenized prompt pool, exhausted rather than reused."""
 

@@ -84,37 +84,77 @@ def frozen(directory, name):
             'prepared': prepared}, files
 
 
+def cold_budget(config):
+    import math
+    import tune
+    model, plan = config['model'], config['model']['planning']
+    budgets = {}
+    for c in model['concurrencies']:
+        rate = max(plan['tokens_per_second'][str(c)], plan['ar_tokens_per_second'][str(c)])
+        tokens = config['tokens'].get(str(c), config['tokens']['default'])
+        budgets[str(c)] = 2 * c + 2 * math.ceil(15 * rate / tokens)
+    needs = [sum(config['warm']) + sum(budgets[str(c)] for _, part in visit['passes'] for _, c in part)
+             for visit in tune.visits(config)]
+    return {'request_budgets': budgets, 'prompts_required': len(needs) * max(needs)}
+
+
 def estimate(config):
-    """Expected job seconds from the model config's planning figures: per arm
-    a startup and fixed overhead, then every warm-up, reference (first arm)
-    and timed window request at the planned request tok/s plus its settling
-    time."""
-    sys.path.insert(0, str(HERE))
+    """Plan priming, measurement, drain, cache warm-up and unmatched replay."""
     import tune
     model, plan = config['model'], config['model']['planning']
     tokens = lambda c: config['tokens'].get(str(c), config['tokens']['default'])
+    rate_for = lambda arm: plan['ar_tokens_per_second'] if arm['depth'] == 0 else plan['tokens_per_second']
+    startup = plan['startup_seconds'] + plan['process_overhead_seconds']
+
+    def closed(c, rate):
+        cohort = c * tokens(c) / rate
+        return max(4, cohort) + 15 + cohort + plan['settle_seconds']
+
     total = 0.0
     for index, arm in enumerate(tune.visits(config)):
-        depth = arm['depth']
-        rates = plan['ar_tokens_per_second'] if depth == 0 else plan['tokens_per_second']
-        total += plan['startup_seconds'] + plan['process_overhead_seconds']
-        total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
+        rates = rate_for(arm)
+        total += startup + sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
         if model.get('mode') == 'ab':
-            for _, part in arm['passes']:
-                for _, c in part:
-                    # Includes one complete in-flight cohort's drain and a
-                    # conservative deferred baseline replay of every request.
-                    total += 15 + c * tokens(c) / rates[str(c)] + plan['settle_seconds']
-                    total += (15 * rates[str(c)] + c * tokens(c)) / plan['ar_tokens_per_second'][str(c)]
+            total += sum(closed(c, rates[str(c)]) for _, part in arm['passes'] for _, c in part)
             continue
-        windows = (tune.windows_for(config, depth, True) if index == 0 else []) \
-            + [window for _, part in arm['passes'] for window in part]
+        windows = (tune.windows_for(config, arm['depth'], True) if index == 0 else []) + [w for _, part in arm['passes'] for w in part]
         for _, c in windows:
-            groups = model.get('groups', {}).get(str(c), 1)
-            total += groups * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])
+            total += model.get('groups', {}).get(str(c), 1) * (c * tokens(c) / rates[str(c)] + plan['settle_seconds'])
     if model.get('mode') == 'ab':
-        total += len({a for a, _ in model['pairs']}) * (plan['startup_seconds'] + plan['process_overhead_seconds'])
+        arms = {arm['label']: arm for arm in tune.arms(config)}
+        if not config.get('cold_engram'):
+            rates = rate_for(tune.arms(config)[0])
+            total += startup + 2 * sum(closed(c, rates[str(c)]) for c in model['concurrencies'])
+            total += sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
+        for baseline in dict.fromkeys(a for a, _ in model['pairs']):
+            total += startup
+            for c in model['concurrencies']:
+                rates = rate_for(arms[baseline])
+                repeats = model.get('concurrency_repeats', {}).get(str(c), model['repeats'])
+                if config.get('cold_engram'):
+                    requests = cold_budget(config)['request_budgets'][str(c)]
+                    total += len(arms) * repeats * requests * tokens(c) / rates[str(c)]
+                else:
+                    # Matched requests compare directly. Budget a cohort plus
+                    # 25% of measured output per pair for unmatched tails.
+                    for a, b in model['pairs']:
+                        if a == baseline:
+                            throughput = max(rates[str(c)], rate_for(arms[b])[str(c)])
+                            total += repeats * (c * tokens(c) + .25 * 15 * throughput) / rates[str(c)]
     return total
+
+
+def check_budget(config, prompts):
+    seconds = estimate(config)
+    if seconds > config['work_seconds']:
+        raise ValueError(f'estimated {seconds:.1f} seconds exceeds work budget {config["work_seconds"]}')
+    if config.get('cold_engram'):
+        needed = cold_budget(config)
+        if prompts < needed['prompts_required']:
+            raise ValueError(f'cold prompt pool has {prompts}, needs {needed["prompts_required"]}')
+        config['cold_engram'].update(needed)
+    return seconds
+
 
 
 def keeper_spec(config, install, stage):
@@ -175,6 +215,7 @@ def main():
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
+    cold_files = []
     cold = model.get('cold_engram', workload.get('cold_engram'))
     if cold:
         if model.get('mode') != 'ab':
@@ -183,13 +224,17 @@ def main():
         for image in cold.get('images', []):
             path = Path(image['path'])
             import faults
-            fd = faults.open_regular(path)
-            os.close(fd)
-            files.add(path)
+            identity = faults.file_identity(path)
+            if identity['size'] != image['bytes']:
+                raise ValueError('cold image size differs from its declaration')
+            cold_files.append(identity)
+            image['identity'] = identity
+            files.discard(path)
         if not args.template and not cold.get('images'):
             raise SystemExit('cold_engram needs explicit rank image sources and Engram view ranges')
     if model.get('mode') == 'ab' and model.get('speculation_mode') != 'off' and not model.get('keeper', True):
         raise SystemExit('A/B speculative visits require keeper staging')
+    seconds = check_budget(config, len(built['prompts']))
     copy = stage / 'harness'
     if copy.exists():
         shutil.rmtree(copy)
@@ -203,7 +248,7 @@ def main():
         files.add(keeper)
     seal = {'schema': 'chopinfer-depth-tune-seal.v1', 'ready': not args.template, 'config': config, 'install': install,
             'harness_source': str(source), 'prompts': built['prompts'], 'prompt_sources': built['sources'],
-            'sha256': {str(x): digest(x) for x in sorted(files)}}
+            'cold_files': cold_files, 'sha256': {str(x): digest(x) for x in sorted(files)}}
     (stage / 'runtime-seal.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
     payload = digest(stage / 'runtime-seal.json')
     text = (copy / 'tune.job.in').read_text()
@@ -219,7 +264,6 @@ def main():
     job = stage / 'tune.job'
     job.write_text(text)
     job.chmod(0o755)
-    seconds = estimate(config)
     receipt = {'payload_sha256': payload, 'revision': install['revision'], 'ready': seal['ready'], 'job': str(job),
                'keeper_spec_sha256': digest(keeper) if keeper else None,
                'sha256': digest(job), 'estimated_minutes': round(seconds / 60, 1),

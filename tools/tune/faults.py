@@ -70,6 +70,18 @@ def open_regular(path):
     return fd
 
 
+def file_identity(path):
+    """Seal immutable mapped input metadata without reading all file pages."""
+    import os
+    fd = open_regular(path)
+    try:
+        value = os.fstat(fd)
+        return {'path': str(path), 'size': value.st_size, 'inode': value.st_ino,
+                'device': value.st_dev, 'mtime_ns': value.st_mtime_ns}
+    finally:
+        os.close(fd)
+
+
 def residency(fd, offset, length):
     """Count file-cache pages with mincore on an untouched PROT_NONE map."""
     import ctypes
@@ -143,6 +155,9 @@ class ColdEngram:
     def prepare(self):
         import os
         import runner
+        for _, image in self.images:
+            if image.get('identity') and file_identity(image['path']) != image['identity']:
+                raise RuntimeError('sealed cold image metadata changed')
         self.epoch += 1
         command = {'epoch': self.epoch, 'mode': 'both', 'reset_cache': True, 'release_page_tables': True}
         body = json.dumps(command).encode()

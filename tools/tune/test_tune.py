@@ -33,6 +33,17 @@ def window(run, label, kind, c, depth, rate, histogram):
     path.write_text(json.dumps(record))
 
 
+def priming_fixture(c):
+    return {'completed_requests': c, 'per_slot_completed': {str(i): 1 for i in range(c)},
+            'last_completed': 1, 'window_started': 2}
+
+
+def warmup_fixture(config):
+    return {'completed': True, 'windows': [{'concurrency': c, 'repeat': repeat,
+        'seed_set': tune.seed_set(config, repeat, c), 'cached_prompt_tokens': 0,
+        'requests': c, 'ended': 1} for c in config['model']['concurrencies'] for repeat in (0, 1)]}
+
+
 def ab_fixture(root, **overrides):
     model = {**MODEL, 'mode': 'ab', 'concurrencies': [8], 'tensor_parallel_size': 1,
              'arms': [{'label': label, 'depth': 3} for label in ('a', 'b')],
@@ -41,13 +52,14 @@ def ab_fixture(root, **overrides):
               'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
     power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
     summary = {'status': 'passed', 'exactness': {'passed': True}, 'processes': {},
-               'power': {'before': power, 'after': power}}
+               'power': {'before': power, 'after': power}, 'page_cache_warmup': warmup_fixture(config)}
     for visit in tune.visits(config):
         repeat = visit['passes'][0][0]
         for _, c in visit['passes'][0][1]:
             rate = 100 if visit['arm'] == 'a' else 110
             row = {'arm': visit['arm'], 'visit': visit['visit'], 'repeat': repeat, 'kind': 'sampled',
                    'concurrency': c, 'depth': 3, 'request_tokens_per_second': rate,
+                   'priming': priming_fixture(c), 'replacement_submissions': 1, 'prefill_share': .01,
                    'window_seconds': 15, 'request_seconds': 15, 'temperature': 1.0,
                    'cached_prompt_tokens': 0, 'seed_set': tune.seed_set(config, repeat, c),
                    'faults': {'complete': True, 'major_faults': 0},
@@ -66,6 +78,151 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_weighted_targets_step_support_and_coverage(self):
+        def mutate(root, function):
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                function(row)
+                tune.r.write(path, row)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root, target_cells=['decode:c8'])
+            def incidental(row):
+                row['cells']['i8-r16'] = {'cycle_ms': [20 if row['arm'] == 'a' else 21], 'execution_ms': [1]}
+            mutate(root, incidental)
+            out = report.ab(root)
+            self.assertTrue(out['weighted']['a/b']['timing_accepted'])
+            self.assertEqual(out['pairs']['a/b']['8']['cells']['i8-r16']['verdict'], 'informational')
+            config['model']['target_cells'] = ['c8/i8-r16']
+            tune.r.write(root / 'config.json', config)
+            with self.assertRaisesRegex(ValueError, 'target'):
+                report.ab(root)
+            config['model']['target_cells'] = ['c8/i8-r32']
+            config['model']['cell_weights'] = {'verify:r32': 0}
+            tune.r.write(root / 'config.json', config)
+            with self.assertRaisesRegex(ValueError, 'target'):
+                report.ab(root)
+            config['model'].update(target_cells=['decode:c8'], cell_weights={}, change='simplification')
+            mutate(root, lambda row: row['cells'].pop('i8-r16', None) if row['arm'] == 'b' and row['repeat'] == 1 else None)
+            tune.r.write(root / 'config.json', config)
+            out = report.ab(root)['weighted']['a/b']
+            self.assertTrue(out['timing_accepted'])
+            self.assertEqual(out['coverage_gaps'], ['c8/i8-r16'])
+            config['model']['required_shapes'] = {'8': ['i8-r16']}
+            tune.r.write(root / 'config.json', config)
+            with self.assertRaisesRegex(ValueError, 'required shape'):
+                report.ab(root)
+            config['model'].update(required_shapes={}, target_cells=['decode_step:c8'])
+            def decode(row):
+                row['cells']['i8-r8'] = {'cycle_ms': [10 if row['arm'] == 'a' else 9] * 20, 'execution_ms': []}
+            mutate(root, decode)
+            tune.r.write(root / 'config.json', config)
+            out = report.ab(root)
+            self.assertEqual(out['pairs']['a/b']['8']['cells']['i8-r8']['weight'], 1)
+            self.assertTrue(out['weighted']['a/b']['timing_accepted'])
+            self.assertIn('Coverage gaps:', (root / 'ab.md').read_text())
+
+    def test_time_share_can_admit_a_rare_but_expensive_cell(self):
+        rows = [{'request_seconds': 15, 'cells': {'i8-r16': {'cycle_ms': [1000]}}} for _ in range(4)]
+        self.assertEqual(report.decision_cells({}, rows, 8, 'speedup')['i8-r16']['weight'], 0)
+        self.assertEqual(report.decision_cells({'min_cell_time_share': .05}, rows, 8, 'speedup')['i8-r16']['weight'], 1)
+
+    def test_energy_is_a_separate_provisional_veto(self):
+        self.assertTrue(report.energy_check({'8': [1, 1.04, 1.04, 1], '16': [1, 1.04, 1.04, 1]})['veto'])
+        self.assertFalse(report.energy_check({'8': [1, 1.03, 1.03, 1]})['veto'])
+        self.assertFalse(report.energy_check({'8': [1, 1.10, 1.10, 1], '16': [1, .99, .99, 1]})['veto'])
+        self.assertFalse(report.energy_check({'8': [None] * 4})['comparable'])
+
+    def test_exactness_keys_are_scoped_to_concurrency_and_only_extras_replay(self):
+        config = {'model': {'pairs': [['a', 'b']], 'concurrencies': [1, 2]}}
+        deferred = []
+        for c in (1, 2):
+            for repeat in (0, 1):
+                for arm in ('a', 'b'):
+                    requests = [{'prompt': [i], 'seed': 100 * repeat + i, 'token_ids': [c],
+                                 'selected_bits': [str(c)]} for i in range(c + 1)]
+                    deferred.append({'arm': arm, 'concurrency': c, 'repeat': repeat, 'requests': requests})
+        pending, matched = tune.exactness_plan(config, deferred)
+        self.assertEqual(pending, {})
+        self.assertEqual(matched, 10)
+        deferred[-1]['requests'].pop()
+        pending, _ = tune.exactness_plan(config, deferred)
+        self.assertEqual(set(pending['a']), {2})
+        self.assertEqual(len(pending['a'][2]), 1)
+        deferred[-1]['requests'][0]['token_ids'] = [99]
+        with self.assertRaisesRegex(RuntimeError, 'matched sampled outputs differ'):
+            tune.exactness_plan(config, deferred)
+
+    def test_unmatched_replay_fills_its_original_concurrency(self):
+        import threading
+        import time
+        first_wave = threading.Barrier(4)
+        lock = threading.Lock()
+        seen = []
+        def replay(item):
+            with lock:
+                index = len(seen)
+                seen.append(item)
+            if index < 4:
+                first_wave.wait(timeout=5)
+            time.sleep(.001)
+        padding = tune.replay_cohort({'target': 'expected'}, 4, ['baseline'], replay)
+        self.assertEqual(sum(value[1][1] is not None for value in seen), 1)
+        self.assertGreaterEqual(padding, 3)
+        self.assertEqual(len(seen), padding + 1)
+
+    def test_cold_visit_assignment_is_deterministic_and_balances_lengths(self):
+        tokens = [[i] * length for i, length in enumerate([8, 16, 32] * 4)]
+        visits = [{'label': str(i)} for i in range(4)]
+        pools = prompts.visit_pools(tokens, visits)
+        assigned = [pools[str(i)].reserve(3) for i in range(4)]
+        self.assertEqual([[len(p) for p in values] for values in assigned], [[8, 16, 32]] * 4)
+        self.assertEqual(len({tuple(p) for values in assigned for p in values}), 12)
+        again = prompts.visit_pools(tokens, visits)
+        self.assertEqual(assigned, [again[str(i)].reserve(3) for i in range(4)])
+
+    def test_page_cache_warmup_is_required_before_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root)
+            summary.pop('page_cache_warmup')
+            tune.r.write(root / 'summary.json', summary)
+            with self.assertRaisesRegex(ValueError, 'warm-up'):
+                report.ab(root)
+            summary['page_cache_warmup'] = warmup_fixture(config)
+            summary['page_cache_warmup']['windows'][0]['ended'] = 3
+            tune.r.write(root / 'summary.json', summary)
+            with self.assertRaisesRegex(ValueError, 'warm-up'):
+                report.ab(root)
+
+    def test_stage_refuses_work_and_cold_prompt_overruns(self):
+        model = {**MODEL, 'mode': 'ab', 'concurrencies': [1],
+                 'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}], 'pairs': [['a', 'b']],
+                 'planning': {'startup_seconds': 1, 'process_overhead_seconds': 1, 'settle_seconds': 1,
+                              'tokens_per_second': {'1': 20}, 'ar_tokens_per_second': {'1': 20}}}
+        config = {'model': model, 'tokens': {'default': 256}, 'warm': [], 'warm_tokens': 8,
+                  'work_seconds': 1, 'kinds': {'sampled': 1}}
+        with self.assertRaisesRegex(ValueError, 'work budget'):
+            stage.check_budget(config, 256)
+        config.update(work_seconds=10000, cold_engram={'warm_fraction': .1})
+        count = stage.cold_budget(config)['prompts_required']
+        with self.assertRaisesRegex(ValueError, 'cold prompt pool'):
+            stage.check_budget(config, count - 1)
+        self.assertLess(stage.check_budget(config, count), config['work_seconds'])
+        self.assertEqual(config['cold_engram']['prompts_required'], count)
+
+    def test_cold_file_seal_detects_changed_metadata_without_reading_pages(self):
+        import faults
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'image'
+            path.write_bytes(bytes(4096))
+            identity = faults.file_identity(path)
+            self.assertEqual(identity['size'], 4096)
+            self.assertEqual(identity, faults.file_identity(path))
+            os.utime(path, ns=(identity['mtime_ns'], identity['mtime_ns'] + 1))
+            self.assertNotEqual(identity, faults.file_identity(path))
+
     def test_declared_target_cannot_disappear(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -124,8 +281,16 @@ class Tuner(unittest.TestCase):
             for case, changes, expected in [('valid', {}, 'passed'),
                                             ('keeper', {'CHOPINFER_WEIGHT_KEEPER_DIR': ''}, 'failed'),
                                             ('cached', {'TUNE_STUB_CACHED': 'a-r0'}, 'failed'),
-                                            ('power', {'TUNE_DRY_POWER_CHANGE_LABEL': 'after-a-r0'}, 'void')]:
+                                            ('power', {'TUNE_DRY_POWER_CHANGE_LABEL': 'after-a-r0'}, 'void'),
+                                            ('slowcold', {'TUNE_STUB_PREFILL_DELAY_SECONDS': '0.25'}, 'passed'),
+                                            ('standard', {}, 'passed')]:
                 out = root / case
+                if case == 'standard':
+                    config.pop('cold_engram')
+                    config['model']['concurrencies'] = [8, 16]
+                    body = json.dumps(seal).encode()
+                    (harness.parent / 'runtime-seal.json').write_bytes(body)
+                    payload = hashlib.sha256(body).hexdigest()
                 result = subprocess.run([sys.executable, '-B', str(harness / 'tune.py'), '--dry-run',
                                          '--output', str(out), '--payload-sha', payload],
                                         env={**env, **changes}, text=True, capture_output=True, timeout=90)
@@ -133,15 +298,29 @@ class Tuner(unittest.TestCase):
                 with self.subTest(case=case):
                     self.assertEqual(summary['status'], expected, result.stdout + result.stderr)
                     self.assertEqual(result.returncode, 0 if expected == 'passed' else 1)
-                if case == 'valid':
+                if case in ('valid', 'standard'):
                     rows = report.load(out)[1]
-                    self.assertEqual(len(rows), 4)
+                    self.assertEqual(len(rows), 4 if case == 'valid' else 8)
+                    self.assertTrue(all(r['priming']['window_started'] >= r['priming']['last_completed'] for r in rows))
+                    self.assertTrue(all(r['full']['steps'] > 0 for r in rows))
+                    if case == 'standard':
+                        self.assertEqual(len(summary['page_cache_warmup']['windows']), 4)
+                        continue
+                    cold_report = json.loads((out / 'ab.json').read_text())
+                    self.assertFalse(cold_report['contract_a_admissible'])
+                    self.assertFalse(cold_report['weighted']['a/b']['timing_accepted'])
+                    self.assertEqual(cold_report['weighted']['a/b']['verdict'], 'cold, unmatched prompts')
                     self.assertTrue(all(r['cold_engram']['state'] == 'partly warm' for r in rows))
                     prompts_used = [tuple(q['prompt']) for r in rows for q in r['requests']]
                     self.assertEqual(len(prompts_used), len(set(prompts_used)))
                     self.assertTrue(all(r['mapped_gather_us'] for r in rows))
                 if case == 'power':
                     self.assertEqual(json.loads((out / 'ab.json').read_text())['pairs'], {})
+                if case == 'slowcold':
+                    rows = report.load(out)[1]
+                    self.assertTrue(all(row['request_tokens_per_second'] == 0 for row in rows))
+                    self.assertTrue(all(min(row['ttft_seconds']) >= .15 for row in rows))
+                    self.assertTrue(all(row['prefill_execution_us'] for row in rows))
 
     def test_ab_seed_sets_match_pairs_and_differ_between_pairs(self):
         config = {'sampling': {'seed': 41, 'temperature': 1.0, 'top_p': 1.0}}
@@ -272,7 +451,7 @@ class Tuner(unittest.TestCase):
             (root / 'config.json').write_text(json.dumps(config))
             power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
             summary = {'power': {'before': power, 'after': power}, 'processes': {},
-                       'exactness': {'passed': True}}
+                       'exactness': {'passed': True}, 'page_cache_warmup': warmup_fixture(config)}
             for visit in tune.visits(config):
                 label, repeat = visit['arm'], visit['passes'][0][0]
                 window(root, visit['label'], 'sampled', 8, 3, (400 if label == 'a' else 440) + repeat,
@@ -280,6 +459,7 @@ class Tuner(unittest.TestCase):
                 path = root / visit['label'] / 'windows' / 'sampled-c8.json'
                 row = json.loads(path.read_text())
                 row.update(arm=label, visit=visit['visit'], repeat=repeat,
+                           priming=priming_fixture(8), replacement_submissions=1, prefill_share=.01,
                            seed_set=tune.seed_set(config, repeat, 8), window_seconds=15,
                            temperature=1.0, cached_prompt_tokens=0, request_seconds=15,
                            faults={'complete': True, 'major_faults': 0},
@@ -322,12 +502,13 @@ class Tuner(unittest.TestCase):
                  'arms': [{'label': label, 'depth': 0} for label in ('a', 'b')], 'pairs': [['a', 'b']]}
         config = {'model': model, 'kinds': {'sampled': 1}, 'sampling': {'seed': 3}}
         power = {'enforced_power_limits_w': [250], 'sm_clock_mhz': [1800]}
-        summary = {'power': {'before': power, 'after': power}, 'processes': {}, 'exactness': {'passed': True}}
+        summary = {'power': {'before': power, 'after': power}, 'processes': {}, 'exactness': {'passed': True}, 'page_cache_warmup': warmup_fixture(config)}
         rows = []
         for visit in tune.visits(config):
             repeat = visit['passes'][0][0]
             row = {'label': visit['label'], 'arm': visit['arm'], 'visit': visit['visit'],
                    'kind': 'sampled', 'concurrency': 1, 'repeat': repeat,
+                   'priming': priming_fixture(1), 'replacement_submissions': 1, 'prefill_share': .01,
                    'seed_set': tune.seed_set(config, repeat, 1), 'window_seconds': 15, 'temperature': 1.0,
                    'cached_prompt_tokens': 0, 'request_seconds': 15, 'faults': {'complete': True, 'major_faults': 0},
                    'energy': {'sm_mhz_range': [[1800, 1800]], 'enforced_power_limits_w': [250]}}
@@ -629,6 +810,13 @@ class Tuner(unittest.TestCase):
             self.assertEqual(result['pairs']['AR/DSpark']['1']['verdict'], 'resolved gain')
             self.assertEqual(result['windows'], 4)
             self.assertFalse(result['contract_a_admissible'])
+            for index, label in enumerate(('no change (both head arms inside the base range)', 'read by hand')):
+                original['rows']['1']['window_tok_s']['verdict'] = label
+                (root / 'comparison.json').write_text(json.dumps(original))
+                disagreement = recorded.closed_loop(root, Path(directory) / f'disagreement-{index}')
+                self.assertFalse(disagreement['harness_agreement'])
+                with self.assertRaisesRegex(ValueError, 'differs'):
+                    recorded.closed_loop(root, Path(directory) / f'required-{index}', require_agreement=True)
             path = root / 'B1.json'
             row = json.loads(path.read_text())
             row[0]['request']['seed'] = 9

@@ -3,7 +3,7 @@
 
 Sweep, costs and exact modes use fixed-token batches and an initial warm
 reference pass. A/B uses matched-seed ABBA visits, each in a fresh process,
-15-second closed-loop windows, and deferred per-request exactness replay.
+primed 15-second windows, and concurrency-scoped exactness with unmatched replay.
 Speculative A/B visits require the keeper. Cold Engram windows acknowledge
 cache reset and page-table release, advise backing files and record residency.
 
@@ -134,6 +134,9 @@ def validate(payload, dry):
         actual = Path(path)
         if not actual.is_absolute() or actual.is_symlink() or digest(actual) != wanted:
             raise RuntimeError('sealed file changed: ' + path)
+    for identity in m.get('cold_files', []):
+        if faults.file_identity(identity['path']) != identity:
+            raise RuntimeError('sealed cold image metadata changed')
     if m['ready']:
         install = m['install']
         for root in (Path(install['install']), Path(install['prepared']['bundle'])):
@@ -595,94 +598,145 @@ def require_keeper(model, keep):
         raise RuntimeError('A/B speculative visits require weight keeper borrowing')
 
 
-def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15):
-    """Replace each completed request immediately; drain outside the interval.
+def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15, before_measure=None):
+    """Prime every slot before opening a fixed-duration replacement window.
 
-    Each slot has a deterministic seed sequence. Complete outputs are retained
-    for a deferred reference pass, including requests that cross the boundary.
+    Cold measurements pause after priming so the control can run while idle.
+    Standard measurements keep replacing requests throughout priming.
     """
     count = len(seeds)
-    lock = threading.Lock()
-    stop = threading.Event()
+    condition = threading.Condition()
+    stop, resume = threading.Event(), threading.Event()
     gate = threading.Barrier(count + 1)
-    requests, events = [], []
+    requests, events, primed, errors = [], [], {}, []
+    timing = {'deadline': None}
     offset = (server.directory / 'server.log').stat().st_size
-    before = scrape(server)
     duration = .15 if server.dry else seconds
 
     def slot(number):
         sequence = 0
-        gate.wait(timeout=10)
-        while not stop.is_set() and time.monotonic() < deadline:
-            index = sequence * count + number
-            prompt = inputs(index)
-            seed = seeds[number] + sequence
-            if sequence >= 10_000:
-                raise RuntimeError('request seed sequence exhausted')
-            body = {'model': r.MODEL, 'prompt': [prompt], 'n': 1, 'cache_salt': f'{name}-{index}',
-                    'max_tokens': tokens, 'min_tokens': tokens, 'ignore_eos': True,
-                    'logprobs': 1, 'return_token_ids': True, 'temperature': sampling['temperature'],
-                    'top_p': sampling['top_p'], 'seed': seed, 'stream': True,
-                    'stream_options': {'include_usage': True}}
-            row = {'index': index, 'slot': number, 'sequence': sequence, 'seed': seed,
-                   'prompt': prompt, 'submitted': time.monotonic(), 'token_ids': [], 'selected_bits': []}
-            usage, finish = None, None
-            for event in r.stream(server.url, '/v1/completions', body, timeout=r.remaining(120)):
-                now = time.monotonic()
-                usage = event.get('usage') or usage
-                for choice in event.get('choices', []):
-                    ids = choice.get('token_ids') or []
-                    if ids:
-                        row.setdefault('first_token', now)
-                    row['token_ids'].extend(ids)
-                    row['selected_bits'].extend(bits(v) for v in
-                                               (choice.get('logprobs') or {}).get('token_logprobs', []))
-                    finish = choice.get('finish_reason') or finish
-                    with lock:
-                        events.append((now, len(ids)))
-            row['completed'] = time.monotonic()
-            if (not usage or usage['completion_tokens'] != tokens or usage['prompt_tokens'] != len(prompt)
-                    or usage['prompt_tokens_details']['cached_tokens'] != 0):
-                raise RuntimeError('incomplete or cached closed-loop workload')
-            if finish != 'length' or len(row['token_ids']) != tokens or len(row['selected_bits']) != tokens:
-                raise RuntimeError('incomplete closed-loop output')
-            row['cached_prompt_tokens'] = usage['prompt_tokens_details']['cached_tokens']
-            with lock:
-                requests.append(row)
-            sequence += 1
+        try:
+            gate.wait(timeout=10)
+            while not stop.is_set():
+                if timing['deadline'] is not None and time.monotonic() >= timing['deadline']:
+                    break
+                index = sequence * count + number
+                prompt = inputs(index)
+                seed = seeds[number] + sequence
+                if sequence >= 10_000:
+                    raise RuntimeError('request seed sequence exhausted')
+                body = {'model': r.MODEL, 'prompt': [prompt], 'n': 1, 'cache_salt': f'{name}-{index}',
+                        'max_tokens': tokens, 'min_tokens': tokens, 'ignore_eos': True,
+                        'logprobs': 1, 'return_token_ids': True, 'temperature': sampling['temperature'],
+                        'top_p': sampling['top_p'], 'seed': seed, 'stream': True,
+                        'stream_options': {'include_usage': True}}
+                row = {'index': index, 'slot': number, 'sequence': sequence, 'seed': seed,
+                       'prompt': prompt, 'submitted': time.monotonic(), 'token_ids': [], 'selected_bits': []}
+                usage, finish = None, None
+                for event in r.stream(server.url, '/v1/completions', body, timeout=r.remaining(120)):
+                    now = time.monotonic()
+                    usage = event.get('usage') or usage
+                    for choice in event.get('choices', []):
+                        ids = choice.get('token_ids') or []
+                        if ids:
+                            row.setdefault('first_token', now)
+                        row['token_ids'].extend(ids)
+                        row['selected_bits'].extend(bits(v) for v in
+                                                   (choice.get('logprobs') or {}).get('token_logprobs', []))
+                        finish = choice.get('finish_reason') or finish
+                        with condition:
+                            events.append((now, len(ids)))
+                row['completed'] = time.monotonic()
+                if (not usage or usage['completion_tokens'] != tokens or usage['prompt_tokens'] != len(prompt)
+                        or usage['prompt_tokens_details']['cached_tokens'] != 0):
+                    raise RuntimeError('incomplete or cached closed-loop workload')
+                if finish != 'length' or len(row['token_ids']) != tokens or len(row['selected_bits']) != tokens:
+                    raise RuntimeError('incomplete closed-loop output')
+                row['cached_prompt_tokens'] = usage['prompt_tokens_details']['cached_tokens']
+                with condition:
+                    requests.append(row)
+                    if sequence == 0:
+                        primed[number] = row['completed']
+                    condition.notify_all()
+                if sequence == 0 and before_measure is not None:
+                    resume.wait(timeout=r.remaining(120))
+                sequence += 1
+        except BaseException as error:
+            with condition:
+                errors.append(error)
+                condition.notify_all()
+            stop.set()
+            raise
 
     with ThreadPoolExecutor(max_workers=count) as pool:
         futures = [pool.submit(slot, i) for i in range(count)]
-        initial = faults.snapshot(server)
-        started, start_ns = time.monotonic(), time.time_ns()
-        deadline = started + duration
+        began = time.monotonic()
         gate.wait(timeout=10)
         try:
+            prime_deadline = began + r.remaining(120)
+            with condition:
+                while len(primed) != count or time.monotonic() - began < (.02 if server.dry else 4):
+                    if errors:
+                        raise errors[0]
+                    if time.monotonic() >= prime_deadline:
+                        raise RuntimeError('priming wave exceeded its deadline')
+                    condition.wait(.01)
+            cold_state = before_measure() if before_measure else None
+            before = scrape(server)
+            initial = faults.snapshot(server)
+            started, start_ns = time.monotonic(), time.time_ns()
+            deadline = timing['deadline'] = started + duration
+            resume.set()
             while time.monotonic() < deadline:
-                for future in futures:
-                    if future.done():
-                        future.result()
+                if errors:
+                    raise errors[0]
                 stop.wait(min(.01, max(0, deadline - time.monotonic())))
             final = faults.snapshot(server)
+            after = scrape(server)
         finally:
             stop.set()
+            resume.set()
         for future in futures:
             future.result()
     steps = settle(server, offset)
     end_ns = start_ns + round(duration * 1e9)
     measured = [s for s in steps if start_ns <= s['completed_unix_ns'] < end_ns]
     emitted = sum(n for at, n in events if started <= at < deadline)
-    if not emitted or not requests:
+    if (not emitted and before_measure is None) or not requests:
         raise RuntimeError('empty closed-loop window')
     requests.sort(key=lambda x: x['index'])
     in_flight = sum(max(0, min(row['completed'], deadline) - max(row['submitted'], started))
                     for row in requests) / duration
     if not server.dry and in_flight < .95 * count:
         raise RuntimeError('underfilled closed-loop window')
+    energy = power.window(started, deadline, max(emitted, 1))
+    if not emitted:
+        energy['joules_per_token'] = None
     return {'started': started, 'ended': deadline, 'steps': measured, 'requests': requests,
+            'cold_steps': [s for s in steps if s['completed_unix_ns'] >= start_ns],
             'faults': faults.difference(initial, final), 'tokens': emitted,
-            'energy': power.window(started, deadline, emitted), 'window_seconds': seconds,
-            'synthetic': server.dry, 'acceptance': acceptance(before, scrape(server))}
+            'energy': energy, 'window_seconds': seconds,
+            'cached_prompt_tokens': sum(row['cached_prompt_tokens'] for row in requests),
+            'priming': {'completed_requests': len(primed), 'per_slot_completed': primed,
+                        'last_completed': max(primed.values()), 'window_started': started},
+            'replacement_submissions': sum(row['sequence'] > 0 and started <= row['submitted'] < deadline for row in requests),
+            'prefill_share': sum(s['execution_us'] for s in measured if s['prefill_items']) / (duration * 1e6),
+            'cold_preparation': cold_state, 'synthetic': server.dry, 'acceptance': acceptance(before, after)}
+
+
+def page_cache_warmup(server, arm, state, power):
+    config = SEAL['config']
+    rows = []
+    for repeat in (0, 1):
+        for c in config['model']['concurrencies']:
+            seeds = seed_set(config, repeat, c)
+            tokens = config['tokens'].get(str(c), config['tokens']['default'])
+            w = closed_loop(server, f'w0-c{c}-r{repeat}', lambda i: state['tokens'][i % len(state['tokens'])],
+                            tokens, config['sampling'], seeds, power)
+            rows.append({'concurrency': c, 'repeat': repeat, 'seed_set': seeds,
+                         'started': w['started'], 'ended': w['ended'], 'requests': len(w['requests']),
+                         'cached_prompt_tokens': w['cached_prompt_tokens'], 'priming': w['priming']})
+    state['page_cache_warmup'] = {'completed': True, 'windows': rows, 'process': arm['label']}
 
 
 def run_ab_windows(server, arm, state, power, root, cold=None):
@@ -693,72 +747,150 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             name = f'{kind}-c{c}-r{repeat}'
             seeds = seed_set(config, repeat, c)
             tokens = config['tokens'].get(str(c), config['tokens']['default'])
-            cold_state = cold.prepare() if cold else None
+            if cold:
+                pool = state['cold_pools'][arm['label']]
+                remaining_windows = sum(len(part) for _, part in arm['passes'])
+                budget = config['cold_engram'].get('request_budgets', {}).get(str(c), len(pool.remaining) // remaining_windows)
+                allocated = pool.reserve(budget)
+                inputs = lambda i: allocated[i] if i < len(allocated) else prompt_builder.exhausted()
+            else:
+                inputs = lambda i: state['tokens'][i % len(state['tokens'])]
             w = closed_loop(server, f"{arm['label']}-{name}",
-                            state['unseen'].take if cold else lambda i: state['tokens'][i % len(state['tokens'])], tokens,
-                            config['sampling'], seeds, power)
+                            inputs, tokens, config['sampling'], seeds, power,
+                            before_measure=cold.prepare if cold else None)
             check_depth(name, w['steps'], arm['depth'])
-            route = check_fallbacks(name, w['steps'], config.get('allow_fallbacks', {}))
+            route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], config.get('allow_fallbacks', {}))
             full = full_concurrency(w['steps'], c)
-            if not full['steps']:
+            if not full['steps'] and not cold:
                 raise RuntimeError(f'{name}: no full-concurrency steps')
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': arm['depth'],
                      'arm': arm['arm'], 'visit': arm['visit'], 'repeat': repeat, 'seed_set': seeds,
-                     'temperature': config['sampling']['temperature'], 'window_seconds': 15,
-                     'cached_prompt_tokens': 0, 'request_tokens_per_second': w['tokens'] / (w['ended'] - w['started']),
+                     'temperature': config['sampling']['temperature'], 'window_seconds': w['window_seconds'],
+                     'cached_prompt_tokens': w['cached_prompt_tokens'],
+                     'priming': w['priming'], 'replacement_submissions': w['replacement_submissions'],
+                     'prefill_share': w['prefill_share'], 'request_tokens_per_second': w['tokens'] / (w['ended'] - w['started']),
                      'request_seconds': w['ended'] - w['started'], 'synthetic': server.dry,
                      'full': full, 'cells': cells(w['steps']), 'faults': w['faults'],
                      'fallback_launches': route['fallback_launches'], 'acceptance': w['acceptance'],
-                     'allocated_steps': check_allocations(name, w['steps'], record['confidence']['enabled'],
+                     'allocated_steps': check_allocations(name, w['cold_steps'] if cold else w['steps'], record['confidence']['enabled'],
                                                          allocation_possible(config, arm, c)),
                      'energy': w['energy'], 'requests': w['requests'], 'steps': w['steps']}
             if cold:
+                cold_state = w['cold_preparation']
                 cold_state['after_window'] = cold.sample()
                 value['cold_engram'] = cold_state
-                value['mapped_gather_us'] = [s['host']['mapped_gather_us'] for s in w['steps']
+                value['mapped_gather_us'] = [s['host']['mapped_gather_us'] for s in w['cold_steps']
                                             if 'mapped_gather_us' in s.get('host', {})]
-                value['prefill_execution_us'] = [s['execution_us'] for s in w['steps'] if s['prefill_items']]
-                value['ttft_seconds'] = [row['first_token'] - row['submitted'] for row in w['requests']]
+                value['prefill_execution_us'] = [s['execution_us'] for s in w['cold_steps'] if s['prefill_items']]
+                value['ttft_seconds'] = [row['first_token'] - row['submitted'] for row in w['requests']
+                                         if row['submitted'] >= w['started']]
+                value['prompt_lengths'] = [len(row['prompt']) for row in w['requests'] if row['submitted'] >= w['started']]
             r.write(root / 'windows' / f'{name}.json', value)
-            state.setdefault('deferred', []).append({'arm': arm['arm'], 'requests': w['requests']})
+            state.setdefault('deferred', []).append({'arm': arm['arm'], 'concurrency': c, 'repeat': repeat, 'requests': w['requests']})
             record['windows'][name] = value
             state['exact'][name] = state['exact'].get(name, 0) + 1
     record['faults'] = faults.combine([v['faults'] for v in record['windows'].values()])
     faults.validate(record['faults'])
 
 
+def exactness_plan(config, deferred):
+    """Compare paired keys within C; replay only keys without a counterpart."""
+    pending, matched = {}, 0
+    for baseline, treatment in config['model']['pairs']:
+        for c in config['model']['concurrencies']:
+            for repeat in range(config['model'].get('concurrency_repeats', {}).get(str(c), 2)):
+                arms_by_key = {}
+                for arm in (baseline, treatment):
+                    values = {}
+                    for visit in deferred:
+                        if (visit['arm'], visit['concurrency'], visit['repeat']) != (arm, c, repeat):
+                            continue
+                        for row in visit['requests']:
+                            key = (tuple(row['prompt']), row['seed'], len(row['token_ids']))
+                            exact = {k: row[k] for k in ('token_ids', 'selected_bits')}
+                            if key in values and values[key] != exact:
+                                raise RuntimeError('duplicate exactness key differs within one concurrency')
+                            values[key] = exact
+                    arms_by_key[arm] = values
+                base, head = arms_by_key[baseline], arms_by_key[treatment]
+                common = base.keys() & head.keys()
+                if not config.get('cold_engram') and len(common) < c:
+                    raise RuntimeError('missing matched exactness keys within concurrency')
+                for key in common:
+                    if base[key] != head[key]:
+                        raise RuntimeError(f'C{c}: matched sampled outputs differ')
+                matched += len(common)
+                for key in base.keys() ^ head.keys():
+                    pending.setdefault(baseline, {}).setdefault(c, {})[key] = base.get(key, head.get(key))
+    return pending, matched
+
+
+def replay_cohort(expected, count, donors, replay):
+    """Keep C slots occupied until all unmatched targets finish."""
+    if not expected or not donors:
+        raise ValueError('replay requires targets and same-concurrency baseline inputs')
+    targets = list(expected.items())
+    lock, stop = threading.Lock(), threading.Event()
+    gate = threading.Barrier(count)
+    state = {'next': 0, 'remaining': len(targets), 'padding_requests': 0}
+
+    def slot(number):
+        sequence = 0
+        try:
+            while not stop.is_set():
+                with lock:
+                    if state['remaining'] == 0:
+                        return
+                    target = state['next'] < len(targets)
+                    if target:
+                        item = targets[state['next']]
+                        state['next'] += 1
+                    else:
+                        item = (donors[(number + sequence) % len(donors)], None)
+                if sequence == 0:
+                    gate.wait(timeout=10)
+                replay((f'{number}-{sequence}', item))
+                with lock:
+                    if target:
+                        state['remaining'] -= 1
+                    else:
+                        state['padding_requests'] += 1
+                sequence += 1
+        except BaseException:
+            stop.set()
+            raise
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        futures = [pool.submit(slot, i) for i in range(count)]
+        for future in futures:
+            future.result()
+    return state['padding_requests']
+
+
 def reference_ab(run, state, dry, keep):
-    """Replay every measured prompt/seed on each pair's baseline after timing."""
+    """Replay unmatched requests at their original concurrency after timing."""
     config, install = SEAL['config'], SEAL['install']
     model = config['model']
     declared = {a['label']: a for a in arms(config)}
-    for baseline in dict.fromkeys(a for a, _ in model['pairs']):
-        labels = {baseline, *(b for a, b in model['pairs'] if a == baseline)}
+    pending, matched = exactness_plan(config, state['deferred'])
+    replayed, padding = 0, 0
+    for baseline, by_concurrency in pending.items():
         arm = declared[baseline]
         arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
                      *model.get('extra_arguments', []), *arm['arguments']]
         if keep:
             arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
+        idle(run, f'reference-{baseline}', dry, (keep or {}).get('lent_mib'))
         server = r.Server(run / 'references' / baseline, install['install'], install['cache'],
                           arguments, dry, S / 'stub.py')
+        if dry:
+            server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
         power = Power(server.directory, dry)
         power.reference = state['power']['before']['enforced_power_limits_w']
-        expected = {}
-        for visit in state['deferred']:
-            if visit['arm'] not in labels:
-                continue
-            for row in visit['requests']:
-                key = (tuple(row['prompt']), row['seed'], len(row['token_ids']))
-                exact = {k: row[k] for k in ('token_ids', 'selected_bits')}
-                if key in expected and expected[key] != exact:
-                    raise RuntimeError(f"{visit['arm']}: matched sampled outputs differ")
-                expected[key] = exact
-
         def replay(item):
             index, (key, wanted) = item
             prompt, seed, tokens = key
             body = {'model': r.MODEL, 'prompt': [list(prompt)], 'n': 1,
-                    'cache_salt': f'reference-{baseline}-{index}', 'max_tokens': tokens, 'min_tokens': tokens,
+                    'cache_salt': f'reference-{baseline}-c{c}-{index}', 'max_tokens': tokens, 'min_tokens': tokens,
                     'ignore_eos': True, 'logprobs': 1, 'return_token_ids': True, 'stream': True,
                     'stream_options': {'include_usage': True}, **config['sampling'], 'seed': seed}
             exact, usage, finish = {'token_ids': [], 'selected_bits': []}, None, None
@@ -768,8 +900,10 @@ def reference_ab(run, state, dry, keep):
                     exact['token_ids'].extend(choice.get('token_ids') or [])
                     exact['selected_bits'].extend(bits(v) for v in (choice.get('logprobs') or {}).get('token_logprobs', []))
                     finish = choice.get('finish_reason') or finish
-            if not usage or usage['completion_tokens'] != tokens or finish != 'length' or exact != wanted:
+            if (not usage or usage['completion_tokens'] != tokens or finish != 'length'
+                    or (wanted is not None and exact != wanted)):
                 raise RuntimeError(f'{baseline}: sampled reference differs for seed {seed}')
+
 
         try:
             reference_power = r.power_check(server.directory, 'before', dry,
@@ -779,19 +913,26 @@ def reference_ab(run, state, dry, keep):
             server.start()
             if keep and weight_source((server.directory / 'server.log').read_text())['source'] != 'borrowed':
                 raise RuntimeError('reference process did not borrow keeper weights')
-            with ThreadPoolExecutor(max_workers=max(model['concurrencies'])) as pool:
-                list(pool.map(replay, enumerate(expected.items())))
+            for c, expected in sorted(by_concurrency.items()):
+                donors = [(tuple(row['prompt']), row['seed'], len(row['token_ids']))
+                          for visit in state['deferred'] if visit['arm'] == baseline and visit['concurrency'] == c
+                          for row in visit['requests']]
+                padding += replay_cohort(expected, c, donors, replay)
+                replayed += len(expected)
             end_power = r.power_check(server.directory, 'after', dry,
                                       state['power']['before']['enforced_power_limits_w'])
             state['power'][f'reference-{baseline}-after'] = end_power
-            r.write(server.directory / 'exactness.json', {'passed': True, 'unique_requests': len(expected),
+            r.write(server.directory / 'exactness.json', {'passed': True,
+                    'requests_per_concurrency': {str(c): len(v) for c, v in by_concurrency.items()},
                     'power_before': reference_power, 'power_after': end_power})
         finally:
             try:
                 server.stop()
             finally:
                 power.stop()
-    state['exactness'] = {'passed': True, 'deferred': True}
+    state['exactness'] = {'passed': True, 'matched_keys': matched, 'replayed_keys': replayed,
+                          'padding_requests': padding,
+                          'scope': 'Keys compared only within their original concurrency.'}
 
 
 def visits(config):
@@ -892,7 +1033,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
             save(SEAL_RUN, state)
 
 
-def run_arm(run, arm, state, dry, keep, reference_pass):
+def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     config = SEAL['config']
     model = config['model']
     install = SEAL['install']
@@ -907,7 +1048,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
     cold = faults.ColdEngram(server, config['cold_engram']) if config.get('cold_engram') else None
     if model.get('mode') == 'ab' and dry:
         server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
-    record = state['processes'][label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {},
+    records = state.setdefault('warmup_processes', {}) if warmup_only else state['processes']
+    record = records[label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {},
                                           'reference_pass': reference_pass}
     power = Power(root, dry)
     kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
@@ -940,13 +1082,20 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
             if cold:
-                state['unseen'] = prompt_builder.Unseen(state['tokens'])
+                state['cold_pools'] = prompt_builder.visit_pools(state['tokens'], visits(config))
+                budgets = config['cold_engram'].get('request_budgets', {})
+                for visit in visits(config):
+                    needed = sum(config['warm']) + sum(budgets.get(str(c), 2 * c)
+                             for _, part in visit['passes'] for _, c in part)
+                    if len(state['cold_pools'][visit['label']].remaining) < needed:
+                        raise RuntimeError('cold prompt pool is too small after balancing token lengths')
             r.write(run / 'prompt-tokens.json', state['tokens'])
+        pool = state['cold_pools'][label] if cold else None
         # Warm windows run the measured kind (sampled when the job measures
         # it) on altered prompts, so they share no cached prefix.
         warm_kind = windows_for(config, depth, True)[0][0]
         for c in config['warm']:
-            warm = [list(state['unseen'].take()) for _ in range(c)] if cold else [list(x) for x in state['tokens'][:c]]
+            warm = [list(p) for p in pool.reserve(c)] if cold else [list(x) for x in state['tokens'][:c]]
             if not cold:
                 for x in warm:
                     x[1] = x[0]
@@ -955,7 +1104,9 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
             memory(f'warm-c{c}')
         record['memory_after_warmup'] = memory_lines((server.directory / 'server.log').read_text(errors='replace'))
         record['metrics_after_warmup'] = counters(server, 'after-warmup')
-        if model.get('mode') == 'ab':
+        if warmup_only:
+            page_cache_warmup(server, arm, state, power)
+        elif model.get('mode') == 'ab':
             run_ab_windows(server, arm, state, power, root, cold)
         elif reference_pass:
             run_windows(server, arm, state, power, root, [(0, windows_for(config, depth, True))], True)
@@ -980,7 +1131,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass):
 
 
 def save(run, state):
-    out = {k: v for k, v in state.items() if k not in ('reference', 'tokens', 'deferred', 'unseen')}
+    out = {k: v for k, v in state.items() if k not in ('reference', 'tokens', 'deferred', 'unseen', 'cold_pools')}
     r.write(run / 'summary.json', out)
     lines = [f"{SEAL['config']['name']}: {state['status']}", '']
     for label, row in state['processes'].items():
@@ -995,7 +1146,8 @@ def save(run, state):
             full = value['full']
             lines.append(f"  {name}: {value['request_tokens_per_second']:.1f} tok/s, full {full['steps']} steps "
                          f"{full['tokens_per_second']:.1f} tok/s, {dict(Counter(full['histogram']).most_common(3))}")
-    lines += ['', *(f'Exact against W0: {k} in {n} timed windows' for k, n in sorted(state['exact'].items()))]
+    exact_label = 'Paired exactness' if state['mode'] == 'ab' else 'Exact against W0'
+    lines += ['', *(f'{exact_label}: {k} in {n} timed windows' for k, n in sorted(state['exact'].items()))]
     if state.get('windows'):
         lines.append(f"Timed windows: {state['windows']['executed']} executed of {state['windows']['planned']} planned")
     lines += ['Sampled difference: ' + x for x in state['sampled_differences']]
@@ -1037,13 +1189,17 @@ def main(args):
         reference = before['power_limits_w']
         state['power']['before'] = before['power']
         reserve = config['model']['planning']['process_reserve_seconds']
+        if state['mode'] == 'ab' and not config.get('cold_engram'):
+            warmup = {**visits(config)[0], 'label': 'page-cache-warmup'}
+            idle(run, 'before-page-cache-warmup', args.dry_run, (keep or {}).get('lent_mib'))
+            run_arm(run, warmup, state, args.dry_run, keep, reference_pass=False, warmup_only=True)
         for index, arm in enumerate(visits(config)):
             left = r.WORK_DEADLINE - time.monotonic()
             if left < reserve:
                 raise RuntimeError(f'work budget: {left:.0f} s left, under the {reserve} s an arm needs; '
                                    f"stopped before {arm['label']}")
             idle(run, f"before-{arm['label']}", args.dry_run, (keep or {}).get('lent_mib'))
-            run_arm(run, arm, state, args.dry_run, keep, reference_pass=index == 0)
+            run_arm(run, arm, state, args.dry_run, keep, reference_pass=index == 0 and state['mode'] != 'ab')
             state['power'][arm['label']] = r.power_check(run, f"after-{arm['label']}", args.dry_run, reference)
             save(run, state)
         if state['mode'] == 'ab':

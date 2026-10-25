@@ -22,6 +22,8 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-bundle-sdk/src/native_note.rs",
     "crates/kernel-lab/tests/common/kv_offload.rs",
     "crates/runtime-host/src/page_cache.rs",
+    "crates/runtime-host/src/allocator.rs",
+    "crates/runtime-host/src/generation/heap.rs",
     "crates/runtime-host/src/direct/plan_cache/files.rs",
     "crates/runtime-host/src/signals.rs",
     "crates/runtime-host/src/host_rows.rs",
@@ -190,6 +192,23 @@ mod tests {
             (
                 "crates/runtime-kv/tests/prefix_registry_bytes.rs",
                 include_str!("../../runtime-kv/tests/prefix_registry_bytes.rs"),
+            ),
+        ] {
+            audit_unsafe_source(Path::new(path), source).unwrap();
+            assert!(audit_unsafe_source(Path::new(path), "unsafe { call() }").is_err());
+        }
+    }
+
+    #[test]
+    fn serving_allocator_controls_have_reviewed_contracts() {
+        for (path, source) in [
+            (
+                "crates/runtime-host/src/allocator.rs",
+                include_str!("../../runtime-host/src/allocator.rs"),
+            ),
+            (
+                "crates/runtime-host/src/generation/heap.rs",
+                include_str!("../../runtime-host/src/generation/heap.rs"),
             ),
         ] {
             audit_unsafe_source(Path::new(path), source).unwrap();

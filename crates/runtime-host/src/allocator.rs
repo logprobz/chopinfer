@@ -23,9 +23,8 @@ fn arena_limit(value: Option<&std::ffi::OsStr>) -> Result<Option<i32>, String> {
 pub(crate) fn configure_serving_process() -> Result<(), String> {
     let limit = arena_limit(std::env::var_os(VARIABLE).as_deref())?;
     if let Some(limit) = limit {
-        // SAFETY-REVIEWED: mallopt changes allocator policy without moving or
-        // invalidating live allocations. The value is a positive c_int, and
-        // the serving CLI calls this before it starts worker or pool threads.
+        // SAFETY-REVIEWED: a positive c_int changes policy without moving live data.
+        // The serving CLI calls mallopt before worker or pool threads start.
         #[allow(unsafe_code)]
         let applied = unsafe { libc::mallopt(libc::M_ARENA_MAX, limit) };
         if applied == 0 {
@@ -120,9 +119,8 @@ mod tests {
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     fn arena_count() -> usize {
-        // SAFETY-REVIEWED: open_memstream initializes the buffer and length;
-        // fclose finalizes them before the slice is read. malloc_info owns no
-        // borrowed pointers after returning, and the buffer is freed once.
+        // SAFETY-REVIEWED: fclose finalizes the initialized buffer before reading.
+        // malloc_info retains no pointers; the buffer is freed once after use.
         #[allow(unsafe_code)]
         unsafe {
             let mut bytes = std::ptr::null_mut();

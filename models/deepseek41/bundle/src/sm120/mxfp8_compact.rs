@@ -8,32 +8,6 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_prefill_compact";
 pub const CUBIN: &str = "compact_dense_prefill_deepseek41_sm120";
 pub const ROWS: [u32; 5] = [128, 512, 2048, 4096, 8192];
-// d2-0381: event and exclusive median ratios must both be below 0.97 on
-// both devices. Select the winning stage count with the best worst-device
-// speedup. Zero retains the baseline. See mxfp8_compact.md for the timings.
-#[cfg(test)]
-const CHOICES: &[(u32, u32, u32, [u32; 5])] = &[
-    (512, 5120, 1, [2, 2, 2, 2, 2]),
-    (576, 5120, 1, [2, 2, 2, 2, 2]),
-    (1024, 4096, 2, [3, 2, 2, 2, 2]),
-    (1024, 4096, 4, [3, 2, 2, 2, 2]),
-    (1024, 4096, 8, [2, 2, 2, 2, 2]),
-    (1152, 5120, 1, [2, 2, 2, 2, 2]),
-    (1280, 5120, 1, [2, 2, 2, 2, 2]),
-    (2304, 5120, 1, [3, 2, 2, 2, 2]),
-    (4096, 1280, 1, [3, 0, 0, 0, 0]),
-    (5120, 576, 1, [3, 0, 0, 0, 0]),
-    (5120, 1152, 1, [3, 0, 0, 0, 0]),
-    (5120, 2048, 1, [3, 0, 0, 0, 0]),
-    (5120, 2304, 1, [3, 0, 0, 0, 0]),
-    (5120, 4096, 1, [3, 2, 2, 2, 2]),
-    (5120, 8192, 1, [3, 2, 2, 2, 2]),
-    (5120, 15360, 1, [3, 2, 2, 2, 2]),
-    (8192, 1280, 1, [2, 2, 0, 0, 0]),
-    (25600, 6144, 1, [2, 2, 2, 0, 0]),
-    (32768, 1280, 1, [2, 0, 0, 0, 0]),
-];
-
 pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     use model_deepseek41_contract::tuning::{Family, select};
     let row = select(
@@ -47,19 +21,6 @@ pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     )?;
     assert_eq!(row.schedule, "compact");
     row.knobs["stages"].count()
-}
-
-#[cfg(test)]
-pub fn legacy_stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
-    if g.id != FLASH.id {
-        return None;
-    }
-    let index = ROWS.iter().position(|r| *r == rows)?;
-    CHOICES
-        .iter()
-        .find(|(n, k, groups, _)| (*n, *k, *groups) == (q.n, q.k, q.groups))
-        .map(|(_, _, _, choices)| choices[index])
-        .filter(|s| *s != 0)
 }
 
 /// Retain the complete qualified translation unit, including controls and

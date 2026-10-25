@@ -60,19 +60,6 @@ pub fn choice(g: &Geometry, ranks: u32, q: Mxfp8FoldGemmQuery, rows: u32) -> boo
     )
     .is_some_and(|row| row.schedule == "tma_scales")
 }
-#[cfg(test)]
-pub fn legacy_choice(g: &Geometry, ranks: u32, q: Mxfp8FoldGemmQuery, rows: u32) -> bool {
-    let engram = (q.n, q.k, q.groups) == (25600, 6144, 1);
-    g.id == FLASH.id
-        && ranks == 4
-        && ((matches!(rows, 4096 | 8192)
-            && matches!(
-                (q.n, q.k, q.groups),
-                (1280, 5120, 1) | (8192, 1280, 1) | (1024, 4096, 2) | (5120, 2048, 1)
-            ))
-            || (engram && rows == 8192))
-}
-
 /// The full-row Engram entry qualified on captured operands and served
 /// token IDs and logprob bits. The lab uses this descriptor for comparisons.
 pub fn engram_candidate(g: &Geometry, ranks: u32) -> Option<(Entry, u32)> {

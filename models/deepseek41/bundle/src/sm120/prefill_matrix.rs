@@ -9,25 +9,6 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub const FAMILY: &str = "mxfp8_prefill_matrix";
 pub const CUBIN: &str = "fold_core_prefill_deepseek41_sm120";
-#[cfg(test)]
-pub const ROWS: [u32; 7] = [192, 448, 960, 1472, 2496, 4096, 8192];
-// SM120, 250 W, 2026-10-20. All selected rows beat 0.97 on both devices
-// with cold and warm caches. Four Q/O families additionally pass captured
-// verify operands repeated to 64, 2496 and 8192 rows. Other measured rows
-// use distinct synthetic operands. No 64-row timing is used: serving
-// keeps the general fold below 128 rows. No other family is selected.
-// Each cell gives (tile rows, pipeline stages), ordered as ROWS.
-#[cfg(test)]
-type RowChoices = (u32, u32, u32, [(u32, u32); 7]);
-#[cfg(test)]
-#[rustfmt::skip]
-const CHOICES: &[RowChoices] = &[
-    (1280, 5120, 1, [(32, 3), (32, 3), (64, 2), (128, 2), (64, 2), (128, 2), (128, 2)]),
-    (8192, 1280, 1, [(128, 2), (128, 2), (128, 2), (128, 2), (128, 2), (128, 2), (128, 2)]),
-    (1024, 4096, 2, [(32, 3), (64, 2), (128, 2), (64, 2), (128, 2), (128, 2), (128, 2)]),
-    (5120, 2048, 1, [(64, 3), (128, 2), (128, 2), (128, 2), (128, 2), (128, 2), (128, 2)]),
-];
-
 pub fn choice(q: Mxfp8FoldGemmQuery, rows: u32) -> Option<(u32, u32)> {
     use model_deepseek41_contract::tuning::{Family, select};
     let row = select(
@@ -62,14 +43,6 @@ pub fn rows() -> Vec<u32> {
         .collect()
 }
 
-#[cfg(test)]
-pub fn legacy_choice(q: Mxfp8FoldGemmQuery, rows: u32) -> Option<(u32, u32)> {
-    let index = ROWS.iter().position(|&r| r == rows)?;
-    CHOICES
-        .iter()
-        .find(|&&(n, k, g, _)| (n, k, g) == (q.n, q.k, q.groups))
-        .map(|row| row.3[index])
-}
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
 }
@@ -173,7 +146,7 @@ mod tests {
                 };
                 for rows in [0, 1, 8, 32, 64, 127, 128, 8191, 8193]
                     .into_iter()
-                    .chain(ROWS.into_iter().flat_map(|r| [r - 1, r, r + 1]))
+                    .chain(rows().into_iter().flat_map(|r| [r - 1, r, r + 1]))
                 {
                     let a = after.launches(&buffers, View::EMPTY, Counts::rows(rows));
                     if ranks == 4

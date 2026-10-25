@@ -241,8 +241,8 @@ fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
         }
     }
     assert_eq!(covered, compiled);
-    assert_eq!(registration::BUCKETS.len(), 55);
-    let unique: BTreeSet<_> = registration::BUCKETS
+    assert_eq!(registration::exact_buckets().len(), 55);
+    let unique: BTreeSet<_> = registration::exact_buckets()
         .iter()
         .map(|b| (b.n, b.k, b.rows))
         .collect();

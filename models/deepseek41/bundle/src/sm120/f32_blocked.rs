@@ -33,13 +33,17 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
         return Ok(entry);
     }
     let q = entry.query();
+    let buckets = super::f32_prefill::rows_for(g, "f32.blocked.prefill", q, None)
+        .into_iter()
+        .flat_map(|row| {
+            assert_eq!(row.schedule, "blocked");
+            let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            let tile = row.knobs["tile"].count().expect("blocked tile count");
+            (lo..=hi).map(move |rows| (rows, tile))
+        })
+        .collect();
     entry
-        .with_blocked_prefill_buckets(
-            selected_rows(q.n, q.k)
-                .iter()
-                .map(|&rows| (rows, 32))
-                .collect(),
-        )
+        .with_blocked_prefill_buckets(buckets)
         .map_err(|e| e.to_string())
 }
 

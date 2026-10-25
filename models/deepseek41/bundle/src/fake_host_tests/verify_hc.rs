@@ -156,13 +156,19 @@ use super::*;
 // and prefill histories. Rows 4, 8, 16 and 32 remain identical after typed
 // handle mapping for the two added wide-fold modules per rank. Mutation
 // controls reject changed operands, row counts and launch dimensions.
+// The unused indexed-retention cubin adds one module and one resolve per
+// rank before verify. `lab/audit_retention_verify.py` maps typed allocation,
+// module, function, stream, event, graph and gather handles: all 47,492
+// verify records and 309,432 retained full-history records are identical.
+// Only the four declared resolves are added; allocation ranks and sizes
+// stay fixed. Twelve mutation controls cover operands, grids and ordering.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xf558e75d5fbeb67d)),
-    (6, (8040, 0xb0a797eb3eb64709)),
-    (8, (7720, 0x599af21d324e3aeb)),
-    (12, (8216, 0xaa274fcbbf815032)),
-    (16, (7892, 0xe2ae7ef2e89dcd72)),
-    (32, (7744, 0xcfee4fa88e7bcbaa)),
+    (4, (7880, 0x443e61c169c2f30d)),
+    (6, (8040, 0x30bfeec614beb9cd)),
+    (8, (7720, 0x96949e0afba185c7)),
+    (12, (8216, 0x596ae0c9990ae362)),
+    (16, (7892, 0x30b889ca72aeab84)),
+    (32, (7744, 0xdca9260abd62a594)),
 ];
 
 #[test]

@@ -6,7 +6,7 @@ that build into or read the shared target directory follow an order:
    (qualification, model preparation, the external SDK smoke, serve
    profiles, Python scorer consumers and the reference checks), which then
    run beside everything that follows;
-2. the portable checks and workspace tests (xtask check-portable), whose
+2. the portable build, lint and workspace test phases, whose
    tests rebuild some target/debug binaries;
 3. the fixture feature variants, then the kernel report integration and the
    feature variants that build only test executables;
@@ -64,7 +64,7 @@ SETUP = ("profile-cli-build", "preparation-fixture-build", "profile-copy") + PRE
 # or adds them with --with-producers (docs/contributing.md#checks).
 PRODUCERS = {
     # The workspace tests' kernel build reports and the external SDK smoke's.
-    "kernel-report-integration": ("portable", "external-model-smoke"),
+    "kernel-report-integration": ("portable-test", "external-model-smoke"),
     # The runtime-host binaries the lifecycle test builds with the fixture services.
     "deploy-entrypoint": ("process-lifecycle",),
 }
@@ -231,8 +231,12 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
                                            "chopinfer-model-fixture"], ("profile-cli-build",), weight=4),
         step("profile-copy", PY + ["-c", PROFILE_COPY, str(debug), str(profile / "debug"), *built],
              ("preparation-fixture-build",)),
-        step("portable", ["cargo", "run", "-p", "xtask", *LOCKED, "--", "check-portable"],
-             readers, weight=test_threads, CHOPINFER_CI_TEST_THREADS=str(test_threads),
+        step("portable-build", ["cargo", "run", "-p", "xtask", *LOCKED, "--", "check-portable-build"],
+             readers, weight=4),
+        step("portable-lint", ["cargo", "run", "-p", "xtask", *LOCKED, "--", "check-portable-lint"],
+             ("portable-build",), weight=4),
+        step("portable-test", ["cargo", "run", "-p", "xtask", *LOCKED, "--", "check-portable-test"],
+             ("portable-lint",), weight=test_threads, CHOPINFER_CI_TEST_THREADS=str(test_threads),
              CHOPINFER_RUST_TEST_RUNNER=env.get("CHOPINFER_RUST_TEST_RUNNER") or preflight.GATE_RUNNER),
         step("release-gate", ["bash", "ci/qualification.sh", "--jobs", str(qualification_jobs)], readers,
              weight=max(qualification_jobs // 2, 1), CARGO_TARGET_DIR=str(profile), **scoring),
@@ -244,9 +248,9 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
              readers, weight=2),
         step("serve-profiles", PY + ["tests/test_serve_profiles.py"], readers, CARGO_TARGET_DIR=str(profile)),
         step("recurrent-fixture", ["cargo", "test", "-p", "bundle-recurrent-fixture", "--features",
-                                   "fake-host-services", *LOCKED], ("portable",), weight=4),
+                                   "fake-host-services", *LOCKED], ("portable-test",), weight=4),
         step("tp4-fixture", ["cargo", "test", "-p", "bundle-tp4-fixture", "--features", "fake-host-services",
-                             *LOCKED], ("portable",), weight=4),
+                             *LOCKED], ("portable-test",), weight=4),
         # Reads the kernel build reports in the shared target directory.
         step("kernel-report-integration", PY + ["tests/test_kernel_report_integration.py"],
              fixtures + ("external-model-smoke",), CHOPINFER_KERNEL_REPORT_TARGET=str(target),
@@ -455,6 +459,9 @@ def main(arguments=None):
                         help="Check the environment the selected steps need (TMPDIR, reference variables) and run "
                              "nothing; every run checks it first")
     args = parser.parse_args(arguments)
+    # Retain the old --only spelling for callers selecting the whole portable pass.
+    args.only = [phase for name in args.only for phase in (
+        ("portable-build", "portable-lint", "portable-test") if name == "portable" else (name,))]
     target = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
     # The steps only name paths under the work directory; nothing is created.
     shared, independent = steps(target, args.work or pathlib.Path(tempfile.gettempdir()) / "chopinfer-cpu-ci.graph",

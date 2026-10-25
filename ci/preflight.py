@@ -13,16 +13,16 @@ TMPDIR_BYTES = 64
 # Runs that read the pinned references: the release gate's
 # test_reference_binding cells and runtime-eval's shipped-reference test, one
 # of the workspace tests.
-REFERENCE_STEPS = ("portable", "release-gate")
+REFERENCE_STEPS = ("portable-test", "release-gate")
 REFERENCE_PACKAGES = ("runtime-eval",)
 # The data root local.env sets. The CPU gate reads the files pinned under it
 # only where they are present, except reference workloads (see
 # reference_workloads).
 DATA_ROOTS = ("CHOPINFER_DATA",)
-# Steps that run the workspace tests under cargo-nextest: `portable` unless the
+# Steps that run the workspace tests under cargo-nextest: `portable-test` unless the
 # run opts out with CHOPINFER_RUST_TEST_RUNNER, the exhaustive comparisons
 # always.
-NEXTEST_STEPS = ("portable", "exhaustive-comparisons")
+NEXTEST_STEPS = ("portable-test", "exhaustive-comparisons")
 # The gate's runner when CHOPINFER_RUST_TEST_RUNNER is unset (ci/cpu.py).
 GATE_RUNNER = "nextest"
 GIT_ROUTING = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
@@ -127,7 +127,7 @@ def test_runner(steps, env):
     requested = env.get("CHOPINFER_RUST_TEST_RUNNER") or GATE_RUNNER
     if requested not in ("auto", "nextest", "cargo"):
         return [f"CHOPINFER_RUST_TEST_RUNNER={requested} is not auto, nextest or cargo"]
-    if requested != "nextest" and needed == {"portable"}:
+    if requested != "nextest" and "exhaustive-comparisons" not in needed:
         return []
     import rust_tests
     if rust_tests.nextest_version() is not None:

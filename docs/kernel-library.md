@@ -440,3 +440,179 @@ separate numerical contracts. A trained activation quantization point must
 be preserved explicitly; omitting it is a different evaluated computation.
 Payload validation rejects nonfinite or unrepresentable decoded operands.
 See [numerics](numerics.md) and the typed format/precision declarations.
+
+## Route classes and served envelopes
+
+Every model declares the shapes it serves through the required
+`conformance::Startup::envelope` method. `conformance::suite!` emits one
+`route_sweep` test per profile. The CPU fake host executes those shapes
+through the bundle ABI, including lowering-time choices and graph replays.
+The quick tier selects an autoregressive and a speculating profile per
+topology; the CPU tier includes every profile, packed prompts and chunk
+continuations. CPU single-prompt probes retain every admission boundary and
+its neighbours in every profile. Every secondary mode keeps fixture probes
+and its smallest and largest shapes. Complete boundary triples rotate among
+eligible secondary profile/mode combinations; extra dense probes rotate
+among single-prompt profiles. No triple is split between combinations.
+
+The CPU plan repeats after the printed `rotation_period`: currently 36 runs
+for DeepSeek and Qwen, 30 for GLM, and 24 for MiMo. Every eligible combination
+of every boundary triple is covered within that many consecutive seeds for a
+fixed envelope. CI assigns consecutive seeds per model using counters under
+`$CHOPINFER_DATA/route-guard/rotation`. It prints the seed, selected combinations
+and a one-command reproduction. An explicit `CHOPINFER_ROUTE_SEED` reproduces
+a run without advancing the counter. Direct Cargo runs default to the UTC
+day, so use explicit consecutive seeds when exercising a rotation manually.
+
+`CHOPINFER_ROUTE_SWEEP=full` checks every single-prompt prefill row count and
+adds the untagged-symbol island backstop. Its secondary modes retain every
+admission boundary and fixture probe in every profile, plus seeded dense
+probes. The full tier does not use the CPU rotation.
+`CHOPINFER_ROUTE_SWEEP=exhaustive` checks the full Cartesian set, including
+all rows in every packed and chunk mode. Run the full tier before release
+qualification, before landing a route change, and when adding a model or a
+new served shape; the exhaustive tier is opt-in.
+
+The shared CI Rust runner runs route sweeps once per selected model in a
+separate libtest process, and excludes them from its ordinary Rust test pass.
+It discovers models through their required allowlist file. Quick sweeps run
+up to four models in parallel. The runner warns loudly when a model exceeds
+20 seconds in quick or 60 seconds in CPU, and prints the route stage's total
+added wall time. The CPU stage runs models serially. Its measured added time
+on eight admitted CPUs is 184 to 188 seconds: DeepSeek 85 to 86, GLM 27 to
+28, MiMo 33 and Qwen 40 seconds (2026-10-25). The model warnings remain active. `ci/quick.sh`
+always selects quick; `ci/cpu.sh` selects CPU. Missing executed cases or peak
+RSS reports fail the stage.
+
+Full and exhaustive sweeps run only in bounded pieces. Build the bundle test
+executable through `tools/dev/heavy.sh`, then run the coordinator outside a
+heavy slot, with one exact profile test at a time:
+
+Run the coordinator once for every emitted `route_sweep` profile when
+qualifying the complete model envelope.
+
+```sh
+python3 -B tools/route_guard/sweep.py --binary "$ROUTE_TEST_BINARY" \
+  --test "$ROUTE_TEST_NAME" --out "$ROUTE_RESULTS"
+```
+
+Use the exact test name from the binary's `--list` output. The coordinator
+copies the executable into its private output directory, so a later Cargo
+build cannot replace the code between pieces. It admits each piece separately through `heavy.sh`, runs shapes sequentially,
+and releases the slot between pieces. Each piece runs in a
+`systemd-run --user --scope` with `MemoryMax=24G` and `MemorySwapMax=0`.
+The test enforces a 16 GiB peak RSS budget and checks elapsed time after each
+shape. The wrapper terminates at 880 seconds and kills after another 10
+seconds, keeping each admission under 15 minutes. Both the test and
+`/usr/bin/time -v` report peak RSS, including failed runs when available.
+Missing cgroup limits or RSS evidence fail the run. Increase `--parts`
+(default 32) if a piece reaches its time limit. `--tier exhaustive` selects
+the Cartesian sweep. Use a new external output directory for each run.
+
+Pieces retain route counts and deduplicated metadata, never fake device
+buffers or launch argument history. A piece passing is not a coverage
+verdict. The final audit requires every expected shape from the same
+executable and seed, then checks neighbours, islands across piece boundaries
+and stale allowlist entries over the complete profile.
+
+`kernel_core::route::RouteClass` distinguishes Fast, Baseline and Reference.
+Tags are registration metadata. `Launch`, `OpInfo`, kernel locks and the
+bundle ABI carry no new field. A wrapper reports its actual selected branch
+through `PreparedOp::route`; lowering carries that entry in the dispatch
+bindings. A symbol can be Fast at one call site and Baseline in a wrapper's
+fallback branch. Those are distinct entry identities, never a global
+Baseline label on the reused symbol. Conflicting classes for one entry
+are refused.
+
+Nested MXFP8 wrappers use the canonical family `mxfp8_prefill`. The registered
+admitted rows are combined, and reports retain the wrapper path: compact,
+matrix, TMA-matrix and TMA-scales. The selected inner fast route remains
+Fast when an outer wrapper delegates to it. Keep allowlist entries specific
+to the selected entry, symbol and row range.
+
+The sweep compares each fallback entry's launch counts across shapes in the
+same mode and phase. It reports a gap when nearby shapes have fewer launches
+of that entry and fewer fallbacks overall, or shapes on both sides have fewer
+launches of the entry. Constant fallbacks are reported. The full tier also
+refuses untagged symbols present only in runs of at most three prefill
+counts. A broad route with short fragments at its boundaries is not an island.
+
+Each bundle keeps `route-allowlist.toml`, including when it is empty. An entry
+names `profiles`, `phase`, `family`, `entry`, `symbol`, inclusive `rows`, a
+nonempty `reason`, and a tracking `task`. Profiles and symbols may use `*`.
+Use one assignment per line, double-quoted strings and JSON-compatible
+arrays. Full-line comments are allowed. A full sweep refuses stale entries.
+Keep independent replacements in separate entries so a qualified route can
+remove its exception without changing unrelated ones.
+
+Existing gaps may be recorded as temporary, exact-symbol/profile/range
+exceptions with a follow-up task that removes them. Every sweep prints each
+exception active in its sampled shapes, including its reason and task.
+Unlisted gaps fail. Full sweeps enforce staleness over the complete profile;
+sparse quick and CPU probes cannot establish full-envelope staleness.
+
+```toml
+[[allow]]
+profiles = ["tp4-*"]
+phase = "prefill"
+family = "projection"
+entry = "projection/general/example_projection"
+symbol = "example_projection"
+rows = [[258, 8191]]
+reason = "The row-range replacement is awaiting qualification"
+task = "projection-range"
+```
+
+Adding a model:
+
+1. Derive `Startup::envelope` from the contract's serving constants. Include
+   the maximum prefill, packing and chunk offsets. `Envelope::served` derives
+   decode and verify shapes from the host's warmup policy. Size the fake KV
+   pool for the longest continuation plus its final chunk, with disjoint
+   page ranges for packed requests. In `symbols_only` mode, keep current
+   simulated state and graph commands, but omit diagnostic upload and launch
+   histories. Use `Startup::finish_route_case` to drop retired-request
+   simulator state, preserving graph commands and resident block-table bytes.
+   Reuse or release all per-shape tensor backing.
+2. Register shared routed families through `Sm120::with_*`. Give every
+   model-owned row selector an entry tag with its family, class and admitted
+   rows. Forward the chosen entry through wrappers and the model's lowering
+   bindings, including cached programs. A fallback reusing a fast symbol
+   needs its own selected-branch identity. Additional execution exports use
+   `bundle_runtime::entry::with_route_counter`, including negotiated prefill.
+   Override `Startup::execute_route_step` when serving uses that extension;
+   preserve non-final prompt boundaries while setting up continuation probes.
+3. Run `cargo test -p bundle-MODEL --lib route_sweep --locked --offline`
+   through `tools/dev/heavy.sh`. Read the profile, mode, phase, family, entry,
+   symbol, row ranges, wrapper path and admitted rows. Qualify and admit a
+   row range, or add a justified exception. Repeat with
+   `CHOPINFER_ROUTE_SWEEP=cpu`, then the bounded full-tier coordinator above.
+4. Check the existing journal pins. Route metadata must preserve their
+   default bytes and every locked kernel. Metadata is not numerical or GPU
+   performance evidence.
+5. For served jobs, set `CHOPINFER_ROUTE_COUNTERS=1` and enable step tracing.
+   The optional `step.v1` `route` object reports fallback launches, families
+   and selected entries. Counts include graph replays and add no device
+   synchronization or readback. The tune runner enables these counters and
+   rejects missing evidence or a nonzero family without a reason in the
+   job's `allow_fallbacks` object.
+
+For profile review, set `CHOPINFER_ROUTE_TAGS_OUT` to a fresh existing directory
+outside the repository when running a sweep. It writes one tag JSON per
+bundle/profile. Use tags from the profiled source revision:
+
+```sh
+python3 -B tools/route_guard/check.py --classes "$ROUTE_CLASSES" \
+  --nsys "$PROFILE_SQLITE" --steps "$STEP_LOG" --allow "$JOB_ALLOWLIST"
+```
+
+The checker also accepts `--journal`. Symbol-only evidence fails for an
+unallowed Baseline-only or Reference-only symbol. A symbol shared by Fast
+and fallback entries is ambiguous: provide selected-entry step records to
+gate its exact fallback counts. Its device time remains unattributed.
+Exit codes are 0 for covered evidence, 1 for unallowed fallbacks and 2 for
+invalid, missing or ambiguous evidence. A model's range allowlist also
+needs `--profile`, `--phase` and `--rows` where those constraints apply;
+a job's family list instead supplies explicit reasons for that workload.
+The serving-step profile report accepts `--route-classes` and `--route-allow`
+to run this check after reading the export.

@@ -31,6 +31,8 @@ Read [BUNDLE_ARCHITECTURE.md](BUNDLE_ARCHITECTURE.md),
 
 ## Engineering rules
 
+- Admit fast routes by row range; every model declares its [served envelope and route tags](docs/kernel-library.md#route-classes-and-served-envelopes), passes the route sweep, and justifies baseline or reference gaps in its bundle's `route-allowlist.toml`.
+
 - Accuracy first. A kernel or serving change that can alter numerics needs
   bitwise-equality or fixed-batch evidence against the previous output or an
   f64 oracle before any performance claim.

@@ -24,6 +24,8 @@ pub mod shape;
 mod shared_overlap;
 pub mod sm120;
 pub mod taps;
+#[cfg(test)]
+mod tuning_tests;
 
 pub use model_deepseek41_contract::BUNDLE_ID;
 

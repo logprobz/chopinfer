@@ -62,10 +62,11 @@ resource and operation-order checks as other device records.
 The revision's sources must hold exactly those pins: the literal
 `(lines, 0x<fnv>)` tuples of the Rust files under the bundle directory that
 call `check_journal` must equal, as a multiset, the captured journals' pins.
-The only exception is a named alias for an excess check of a table pin:
+The only exception is a named alias for an excess table-read check:
 its call site (and every repeated check) must pass a plain place, its pin
 must occur among the source literals, and its body must match a retained
-journal with that pin by SHA-256. Literal-site checks cannot be aliases.
+journal with that pin by SHA-256. The retained journal may be checked at
+a literal or table-read call site. Literal-site checks cannot be aliases.
 The retained pins must still equal the entire source multiset. A v3 index
 records every alias in `pin_aliases`; the proof recomputes that map and
 names it in both its claim and coverage. All journals and device histories

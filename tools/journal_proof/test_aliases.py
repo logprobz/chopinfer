@@ -47,6 +47,52 @@ class AliasTests(Harness):
         self.assertIn(ALIAS, report['claim']['compared']['pin_aliases'])
         self.assertIn(STEP, report['claim']['compared']['pin_aliases'])
 
+    def assert_alias_checks(self, revision, sites, expected):
+        bodies = {CREATE: self.base[CREATE], **{name: self.base[STEP] for name in sites}}
+        def dump(out):
+            for i, (name, line) in enumerate(sites.items()):
+                write_dump(out, {CREATE: bodies[CREATE], name: bodies[name]},
+                           {CREATE: [ROOT + 'src/fixture_tests.rs', 2], name: [ROOT + 'src/fixture_tests.rs', line]},
+                           test=f'alias-{i}')
+        revision, out, _ = self.capture(bodies, revision, dump=dump)
+        index = json.loads((out / 'index.json').read_text())
+        self.assertEqual(index['pin_aliases'], expected)
+        self.assertFalse(set(expected) & set(expected.values()), 'aliases must not chain')
+        spec = identity_spec(self.repo.repo, MODEL, revision, out / 'index.json')
+        code, report = self.prove((revision, out), (revision, out), spec, '--require', 'identity')
+        self.assertEqual(code, 0, report.get('problems') or report.get('journals'))
+        self.assertEqual(report['coverage']['pin_aliases'], dict(base=expected, head=expected))
+
+    def test_aliases_checked_at_different_table_sites(self):
+        revision = self.table_revision(extra='fn other() { check_journal(&lines, expected, &file).unwrap(); }\n')
+        self.assert_alias_checks(revision, {STEP: 7, ALIAS: 8}, {ALIAS: STEP})
+
+    def test_three_way_alias_group_keeps_one_representative(self):
+        third = 'toy-step-third.journal'
+        self.assert_alias_checks(self.table_revision(), {STEP: 7, ALIAS: 7, third: 7}, {ALIAS: STEP, third: STEP})
+
+    def test_table_read_can_alias_a_literal_site_journal(self):
+        revision = self.commit(self.base, 'fn table() { check_journal(&lines, expected, &file).unwrap(); }\n')
+        self.assert_alias_checks(revision, {STEP: 3, ALIAS: 7}, {ALIAS: STEP})
+
+    def test_v2_index_cannot_carry_pin_aliases(self):
+        revision, out, _ = self.capture(self.base)
+        spec = identity_spec(self.repo.repo, MODEL, revision, out / 'index.json')
+        payload = json.loads((out / 'index.json').read_text())
+        for key in ('attestation', 'sites', 'repeated_checks'):
+            payload.pop(key)
+        payload.update(schema='chopinfer.journal-captures.v2', producer='capture_revision.py',
+                       journals={name: str(out / name) for name in self.base})
+        payload['auxiliary']['path'] = str(out / 'aux/manifest.json')
+        (out / 'index.json').write_text(json.dumps(seal(payload)))
+        code, report = self.prove((revision, out), (revision, out), spec, '--require', 'identity')
+        self.assertEqual(code, 0, report)
+        payload['pin_aliases'] = {STEP: CREATE}
+        (out / 'index.json').write_text(json.dumps(seal(payload)))
+        code, report = self.prove((revision, out), (revision, out), spec, '--require', 'identity')
+        self.assertEqual(code, 2, report)
+        self.assertIn('sealed pin aliases differ', report['problems'][0])
+
     def test_no_alias_keeps_index_and_report_fields_absent(self):
         revision, out, _ = self.capture(self.base)
         self.assertNotIn('pin_aliases', json.loads((out / 'index.json').read_text()))

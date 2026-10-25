@@ -60,7 +60,8 @@ CLAIM = dict(
     auxiliary_history=('Every other operation the fixture device recorded from the start of its lifetime through its last '
                        'pinned checkpoint (setup and the history between pinned captures): launches, copies, uploads with '
                        'their payload FNV, downloads, zeros, allocations, releases, stream and event creation, event '
-                       'record/wait, graph capture begin/end, replay and release. Compared line for line under '
+                       'record/wait, graph capture begin/end, replay and release, mapped-gather records and serving kv state. '
+                       'Compared line for line under '
                        'history_policy and the same mapping; unknown operation forms fail closed.'),
     ordering=('The relative order of every retained operation across owners (create, each pinned journal, history) '
               'is preserved; an operation inside a merged group or an expansion cannot be crossed.'),

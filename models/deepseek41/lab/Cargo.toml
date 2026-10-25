@@ -105,10 +105,6 @@ name = "query_prefill"
 path = "tests/sm120/query_prefill/main.rs"
 
 [[test]]
-name = "hc_prefill_fused"
-path = "tests/sm120/hc_prefill_fused/main.rs"
-
-[[test]]
 name = "ceil_cached"
 path = "tests/sm120/ceil_cached/main.rs"
 

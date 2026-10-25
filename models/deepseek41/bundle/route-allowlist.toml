@@ -51,7 +51,7 @@ reason = "Cached input and query norms cover measured row buckets; intervening d
 task = "NORM-cached-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-dspark", "tp4-dspark-full-prefill"]
+profiles = ["tp4-ar-full-prefill", "tp4-dspark-full-prefill"]
 phase = "prefill"
 family = "hc_prefill_expand_mix"
 entry = "hc_prefill_expand_mix/separate/chop_sinkhorn_hc_deepseek41_expand_f32_v1"
@@ -71,7 +71,7 @@ reason = "The fused expansion and mixer is qualified at 64, 320 and 8192 rows; o
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-dspark", "tp4-dspark-full-prefill"]
+profiles = ["tp4-ar-full-prefill", "tp4-dspark-full-prefill"]
 phase = "prefill"
 family = "hc_prefill_expand_mix"
 entry = "hc_prefill_expand_mix/separate/chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_tiled_r8_v1"
@@ -91,7 +91,7 @@ reason = "The fused expansion and mixer is qualified at 64, 320 and 8192 rows; o
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-dspark", "tp4-dspark-full-prefill"]
+profiles = ["tp4-ar-full-prefill", "tp4-dspark-full-prefill"]
 phase = "prefill"
 family = "hc_prefill_expand_mix"
 entry = "hc_prefill_expand_mix/separate/chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1"
@@ -111,7 +111,7 @@ reason = "The fused expansion and mixer is qualified at 64, 320 and 8192 rows; o
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-dspark", "tp4-dspark-full-prefill"]
+profiles = ["tp4-ar-full-prefill", "tp4-dspark-full-prefill"]
 phase = "prefill"
 family = "hc_prefill_expand_mix"
 entry = "hc_prefill_expand_mix/separate/chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c4_v1"
@@ -131,7 +131,7 @@ reason = "The fused expansion and mixer is qualified at 64, 320 and 8192 rows; o
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-dspark", "tp4-dspark-full-prefill"]
+profiles = ["tp4-ar-full-prefill", "tp4-dspark-full-prefill"]
 phase = "prefill"
 family = "hc_prefill_expand_mix"
 entry = "hc_prefill_expand_mix/separate/chop_sinkhorn_hc_deepseek41_prefill_mix_pipeline_r8_c8_v1"
@@ -2089,3 +2089,163 @@ symbol = "chop_deepseek41_hc_round_expand_mix_partials_v1"
 rows = [[2, 2], [4, 4]]
 reason = "The standalone rounded-chain producer is qualified at decode rows 1 and 8; rows 2 and 4 retain its original partial producer"
 task = "HC-round-chain-decode-2-4"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
+symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
+symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
+reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
+symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_initialize_v2"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_ticket_n5120_k2048_g1_f32_v2_packed_v1"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
+symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_initialize_v2"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_ticket_n8192_k1280_g1_f32_v2_packed_v1"
+rows = [[193, 193], [257, 258]]
+reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+task = "MXFP8-fold-packed-cones"

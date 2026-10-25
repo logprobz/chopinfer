@@ -156,7 +156,8 @@ def fit(points):
     for _ in range(100):
         g_s = RIDGE * n * scale
         g_o = RIDGE * n * offset
-        h_ss = h_so = h_oo = RIDGE * n
+        h_ss = h_oo = RIDGE * n
+        h_so = 0.0
         for s, y, _ in points:
             p = sigmoid(scale * s + offset)
             w = p * (1.0 - p)

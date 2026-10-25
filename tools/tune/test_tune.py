@@ -417,6 +417,18 @@ def confidence_log(path, truth, records, seed=7, contract='fixture.drafter-confi
 class Calibration(unittest.TestCase):
     TRUTH = [(1.5, 0.5), (1.2, 0.2), (1.0, 0.0), (0.8, -0.2), (0.6, -0.4)]
 
+    def test_constant_scores_fit_the_observed_rate(self):
+        # Ridge keeps a constant feature's Hessian invertible. It must not
+        # leave an imbalanced population at the initial probability of 0.5.
+        for accepted in (20, 80):
+            with self.subTest(accepted=accepted):
+                points = [(1.0, int(index < accepted), index % 2) for index in range(100)]
+                scale, offset = calibrate.fit(points)
+                self.assertAlmostEqual(calibrate.sigmoid(scale + offset), accepted / 100,
+                                       delta=0.002)
+                self.assertLess(calibrate.log_loss(points, scale, offset),
+                                calibrate.log_loss(points, 0.0, 0.0))
+
     def test_commit_shape_records_do_not_enter_confidence_folds(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'server.log'

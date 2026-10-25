@@ -3,6 +3,7 @@ use super::Instance;
 use crate::dspark::device::slice;
 use crate::dspark::execution::DraftInput;
 use crate::dspark::state::BLOCK_ROWS;
+use model_deepseek41_contract::geometry::FLASH;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 
 fn compact_heads(inputs: &[DraftInput]) -> bool {
@@ -34,10 +35,9 @@ impl Instance {
         crate::lower::dspark::metadata(device.shape.geometry, inputs)?;
         let chunk_items = device.draft_chunk_items;
         if inputs.len() <= chunk_items {
-            let positions = if crate::sm120::dspark_projection::enabled(
-                &device.shape.geometry,
-                device.shape.ranks(),
-            ) && compact_heads(inputs)
+            let positions = if device.shape.geometry.id == FLASH.id
+                && device.shape.ranks() == 4
+                && compact_heads(inputs)
             {
                 3
             } else {

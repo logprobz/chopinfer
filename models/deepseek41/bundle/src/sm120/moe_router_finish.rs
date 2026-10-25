@@ -23,7 +23,7 @@ use model_deepseek41_contract::moe::Experts;
 // against the unfused one, 20 of 20 layers, no slow sample, bitwise. At
 // backbone Decode-16 (AR C16; the first 16 sequences of the AR C32
 // captures, decode16-r1) it saves 0.31 ms, 20 of 20 layers, bitwise.
-pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+pub(crate) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     #[cfg(test)]
     if DISABLED.get() {
         return false;
@@ -42,7 +42,7 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
 // Additional TP4 backbone widths qualified as complete MoE graphs. The
 // verify tails also admit direct gate/down stages, so their measured gain
 // belongs to the whole MoE. Existing Verify-8 keeps its v1 finisher.
-pub(super) fn small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+pub(crate) fn small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     #[cfg(test)]
     if BASE_ADMISSION.get() {
         return false;
@@ -56,7 +56,7 @@ pub(super) fn small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
         )
 }
 
-pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows: u32) -> bool {
+pub(crate) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows: u32) -> bool {
     #[cfg(test)]
     if DISABLED.get() {
         return false;
@@ -95,7 +95,7 @@ pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows:
 // the join launched as a full dependency (shared_overlap::Lanes::issue) no
 // gate starts early, and the pair gains 0.25 ms per C8 cycle and 0.29 ms per
 // C32 cycle (the finish saves 0.34 ms at C32; same profile, 2026-10-21).
-pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+pub(crate) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     qualified(set, phase, rows)
         && (small_gap(set, phase, rows)
             || matches!(
@@ -130,7 +130,7 @@ pub(crate) fn layout(entry: &Entry, rows: u32) -> Layout {
     }
 }
 
-pub(super) fn calls(e: &Entry, rows: u32, scale_bits: u32, r2: bool) -> Result<Vec<Call>, Refused> {
+pub(crate) fn calls(e: &Entry, rows: u32, scale_bits: u32, r2: bool) -> Result<Vec<Call>, Refused> {
     let layout = layout(e, rows);
     let tickets = layout.routed + e.workspace_bytes(rows)?.next_multiple_of(256);
     kernel::STAGES

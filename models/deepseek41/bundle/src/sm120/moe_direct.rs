@@ -22,7 +22,7 @@ use model_deepseek41_contract::moe::Experts;
 // Full graphs, poisoned replays and clean eager/graph memcheck preserve
 // the result. Local-fold candidates remain unselected. A separate measured
 // router epilogue may fuse projection reduction, selection and metadata.
-fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
+pub(super) fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
     use ExecutionPhase::{Decode, Verify};
     let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
     out.extend([1, 2, 4, 5, 6, 8, 16, 32, 64].map(|rows| (Verify, rows)));
@@ -92,11 +92,7 @@ pub(super) fn prepare_set(
 /// partial layout as the small queues; the module is the qualified lab
 /// module's bytes. Decode-16 and the drafter bank are unmeasured.
 fn absorbs(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
-    entry.experts() == 384
-        && matches!(
-            (phase, rows),
-            (ExecutionPhase::Decode, 32) | (ExecutionPhase::Verify, 32)
-        )
+    stage_selected("absorb", entry.experts(), phase, rows)
 }
 
 /// TP4, 250 W, 2026-10-22, captured full MoE graphs (strip2-r1): the
@@ -122,8 +118,27 @@ fn absorbs(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
 /// faster, no slow sample, A/A within 0.04 ms. Their router, gate and
 /// finisher launches equal the Decode buckets', so the down queue is the
 /// only difference either way.
-fn strips2(entry: &Entry, _phase: ExecutionPhase, rows: u32) -> bool {
-    entry.experts() == 384 && matches!(rows, 16 | 32)
+fn strips2(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
+    stage_selected("strip2", entry.experts(), phase, rows)
+}
+
+pub(super) fn stage_selected(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) -> bool {
+    use ExecutionPhase::{Decode, Verify};
+    match site {
+        "absorb" => experts == 384 && matches!((phase, rows), (Decode, 32) | (Verify, 32)),
+        "strip2" => experts == 384 && matches!(rows, 16 | 32),
+        "wide" => experts == 384 && phase == Verify && (33..=64).contains(&rows),
+        "small" => rows <= 8,
+        "gate_grid" => experts == 384 && matches!((phase, rows), (Decode, 8 | 32) | (Verify, 32)),
+        "gate_resident" => {
+            experts == 384
+                && (matches!(rows, 16 | 32) || (phase == Verify && matches!(rows, 4 | 6)))
+        }
+        "gate_finish" => {
+            experts == 384 && matches!((phase, rows), (Decode, 1 | 8 | 16) | (Verify, 4 | 6 | 16))
+        }
+        _ => unreachable!("direct selection site"),
+    }
 }
 
 fn prepare(
@@ -135,10 +150,7 @@ fn prepare(
     r2: bool,
     tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
 ) -> Result<Prepared, Refused> {
-    let wide = fused_router
-        && entry.experts() == 384
-        && phase == ExecutionPhase::Verify
-        && (33..=64).contains(&rows);
+    let wide = fused_router && stage_selected("wide", entry.experts(), phase, rows);
     let absorb_queues = absorbs(entry, phase, rows) || wide;
     let strip2_down = strips2(entry, phase, rows) || wide;
     let scratch = entry.workspace_bytes(rows)?;
@@ -176,7 +188,8 @@ fn prepare(
         Stage::DownWide,
         Stage::DownFinish,
     ] {
-        if ((rows <= 8 || absorb_queues) && matches!(s, Stage::GateWide | Stage::DownWide))
+        if ((stage_selected("small", entry.experts(), phase, rows) || absorb_queues)
+            && matches!(s, Stage::GateWide | Stage::DownWide))
             || (strip2_down && s == Stage::DownWide)
         {
             continue;
@@ -211,11 +224,7 @@ fn prepare(
         // Keep the locked cubin, operands, K128 chains and partial ABI.
         // Other phase/row pairs and the drafter bank retain their prior grid.
         if stage == Some(Stage::GateSmall)
-            && entry.experts() == 384
-            && matches!(
-                (phase, rows),
-                (ExecutionPhase::Decode, 8 | 32) | (ExecutionPhase::Verify, 32)
-            )
+            && stage_selected("gate_grid", entry.experts(), phase, rows)
         {
             plan.grid[0] = plan.grid[0].min(kernels_sm120::moe::SM_COUNT * 6);
         }
@@ -236,9 +245,7 @@ fn prepare(
         // 16-row prefixes): 0.80 ms over the same, 20 of 20 layers.
         // Decode-16 (decode16-r1, 16 AR sequences): 0.85 ms, 20 of 20.
         if stage == Some(Stage::GateSmall)
-            && entry.experts() == 384
-            && (matches!(rows, 16 | 32)
-                || (phase == ExecutionPhase::Verify && matches!(rows, 4 | 6)))
+            && stage_selected("gate_resident", entry.experts(), phase, rows)
         {
             // The positional ABI is identical. Retain the floor binding's
             // view names for scales, sorted rows and padded rows.
@@ -263,11 +270,7 @@ fn prepare(
         // router (verify16-r1), and 0.48 ms at Decode-16 (decode16-r1).
         // Other rows are unmeasured.
         if stage == Some(Stage::GateFinish)
-            && entry.experts() == 384
-            && matches!(
-                (phase, rows),
-                (ExecutionPhase::Decode, 1 | 8 | 16) | (ExecutionPhase::Verify, 4 | 6 | 16)
-            )
+            && stage_selected("gate_finish", entry.experts(), phase, rows)
         {
             spec = bandwidth::finish_loads_entry(entry);
         }

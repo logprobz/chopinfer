@@ -172,6 +172,11 @@ fn check_row(row: &Row) -> Result<(), TuningError> {
                 "{key}: rows must satisfy 1 <= lo <= hi <= bucket"
             )));
         }
+        if lo == 1 && hi == key.bucket {
+            return Err(error(format!(
+                "{key}: a range covering the whole bucket omits rows"
+            )));
+        }
     }
     if row.knobs.keys().any(|n| !name(n)) {
         return Err(error(format!("{key}: knobs need names")));
@@ -265,14 +270,50 @@ impl Table {
         bucket: u32,
         rows: u32,
     ) -> Option<&Row> {
+        self.select_by(op, weights, bucket, rows, |other| other.cmp(shape))
+    }
+
+    /// Selects with borrowed shape entries in strictly ascending name order.
+    /// Unsorted or duplicate names return `None`. This lookup allocates nothing.
+    pub fn select_sorted(
+        &self,
+        op: &str,
+        weights: &str,
+        shape: &[(&str, u32)],
+        bucket: u32,
+        rows: u32,
+    ) -> Option<&Row> {
+        if shape.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return None;
+        }
+        self.select_by(op, weights, bucket, rows, |other| {
+            other
+                .iter()
+                .map(|(name, size)| (name.as_str(), *size))
+                .cmp(shape.iter().copied())
+        })
+    }
+
+    fn select_by(
+        &self,
+        op: &str,
+        weights: &str,
+        bucket: u32,
+        rows: u32,
+        compare_shape: impl Fn(&BTreeMap<String, u32>) -> std::cmp::Ordering,
+    ) -> Option<&Row> {
         if rows == 0 || rows > bucket {
             return None;
         }
         self.rows
             .binary_search_by(|row| {
                 row.key
-                    .group()
-                    .cmp(&(op, weights, shape, bucket))
+                    .op
+                    .as_str()
+                    .cmp(op)
+                    .then_with(|| row.key.weights.as_str().cmp(weights))
+                    .then_with(|| compare_shape(&row.key.shape))
+                    .then_with(|| row.key.bucket.cmp(&bucket))
                     .then_with(|| {
                         let [lo, hi] = row.key.rows.unwrap_or([1, bucket]);
                         if rows < lo {
@@ -437,34 +478,45 @@ pub fn shape_distance(key: &Key, other: &Key) -> u64 {
 /// geometry id) for the same operation, weights and bucket, the first in
 /// [`nearest_first`] order by [`shape_distance`] that is `legal` once keyed
 /// to `key`, with the status `inherited <id> row <source key>`. `own` is the
-/// geometry `key` belongs to.
+/// geometry `key` belongs to. Refuses ranged keys or matching ranged source
+/// rows: inheritance supports only whole-bucket schedules.
 pub fn inherit<'a>(
     own: Option<&str>,
     key: &Key,
     tables: impl IntoIterator<Item = (&'a str, &'a Table)>,
     mut legal: impl FnMut(&Row) -> bool,
-) -> Option<(Row, String)> {
+) -> Result<Option<(Row, String)>, TuningError> {
+    if key.rows.is_some() {
+        return Err(error(format!("{key}: cannot inherit a ranged tuning key")));
+    }
     let rows = tables
         .into_iter()
         .flat_map(|(id, table)| table.rows().iter().map(move |row| (id, row)))
         .filter(|(_, row)| {
             row.key.op == key.op && row.key.weights == key.weights && row.key.bucket == key.bucket
         });
-    nearest_first(
+    let rows = nearest_first(
         own,
         rows,
         |(id, _)| id,
         |(_, row)| shape_distance(key, &row.key),
-    )
-    .into_iter()
-    .find_map(|(id, row)| {
+    );
+    for (id, row) in &rows {
+        if row.key.rows.is_some() {
+            return Err(error(format!(
+                "{id} row {}: cannot inherit a ranged tuning row",
+                row.key
+            )));
+        }
+    }
+    Ok(rows.into_iter().find_map(|(id, row)| {
         let status = format!("inherited {id} row {}", row.key);
         let row = Row {
             key: key.clone(),
             ..row.clone()
         };
         legal(&row).then_some((row, status))
-    })
+    }))
 }
 
 /// Timing of a candidate against the current row, from alternating
@@ -614,10 +666,54 @@ mod tests {
     }
 
     #[test]
+    fn whole_bucket_ranges_must_omit_rows() {
+        for bucket in [1, 16] {
+            let mut choice = ranged(Some([1, bucket]));
+            choice.key.bucket = bucket;
+            let mut table = Table::new(table().target);
+            assert!(
+                table
+                    .upsert(choice.clone())
+                    .unwrap_err()
+                    .0
+                    .contains("whole bucket omits rows")
+            );
+            table.rows.push(choice);
+            assert!(
+                Table::parse(&table.render())
+                    .unwrap_err()
+                    .0
+                    .contains("whole bucket omits rows")
+            );
+        }
+    }
+
+    #[test]
+    fn inheritance_refuses_ranged_sources() {
+        let mut source = Table::new(table().target);
+        source.upsert(ranged(Some([1, 4]))).unwrap();
+        let error = inherit(None, &key("a.op", 16), [("source", &source)], |_| true).unwrap_err();
+        assert!(error.0.contains("source row"));
+        assert!(error.0.contains("cannot inherit a ranged tuning row"));
+        assert!(
+            inherit(None, &key("other.op", 16), [("source", &source)], |_| true)
+                .unwrap()
+                .is_none()
+        );
+        let ranged_key = ranged(Some([2, 4])).key;
+        assert!(
+            inherit(None, &ranged_key, [], |_| true)
+                .unwrap_err()
+                .0
+                .contains("cannot inherit a ranged tuning key")
+        );
+    }
+
+    #[test]
     fn parse_refuses_overlaps_and_mixed_ranges_in_ascending_key_order() {
         for (left, right, message) in [
             (Some([1, 8]), Some([8, 16]), "overlapping"),
-            (Some([1, 16]), Some([3, 4]), "overlapping"),
+            (Some([2, 16]), Some([3, 4]), "overlapping"),
             (Some([1, 4]), Some([1, 8]), "overlapping"),
             (None, Some([3, 4]), "stand alone"),
         ] {
@@ -753,55 +849,116 @@ mod tests {
 
     #[test]
     fn existing_tuning_v1_tables_keep_every_byte() {
-        for (name, text) in [
-            (
-                "qwen",
-                include_str!("../../../models/qwen38/contract/tuning/flash/schedules.json"),
-            ),
-            (
-                "glm",
-                include_str!("../../../models/glm5next/contract/tuning/flash/schedules.json"),
-            ),
-            (
-                "sm120",
-                include_str!("../../kernels-sm120/tuning/schedules.json"),
-            ),
-        ] {
-            let table = Table::parse(text).unwrap_or_else(|error| panic!("{name}: {error}"));
-            assert_eq!(table.rows().is_empty(), name == "sm120", "{name}");
-            assert!(
-                table.rows().iter().all(|row| row.key.rows.is_none()),
-                "{name}"
-            );
-            assert_eq!(table.render().as_bytes(), text.as_bytes(), "{name}");
+        use std::{fs, path::Path};
+
+        fn contains_table(value: &serde_json::Value) -> bool {
+            value.get("schema").and_then(|v| v.as_str()) == Some(SCHEMA)
+                || value
+                    .as_object()
+                    .is_some_and(|object| object.values().any(contains_table))
         }
 
-        // MiMo wraps its canonical tables in a map keyed by geometry.
-        let text = include_str!("../../../models/mimo26/contract/tuning/schedules.json");
-        let files: BTreeMap<String, File> = serde_json::from_str(text).unwrap();
-        assert!(!files.is_empty());
-        let mut entries = Vec::new();
-        for (id, file) in files {
-            assert_eq!(file.schema, SCHEMA);
-            let table = Table {
-                target: file.target,
-                rows: file.rows,
-            };
-            assert!(!table.rows().is_empty(), "{id}: expected existing rows");
-            assert!(
-                table.rows().iter().all(|row| row.key.rows.is_none()),
-                "{id}"
-            );
-            let rendered = table.render();
-            assert_eq!(Table::parse(&rendered).unwrap(), table);
-            let indented = rendered.trim_end_matches('\n').replace('\n', "\n  ");
-            entries.push(format!(
-                "  {}: {indented}",
-                serde_json::to_string(&id).unwrap()
-            ));
+        fn render_document(value: serde_json::Value) -> String {
+            if value.get("schema").and_then(|v| v.as_str()) == Some(SCHEMA) {
+                let file: File = serde_json::from_value(value).unwrap();
+                let table = Table {
+                    target: file.target,
+                    rows: file.rows,
+                };
+                let text = table.render();
+                assert_eq!(Table::parse(&text).unwrap(), table);
+                return text;
+            }
+            // Some documents wrap tables in maps keyed by geometry.
+            let entries = value
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(id, value)| {
+                    assert!(
+                        contains_table(value),
+                        "wrapper entry {id} has no tuning table"
+                    );
+                    let text = render_document(value.clone());
+                    let indented = text.trim_end_matches('\n').replace('\n', "\n  ");
+                    format!("  {}: {indented}", serde_json::to_string(id).unwrap())
+                })
+                .collect::<Vec<_>>();
+            format!("{{\n{}\n}}\n", entries.join(",\n"))
         }
-        let rendered = format!("{{\n{}\n}}\n", entries.join(",\n"));
-        assert_eq!(rendered.as_bytes(), text.as_bytes(), "mimo");
+
+        fn visit(directory: &Path, tuning: bool, found: &mut usize) {
+            for entry in fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                let path = entry.path();
+                if kind.is_dir() {
+                    let name = entry.file_name();
+                    let name = name.to_str().unwrap();
+                    if !name.starts_with('.') && name != "target" {
+                        visit(&path, tuning || name == "tuning", found);
+                    }
+                } else if kind.is_file()
+                    && tuning
+                    && path.extension().is_some_and(|ext| ext == "json")
+                {
+                    let text = fs::read_to_string(&path).unwrap();
+                    let value = serde_json::from_str(&text).unwrap();
+                    if contains_table(&value) {
+                        assert_eq!(
+                            render_document(value).as_bytes(),
+                            text.as_bytes(),
+                            "{}",
+                            path.display()
+                        );
+                        *found += 1;
+                    }
+                }
+            }
+        }
+
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let mut found = 0;
+        visit(workspace, false, &mut found);
+        assert!(
+            found >= 4,
+            "expected at least four tuning documents, found {found}"
+        );
+    }
+
+    #[test]
+    fn borrowed_shape_selection_matches_map_selection() {
+        let mut table = Table::new(table().target);
+        for range in [[2, 5], [9, 16]] {
+            table.upsert(ranged(Some(range))).unwrap();
+        }
+        table.upsert(row("b.op", 16, 4)).unwrap();
+        let shape = [("experts", 64), ("hidden", 4096)];
+        let map = key("a.op", 16).shape;
+        for op in ["a.op", "b.op", "absent.op"] {
+            for rows in 0..=17 {
+                assert_eq!(
+                    table.select_sorted(op, "mxfp4", &shape, 16, rows),
+                    table.select(op, "mxfp4", &map, 16, rows)
+                );
+            }
+        }
+        for invalid in [
+            vec![("hidden", 4096), ("experts", 64)],
+            vec![("experts", 64), ("experts", 64)],
+            vec![("experts", 64)],
+            vec![],
+        ] {
+            assert!(
+                table
+                    .select_sorted("a.op", "mxfp4", &invalid, 16, 3)
+                    .is_none()
+            );
+        }
     }
 
     #[test]
@@ -874,7 +1031,9 @@ mod tests {
         let tables = [("far", &far), ("near", &near), ("own", &other)];
         let want = key("a.op", 2);
         // The geometry's own row comes first, then the nearest shape.
-        let (row, status) = inherit(Some("own"), &want, tables, |_| true).unwrap();
+        let (row, status) = inherit(Some("own"), &want, tables, |_| true)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (row.key.clone(), row.knobs["warps"]),
             (want.clone(), Knob::Count(16))
@@ -883,10 +1042,12 @@ mod tests {
             status,
             "inherited own row a.op mxfp4 experts=64,hidden=4096 t2"
         );
-        let (row, status) = inherit(None, &want, tables, |_| true).unwrap();
+        let (row, status) = inherit(None, &want, tables, |_| true).unwrap().unwrap();
         assert_eq!(row.knobs["warps"], Knob::Count(16));
         assert!(status.starts_with("inherited own row"));
-        let (row, status) = inherit(None, &want, [tables[0], tables[1]], |_| true).unwrap();
+        let (row, status) = inherit(None, &want, [tables[0], tables[1]], |_| true)
+            .unwrap()
+            .unwrap();
         assert_eq!(row.knobs["warps"], Knob::Count(4));
         assert_eq!(
             status,
@@ -894,10 +1055,20 @@ mod tests {
         );
         // An illegal row is skipped; nothing legal inherits nothing.
         let legal = |row: &Row| row.knobs["warps"] != Knob::Count(4);
-        let (row, _) = inherit(None, &want, [tables[0], tables[1]], legal).unwrap();
+        let (row, _) = inherit(None, &want, [tables[0], tables[1]], legal)
+            .unwrap()
+            .unwrap();
         assert_eq!(row.knobs["warps"], Knob::Count(8));
-        assert!(inherit(None, &want, [tables[0], tables[1]], |_| false).is_none());
-        assert!(inherit(None, &key("c.op", 2), tables, |_| true).is_none());
+        assert!(
+            inherit(None, &want, [tables[0], tables[1]], |_| false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            inherit(None, &key("c.op", 2), tables, |_| true)
+                .unwrap()
+                .is_none()
+        );
         // Equal distances order by id; the own geometry precedes both.
         let ids = nearest_first(Some("b"), ["c", "a", "b"], |id| id, |_| 1);
         assert_eq!(ids, ["b", "a", "c"]);

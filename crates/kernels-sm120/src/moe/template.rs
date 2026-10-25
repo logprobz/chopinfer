@@ -394,7 +394,8 @@ pub fn resolve_table<'g>(
             &key,
             measured.iter().map(|(id, table)| (id.as_str(), table)),
             |row| validate_row(variant, row).is_ok(),
-        );
+        )
+        .map_err(|error| error.to_string())?;
         let (row, status) = if let Some(inherited) = inherited {
             inherited
         } else {

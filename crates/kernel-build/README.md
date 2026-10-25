@@ -129,13 +129,23 @@ builds whose options file, `nvcc.profile` or build date changes.
 
 `kernel_build::tuning` reads and writes schedule tables (schema
 `chopinfer-tuning-v1`): rows keyed by operation, weight format, named
-rank-shape sizes and batch bucket, each with a schedule name and count or
-flag knobs. Files are canonical (ascending keys, one row per line) and
+rank-shape sizes, batch bucket and an optional inclusive launch-row range,
+each with a schedule name and count or flag knobs. Empty knobs are valid
+when the schedule name alone expresses the choice. A range `[lo, hi]`
+must satisfy `1 <= lo <= hi <= bucket`; whole-bucket coverage omits `rows`
+and `[1, bucket]` is refused. Within a key group, use either one row without
+a range or ascending disjoint ranges. `Table::select` matches the launch
+row count; `select_sorted` accepts borrowed, sorted shape entries without
+allocating. Gaps and counts outside the bucket return no row. Exact-key
+`get` and `require` stay exact, and `inherit` returns an error for ranged
+keys or matching ranged source rows. Files are canonical (ascending keys, one row per line) and
 `Table::parse` refuses any other form, so a rewritten table diffs by row.
 The module interprets no knob; the owning catalog validates rows against
 its kernel. `accepts` and `best` are the replacement rule offline sweeps
 share: a candidate must beat the current row by more than its A-to-A noise
-band plus a margin. The grouped-MoE template's rows live with their
+band plus a margin. `best` ranks knob sets within one schedule and keeps
+its existing tie-breaking; it does not identify schedule-only candidates
+whose knob sets are all empty. The grouped-MoE template's rows live with their
 owners: shared entries in `crates/kernels-sm120/tuning/schedules.json` and
 each model's in `models/<name>/contract/tuning/schedules.json`.
 

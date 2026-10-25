@@ -5,6 +5,8 @@
 - [Tuning speculative decoding: depths, widths, token capacity, graph budget](depth-tuning.md)
 - [HTTP API](serving-request-surface.md)
 - [Operations and diagnostics](operations-observability.md)
+- [Mapped-row read-ahead](mapped-row-read-ahead.md)
+- [Persistent weight ownership](weight-keeper.md)
 - [Contributing and checks](contributing.md)
 - [Adding a model](adding-a-model.md)
 - [Kernel contribution guide](kernel-library.md)

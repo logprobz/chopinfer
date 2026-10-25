@@ -150,14 +150,14 @@ use super::*;
 // unchanged by this admission.
 // Small-row status folds replace 160 instances of each query projection,
 // WO projection and WO_a input quantizer at rows 6 and 12. Their captures
-// lose 640 and 800 nodes respectively. `lab/audit_small_row_verify.py`
+// lose 640 and 800 nodes respectively. `tools/journal_proof/proof.py`
 // checks the ordered operands, flags, slab spans, launch geometry and
 // capture totals, retaining every other operation and the full creation
 // and prefill histories. Rows 4, 8, 16 and 32 remain identical after typed
 // handle mapping for the two added wide-fold modules per rank. Mutation
 // controls reject changed operands, row counts and launch dimensions.
 // The unused indexed-retention cubin adds one module and one resolve per
-// rank before verify. `lab/audit_retention_verify.py` maps typed allocation,
+// rank before verify. `tools/journal_proof/proof.py` maps typed allocation,
 // module, function, stream, event, graph and gather handles: all 47,492
 // verify records and 309,432 retained full-history records are identical.
 // Only the four declared resolves are added; allocation ranks and sizes

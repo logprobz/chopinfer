@@ -1243,14 +1243,14 @@ fn journal_steps(host: &Rc<Host>) {
 /// The small-row admission changes exactly 308 two-row HC producers in
 /// each TP4 history, retaining their operands and allocations. Two existing
 /// wide-fold modules per rank add 56 resolves, 12 shared-memory settings and
-/// 64 releases. `lab/audit_small_row_lifecycle.py` checks every retained
+/// 64 releases. `tools/journal_proof/proof.py` checks every retained
 /// record through typed handle bijections and rejects mutated operands,
 /// launch geometry, retained bindings and missing lifecycle operations.
 /// TP1 and TP2 remain byte-identical.
 /// The cached small-decode norms change exactly 320 input and 160 query
 /// launches in each TP4 history, only their symbol, grid and block width.
-/// `lab/audit_norm_small_rows.py` verifies every other byte, the complete
-/// handle tables and eight mutation controls against the prior pinned history.
+/// `tools/journal_proof/proof.py` verifies retained records and complete
+/// typed handle mappings against the prior pinned history.
 /// Decode-2 selected-key caching replaces each of 160 source launches with
 /// its predecode and cached source. Original source operands and all ordered
 /// merges remain identical. The unchanged graph splitter moves one complete

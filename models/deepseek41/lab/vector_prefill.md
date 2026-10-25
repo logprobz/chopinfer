@@ -17,8 +17,9 @@ and omitted-chain control apply. Gate/up and down wins are evaluated
 independently, requiring more than 3% improvement on both devices and both
 routing distributions.
 
-Build with the standalone example's `OUT --initialize --vector` arguments
-for the first lock and `OUT --verify --vector` thereafter. The ignored
+Build the locked vector family with
+`cargo run -p model-deepseek41-lab --example build_family --locked --offline -- lab/exact_moe_prefill_vector "$OUT"`
+through `tools/dev/heavy.sh`, with `OUT` outside the repository. The ignored
 `vector_gpu` test reads
 `CHOPINFER_DEEPSEEK41_VECTOR_PREFILL_CUBINS`. Its job includes current
 serving timings, scalar-control timings, phase clocks, and a staged symbol

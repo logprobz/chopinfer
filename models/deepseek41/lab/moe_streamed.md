@@ -73,7 +73,8 @@ old gate/up has only 54 useful CTAs and down has 480. The active grid caps
 at 376 CTAs; gate/up uses 216. Streamed gate/up has 2,160 independent chain
 items and down has 2,400, with a small-queue grid capped at 1,504 CTAs.
 These counts and compiler resources suggest more load concurrency; they
-do not measure achieved occupancy or bandwidth. The paired device measurements above carry the timing evidence.
+do not measure achieved occupancy or bandwidth. The paired device
+measurements above carry the timing evidence.
 
 ## Qualification and profiling
 

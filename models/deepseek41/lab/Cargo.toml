@@ -34,63 +34,11 @@ name = "retention_pair"
 path = "tests/sm120/retention_pair.rs"
 
 [[example]]
-name = "build_moe"
-path = "examples/sm120/build_moe.rs"
-
-[[example]]
-name = "build_latent_glue"
-path = "examples/sm120/build_latent_glue.rs"
-
-[[example]]
-name = "build_window_stage"
-path = "examples/sm120/build_window_stage.rs"
-
-[[example]]
-name = "build_staged_window_keys"
-path = "examples/sm120/build_staged_window_keys.rs"
-
-[[example]]
-name = "build_ceil_parallel"
-path = "examples/sm120/build_ceil_parallel.rs"
-
-[[example]]
-name = "build_dspark_ring_gather"
-path = "examples/sm120/build_dspark_ring_gather.rs"
-
-[[example]]
-name = "build_dspark_retain_rows"
-path = "examples/sm120/build_dspark_retain_rows.rs"
-
-[[example]]
-name = "build_engram_hash"
-path = "examples/sm120/build_engram_hash.rs"
-
-[[example]]
-name = "build_moe_floor"
-path = "examples/sm120/build_moe_floor.rs"
-
-[[example]]
 name = "prefill_attention"
 path = "examples/sm120/prefill_attention.rs"
 
 [lints]
 workspace = true
-
-[[example]]
-name = "build_candidate_cached"
-path = "examples/sm120/build_candidate_cached.rs"
-
-[[example]]
-name = "build_select_early"
-path = "examples/sm120/build_select_early.rs"
-
-[[example]]
-name = "build_indexer_prefill"
-path = "examples/sm120/build_indexer_prefill.rs"
-
-[[example]]
-name = "build_attention_pair"
-path = "examples/sm120/build_attention_pair.rs"
 
 [[test]]
 name = "attention_pair"
@@ -120,69 +68,9 @@ path = "tests/sm120/query_window/main.rs"
 name = "norm_query_cached"
 path = "tests/sm120/norm_query_cached/main.rs"
 
-[[example]]
-name = "build_hc_prefill_fused"
-path = "examples/sm120/build_hc_prefill_fused.rs"
-
-[[example]]
-name = "build_hc_prefill_expand_mix"
-path = "examples/sm120/build_hc_prefill_expand_mix.rs"
-
-[[example]]
-name = "build_hc_prefill_expand_mix_norm"
-path = "examples/sm120/build_hc_prefill_expand_mix_norm.rs"
-
-[[example]]
-name = "build_ceil_cached"
-path = "examples/sm120/build_ceil_cached.rs"
-
-[[example]]
-name = "build_norm_query_cached"
-path = "examples/sm120/build_norm_query_cached.rs"
-
-[[example]]
-name = "build_hc_prefill_warp"
-path = "examples/sm120/build_hc_prefill_warp.rs"
-
 [[test]]
 name = "bf16_partials"
 path = "tests/sm120/bf16_partials.rs"
-
-[[example]]
-name = "build_acceptance"
-path = "examples/sm120/build_acceptance.rs"
-
-[[example]]
-name = "build_host_acceptance"
-path = "examples/sm120/build_host_acceptance.rs"
-
-[[example]]
-name = "build_norm_quantize_cached"
-path = "examples/sm120/build_norm_quantize_cached.rs"
-
-[[example]]
-name = "build_hc_round_chain"
-path = "examples/sm120/build_hc_round_chain.rs"
-
-[[example]]
-name = "build_confidence_parallel"
-path = "examples/sm120/build_confidence_parallel.rs"
-
-[[example]]
-name = "build_hc_finish_norm"
-path = "examples/sm120/build_hc_finish_norm.rs"
-
-[[example]]
-name = "build_moe_router_finish"
-path = "examples/sm120/build_moe_router_finish.rs"
-
-[[example]]
-name = "fold_bandwidth"
-path = "examples/sm120/build_fold_bandwidth.rs"
-
-[[example]]
-name = "build_compact_dense"
-path = "examples/sm120/build_compact_dense.rs"
 
 [[test]]
 name = "compact_dense"
@@ -192,18 +80,6 @@ path = "tests/sm120/compact_dense/main.rs"
 name = "hc_exact_rows"
 path = "tests/sm120/exact_rows/main.rs"
 
-[[example]]
-name = "build_indexer_score_study"
-path = "examples/sm120/build_indexer_score_study.rs"
-
-[[example]]
-name = "build_native_moe_prefill"
-path = "examples/sm120/build_native_moe_prefill.rs"
-
-[[example]]
-name = "build_native_tune"
-path = "examples/sm120/build_native_tune.rs"
-
 [[test]]
 name = "native_moe_prefill"
 path = "tests/sm120/native_moe_prefill/main.rs"
@@ -212,21 +88,9 @@ path = "tests/sm120/native_moe_prefill/main.rs"
 name = "projection_zero"
 path = "tests/sm120/projection_zero/main.rs"
 
-[[example]]
-name = "build_projection_zero"
-path = "examples/sm120/build_projection_zero.rs"
-
-[[example]]
-name = "build_fold_core"
-path = "examples/sm120/build_fold_core.rs"
-
 [[test]]
 name = "fold_core"
 path = "tests/sm120/fold_core/main.rs"
-
-[[example]]
-name = "build_indexer_prefill_tile"
-path = "examples/sm120/build_indexer_prefill_tile.rs"
 
 [[test]]
 name = "hc_finish_twin"
@@ -236,53 +100,9 @@ path = "tests/sm120/hc_finish_twin/main.rs"
 name = "hc_cols"
 path = "tests/sm120/hc_cols/main.rs"
 
-[[example]]
-name = "build_router_norm"
-path = "examples/sm120/build_router_norm.rs"
-
 [[test]]
 name = "router_norm"
 path = "tests/sm120/router_norm/main.rs"
-
-[[example]]
-name = "build_fold_local_rows"
-path = "examples/sm120/build_fold_local_rows.rs"
-
-[[example]]
-name = "build_fold_deep"
-path = "examples/sm120/build_fold_deep.rs"
-
-[[example]]
-name = "build_fold_cluster"
-path = "examples/sm120/build_fold_cluster.rs"
-
-[[example]]
-name = "build_fold_fused"
-path = "examples/sm120/build_fold_fused.rs"
-
-[[example]]
-name = "build_fold_plain"
-path = "examples/sm120/build_fold_plain.rs"
-
-[[example]]
-name = "build_packed_serving"
-path = "examples/sm120/build_packed_serving.rs"
-
-[[example]]
-name = "build_f32_verify"
-path = "examples/sm120/build_f32_verify.rs"
-
-[[example]]
-name = "build_fold_verify"
-path = "examples/sm120/build_fold_verify.rs"
-
-[[example]]
-name = "build_fold_verify_local"
-path = "examples/sm120/build_fold_verify_local.rs"
-
-[[example]]
-name = "build_moe_router64"
-path = "examples/sm120/build_moe_router64.rs"
 
 [[example]]
 name = "prepare_moe_wide"
@@ -291,3 +111,7 @@ path = "examples/sm120/prepare_moe_wide.rs"
 [[test]]
 name = "norm_small_rows"
 path = "tests/sm120/norm_small_rows/main.rs"
+
+[[example]]
+name = "build_family"
+path = "examples/build_family.rs"

@@ -34,6 +34,15 @@ def window(run, label, kind, c, depth, rate, histogram):
 
 
 class Tuner(unittest.TestCase):
+    def test_void_run_cannot_be_pooled_by_other_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'config.json').write_text(json.dumps(CONFIG))
+            (root / 'summary.json').write_text(json.dumps({'status': 'void'}))
+            for reader in (report.costs, report.evaluate):
+                with self.subTest(reader=reader.__name__), self.assertRaisesRegex(ValueError, 'void'):
+                    reader(root)
+
     def test_cold_ab_cpu_stub_and_negative_controls(self):
         import hashlib
         import os

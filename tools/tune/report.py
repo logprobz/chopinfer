@@ -36,8 +36,11 @@ import sys
 from pathlib import Path
 
 
-def load(run):
+def load(run, allow_void=False):
     run = Path(run)
+    summary = run / 'summary.json'
+    if not allow_void and summary.exists() and json.loads(summary.read_text()).get('status') == 'void':
+        raise ValueError('void jobs cannot be pooled')
     config = json.loads((run / 'config.json').read_text())
     rows = []
     for directory in sorted(run.glob('*/windows')):
@@ -372,7 +375,7 @@ def ab_validity(config, rows, summary):
 def ab(run):
     """Contract A decisions preserve matched pairs and never pool void jobs."""
     run = Path(run)
-    config, rows = load(run)
+    config, rows = load(run, allow_void=True)
     summary = json.loads((run / 'summary.json').read_text())
     validity = ({'status': 'void', 'reason': 'power limits changed within job'}
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))

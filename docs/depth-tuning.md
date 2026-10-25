@@ -75,7 +75,8 @@ less than the tokens their drafts add. Measure the step costs first (the
    --payload-sha PAYLOAD --dry-run`. Stub timings are synthetic; the dry run
    checks mechanics and failures only. The stub's controls
    (`TUNE_STUB_PERTURB`, `TUNE_STUB_PREEMPT`, `TUNE_STUB_IGNORE_DEPTHS`,
-   `TUNE_DRY_POWER_W`) must each fail the job.
+   `TUNE_DRY_POWER_CHANGE_LABEL`) must each fail the job. `TUNE_DRY_POWER_W`
+   selects a synthetic limit and does not impose a required wattage.
 5. Queue `STAGE/tune.job` on an otherwise idle machine.
 
 ## What the job does and checks

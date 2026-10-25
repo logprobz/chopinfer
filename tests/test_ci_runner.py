@@ -24,6 +24,7 @@ import qualification
 import runner
 import rust_tests
 import route_sweeps
+import test_inventory
 
 
 def shell(script):
@@ -65,6 +66,17 @@ class Runner(unittest.TestCase):
     def run_steps(self, steps, jobs=4, keep_going=False):
         return {result.name: result for result in
                 runner.run(steps, jobs, self.directory / "logs", keep_going=keep_going, out=io.StringIO())}
+
+    def test_exclusive_step_drains_and_blocks_other_steps(self):
+        results = self.run_steps([
+            runner.Step("first", shell("sleep 0.15")),
+            runner.Step("memory", shell("sleep 0.15"), exclusive=True),
+            runner.Step("last", shell("true")),
+        ])
+        for before, after in (("first", "memory"), ("memory", "last")):
+            self.assertGreaterEqual(results[after].started,
+                                    results[before].started + results[before].seconds - 0.02)
+        self.assertTrue(all(result.status == "ok" for result in results.values()))
 
     def test_a_failed_step_fails_the_run_and_skips_what_follows(self):
         results = self.run_steps([runner.Step("fails", shell("echo broken; exit 3")),
@@ -396,7 +408,7 @@ class ScorerDependencies(unittest.TestCase):
     def test_the_profile_copy_precedes_later_shared_target_writers(self):
         with tempfile.TemporaryDirectory() as directory:
             steps = {step.name: step for step in self.planned(pathlib.Path(directory))}
-            self.assertIn("profile-copy", steps["portable"].after)
+            self.assertIn("profile-copy", steps["portable-build"].after)
 
     def test_qualification_runs_modules_at_once_even_on_a_small_budget(self):
         """ci/quick.sh in an 8-CPU lane gets jobs=8; one module at a time made the qualification
@@ -419,11 +431,129 @@ class ScorerDependencies(unittest.TestCase):
                 with self.subTest(jobs=jobs, threads=threads):
                     steps = {step.name: step for step in cpu.order(*cpu.steps(work / "target", work, jobs,
                                                                               threads, exhaustive=True))}
-                    self.assertEqual(steps["portable"].weight, tests)
+                    self.assertEqual(steps["portable-test"].weight, tests)
                     self.assertEqual(steps["exhaustive-comparisons"].weight, tests)
                     self.assertLessEqual(max(step.weight for step in steps.values()), max(jobs // 2, 1))
-                    self.assertEqual(steps["portable"].env["CHOPINFER_CI_TEST_THREADS"], str(threads))
+                    self.assertEqual(steps["portable-test"].env["CHOPINFER_CI_TEST_THREADS"], str(threads))
                     self.assertIn(f"--test-threads {threads}", " ".join(steps["exhaustive-comparisons"].argv))
+
+
+class PhasedGate(unittest.TestCase):
+    def test_phases_preserve_checks_and_isolate_memory_before_variant_builds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            shared, independent = cpu.steps(work / "target", work, 8, 8)
+        steps = {step.name: step for step in shared + independent}
+        for phase in ("build", "lint", "test"):
+            self.assertEqual(steps["portable-" + phase].argv[-1], "check-portable-" + phase)
+        self.assertEqual(steps["portable-lint"].after, ("portable-build",))
+        self.assertEqual(steps["portable-test"].after, ("portable-lint",))
+        self.assertEqual(steps["high-memory-tests"].after, ("portable-test",))
+        self.assertTrue(steps["high-memory-tests"].exclusive)
+        for name in ("recurrent-fixture", "tp4-fixture"):
+            self.assertEqual(steps[name].after, ("high-memory-tests",))
+        self.assertEqual(steps["portable-test"].env["CHOPINFER_CI_MEMORY_PASS"], "ordinary")
+
+    def test_the_same_declared_cases_leave_both_ordinary_runners(self):
+        entries = rust_tests.high_memory(["--workspace"])
+        self.assertEqual(len(entries), 2)
+        self.assertTrue(all(reason for _, _, reason in entries))
+        nextest = rust_tests.commands(["--workspace"], "nextest", 8, skip_high_memory=True)[0]
+        cargo = rust_tests.commands(["--workspace"], "cargo", 8, skip_high_memory=True,
+                                    skip_routes=True, route_tests=["fake::route_sweep::tp4"])[0]
+        self.assertIn("--exact", cargo)
+        self.assertIn("fake::route_sweep::tp4", cargo)
+        self.assertNotIn("route_sweep::", cargo)
+        for binary, name, _ in entries:
+            self.assertIn(f"(binary_id(={binary}) & test(={name}))", nextest[-1])
+            self.assertIn(name, cargo)
+        self.assertEqual(rust_tests.high_memory(["-p", "xtask"]), [])
+
+    def test_cargo_high_memory_zero_tests_is_a_failure(self):
+        popen = subprocess.Popen
+        with patch.object(rust_tests.subprocess, "Popen", side_effect=lambda *a, **kw: popen(
+                [sys.executable, "-c", "print('test result: ok. 0 passed; 0 failed; 0 ignored;')"], **kw)), \
+                patch("sys.stdout", new_callable=io.StringIO), \
+                patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(rust_tests.run_high_memory(["-p", "bundle-glm5next"], "cargo"), 1)
+
+    def test_combined_inventory_keeps_rust_python_doctest_and_route_evidence(self):
+        log = """==> bundle-sample cpu route envelope (1.0s)
+sample-tp2: route sweep Cpu, seed=7, 32 cases, 1.0s
+test fake_host_tests::route_sweep::sample ... ok
+route budget: model=bundle-sample tier=cpu tests=1 elapsed_seconds=1.0
+==> bundle-sample library tests (one process)
+test ordinary ... ok
+   Doc-tests sample
+test src/lib.rs - example (line 12) ... ok
+test_named (__main__.Checks.test_named) ... ok
+Ran 1 test in 0.1s
+OK
+"""
+        tests, routes, python = test_inventory.log_records("portable-test", log)
+        self.assertEqual([t["kind"] for t in tests], ["rust", "rust", "doctest"])
+        self.assertEqual(routes, [{"step": "portable", "model": "bundle-sample", "profile": "sample-tp2",
+                                   "tier": "cpu", "seed": 7, "cases": 32, "outcome": "passed"}])
+        self.assertTrue(python["complete_names"])
+        self.assertEqual(python["ran"], 1)
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            (work / "logs").mkdir()
+            (work / "logs/portable-test.log").write_text(log)
+            (work / "junit").mkdir()
+            (work / "junit/ordinary.xml").write_text(
+                '<testsuites><testsuite><testcase classname="other" name="nextest"/>'
+                '</testsuite></testsuites>')
+            summary = {"steps": [{"name": "portable-test", "status": "ok", "exit": 0, "log": "recorded"}]}
+            inventory = test_inventory.collect(work, summary)
+            self.assertEqual(len(inventory["tests"]), 4)
+            self.assertEqual(inventory["duplicate_portable_tests"], [])
+            (work / "junit/memory.xml").write_bytes((work / "junit/ordinary.xml").read_bytes())
+            self.assertEqual(test_inventory.collect(work, summary)["duplicate_portable_tests"], [["other", "nextest"]])
+
+    def test_inventory_comparison_refuses_omissions_outcome_changes_and_count_changes(self):
+        before = {"tests": [{"name": "case", "outcome": "passed"}], "routes": [], "checks": [],
+                  "duplicate_portable_tests": [], "python": [{"step": "ci-runner", "ran": 3, "skipped": 0,
+                    "verdicts": ["OK"], "tests": [], "complete_names": False}]}
+        self.assertTrue(test_inventory.compare(before, before)["equal"])
+        for field, changed in (("tests", []), ("tests", [{"name": "case", "outcome": "failed"}]),
+                               ("python", [{**before["python"][0], "ran": 2}]),
+                               ("python", [{**before["python"][0], "ran": 4}])):
+            after = {**before, field: changed}
+            self.assertFalse(test_inventory.compare(before, after)["equal"])
+        after = {**before, "python": [{**before["python"][0], "ran": 4}]}
+        self.assertTrue(test_inventory.compare(before, after, ["ci-runner"])["equal"])
+        after["python"][0]["ran"] = 2
+        self.assertFalse(test_inventory.compare(before, after, ["ci-runner"])["equal"])
+
+    def test_qualification_counts_preserve_repeated_configurations_and_names(self):
+        log = """==> none/test_example (ok)
+test_first (test_example.Checks.test_first) ... diagnostic output
+ok
+Ran 1 test in 0.1s
+OK
+qualification none/test_example: 0.2s (exit 0)
+qualification none: 1 cells, 1 tests, 0 skipped
+==> none/test_example (ok)
+test_first (test_example.Checks.test_first) ... ok
+Ran 1 test in 0.1s
+OK
+qualification none/test_example: 0.2s (exit 0)
+qualification none: 1 cells, 1 tests, 0 skipped
+"""
+        _, _, recorded = test_inventory.log_records("release-gate-clean", log)
+        self.assertEqual(recorded["ran"], 2)
+        self.assertEqual(set(recorded["configurations"]), {"none", "none#2"})
+        self.assertEqual(len(recorded["cells"]), 2)
+        self.assertTrue(recorded["complete_names"])
+        self.assertTrue(all(case["name"].startswith("none/test_example/") for case in recorded["tests"]))
+
+    def test_inventory_keeps_zero_case_doctest_suites(self):
+        tests, _, _ = test_inventory.log_records("portable", """   Doc-tests sample
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+""")
+        self.assertEqual(len(tests), 1)
+        self.assertEqual((tests[0]["kind"], tests[0]["binary"], tests[0]["passed"]), ("doctest-suite", "sample", 0))
 
 
 class ReferencePrerequisites(unittest.TestCase):
@@ -469,7 +599,7 @@ class ReferencePrerequisites(unittest.TestCase):
             cpu.main(["--only", "kernel-report-integration", "--only", "deploy-entrypoint",
                       "--only", "process-lifecycle"])
         self.assertEqual(raised.exception.code, 2)
-        self.assertIn("kernel-report-integration reads the outputs of portable, external-model-smoke: add them "
+        self.assertIn("kernel-report-integration reads the outputs of portable-test, external-model-smoke: add them "
                       "with --only, or pass --with-producers", stderr.getvalue())
         self.assertNotIn("deploy-entrypoint reads", stderr.getvalue())
 
@@ -479,10 +609,10 @@ class ReferencePrerequisites(unittest.TestCase):
         names = cpu.with_producers(["kernel-report-integration"])
         self.assertEqual(cpu.missing_producers(names), {})
         steps = {item.name: item for item in cpu.select(cpu.order(shared, independent), names)}
-        self.assertEqual(set(steps), {"kernel-report-integration", "portable", "external-model-smoke",
+        self.assertEqual(set(steps), {"kernel-report-integration", "portable-test", "external-model-smoke",
                                       *cpu.SETUP} - set(cpu.PREREQUISITES))
         # The reader followed portable through the unselected fixture builds.
-        self.assertEqual(set(steps["kernel-report-integration"].after), {"portable", "external-model-smoke"})
+        self.assertEqual(set(steps["kernel-report-integration"].after), {"portable-test", "external-model-smoke"})
 
     def test_every_producer_precedes_its_reader_in_the_gate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -643,6 +773,20 @@ class Qualification(unittest.TestCase):
 
 
 class RouteSweeps(unittest.TestCase):
+    def test_recorded_model_seeds_reach_children_without_advancing_rotation(self):
+        output = ('12 cases, 0.1s\npeak_rss_bytes=1024\n'
+                  '{"rotation_period": 2, "selected_combinations": []}\n'
+                  'test result: ok. 1 passed; 0 failed; 0 ignored;')
+        env = {"CHOPINFER_ROUTE_SEEDS": json.dumps({"first": 3, "second": 9})}
+        binaries = {name: ("fixture", ".", env) for name in ("first", "second")}
+        with patch.object(route_sweeps.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run, \
+                patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(route_sweeps.run(binaries, "cpu"), 0)
+        self.assertEqual([call.kwargs["env"]["CHOPINFER_ROUTE_SEED"] for call in run.call_args_list], ["3", "9"])
+        self.assertNotIn("CHOPINFER_ROUTE_SEED", env)
+        with patch("sys.stdout", new_callable=io.StringIO), self.assertRaisesRegex(ValueError, "no integer route seed"):
+            route_sweeps.run({"missing": ("fixture", ".", env)}, "cpu")
+
     def test_new_model_is_discovered_from_its_required_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

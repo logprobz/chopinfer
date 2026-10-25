@@ -21,7 +21,7 @@ def isolated_workspace(root):
     # in the developer's checkout cannot affect the test.
     (root / 'ci').mkdir()
     for name in ('cpu.sh', 'cpu.py', 'runner.py', 'rust-profile.env', 'model_checks.py', 'preflight.py',
-                 'rust_tests.py', 'route_sweeps.py'):
+                 'rust_tests.py', 'route_sweeps.py', 'test_inventory.py'):
         (root / 'ci' / name).write_bytes((ROOT / 'ci' / name).read_bytes())
     (root / 'local.env').write_text('')
     # The checkpoint variable stems come from the model inventories.
@@ -552,7 +552,7 @@ class Preflight(unittest.TestCase):
             (self.root / 'models' / model / 'qual-references.lock.json').write_text(json.dumps({'entries': entries}))
         long = 'CHOPINFER_TEST_LONG is unset; it names the directory that holds the pinned qwen38 reference:long, qwen38 workload:long'
         layers = 'CHOPINFER_TEST_LAYERS is unset; it names the directory that holds the pinned mimo26 layer_reference'
-        for step in ('portable', 'release-gate'):
+        for step in ('portable-test', 'release-gate'):
             with self.subTest(step=step):
                 self.assertRefused(self.gate('--preflight', '--only', step), layers, long)
                 self.assertRefused(self.gate('--only', step), layers, long)
@@ -584,7 +584,7 @@ class Preflight(unittest.TestCase):
         probes = (f'CHOPINFER_DATA={data} holds no refs/probes.workload.json: the workload of the pinned '
                   'qwen38 image_probes reference')
         media = f'CHOPINFER_DATA={data} holds no media.json: the workload of the pinned mimo26 media reference'
-        for step in ('portable', 'release-gate'):
+        for step in ('portable-test', 'release-gate'):
             with self.subTest(step=step):
                 self.assertRefused(self.gate('--only', step, CHOPINFER_DATA=str(data)), probes, media)
         # Unset, the tests expect those references to be insufficient; a
@@ -599,15 +599,15 @@ class Preflight(unittest.TestCase):
 
     def test_a_missing_nextest_stops_the_workspace_tests_unless_the_run_opts_out(self):
         missing = 'cargo-nextest is not installed; the gate runs the workspace tests under cargo-nextest'
-        self.assertRefused(self.gate('--only', 'portable', NO_NEXTEST='1'), missing)
+        self.assertRefused(self.gate('--only', 'portable-test', NO_NEXTEST='1'), missing)
         self.assertRefused(self.gate('--preflight', NO_NEXTEST='1'), missing)
-        self.assertRefused(self.gate('--only', 'portable', CHOPINFER_RUST_TEST_RUNNER='nextest', NO_NEXTEST='1'),
+        self.assertRefused(self.gate('--only', 'portable-test', CHOPINFER_RUST_TEST_RUNNER='nextest', NO_NEXTEST='1'),
                            missing)
-        self.assertRefused(self.gate('--only', 'portable', CHOPINFER_RUST_TEST_RUNNER='fast'),
+        self.assertRefused(self.gate('--only', 'portable-test', CHOPINFER_RUST_TEST_RUNNER='fast'),
                            'CHOPINFER_RUST_TEST_RUNNER=fast is not auto, nextest or cargo')
         for runner in ('cargo', 'auto'):
             with self.subTest(runner=runner):
-                result = self.gate('--preflight', '--only', 'portable', CHOPINFER_RUST_TEST_RUNNER=runner, NO_NEXTEST='1')
+                result = self.gate('--preflight', '--only', 'portable-test', CHOPINFER_RUST_TEST_RUNNER=runner, NO_NEXTEST='1')
                 self.assertEqual((result.returncode, result.stderr.strip()), (0, 'cpu-ci preflight: ok'))
         # A selection without the workspace tests does not need nextest.
         self.assertEqual(self.gate('--only', 'leak-guard', '--preflight', NO_NEXTEST='1').returncode, 0)
@@ -622,7 +622,7 @@ class Preflight(unittest.TestCase):
             with self.subTest(runner=value), patch.dict(os.environ, env, clear=True), \
                     tempfile.TemporaryDirectory() as directory:
                 shared, independent = cpu.steps(Path(directory) / 'target', Path(directory), 4, 4)
-                portable = next(step for step in shared + independent if step.name == 'portable')
+                portable = next(step for step in shared + independent if step.name == 'portable-test')
                 self.assertEqual(portable.env['CHOPINFER_RUST_TEST_RUNNER'], expected)
 
     def test_head_moving_during_the_run_fails_it(self):

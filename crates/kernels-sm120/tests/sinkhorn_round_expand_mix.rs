@@ -219,6 +219,25 @@ fn measured_chain_buckets_keep_the_finisher_arguments_and_workspace_exact() {
         let expected = old.launches(&b, ws, Counts::rows(rows)).unwrap();
         let actual = op.launches(&b, ws, Counts::rows(rows)).unwrap();
         assert_eq!(actual.len(), 2);
+        let route = op
+            .route(Counts::rows(rows), &actual[0])
+            .expect("selected chain producer");
+        assert_eq!(
+            route.class,
+            if [1, 8].contains(&rows) {
+                kernel_core::route::RouteClass::Fast
+            } else {
+                kernel_core::route::RouteClass::Baseline
+            }
+        );
+        let finish = op
+            .route(Counts::rows(rows), &actual[1])
+            .expect("standalone finisher");
+        assert_eq!(finish.class, kernel_core::route::RouteClass::Fast);
+        assert_eq!(
+            old.route(Counts::rows(rows), &expected[0]).unwrap().class,
+            kernel_core::route::RouteClass::Fast
+        );
         for i in 0..2 {
             assert_eq!(actual[i].arguments, expected[i].arguments);
             assert_eq!(

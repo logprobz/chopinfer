@@ -93,10 +93,22 @@ class CheckTests(unittest.TestCase):
         steps = self.root / 'steps'
         steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': {
             'fallback_launches': 0, 'families': {}, 'entries': {}}}) + '\n')
-        self.assertEqual(self.run_check('--journal', journal, '--steps', steps), 1)
+        self.assertEqual(self.run_check('--journal', journal, '--steps', steps), 2)
         self.tags.append({**self.tags[0], 'entry': 'projection/standalone/shared', 'class': 'Fast'})
         self.write_classes()
         self.assertEqual(self.run_check('--journal', journal, '--steps', steps), 2)
+
+    def test_allowance_cannot_clear_incomplete_supplied_step_evidence(self):
+        journal = self.root / 'journal'
+        journal.write_text('launch 4 shared\nlaunch 4 shared\n')
+        steps = self.root / 'steps'
+        steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': {
+            'fallback_launches': 1, 'families': {'projection': 1}, 'entries': {
+                self.tags[0]['entry']: {'class': 'Baseline', 'family': 'projection',
+                    'symbol': 'shared', 'launches': 1}}}}) + '\n')
+        allow = self.root / 'allow.json'
+        allow.write_text(json.dumps({'allow_fallbacks': {'projection': 'Range work pending'}}))
+        self.assertEqual(self.run_check('--journal', journal, '--steps', steps, '--allow', allow), 2)
 
     def test_step_metadata_must_match_the_classes_revision(self):
         self.tags[0]['class'] = 'Fast'

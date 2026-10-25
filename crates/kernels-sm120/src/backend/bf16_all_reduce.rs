@@ -146,6 +146,18 @@ pub const LOW_LATENCY_ROWS: u32 = {
     most
 };
 
+pub(super) const ONE_SHOT_ROWS: u32 = {
+    let mut most = 0;
+    let mut at = 0;
+    while at < FORMS.len() {
+        if matches!(FORMS[at].1, Tuned::OneShot) && FORMS[at].0 > most {
+            most = FORMS[at].0;
+        }
+        at += 1;
+    }
+    most
+};
+
 /// The form of `rows` rows in SM120's table ([`FORMS`]): the first bound
 /// that holds them, past every bound the phased turns.
 pub fn tuned(rows: u32) -> Tuned {

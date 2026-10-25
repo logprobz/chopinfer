@@ -292,7 +292,15 @@ pub(super) fn mix_collapse(
 
 impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBuffers<View>> {
     fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
-        let entry = self.warp.as_ref()?;
+        let Some(entry) = self.warp.as_ref() else {
+            return Some(kernel_core::route::branch(
+                &launch.symbol,
+                kernel_core::route::RouteClass::Fast,
+                "sinkhorn_mix",
+                "standalone",
+                [1..=self.plans.len() as u32],
+            ));
+        };
         let selected = entry.buckets.contains(&counts.rows);
         Some(kernel_core::route::branch(
             &launch.symbol,
@@ -416,6 +424,15 @@ pub(super) fn expand(
 }
 
 impl PreparedOp<StreamExpandBuffers<View>> for LaggedOp<StreamExpandBuffers<View>> {
+    fn route(&self, _counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        Some(kernel_core::route::branch(
+            &launch.symbol,
+            kernel_core::route::RouteClass::Fast,
+            "hc_expand",
+            "standalone",
+            [1..=self.plans.len() as u32],
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }
@@ -604,6 +621,17 @@ mod tests {
                 let launch = &launches[0];
                 let selected = capacity == 8 && [1, 8].contains(&rows);
                 assert_eq!(launch.symbol == warp.symbol(), selected);
+                let tag = op
+                    .route(Counts::rows(rows), launch)
+                    .expect("selected mixer entry");
+                assert_eq!(
+                    tag.class,
+                    if capacity == 8 && !selected {
+                        kernel_core::route::RouteClass::Baseline
+                    } else {
+                        kernel_core::route::RouteClass::Fast
+                    }
+                );
                 if selected {
                     assert_eq!(launch.plan, warp.source.reference.plan(rows, rows).unwrap());
                     let mut args = handles(1..=12);
@@ -772,6 +800,10 @@ mod tests {
             .launches(&buffers, view(0, 0), Counts::rows(32))
             .unwrap();
         assert_eq!(launches[0].symbol, symbol(lagged::Op::Expand));
+        assert_eq!(
+            expand.route(Counts::rows(32), &launches[0]).unwrap().class,
+            kernel_core::route::RouteClass::Fast
+        );
         assert_eq!(launches[0].plan.grid, [10, 32, 1]);
         assert_eq!(launches[0].arguments.0, handles(1..=6));
         let short = StreamExpandBuffers {

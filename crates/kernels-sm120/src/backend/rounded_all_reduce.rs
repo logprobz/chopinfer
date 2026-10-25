@@ -62,7 +62,7 @@ use crate::row::rounding::{self, PartialRounding};
 const SENDERS: u32 = 16;
 const WIDE_WORKERS: u32 = 32;
 /// The most rows of the one-shot round entry.
-const ONE_SHOT_ROWS: u32 = 4;
+pub(super) const ONE_SHOT_ROWS: u32 = 4;
 /// The most rows of a two-shot call without workers.
 const DECODE_ROWS: u32 = 32;
 

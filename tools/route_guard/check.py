@@ -170,6 +170,9 @@ def check(args):
             tag = tags[0]
             print(f"{tag['class']} family={tag['family']} symbol={symbol} launches={count} device_ns={ns}")
             if selected_symbols[symbol] < required[symbol]:
+                if args.steps:
+                    ambiguous.append(symbol)
+                    continue
                 covered = [allowed(t, allow, profile, args.phase, args.rows, active) for t in tags]
                 if not all(covered):
                     failures.append(symbol)
@@ -185,7 +188,7 @@ def check(args):
         print(json.dumps({'schema': 'chopinfer.route-exception.v1', 'profile': profile,
                           'phase': args.phase, 'rows': args.rows, 'exception': allow[index]}))
     if ambiguous:
-        raise EvidenceError('ambiguous symbols require enough matching selected-entry --steps evidence: ' + ', '.join(ambiguous))
+        raise EvidenceError('fallback symbols require enough matching selected-entry --steps evidence: ' + ', '.join(ambiguous))
     if failures:
         print('unallowed fallbacks: ' + ', '.join(failures), file=sys.stderr)
         return 1

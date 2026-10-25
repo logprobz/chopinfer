@@ -97,6 +97,42 @@ pub(super) struct Failure {
 }
 
 pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Failure> {
+    // A reused symbol cannot establish which registration was selected. Require
+    // all its launches to carry an entry before interpreting admission gaps.
+    let fallback_symbols: BTreeSet<_> = tags
+        .iter()
+        .filter(|tag| tag.class != "Fast")
+        .map(|tag| tag.symbol.as_str())
+        .collect();
+    let mut entries = BTreeMap::<&str, Vec<&str>>::new();
+    for tag in tags
+        .iter()
+        .filter(|tag| fallback_symbols.contains(tag.symbol.as_str()))
+    {
+        entries.entry(&tag.symbol).or_default().push(&tag.entry);
+    }
+    let mut incomplete = BTreeMap::<(&str, &str, &str, u64, u64), Vec<u32>>::new();
+    for sample in samples {
+        for (symbol, entries) in &entries {
+            let raw = sample.symbols.get(*symbol).copied().unwrap_or(0);
+            let selected = entries
+                .iter()
+                .try_fold(0u64, |sum, entry| {
+                    sum.checked_add(sample.symbols.get(*entry).copied().unwrap_or(0))
+                })
+                .expect("selected-entry launch count overflow");
+            if raw != selected {
+                incomplete
+                    .entry((&sample.mode, &sample.phase, symbol, raw, selected))
+                    .or_default()
+                    .push(sample.rows);
+            }
+        }
+    }
+    assert!(incomplete.is_empty(), "incomplete selected-entry route evidence:\n{}",
+        incomplete.into_iter().map(|((mode, phase, symbol, raw, selected), rows)| {
+            format!("mode={mode} phase={phase} rows={} symbol={symbol} raw={raw} selected={selected}", ranges(&rows))
+        }).collect::<Vec<_>>().join("\n"));
     let mut groups = BTreeMap::<(&str, &str), Vec<&Sample>>::new();
     for sample in samples {
         groups
@@ -230,6 +266,13 @@ pub(super) fn check(
     }
     for &index in &used {
         let entry = &allow[index];
+        let mut modes = BTreeMap::<&str, BTreeSet<u32>>::new();
+        for failure in failures
+            .iter()
+            .filter(|f| entry.matches(profile, &f.phase, &f.family, &f.entry, &f.symbol, f.rows))
+        {
+            modes.entry(&failure.mode).or_default().insert(failure.rows);
+        }
         let matched: BTreeSet<_> = failures
             .iter()
             .filter(|f| entry.matches(profile, &f.phase, &f.family, &f.entry, &f.symbol, f.rows))
@@ -242,6 +285,9 @@ pub(super) fn check(
                 "phase": entry.phase, "family": entry.family, "entry": entry.entry,
                 "symbol": entry.symbol, "allowed_rows": entry.rows,
                 "observed_rows": ranges(&matched.into_iter().collect::<Vec<_>>()),
+                "observed_modes": modes.into_iter().map(|(mode, rows)| serde_json::json!({
+                    "mode": mode, "rows": ranges(&rows.into_iter().collect::<Vec<_>>())
+                })).collect::<Vec<_>>(),
                 "reason": entry.reason, "task": entry.task,
             })
         );
@@ -304,6 +350,34 @@ mod tests {
     use kernel_core::route::RouteClass;
 
     #[test]
+    fn registered_fallback_requires_complete_selected_entry_evidence() {
+        let baseline: Tag = RouteTag::new("shared", RouteClass::Baseline, "gemm", [8..=8]).into();
+        let fast: Tag = RouteTag::new("shared", RouteClass::Fast, "gemm", [1..=64])
+            .with_entry("gemm/standalone/shared")
+            .into();
+        let tags = [baseline, fast];
+        let sample = |raw, fallback, standalone| Sample {
+            mode: "single".into(),
+            phase: "prefill".into(),
+            rows: 7,
+            symbols: BTreeMap::from([
+                ("shared".into(), raw),
+                ("gemm/shared".into(), fallback),
+                ("gemm/standalone/shared".into(), standalone),
+            ]),
+        };
+        // Complete mixed evidence remains a constant route, which is reported
+        // without becoming an admission gap under the approved comparison rule.
+        assert!(failures(&[sample(3, 1, 2)], &tags, Tier::Quick).is_empty());
+        for invalid in [sample(3, 0, 0), sample(3, 1, 1), sample(3, 1, 3)] {
+            assert!(
+                std::panic::catch_unwind(|| failures(&[invalid], &tags, Tier::Quick)).is_err(),
+                "registered fallback launches need complete selected-entry evidence"
+            );
+        }
+    }
+
+    #[test]
     fn repeated_selected_entries_have_one_bounded_metadata_record() {
         let mut tags = BTreeMap::new();
         for row in 1..=8192 {
@@ -338,15 +412,11 @@ mod tests {
                 mode: "single".into(),
                 phase: "prefill".into(),
                 rows: r,
-                symbols: BTreeMap::from([(
-                    (if r == 512 || r == 2048 {
-                        "fast"
-                    } else {
-                        "gemm/base"
-                    })
-                    .into(),
-                    1,
-                )]),
+                symbols: if r == 512 || r == 2048 {
+                    BTreeMap::from([("fast".into(), 1)])
+                } else {
+                    BTreeMap::from([("base".into(), 1), ("gemm/base".into(), 1)])
+                },
             })
             .collect();
         let failed = failures(&samples, &[tag.into()], Tier::Quick);

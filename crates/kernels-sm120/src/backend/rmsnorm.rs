@@ -117,6 +117,15 @@ impl RmsNormOp {
 }
 
 impl PreparedOp<RmsNormBuffers<View>> for RmsNormOp {
+    fn route(&self, _counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        Some(kernel_core::route::branch(
+            &launch.symbol,
+            kernel_core::route::RouteClass::Fast,
+            "rmsnorm",
+            "standalone",
+            [1..=self.capacity],
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }
@@ -569,6 +578,12 @@ mod tests {
             .launches(&buffers, View::EMPTY, Counts::rows(16))
             .unwrap();
         let built = RmsNorm::new(requirement, 16, RmsNormTarget::SM120F).unwrap();
+        let tag = prepared.route(Counts::rows(16), &launches[0]).unwrap();
+        assert_eq!(
+            (tag.class, tag.family),
+            (kernel_core::route::RouteClass::Fast, "rmsnorm")
+        );
+        assert_eq!(tag.wrappers, ["standalone"]);
         assert_eq!(
             launches,
             [Launch {

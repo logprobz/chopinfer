@@ -28,6 +28,24 @@ impl Sm120 {
         if let Some(offers) = &self.f32_projections {
             tags.extend(offers.route_tags());
         }
+        // The registered one-shot protocols cover a continuous small-row
+        // range. Their composed alternatives have different symbols.
+        if self.bf16_all_reduce.phased {
+            tags.push(RouteTag::new(
+                crate::comm::phased_bf16::ONE_SHOT_SYMBOL,
+                RouteClass::Fast,
+                "bf16_all_reduce",
+                [1..=super::bf16_all_reduce::ONE_SHOT_ROWS],
+            ));
+        }
+        if self.rounded_all_reduce.phased {
+            tags.push(RouteTag::new(
+                crate::comm::phased_f32::ONE_SHOT_ROUND_SYMBOL,
+                RouteClass::Fast,
+                "rounded_all_reduce",
+                [1..=super::rounded_all_reduce::ONE_SHOT_ROWS],
+            ));
+        }
         self.prefill_route_tags(&mut tags);
         self.sinkhorn_route_tags(&mut tags);
         tags
@@ -132,6 +150,24 @@ impl Sm120 {
     }
 
     fn sinkhorn_route_tags(&self, tags: &mut Vec<RouteTag>) {
+        for (entry, buckets) in self.round_chains.iter().chain(&self.finish_norm_chains) {
+            tags.push(kernel_core::route::branch(
+                &entry.reference.symbols()[0],
+                RouteClass::Baseline,
+                "sinkhorn_round_chain",
+                "chain-fallback",
+                buckets.iter().map(|&(rows, _)| rows..=rows),
+            ));
+            for symbol in entry.symbols() {
+                tags.push(kernel_core::route::branch(
+                    &symbol,
+                    RouteClass::Fast,
+                    "sinkhorn_round_chain",
+                    "chain",
+                    buckets.iter().map(|&(rows, _)| rows..=rows),
+                ));
+            }
+        }
         // A prefill wrapper replaces the complete lagged mixer at its rows.
         for (entry, rows) in &self.sinkhorn.lagged_prefill {
             let need = Need::rows(

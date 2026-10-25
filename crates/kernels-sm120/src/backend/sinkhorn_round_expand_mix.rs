@@ -110,6 +110,38 @@ struct Op {
     info: OpInfo,
 }
 impl PreparedOp<Buffers<View>> for Op {
+    fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        use kernel_core::route::{RouteClass, branch};
+        // Chain tuning replaces only the producer. The standalone finisher is
+        // unchanged; a composing norm wrapper classifies its own fallback tail.
+        if (launch.symbol == self.entry.symbols()[0]
+            || self
+                .chains
+                .as_ref()
+                .is_some_and(|(entry, _)| entry.symbols().contains(&launch.symbol)))
+            && let Some((_, buckets)) = &self.chains
+        {
+            let selected = buckets.iter().any(|&(rows, _)| rows == counts.rows);
+            return Some(branch(
+                &launch.symbol,
+                if selected {
+                    RouteClass::Fast
+                } else {
+                    RouteClass::Baseline
+                },
+                "sinkhorn_round_chain",
+                if selected { "chain" } else { "chain-fallback" },
+                buckets.iter().map(|&(rows, _)| rows..=rows),
+            ));
+        }
+        Some(branch(
+            &launch.symbol,
+            RouteClass::Fast,
+            "sinkhorn_round_chain",
+            "standalone",
+            [1..=self.capacity],
+        ))
+    }
     fn info(&self) -> &OpInfo {
         &self.info
     }

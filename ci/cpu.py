@@ -110,12 +110,9 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
     env = os.environ.copy()
 
     def step(name, argv, after=(), weight=1, skips=None, exclusive=False, **variables):
-        if ("unittest" in argv or any(pathlib.Path(arg).name.startswith("test_") and arg.endswith(".py")
-                                     for arg in argv)) and "-v" not in argv:
-            argv = [*argv, "-v"]
         return runner.Step(name, argv, env={**env, **variables} if variables else None,
                            cwd=str(ROOT), weight=min(weight, max(jobs // 2, 1)), after=after, skips=skips,
-                           exclusive=exclusive)
+                           exclusive=exclusive, verbose_tests=True)
 
     # The reference runner's tests need torch and tapdiff's need numpy, from
     # CHOPINFER_REFRUN_PYTHON (the runner's venv): its check runs first and

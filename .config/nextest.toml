@@ -10,6 +10,9 @@ nextest-version = { required = "0.9.146" }
 shared-target = { max-threads = 1 }
 # Tests that compile CUDA. Each build starts up to 16 nvcc workers.
 nvcc = { max-threads = 2 }
+# The high-memory-* overrides below are ci/rust_tests.py's single registry.
+high-memory-startup-state-over-16gib = { max-threads = 1 }
+high-memory-wide-kv-oracle-over-16gib = { max-threads = 1 }
 
 [profile.default]
 slow-timeout = { period = "60s" }
@@ -48,6 +51,16 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Full TP4 MTP startup allocates more than 16 GiB of fake-host state.
+[[profile.ci.overrides]]
+filter = "(binary_id(=bundle-glm5next) & test(=fake_host_tests::conformance_tests::serving_startup::tp4_mtp))"
+test-group = "high-memory-startup-state-over-16gib"
+
+# Wide KV oracle buffers need more than 16 GiB, even before other tests run.
+[[profile.ci.overrides]]
+filter = "(binary_id(=kernel-lab::gated_kv_write_conformance) & test(=wide_gated_kv_write_cases_validate))"
+test-group = "high-memory-wide-kv-oracle-over-16gib"
 
 # Load-bound tests (CPU oracles over large buffers, or nvcc builds) that full
 # gates on a shared 48-core host stopped at the 600 s limit at load 87 to 250

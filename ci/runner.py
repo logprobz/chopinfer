@@ -11,6 +11,7 @@ import contextlib
 import dataclasses
 import json
 import os
+from pathlib import Path
 import re
 import signal
 import subprocess
@@ -34,6 +35,8 @@ class Step:
     skips: tuple = None
     # Drain running steps before starting, then admit no peers until it exits.
     exclusive: bool = False
+    # Retain individual Python test names in gate logs.
+    verbose_tests: bool = False
 
 
 @dataclasses.dataclass
@@ -235,8 +238,15 @@ def _start(step, result, log_dir):
     result.log = os.path.join(log_dir, step.name.replace("/", "_") + ".log")
     result.status = "running"
     result.started = time.time()
+    argv = step.argv
+    # Preserve declared check commands for dependency planners. Only actual
+    # unittest invocations get verbosity, never py_compile's source operands.
+    if step.verbose_tests and "-v" not in argv and (
+            "unittest" in argv or (len(argv) > 2 and argv[1] == "-B" and
+                                  Path(argv[2]).name.startswith("test_") and argv[2].endswith(".py"))):
+        argv = [*argv, "-v"]
     with open(result.log, "wb") as log:
-        child = subprocess.Popen(step.argv, cwd=step.cwd, env=step.env, stdin=subprocess.DEVNULL,
+        child = subprocess.Popen(argv, cwd=step.cwd, env=step.env, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     # The runner reaps children with os.wait4; keep Popen from waiting again.
     child.returncode = 0

@@ -78,6 +78,21 @@ class Runner(unittest.TestCase):
                                     results[before].started + results[before].seconds - 0.02)
         self.assertTrue(all(result.status == "ok" for result in results.values()))
 
+    def test_python_names_are_logged_without_changing_declarations_or_compile_commands(self):
+        source = self.directory / "test_sample.py"
+        source.write_text("import unittest\nclass Sample(unittest.TestCase):\n"
+                          "    def test_case(self): pass\nunittest.main()\n")
+        argv = [sys.executable, "-B", str(source)]
+        step = runner.Step("unittest", argv, verbose_tests=True)
+        compile_step = runner.Step("compile", [sys.executable, "-B", "-m", "py_compile", str(source)],
+                                   env={**os.environ, "PYTHONPYCACHEPREFIX": str(self.directory / "pycache")},
+                                   verbose_tests=True)
+        results = self.run_steps([step, compile_step])
+        self.assertTrue(all(result.status == "ok" for result in results.values()))
+        self.assertEqual(step.argv, argv)
+        self.assertNotIn("-v", step.argv)
+        self.assertIn("test_case (__main__.Sample.test_case) ... ok", pathlib.Path(results["unittest"].log).read_text())
+
     def test_a_failed_step_fails_the_run_and_skips_what_follows(self):
         results = self.run_steps([runner.Step("fails", shell("echo broken; exit 3")),
                                   runner.Step("later", shell("true"), after=("fails",))], jobs=1)
@@ -827,7 +842,9 @@ class RouteSweeps(unittest.TestCase):
                     print("test result: ok. 1 passed; 0 failed; 0 ignored;")
                     '''))
                 binary.chmod(0o755)
-                binaries[name] = (str(binary), str(root), dict(os.environ))
+                env = {key: value for key, value in os.environ.items()
+                       if key not in ("CHOPINFER_ROUTE_SEED", "CHOPINFER_ROUTE_SEEDS")}
+                binaries[name] = (str(binary), str(root), env)
             with patch.object(sys, "stdout", new_callable=io.StringIO) as output:
                 self.assertEqual(route_sweeps.run(binaries, "quick"), 0)
                 self.assertIn("parallel_models=2", output.getvalue())
@@ -1152,8 +1169,12 @@ class NextestProfiles(unittest.TestCase):
         for package, test in named:
             with self.subTest(package=package, test=test):
                 function = test.rsplit("::", 1)[-1]
-                self.assertTrue(any(re.search(rf"\bfn {function}\(", path.read_text())
-                                    for path in packages[package].rglob("*.rs")))
+                sources = [path.read_text() for path in packages[package].rglob("*.rs")]
+                declared = any(re.search(rf"\bfn {function}\(", source) for source in sources)
+                if "::serving_startup::" in test:
+                    declared |= any(re.search(rf'startup:\s*\w+\s*\{{[^}}]*\b{function}:\s*"[^"]+"', source)
+                                    for source in sources)
+                self.assertTrue(declared, (package, test))
 
 
 class Inventory(unittest.TestCase):

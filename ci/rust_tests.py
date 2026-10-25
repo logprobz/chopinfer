@@ -20,24 +20,34 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from xml.etree import ElementTree
 
 import route_sweeps
 
 PINNED = "0.9.146"
 LOCKED = ["--locked", "--offline"]
-# These cases exceed 16 GiB individually. Run them serially after the ordinary
-# pass; cpu.py also reserves the entire gate scheduler while this pass runs.
-HIGH_MEMORY = (
-    ("bundle-glm5next", "fake_host_tests::conformance_tests::serving_startup::tp4_mtp",
-     "The full TP4 MTP startup allocates more than 16 GiB of fake-host state."),
-    ("kernel-lab::gated_kv_write_conformance", "wide_gated_kv_write_cases_validate",
-     "Wide KV oracle buffers exceed 16 GiB alongside the ordinary test pool."),
-)
 
 
 def high_memory(selection):
-    return [entry for entry in HIGH_MEMORY
+    """Exact high-memory overrides, with their reason in the group name.
+
+    Keep model-specific identities in nextest's configuration. Both ordinary
+    runners and the exclusive pass derive their selection from this registry.
+    """
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / ".config/nextest.toml").read_text())
+    entries = []
+    for override in config["profile"]["ci"].get("overrides", []):
+        group = override.get("test-group", "")
+        if not group.startswith("high-memory-"):
+            continue
+        match = re.fullmatch(r"\(binary_id\(=([\w:-]+)\) & test\(=([\w:]+)\)\)", override["filter"])
+        if not match or config["test-groups"][group]["max-threads"] != 1:
+            raise ValueError("high-memory overrides require an exact binary/test pair and a serial group")
+        entries.append((match[1], match[2], group.removeprefix("high-memory-").replace("-", " ")))
+    if not entries or len({entry[:2] for entry in entries}) != len(entries):
+        raise ValueError("high-memory registry is empty or contains duplicate identities")
+    return [entry for entry in entries
             if selection == ["--workspace"] or entry[0].split("::")[0] in selection[1::2]]
 
 

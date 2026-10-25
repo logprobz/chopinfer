@@ -1251,6 +1251,12 @@ fn journal_steps(host: &Rc<Host>) {
 /// launches in each TP4 history, only their symbol, grid and block width.
 /// `lab/audit_norm_small_rows.py` verifies every other byte, the complete
 /// handle tables and eight mutation controls against the prior pinned history.
+/// Decode-2 selected-key caching replaces each of 160 source launches with
+/// its predecode and cached source. Original source operands and all ordered
+/// merges remain identical. The unchanged graph splitter moves one complete
+/// five-launch KV fork/join unit from the third to the second piece per rank;
+/// piece node counts change from 44/201/1288 to 45/211/1317. The audit retains
+/// every other operation and allocation, and all five other journals exactly.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1277,7 +1283,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77575, 0xacfd53c6ca99fe31),
+        (77603, 0xce80929c357aeb4d),
     ),
     (
         "deepseek41-flash-tp4",

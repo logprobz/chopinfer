@@ -8,8 +8,8 @@ phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_heads_v1"
-rows = [[1, 32]]
-reason = "Staged decode sources are qualified at eight rows; the selected-key cache covers only its declared decode buckets"
+rows = [[3, 3], [5, 7], [9, 32]]
+reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]
@@ -18,8 +18,8 @@ phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_p32_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_p32_heads_v1"
-rows = [[1, 32]]
-reason = "Staged decode sources are qualified at eight rows; the selected-key cache covers only its declared decode buckets"
+rows = [[3, 3], [5, 7], [9, 32]]
+reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]
@@ -28,8 +28,8 @@ phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_decode_heads_v1"
 symbol = "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_decode_heads_v1"
-rows = [[1, 32]]
-reason = "Staged decode sources are qualified at eight rows; the selected-key cache covers only its declared decode buckets"
+rows = [[3, 3], [5, 7], [9, 32]]
+reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths retain the source fallback"
 task = "LATENT-source-range"
 
 [[allow]]

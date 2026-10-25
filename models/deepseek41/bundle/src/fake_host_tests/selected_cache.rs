@@ -7,10 +7,10 @@ fn sources(line: &str) -> bool {
         && !line.contains("_merge_")
 }
 
-fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
+fn run_case(ranks: Ranks, layout: KvLayout, cached: bool, drafting: bool) -> Vec<String> {
     let shape = Shape::new(&FLASH, ranks).unwrap();
     let host = FakeHost::new(shape, layout);
-    if layout.storage == KvStorage::Native {
+    if layout.storage == KvStorage::Native && drafting {
         host.speculation.set(Some((5, 48)));
     }
     let mut instance = create(&host, 32);
@@ -37,7 +37,7 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
             && if verify {
                 matches!(rows, 4 | 6 | 32)
             } else {
-                matches!(rows, 1 | 8)
+                matches!(rows, 1 | 2 | 4 | 8)
             };
         let count = 40 * ranks.get() as usize;
         let calls: Vec<_> = lines.iter().filter(|l| sources(l)).collect();
@@ -91,7 +91,7 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
             *end += 1;
         }
     }
-    if layout.storage == KvStorage::Native {
+    if layout.storage == KvStorage::Native && drafting {
         for (items_count, width) in [(1_u32, 4_u32), (1, 6), (2, 4), (4, 4), (8, 4)] {
             let tokens = vec![7; width as usize];
             let items = (0..items_count)
@@ -136,9 +136,10 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
         let name = format!(
-            "{}.{:?}.selected-cache.{}.journal",
+            "{}.{:?}.selected-cache.{}.{}.journal",
             shape.topology(),
             layout.storage,
+            if drafting { "dspark" } else { "ar" },
             if cached { "serving" } else { "reference" }
         );
         std::fs::write(dir.join(&name), lines.join("\n")).unwrap();
@@ -149,22 +150,25 @@ fn run_case(ranks: Ranks, layout: KvLayout, cached: bool) -> Vec<String> {
 
 #[test]
 fn selected_cache_changes_only_measured_source_launches() {
-    let reference =
-        crate::sm120::latent_cache::with_reference(|| run_case(Ranks::TP4, KV_LAYOUTS[0], false));
-    let serving = run_case(Ranks::TP4, KV_LAYOUTS[0], true);
     let retained = |lines: Vec<String>| {
         lines
             .into_iter()
             .filter(|l| l.starts_with("launch ") && !sources(l))
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        retained(reference),
-        retained(serving),
-        "all merges and non-source launches must retain their exact bindings"
-    );
-    run_case(Ranks::TP2, KV_LAYOUTS[0], false);
-    run_case(Ranks::TP4, KV_LAYOUTS[1], false);
+    for drafting in [false, true] {
+        let reference = crate::sm120::latent_cache::with_reference(|| {
+            run_case(Ranks::TP4, KV_LAYOUTS[0], false, drafting)
+        });
+        let serving = run_case(Ranks::TP4, KV_LAYOUTS[0], true, drafting);
+        assert_eq!(
+            retained(reference),
+            retained(serving),
+            "all merges and non-source launches must retain their exact bindings"
+        );
+    }
+    run_case(Ranks::TP2, KV_LAYOUTS[0], false, true);
+    run_case(Ranks::TP4, KV_LAYOUTS[1], false, false);
 }
 
 #[test]

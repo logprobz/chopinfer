@@ -21,7 +21,7 @@ pub fn eligible(g: &Geometry, ranks: u32, storage: KvStorage) -> bool {
 
 pub fn rows(phase: AttentionPhase) -> Vec<u32> {
     match phase {
-        AttentionPhase::Decode => vec![1, 8],
+        AttentionPhase::Decode => vec![1, 2, 4, 8],
         AttentionPhase::Verify => [4, 6, 32].into_iter().chain(33..=MAX_ROWS).collect(),
         _ => Vec::new(),
     }
@@ -33,7 +33,7 @@ pub fn selected(phase: AttentionPhase, count: u32) -> bool {
         return false;
     }
     match phase {
-        AttentionPhase::Decode => matches!(count, 1 | 8),
+        AttentionPhase::Decode => matches!(count, 1 | 2 | 4 | 8),
         AttentionPhase::Verify => matches!(count, 4 | 6) || (32..=MAX_ROWS).contains(&count),
         _ => false,
     }
@@ -110,12 +110,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wide_cache_bounds_storage_without_changing_decode_selection() {
-        assert_eq!(rows(AttentionPhase::Decode), [1, 8]);
+    fn cache_bounds_and_decode_rows() {
+        assert_eq!(rows(AttentionPhase::Decode), [1, 2, 4, 8]);
         assert_eq!(bytes(32), 21_053_440);
         assert_eq!(bytes(64), 42_106_880);
         assert_eq!(bytes(192), bytes(64));
         for count in 1..=192 {
+            assert_eq!(
+                selected(AttentionPhase::Decode, count),
+                matches!(count, 1 | 2 | 4 | 8)
+            );
             assert_eq!(
                 selected(AttentionPhase::Verify, count),
                 matches!(count, 4 | 6 | 32..=64)

@@ -296,7 +296,7 @@ fn export(bundle: &str, profile: &str, tags: &[audit::Tag]) {
 
 pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
     let tier = Tier::configured();
-    let servings = S::servings();
+    let servings = super::super::startup::servings::<S>();
     let serving = servings
         .iter()
         .find(|s| s.profile == profile)
@@ -499,7 +499,7 @@ fn sample_key(sample: &audit::Sample) -> (String, String, u32) {
 /// Exercise repeated varying shapes with the same fake instance. Model hooks
 /// assert that diagnostics do not retain buffers after request retirement.
 pub fn memory_regression<S: Startup>() {
-    let servings = S::servings();
+    let servings = super::super::startup::servings::<S>();
     let serving = servings
         .iter()
         .find(|s| s.draft_tokens > 0)

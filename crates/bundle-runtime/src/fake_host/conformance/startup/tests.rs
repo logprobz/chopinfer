@@ -237,6 +237,7 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
                 IMAGES | NO_ENCODER => vec!["text".to_owned(), "image".to_owned()],
                 _ => vec!["text".to_owned()],
             },
+            verify: Default::default(),
             selection: (REFUSE == UNPROVIDED).then(|| vec!["text".to_owned(), "video".to_owned()]),
             package: Some(PackageSpeculation {
                 maximum_draft_tokens: 3,
@@ -315,6 +316,41 @@ fn keys(warmup: &VerifyWarmup) -> Vec<(usize, usize)> {
         .iter()
         .map(|shape| (shape.row_bucket, shape.item_bucket))
         .collect()
+}
+
+#[test]
+fn profile_verify_capacity_and_widths_follow_the_host_graph_budget() {
+    let mut document: serde_json::Value = serde_json::from_str(PROFILES).unwrap();
+    let profile = &mut document["profiles"]["tp1-mtp"];
+    profile["max_sequences"] = 32.into();
+    profile["speculation"]["rows"] = 64.into();
+    profile["speculation"]["graph_rows"] = 64.into();
+    profile["speculation"]["widths"] = "6,8,16,32,64".into();
+    let configured = |document: &serde_json::Value| {
+        let mut serving = profiles(&document.to_string()).remove("tp1-mtp").unwrap();
+        let mut package = Adapter::<NONE>::servings().pop().unwrap().package.unwrap();
+        package.maximum_verify_tokens = 128;
+        package.narrow_rows = true;
+        package.exact_graphs = true;
+        serving.package = Some(package);
+        serving
+    };
+    let serving = configured(&document);
+    assert_eq!(serving.verify_rows(), 64);
+    let warmup = serving.verify_warmup().unwrap();
+    assert_eq!(warmup.step_rows, 32);
+    assert_eq!(warmup.widths, [64]);
+    assert_eq!(serving.model_options["verify_graph_rows"], "64");
+    assert!(
+        super::super::Envelope::served(&serving, 8192)
+            .verify
+            .iter()
+            .any(|shape| shape.row_bucket == 64)
+    );
+    document["profiles"]["tp1-mtp"]["speculation"]["graph_rows"] = 32.into();
+    let limited = configured(&document);
+    assert_eq!(limited.verify_rows(), 64);
+    assert!(limited.verify_warmup().unwrap().widths.is_empty());
 }
 
 /// Eight sequences take decode waves of 1, 2, 4 and 8, a prefill and a

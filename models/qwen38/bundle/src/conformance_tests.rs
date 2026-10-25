@@ -203,6 +203,7 @@ impl conformance::Startup for Served {
                 // The served checkpoints store the vision tower
                 // (compiler `has_vision_tower`), so `auto` serves images.
                 provides: vec!["text".to_owned(), "image".to_owned()],
+                verify: Default::default(),
                 selection: None,
                 // The package's declaration (compiler `package.rs`) without
                 // wide rows: the MTP drafter drafts in the bundle.

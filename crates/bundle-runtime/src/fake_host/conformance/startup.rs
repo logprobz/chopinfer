@@ -45,6 +45,16 @@ pub struct Serving {
     pub selection: Option<Vec<String>>,
     /// The package's speculation declaration, `None` when it declares none.
     pub package: Option<PackageSpeculation>,
+    /// Resolved from the profile by the shared startup and route sweep entry points.
+    pub verify: VerifyOptions,
+}
+
+/// Profile overrides of the package default verify capacity and graph warmup.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct VerifyOptions {
+    pub rows: Option<u32>,
+    pub graph_rows: Option<u32>,
+    pub widths: Vec<u32>,
 }
 
 /// What a package declares for speculation, from the builders the package
@@ -99,11 +109,10 @@ impl Serving {
             self.draft_tokens <= package.maximum_draft_tokens,
             "{profile}: draft tokens exceed the package maximum"
         );
-        let rows = served_verify_rows(
-            package.maximum_verify_tokens as usize,
-            self.sequences as usize,
-            narrows_rows(package.narrow_rows),
-        );
+        let rows = self.verify_rows() as usize;
+        let graphed_rows = rows.min(self.verify.graph_rows.unwrap_or(u32::MAX) as usize);
+        assert!(graphed_rows > 0, "{profile}: graph rows must be positive");
+        let warmed_rows = graphed_rows.min(self.default_verify_rows());
         assert!(
             rows > tokens,
             "{profile}: verify rows must exceed the draft tokens"
@@ -116,10 +125,16 @@ impl Serving {
         Some(VerifyWarmup {
             item_rows: item_rows(&buckets, tokens),
             maximum_draft_tokens: tokens,
-            step_rows: rows,
+            step_rows: warmed_rows,
             drafting_items: package.maximum_draft_items.map(|items| items as usize),
             exact_graphs: package.exact_graphs,
-            widths: Vec::new(),
+            widths: self
+                .verify
+                .widths
+                .iter()
+                .map(|&width| width as usize)
+                .filter(|&width| width > warmed_rows && width <= graphed_rows)
+                .collect(),
             // Profiles never enable verify allocation.
             allocated: Vec::new(),
         })
@@ -128,8 +143,29 @@ impl Serving {
     /// The verify rows the host reports to the bundle (`query_speculation`),
     /// 0 without speculation.
     pub fn verify_rows(&self) -> u32 {
-        self.verify_warmup()
-            .map_or(0, |warmup| u32::try_from(warmup.step_rows).unwrap())
+        if self.draft_tokens == 0 {
+            return 0;
+        }
+        let package = self.package.as_ref().expect("speculation declaration");
+        let rows = self
+            .verify
+            .rows
+            .unwrap_or_else(|| self.default_verify_rows() as u32);
+        assert!(
+            rows > self.draft_tokens && rows <= package.maximum_verify_tokens,
+            "{}: requested verify capacity is outside the package limits",
+            self.profile
+        );
+        rows
+    }
+
+    fn default_verify_rows(&self) -> usize {
+        let package = self.package.as_ref().expect("speculation declaration");
+        served_verify_rows(
+            package.maximum_verify_tokens as usize,
+            self.sequences as usize,
+            narrows_rows(package.narrow_rows),
+        )
     }
 
     /// Whether each verify item's drafts come from the bundle.
@@ -251,7 +287,22 @@ fn profiles(json: &str) -> BTreeMap<String, Serving> {
         .iter()
         .map(|(name, profile)| {
             let speculation = &profile["speculation"];
-            let serving = Serving {
+            let verify = VerifyOptions {
+                rows: speculation.get("rows").map(|v| number(v, "rows")),
+                graph_rows: speculation
+                    .get("graph_rows")
+                    .map(|v| number(v, "graph_rows")),
+                widths: speculation.get("widths").map_or_else(Vec::new, |value| {
+                    value
+                        .as_str()
+                        .expect("verify widths")
+                        .split(',')
+                        .map(|width| width.trim().parse::<u32>().expect("verify width"))
+                        .collect()
+                }),
+            };
+            assert!(verify.graph_rows != Some(0) && verify.widths.iter().all(|&width| width > 0));
+            let mut serving = Serving {
                 profile: name.clone(),
                 tensor_parallel: number(&profile["tensor_parallel"], "tensor_parallel"),
                 context_parallel: profile
@@ -276,7 +327,13 @@ fn profiles(json: &str) -> BTreeMap<String, Serving> {
                 provides: Vec::new(),
                 selection: None,
                 package: None,
+                verify,
             };
+            if let Some(rows) = serving.verify.graph_rows {
+                serving
+                    .model_options
+                    .insert("verify_graph_rows".into(), rows.to_string());
+            }
             (name.clone(), serving)
         })
         .collect()
@@ -551,7 +608,7 @@ fn refuse_excess_drafting<S: Startup>(
 /// the package provides.
 fn serving<S: Startup>(profiles: &BTreeMap<String, Serving>, profile: &str) -> Serving {
     let mut servings = S::servings().into_iter().filter(|s| s.profile == profile);
-    let serving = servings
+    let mut serving = servings
         .next()
         .unwrap_or_else(|| panic!("{profile}: no serving configuration"));
     assert!(
@@ -561,6 +618,12 @@ fn serving<S: Startup>(profiles: &BTreeMap<String, Serving>, profile: &str) -> S
     let declared = profiles
         .get(profile)
         .unwrap_or_else(|| panic!("{profile}: not a profile of profiles.json"));
+    serving.verify = declared.verify.clone();
+    if let Some(rows) = declared.verify.graph_rows {
+        serving
+            .model_options
+            .insert("verify_graph_rows".into(), rows.to_string());
+    }
     let expected = Serving {
         provides: serving.provides.clone(),
         selection: serving.selection.clone(),
@@ -587,7 +650,7 @@ fn serving<S: Startup>(profiles: &BTreeMap<String, Serving>, profile: &str) -> S
 
 /// Checks that the adapter declares one serving configuration per profile,
 /// each with its profile's values. Returns them in the adapter's order.
-fn servings<S: Startup>() -> Vec<Serving> {
+pub(super) fn servings<S: Startup>() -> Vec<Serving> {
     let profiles = profiles(S::profiles());
     let servings = S::servings();
     let mut declared: Vec<&str> = servings.iter().map(|s| s.profile.as_str()).collect();

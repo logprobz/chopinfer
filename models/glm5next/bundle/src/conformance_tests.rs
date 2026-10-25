@@ -375,6 +375,7 @@ impl conformance::Startup for Served {
                 // (`encoder::declarations`), whose tower every admitted
                 // checkpoint stores, so `auto` serves images.
                 provides: vec!["text".to_owned(), "image".to_owned()],
+                verify: Default::default(),
                 selection: None,
                 // The default package's declaration (compiler `package.rs`):
                 // the MTP drafter at the contract's maximum serves every

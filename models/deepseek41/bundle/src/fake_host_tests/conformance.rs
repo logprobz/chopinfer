@@ -378,6 +378,7 @@ impl conformance::Startup for Served {
             model_options: Default::default(),
             // The package serves text alone: no encoder loads.
             provides: vec!["text".to_owned()],
+            verify: Default::default(),
             selection: None,
             package: Some(conformance::PackageSpeculation {
                 maximum_draft_tokens: model_deepseek41_contract::serving::MAX_DRAFT_TOKENS,

@@ -222,6 +222,7 @@ impl conformance::Startup for Served {
                 // so `auto` serves text and image: the package names its
                 // encoder set (`weight_plan::ENCODER_SET_ROLE`).
                 provides: provides.clone(),
+                verify: Default::default(),
                 selection: None,
                 // The package's declaration (compiler `mimo26_package`):
                 // MTP drafts within the decode kernels' rows, DFlash drafts

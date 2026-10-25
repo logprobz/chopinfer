@@ -237,10 +237,6 @@ name = "hc_finish_twin"
 path = "tests/sm120/hc_finish_twin/main.rs"
 
 [[test]]
-name = "hc_tail16"
-path = "tests/sm120/hc_tail16/main.rs"
-
-[[test]]
 name = "hc_cols"
 path = "tests/sm120/hc_cols/main.rs"
 

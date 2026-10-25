@@ -573,10 +573,9 @@ impl MoeOps {
         let mut launches = bind.launch(op, &buffers, Counts::rows(phase.rows()))?;
         if kernel_core::route::Metadata::enabled() {
             for item in &mut launches {
-                item.launch.bindings = item
-                    .launch
+                item.launch
                     .bindings
-                    .with_route(self.router_route(phase, &item.launch.symbol));
+                    .set_route(self.router_route(phase, &item.launch.symbol));
             }
         }
         Ok(launches)
@@ -680,7 +679,7 @@ impl MoeOps {
                         if selected { "selected" } else { "general" },
                         admitted.clone(),
                     );
-                    item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                    item.launch.bindings.set_route(Some(tag));
                 }
             }
         }

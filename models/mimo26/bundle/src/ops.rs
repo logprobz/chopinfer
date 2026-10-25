@@ -571,13 +571,16 @@ impl Bind {
         counts: Counts,
     ) -> Result<Vec<Lowered>, Refusal> {
         let launches = op.launches(buffers, View::EMPTY, counts)?;
+        if !kernel_core::route::Metadata::enabled() {
+            return Ok(self.launches(launches));
+        }
         let routes: Vec<_> = launches
             .iter()
             .map(|launch| kernel_core::route::selected(op, counts, launch))
             .collect();
         let mut lowered = self.launches(launches);
         for (item, route) in lowered.iter_mut().zip(routes) {
-            item.launch.bindings = item.launch.bindings.with_route(route);
+            item.launch.bindings.set_route(route);
         }
         Ok(lowered)
     }

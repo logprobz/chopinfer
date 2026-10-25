@@ -3,6 +3,7 @@ use super::*;
 struct Producer {
     info: OpInfo,
     launches: Vec<Launch>,
+    route_calls: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 impl PreparedOp<()> for Producer {
     fn info(&self) -> &OpInfo {
@@ -11,10 +12,22 @@ impl PreparedOp<()> for Producer {
     fn launches(&self, _: &(), _: View, _: Counts) -> Result<Vec<Launch>, Refusal> {
         Ok(self.launches.clone())
     }
+    fn route(&self, _: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
+        self.route_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(kernel_core::route::branch(
+            &launch.symbol,
+            kernel_core::route::RouteClass::Fast,
+            "producer",
+            "independent",
+            [1..=32],
+        ))
+    }
 }
 
 fn producer() -> Producer {
     Producer {
+        route_calls: Default::default(),
         info: OpInfo::new(
             "independent",
             Invariance::any_rows(32),
@@ -35,6 +48,31 @@ fn producer() -> Producer {
             collective: false,
             persistent: false,
         }],
+    }
+}
+
+#[test]
+fn disabled_routes_skip_selection_in_both_lowering_paths() {
+    let producer = producer();
+    let calls = producer.route_calls.clone();
+    let op: Prepared<()> = Box::new(producer);
+    for enabled in [false, true] {
+        let _counter = bundle_runtime::routes::RouteCounter::begin(enabled);
+        for independent in [false, true] {
+            let bind = Bind::default();
+            let lowered = if independent {
+                bind.launch_independent(&op, &(), Counts::rows(16))
+            } else {
+                bind.launch(&op, &(), Counts::rows(16))
+            }
+            .unwrap();
+            assert_eq!(lowered.len(), 1);
+            assert_eq!(lowered[0].launch.bindings.route().is_some(), enabled);
+        }
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            if enabled { 2 } else { 0 }
+        );
     }
 }
 

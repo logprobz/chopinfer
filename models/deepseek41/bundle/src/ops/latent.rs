@@ -898,7 +898,7 @@ impl AttentionOps {
                             admitted.clone(),
                         )
                     };
-                    item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                    item.launch.bindings.set_route(Some(tag));
                 }
             }
             Ok(launches)

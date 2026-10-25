@@ -866,10 +866,9 @@ fn selected_entries_count_eager_and_replayed_launches_with_a_reused_symbol() {
         (RouteClass::Fast, "standalone"),
         (RouteClass::Baseline, "fallback"),
     ]) {
-        launch.bindings =
-            launch
-                .bindings
-                .with_route(Some(branch("shared", class, "norm", wrapper, [8..=8])));
+        launch
+            .bindings
+            .set_route(Some(branch("shared", class, "norm", wrapper, [8..=8])));
     }
     let mut graphs = GraphCache::<Steps>::new(ranks);
     for graph in [None, Some((1, 0)), Some((1, 0)), Some((1, 0))] {

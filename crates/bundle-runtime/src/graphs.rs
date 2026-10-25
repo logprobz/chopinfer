@@ -236,14 +236,7 @@ impl<G: BundleGeometry> GraphCache<G> {
         self.capture(services, stream, key, launches, record)?;
         for &graph in &self.graphs[&key] {
             services.launch_graph(stream, graph)?;
-            if let Some(counts) = self
-                .ledger
-                .borrow()
-                .routes
-                .get(&(graph.generation(), graph.slot()))
-            {
-                crate::routes::replay(counts);
-            }
+            self.replay_routes(graph);
         }
         Ok(())
     }
@@ -441,14 +434,7 @@ impl<G: BundleGeometry> GraphCache<G> {
                     continue;
                 };
                 services.launch_graph(streams[rank], graph)?;
-                if let Some(counts) = self
-                    .ledger
-                    .borrow()
-                    .routes
-                    .get(&(graph.generation(), graph.slot()))
-                {
-                    crate::routes::replay(counts);
-                }
+                self.replay_routes(graph);
                 if piece == 0 {
                     first_piece(rank);
                 }
@@ -459,6 +445,20 @@ impl<G: BundleGeometry> GraphCache<G> {
 }
 
 impl<G> GraphCache<G> {
+    fn replay_routes(&self, graph: BundleGraphHandleV1) {
+        if !crate::routes::active() {
+            return;
+        }
+        if let Some(counts) = self
+            .ledger
+            .borrow()
+            .routes
+            .get(&(graph.generation(), graph.slot()))
+        {
+            crate::routes::replay(counts);
+        }
+    }
+
     /// The cached graph pieces of every rank in `keys`, or None when any
     /// rank still needs a capture.
     pub fn cached(&self, keys: &[GraphKey]) -> Option<Vec<&[BundleGraphHandleV1]>> {
@@ -557,6 +557,15 @@ impl<G> GraphCache<G> {
 mod tests {
     use super::{decode_bucket, pieces, verify_bucket};
     use crate::geometry::tests::{Tp4 as Geometry, Wide};
+
+    #[test]
+    fn disabled_route_replay_never_borrows_the_ledger() {
+        let cache = super::GraphCache::<Geometry>::new(super::Ranks::new(4).unwrap());
+        let _disabled = crate::routes::RouteCounter::begin(false);
+        let _exclusive = cache.ledger.borrow_mut();
+        // An attempted ledger lookup would panic while this borrow is held.
+        cache.replay_routes(super::BundleGraphHandleV1::from_parts(1, 1));
+    }
 
     #[test]
     fn decode_buckets_round_up_to_declared_capacities() {

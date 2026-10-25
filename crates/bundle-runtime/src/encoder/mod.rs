@@ -856,12 +856,15 @@ impl Encoder {
                 if launch.collective || !launch.plan.pdl {
                     return Err(format!("{}: not a PDL launch of one rank", launch.symbol));
                 }
+                if kernel_core::route::Metadata::enabled() {
+                    bindings.set_route(op.route(live, &launch));
+                }
                 let resolved = dispatch::resolve(
                     symbols,
                     &launch.symbol,
                     launch.plan,
                     &launch.arguments,
-                    &bindings.with_route(op.route(live, &launch)),
+                    &bindings,
                 )
                 .map_err(|error| format!("{}: {error:?}", launch.symbol))?;
                 Ok((resolved, launch.symbol, launch.rows))

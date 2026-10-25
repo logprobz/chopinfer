@@ -15,10 +15,9 @@ impl Lowering<'_> {
             && let Some(moe) = &self.ops.moe
         {
             for item in launches.iter_mut() {
-                item.launch.bindings = item
-                    .launch
+                item.launch
                     .bindings
-                    .with_route(moe.router_route(phase, &item.launch.symbol));
+                    .set_route(moe.router_route(phase, &item.launch.symbol));
             }
         }
         if matches!(stage, Stage::Project(_, "moe.router"))
@@ -29,10 +28,9 @@ impl Lowering<'_> {
                 .iter_mut()
                 .filter(|item| item.launch.bindings.route().is_none())
             {
-                item.launch.bindings = item
-                    .launch
+                item.launch
                     .bindings
-                    .with_route(moe.router_route(phase, &item.launch.symbol));
+                    .set_route(moe.router_route(phase, &item.launch.symbol));
             }
         }
         if !phase.prefill() {
@@ -47,7 +45,7 @@ impl Lowering<'_> {
                     "router-in-norm",
                     [crate::Kernels::router_in_norm_route_rows()],
                 );
-                item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                item.launch.bindings.set_route(Some(tag));
             }
         }
         if self.ops.norm_prefill.is_some()
@@ -76,7 +74,7 @@ impl Lowering<'_> {
                     if selected { "fused" } else { "unfused" },
                     admitted.clone(),
                 );
-                item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+                item.launch.bindings.set_route(Some(tag));
             }
         }
         if !self.prefill_hc_fusion {
@@ -116,7 +114,7 @@ impl Lowering<'_> {
                 if selected { "fused" } else { "separate" },
                 admitted.clone(),
             );
-            item.launch.bindings = item.launch.bindings.with_route(Some(tag));
+            item.launch.bindings.set_route(Some(tag));
         }
     }
 }

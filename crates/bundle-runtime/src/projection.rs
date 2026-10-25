@@ -961,14 +961,17 @@ pub fn launch_with_persistence(
         ..Counts::rows(phase.rows)
     };
     for item in op.launches(&buffers, View::EMPTY, counts)? {
-        let route = kernel_core::route::selected(op.as_ref(), counts, &item);
+        let mut bindings = b.clone();
+        if kernel_core::route::Metadata::enabled() {
+            bindings.set_route(kernel_core::route::selected(op.as_ref(), counts, &item));
+        }
         launches.push((
             PreparedLaunch {
                 symbol: item.symbol,
                 rows: item.rows,
                 plan: item.plan,
                 arguments: item.arguments,
-                bindings: b.with_route(route),
+                bindings,
             },
             Some(item.persistent),
         ));

@@ -403,13 +403,16 @@ impl Bind {
         counts: Counts,
     ) -> Result<Vec<Lowered>, Refusal> {
         let launches = op.launches(buffers, workspace, counts)?;
+        if !kernel_core::route::Metadata::enabled() {
+            return Ok(self.lowered(op.info(), launches));
+        }
         let routes: Vec<_> = launches
             .iter()
             .map(|launch| kernel_core::route::selected(op.as_ref(), counts, launch))
             .collect();
         let mut lowered = self.lowered(op.info(), launches);
         for (item, route) in lowered.iter_mut().zip(routes) {
-            item.launch.bindings = item.launch.bindings.with_route(route);
+            item.launch.bindings.set_route(route);
         }
         Ok(lowered)
     }
@@ -424,13 +427,16 @@ impl Bind {
             return Err(Refusal("GLM 5.3 Flash binds no backend workspace"));
         }
         let launches = op.launches(buffers, View::EMPTY, counts)?;
+        if !kernel_core::route::Metadata::enabled() {
+            return Ok(self.lowered(op.info(), launches));
+        }
         let routes: Vec<_> = launches
             .iter()
             .map(|launch| kernel_core::route::selected(op, counts, launch))
             .collect();
         let mut lowered = self.lowered(op.info(), launches);
         for (item, route) in lowered.iter_mut().zip(routes) {
-            item.launch.bindings = item.launch.bindings.with_route(route);
+            item.launch.bindings.set_route(route);
         }
         Ok(lowered)
     }

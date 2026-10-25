@@ -302,9 +302,11 @@ impl Bind {
             .into_iter()
             .zip(facts)
             .map(|(launch, facts)| {
-                let route = kernel_core::route::selected(op, counts, &launch);
+                let route = kernel_core::route::Metadata::enabled()
+                    .then(|| kernel_core::route::selected(op, counts, &launch))
+                    .flatten();
                 let mut prepared = self.prepared(launch);
-                prepared.bindings = prepared.bindings.with_route(route);
+                prepared.bindings.set_route(route);
                 Lowered {
                     launch: prepared,
                     facts,

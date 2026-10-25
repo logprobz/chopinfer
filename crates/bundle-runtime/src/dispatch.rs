@@ -54,11 +54,13 @@ pub struct BufferBindings {
 
 impl BufferBindings {
     /// Attach the selected entry to this launch's bindings, outside its ABI.
-    pub fn with_route(&self, route: Option<kernel_core::route::RouteTag>) -> Self {
-        Self {
-            route,
-            ..self.clone()
-        }
+    pub fn with_route(mut self, route: Option<kernel_core::route::RouteTag>) -> Self {
+        self.set_route(route);
+        self
+    }
+
+    pub fn set_route(&mut self, route: Option<kernel_core::route::RouteTag>) {
+        self.route = route;
     }
 
     pub fn route(&self) -> Option<&kernel_core::route::RouteTag> {
@@ -283,6 +285,30 @@ mod tests {
     };
 
     use super::{BufferBindings, arguments, launch_config};
+
+    #[test]
+    fn route_attachment_preserves_binding_allocations() {
+        let mut bindings = BufferBindings::default();
+        let id = bindings.bind(DeviceBufferSpanV1::new(
+            BundleDeviceBufferHandleV1::from_parts(1, 1),
+            256,
+            4096,
+        ));
+        let address = &bindings.views[&id] as *const _;
+        let tag = kernel_core::route::branch(
+            "same",
+            kernel_core::route::RouteClass::Fast,
+            "norm",
+            "fast",
+            [1..=32],
+        );
+        let mut bindings = bindings.with_route(Some(tag.clone()));
+        assert_eq!(&bindings.views[&id] as *const _, address);
+        assert_eq!(bindings.route(), Some(&tag));
+        bindings.set_route(None);
+        assert_eq!(&bindings.views[&id] as *const _, address);
+        assert!(bindings.route().is_none());
+    }
 
     #[test]
     fn bound_views_keep_distinct_offsets_and_pdl() {

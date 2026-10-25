@@ -36,7 +36,7 @@ impl CachedProjection for Projection {
         if kernel_core::route::Metadata::enabled() {
             for call in &mut calls {
                 let tag = super::wide_routes::tag(&call.launch.symbol, "f32_projection", 33);
-                call.launch.bindings = call.launch.bindings.with_route(Some(tag));
+                call.launch.bindings.set_route(Some(tag));
             }
         }
         CachedProjectionStages::new(calls, self.candidate.symbols(), rows, spans)

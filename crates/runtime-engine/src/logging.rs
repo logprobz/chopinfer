@@ -450,7 +450,7 @@ thread_local! {
 /// Called synchronously by the bundle log service on the stepping thread.
 /// Routine log delivery may drop text, but the step retains this structured copy.
 pub fn record_route(message: &[u8]) {
-    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(message) else {
+    let Some(mut value) = parse_route(message, |bytes| serde_json::from_slice(bytes).ok()) else {
         return;
     };
     if value["schema"] == "chopinfer.route.v1" {
@@ -472,6 +472,19 @@ pub fn record_route(message: &[u8]) {
             }
         });
     }
+}
+
+fn parse_route(
+    message: &[u8],
+    parse: impl FnOnce(&[u8]) -> Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    // Bundle records use this literal schema. Check bytes before allocating
+    // a JSON tree for unrelated diagnostics, regardless of field order.
+    const SCHEMA: &[u8] = b"\"chopinfer.route.v1\"";
+    if !message.windows(SCHEMA.len()).any(|bytes| bytes == SCHEMA) {
+        return None;
+    }
+    parse(message)
 }
 
 fn accumulate_route(total: &mut serde_json::Value, next: &serde_json::Value) -> Option<()> {
@@ -525,6 +538,22 @@ pub(crate) fn take_route() -> Option<serde_json::Value> {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    #[test]
+    fn unrelated_route_messages_never_reach_the_json_parser() {
+        for message in [
+            b"plain diagnostic".as_slice(),
+            br#"{"schema":"chopinfer.graph-cache.v1","graphs":4}"#,
+            br#"{"schema":"chopinfer.route.v10"}"#,
+            br#"{"message":"mentions chopinfer.route.v1 without a schema"}"#,
+        ] {
+            assert!(parse_route(message, |_| panic!("unrelated JSON parsed")).is_none());
+        }
+        record_route(br#"{"schema":"other.v1","message":"chopinfer.route.v1"}"#);
+        assert!(take_route().is_none());
+        record_route(br#"{"schema" : "chopinfer.route.v1", "fallback_launches":0,"families":{},"entries":{}}"#);
+        assert_eq!(take_route().unwrap()["fallback_launches"], 0);
+    }
 
     #[test]
     fn route_records_add_execute_and_commit_launches_until_step_end() {

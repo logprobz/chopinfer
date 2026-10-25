@@ -51,6 +51,25 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(CHECK.nsys(path), {'shared': (2, 70)})
         self.assertEqual(self.run_check('--nsys', path), 1)
 
+    def test_active_exception_prints_scope_reason_and_removal_task(self):
+        journal = self.root / 'journal'
+        journal.write_text('launch 4 shared\n')
+        allow = self.root / 'allow.json'
+        item = {'profiles': ['tp2-ar'], 'phase': 'prefill', 'rows': [[513, 513]],
+                'entry': self.tags[0]['entry'], 'symbol': 'shared', 'family': 'projection',
+                'reason': 'Existing gap awaiting range qualification', 'task': 'projection-range'}
+        allow.write_text(json.dumps({'allow': [item]}))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(CHECK.main(['--classes', str(self.classes), '--journal', str(journal),
+                                        '--allow', str(allow), '--phase', 'prefill', '--rows', '513']), 0)
+        records = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['exception'], item)
+        self.assertEqual(records[0]['profile'], 'tp2-ar')
+        self.assertEqual(self.run_check('--journal', journal, '--allow', allow,
+                                        '--phase', 'prefill', '--rows', '514'), 1)
+
     def test_reused_symbol_needs_entry_evidence_and_fast_entry_passes(self):
         self.tags.append({**self.tags[0], 'entry': 'projection/standalone/shared', 'class': 'Fast'})
         self.write_classes()

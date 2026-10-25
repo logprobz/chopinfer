@@ -108,7 +108,8 @@ def allowances(path):
         for family, reason in value['allow_fallbacks'].items():
             if not isinstance(reason, str) or not reason.strip():
                 raise EvidenceError('allow_fallbacks needs a reason for every family')
-            result.append({'family': family, 'symbol': '*', 'entry': '*'})
+            result.append({'family': family, 'symbol': '*', 'entry': '*',
+                           'reason': reason, 'task': 'tune-window'})
         return result
     result = value.get('allow', [])
     for allow in result:
@@ -117,8 +118,9 @@ def allowances(path):
     return result
 
 
-def allowed(tag, allow, profile, phase, rows):
-    for item in allow:
+def allowed(tag, allow, profile, phase, rows, active):
+    matched = False
+    for index, item in enumerate(allow):
         if item['family'] != tag['family'] or not fnmatchcase(tag['symbol'], item.get('symbol', '*')):
             continue
         if not fnmatchcase(tag['entry'], item.get('entry', '*')):
@@ -129,13 +131,15 @@ def allowed(tag, allow, profile, phase, rows):
             continue
         if 'rows' in item and (rows is None or not any(lo <= rows <= hi for lo, hi in item['rows'])):
             continue
-        return True
-    return False
+        active.add(index)
+        matched = True
+    return matched
 
 
 def check(args):
     document, entries, classes = load_classes(args.classes)
     allow = allowances(args.allow)
+    active = set()
     selected = steps(args.steps, entries)
     profile = args.profile or document.get('profile')
     observed = collections.defaultdict(lambda: [0, 0])
@@ -165,7 +169,7 @@ def check(args):
         elif kinds and kinds != {'Fast'}:
             tag = tags[0]
             print(f"{tag['class']} family={tag['family']} symbol={symbol} launches={count} device_ns={ns}")
-            if selected_symbols[symbol] < required[symbol] and not all(allowed(t, allow, profile, args.phase, args.rows) for t in tags):
+            if selected_symbols[symbol] < required[symbol] and not all(allowed(t, allow, profile, args.phase, args.rows, active) for t in tags):
                 failures.append(symbol)
     for entry, count in sorted(selected.items()):
         if entry not in entries:
@@ -173,8 +177,11 @@ def check(args):
         tag = entries[entry]
         if count and tag['class'] != 'Fast':
             print(f"{tag['class']} family={tag['family']} entry={entry} symbol={tag['symbol']} launches={count}")
-            if not allowed(tag, allow, profile, args.phase, args.rows):
+            if not allowed(tag, allow, profile, args.phase, args.rows, active):
                 failures.append(entry)
+    for index in sorted(active):
+        print(json.dumps({'schema': 'chopinfer.route-exception.v1', 'profile': profile,
+                          'phase': args.phase, 'rows': args.rows, 'exception': allow[index]}))
     if ambiguous:
         raise EvidenceError('ambiguous symbols require enough matching selected-entry --steps evidence: ' + ', '.join(ambiguous))
     if failures:

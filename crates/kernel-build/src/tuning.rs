@@ -2,9 +2,10 @@
 //!
 //! One table format for every tunable operation. A row is keyed by the
 //! operation, the weight format, the rank shape (the derived per-rank sizes
-//! the instance is compiled for) and the batch bucket, and holds the
-//! schedule and its compile-time knobs. A catalog builds each instance from
-//! its row, so a new model or topology needs rows, not kernel code.
+//! the instance is compiled for), the batch bucket and an optional launch-row
+//! range, and holds the schedule and its compile-time knobs. A catalog
+//! builds each instance from its row, so a new model or topology needs rows,
+//! not kernel code.
 //!
 //! The file is canonical: rows in ascending key order, one row per line,
 //! knobs and shape entries in name order. [`Table::parse`] refuses anything
@@ -73,7 +74,7 @@ impl fmt::Display for Knob {
 /// Knobs by name.
 pub type Knobs = BTreeMap<String, Knob>;
 
-/// What a row is for. Keys order by operation, weights, shape, then bucket.
+/// What a row is for. Keys order by operation, weights, shape, bucket, then rows.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Key {
@@ -85,6 +86,14 @@ pub struct Key {
     pub shape: BTreeMap<String, u32>,
     /// Batch bucket: the token capacity of the instance.
     pub bucket: u32,
+    /// Inclusive launch-row range within the bucket; absent covers `1..=bucket`.
+    pub rows: Option<[u32; 2]>,
+}
+
+impl Key {
+    fn group(&self) -> (&str, &str, &BTreeMap<String, u32>, u32) {
+        (&self.op, &self.weights, &self.shape, self.bucket)
+    }
 }
 
 impl fmt::Display for Key {
@@ -93,7 +102,11 @@ impl fmt::Display for Key {
         for (i, (name, value)) in self.shape.iter().enumerate() {
             write!(f, "{}{name}={value}", if i == 0 { "" } else { "," })?;
         }
-        write!(f, " t{}", self.bucket)
+        write!(f, " t{}", self.bucket)?;
+        if let Some([lo, hi]) = self.rows {
+            write!(f, " rows={lo}..={hi}")?;
+        }
+        Ok(())
     }
 }
 
@@ -153,8 +166,34 @@ fn check_row(row: &Row) -> Result<(), TuningError> {
     if key.bucket == 0 {
         return Err(error(format!("{key}: bucket must be nonzero")));
     }
-    if row.knobs.is_empty() || row.knobs.keys().any(|n| !name(n)) {
+    if let Some([lo, hi]) = key.rows {
+        if lo == 0 || lo > hi || hi > key.bucket {
+            return Err(error(format!(
+                "{key}: rows must satisfy 1 <= lo <= hi <= bucket"
+            )));
+        }
+    }
+    if row.knobs.keys().any(|n| !name(n)) {
         return Err(error(format!("{key}: knobs need names")));
+    }
+    Ok(())
+}
+
+fn check_ranges(left: &Key, right: &Key) -> Result<(), TuningError> {
+    if left.group() == right.group() {
+        match (left.rows, right.rows) {
+            (Some([_, hi]), Some([lo, _])) if hi < lo => {}
+            (Some(_), Some(_)) => {
+                return Err(error(format!(
+                    "overlapping tuning row ranges: {left} then {right}"
+                )));
+            }
+            _ => {
+                return Err(error(format!(
+                    "whole-bucket tuning row must stand alone: {left} then {right}"
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -169,7 +208,8 @@ impl Table {
     }
 
     /// Parses a canonical table: the schema, valid names, strictly
-    /// ascending keys, and bytes equal to [`Table::render`] of the result.
+    /// ascending keys with disjoint ranges, and bytes equal to
+    /// [`Table::render`] of the result.
     pub fn parse(text: &str) -> Result<Self, TuningError> {
         let file: File =
             serde_json::from_str(text).map_err(|e| error(format!("tuning table: {e}")))?;
@@ -187,6 +227,9 @@ impl Table {
                 "tuning rows must be in ascending key order without repeats: {} then {}",
                 pair[0].key, pair[1].key
             )));
+        }
+        for pair in file.rows.windows(2) {
+            check_ranges(&pair[0].key, &pair[1].key)?;
         }
         let table = Self {
             target: file.target,
@@ -211,6 +254,40 @@ impl Table {
             .map(|at| &self.rows[at])
     }
 
+    /// The row for this exact operation, format, shape and bucket whose
+    /// inclusive range contains `rows`. Gaps and rows outside the bucket
+    /// return `None`; a row without a range covers `1..=bucket`.
+    pub fn select(
+        &self,
+        op: &str,
+        weights: &str,
+        shape: &BTreeMap<String, u32>,
+        bucket: u32,
+        rows: u32,
+    ) -> Option<&Row> {
+        if rows == 0 || rows > bucket {
+            return None;
+        }
+        self.rows
+            .binary_search_by(|row| {
+                row.key
+                    .group()
+                    .cmp(&(op, weights, shape, bucket))
+                    .then_with(|| {
+                        let [lo, hi] = row.key.rows.unwrap_or([1, bucket]);
+                        if rows < lo {
+                            std::cmp::Ordering::Greater
+                        } else if rows > hi {
+                            std::cmp::Ordering::Less
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    })
+            })
+            .ok()
+            .map(|at| &self.rows[at])
+    }
+
     /// The row of `key`, or an error naming it.
     pub fn require(&self, key: &Key) -> Result<&Row, TuningError> {
         self.get(key)
@@ -218,12 +295,19 @@ impl Table {
     }
 
     /// Inserts `row`, replacing the row of the same key. Returns the
-    /// replaced row.
+    /// replaced row. Refuses overlapping or mixed whole-bucket/ranged rows
+    /// without changing the table.
     pub fn upsert(&mut self, row: Row) -> Result<Option<Row>, TuningError> {
         check_row(&row)?;
         match self.rows.binary_search_by(|r| r.key.cmp(&row.key)) {
             Ok(at) => Ok(Some(std::mem::replace(&mut self.rows[at], row))),
             Err(at) => {
+                if at > 0 {
+                    check_ranges(&self.rows[at - 1].key, &row.key)?;
+                }
+                if let Some(next) = self.rows.get(at) {
+                    check_ranges(&row.key, &next.key)?;
+                }
                 self.rows.insert(at, row);
                 Ok(None)
             }
@@ -253,9 +337,13 @@ impl Table {
                 .map(|(n, v)| format!("{}: {v}", quote(n)))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let rows = row
+                .key
+                .rows
+                .map_or_else(String::new, |[lo, hi]| format!(", \"rows\": [{lo}, {hi}]"));
             out.push_str(if i == 0 { "\n" } else { ",\n" });
             out.push_str(&format!(
-                "    {{\"op\": {}, \"weights\": {}, \"shape\": {{{shape}}}, \"bucket\": {}, \"schedule\": {}, \"knobs\": {{{knobs}}}}}",
+                "    {{\"op\": {}, \"weights\": {}, \"shape\": {{{shape}}}, \"bucket\": {}{rows}, \"schedule\": {}, \"knobs\": {{{knobs}}}}}",
                 quote(&row.key.op),
                 quote(&row.key.weights),
                 row.key.bucket,
@@ -420,6 +508,7 @@ mod tests {
             weights: "mxfp4".into(),
             shape: [("experts".to_string(), 64), ("hidden".to_string(), 4096)].into(),
             bucket,
+            rows: None,
         }
     }
 
@@ -460,6 +549,206 @@ mod tests {
         assert_eq!(Table::parse(&text).unwrap(), table);
         let empty = Table::new(table.target);
         assert_eq!(Table::parse(&empty.render()).unwrap(), empty);
+    }
+
+    #[test]
+    fn schedule_only_rows_allow_empty_knobs() {
+        let mut table = Table::new(table().target);
+        let mut choice = row("a.op", 16, 4);
+        choice.knobs.clear();
+        table.upsert(choice.clone()).unwrap();
+        assert_eq!(Table::parse(&table.render()).unwrap().rows(), &[choice]);
+    }
+
+    #[test]
+    fn parse_and_render_inclusive_row_ranges() {
+        let text = table()
+            .render()
+            .replace("\"bucket\": 16,", "\"bucket\": 16, \"rows\": [3, 12],");
+        assert_eq!(Table::parse(&text).unwrap().render(), text);
+    }
+
+    fn ranged(rows: Option<[u32; 2]>) -> Row {
+        Row {
+            key: Key {
+                rows,
+                ..key("a.op", 16)
+            },
+            ..row("a.op", 16, 4)
+        }
+    }
+
+    #[test]
+    fn parse_and_upsert_refuse_invalid_ranges_and_knob_names() {
+        for range in [[0, 1], [5, 4], [1, 17], [17, 17]] {
+            let row = ranged(Some(range));
+            let mut table = Table::new(table().target);
+            assert!(table.upsert(row.clone()).unwrap_err().0.contains("1 <= lo"));
+            assert!(table.rows().is_empty());
+            table.rows.push(row);
+            assert!(
+                Table::parse(&table.render())
+                    .unwrap_err()
+                    .0
+                    .contains("1 <= lo")
+            );
+        }
+        let mut table = Table::new(table().target);
+        let mut row = ranged(None);
+        row.knobs = [("Bad knob".into(), Knob::Count(4))].into();
+        assert!(
+            table
+                .upsert(row.clone())
+                .unwrap_err()
+                .0
+                .contains("knobs need names")
+        );
+        assert!(table.rows().is_empty());
+        table.rows.push(row);
+        assert!(
+            Table::parse(&table.render())
+                .unwrap_err()
+                .0
+                .contains("knobs need names")
+        );
+    }
+
+    #[test]
+    fn parse_refuses_overlaps_and_mixed_ranges_in_ascending_key_order() {
+        for (left, right, message) in [
+            (Some([1, 8]), Some([8, 16]), "overlapping"),
+            (Some([1, 16]), Some([3, 4]), "overlapping"),
+            (Some([1, 4]), Some([1, 8]), "overlapping"),
+            (None, Some([3, 4]), "stand alone"),
+        ] {
+            let table = Table {
+                target: table().target,
+                rows: vec![ranged(left), ranged(right)],
+            };
+            assert!(table.rows[0].key < table.rows[1].key);
+            assert!(
+                Table::parse(&table.render())
+                    .unwrap_err()
+                    .0
+                    .contains(message)
+            );
+        }
+        let mut table = Table {
+            target: table().target,
+            rows: vec![ranged(Some([1, 4])), ranged(Some([5, 8]))],
+        };
+        assert_eq!(Table::parse(&table.render()).unwrap(), table);
+        table.rows.reverse();
+        assert!(
+            Table::parse(&table.render())
+                .unwrap_err()
+                .0
+                .contains("ascending")
+        );
+        table.rows[1] = table.rows[0].clone();
+        assert!(
+            Table::parse(&table.render())
+                .unwrap_err()
+                .0
+                .contains("ascending")
+        );
+    }
+
+    #[test]
+    fn upsert_refuses_range_conflicts_without_mutating_the_table() {
+        let mut table = Table::new(table().target);
+        for range in [[12, 16], [1, 4], [8, 10]] {
+            table.upsert(ranged(Some(range))).unwrap();
+        }
+        for range in [
+            None,
+            Some([1, 3]),
+            Some([4, 7]),
+            Some([5, 8]),
+            Some([9, 11]),
+            Some([11, 12]),
+            Some([1, 16]),
+        ] {
+            let before = table.clone();
+            assert!(table.upsert(ranged(range)).is_err());
+            assert_eq!(table, before);
+        }
+        table.upsert(ranged(Some([5, 7]))).unwrap();
+        table.upsert(ranged(Some([11, 11]))).unwrap();
+        let mut replacement = ranged(Some([8, 10]));
+        replacement.schedule = "ticket".into();
+        assert_eq!(
+            table.upsert(replacement.clone()).unwrap(),
+            Some(ranged(Some([8, 10])))
+        );
+        assert_eq!(table.require(&replacement.key).unwrap(), &replacement);
+        assert_eq!(Table::parse(&table.render()).unwrap(), table);
+
+        let mut whole = Table::new(table.target);
+        whole.upsert(ranged(None)).unwrap();
+        let before = whole.clone();
+        assert!(whole.upsert(ranged(Some([1, 16]))).is_err());
+        assert_eq!(whole, before);
+    }
+
+    #[test]
+    fn select_matches_only_the_exact_group_and_inclusive_range() {
+        let mut table = Table::new(table().target);
+        for range in [[3, 5], [9, 12], [13, 16]] {
+            table.upsert(ranged(Some(range))).unwrap();
+        }
+        let key = key("a.op", 16);
+        for rows in 0..=17 {
+            let expected = match rows {
+                3..=5 => Some([3, 5]),
+                9..=12 => Some([9, 12]),
+                13..=16 => Some([13, 16]),
+                _ => None,
+            };
+            assert_eq!(
+                table
+                    .select(&key.op, &key.weights, &key.shape, key.bucket, rows)
+                    .map(|r| r.key.rows.unwrap()),
+                expected
+            );
+        }
+        assert!(table.get(&key).is_none());
+        assert!(table.require(&key).is_err());
+        let mut others = Vec::new();
+        let mut other = ranged(None);
+        other.key.op = "b.op".into();
+        others.push(other);
+        let mut other = ranged(None);
+        other.key.weights = "mxfp8".into();
+        others.push(other);
+        let mut other = ranged(None);
+        other.key.shape.insert("hidden".into(), 8192);
+        others.push(other);
+        let mut other = ranged(None);
+        other.key.bucket = 32;
+        others.push(other);
+        for other in others {
+            let key = &other.key;
+            assert!(
+                table
+                    .select(&key.op, &key.weights, &key.shape, key.bucket, 3)
+                    .is_none()
+            );
+            table.upsert(other.clone()).unwrap();
+            for rows in 0..=key.bucket + 1 {
+                let expected = (1..=key.bucket).contains(&rows).then_some(&other);
+                assert_eq!(
+                    table.select(&key.op, &key.weights, &key.shape, key.bucket, rows),
+                    expected
+                );
+            }
+            assert_eq!(table.get(key), Some(&other));
+        }
+        assert!(
+            table
+                .select(&key.op, &key.weights, &key.shape, key.bucket, 1)
+                .is_none()
+        );
     }
 
     #[test]

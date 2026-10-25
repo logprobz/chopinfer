@@ -651,6 +651,7 @@ pub fn key(v: &Variant) -> Key {
         ]
         .into(),
         bucket: v.tokens_capacity,
+        rows: None,
     }
 }
 
@@ -996,6 +997,7 @@ pub fn packed_key(
         ]
         .into(),
         bucket: tokens_capacity,
+        rows: None,
     }
 }
 

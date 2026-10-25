@@ -144,6 +144,7 @@ pub fn moe_key(g: &Geometry, ranks: u32, projection: MoeProjection, phase: MoePh
             ("top_k".into(), profile.top_k),
         ]),
         bucket: phase.bucket(),
+        rows: None,
     }
 }
 

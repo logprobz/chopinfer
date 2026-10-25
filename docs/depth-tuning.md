@@ -191,104 +191,164 @@ must execute none. Depth checks use the verified width. Allocated step
 keys include items, width, verify items and reserved rows, for example
 `i8-r32-v8-R48`; unallocated keys retain their existing form.
 
-A/B runs one ABBA block, two fresh processes per arm. Declare each baseline
-before its treatments. The tuner runs the declared arms, then reverses them;
-overlapping pairs share visits while each pair retains A1, B1, B2, A2 order.
-Speculative visits require keeper borrowing, including in the CPU stub.
-Each slot has a seed sequence: A1/B1 share one set and B2/A2 share another.
-Sampling uses temperature 1.0. A single-repeat concurrency remains a short
-control and receives no decision verdict.
+A/B runs one ABBA block, two fresh keeper-borrowed processes per arm.
+Declare each baseline before its treatments. The tuner runs the declared
+arms, then reverses them, retaining A1, B1, B2, A2 order for every pair.
+A1/B1 share one set of per-slot seed sequences; B2/A2 share another.
+Sampling uses temperature 1.0. Single-repeat concurrencies are short controls
+and receive no decision verdict.
 
-Each measured window lasts 15 seconds. One worker per slot immediately
-replaces completed requests. Only tokens streamed inside the interval enter
-the throughput and energy measurements; in-flight requests drain afterward.
-Every response must report zero cached prompt tokens. Full-concurrency
-step cells exclude prefill and boundary intervals. Complete measured fault
-deltas must sum to at most 1,000 major faults per visit. Startup, warmup and
-drain faults do not enter that sum.
+Before A1, a separate baseline process runs an untimed closed-loop pass at
+every concurrency with both seed sets and the same prompts. This warms the
+OS page cache for prompt and generated-token Engram rows. The process is
+stopped before timed visits, so its learned acceptance prior is discarded.
+`summary.json` records `page_cache_warmup`; a standard report requires the
+complete warm-up before the first measurement. Cold jobs skip this pass.
 
-After all timed visits, additional baseline processes replay every distinct
-prompt, seed and output length. Token IDs and selected logprob bits must
-match. Deferring this pass preserves unseen prompts for cold measurements.
-The stage estimate includes replay and process startup costs. A missing
-exactness result, repeat, visit, clock record or fault counter fails the report.
+Each window opens only after every slot completes its first request and at
+least four seconds of priming have elapsed. Workers continue replacing
+requests during standard priming. The 15-second measurement counts stream
+tokens within its boundaries; drain tokens and time stay outside it.
+Every response must report zero cached prompt tokens. Windows retain their
+priming timestamps, replacement submissions, prefill execution share,
+clocks and complete fault deltas. At most 1,000 measured major faults are
+allowed per visit; startup, priming and drain are excluded from that sum.
 
-`report.py --ab RUN` writes `ab.json` and `ab.md`. Each decision cell reports
+Exactness compares token IDs and selected logprob bits across matched arms
+only within one concurrency. Keys include prompt, seed and output length;
+keys from different concurrencies are never merged because reduction
+buckets can change the result (see [Batch shape](numerics.md#batch-shape)).
+Only requests lacking a matched counterpart need an additional baseline
+replay, at their original concurrency. Replay starts after an idle check.
+Baseline padding requests keep every slot occupied until the unmatched
+targets finish; padding outputs do not add exactness comparisons.
+All cold requests are unmatched, so their exactness replay remains deferred
+until all timed visits finish.
+
+The four confidence comparisons are separate jobs: `confidence-ab`
+(default against floor 1), `confidence-ab-cap48` (capacity 48 against floor 1),
+`confidence-ab-floor0` (default against floor 0), and `confidence-ab-decode`
+(AR against depth 1/floor 0). Each has a 28-minute work budget. The stage
+estimates startup, warm-up, priming, measurement, drain and unmatched replay,
+and refuses an estimate above `work_seconds`. Standard replay planning
+reserves a cohort plus 25% of measured output per pair for unmatched tails;
+this is a budget estimate, not an observed performance claim.
+
+`report.py --ab RUN` writes `ab.json` and `ab.md`. Per decision cell it gives
 `d1 = B1/A1 - 1`, `d2 = B2/A2 - 1`, their mean and `abs(d1-d2)` spread.
-Request cells use throughput; matched step cells use inverse median cycle
-time. A resolved gain has two positive deltas and mean above spread.
-A resolved regression has two negative deltas and mean below
-`-max(spread, 0.005)`. Other results are neutral. Set model `change` to
-`speedup` (default), `variant`, `table_row` or `simplification`. Variants and
-table rows also require a 1.5% mean; simplifications reject any weighted
-resolved regression.
+Rates are higher-is-better: request throughput or inverse median cycle time
+of the served full graph. A resolved gain has two positive deltas and mean
+above spread. A resolved regression has two negative deltas and mean below
+`-max(spread, 0.005)`. Other results are neutral.
 
-Default weights are one for measured decode C1, C2, C4, C8, C16 and C32,
-and matched verify widths 6, 8, 16, 32 and 64. Model `cell_weights` overrides
-these using keys such as `decode:c8` and `verify:r32`. Declare required
-target shapes in `required_shapes`, for example `{"8": ["i8-r32"]}`.
-Use `target_cells`, for example `["decode:c8", "c8/i8-r32"]`, to require
-gains only in the intended cells while retaining regression checks on all
-weighted cells. Without this field, every weighted cell is a gain target.
-Missing required cells fail. Unmatched incidental shapes are displayed
-without a paired verdict; an unmatched served cell prevents acceptance.
-The report states the number and total weight of
-its decision cells; a weighted average cannot hide a cell regression.
-Short controls do not establish coverage of the unmeasured cells.
+| Measurement | Target name | Weight key | Default weight |
+|---|---|---|---:|
+| Request throughput at C8 | `decode:c8` | `decode:c8` | 1 |
+| Decode step `i8-r8` | `decode_step:c8` or `c8/i8-r8` | `decode_step:c8` | 1 |
+| Verify step `i8-r32` | `c8/i8-r32` | `verify:r32` or `c8/i8-r32` | 1 |
 
-Energy is reported separately. The job records each GPU's enforced power
-limit and SM clocks at the start and end of the job and every visit, with
-clocks and power samples inside each window. Limits may differ between GPUs
-and jobs, but a change within the job voids the entire result, without
-pooling it. Compare J/token only at identical limits. Leave
-`EXPECTED_POWER_W` and `--expected-power-w` unset; a legacy model config's
-`expected_power_w` does not impose a cap. The tuner never changes limits or
-clocks, and neither is a tuning key.
+Defaults cover measured decode C1, C2, C4, C8, C16 and C32 and verify widths
+6, 8, 16, 32 and 64. Step cells must have full concurrency and at least
+`min_cell_steps` (default 20) in every visit. Optional `min_cell_time_share`
+can admit a cell instead when it occupies that fraction of measured time
+in every visit. Other shapes are informational with zero decision weight.
+Model `cell_weights` supplies nonnegative overrides.
+
+Set `target_cells` to the intended gain targets. Every declared target must
+be present in all four visits, sufficiently sampled and positively weighted;
+a missing target cannot disappear from acceptance. Without explicit targets,
+every weighted cell is a target. `required_shapes`, for example
+`{"8": ["i8-r32"]}`, is a hard coverage and sampling requirement.
+
+Model `change` is `speedup` (default), `variant`, `table_row` or
+`simplification`. Variants and table rows also need a 1.5% mean gain in
+their target cells. A simplification rejects only a resolved regression in
+a weighted cell. Unmatched incidental cells are reported as coverage gaps,
+not simplification rejections; required shapes and targets remain mandatory.
+Other change classes cannot pass with unmatched served coverage.
+
+The weighted section reports its descriptive verdict, mean, cell count,
+coverage gaps and `timing_accepted`. Its verdict describes all decision
+cells; timing acceptance checks the declared targets and rejects any
+weighted regression. A neutral descriptive verdict can therefore accompany
+a successful simplification or a gain limited to declared targets. The
+weighted mean never hides a cell regression.
+
+Energy is separate under `energy_check`. Only identical per-GPU enforced
+limits permit comparison. Pending a pooled noise model, the equal-weight
+mean paired J/token increase across active decision concurrencies vetoes
+adoption only above 3%, with a positive mean at every such concurrency.
+Mixed signs and smaller changes are informational. This provisional energy
+check does not replace `timing_accepted` or exactness.
+
+The job records each GPU's enforced limit and SM clocks at job and visit
+boundaries and within each window. Limits may differ between GPUs and jobs,
+but a change within a job makes it void. Void jobs cannot be pooled by A/B,
+costs, sweep or recorded adapters. Leave `EXPECTED_POWER_W` and
+`--expected-power-w` unset. The tuner never changes limits or clocks, and
+neither is a tuning key.
 
 ## Cold Engram workload
 
-Select `tools/tune/workloads/cold-engram.json` with `mode: ab`. Its coding
-and chat pool supplies prompts once per job, including warmups and request
-replacements. Exhaustion fails instead of reusing a prompt. Increase the
-workload's pool for larger runs. Exactness replays occur only after timing.
+Select `tools/tune/workloads/cold-engram.json` with `mode: ab`. Cold cells are
+labelled **cold, unmatched prompts**, excluded from automatic timing and
+energy acceptance. They report each arm's TTFT, prefill execution time,
+step.v1 `host.mapped_gather_us` and residency. Metric spread is max/min minus
+one across visit medians. Priming is excluded; cold request latencies and
+prefill steps can include drain when a prefill outlasts the measurement.
+Such a window can have zero timed output tokens and no J/token result.
 
-Supply `cold_engram` in the model configuration with `warm_fraction`
-(default 0.1) and an `images` array. Each entry names an absolute `path`,
-its expected `bytes`, and `views`: objects with `name`, `offset` and `bytes`
-for each Engram view. These are measurement inputs, sealed with the stage;
-keep the configuration outside the repository. For direct loading, identify
-the actual checkpoint backing files and view ranges rather than assuming
-that a logical rank image exists on disk. The package's manifest and host
-validation still govern serving. The harness refuses symlinks and invalid
-file sizes or view ranges.
+The tokenized pool is assigned deterministically by length and original
+index, with equal length histograms per arm, then split across visits.
+Incomplete length groups stay unused. Request index determines its prompt,
+so thread arrival order cannot change the assignment. Each prompt is used
+once before deferred exactness replay. The report records actual used
+lengths, because arms may complete different numbers of requests.
 
-Before each timed window, while its requests are idle, the tuner publishes
-a new epoch to its private `CHOPINFER_MAPPED_ROW_CONTROL` file with
+At staging, `cold_engram.request_budgets` reserves a priming and in-flight
+cohort plus twice the planned 15-second request count for each window.
+Warmup prompts are included. Staging refuses an undersized pool; after
+tokenization, the runtime also refuses insufficient balanced pools before
+timing. Exceeding a reserved window budget fails instead of reusing inputs.
+
+Supply `cold_engram` with `warm_fraction` (default 0.1) and `images`. Each
+entry names an absolute `path`, its expected `bytes`, and Engram `views`
+with `name`, `offset` and `bytes`. Keep this configuration outside the
+repository. For direct packages, identify the actual checkpoint backing
+files rather than assuming logical rank images exist on disk. Serving
+manifest validation is unchanged. The stage seals path, size, device,
+inode and nanosecond mtime, checked without rehashing multi-GB files at job
+startup and before advice. Symlinks and invalid sizes/ranges are refused.
+
+Cold workers pause after priming. While idle, the tuner publishes a new
+epoch to its private `CHOPINFER_MAPPED_ROW_CONTROL` file with
 `reset_cache: true`, `release_page_tables: true` and read-ahead `mode: both`.
-It requires the host's applied acknowledgement, then issues
-`POSIX_FADV_DONTNEED` for every declared image source. Untouched mappings and
-`mincore` measure each Engram view before and after advice and after the
-window. If any post-advice resident fraction reaches `warm_fraction`, the
-window is labelled `partly warm`; file advice alone is not proof of eviction.
+It requires the applied acknowledgement, then issues
+`POSIX_FADV_DONTNEED` on every declared image source before timed requests
+resume with unseen prompts. Untouched mappings and `mincore` measure each
+view before/after advice and after the window. Any post-advice resident
+fraction at least `warm_fraction` labels it `partly warm`; advice alone
+never proves eviction. `mapped_gather_us` covers synchronous gathers;
+prepared asynchronous reads require their own attribution trace.
 
-The report retains residency, TTFT, prefill execution time and step.v1
-`host.mapped_gather_us`. This phase measures synchronous mapped gathers;
-prepared reads need their own trace to attribute asynchronous cost. CPU
-stub residency and clocks are synthetic and prove no GPU performance or
-physical eviction. `TUNE_STUB_RESIDENCY` exercises partly warm labelling.
+CPU clocks and residency are synthetic. `TUNE_STUB_RESIDENCY` tests partly
+warm labeling, and `TUNE_STUB_PREFILL_DELAY_SECONDS` tests prefill drain.
+The CPU stub has one scheduler emitting batched steps for all live requests;
+its standard A/B tests include C8 and C16.
 
 ## Replay a historical closed-loop run
 
 Run `python3 -B tools/tune/recorded.py --closed-loop RECORDED_RUN OUTPUT_DIR`
-on CPU. The adapter reconstructs timed rates from request events, checks
-paired seeds, cached-token counts, faults, keeper sources and recorded power,
-and applies the same paired verdict function as `report.ab`. It requires
-agreement with the historical harness's classifications. Outputs and source
-digests stay outside the repository.
+on CPU. It reconstructs timed rates from events, validates paired inputs,
+faults, keeper sources and power, then uses the paired verdict calculator.
+Historical labels, mapped verdicts and disagreements are retained. Add
+`--require-agreement` to fail when any classification differs or is unresolved.
+The legacy tuner adapter rejects void sources before adaptation and retains
+the source validity status and summary digest.
 
-Historical runs remain labelled `historical replay`, with admission gaps
-listed. A replay does not retroactively certify fresh processes, 15-second
-windows or exact output evidence that its source never recorded.
+Historical results remain labelled `historical replay`, with admission gaps
+listed. They do not certify fresh processes, 15-second windows or exact
+output proofs missing from the source. Evidence stays outside the repository.
 
 Before queueing, run the sealed wrapper end to end with `env -i` and
 `--dry-run`. The stage writer removes group/other write permissions from

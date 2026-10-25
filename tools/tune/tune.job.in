@@ -9,21 +9,16 @@ if [[ ${CHOPINFER_PERF_SIGNAL_BOOTSTRAP:-} != "$BASHPID" ]]; then
     exec /usr/bin/python3 -c 'import os,signal,sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP)]; os.execv("/usr/bin/bash", ["/usr/bin/bash", *sys.argv[1:]])' "${BASH_SOURCE[0]}" "$@"
 fi
 unset CHOPINFER_PERF_SIGNAL_BOOTSTRAP
-# Depth tuner @NAME@ (whole machine, no profiler): one server per arm,
-# reused for every window and borrowing its weights from runner6's keeper
-# when the keeper header above starts one. The first arm runs an untimed
-# reference pass through every window, then each arm runs its windows of
-# the workload (the config's kinds: fixed-seed sampled at temperature 1.0)
-# at every concurrency its depth can change, repeated in alternating order.
-# Every output must equal the reference bit for bit (greedy at once,
-# sampled at the end). Test KV mode, zero preemptions and evictions; power
-# limits recorded and constant (and equal to the config's expected watts);
-# SM clocks recorded, never asserted;
-# each rank's memory after warmup and GPU memory recorded. tune.md and
-# tune.json hold the measurements and the selected `depths` schedule, or
-# costs.md and costs.json the step costs per verify width. A/B mode mirrors
-# the arm visits for one ABBA block and writes ab.md and ab.json; exactness
-# mode also checks greedy outputs.
+# Depth tuner @NAME@ (whole machine, no profiler).
+# A/B starts fresh keeper-borrowed visits with paired seed sets. Standard
+# jobs first warm the page cache in a separate process, prime every slot,
+# then measure 15-second replacement windows. Matched outputs compare at
+# their original concurrency; only unmatched requests need baseline replay.
+# Cold windows reset mapped state and advise backing files after priming,
+# then use unseen prompts. Their reports are diagnostic, without automatic
+# timing acceptance. Sweep, costs and exact retain their fixed-token batches.
+# All modes check KV preemptions and evictions and record enforced limits
+# and clocks. Changing limits voids the job; no wattage or clock is imposed.
 # The queue copies this file to running/, so every asset is addressed by
 # absolute path.
 readonly stage=@STAGE@
@@ -38,7 +33,8 @@ export TMPDIR="$CHOPINFER_DATA/tmp/depth-tune"
 export CUDA_VISIBLE_DEVICES=@DEVICES@
 # Every other CHOPINFER_ variable is cleared for each server (runner.py).
 unset OPENAI_API_KEY TUNE_STUB_PERTURB TUNE_STUB_PREEMPT TUNE_STUB_IGNORE_DEPTHS TUNE_DRY_POWER_W \
-    TUNE_DRY_POWER_CHANGE_LABEL TUNE_STUB_IGNORE_CONFIDENCE TUNE_STUB_CLAIM_CONFIDENCE
+    TUNE_DRY_POWER_CHANGE_LABEL TUNE_STUB_IGNORE_CONFIDENCE TUNE_STUB_CLAIM_CONFIDENCE TUNE_STUB_CACHED \
+    TUNE_STUB_RESIDENCY TUNE_STUB_PREFILL_DELAY_SECONDS TUNE_STUB_CLOSED_LOOP
 export PATH="/usr/local/cuda/bin:$PATH"
 # The runner's working directory may not exist.
 cd "$stage"

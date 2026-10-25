@@ -425,17 +425,18 @@ position's generated index (model option `dspark_coupled_drafts`, default
 true; `false` drafts every request greedily); emitted tokens do not depend
 on it. Its profiles plan balanced
 drafts at native KV and TP4: every stream drafts the deepest common depth
-that fits the 32 verify rows, at most five from C1, three from C8 and none
-from C16 (`depths` `1:5,8:3,16:0`), and no plan reads a step time, so
+that fits the 64 verify rows, at most five from C1, three from C8 through
+C16 and none from C32 (`depths` `1:5,8:3,16:3,32:0`), and no plan reads a step time, so
 identical processes run identical step shapes. On 2026-10-23 at 300 W, four
 fresh processes per arm on one install served balanced within a 2.2%
 throughput spread at C8 and C16 with identical step shapes, while the
 adaptive policy differed by up to 57% in C8 full-concurrency throughput.
 Against no drafting, three drafts per stream at C8 raised full-concurrency
 throughput by 44% greedy and 26% sampled; one draft at C16 lowered request
-throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 serve without
-drafts. Each plan then lands on the widest verify width of 6, 8, 16 and 32
-rows that its depth caps reach (`widths` `6,8,16,32`), filled by
+throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 served without
+drafts at that time. Each plan now lands on the widest verify width of
+6, 8, 16, 32 and 64 rows that its depth caps reach
+(`widths` `6,8,16,32,64`), filled by
 acceptance: the target verify's MoE has its prepared plans at those widths
 and runs a generic path between them, so a C8 step of 24 rows took 43.8 ms
 against 37.5 ms for 32 rows. On 2026-10-23 at 300 W, against the same
@@ -461,19 +462,73 @@ The package declares up to 192 verify rows a step, every item at its
 deepest block. The host serves 32 unless `--speculative-rows` (profile
 `speculation.rows`) asks for more, and the instance prepares every op for
 the rows it is asked for. The model option `verify_graph_rows`
-(`--speculation-graph-rows`, profile `speculation.graph_rows`, default 32)
+(`--speculation-graph-rows`, profile `speculation.graph_rows`, default 64)
 is the widest verify step captured in a graph; wider steps run without one.
-No profile asks for more than 32 rows or graphs: on 2026-10-24 (TP4,
+The three TP4 DSpark profiles request 64 verify rows and graph rows.
+Before the specialized 64-row routes, on 2026-10-24 (TP4,
 300 W, sampled at temperature 1.0, 128 rows, graphs up to 64 rows) the
 median step took 16.4 ms at 8 rows, 29.4 ms at 16, 47.1 ms at 24,
 37.8 ms at 32, 88.2 ms at 40 and 93.0 ms at 48 rows with 8 items, and
 24.0 ms at 16 rows, 43.9 ms at 32, 99.6 ms at 48, 103.8 ms at 64 and
 268.2 ms at 96 rows (no graph) with 16 items.
-Widths without specialized kernels (24, 40, 48 and 64 rows) cost more than
+Widths without specialized kernels then (24, 40, 48 and 64 rows) cost more than
 32 rows or several AR steps, so full-concurrency C8 ran fastest at depth 3
 (32 rows, 596 tokens/s against 488 for AR) and C16 at depth 0 (668
 tokens/s; depth 1 at 32 rows 663, depths 2 and 3 at 48 and 64 rows 395 and
-451), which the `tp4-dspark` depths and widths already select.
+451). These measurements preceded the specialized 64-row routes and the
+C16 default qualified below.
+On 2026-10-25, the 64-row default passed fixed-seed sampled (temperature
+1.0) and greedy equality against the preceding landed implementation at
+TP4 on four RTX PRO 6000 GPUs. Matched wide-policy schedules exercised
+C8, C16 depth 3 with an actual 64-row target, and C32 depth 0, with 256
+output tokens per request. AR and DSpark covered 224 batch requests per
+revision and 24 cold-repeat, prefix-hit and multi-turn controls. Tokens,
+selected and top-logprob bits matched. The 114 DSpark state comparisons
+also matched full-vocabulary logits, all 134 raw feature-history rows,
+committed KV, cursors and prompt boundaries, including an 8192-token chunk
+boundary. Identical C32 conditioning cohorts overwrote reusable compressor
+tail history before capture; their outputs also matched bit for bit. No
+captured bytes were masked. Canonical initialization of dead tail-history
+cells remains a post-release state-hygiene follow-up.
+
+The closed-loop comparison used four fresh keeper-borrowed processes in
+A1/B1/B2/A2 order, one seed schedule, distinct cache salts and zero cached
+prompt tokens. Requests sampled at temperature 1.0 with both minimum and
+maximum output set to 1024 tokens. Each concurrency ran for 15 seconds;
+unfinished requests were cancelled at the window boundary. Both arms used
+a 32768-page KV cap per rank for this comparison, with no evictions or
+preemptions. The 300 W cap remained in force and the SM clock lock was
+removed. Per-window mean clocks ranged from 1942 to 2167 MHz on rank 0,
+2097 to 2221 on rank 1, 2134 to 2236 on rank 2 and 2082 to 2223 on rank 3.
+All comparisons below are within that job.
+
+| Concurrency | Base A1 / A2 tokens/s | Head B1 / B2 tokens/s | Mean paired gain | Pair spread | Mean paired J/token change |
+|---|---:|---:|---:|---:|---:|
+| C8 | 678.543 / 664.756 | 675.463 / 670.417 | +0.199% | 1.306 points | +0.718% |
+| C16 | 722.647 / 722.326 | 769.570 / 767.258 | +6.357% | 0.273 points | -5.237% |
+
+The paired changes are B1/A1 - 1 and B2/A2 - 1; their mean is the verdict
+and their absolute difference is the spread. C8 stayed within spread.
+Both C16 throughput pairs gained, by 6.493% and 6.220%, resolving the gain.
+C16 energy improved in both pairs. The small C8 energy change is
+informational under the 3% energy rule.
+
+| Configuration | KV MiB per rank | Graph MiB by rank | Free MiB by rank |
+|---|---:|---|---|
+| Base default, capped pool | 1780 | 270 / 270 / 270 / 270 | 15883 / 15885 / 15885 / 15885 |
+| 64-row default, capped pool | 1780 | 276 / 274 / 274 / 274 | 15845 / 15849 / 15849 / 15849 |
+| 64-row policy, full pool | 17275 | 276 / 274 / 274 / 274 | 357 / 361 / 361 / 361 |
+
+The full-pool exactness start, with device-result transport disabled for
+state capture, allocated 318026 pages per rank, or 20353664 tokens of
+capacity. The timing cap is not a profile default. Wider
+preparation uses 32 MiB more workspace per rank and graph allocation grows
+by 4 to 6 MiB, so automatic KV sizing can decrease. The `tp4-dspark` graph
+reserve stays at 640 MiB; context, per-request and maximum-sequence limits
+are unchanged. Default-regression pins now require the 64-row capacity,
+graph budget and width list. Kernel locks and existing journal pins were
+not regenerated.
+
 The DSpark paired-teacher policy
 is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 

@@ -8,6 +8,11 @@ use kernels_sm120::{latent, pooled_indexer, precision::Compute};
 
 pub(super) fn entries(engines: &Engines) -> Vec<RouteTag> {
     let mut tags = Vec::new();
+    // Collectives prepare on separate backends selected by create's residency
+    // admission. Include their registered domains in the bundle catalogue.
+    for admission in super::Admission::ALL {
+        tags.extend(super::comm_backend(engines, admission).route_tags());
+    }
     for (id, usage, generated) in model_glm5next_contract::sm120::precision::offers(engines.shape)
         .expect("registered projection offers")
     {

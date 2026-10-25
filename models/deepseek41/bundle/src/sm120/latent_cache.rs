@@ -39,6 +39,14 @@ pub fn selected(phase: AttentionPhase, count: u32) -> bool {
     }
 }
 
+pub fn head_group(phase: AttentionPhase, rows: u32) -> u32 {
+    if phase == AttentionPhase::Verify && rows == 4 {
+        8
+    } else {
+        0
+    }
+}
+
 /// Keep the qualified lab module byte-for-byte, including its unused controls.
 pub fn entries(g: &Geometry) -> Result<Vec<Entry>, String> {
     Ok(super::latent_scheduled::entries(g, 4)?
@@ -80,12 +88,14 @@ pub fn prepare(
     let reference = backend.latent_attention_sources(query, need)?;
     // Complete captured attention graphs won at four rows with eight heads
     // sharing each key tile. Retain the measured routes at all other widths.
-    let groups: &[(u32, u32)] = if *phase == AttentionPhase::Verify && rows.contains(&4) {
-        &[(4, 8)]
-    } else {
-        &[]
-    };
-    sources_cached::prepare_grouped(reference, entry, need, &rows, groups)
+    let groups: Vec<_> = rows
+        .iter()
+        .filter_map(|&rows| {
+            let group = head_group(*phase, rows);
+            (group != 0).then_some((rows, group))
+        })
+        .collect();
+    sources_cached::prepare_grouped(reference, entry, need, &rows, &groups)
 }
 
 #[cfg(test)]

@@ -56,6 +56,15 @@ pub fn loads(cubin: &str, g: &Geometry, ranks: u32, storage: KvStorage) -> bool 
     cubin != CUBIN || (super::latent_scheduled::qualified(g, ranks) && storage == KvStorage::Native)
 }
 
+pub fn selection(phase: AttentionPhase) -> Option<(u32, u32, u32, bool)> {
+    let rows = match phase {
+        AttentionPhase::Decode => 8,
+        AttentionPhase::Verify => 32,
+        _ => return None,
+    };
+    Some((rows, 64, 0, false))
+}
+
 /// Only these exact phase/row pairs were timed. In particular, 16 rows and
 /// eight verify rows have no timing evidence, and one-row decode was tied.
 pub fn prepare(
@@ -72,16 +81,11 @@ pub fn prepare(
     if !super::latent_scheduled::qualified(g, ranks) {
         return Ok(reference);
     }
-    let rows = match query {
-        LatentAttentionQuery::Attention {
-            phase: AttentionPhase::Decode,
-            ..
-        } => 8,
-        LatentAttentionQuery::Attention {
-            phase: AttentionPhase::Verify,
-            ..
-        } => 32,
-        _ => return Ok(reference),
+    let LatentAttentionQuery::Attention { phase, .. } = query else {
+        return Ok(reference);
+    };
+    let Some((rows, stage_keys, head_group, packed)) = selection(*phase) else {
+        return Ok(reference);
     };
     if need.capacity < rows {
         return Ok(reference);
@@ -97,9 +101,9 @@ pub fn prepare(
     // measured context/format at these rows. Keep all eight ordered splits.
     let entry = Entry {
         source,
-        stage_keys: 64,
-        head_group: 0,
-        packed: false,
+        stage_keys,
+        head_group,
+        packed,
         profile: false,
     };
     sources_decode::prepare(reference, need, &[(rows, entry)])

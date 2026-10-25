@@ -26,6 +26,10 @@ pub fn qualified(g: &Geometry, ranks: u32) -> bool {
         && g.shape.indexer.top_k == 512
 }
 
+pub fn paired_prefill_enabled(g: &Geometry, ranks: u32, capacity: u32) -> bool {
+    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4 && capacity >= 8192
+}
+
 pub fn serving_entries(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
     Ok(super::latent::entries(g, ranks)?
         .into_iter()

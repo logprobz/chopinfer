@@ -20,6 +20,10 @@ impl crate::Kernels {
             })
     }
 
+    pub(crate) fn prefill_tile_selected(compact: bool, ratio2: bool, rows: u32) -> bool {
+        rows == if compact || ratio2 { 4096 } else { 512 }
+    }
+
     pub(crate) fn prefill_tile_scores(
         mut calls: Vec<Lowered>,
         compact: bool,
@@ -29,12 +33,11 @@ impl crate::Kernels {
             if !call.launch.symbol.ends_with("_mma_fp4_guard_fast_v1") {
                 continue;
             }
-            let rows = if compact || call.launch.symbol.contains("_r2_") {
-                4096
-            } else {
-                512
-            };
-            if call.launch.rows != rows {
+            if !Self::prefill_tile_selected(
+                compact,
+                call.launch.symbol.contains("_r2_"),
+                call.launch.rows,
+            ) {
                 return Ok(calls);
             }
             if call.collective

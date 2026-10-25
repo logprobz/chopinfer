@@ -1,5 +1,35 @@
 {
   "schema": "chopinfer-tuning-v1",
   "target": {"compute_capability": 120, "sm_count": 188},
-  "rows": []
+  "rows": [
+    {"op": "latent.cache.decode", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 32, "rows": [1, 2], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.cache.decode", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 32, "rows": [4, 4], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.cache.decode", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 32, "rows": [8, 8], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.cache.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "rows": [4, 4], "schedule": "selected_cache", "knobs": {"head_group": 8}},
+    {"op": "latent.cache.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "rows": [6, 6], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.cache.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "rows": [16, 16], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.cache.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "rows": [32, 64], "schedule": "selected_cache", "knobs": {"head_group": 0}},
+    {"op": "latent.paired.prefill", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 8192, "schedule": "paired", "knobs": {}},
+    {"op": "latent.query.decode", "weights": "f32", "shape": {"ranks": 4}, "bucket": 48, "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 49, "rows": [49, 49], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 50, "rows": [49, 50], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 51, "rows": [49, 51], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 52, "rows": [49, 52], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 53, "rows": [49, 53], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 54, "rows": [49, 54], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 55, "rows": [49, 55], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 56, "rows": [49, 56], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 57, "rows": [49, 57], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 58, "rows": [49, 58], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 59, "rows": [49, 59], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 60, "rows": [49, 60], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 61, "rows": [49, 61], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 62, "rows": [49, 62], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 63, "rows": [49, 63], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 64, "rows": [49, 64], "schedule": "parallel", "knobs": {}},
+    {"op": "latent.sources.decode", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 32, "schedule": "independent_heads", "knobs": {}},
+    {"op": "latent.sources.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "schedule": "independent_heads", "knobs": {}},
+    {"op": "latent.staging.decode", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 32, "rows": [8, 8], "schedule": "staged", "knobs": {"head_group": 0, "packed": false, "stage_keys": 64}},
+    {"op": "latent.staging.verify", "weights": "fp8", "shape": {"ranks": 4}, "bucket": 192, "rows": [32, 32], "schedule": "staged", "knobs": {"head_group": 0, "packed": false, "stage_keys": 64}}
+  ]
 }

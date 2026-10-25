@@ -61,7 +61,7 @@ pub fn prepare(
             [1..=need.capacity],
         )],
     );
-    if geometry.id != FLASH.id || ranks != 4 || need.capacity < ROWS {
+    if !super::latent_scheduled::paired_prefill_enabled(geometry, ranks, need.capacity) {
         return Ok(reference);
     }
     let Some(entry) = entries()

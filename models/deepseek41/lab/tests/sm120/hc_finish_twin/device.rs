@@ -1,81 +1,42 @@
-use super::{artifacts, buffers, registration, served, twin};
+use super::{artifacts, buffers, served, twin};
 pub use buffers::Input;
 use kernel_core::{backend::View, contract::Argument};
 use kernel_harness::{LabResult, Session, launch};
-use kernels_sm120::sinkhorn_hc::{
-    completion::{self, Layout, Mutation},
-    finish_twin,
-};
+use kernels_sm120::sinkhorn_hc::{completion::Mutation, finish_twin};
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument as A, Module, Stream};
 use std::collections::BTreeMap;
 pub type Output = buffers::Output<4096>;
-pub const VARIANTS: [&str; 8] = [
-    "tail8", "tail16", "tail32", "split8", "split16", "twin8", "twin16", "twin32",
-];
-/// Timed arms: the served pair against itself (A/A), then every variant.
-pub const TIMING_VARIANTS: [&str; 9] = [
-    "served", "tail8", "tail16", "tail32", "split8", "split16", "twin8", "twin16", "twin32",
-];
-const GUARD: usize = 64;
+pub const VARIANTS: [&str; 1] = ["twin32"];
+/// The reference A/A control and the selected twin.
+pub const TIMING_VARIANTS: [&str; 2] = ["served", "twin32"];
 
-/// A replacement composed from the served pair's own validated launches.
+/// The reference producer followed by a composed two-CTA finish.
 #[derive(Clone, Debug)]
-pub enum Candidate {
-    /// One launch for the producer and the tail.
-    Completion(completion::Entry, u32),
-    /// The served producer, then the tail on two CTAs per row.
-    Twin(finish_twin::Entry, u32),
-}
+pub struct Candidate(pub finish_twin::Entry, pub u32);
 impl Candidate {
     pub fn launches(&self) -> usize {
-        match self {
-            Candidate::Completion(..) => 1,
-            Candidate::Twin(..) => 2,
-        }
+        2
     }
     pub fn symbol(&self) -> String {
-        match self {
-            Candidate::Completion(e, w) => e.symbol(*w),
-            Candidate::Twin(e, w) => e.symbol(*w),
-        }
+        self.0.symbol(self.1)
     }
     pub fn mutation(&self) -> Mutation {
-        match self {
-            Candidate::Completion(e, _) => e.mutation,
-            Candidate::Twin(e, _) => e.mutation,
-        }
+        self.0.mutation
     }
 }
 
 pub fn variant(name: &str) -> LabResult<Candidate> {
-    if let Some(w) = name.strip_prefix("twin") {
-        let warps: u32 = w.parse().map_err(|_| "invalid warp count")?;
-        if !finish_twin::WARPS.contains(&warps) {
-            return Err("unsupported warp count".into());
-        }
-        return Ok(Candidate::Twin(twin::served(), warps));
+    match name {
+        "twin32" => Ok(Candidate(twin::served(), 32)),
+        _ => Err(format!("unknown finish twin variant {name}")),
     }
-    let (layout, warps) = if let Some(w) = name.strip_prefix("tail") {
-        (Layout::Tail, w)
-    } else if let Some(w) = name.strip_prefix("split") {
-        (Layout::Split, w)
-    } else {
-        return Err(format!("unknown completion variant {name}"));
-    };
-    let warps: u32 = warps.parse().map_err(|_| "invalid warp count")?;
-    if !layout.warps().contains(&warps) {
-        return Err("unsupported warp count".into());
-    }
-    Ok(Candidate::Completion(registration::entry(layout), warps))
 }
 
-/// Every mutation control: the completion's at eight warps, the two-CTA
-/// finish's at 32.
+/// Every mutation control of the selected 32-warp finish.
 pub fn controls() -> Vec<Candidate> {
-    registration::controls()
+    twin::controls()
         .into_iter()
-        .map(|e| Candidate::Completion(e, 8))
-        .chain(twin::controls().into_iter().map(|e| Candidate::Twin(e, 32)))
+        .map(|e| Candidate(e, 32))
         .collect()
 }
 
@@ -102,36 +63,6 @@ impl Kernels {
             functions,
             _modules: modules,
         })
-    }
-}
-
-/// One word per row, zeroed, followed by a poisoned guard.
-pub struct Tickets {
-    pub buffer: DeviceBuffer,
-    rows: usize,
-}
-impl Tickets {
-    pub fn new(s: &Session, rows: usize) -> LabResult<Self> {
-        let buffer = s.allocate(rows * 4 + GUARD)?;
-        let mut bytes = vec![0xa5; rows * 4 + GUARD];
-        bytes[..rows * 4].fill(0);
-        buffer
-            .copy_from_bytes(&bytes, &s.stream)
-            .map_err(|e| e.to_string())?;
-        Ok(Self { buffer, rows })
-    }
-    /// Every ticket returned to zero and the guard is unchanged.
-    pub fn check(&self, s: &Stream) -> LabResult<()> {
-        let mut bytes = vec![0; self.buffer.byte_len()];
-        self.buffer
-            .copy_to_bytes(&mut bytes, s)
-            .map_err(|e| e.to_string())?;
-        if bytes[..self.rows * 4].iter().any(|&b| b != 0)
-            || bytes[self.rows * 4..].iter().any(|&b| b != 0xa5)
-        {
-            return Err("completion ticket was not reset or its guard changed".into());
-        }
-        Ok(())
     }
 }
 
@@ -162,7 +93,6 @@ pub fn launch(
     k: &Kernels,
     i: &Input,
     o: &Output,
-    t: &Tickets,
     variant: &str,
     widen: bool,
     alias: bool,
@@ -171,7 +101,7 @@ pub fn launch(
         "served" => None,
         name => Some(self::variant(name)?),
     };
-    launch_with(s, k, i, o, t, candidate.as_ref(), widen, alias)
+    launch_with(s, k, i, o, candidate.as_ref(), widen, alias)
 }
 
 /// As `launch`, with an explicit candidate entry (or none for the served
@@ -182,7 +112,6 @@ pub fn launch_with(
     k: &Kernels,
     i: &Input,
     o: &Output,
-    t: &Tickets,
     candidate: Option<&Candidate>,
     widen: bool,
     alias: bool,
@@ -214,7 +143,6 @@ pub fn launch_with(
         &v["scales"],
         &v["status"],
         &o.scratch,
-        &t.buffer,
     ];
     // Aliased roles share one handle, as the bundle binds one logical view.
     let mut seen: Vec<(u64, u64)> = Vec::new();
@@ -250,20 +178,10 @@ pub fn launch_with(
     if plans.len() != 2 {
         return Err("served HC reference must have two launches".into());
     }
-    match candidate {
-        None => {}
-        Some(Candidate::Completion(entry, warps)) => {
-            plans = vec![
-                entry
-                    .compose(&plans[0], &plans[1], views[22], *warps)
-                    .map_err(|e| e.to_string())?,
-            ];
-        }
-        Some(Candidate::Twin(entry, warps)) => {
-            plans[1] = entry
-                .compose(&plans[1], *warps)
-                .map_err(|e| e.to_string())?;
-        }
+    if let Some(Candidate(entry, warps)) = candidate {
+        plans[1] = entry
+            .compose(&plans[1], *warps)
+            .map_err(|e| e.to_string())?;
     }
     for plan in &plans {
         let args = plan

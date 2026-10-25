@@ -1,9 +1,9 @@
 //! Bitwise comparison of every candidate with the served pair on every real
-//! boundary of the selected row counts, with invariance, ticket and mutation
+//! Verify-6 boundary, with invariance and mutation
 //! controls.
 use super::{
     artifacts, corpus,
-    device::{self, Input, Kernels, Output, Tickets, VARIANTS},
+    device::{self, Input, Kernels, Output, VARIANTS},
 };
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::sinkhorn_hc::completion::Mutation;
@@ -140,22 +140,21 @@ impl Run<'_> {
         self.checks
             .push(json!({"case":label,"name":name,"passed":passed}));
     }
-    /// One eager launch from poisoned outputs; the tickets must return to zero.
+    /// One eager launch from poisoned outputs.
     #[allow(clippy::too_many_arguments)]
     fn eager(
         &self,
         i: &Input,
         o: &Output,
-        t: &Tickets,
         variant: &str,
         widen: bool,
         alias: bool,
         prior: u32,
-    ) -> LabResult<(Values, bool)> {
+    ) -> LabResult<Values> {
         device::reset(&self.s.stream, i, o, prior, alias)?;
-        device::launch(&self.s.stream, self.k, i, o, t, variant, widen, alias)?;
+        device::launch(&self.s.stream, self.k, i, o, variant, widen, alias)?;
         let values = device::read(&self.s.stream, o)?;
-        Ok((values, t.check(&self.s.stream).is_ok()))
+        Ok(values)
     }
     /// Candidate equals the served pair under the same inputs and state.
     #[allow(clippy::too_many_arguments)]
@@ -171,10 +170,10 @@ impl Run<'_> {
     ) -> LabResult<()> {
         let old = Output::new(self.s, i.rows)?;
         let new = Output::new(self.s, i.rows)?;
-        let tickets = Tickets::new(self.s, i.rows)?;
-        let (expected, _) = self.eager(i, &old, &tickets, "served", widen, alias, prior)?;
-        let (actual, zero) = self.eager(i, &new, &tickets, variant, widen, alias, prior)?;
-        self.check(label, name, zero && mismatch(&actual, &expected).is_empty());
+
+        let expected = self.eager(i, &old, "served", widen, alias, prior)?;
+        let actual = self.eager(i, &new, variant, widen, alias, prior)?;
+        self.check(label, name, mismatch(&actual, &expected).is_empty());
         Ok(())
     }
 }
@@ -202,46 +201,37 @@ fn controls(
                 .copy_from_bytes(&(part.len() as u32).to_ne_bytes(), &s.stream)
                 .map_err(|e| e.to_string())?;
             let out = Output::new(s, bucket)?;
-            let t = Tickets::new(s, bucket)?;
-            let (values, zero) = run.eager(&moved, &out, &t, variant, widen, alias, 0)?;
+
+            let values = run.eager(&moved, &out, variant, widen, alias, 0)?;
             run.check(
                 label,
                 &format!("chunk{chunk}:{index}"),
-                zero && same_rows(&live_rows(&values, part.len(), bucket), actual, part, rows),
+                same_rows(&live_rows(&values, part.len(), bucket), actual, part, rows),
             );
         }
     }
     let reversed = map.iter().copied().rev().collect::<Vec<_>>();
     let moved = Input::new(s, case, &reversed)?;
     let other = Output::new(s, rows)?;
-    let t = Tickets::new(s, rows)?;
-    let (values, zero) = run.eager(&moved, &other, &t, variant, widen, alias, 0)?;
+
+    let values = run.eager(&moved, &other, variant, widen, alias, 0)?;
     run.check(
         label,
         "reverse_position",
-        zero && same_rows(&values, actual, &reversed, rows),
+        same_rows(&values, actual, &reversed, rows),
     );
-    // Two private output sets and ticket arrays on two streams at once.
+    // Two private output sets on two streams at once.
     let input = Input::new(s, case, &map)?;
     let first = Output::new(s, rows)?;
-    let first_tickets = Tickets::new(s, rows)?;
+
     first.assert_disjoint(&other)?;
     device::reset(&s.stream, &input, &first, 0, alias)?;
     device::reset(&s.stream, &moved, &other, 0, alias)?;
     s.stream.synchronize().map_err(|e| e.to_string())?;
     let side = s.context.stream().map_err(|e| e.to_string())?;
     for _ in 0..3 {
-        device::launch(
-            &s.stream,
-            run.k,
-            &input,
-            &first,
-            &first_tickets,
-            variant,
-            widen,
-            alias,
-        )?;
-        device::launch(&side, run.k, &moved, &other, &t, variant, widen, alias)?;
+        device::launch(&s.stream, run.k, &input, &first, variant, widen, alias)?;
+        device::launch(&side, run.k, &moved, &other, variant, widen, alias)?;
     }
     side.synchronize().map_err(|e| e.to_string())?;
     s.stream.synchronize().map_err(|e| e.to_string())?;
@@ -252,9 +242,7 @@ fn controls(
     run.check(
         label,
         "concurrent_scratch",
-        first_tickets.check(&s.stream).is_ok()
-            && t.check(&s.stream).is_ok()
-            && (!repeated || (a == *actual && same_rows(&b, actual, &reversed, rows))),
+        !repeated || (a == *actual && same_rows(&b, actual, &reversed, rows)),
     );
     for live in BTreeSet::from([0, rows - 1]) {
         input
@@ -312,7 +300,7 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
         let old = Output::new(s, rows)?;
         let out = Output::new(s, rows)?;
         old.assert_disjoint(&out)?;
-        let tickets = Tickets::new(s, rows)?;
+
         let mut count = 0;
         let configurations = if memcheck {
             vec![(case.widening(), true)]
@@ -321,10 +309,7 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
         };
         for (widen, alias) in configurations {
             let configuration = if alias { "served" } else { "other" };
-            let (expected, zero) = run.eager(&input, &old, &tickets, "served", widen, alias, 0)?;
-            if !zero {
-                return Err("served pair changed the ticket buffer".into());
-            }
+            let expected = run.eager(&input, &old, "served", widen, alias, 0)?;
             if alias && !memcheck {
                 let mut errors = Vec::new();
                 let mut outputs = 0;
@@ -343,31 +328,22 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
             }
             for variant in VARIANTS {
                 let label = format!("{}:{variant}:{configuration}", case.id);
-                let (actual, zero) = run.eager(&input, &out, &tickets, variant, widen, alias, 0)?;
-                let mut failures = mismatch(&actual, &expected);
-                if !zero {
-                    failures.push("tickets".into());
-                }
+                let actual = run.eager(&input, &out, variant, widen, alias, 0)?;
+                let failures = mismatch(&actual, &expected);
                 reports.push(json!({"case":case.id,"rows":rows,"variant":variant,"configuration":configuration,"widen":widen,"alias":alias,"passed":failures.is_empty(),"failures":failures,"output_sha256":digest(&actual)}));
                 count += 1;
                 if memcheck {
                     continue;
                 }
-                // Two replays of one graph reuse the same tickets.
+                // Two replays of one graph reuse the same outputs and workspace.
                 let graph = s.capture(|stream| {
-                    device::launch(stream, &k, &input, &out, &tickets, variant, widen, alias)
-                        .map(|_| ())
+                    device::launch(stream, &k, &input, &out, variant, widen, alias).map(|_| ())
                 })?;
                 for replay in 0..2 {
                     device::reset(&s.stream, &input, &out, 0, alias)?;
                     graph.launch(&s.stream).map_err(|e| e.to_string())?;
                     let values = device::read(&s.stream, &out)?;
-                    let zero = tickets.check(&s.stream).is_ok();
-                    run.check(
-                        &label,
-                        &format!("graph_replay{replay}"),
-                        zero && values == actual,
-                    );
+                    run.check(&label, &format!("graph_replay{replay}"), values == actual);
                 }
                 if seen.insert((rows, variant, configuration)) {
                     controls(&mut run, case, &label, variant, widen, alias, &actual)?;
@@ -375,7 +351,7 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
             }
         }
         println!(
-            "HC_COMPLETION_CASE {}",
+            "HC_FINISH_TWIN_CASE {}",
             json!({"case":case.id,"rows":rows,"reports":count})
         );
     }
@@ -387,22 +363,12 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
             for control in device::controls() {
                 let old = Output::new(s, rows)?;
                 let new = Output::new(s, rows)?;
-                let tickets = Tickets::new(s, rows)?;
+
                 let widen = case.widening();
                 let prior = control_prior(control.mutation());
-                let (expected, _) =
-                    run.eager(&input, &old, &tickets, "served", widen, true, prior)?;
+                let expected = run.eager(&input, &old, "served", widen, true, prior)?;
                 device::reset(&s.stream, &input, &new, prior, true)?;
-                device::launch_with(
-                    &s.stream,
-                    &k,
-                    &input,
-                    &new,
-                    &tickets,
-                    Some(&control),
-                    widen,
-                    true,
-                )?;
+                device::launch_with(&s.stream, &k, &input, &new, Some(&control), widen, true)?;
                 let actual = device::read(&s.stream, &new)?;
                 let label = format!("{}:{}", case.id, control.symbol());
                 run.check(
@@ -418,13 +384,13 @@ pub fn matrix(s: &Session, memcheck: bool) -> LabResult<Value> {
         .iter()
         .all(|v| v.iter().all(|r| r["passed"] == true));
     println!(
-        "HC_COMPLETION_RESULT memcheck={memcheck} cases={} reports={} checks={} negatives={negatives} passed={passed}",
+        "HC_FINISH_TWIN_RESULT memcheck={memcheck} cases={} reports={} checks={} negatives={negatives} passed={passed}",
         cases.len(),
         reports.len(),
         run.checks.len()
     );
     Ok(
-        json!({"schema":"chopinfer.hc-completion-matrix.v1","corpus_sha256":sha,"cases":cases.len(),
+        json!({"schema":"chopinfer.hc-finish-twin-matrix.v1","corpus_sha256":sha,"cases":cases.len(),
         "memcheck":memcheck,"reports":reports,"checks":run.checks,"captured":captured,"negatives":negatives,"passed":passed}),
     )
 }
@@ -462,7 +428,14 @@ fn every_control_runs_under_a_prior_that_shows_it() {
         .iter()
         .map(|c| (c.mutation(), control_prior(c.mutation())))
         .collect::<Vec<_>>();
-    assert_eq!(priors.len(), 8);
+    assert_eq!(
+        priors,
+        vec![
+            (Mutation::ClearStatus, 0x80),
+            (Mutation::WrongFloor, 0),
+            (Mutation::ReverseFold, 0),
+        ]
+    );
     for (mutation, prior) in priors {
         assert_eq!(prior == 0, mutation != Mutation::ClearStatus);
     }
@@ -479,7 +452,7 @@ fn chunk_parts_run_in_qualified_buckets() {
     let pair = |rows: usize| super::served::plans(rows as u32, &views, false).unwrap();
     // A three-row part has no qualified boundary; the served op unfuses it.
     assert_eq!(pair(3).len(), 3);
-    for rows in [1, 6, 8] {
+    for rows in [6] {
         let map = (0..rows).collect::<Vec<_>>();
         for chunk in [1, 3] {
             for part in map.chunks(chunk) {
@@ -495,12 +468,11 @@ fn chunk_parts_run_in_qualified_buckets() {
 }
 
 #[test]
-#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
-fn real_c1_c8_bitwise_invariances_and_controls_on_gpu() {
-    // Named for its first row counts; CHOPINFER_HC_COMPLETION_ROWS selects.
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_FINISH_TWIN_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
+fn real_verify_six_bitwise_invariances_and_controls_on_gpu() {
     let result = kernel_harness::gpu_test(1 << 30, |s| -> LabResult<()> {
         let value = matrix(s, false)?;
-        write("CHOPINFER_HC_COMPLETION_REPORT", &value)?;
+        write("CHOPINFER_HC_FINISH_TWIN_REPORT", &value)?;
         if value["passed"] != true {
             return Err("bitwise matrix failed; see the report".into());
         }
@@ -511,11 +483,11 @@ fn real_c1_c8_bitwise_invariances_and_controls_on_gpu() {
 }
 
 #[test]
-#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
-fn memcheck_real_c1_c8_on_gpu() {
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_FINISH_TWIN_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
+fn memcheck_real_verify_six_on_gpu() {
     let result = kernel_harness::gpu_test(1 << 30, |s| -> LabResult<()> {
         let value = matrix(s, true)?;
-        write("CHOPINFER_HC_COMPLETION_MEMCHECK_REPORT", &value)?;
+        write("CHOPINFER_HC_FINISH_TWIN_MEMCHECK_REPORT", &value)?;
         if value["passed"] != true {
             return Err("memcheck matrix failed; see the report".into());
         }

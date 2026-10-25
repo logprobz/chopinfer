@@ -3,13 +3,13 @@
 //! boundary of the selected row counts.
 use super::{
     artifacts,
-    device::{self, Input, Kernels, Output, TIMING_VARIANTS, Tickets},
+    device::{self, Input, Kernels, Output, TIMING_VARIANTS},
 };
 use kernel_harness::{LabResult, eviction::EvictionMode};
 use serde_json::json;
 
 #[test]
-#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
+#[ignore = "requires CHOPINFER_KERNEL_GPU, CHOPINFER_HC_FINISH_TWIN_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn paired_cold_hot_served_configuration_on_gpu() {
     let cubins = artifacts::timing_cubins().unwrap();
     let result = kernel_harness::gpu_test_with(cubins, 1 << 30, |s| -> LabResult<()> {
@@ -23,25 +23,14 @@ fn paired_cold_hot_served_configuration_on_gpu() {
             let old = Output::new(s, rows)?;
             let new = Output::new(s, rows)?;
             old.assert_disjoint(&new)?;
-            let old_tickets = Tickets::new(s, rows)?;
-            let new_tickets = Tickets::new(s, rows)?;
+
             let widen = case.widening();
             // Separate coefficient buffers keep every replay identical; the
             // aliased served form moves the same bytes.
             device::reset(&s.stream, &input, &old, 0, false)?;
             device::reset(&s.stream, &input, &new, 0, false)?;
             let reference = s.capture(|stream| {
-                device::launch(
-                    stream,
-                    &kernels,
-                    &input,
-                    &old,
-                    &old_tickets,
-                    "served",
-                    widen,
-                    false,
-                )
-                .map(|_| ())
+                device::launch(stream, &kernels, &input, &old, "served", widen, false).map(|_| ())
             })?;
             for variant in TIMING_VARIANTS {
                 let launches = match variant {
@@ -49,17 +38,8 @@ fn paired_cold_hot_served_configuration_on_gpu() {
                     name => device::variant(name)?.launches(),
                 };
                 let candidate = s.capture(|stream| {
-                    device::launch(
-                        stream,
-                        &kernels,
-                        &input,
-                        &new,
-                        &new_tickets,
-                        variant,
-                        widen,
-                        false,
-                    )
-                    .map(|_| ())
+                    device::launch(stream, &kernels, &input, &new, variant, widen, false)
+                        .map(|_| ())
                 })?;
                 for hot in [false, true] {
                     let label = format!("{}:{variant}:hot={hot}", case.id);
@@ -85,28 +65,27 @@ fn paired_cold_hot_served_configuration_on_gpu() {
                         "candidate_us":f64::from(time.arms[1].median_ms)*1000.,
                         "paired_ratio":time.paired_ratio,"reference_launches":2,"candidate_launches":launches}));
                 }
-                new_tickets.check(&s.stream)?;
             }
-            old_tickets.check(&s.stream)?;
+
             println!(
-                "HC_COMPLETION_TIMING_CASE {}",
+                "HC_FINISH_TWIN_TIMING_CASE {}",
                 json!({"case":case.id,"rows":rows,"records":TIMING_VARIANTS.len()*2,"elapsed_s":start.elapsed().as_secs_f64()})
             );
         }
-        let value = json!({"schema":"chopinfer.hc-completion-timing.v1","corpus_sha256":sha,"cases":cases.len(),"records":records,
+        let value = json!({"schema":"chopinfer.hc-finish-twin-timing.v1","corpus_sha256":sha,"cases":cases.len(),"records":records,
             "scope":"Whole-boundary AB/BA CUDA event intervals of one graph per arm. Read eviction before each arm; hot adds an untimed replay. The served pair is the reference at each row count; the served arm is its A/A control on separate outputs. Site widening policy with separate post/comb buffers."});
         std::fs::write(
-            std::env::var_os("CHOPINFER_HC_COMPLETION_TIMING_REPORT")
+            std::env::var_os("CHOPINFER_HC_FINISH_TWIN_TIMING_REPORT")
                 .ok_or("timing report path required")?,
             serde_json::to_vec(&value).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         s.receipt(
-            "hc_completion_timing",
+            "hc_finish_twin_timing",
             std::collections::BTreeMap::from([("case_count".into(), json!(cases.len()))]),
         )?;
         println!(
-            "HC_COMPLETION_TIMING_RESULT cases={} records={} PASS",
+            "HC_FINISH_TWIN_TIMING_RESULT cases={} records={} PASS",
             cases.len(),
             value["records"].as_array().unwrap().len()
         );

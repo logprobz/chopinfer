@@ -1,4 +1,4 @@
-use super::{corpus, device, registration, twin};
+use super::{corpus, device, twin};
 use kernel_harness::{Cubins, LabResult};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -11,30 +11,14 @@ const PROBES: &[&str] = &[
 ];
 /// Executed sites per row count: two captured groups of 77 boundaries.
 pub const SITES: usize = 154;
-/// Captured row counts with a chain-producer pair: C1 and C8 decode, Verify-6.
-const QUALIFIABLE: [usize; 3] = [1, 6, 8];
-/// The row counts this run qualifies, `CHOPINFER_HC_COMPLETION_ROWS` as
-/// increasing comma-separated values; C1 and C8 when unset.
+/// The served Verify-6 twin32 bucket. Chunk controls also use one-row slices.
 pub fn rows() -> LabResult<Vec<usize>> {
-    let Ok(text) = std::env::var("CHOPINFER_HC_COMPLETION_ROWS") else {
-        return Ok(vec![1, 8]);
-    };
-    let rows = text
-        .split(',')
-        .map(|v| v.parse::<usize>().map_err(|e| e.to_string()))
-        .collect::<LabResult<Vec<_>>>()?;
-    if rows.is_empty()
-        || rows.windows(2).any(|p| p[0] >= p[1])
-        || rows.iter().any(|r| !QUALIFIABLE.contains(r))
-    {
-        return Err("invalid HC completion row selection".into());
-    }
-    Ok(rows)
+    Ok(vec![6])
 }
 pub const ROUNDS: usize = 7;
 pub const WARMUP: usize = 2;
 pub fn root() -> PathBuf {
-    std::env::var_os("CHOPINFER_HC_COMPLETION_ARTIFACTS")
+    std::env::var_os("CHOPINFER_HC_FINISH_TWIN_ARTIFACTS")
         .expect("artifact directory required")
         .into()
 }
@@ -56,7 +40,7 @@ fn exports(lock: &str, name: &str, bytes: &[u8]) -> LabResult<Vec<String>> {
         })
         .collect()
 }
-/// A frozen candidate module: its exports must be the registration's, and
+/// A frozen twin module: its exports must be the registration's, and
 /// an embedded copy must be the frozen bytes.
 fn candidate(
     variable: &str,
@@ -78,7 +62,7 @@ fn candidate(
     Ok((bytes, symbols))
 }
 /// The served producer and tail modules embedded in the bundle, the frozen
-/// candidate modules, and the kernel-lab timing probe.
+/// twin module, and the kernel-lab timing probe.
 pub fn images() -> LabResult<Images> {
     use bundle_deepseek41::sm120 as b;
     let g = &model_deepseek41_contract::geometry::FLASH;
@@ -97,18 +81,6 @@ pub fn images() -> LabResult<Images> {
         result.insert(name.into(), (bytes.to_vec(), exports(lock, name, bytes)?));
     }
     result.insert(
-        registration::CUBIN.into(),
-        candidate(
-            "CHOPINFER_HC_COMPLETION_CUBIN",
-            include_str!("../../../../bundle/kernels.lock.d/sinkhorn_hc_completion.lock"),
-            registration::CUBIN,
-            registration::entries()
-                .iter()
-                .map(|(e, w)| e.symbol(*w))
-                .collect(),
-        )?,
-    );
-    result.insert(
         twin::CUBIN.into(),
         candidate(
             "CHOPINFER_HC_FINISH_TWIN_CUBIN",
@@ -118,7 +90,7 @@ pub fn images() -> LabResult<Images> {
         )?,
     );
     let probe = std::fs::read(
-        std::env::var_os("CHOPINFER_HC_COMPLETION_PROBE").ok_or("kernel-lab probe required")?,
+        std::env::var_os("CHOPINFER_HC_FINISH_TWIN_PROBE").ok_or("kernel-lab probe required")?,
     )
     .map_err(|e| e.to_string())?;
     let symbols = exports(
@@ -230,13 +202,13 @@ pub fn coverage(cases: &[corpus::Case], sha: &str) -> LabResult<Value> {
         "configurations":["served","other"],
         "matrix_reports":cases.len()*variants*2,"timing_records":cases.len()*device::TIMING_VARIANTS.len()*2,
         "memcheck_reports":2*rows.len()*(variants+1),"rounds":ROUNDS,"warmup":WARMUP,
-        "scope":"Real captured HC boundaries of the selected row counts (C1 and C8 decode, Verify-6). The served configuration uses the site's widening policy with post and comb aliased to their inputs; the other configuration flips widening with separate coefficient buffers. Timing pairs the served pair with itself (A/A) and with every variant."}),
+        "scope":"Real captured Verify-6 HC boundaries. The served configuration uses the site's widening policy with post and comb aliased to their inputs; the other configuration flips widening with separate coefficient buffers. Timing pairs the served pair with itself (A/A) and with every variant."}),
     )
 }
 #[test]
-#[ignore = "requires staged CHOPINFER_HC_COMPLETION_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
+#[ignore = "requires staged CHOPINFER_HC_FINISH_TWIN_ARTIFACTS and CHOPINFER_HC_GRAM_CORPUS"]
 fn frozen_modules_and_cases_on_cpu() {
-    let export = std::env::var("CHOPINFER_HC_COMPLETION_EXPORT").as_deref() == Ok("1");
+    let export = std::env::var("CHOPINFER_HC_FINISH_TWIN_EXPORT").as_deref() == Ok("1");
     let images = images().unwrap();
     if export {
         std::fs::create_dir_all(root()).unwrap();
@@ -267,7 +239,7 @@ fn frozen_modules_and_cases_on_cpu() {
     assert_eq!(saved, value);
     assert_eq!(memcheck_cases().unwrap().len(), 2 * rows().unwrap().len());
     println!(
-        "HC_COMPLETION_ARTIFACTS modules={} symbols={} cases={} PASS",
+        "HC_FINISH_TWIN_ARTIFACTS modules={} symbols={} cases={} PASS",
         images.len(),
         images.values().map(|(_, s)| s.len()).sum::<usize>(),
         cases.len()

@@ -233,8 +233,8 @@ name = "build_indexer_prefill_tile"
 path = "examples/sm120/build_indexer_prefill_tile.rs"
 
 [[test]]
-name = "hc_completion"
-path = "tests/sm120/hc_completion/main.rs"
+name = "hc_finish_twin"
+path = "tests/sm120/hc_finish_twin/main.rs"
 
 [[test]]
 name = "hc_tail16"

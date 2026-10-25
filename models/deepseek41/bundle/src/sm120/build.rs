@@ -9,7 +9,8 @@ use std::env;
 use std::path::PathBuf;
 
 use kernel_build::{LockDir, ModelLock, Toolchain};
-use model_deepseek41_contract::geometry::GEOMETRIES;
+use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+use model_deepseek41_contract::tuning::{self, Family};
 
 mod acceptance_cubin;
 mod acceptance_entries;
@@ -839,6 +840,9 @@ pub fn selection(
 }
 
 fn main() {
+    for family in Family::ALL {
+        tuning::table(&FLASH, family).expect("FLASH family tuning table");
+    }
     println!("cargo:rerun-if-changed=src/sm120");
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("output directory"));

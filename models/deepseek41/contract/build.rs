@@ -380,8 +380,7 @@ fn main() {
     fs::write(out.join("geometries.rs"), output).unwrap();
 
     let tuning = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("tuning/flash");
-    let mut tables = String::from("pub(crate) static TABLES: &[(Family, &str)] = &[\n");
-    for (variant, family) in [
+    let families = [
         ("DenseFold", "dense_fold"),
         ("Reuse", "reuse"),
         ("DensePrefill", "dense_prefill"),
@@ -391,7 +390,35 @@ fn main() {
         ("Norm", "norm"),
         ("Latent", "latent"),
         ("Indexer", "indexer"),
-    ] {
+    ];
+    let variants = families
+        .iter()
+        .map(|(variant, _)| *variant)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let all = families
+        .iter()
+        .map(|(variant, _)| format!("Self::{variant}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let names = families
+        .iter()
+        .map(|(variant, family)| format!("Self::{variant} => {family:?},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut tables = format!(
+        "/// Schedule families with independent tuning files and coverage tests.\n\
+         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]\n\
+         pub enum Family {{ {variants} }}\n\
+         impl Family {{\n\
+             pub const ALL: [Self; {}] = [{all}];\n\
+             /// The filename stem and operation prefix.\n\
+             pub const fn name(self) -> &'static str {{ match self {{ {names} }} }}\n\
+         }}\n\
+         pub(crate) static TABLES: &[(Family, &str)] = &[\n",
+        families.len()
+    );
+    for (variant, family) in families {
         let path = tuning.join(format!("{family}.json"));
         println!("cargo:rerun-if-changed={}", path.display());
         let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

@@ -460,10 +460,15 @@ job/visit enforced power limits. A changing limit voids the whole job.
 Its [cold Engram workload](depth-tuning.md#cold-engram-workload) pairs an
 acknowledged mapped-row control epoch with file-page advice and `mincore`
 residency. Cache reset and page-table release do not evict file pages.
-Residual residency is reported as partly warm. Cold reports are labelled "cold, unmatched prompts" and cannot automatically
+Residual residency is reported as partly warm. Cold reports are labelled
+"cold, unmatched prompts" and cannot automatically
 accept a change. Prompt assignment is deterministic and length-balanced by
-arm. Standard windows open only after all slots finish priming and retain
-replacement counts and prefill share. The cold window also retains
+nearest length across arms, with source order restored within each arm and
+length differences recorded. Standard windows open only after all slots
+finish priming and retain replacement counts, prefill share and observed
+duration. Supported undrafted or declared untouched control shapes check
+for a first-visit A1 offset; a detected offset invalidates timing acceptance.
+The cold window also retains
 `host.mapped_gather_us` from step.v1, TTFT and prefill execution times;
 `mapped_gather_us` covers synchronous gathers and is not a complete measure
 of prepared asynchronous gathers. These fields can overlap other host phases.

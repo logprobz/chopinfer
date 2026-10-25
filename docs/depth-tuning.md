@@ -199,11 +199,23 @@ Sampling uses temperature 1.0. Single-repeat concurrencies are short controls
 and receive no decision verdict.
 
 Before A1, a separate baseline process runs an untimed closed-loop pass at
-every concurrency with both seed sets and the same prompts. This warms the
+every concurrency with its measured seed sets and the same prompts. A
+single-repeat concurrency warms only its first seed set. This warms the
 OS page cache for prompt and generated-token Engram rows. The process is
 stopped before timed visits, so its learned acceptance prior is discarded.
 `summary.json` records `page_cache_warmup`; a standard report requires the
 complete warm-up before the first measurement. Cold jobs skip this pass.
+
+The validity check also looks for an A1 offset on supported control shapes.
+By default these are undrafted `iC-rC` steps. If the change affects decode,
+declare untouched full-concurrency shapes with `control_shapes`, for example
+`{"8": ["i8-r32"]}`. Each control needs the same minimum step count or time
+share in all four visits as a decision cell. A1's median cycle time must lie
+outside the B1/B2/A2 range and differ from their median by more than both
+their max/min spread and 0.5% to flag an offset. Either direction invalidates
+the job's timing verdict. `a1_control_check` records the medians and threshold;
+missing or thin controls are labelled `unavailable`, not cleared. This checks
+for a first-visit confound, without attributing its cause to page residency.
 
 Each window opens only after every slot completes its first request and at
 least four seconds of priming have elapsed. Workers continue replacing
@@ -213,6 +225,11 @@ Every response must report zero cached prompt tokens. Windows retain their
 priming timestamps, replacement submissions, prefill execution share,
 clocks and complete fault deltas. At most 1,000 measured major faults are
 allowed per visit; startup, priming and drain are excluded from that sum.
+`window_seconds` and `request_seconds` use the observed interval through the
+final fault snapshot. A real window must last 15 seconds with at most 0.15
+seconds of polling/snapshot overrun. Dry runs measure their actual shortened
+interval and remain mechanics-only evidence. A cold slot whose priming pause
+times out fails the job instead of submitting requests during preparation.
 
 Exactness compares token IDs and selected logprob bits across matched arms
 only within one concurrency. Keys include prompt, seed and output length;
@@ -220,6 +237,9 @@ keys from different concurrencies are never merged because reduction
 buckets can change the result (see [Batch shape](numerics.md#batch-shape)).
 Only requests lacking a matched counterpart need an additional baseline
 replay, at their original concurrency. Replay starts after an idle check.
+Treatment-only keys compare against baseline output. Baseline-only keys
+replay against the baseline itself as a reproducibility control; they add
+no cross-arm evidence.
 Baseline padding requests keep every slot occupied until the unmatched
 targets finish; padding outputs do not add exactness comparisons.
 All cold requests are unmatched, so their exactness replay remains deferred
@@ -233,6 +253,8 @@ estimates startup, warm-up, priming, measurement, drain and unmatched replay,
 and refuses an estimate above `work_seconds`. Standard replay planning
 reserves a cohort plus 25% of measured output per pair for unmatched tails;
 this is a budget estimate, not an observed performance claim.
+The repository confidence jobs take about 20 minutes in this estimate.
+Served timing jobs queued under the lane rules target 15 minutes.
 
 `report.py --ab RUN` writes `ab.json` and `ab.md`. Per decision cell it gives
 `d1 = B1/A1 - 1`, `d2 = B2/A2 - 1`, their mean and `abs(d1-d2)` spread.
@@ -252,7 +274,9 @@ Defaults cover measured decode C1, C2, C4, C8, C16 and C32 and verify widths
 `min_cell_steps` (default 20) in every visit. Optional `min_cell_time_share`
 can admit a cell instead when it occupies that fraction of measured time
 in every visit. Other shapes are informational with zero decision weight.
-Model `cell_weights` supplies nonnegative overrides.
+Model `cell_weights` supplies nonnegative overrides using the key forms
+above, with measured concurrencies and positive row widths. Unknown key
+forms or unmeasured concurrencies are rejected.
 
 Set `target_cells` to the intended gain targets. Every declared target must
 be present in all four visits, sufficiently sampled and positively weighted;
@@ -263,9 +287,16 @@ every weighted cell is a target. `required_shapes`, for example
 Model `change` is `speedup` (default), `variant`, `table_row` or
 `simplification`. Variants and table rows also need a 1.5% mean gain in
 their target cells. A simplification rejects only a resolved regression in
-a weighted cell. Unmatched incidental cells are reported as coverage gaps,
-not simplification rejections; required shapes and targets remain mandatory.
-Other change classes cannot pass with unmatched served coverage.
+a weighted cell. A single job's simplification rejection is provisional
+until the cell's regression reproduces in a confirmation job.
+
+Support is checked before pairing. Shapes below the threshold in every
+visit are informational. Shapes supported in both visits of only one arm
+are also informational, labelled `arm-specific shape`, since different
+depths can serve disjoint decode and verify shapes. Other unmatched cells
+are coverage gaps. These cells have zero decision weight and do not reject
+a speedup or simplification. Declared targets and required shapes remain
+hard requirements even when a shape would otherwise be informational.
 
 The weighted section reports its descriptive verdict, mean, cell count,
 coverage gaps and `timing_accepted`. Its verdict describes all decision
@@ -298,16 +329,20 @@ one across visit medians. Priming is excluded; cold request latencies and
 prefill steps can include drain when a prefill outlasts the measurement.
 Such a window can have zero timed output tokens and no J/token result.
 
-The tokenized pool is assigned deterministically by length and original
-index, with equal length histograms per arm, then split across visits.
-Incomplete length groups stay unused. Request index determines its prompt,
+The tokenized pool is sorted by length and original index, then consecutive
+nearest-length groups assign one prompt to each arm. Only the final group
+is discarded if it has fewer prompts than arms. Each arm restores original
+index order before splitting its prompts across visits, so window order is
+not sorted by length. `cold_prompt_assignment` records indices, lengths and
+each group's longest-minus-shortest token count. Request index determines its prompt,
 so thread arrival order cannot change the assignment. Each prompt is used
 once before deferred exactness replay. The report records actual used
 lengths, because arms may complete different numbers of requests.
 
 At staging, `cold_engram.request_budgets` reserves a priming and in-flight
 cohort plus twice the planned 15-second request count for each window.
-Warmup prompts are included. Staging refuses an undersized pool; after
+Warmup prompts are included. Staging computes the balanced capacity of each
+visit and refuses an undersized pool before server startup; after
 tokenization, the runtime also refuses insufficient balanced pools before
 timing. Exceeding a reserved window budget fails instead of reusing inputs.
 
@@ -333,6 +368,7 @@ prepared asynchronous reads require their own attribution trace.
 
 CPU clocks and residency are synthetic. `TUNE_STUB_RESIDENCY` tests partly
 warm labeling, and `TUNE_STUB_PREFILL_DELAY_SECONDS` tests prefill drain.
+`TUNE_STUB_TOKEN_BYTES=4` exercises varied, more realistic token lengths.
 The CPU stub has one scheduler emitting batched steps for all live requests;
 its standard A/B tests include C8 and C16.
 

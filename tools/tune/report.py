@@ -551,6 +551,8 @@ def ab(run):
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
              'A1 control check: ' + validity.get('a1_control_check', {}).get('status', 'unavailable') + '.',
              validity.get('reason') or '', '',
+             'Timing uses supported paired cells with positive weight. Arm-specific shapes and coverage gaps '
+             'are informational; declared targets and required shapes remain mandatory.', '',
              '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
              '|---|---:|---:|---:|---:|---|---:|']
     if validity['status'] == 'valid':
@@ -618,7 +620,7 @@ def ab(run):
                         lines.append(f"| {key} {name} | {cell['d1']:.2%} | {cell['d2']:.2%} | "
                                      f"{cell['mean']:.2%} | {cell['spread']:.2%} | {cell['verdict']} | {cell['weight']} |")
                     else:
-                        lines.append(f"| {key} {name} | - | - | - | - | {cell['verdict']} | {cell['weight']} |")
+                        lines.append(f"| {key} {name} | - | - | - | - | {cell['verdict']}: {cell.get('reason', '')} | {cell['weight']} |")
                 if any(cell['weight'] > 0 for cell in current.values()):
                     energies[str(c)] = [(row.get('energy') or {}).get('joules_per_token') for row in selected]
             if cold:

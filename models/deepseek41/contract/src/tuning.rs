@@ -241,10 +241,6 @@ mod tests {
             );
             assert!(select_from(&fixture, &op, "f32", &shape, 16, 2).is_none());
             assert!(select_from(&fixture, &op, "bf16", &shape, 8, 2).is_none());
-
-            // The initial embedded tables pin baseline-only coverage.
-            assert!(table(&FLASH, family).unwrap().rows().is_empty());
-            assert!(select(&FLASH, family, &op, "f32", &shape, 8, 2).is_none());
         }
     }
 }

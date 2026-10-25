@@ -414,6 +414,7 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
                 actual, expected,
                 "route piece coverage differs from the envelope"
             );
+            println!("route audit: case_plan_matches=true cases={count}");
             samples
         } else {
             let cases: Vec<_> = cases

@@ -8,6 +8,23 @@ use std::path::PathBuf;
 const MAX_RECEIPT: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
 
+fn capture_identity(
+    build: &str,
+    capture: Option<String>,
+    audit: bool,
+    metadata_only: bool,
+) -> String {
+    let valid = |value: &str| value.len() == 64 && value.bytes().all(|c| c.is_ascii_hexdigit());
+    assert!(valid(build), "invalid audit executable identity");
+    let capture = capture.unwrap_or_else(|| build.into());
+    assert!(valid(&capture), "invalid capture executable identity");
+    assert!(
+        capture == build || (audit && metadata_only),
+        "different builds require an explicit metadata-only audit"
+    );
+    capture
+}
+
 #[derive(Debug)]
 pub(super) struct Pieces {
     directory: PathBuf,
@@ -67,10 +84,24 @@ impl Pieces {
             Some(index)
         };
         // Bind every piece to the exact executable and deterministic case plan.
-        // The runner supplies its SHA256 and never reuses an output directory.
+        // The runner pins its executable. A reviewed metadata-only audit can
+        // read a complete older capture, retaining both executable identities.
         let build = std::env::var("CHOPINFER_ROUTE_BUILD").expect("route executable identity");
-        assert!(build.len() == 64 && build.bytes().all(|c| c.is_ascii_hexdigit()));
-        let identity = format!("{build}:{bundle}:{profile}:{tier:?}:{seed}:{cases}");
+        let capture = capture_identity(
+            &build,
+            std::env::var("CHOPINFER_ROUTE_CAPTURE_BUILD").ok(),
+            index.is_none(),
+            std::env::var("CHOPINFER_ROUTE_METADATA_ONLY").as_deref() == Ok("1"),
+        );
+        if capture != build {
+            println!(
+                "{}",
+                serde_json::json!({"schema": "chopinfer.route-audit.v1",
+                "capture_build_sha256": capture, "audit_build_sha256": build,
+                "metadata_only": true, "expected_cases": cases})
+            );
+        }
+        let identity = format!("{capture}:{bundle}:{profile}:{tier:?}:{seed}:{cases}");
         Some(Self {
             directory,
             index,
@@ -146,5 +177,32 @@ impl Pieces {
             }
         }
         (samples, tags.into_values().collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn different_capture_builds_require_both_audit_mode_and_explicit_metadata_scope() {
+        let build = "a".repeat(64);
+        let capture = "b".repeat(64);
+        assert_eq!(capture_identity(&build, None, false, false), build);
+        for (audit, metadata) in [(false, false), (false, true), (true, false)] {
+            assert!(
+                std::panic::catch_unwind(|| capture_identity(
+                    &build,
+                    Some(capture.clone()),
+                    audit,
+                    metadata
+                ))
+                .is_err()
+            );
+        }
+        assert_eq!(
+            capture_identity(&build, Some(capture.clone()), true, true),
+            capture
+        );
     }
 }

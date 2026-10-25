@@ -32,6 +32,8 @@ class Step:
     # For a required unittest -v run: the skip reasons it may report, as
     # regular expressions. None leaves the exit status alone.
     skips: tuple = None
+    # Drain running steps before starting, then admit no peers until it exits.
+    exclusive: bool = False
 
 
 @dataclasses.dataclass
@@ -168,6 +170,10 @@ def run(steps, jobs, log_dir, keep_going=False, out=None, label="ci", grace=10.0
                         pending.remove(step)
                         continue
                     busy = sum(running[pid][0].weight for pid in running)
+                    if any(item.exclusive for item, _ in running.values()):
+                        break
+                    if step.exclusive and all(state == "ok" for state in states) and running:
+                        break
                     if all(state == "ok" for state in states) and (not running or busy + step.weight <= jobs):
                         pending.remove(step)
                         with _holding_interrupts():
@@ -285,7 +291,8 @@ def _report(step, result, out, label):
         out.write(f"==> {step.name} ({result.status})\n{text}")
         if text and not text.endswith("\n"):
             out.write("\n")
-    out.write(f"{label} {step.name}: {result.seconds:.3f}s (exit {result.exit})\n")
+    out.write(f"{label} {step.name}: {result.seconds:.3f}s (exit {result.exit}) "
+              f"peak_rss_kib={result.max_rss_kib}\n")
     out.flush()
 
 

@@ -22,7 +22,7 @@ DATA_ROOTS = ("CHOPINFER_DATA",)
 # Steps that run the workspace tests under cargo-nextest: `portable-test` unless the
 # run opts out with CHOPINFER_RUST_TEST_RUNNER, the exhaustive comparisons
 # always.
-NEXTEST_STEPS = ("portable-test", "exhaustive-comparisons")
+NEXTEST_STEPS = ("portable-test", "high-memory-tests", "exhaustive-comparisons")
 # The gate's runner when CHOPINFER_RUST_TEST_RUNNER is unset (ci/cpu.py).
 GATE_RUNNER = "nextest"
 GIT_ROUTING = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",

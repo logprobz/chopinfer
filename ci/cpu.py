@@ -108,9 +108,10 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
     qualification_jobs = max(jobs // 6, min(jobs // 2, 4), 1)
     env = os.environ.copy()
 
-    def step(name, argv, after=(), weight=1, skips=None, **variables):
+    def step(name, argv, after=(), weight=1, skips=None, exclusive=False, **variables):
         return runner.Step(name, argv, env={**env, **variables} if variables else None,
-                           cwd=str(ROOT), weight=min(weight, max(jobs // 2, 1)), after=after, skips=skips)
+                           cwd=str(ROOT), weight=min(weight, max(jobs // 2, 1)), after=after, skips=skips,
+                           exclusive=exclusive)
 
     # The reference runner's tests need torch and tapdiff's need numpy, from
     # CHOPINFER_REFRUN_PYTHON (the runner's venv): its check runs first and
@@ -237,6 +238,13 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
              ("portable-build",), weight=4),
         step("portable-test", ["cargo", "run", "-p", "xtask", *LOCKED, "--", "check-portable-test"],
              ("portable-lint",), weight=test_threads, CHOPINFER_CI_TEST_THREADS=str(test_threads),
+             CHOPINFER_CI_MEMORY_PASS="ordinary", CHOPINFER_CI_BINARIES_METADATA=str(work / "binaries.json"),
+             CHOPINFER_CI_JUNIT_DIR=str(work / "junit"),
+             CHOPINFER_RUST_TEST_RUNNER=env.get("CHOPINFER_RUST_TEST_RUNNER") or preflight.GATE_RUNNER),
+        step("high-memory-tests", PY + ["ci/rust_tests.py", "--workspace", "--memory-pass", "high"],
+             ("portable-test",), exclusive=True,
+             CHOPINFER_CI_BINARIES_METADATA=str(work / "binaries.json"),
+             CHOPINFER_CI_JUNIT_DIR=str(work / "junit"),
              CHOPINFER_RUST_TEST_RUNNER=env.get("CHOPINFER_RUST_TEST_RUNNER") or preflight.GATE_RUNNER),
         step("release-gate", ["bash", "ci/qualification.sh", "--jobs", str(qualification_jobs)], readers,
              weight=max(qualification_jobs // 2, 1), CARGO_TARGET_DIR=str(profile), **scoring),
@@ -248,9 +256,9 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
              readers, weight=2),
         step("serve-profiles", PY + ["tests/test_serve_profiles.py"], readers, CARGO_TARGET_DIR=str(profile)),
         step("recurrent-fixture", ["cargo", "test", "-p", "bundle-recurrent-fixture", "--features",
-                                   "fake-host-services", *LOCKED], ("portable-test",), weight=4),
+                                   "fake-host-services", *LOCKED], ("high-memory-tests",), weight=4),
         step("tp4-fixture", ["cargo", "test", "-p", "bundle-tp4-fixture", "--features", "fake-host-services",
-                             *LOCKED], ("portable-test",), weight=4),
+                             *LOCKED], ("high-memory-tests",), weight=4),
         # Reads the kernel build reports in the shared target directory.
         step("kernel-report-integration", PY + ["tests/test_kernel_report_integration.py"],
              fixtures + ("external-model-smoke",), CHOPINFER_KERNEL_REPORT_TARGET=str(target),
@@ -461,7 +469,7 @@ def main(arguments=None):
     args = parser.parse_args(arguments)
     # Retain the old --only spelling for callers selecting the whole portable pass.
     args.only = [phase for name in args.only for phase in (
-        ("portable-build", "portable-lint", "portable-test") if name == "portable" else (name,))]
+        ("portable-build", "portable-lint", "portable-test", "high-memory-tests") if name == "portable" else (name,))]
     target = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
     # The steps only name paths under the work directory; nothing is created.
     shared, independent = steps(target, args.work or pathlib.Path(tempfile.gettempdir()) / "chopinfer-cpu-ci.graph",

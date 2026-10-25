@@ -12,16 +12,55 @@ tests one binary at a time, and the run says so."""
 import argparse
 import json
 import os
+from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
+from xml.etree import ElementTree
 
 import route_sweeps
 
 PINNED = "0.9.146"
 LOCKED = ["--locked", "--offline"]
+# These cases exceed 16 GiB individually. Run them serially after the ordinary
+# pass; cpu.py also reserves the entire gate scheduler while this pass runs.
+HIGH_MEMORY = (
+    ("bundle-glm5next", "fake_host_tests::conformance_tests::serving_startup::tp4_mtp",
+     "The full TP4 MTP startup allocates more than 16 GiB of fake-host state."),
+    ("kernel-lab::gated_kv_write_conformance", "wide_gated_kv_write_cases_validate",
+     "Wide KV oracle buffers exceed 16 GiB alongside the ordinary test pool."),
+)
+
+
+def high_memory(selection):
+    return [entry for entry in HIGH_MEMORY
+            if selection == ["--workspace"] or entry[0].split("::")[0] in selection[1::2]]
+
+
+def memory_filter(entries):
+    return " | ".join(f"(binary_id(={binary}) & test(={name}))" for binary, name, _ in entries)
+
+
+def save_junit(name, since, expected=None):
+    """Keep each pass before nextest overwrites its profile's report."""
+    source = Path(__file__).resolve().parents[1] / "target/nextest/ci/junit.xml"
+    if not source.is_file() or source.stat().st_mtime < since:
+        if expected is not None or os.environ.get("CHOPINFER_CI_JUNIT_DIR"):
+            raise ValueError("high-memory tests produced no current JUnit report")
+        return
+    if expected is not None:
+        cases = ElementTree.parse(source).getroot().iter("testcase")
+        actual = [(case.get("classname"), case.get("name")) for case in cases]
+        if sorted(actual) != sorted((binary, test) for binary, test, _ in expected):
+            raise ValueError("high-memory JUnit identities differ from the declared cases")
+    if directory := os.environ.get("CHOPINFER_CI_JUNIT_DIR"):
+        destination = Path(directory)
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination / (name + ".xml"))
 
 
 def nextest_version():
@@ -53,11 +92,16 @@ def one_process_libraries(selection, packages=None):
     return declared if selection == ["--workspace"] else [name for name in declared if name in selection[1::2]]
 
 
-def commands(selection, runner, threads, profile="ci", one_process=(), binaries_metadata=None, skip_routes=False):
+def commands(selection, runner, threads, profile="ci", one_process=(), binaries_metadata=None, skip_routes=False,
+             skip_high_memory=False, route_tests=()):
     """The commands that run `selection` (["--workspace"] or -p pairs).
     Library tests of the `one_process` packages are left out of nextest."""
     if runner == "cargo":
-        return [["cargo", "test", *selection, *LOCKED, *(["--", "--skip", "route_sweep::"] if skip_routes else [])]]
+        skipped = (list(route_tests) if skip_high_memory else ["route_sweep::"] if skip_routes else []) + (
+            [name for _, name, _ in high_memory(selection)] if skip_high_memory else [])
+        return [["cargo", "test", *selection, *LOCKED,
+                 *(["--", *(["--exact"] if skip_high_memory else []),
+                    *[arg for name in skipped for arg in ("--skip", name)]] if skipped else [])]]
     # The metadata already names the built selection; nextest refuses Cargo
     # build options when reusing it. Doctests still use the original selection.
     build_selection = [] if binaries_metadata else selection
@@ -68,6 +112,8 @@ def commands(selection, runner, threads, profile="ci", one_process=(), binaries_
     excluded = [f"binary_id(={name})" for name in one_process]
     if skip_routes:
         excluded.append("test(/route_sweep::/)")
+    if skip_high_memory and (entries := high_memory(selection)):
+        excluded.append(memory_filter(entries))
     if excluded:
         run += ["-E", "not (" + " | ".join(excluded) + ")"]
     doc = selection if selection == ["--workspace"] else [
@@ -123,23 +169,25 @@ def library_binaries(selection, names, packages, metadata_path):
     return binaries
 
 
-def run_nextest(selection, threads):
+def run_nextest(selection, threads, skip_high_memory=False):
     """Nextest, one-process libraries beside or before it, then doctests."""
     packages = workspace_packages()
     one_process = one_process_libraries(selection, packages)
     serial_libraries = os.environ.get("CHOPINFER_CI_SERIAL_LIBRARIES") == "1"
     routes = route_sweeps.libraries(selection, packages)
-    run, *doc = commands(selection, "nextest", threads, one_process=one_process, skip_routes=bool(routes))
+    run, *doc = commands(selection, "nextest", threads, one_process=one_process, skip_routes=bool(routes),
+                         skip_high_memory=skip_high_memory)
     children = []
     with tempfile.TemporaryDirectory(prefix="chopinfer-rust-tests-") as logs:
         try:
             route_status = 0
             if one_process or routes:
                 # Reuse the listed build so Cargo cannot replace a running test's executable.
-                metadata = os.path.join(logs, "binaries.json")
+                metadata = os.environ.get("CHOPINFER_CI_BINARIES_METADATA") or os.path.join(logs, "binaries.json")
                 binaries = library_binaries(selection, sorted(set(one_process) | set(routes)), packages, metadata)
                 run = commands(selection, "nextest", threads, one_process=one_process,
-                               binaries_metadata=metadata, skip_routes=bool(routes))[0]
+                               binaries_metadata=metadata, skip_routes=bool(routes),
+                               skip_high_memory=skip_high_memory)[0]
                 route_status = route_sweeps.run({name: binaries[name] for name in routes},
                                                os.environ.get("CHOPINFER_ROUTE_SWEEP", "quick"))
                 for name in one_process:
@@ -147,11 +195,20 @@ def run_nextest(selection, threads):
                     log = open(os.path.join(logs, name + ".log"), "w+b")
                     when = "before" if serial_libraries else "beside"
                     print(f"rust tests: {name} library tests in one process {when} nextest", file=sys.stderr, flush=True)
-                    children.append((name, subprocess.Popen([binary, *(["--skip", "route_sweep::"] if routes else [])], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                    # --skip is a substring filter unless --exact is set:
+                    # tp4_mtp alone would also remove tp4_mtp_k5 and DCP tests.
+                    skipped = (route_test_names(binary, cwd, env) if routes and skip_high_memory
+                               else ["route_sweep::"] if routes else []) + (
+                        [test for owner, test, _ in high_memory(selection) if owner == name]
+                        if skip_high_memory else [])
+                    children.append((name, subprocess.Popen([binary, *(["--exact"] if skip_high_memory else []),
+                                                            *[arg for test in skipped for arg in ("--skip", test)]], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                                             stdout=log, stderr=subprocess.STDOUT), log))
                     if serial_libraries:
                         children[-1][1].wait()
+            began = time.time()
             status = subprocess.run(run).returncode
+            save_junit("portable-test", began)
             failed = [" ".join(run)] if status else []
             if route_status:
                 failed.append("route envelopes")
@@ -204,10 +261,17 @@ def cargo_route_binaries(names, packages):
     return binaries
 
 
+def route_test_names(binary, cwd, env):
+    output = subprocess.check_output([binary, "route_sweep::", "--list"], cwd=cwd, env=env, text=True)
+    return [line.removesuffix(": test") for line in output.splitlines() if line.endswith(": test")]
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", action="store_true")
     parser.add_argument("-p", "--package", action="append", default=[])
+    parser.add_argument("--memory-pass", choices=("all", "ordinary", "high"),
+                        default=os.environ.get("CHOPINFER_CI_MEMORY_PASS", "all"))
     parser.add_argument("--runner", choices=("auto", "nextest", "cargo"),
                         default=os.environ.get("CHOPINFER_RUST_TEST_RUNNER", "auto"))
     parser.add_argument("--test-threads", type=int, default=int(os.environ.get("CHOPINFER_CI_TEST_THREADS", "16")),
@@ -216,22 +280,70 @@ def main(arguments=None):
     if args.workspace == bool(args.package):
         parser.error("select --workspace or packages with -p")
     selection = ["--workspace"] if args.workspace else [item for name in args.package for item in ("-p", name)]
-    return run(selection, args.runner, args.test_threads)
+    return run(selection, args.runner, args.test_threads, args.memory_pass)
 
 
-def run(selection, requested, threads):
+def run_high_memory(selection, runner):
+    entries = high_memory(selection)
+    if not entries:
+        return 0
+    results = []
+    for index, (binary, name, reason) in enumerate(entries):
+        print(f"high-memory test: {binary} {name}: {reason}", flush=True)
+        if runner == "nextest":
+            metadata = os.environ.get("CHOPINFER_CI_BINARIES_METADATA")
+            command = ["cargo", "nextest", "run", "--profile", "ci", "--test-threads", "1",
+                       "--no-tests", "fail", "-E", memory_filter([(binary, name, reason)])]
+            command += (["--binaries-metadata", metadata] if metadata and Path(metadata).is_file()
+                        else [*selection, *LOCKED])
+        else:
+            package, _, target = binary.partition("::")
+            command = ["cargo", "test", "-p", package, *(["--test", target] if target else ["--lib"]),
+                       *LOCKED, name, "--", "--exact", "--test-threads=1"]
+        began = time.time()
+        started = time.monotonic()
+        with tempfile.TemporaryFile(mode="w+") as log:
+            child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            _, status, usage = os.wait4(child.pid, 0)
+            child.returncode = os.waitstatus_to_exitcode(status)
+            log.seek(0)
+            output = log.read()
+        print(output, end="", flush=True)
+        code = child.returncode
+        if runner == "nextest":
+            save_junit(f"high-memory-{index}", began, expected=[(binary, name, reason)])
+        elif "test result: ok. 1 passed; 0 failed; 0 ignored;" not in output:
+            code = code or 1
+        result = {"binary": binary, "name": name, "reason": reason, "exit": code,
+                  "seconds": time.monotonic() - started, "max_rss_kib": usage.ru_maxrss,
+                  "cpu_seconds": usage.ru_utime + usage.ru_stime}
+        results.append(result)
+        print("high-memory result: " + json.dumps(result), flush=True)
+    if directory := os.environ.get("CHOPINFER_CI_JUNIT_DIR"):
+        Path(directory).parent.joinpath("high-memory-results.json").write_text(json.dumps(results, indent=2) + "\n")
+    return int(any(result["exit"] for result in results))
+
+
+def run(selection, requested, threads, memory_pass="all"):
     runner, note = choose(requested)
     print(note, file=sys.stderr, flush=True)
+    if memory_pass == "high":
+        return run_high_memory(selection, runner)
     if runner == "nextest":
-        return run_nextest(selection, threads)
-    packages = workspace_packages()
-    routes = route_sweeps.libraries(selection, packages)
-    route_status = route_sweeps.run(cargo_route_binaries(routes, packages),
-                                   os.environ.get("CHOPINFER_ROUTE_SWEEP", "quick"))
-    status = subprocess.run(commands(selection, runner, threads, skip_routes=bool(routes))[0]).returncode
-    status = status or route_status
-    if status:
-        print(f"rust tests: cargo test failed with exit {status}", file=sys.stderr)
+        status = run_nextest(selection, threads, skip_high_memory=True)
+    else:
+        packages = workspace_packages()
+        routes = route_sweeps.libraries(selection, packages)
+        binaries = cargo_route_binaries(routes, packages)
+        route_status = route_sweeps.run(binaries,
+                                       os.environ.get("CHOPINFER_ROUTE_SWEEP", "quick"))
+        route_tests = [name for binary, cwd, env in binaries.values() for name in route_test_names(binary, cwd, env)]
+        status = subprocess.run(commands(selection, runner, threads, skip_routes=bool(routes),
+                                         skip_high_memory=True, route_tests=route_tests)[0]).returncode or route_status
+        if status:
+            print(f"rust tests: cargo test failed with exit {status}", file=sys.stderr)
+    if memory_pass == "all":
+        status = run_high_memory(selection, runner) or status
     return status
 
 

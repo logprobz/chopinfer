@@ -543,6 +543,10 @@ pub fn selection(
             owners.push((fold_local_rows::CUBIN.into(), geometry.id));
             owners.push((fold_cluster::CUBIN.into(), geometry.id));
             owners.push((fold_fused::CUBIN.into(), geometry.id));
+            owners.push((fold_verify::CUBIN.into(), geometry.id));
+            owners.push((fold_verify_local::CUBIN.into(), geometry.id));
+            owners.push((f32_verify::CUBIN.into(), geometry.id));
+            owners.push((moe_router64::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
             owners.push((dspark_projection::CUBIN.into(), geometry.id));
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));

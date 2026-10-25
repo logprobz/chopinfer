@@ -77,6 +77,11 @@ impl Fixture {
 
     /// Preserve each captured row's selected-key order while seeding its KV.
     pub fn with_compressed_keys(case: Case, entry: &Entry, captured: Option<&[u32]>) -> Self {
+        Self::with_seed(case, entry, captured, 0)
+    }
+
+    /// Distinct rank fixtures keep the same layout and key-order contracts.
+    pub fn with_seed(case: Case, entry: &Entry, captured: Option<&[u32]>, seed: u64) -> Self {
         assert!(case.context > 0 && case.inactive <= case.rows());
         let kernel_core::latent_attention::LatentAttentionQuery::Attention {
             heads,
@@ -103,7 +108,7 @@ impl Fixture {
         let page_stride = page * (WIDTH / 2 + WIDTH / 16) + usize::from(case.holes);
         let code_stride = SLOTS * WIDTH + if case.holes { 2 } else { 0 };
         let scale_stride = SLOTS * WIDTH / 32 + if case.holes { 3 } else { 0 };
-        let mut rng = Rng(0x6bcd_48a2_1994_5119 ^ case.context as u64);
+        let mut rng = Rng(0x6bcd_48a2_1994_5119 ^ case.context as u64 ^ seed);
         let mut window_keys = vec![u32::MAX; rows * 128];
         if let Some(keys) = captured {
             assert_eq!(keys.len(), rows * budget);

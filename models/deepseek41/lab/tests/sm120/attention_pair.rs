@@ -8,6 +8,8 @@ use candidate as latent_scheduled;
 mod cache;
 #[path = "attention_pair/cache_catalog.rs"]
 mod cache_catalog;
+#[path = "attention_pair/cache_narrow.rs"]
+mod cache_narrow;
 #[path = "attention_pair/captured_replay.rs"]
 mod captured_replay;
 #[path = "attention_pair/decode.rs"]

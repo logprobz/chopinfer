@@ -249,3 +249,60 @@ profiles, workloads and output lengths on an idle host and GPUs. Report
 paired timings and variability, not a best run. Shared-device results are
 diagnostic only. [Tracing and profiling](operations-observability.md#trace-a-slow-request)
 helps locate the cost; profiling bypasses do not qualify release artifacts.
+
+### Step-time acceptance
+
+Use the in-tree `tools/tune` `mode: ab` for the following paired method.
+Arm A is the baseline and arm B is the candidate. Only served full-graph
+timing of the affected bucket decides adoption. Pair-lab kernel timings
+with an in-job A/A help locate work to improve.
+
+- Use sampled coding and chat prompts at temperature 1.0.
+- Visit A1, B1, B2, A2 in that order, with 15-second measured windows.
+  A1/B1 share one seed set and B2/A2 share another. Each DSpark visit runs
+  in a fresh process borrowing the weight keeper, so learned acceptance
+  state cannot carry between visits. Assert zero cached prompt tokens in
+  measured windows.
+- Record major faults per visit and SM clocks per window. A visit with more
+  than 1,000 major faults is invalid and must be rerun before a verdict.
+- Report each cell and weight cells by served shapes: decode C1, C2, C4,
+  C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
+
+Report full-graph step times and paired served rates. In the formulas below,
+A1, B1, B2 and A2 are higher-is-better rates; use inverse step time when
+judging a step-time reduction. For each cell, compute:
+
+```text
+d1 = B1 / A1 - 1
+d2 = B2 / A2 - 1
+mean = (d1 + d2) / 2
+spread = abs(d1 - d2)
+```
+
+A speedup is resolved only when d1 and d2 have the same sign and the mean
+exceeds the spread. A new table row or variant also needs a mean of at least
+1.5% in its target cells. Reject a simplification (a removed row, merged
+variant or deleted path) if any weighted cell has both d1 and d2 negative
+and a mean below `-max(spread, 0.5%)`. Keep cell verdicts separate so a gain
+elsewhere cannot hide that regression. An A1/A2 or B1/B2 comparison counts
+as A/A only when both visits used identical seeds and prompts.
+
+### Power and energy
+
+Power limits and clocks are operator-controlled. Never set, lock or assume
+them. Every timed job records each GPU's enforced power limit and SM clocks
+at the start and end of the job and each visit. Limits may differ between
+GPUs and between jobs, but each GPU's limit must stay constant within one
+job. A job whose limits change mid-run is void: rerun it and never pool its
+measurements with valid jobs.
+
+Tuning tables, profiles and depth schedules are never keyed by power or
+clock. A candidate whose gain plausibly comes from power-cap behavior,
+such as lower draw without less work, needs a second verdict at a different
+limit before adoption. The operator controls that limit too.
+
+Check energy (J/token) separately from the speed verdict, and compare it
+only between arms under identical per-GPU power limits. A J/token increase
+vetoes adoption only when it exceeds 3% and agrees in sign across the
+concurrencies where the candidate is active; otherwise report it as
+informational. Energy does not replace the timing or bitwise gates.

@@ -33,13 +33,13 @@ import collections
 import json
 import re
 from common import git, need, unique
-from engine import ALLOC, Unproven, launch, render, require
+from engine import ALLOC, KERNEL_SYMBOL, Unproven, launch, render, require
 import history
 
 SCHEMA = 'chopinfer.journal-proof.layout.v1'
 FIELDS = {'schema', 'description', 'modules', 'resources', 'collectives', 'kernels', 'text_journals'}
 CONFIG_FIELDS = ('flags', 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_memory_bytes')
-SYMBOL = re.compile(r'chop_\w+')
+SYMBOL = re.compile(KERNEL_SYMBOL)
 LITERAL = re.compile(r'(?:Scalar)?(?:U32|U64|I32|F32)\([-+0-9.e]+\)|NullDevicePointer')
 SPAN = re.compile(r'DeviceBufferSpanV1 \{ buffer: BundleDeviceBufferHandleV1 \{ raw: (\d+) \}, offset: (\d+), length: (\d+) \}')
 LAYOUT_FIELDS = {'planes', 'from_stride', 'to_stride', 'from_tail', 'to_tail'}

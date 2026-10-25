@@ -598,6 +598,14 @@ class LayoutTests(unittest.TestCase):
                 layout.parse(json.dumps(decl).encode())
         layout.parse(json.dumps(declaration()).encode())
 
+    def test_namespaced_symbols_work_in_every_declaration_field(self):
+        decl = declaration()
+        decl['modules']['added'][1]['configures'] = {F32: [4096]}
+        decl['kernels'][0]['cases'][0]['then']['symbol'] = SPLIT
+        bare = json.dumps(decl)
+        expected = json.loads(json.dumps(layout.parse(bare.encode())).replace('chop_', 'family_chop_'))
+        self.assertEqual(layout.parse(bare.replace('chop_', 'family_chop_').encode()), expected)
+
     def test_committed_declarations_parse(self):
         # Each model's declarations (README, Layout declarations).
         for path in sorted(Path(__file__).resolve().parents[2].glob('models/*/journal-changes/*.json')):

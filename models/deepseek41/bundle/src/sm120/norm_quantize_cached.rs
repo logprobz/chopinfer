@@ -33,8 +33,12 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// Select only the measured Flash decode buckets.
 pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
-        backend.with_rmsnorm_quantize_cached(entry(g), vec![(1, 32), (8, 32)])
+        backend.with_rmsnorm_quantize_cached(entry(g), buckets())
     } else {
         backend
     }
+}
+
+pub(crate) fn buckets() -> Vec<(u32, u32)> {
+    vec![(1, 32), (8, 32)]
 }

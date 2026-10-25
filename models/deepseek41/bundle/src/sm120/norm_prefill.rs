@@ -47,6 +47,10 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
     if g != &FLASH {
         return Ok(backend);
     }
-    let entry = entries()?.pop().expect("cached prefill norm");
+    let entry = selected()?;
     Ok(backend.with_rmsnorm_quantize(entry.reference))
+}
+
+pub(crate) fn selected() -> Result<Entry, String> {
+    Ok(entries()?.pop().expect("cached prefill norm"))
 }

@@ -56,7 +56,11 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     baseline_quantizers(g, ranks)?
         .into_iter()
         .try_fold(backend, |backend, entry| {
-            let warps = if entry.query.width >= 8192 { 16 } else { 8 };
+            let warps = selected_warps(entry.query.width);
             Ok(backend.with_block_quantize(prefill(entry, warps)?))
         })
+}
+
+pub(crate) fn selected_warps(width: u32) -> u32 {
+    if width >= 8192 { 16 } else { 8 }
 }

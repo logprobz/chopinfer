@@ -45,7 +45,7 @@ pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
 
 /// Flash TP4 includes the target intermediate in its wide verify forms.
 /// Other topologies retain their target decode and drafter row limits.
-fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
+pub(crate) fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
     if g.id == FLASH.id && ranks == 4 {
         return CAPACITY;
     }
@@ -119,7 +119,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 
 /// Preserve generic expert-chain selection while exposing wide entries
 /// to explicit callers. Direct wide gates quantize in their own finisher.
-pub(super) fn registered_quantizers(
+pub(crate) fn registered_quantizers(
     g: &Geometry,
     ranks: u32,
 ) -> Result<Vec<block_quantize::Entry>, String> {

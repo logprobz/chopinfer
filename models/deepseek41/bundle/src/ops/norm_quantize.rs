@@ -6,6 +6,10 @@ use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;
 use model_deepseek41_contract::{rows, serving::DECODE_BATCH};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
+pub(crate) fn small_selected(phase: Phase) -> bool {
+    matches!(phase, Phase::Decode(2 | 4))
+}
+
 pub(crate) struct NormQuantizeOps {
     input: Prepared<RmsNormQuantizeBuffers<View>>,
     query: Prepared<RmsNormQuantizeBuffers<View>>,
@@ -73,7 +77,7 @@ impl NormQuantizeOps {
     }
 
     fn selected(&self, query: bool, phase: Phase) -> &Prepared<RmsNormQuantizeBuffers<View>> {
-        if matches!(phase, Phase::Decode(2 | 4))
+        if small_selected(phase)
             && let Some(ops) = &self.small_decode
         {
             return &ops[usize::from(query)];

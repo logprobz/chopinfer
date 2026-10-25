@@ -16,8 +16,13 @@ impl crate::Kernels {
             Sm120::new()
                 .with_rmsnorm_quantize(input.reference.clone())
                 .with_rmsnorm_quantize(query.reference.clone())
-                .with_rmsnorm_quantize_cached(input, vec![(2, 32), (4, 32)])
-                .with_rmsnorm_quantize_cached(query, vec![(2, 16), (4, 16)]),
+                .with_rmsnorm_quantize_cached(input, Self::small_norm_buckets(false))
+                .with_rmsnorm_quantize_cached(query, Self::small_norm_buckets(true)),
         ))
+    }
+
+    pub(crate) fn small_norm_buckets(query: bool) -> Vec<(u32, u32)> {
+        let warps = if query { 16 } else { 32 };
+        vec![(2, warps), (4, warps)]
     }
 }

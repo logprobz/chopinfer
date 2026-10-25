@@ -4,23 +4,6 @@ use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 use kernels_sm120::gemm::mxfp8_fold_direct::Schedule;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
-// SM120, 250 W, 2026-10-19: five interleaved rounds, two devices.
-// Both event and exclusive medians must beat 0.97 in cold and prefetched
-// modes. Columns: N, K, groups, paired, rows, schedule. Comments give the
-// worst event and exclusive ratios across both devices and cache modes.
-// Unlisted buckets retain their previous route; look-ahead is not enabled.
-#[rustfmt::skip]
-const WINS: &[(u32, u32, u32, bool, u32, Schedule)] = &[
-    (1024, 4096, 8, false, 1, Schedule::LocalSplit), // 0.956522, 0.937594
-    (16384, 1280, 1, false, 1, Schedule::Block),     // 0.929609, 0.909898
-    (2304, 5120, 1, true, 1, Schedule::LocalSplit), // 0.883165, 0.854890
-    (2304, 5120, 1, true, 2, Schedule::LocalSplit), // 0.942042, 0.918974
-    (25600, 6144, 1, false, 32, Schedule::Block),   // 0.884943, 0.882732
-    (25600, 6144, 1, false, 64, Schedule::Block),   // 0.807655, 0.808057
-    (5120, 2048, 1, false, 1, Schedule::LocalSplit), // 0.900000, 0.857708
-    (5120, 2048, 1, false, 2, Schedule::LocalSplit), // 0.900000, 0.885081
-];
-
 pub fn selected(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> Option<Schedule> {
     match previous::tuning_row(
         g,

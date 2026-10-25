@@ -14,7 +14,7 @@ use model_deepseek41_contract::{admission, geometry::Geometry, projections};
 use projection_spec::ProjectionKind;
 use projection_spec::derive::{Topology, rank_selection};
 use std::collections::BTreeMap;
-use std::ops::{Range, RangeInclusive};
+use std::ops::Range;
 
 #[path = "mxfp8_compact.rs"]
 pub mod compact;
@@ -205,18 +205,6 @@ pub fn routed_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery 
         ..query
     }
 }
-
-// Flash SM120, 250 W, 2026-10-19: ticket timings were within 3% of the
-// split-fold baseline on both GPUs. Prefer the baseline for these ties.
-// Each row is (N, K, row-count ranges); all are single projections at G=1.
-// These are Flash measurements only, not performance evidence for another
-// geometry with the same matrix dimensions. Both paths preserve exact arithmetic.
-const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
-    (16384, 1280, &[3..=4, 7..=11]),
-    (5120, 1152, &[1..=2, 9..=16]),
-    (5120, 576, &[1..=28]),
-    (8192, 1280, &[1..=2, 5..=12, 16..=16]),
-];
 
 /// The accepted ticket baseline: split folds for measured ties and the
 /// TP2 one/two-row regression. The lab also uses this to compare candidates.
@@ -667,4 +655,25 @@ pub fn tuning_count(row: &kernel_build::tuning::Row, name: &str) -> u32 {
         .get(name)
         .and_then(|v| v.count())
         .unwrap_or_else(|| panic!("{}: missing count {name}", row.key))
+}
+
+/// Iterate measured rows without retaining a second registration list.
+pub fn status_rows(op: &str, bucket: u32) -> impl Iterator<Item = u32> + '_ {
+    model_deepseek41_contract::tuning::table(
+        &model_deepseek41_contract::geometry::FLASH,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+    )
+    .into_iter()
+    .flat_map(|table| table.rows())
+    .filter(move |row| {
+        row.key.op == op
+            && row.key.weights == "mxfp8"
+            && row.key.bucket == bucket
+            && row.key.shape.len() == 1
+            && row.key.shape.get("ranks") == Some(&4)
+    })
+    .flat_map(|row| {
+        let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+        first..=last
+    })
 }

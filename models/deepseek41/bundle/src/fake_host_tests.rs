@@ -2396,7 +2396,7 @@ fn assert_small_row_ceil_bindings(lines: &[String]) {
         .filter_map(|e| crate::sm120::ceil_cached::cached(&e))
         .map(|e| e.symbol)
         .chain(
-            crate::sm120::fold_fused::ROWS
+            crate::sm120::fold_fused::rows()
                 .iter()
                 .filter_map(|&rows| crate::sm120::fold_fused::sliced(rows))
                 .map(|q| q.symbol),

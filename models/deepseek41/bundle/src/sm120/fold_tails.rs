@@ -10,11 +10,6 @@
 use kernels_sm120::gemm::mxfp8_fold_cluster_fused::Entry;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
-pub(crate) const ROWS: [u32; 32] = [
-    3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    31, 35, 40, 45, 50, 55, 60,
-];
-
 /// The wide modules also serve drafter rows in default verify-32 profiles.
 pub(crate) fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
@@ -41,5 +36,5 @@ pub(crate) fn cluster(id: &str, rows: u32) -> Option<Entry> {
 
 /// Exact tail rows in table order, including the measured gaps.
 pub(crate) fn rows() -> Vec<u32> {
-    (1..=64).filter(|&rows| tile(rows).is_some()).collect()
+    super::mxfp8_fold::status_rows("dense_fold.status_tails.decode", 64).collect()
 }

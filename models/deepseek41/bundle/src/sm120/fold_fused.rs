@@ -1,6 +1,6 @@
 //! Folds that admit rows by status for Flash TP4's 1-, 2-, 4-, 8-, 16- and
 //! 32-row decode and verify buckets: WQ_a, WKV, WO_a and WO_b on their
-//! cluster schedules (`fold_cluster::SERVED`) without the admission launch,
+//! cluster schedules from the tuning table without the admission launch,
 //! WO_a quantizing WO_b's input in its merge after the row-sliced
 //! 8192-column quantizer (`row/ceil_sliced.cuh`), WO_b failing rows by
 //! status and WO_a's block flags, and WQ_b's row-local fold on 48-column
@@ -78,8 +78,6 @@ use kernels_sm120::gemm::{
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_fused";
 pub const CUBIN: &str = "mxfp8_fold_fused_deepseek41_sm120";
-/// The row buckets every fused fold serves.
-pub const ROWS: [u32; 6] = [1, 2, 4, 8, 16, 32];
 /// The row tiles the cubin holds, each with its folds and quantizer.
 pub const TILES: [u32; 2] = [16, 32];
 /// The projections whose served cluster fold a fused twin replaces.
@@ -89,11 +87,6 @@ pub const CLUSTER: [&str; 4] = [
     "attention.o-a",
     "attention.o-b",
 ];
-/// Tile rows, slices per row and warps per slice of WO_a's input
-/// quantizer.
-pub const SLICED: &[(u32, u32, u32)] = &[(16, 32, 8), (32, 16, 8)];
-/// WQ_b's wide fold at every bucket: column tile and folds in flight.
-pub const WIDE: (u32, u32) = (48, 4);
 /// WO_a's input: the rank's heads, BF16.
 const ATTENTION: u32 = 8192;
 
@@ -280,5 +273,5 @@ mod tests {
 
 /// Exact launch rows represented by the status-fold table.
 pub fn rows() -> Vec<u32> {
-    (1..=32).filter(|&rows| tile(rows).is_some()).collect()
+    super::mxfp8_fold::status_rows("dense_fold.status.decode", 32).collect()
 }

@@ -54,7 +54,7 @@ impl FusedFold for StatusFold {
     }
 }
 
-/// WO_a's row-sliced input quantizer (`fold_fused::SLICED`), whose rejected
+/// WO_a's row-sliced input quantizer (the status-fold table), whose rejected
 /// rows only a status fold may follow.
 struct SlicedQuantizer(Quantizer);
 

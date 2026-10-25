@@ -31,16 +31,16 @@ pub fn served(id: &str, rows: u32) -> Option<Entry> {
 }
 
 pub fn entry(id: &str) -> Option<Entry> {
-    let (n, k, groups, tile_n, splits, stages, pending, quantize) = match id {
-        "attention.q-a" => (1280, 5120, 1, 64, 8, 5, 0, false),
-        "attention.kv" => (512, 5120, 1, 16, 8, 5, 0, false),
-        "attention.o-a" => (1024, 4096, 2, 64, 8, 3, 0, true),
-        "attention.o-b" => (5120, 2048, 1, 32, 2, 4, 64, false),
+    let (n, k, groups, pending, quantize) = match id {
+        "attention.q-a" => (1280, 5120, 1, 0, false),
+        "attention.kv" => (512, 5120, 1, 0, false),
+        "attention.o-a" => (1024, 4096, 2, 0, true),
+        "attention.o-b" => (5120, 2048, 1, 64, false),
         _ => return None,
     };
     let (tile_n, splits, stages) = if id == "attention.kv" {
         // This lab descriptor is not a served wide status route.
-        (tile_n, splits, stages)
+        (16, 8, 5)
     } else {
         let op = format!("dense_fold.{}_status.verify", id.replace(['.', '-'], "_"));
         let tuning = super::mxfp8_fold::status_tuning(&op, 64, 64)?;

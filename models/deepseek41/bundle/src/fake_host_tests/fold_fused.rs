@@ -79,7 +79,7 @@ fn run_counts(kv: KvLayout, counts: &[u64], verify_tails: bool) -> Run {
             // Decode pads item counts to powers of two. Verify preserves
             // each exact row count, including the odd and balanced tails.
             batches.extend(
-                fold_tails::ROWS
+                fold_tails::rows()
                     .into_iter()
                     .filter(|&rows| rows <= 32)
                     .map(|rows| {
@@ -373,8 +373,8 @@ struct Fold {
 }
 
 fn admitted(id: &str, rows: u32) -> bool {
-    fold_fused::ROWS.contains(&rows)
-        || id != "attention.kv" && rows <= 32 && fold_tails::ROWS.contains(&rows)
+    fold_fused::rows().contains(&rows)
+        || id != "attention.kv" && rows <= 32 && fold_tails::rows().contains(&rows)
 }
 
 fn tile(rows: u32) -> u32 {
@@ -782,7 +782,7 @@ fn status_fold_tails_preserve_operands_and_zeroing_producers() {
         .iter()
         .map(|&rows| (format!("decode {rows}"), rows))
         .chain(
-            fold_tails::ROWS
+            fold_tails::rows()
                 .into_iter()
                 .filter(|&rows| rows <= 32)
                 .map(|rows| (format!("verify {rows}"), u64::from(rows))),

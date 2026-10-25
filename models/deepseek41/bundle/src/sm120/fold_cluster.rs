@@ -10,10 +10,6 @@ use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_cluster::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_cluster";
 pub const CUBIN: &str = "mxfp8_fold_cluster_deepseek41_sm120";
-/// Projection, rows, N, K, groups, column tile, splits (cluster CTAs),
-/// folds in flight.
-pub type Served = (&'static str, u32, u32, u32, u32, u32, u32, u32);
-
 // SM120, 300 W, 2026-10-22: graph replay against the served fold of each
 // bucket, warm medians in us on two devices. q-a 16: 12.0/12.9 -> 9.6/8.9.
 // q-a 32: 16.0/16.0 -> 11.8/11.7. kv 16: 9.9/10.0 -> 7.7/7.6. kv 32:
@@ -24,17 +20,6 @@ pub type Served = (&'static str, u32, u32, u32, u32, u32, u32, u32);
 // verify operands, and its SASS equals the measured lab entry's.
 // Other buckets keep their route; these rows come before
 // `fold_local_rows::SERVED`.
-#[rustfmt::skip]
-pub const SERVED: &[Served] = &[
-    ("attention.q-a", 16, 1280, 5120, 1, 32, 8, 5),
-    ("attention.q-a", 32, 1280, 5120, 1, 64, 8, 5),
-    ("attention.kv", 16, 512, 5120, 1, 16, 8, 5),
-    ("attention.kv", 32, 512, 5120, 1, 16, 8, 5),
-    ("attention.o-a", 16, 1024, 4096, 2, 32, 8, 4),
-    ("attention.o-a", 32, 1024, 4096, 2, 64, 8, 3),
-    ("attention.o-b", 16, 5120, 2048, 1, 32, 2, 4),
-    ("attention.o-b", 32, 5120, 2048, 1, 32, 2, 4),
-];
 
 fn entry(rows: u32, n: u32, k: u32, groups: u32, tile_n: u32, splits: u32, stages: u32) -> Entry {
     let base = super::mxfp8_fold::prefill_entries(&FLASH, 4)
@@ -58,19 +43,22 @@ fn entry(rows: u32, n: u32, k: u32, groups: u32, tile_n: u32, splits: u32, stage
     }
 }
 
-/// Each distinct entry `SERVED` names.
+/// Each distinct cluster descriptor, in the original cubin order.
 pub fn entries() -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
-    for &(_, rows, n, k, groups, tile_n, splits, stages) in SERVED {
-        let e = entry(rows, n, k, groups, tile_n, splits, stages);
-        if !entries.iter().any(|old| old.symbol() == e.symbol()) {
-            entries.push(e);
+    for id in super::fold_fused::CLUSTER {
+        let op = format!("dense_fold.{}_cluster.decode", id.replace(['.', '-'], "_"));
+        for rows in super::mxfp8_fold::status_rows(&op, 32) {
+            let e = served(id, rows).expect("table row has a cluster descriptor");
+            if !entries.iter().any(|old| old.symbol() == e.symbol()) {
+                entries.push(e);
+            }
         }
     }
     entries
 }
 
-/// The entry `SERVED` names for projection `id` at `rows` rows.
+/// The measured cluster descriptor for this projection and launch row.
 pub fn served(id: &str, rows: u32) -> Option<Entry> {
     let q = query(id)?;
     let op = format!("dense_fold.{}_cluster.decode", id.replace(['.', '-'], "_"));

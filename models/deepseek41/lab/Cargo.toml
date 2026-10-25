@@ -110,4 +110,4 @@ path = "tests/sm120/norm_small_rows/main.rs"
 
 [[example]]
 name = "build_family"
-path = "examples/build_family.rs"
+path = "examples/sm120/build_family.rs"

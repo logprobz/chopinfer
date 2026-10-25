@@ -1,0 +1,43 @@
+//! Lab recipe modules and retained qualification controls.
+#![allow(dead_code)]
+use super::bundle::{latent, latent_scheduled as candidate};
+#[path = "../../../tests/sm120/attention_pair/probe.rs"]
+pub mod attention_probe;
+#[path = "../../../tests/sm120/attention_pair/cache_catalog.rs"]
+pub mod cache_catalog;
+#[path = "../../../tests/sm120/ceil_cached/catalog.rs"]
+pub mod ceil_cached;
+#[path = "../../../sm120/compact_dense.rs"]
+pub mod compact_dense;
+#[path = "../../../tests/sm120/finish_norm_registration.rs"]
+pub mod finish_norm_registration;
+#[path = "../../../sm120/fold_bandwidth.rs"]
+pub mod fold_bandwidth;
+#[path = "../../../sm120/fold_cluster.rs"]
+pub mod fold_cluster;
+#[path = "../../../sm120/fold_core.rs"]
+pub mod fold_core;
+#[path = "../../../sm120/fold_deep.rs"]
+pub mod fold_deep;
+#[path = "../../../sm120/fold_fused.rs"]
+pub mod fold_fused;
+#[path = "../../../sm120/fold_local_rows.rs"]
+pub mod fold_local_rows;
+#[path = "../../../sm120/fold_plain.rs"]
+pub mod fold_plain;
+#[path = "../../../tests/sm120/attention_pair/grouped_cache.rs"]
+pub mod grouped_cache;
+#[path = "../../../tests/sm120/hc_prefill_fused/catalog.rs"]
+pub mod hc_prefill_fused;
+#[path = "../../../tests/sm120/hc_prefill_warp/catalog.rs"]
+pub mod hc_prefill_warp;
+#[path = "../../../tests/sm120/indexer_prefill_probe.rs"]
+pub mod indexer_prefill_probe;
+#[path = "../../../tests/sm120/norm_query_cached/catalog.rs"]
+pub mod norm_query_cached;
+#[path = "../../../sm120/packed_serving.rs"]
+pub mod packed_serving;
+#[path = "../../../sm120/projection_zero.rs"]
+pub mod projection_zero;
+#[path = "../../../sm120/router_norm.rs"]
+pub mod router_norm;

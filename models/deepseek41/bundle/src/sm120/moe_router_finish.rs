@@ -28,12 +28,32 @@ pub(super) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     if DISABLED.get() {
         return false;
     }
+    if small_gap(set, phase, rows) {
+        return true;
+    }
     match (set.count, set.top_k, phase) {
         (384, 6, ExecutionPhase::Decode) => [1, 8, 16, 32].contains(&rows),
         (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
         (128, 3, ExecutionPhase::Decode) => rows == 1,
         _ => false,
     }
+}
+
+// Additional TP4 backbone widths qualified as complete MoE graphs. The
+// verify tails also admit direct gate/down stages, so their measured gain
+// belongs to the whole MoE. Existing Verify-8 keeps its v1 finisher.
+pub(super) fn small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    #[cfg(test)]
+    if BASE_ADMISSION.get() {
+        return false;
+    }
+    set.count == 384
+        && set.top_k == 6
+        && matches!(
+            (phase, rows),
+            (ExecutionPhase::Decode, 2 | 4)
+                | (ExecutionPhase::Verify, 2 | 3 | 5 | 7 | 9..=15 | 17..=31)
+        )
 }
 
 pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows: u32) -> bool {
@@ -76,6 +96,9 @@ pub(super) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows:
 // gate starts early, and the pair gains 0.25 ms per C8 cycle and 0.29 ms per
 // C32 cycle (the finish saves 0.34 ms at C32; same profile, 2026-10-21).
 pub(super) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    if small_gap(set, phase, rows) {
+        return true;
+    }
     qualified(set, phase, rows)
         && matches!(
             (set.count, set.top_k, phase, rows),
@@ -230,6 +253,22 @@ pub(crate) fn without_fusion<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
+thread_local! { static BASE_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// Recover the previous selection for lifecycle audits without changing kernels.
+#[cfg(test)]
+pub(crate) fn with_base_admission<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BASE_ADMISSION.set(self.0);
+        }
+    }
+    let _restore = Restore(BASE_ADMISSION.replace(true));
+    f()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use bundle_runtime::geometry::Ranks;
@@ -240,10 +279,17 @@ mod tests {
             let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
             for set in moe::expert_sets(&FLASH) {
                 let ops = super::super::moe_direct::prepare_set(&shape, set).unwrap();
+                if ranks == Ranks::TP4 && set.count == 384 {
+                    for rows in 2..=32 {
+                        assert!(ops.iter().any(|(phase, n, op)| {
+                            *phase == ExecutionPhase::Verify && *n == rows && op.fuses_router()
+                        }));
+                    }
+                }
                 for (phase, rows, op) in ops {
                     let wanted = match (set.count, phase) {
-                        (384, ExecutionPhase::Decode) => [1, 8, 16, 32].contains(&rows),
-                        (384, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
+                        (384, ExecutionPhase::Decode) => [1, 2, 4, 8, 16, 32].contains(&rows),
+                        (384, ExecutionPhase::Verify) => (2..=32).contains(&rows),
                         (128, ExecutionPhase::Decode) => rows == 1,
                         _ => false,
                     };
@@ -253,8 +299,8 @@ mod tests {
                     let r2 = set.count == 384
                         && matches!(
                             (phase, rows),
-                            (ExecutionPhase::Decode, 1 | 8 | 16 | 32)
-                                | (ExecutionPhase::Verify, 4 | 6 | 16 | 32)
+                            (ExecutionPhase::Decode, 1 | 2 | 4 | 8 | 16 | 32)
+                                | (ExecutionPhase::Verify, 2..=7 | 9..=32)
                         );
                     let finishes = op
                         .info
@@ -282,9 +328,9 @@ mod tests {
                     );
                 }
                 assert_eq!(qualified(set, ExecutionPhase::Verify, 4), set.count == 384);
-                assert!(!qualified(set, ExecutionPhase::Decode, 4));
+                assert_eq!(qualified(set, ExecutionPhase::Decode, 4), set.count == 384);
                 assert!(!qualified(set, ExecutionPhase::Prefill, 4));
-                for rows in [0, 2, 3, 5, 7, 12, 24, 48, 64, 192, 512, 8192] {
+                for rows in [0, 33, 48, 64, 192, 512, 8192] {
                     for phase in [
                         ExecutionPhase::Decode,
                         ExecutionPhase::Verify,

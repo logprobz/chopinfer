@@ -57,6 +57,7 @@ mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
 mod query_window;
+mod router_gaps;
 mod router_prefill;
 mod scale_banks;
 mod scratch_regions;

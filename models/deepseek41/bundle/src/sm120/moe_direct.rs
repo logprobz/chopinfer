@@ -31,6 +31,12 @@ fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)>
     } else {
         out.extend((33..=maximum_verify_rows.min(63)).map(|rows| (Verify, rows)));
     }
+    for rows in 2..=32 {
+        if super::moe_router_finish::small_gap(set, Verify, rows) && !out.contains(&(Verify, rows))
+        {
+            out.push((Verify, rows));
+        }
+    }
     out
 }
 

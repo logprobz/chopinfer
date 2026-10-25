@@ -455,6 +455,16 @@ Step and request logs are not replay inputs; they omit token contents.
   The new scopes read clocks only while step tracing is enabled. They add
   no device synchronization and do not change tokens or event order.
 
+The served A/B tuner records per-window clocks, per-visit major faults and
+job/visit enforced power limits. A changing limit voids the whole job.
+Its [cold Engram workload](depth-tuning.md#cold-engram-workload) pairs an
+acknowledged mapped-row control epoch with file-page advice and `mincore`
+residency. Cache reset and page-table release do not evict file pages.
+Residual residency is reported as partly warm. The window also retains
+`host.mapped_gather_us` from step.v1, TTFT and prefill execution times;
+`mapped_gather_us` covers synchronous gathers and is not a complete measure
+of prepared asynchronous gathers. These fields can overlap other host phases.
+
 ## Inspect sampled steps
 
 Set `CHOPINFER_STEP_PROFILE_EVERY=N` before startup to sample every Nth engine

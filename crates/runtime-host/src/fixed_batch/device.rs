@@ -327,7 +327,8 @@ fn replay_installed_trace_gpu() -> Result<()> {
 /// The native host entry uses this same recorder so content proofs bind to
 /// the executable that plans weights and replays the trace.
 pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
-    let config: Config = serde_json::from_reader(File::open(configuration)?)?;
+    let configuration_bytes = std::fs::read(configuration)?;
+    let config: Config = serde_json::from_slice(&configuration_bytes)?;
     let temperature = config.temperature.unwrap_or(0.8);
     runtime_sampling::SamplingParameters::new(temperature)?;
     // One distinct ordinal per rank.
@@ -625,6 +626,14 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         );
         return Ok(());
     }
+    eprintln!(
+        "startup fixed_batch_identity: {}",
+        json!({"schema":"chopinfer.fixed-batch-identity.v1",
+            "source_commit":env!("CHOPINFER_BUILD_REVISION"),
+            "binary_sha256":crate::weight_keeper::content::producer_sha256()?,
+            "configuration":configuration,
+            "configuration_sha256":runtime_weights::sha256_bytes(&configuration_bytes)})
+    );
     if config.owned {
         let control: Value = serde_json::from_reader(File::open(
             config

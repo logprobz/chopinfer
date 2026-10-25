@@ -69,6 +69,7 @@ pub mod norm_quantize;
 pub mod norm_quantize_cached;
 pub mod norm_quantize_tiles;
 pub mod norm_query_cached;
+mod norm_small_decode;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
@@ -331,6 +332,9 @@ impl crate::Kernels {
             .backend
             .route_tags();
         tags.extend(wide_routes::catalogue(shape).expect("qualified wide route metadata"));
+        if let Some(backend) = Self::small_decode_norm_backend(shape) {
+            tags.extend(backend.route_tags());
+        }
         if f32_zero::selected(
             shape.geometry,
             shape.ranks(),

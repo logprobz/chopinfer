@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn small_decode_norms_use_cached_serving_entries() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    for slot in 0..4 {
+        step(
+            &mut instance,
+            &prompt(slot + 1, slot, 0, 3, true),
+            &mut Views::default(),
+        );
+    }
+    let mut ends = [3; 4];
+    for count in [2, 4] {
+        let from = host.device.journal.borrow().len();
+        let items = (0..count)
+            .map(|slot| (slot + 1, slot, ends[slot as usize], 9))
+            .collect::<Vec<_>>();
+        step(&mut instance, &decode(&items), &mut Views::default());
+        let journal = host.device.journal.borrow();
+        let launches = journal[from..]
+            .iter()
+            .filter(|line| line.starts_with("launch "))
+            .collect::<Vec<_>>();
+        for (kind, per_layer) in [("input", 2), ("query", 1)] {
+            let prefix = format!("chop_norm_quantize_deepseek41_{kind}_cached");
+            assert_eq!(
+                launches
+                    .iter()
+                    .filter(|line| line.contains(&prefix))
+                    .count(),
+                FLASH.layers() as usize * shape.ranks() as usize * per_layer,
+                "Decode-{count} {kind} norm did not select the qualified cached entry"
+            );
+            let fallback = format!("chop_norm_quantize_deepseek41_{kind}_v1 ");
+            assert!(launches.iter().all(|line| !line.contains(&fallback)));
+        }
+        for end in &mut ends[..count as usize] {
+            *end += 1;
+        }
+    }
+    instance.destroy().unwrap();
+}
+
 /// The journal prints each bound span even when two planner IDs name the
 /// same storage. Compare physical ranges, not planner handles.
 fn spans(line: &str) -> Vec<(u64, u64, u64)> {

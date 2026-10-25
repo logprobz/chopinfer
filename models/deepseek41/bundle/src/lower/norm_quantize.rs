@@ -19,13 +19,9 @@ impl Lowering<'_> {
         if self.finish_norm_was_fused(phase, layer, sublayer)? {
             return Ok(Some(Vec::new()));
         }
-        ops.launch(
-            false,
-            phase.rows(),
-            self.input_norm_views(phase, layer, sublayer)?,
-        )
-        .map(Some)
-        .map_err(|e| format!("input norm quantize of layer {layer}: {e}"))
+        ops.launch(false, phase, self.input_norm_views(phase, layer, sublayer)?)
+            .map(Some)
+            .map_err(|e| format!("input norm quantize of layer {layer}: {e}"))
     }
 
     pub(super) fn input_norm_views(
@@ -65,7 +61,7 @@ impl Lowering<'_> {
         let row = |span| rows(span, phase.rows());
         ops.launch(
             true,
-            phase.rows(),
+            phase,
             RmsNormQuantizeBuffers {
                 input: row(s.query_a),
                 weight: self

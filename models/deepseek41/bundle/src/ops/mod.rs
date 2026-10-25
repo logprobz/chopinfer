@@ -210,7 +210,12 @@ impl Ops {
             &mut missing,
             &names,
             "fused norm",
-            norm_quantize::NormQuantizeOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            norm_quantize::NormQuantizeOps::prepare(
+                kernels.backend.as_ref(),
+                shape,
+                &asks,
+                expert_set.count == shape.geometry.shape.moe.experts,
+            ),
         );
         let norm_prefill = if shape.geometry == &model_deepseek41_contract::geometry::FLASH {
             family(

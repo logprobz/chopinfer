@@ -1247,6 +1247,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// record through typed handle bijections and rejects mutated operands,
 /// launch geometry, retained bindings and missing lifecycle operations.
 /// TP1 and TP2 remain byte-identical.
+/// The cached small-decode norms change exactly 320 input and 160 query
+/// launches in each TP4 history, only their symbol, grid and block width.
+/// `lab/audit_norm_small_rows.py` verifies every other byte, the complete
+/// handle tables and eight mutation controls against the prior pinned history.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1273,12 +1277,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77575, 0x5fea922ff08b9517),
+        (77575, 0xacfd53c6ca99fe31),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75979, 0x5f2932c8be9b0823),
+        (75979, 0x3a2f0a60c34638dd),
     ),
 ];
 

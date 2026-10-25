@@ -1426,8 +1426,8 @@ phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n1280_k5120_g1_f32_v2_initialize_v2"
 symbol = "chop_deepseek41_mxfp8_ticket_n1280_k5120_g1_f32_v2_initialize_v2"
-rows = [[30, 30]]
-reason = "Known-gap ratchet: projection_reuse::choice qualifies only selected inner-row counts. Five-position drafter sub-batches and verification tails select the original split, prefetch or ticket stages at these exact enclosing verify widths; the follow-up must qualify the missing inner-row ranges and delete this entry"
+rows = [[26, 26], [28, 28], [30, 30]]
+reason = "Known-gap ratchet: projection_reuse::choice qualifies only selected inner-row counts. Balanced 13- and 14-item drafter batches contain seven-item chunks (35 block rows), while 15 items retain the same seven-item tail. These chunks and verification tails select the original split, prefetch or ticket stages at these exact enclosing verify widths; the follow-up must qualify the missing inner-row ranges and delete this entry"
 task = "MXFP8-fold-verify-tails"
 
 [[allow]]
@@ -1436,8 +1436,8 @@ phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_ticket_n1280_k5120_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_ticket_n1280_k5120_g1_f32_v2_packed_v1"
-rows = [[30, 30]]
-reason = "Known-gap ratchet: projection_reuse::choice qualifies only selected inner-row counts. Five-position drafter sub-batches and verification tails select the original split, prefetch or ticket stages at these exact enclosing verify widths; the follow-up must qualify the missing inner-row ranges and delete this entry"
+rows = [[26, 26], [28, 28], [30, 30]]
+reason = "Known-gap ratchet: projection_reuse::choice qualifies only selected inner-row counts. Balanced 13- and 14-item drafter batches contain seven-item chunks (35 block rows), while 15 items retain the same seven-item tail. These chunks and verification tails select the original split, prefetch or ticket stages at these exact enclosing verify widths; the follow-up must qualify the missing inner-row ranges and delete this entry"
 task = "MXFP8-fold-verify-tails"
 
 [[allow]]
@@ -2079,3 +2079,13 @@ symbol = "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1"
 rows = [[65, 96], [129, 160], [193, 224], [257, 288], [321, 352], [385, 416], [449, 480], [513, 544], [577, 608], [641, 672], [705, 736], [769, 800], [833, 864], [897, 928], [961, 992], [1025, 1056], [1089, 1120], [1153, 1184], [1217, 1248], [1281, 1312], [1345, 1376], [1409, 1440], [1473, 1504], [1537, 1568], [1601, 1632], [1665, 1696], [1729, 1760], [1793, 1824], [1857, 1888], [1921, 1952], [1985, 2016]]
 reason = "Known-gap ratchet: execute::skip clips the final 64-aligned cone to the prompt end. Its 1 through 32 row tails select hc::SPLIT_ROWS rather than the exact-row sinkhorn prefill choices. These outer intervals retain the original split mixer until the tail range is qualified; full-prefill profiles have no repeated cone tails"
 task = "HC-prefill-cone-tails"
+
+[[allow]]
+profiles = ["tp4-ar", "tp4-ar-full-prefill", "tp4-ar-upper-skip-2048", "tp4-dspark", "tp4-dspark-full-prefill", "tp4-dspark-upper-skip-2048"]
+phase = "decode"
+family = "sinkhorn_round_chain"
+entry = "sinkhorn_round_chain/chain-fallback/chop_deepseek41_hc_round_expand_mix_partials_v1"
+symbol = "chop_deepseek41_hc_round_expand_mix_partials_v1"
+rows = [[2, 2], [4, 4]]
+reason = "The standalone rounded-chain producer is qualified at decode rows 1 and 8; rows 2 and 4 retain its original partial producer"
+task = "HC-round-chain-decode-2-4"

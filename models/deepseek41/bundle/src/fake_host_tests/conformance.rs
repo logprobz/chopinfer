@@ -345,6 +345,17 @@ impl conformance::Startup for Served {
         }
         envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
         envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        if serving.draft_tokens > 0 {
+            // Exercise direct 9-12-item drafts and balanced 9+8, 12+12 and
+            // 9+8+8 partitions. The existing 32-item wave runs 11+11+10.
+            envelope.decode_buckets.extend(
+                [9, 10, 11, 12, 17, 24, 25]
+                    .into_iter()
+                    .filter(|&items| items <= serving.sequences),
+            );
+            envelope.decode_buckets.sort_unstable();
+            envelope.decode_buckets.dedup();
+        }
         envelope
     }
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
@@ -557,6 +568,28 @@ impl conformance::Startup for Served {
     fn assert_released(&self) {
         assert_host_released(&self.observed, &self.host, &self.serving.profile);
     }
+}
+
+#[test]
+fn route_envelopes_cover_balanced_drafter_partitions() {
+    use conformance::Startup;
+    let mut profiles = 0;
+    for serving in Served::servings().iter().filter(|s| s.draft_tokens > 0) {
+        profiles += 1;
+        assert_eq!(
+            serving.model_options[model_deepseek41_contract::dspark_options::DRAFT_CHUNK_ITEMS],
+            "12"
+        );
+        let envelope = Served::envelope(serving);
+        for items in [9, 10, 11, 12, 17, 24, 25, 32] {
+            assert!(
+                envelope.decode_buckets.contains(&items),
+                "{}: missing balanced drafter witness with {items} items",
+                serving.profile
+            );
+        }
+    }
+    assert_eq!(profiles, 3);
 }
 
 #[test]

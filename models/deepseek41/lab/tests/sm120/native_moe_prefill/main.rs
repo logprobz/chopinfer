@@ -22,7 +22,6 @@ mod pipeline;
 mod probe;
 mod synthetic;
 mod timing;
-mod tune;
 
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::gated_mlp::GatedMlpProjection;

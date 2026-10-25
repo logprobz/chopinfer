@@ -56,7 +56,7 @@ def ab_fixture(root, **overrides):
     for visit in tune.visits(config):
         repeat = visit['passes'][0][0]
         for _, c in visit['passes'][0][1]:
-            rate = 100 if visit['arm'] == 'a' else 110
+            rate = 100 if visit['arm'] == model['arms'][0]['label'] else 110
             row = {'arm': visit['arm'], 'visit': visit['visit'], 'repeat': repeat, 'kind': 'sampled',
                    'concurrency': c, 'depth': 3, 'request_tokens_per_second': rate,
                    'priming': priming_fixture(c), 'replacement_submissions': 1, 'prefill_share': .01,
@@ -107,7 +107,7 @@ class Tuner(unittest.TestCase):
             tune.r.write(root / 'config.json', config)
             out = report.ab(root)['weighted']['a/b']
             self.assertTrue(out['timing_accepted'])
-            self.assertEqual(out['coverage_gaps'], ['c8/i8-r16'])
+            self.assertEqual(out['coverage_gaps'], [])
             config['model']['required_shapes'] = {'8': ['i8-r16']}
             tune.r.write(root / 'config.json', config)
             with self.assertRaisesRegex(ValueError, 'required shape'):
@@ -121,6 +121,57 @@ class Tuner(unittest.TestCase):
             self.assertEqual(out['pairs']['a/b']['8']['cells']['i8-r8']['weight'], 1)
             self.assertTrue(out['weighted']['a/b']['timing_accepted'])
             self.assertIn('Coverage gaps:', (root / 'ab.md').read_text())
+
+    def test_speedup_ignores_incidental_and_arm_specific_shapes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ab_fixture(root, target_cells=['decode:c8', 'c8/i8-r32'])
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                if row['arm'] == 'a' or row['repeat'] == 0:
+                    row['cells']['i8-r16'] = {'cycle_ms': [20], 'execution_ms': []}
+                    row['cells']['i8-r64'] = {'cycle_ms': [20] * 20, 'execution_ms': []}
+                tune.r.write(path, row)
+            result = report.ab(root)
+            self.assertTrue(result['weighted']['a/b']['timing_accepted'])
+            self.assertEqual(result['weighted']['a/b']['coverage_gaps'], ['c8/i8-r64'])
+            self.assertEqual(result['pairs']['a/b']['8']['cells']['i8-r16']['verdict'], 'informational')
+
+            base = json.loads((HERE.parents[1] / 'models/deepseek41/depth-tune.json').read_text())
+            model = {**base, **base['jobs']['confidence-ab-decode'], 'tensor_parallel_size': 1}
+            # Recreate the repository job with resolved throughput gains and
+            # the disjoint decode/verify shapes its two arms serve.
+            import shutil
+            for path in root.iterdir():
+                shutil.rmtree(path) if path.is_dir() else path.unlink()
+            config, _ = ab_fixture(root, **model)
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                c = row['concurrency']
+                width = c if row['arm'] == 'd0' else 2 * c
+                row['cells'] = {f'i{c}-r{width}': {'cycle_ms': [20] * 50, 'execution_ms': []}}
+                tune.r.write(path, row)
+            result = report.ab(root)
+            self.assertTrue(result['weighted']['d0/d1-conf0']['timing_accepted'])
+            cell = result['pairs']['d0/d1-conf0']['8']['cells']['i8-r8']
+            self.assertEqual((cell['verdict'], cell['reason']), ('informational', 'arm-specific shape'))
+            for requirement in ({'target_cells': ['c8/i8-r8']}, {'required_shapes': {'8': ['i8-r8']}}):
+                with self.subTest(requirement=requirement):
+                    tune.r.write(root / 'config.json', {**config, 'model': {**model, **requirement}})
+                    with self.assertRaisesRegex(ValueError, 'target|required shape'):
+                        report.ab(root)
+
+    def test_cell_weight_keys_are_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for key in ('verify:32', 'decode:c7', 'decode_step:c0', 'c8/i7-r32', 'c7/i7-r32', 'verify:r0'):
+                with self.subTest(key=key):
+                    ab_fixture(root, cell_weights={key: 0})
+                    with self.assertRaisesRegex(ValueError, 'cell weight'):
+                        report.ab(root)
+            ab_fixture(root, cell_weights={'decode:c8': 2, 'decode_step:c8': 0, 'verify:r32': 3, 'c8/i8-r32': 4})
+            result = report.ab(root)['weighted']['a/b']
+            self.assertEqual(result['weight'], 6)
 
     def test_time_share_can_admit_a_rare_but_expensive_cell(self):
         rows = [{'request_seconds': 15, 'cells': {'i8-r16': {'cycle_ms': [1000]}}} for _ in range(4)]

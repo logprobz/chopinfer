@@ -448,22 +448,36 @@ def decision_cells(model, selected, c, change):
         values = [row.get(shape, []) for row in normalized]
         counts = [len(v) for v in values]
         shares = [sum(v) / (row['request_seconds'] * 1000) for v, row in zip(values, selected)]
-        enough = all(n >= minimum or (share is not None and fraction >= share)
-                     for n, fraction in zip(counts, shares))
-        paired_shape = all(counts) and len(selected) == 4
-        eligible = items == c and paired_shape and enough
+        supported = [n >= minimum or (share is not None and fraction >= share)
+                     for n, fraction in zip(counts, shares)]
+        paired_shape = len(selected) == 4 and all(supported)
+        eligible = items == c and paired_shape
         cell = {'steps': counts, 'time_share': shares, 'nominal_weight': nominal,
-                'weight': nominal if eligible else 0, 'decision': eligible and nominal > 0}
+                'supported': supported, 'weight': nominal if eligible else 0, 'decision': eligible and nominal > 0}
         if shape in required and not eligible:
             raise ValueError(f'required shape {shape} is missing, unpaired or insufficiently sampled')
-        if not paired_shape:
-            cell.update(verdict='unmatched', reason='coverage gap')
-        elif not eligible:
+        if items != c or not any(supported):
             cell.update(verdict='informational', reason='insufficient full-concurrency steps or time share')
+        elif supported in ([True, False, False, True], [False, True, True, False]):
+            cell.update(verdict='informational', reason='arm-specific shape')
+        elif not paired_shape:
+            cell.update(verdict='unmatched', reason='coverage gap')
         else:
             cell.update(paired([1 / median(v) for v in values], change))
         result[shape] = cell
     return result
+
+
+def validate_cell_weights(model):
+    concurrencies = set(model['concurrencies'])
+    for key, weight in model.get('cell_weights', {}).items():
+        decode = re.fullmatch(r'decode(?:_step)?:c([1-9]\d*)', key)
+        verify = re.fullmatch(r'verify:r([1-9]\d*)', key)
+        shape = re.fullmatch(r'c([1-9]\d*)/i([1-9]\d*)-r([1-9]\d*)', key)
+        valid = (decode and int(decode[1]) in concurrencies) or verify or (
+            shape and int(shape[1]) in concurrencies and shape[1] == shape[2])
+        if not valid or type(weight) not in (int, float) or not math.isfinite(weight) or weight < 0:
+            raise ValueError(f'invalid served cell weight: {key}')
 
 
 def cold_report(selected):
@@ -492,10 +506,9 @@ def ab(run):
              '|---|---:|---:|---:|---:|---|---:|']
     if validity['status'] == 'valid':
         model = config['model']
-        if (any(not isinstance(w, (int, float)) or not math.isfinite(w) or w < 0
-                for w in model.get('cell_weights', {}).values())
-                or not set(model.get('required_shapes', {})) <= {str(c) for c in model['concurrencies']}):
-            raise ValueError('invalid served cell weights or target concurrencies')
+        validate_cell_weights(model)
+        if not set(model.get('required_shapes', {})) <= {str(c) for c in model['concurrencies']}:
+            raise ValueError('invalid target concurrencies')
         change = model.get('change', 'speedup')
         if change not in ('speedup', 'simplification', 'variant', 'table_row'):
             raise ValueError('unknown A/B change class')
@@ -575,8 +588,7 @@ def ab(run):
                     raise ValueError('no weighted target cells')
                 total = sum(weight for weight, _ in decisions)
                 regression = any(cell['verdict'] == 'resolved regression' for _, cell in decisions)
-                timing = not regression and (change == 'simplification' or
-                         (not gaps and all(cell['accepted'] for cell in targets)))
+                timing = not regression and (change == 'simplification' or all(cell['accepted'] for cell in targets))
                 out['weighted'][key] = {'mean': sum(weight * cell['mean'] for weight, cell in decisions) / total,
                     'cells': len(decisions), 'weight': total, 'coverage_gaps': gaps, 'timing_accepted': timing,
                     'verdict': 'resolved regression' if regression else 'resolved gain' if

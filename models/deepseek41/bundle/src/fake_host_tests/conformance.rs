@@ -353,6 +353,20 @@ impl conformance::Startup for Served {
                     .into_iter()
                     .filter(|&items| items <= serving.sequences),
             );
+            // Uniform depth-three heads and both neighboring full-path bounds.
+            for items in 1..=9_usize {
+                if items <= serving.sequences as usize
+                    && 4 * items <= serving.verify_rows() as usize
+                {
+                    envelope
+                        .verify
+                        .push(runtime_bundle_sdk::warmup::VerifyShape {
+                            row_bucket: 4 * items,
+                            item_bucket: items,
+                            drafts: vec![3; items],
+                        });
+                }
+            }
             envelope.decode_buckets.sort_unstable();
             envelope.decode_buckets.dedup();
         }

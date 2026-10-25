@@ -1238,8 +1238,8 @@ phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
 symbol = "chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
-rows = [[9, 15], [17, 31]]
-reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. instance::dspark::batch splits at eight items, and partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception"
+rows = [[9, 15], [17, 32]]
+reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. Partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception. The uniform depth-three C8 witness also reaches enclosing width 32 with the full five-position baseline"
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]
@@ -1248,8 +1248,8 @@ phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
 symbol = "chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
-rows = [[9, 15], [17, 31]]
-reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. instance::dspark::batch splits at eight items, and partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception"
+rows = [[9, 15], [17, 32]]
+reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. Partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception. The uniform depth-three C8 witness also reaches enclosing width 32 with the full five-position baseline"
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]
@@ -1258,8 +1258,8 @@ phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
 symbol = "chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
-rows = [[9, 15], [17, 31]]
-reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. instance::dspark::batch splits at eight items, and partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception"
+rows = [[9, 15], [17, 32]]
+reason = "dspark_projection::route admits five-row drafter multiples from 35 through 60. Partial drafter sub-batches at these enclosing verify widths use the original cached router; qualify those short sub-batches before removing this exception. The uniform depth-three C8 witness also reaches enclosing width 32 with the full five-position baseline"
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]

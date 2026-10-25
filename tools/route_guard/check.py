@@ -169,8 +169,10 @@ def check(args):
         elif kinds and kinds != {'Fast'}:
             tag = tags[0]
             print(f"{tag['class']} family={tag['family']} symbol={symbol} launches={count} device_ns={ns}")
-            if selected_symbols[symbol] < required[symbol] and not all(allowed(t, allow, profile, args.phase, args.rows, active) for t in tags):
-                failures.append(symbol)
+            if selected_symbols[symbol] < required[symbol]:
+                covered = [allowed(t, allow, profile, args.phase, args.rows, active) for t in tags]
+                if not all(covered):
+                    failures.append(symbol)
     for entry, count in sorted(selected.items()):
         if entry not in entries:
             raise EvidenceError(f'step entry missing from classes: {entry}')

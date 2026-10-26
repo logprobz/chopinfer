@@ -32,3 +32,12 @@ additions therefore use the supported added-journal spec, bound to the
 candidate commit as described above. A declared addition authenticates a new
 fixture against its source pin; it does not claim equivalence to a fixture
 that did not exist at the base.
+
+The DSpark fixture includes the adopted verify-allocation startup check,
+indexed-retention storage and early-Engram resources. These add 168 lifecycle
+operations to this new fixture: 49 allocations, eight symbol resolves, four
+startup launches, 20 uploads, six events, one stream, four synchronizations,
+four mapped-gather releases and 72 resource releases. Existing launch order,
+grids, scalar arguments, offsets and lengths are unchanged after removing
+opaque handle labels for the diagnostic comparison. The AR fixture is
+unchanged. This pin audit does not replace the sealed journal proof.

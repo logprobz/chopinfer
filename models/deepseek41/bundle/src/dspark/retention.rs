@@ -18,11 +18,11 @@ pub(crate) fn enabled() -> bool {
     #[cfg(test)]
     return ENABLED.get();
     #[cfg(not(test))]
-    std::env::var_os("CHOPINFER_DSPARK_INDEXED_RETENTION").is_some_and(|value| value == "1")
+    std::env::var_os("CHOPINFER_DSPARK_INDEXED_RETENTION").is_none_or(|value| value == "1")
 }
 
 #[cfg(test)]
-thread_local! { static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
 
 #[cfg(test)]
 pub(crate) fn with_enabled<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

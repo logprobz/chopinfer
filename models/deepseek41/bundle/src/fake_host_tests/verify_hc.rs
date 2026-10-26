@@ -170,13 +170,16 @@ use super::*;
 // Early Engram preparation adds five buffers, one stream and two gather
 // handles. The six verify bodies and every retained full-history operation
 // stay identical under the ordered resource map.
+// Indexed retention adds a 768-byte metadata buffer per rank. These
+// fixtures keep scalar prefill commits and stop before a verify commit;
+// every retained operation is identical under the ordered resource map.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xb4737f7550f49c97)),
-    (6, (8040, 0x0a62ceac5b24f8b3)),
-    (8, (7720, 0x6a04786eb7d646ef)),
-    (12, (8216, 0x3a974c0fef0db0f8)),
-    (16, (8052, 0xc142e68f2dbe8bc2)),
-    (32, (7744, 0xb468317469c865a2)),
+    (4, (7880, 0x46da1eeb13966b77)),
+    (6, (8040, 0xe01aeeb91641bafb)),
+    (8, (7720, 0x341c8156d6dc626d)),
+    (12, (8216, 0xe96a98bf424a6b96)),
+    (16, (8052, 0xc33c46e880a17ace)),
+    (32, (7744, 0x9f3d7588537b3b60)),
 ];
 
 #[test]

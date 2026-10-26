@@ -1,0 +1,582 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Adopt indexed DSpark retention. Each of the six TP4 verify fixtures adds one 768-byte metadata allocation per rank during creation. Their prefill commits retain scalar copies and their pinned verify steps do not commit, so every retained operation and all locked modules remain unchanged.",
+ "handles": {
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    {
+     "name": "retention_allocation_0",
+     "kind": "allocation",
+     "at": 488,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       768,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_1",
+     "kind": "allocation",
+     "at": 995,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       768,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_2",
+     "kind": "allocation",
+     "at": 1502,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       768,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "retention_allocation_3",
+     "kind": "allocation",
+     "at": 2009,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 768 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       768,
+       256,
+       4294967301
+      ]
+     ]
+    }
+   ]
+  }
+ }
+}

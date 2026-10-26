@@ -1,12 +1,11 @@
 #pragma once
-#include "mxfp8_fold_local_deep.cuh"
+#include "fold_rows.cuh"
+#include "mxfp8_fold_admit.cuh"
 #include "mxfp8_fold_packed.cuh"
 
-// mxfp8_fold_local_rows::run and run_deep, verbatim but for their column
-// tiles: any multiple of eight columns up to 64 (one warp per eight), so a
-// 48-column tile covers Flash TP4's 8192 WQ_b columns with 171 CTAs, one per
-// SM, where 32-column tiles put two CTAs on 68 of the 188 SMs. Every output
-// column's folds, MMAs and ordered sum are unchanged.
+// Row-local folds on eight-column multiples through 64 columns. The pair
+// loop and the refilling ring keep four K32 MMAs per fold and add the
+// partials in increasing K order. Admission is a separate shared entry.
 //
 // PackedWeights reads weight codes stored as mxfp8-fold-packed-8x128-v1
 // (mxfp8_fold_packed.cuh). A strip's fold is 1024 contiguous bytes whose

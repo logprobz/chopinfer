@@ -199,10 +199,10 @@ impl Entry {
         let q = self.base.query;
         let ticket = mxfp8_fold_ticket::Entry::new(q, self.symbol(), false).unwrap();
         let mut specs = ticket.specs();
-        let ns = "chop::gemm::mxfp8_fold_local_rows";
+        let ns = "chop::gemm::mxfp8_fold_local_wide";
         specs[0].symbol = format!("{}_admit_v1", self.symbol());
         specs[0].body = format!(
-            "{ns}::admit<{},{},{},{},false>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
+            "chop::gemm::mxfp8_fold_admit::admit<{},{},{},{},false>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
             q.k, q.groups, q.activation_row_stride, q.activation_group_stride
         );
         specs[1].max_threads = self.tile_n * 4;
@@ -249,11 +249,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: if entries.iter().any(|e| e.stages > 0) {
-            vec!["#include \"gemm/mxfp8_fold_local_deep.cuh\"".into()]
-        } else {
-            vec!["#include \"gemm/mxfp8_fold_local_rows.cuh\"".into()]
-        },
+        headers: vec!["#include \"gemm/mxfp8_fold_local_wide.cuh\"".into()],
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),
     })
@@ -373,7 +369,7 @@ mod tests {
         let spec = cubin_spec("deep", std::slice::from_ref(&e)).unwrap();
         assert_eq!(
             spec.headers,
-            ["#include \"gemm/mxfp8_fold_local_deep.cuh\""]
+            ["#include \"gemm/mxfp8_fold_local_wide.cuh\""]
         );
         e.stages = 0;
         assert!(e.validate().is_err());

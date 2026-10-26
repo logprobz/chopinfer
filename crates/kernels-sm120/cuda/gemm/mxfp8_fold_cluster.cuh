@@ -1,6 +1,6 @@
 #pragma once
 #include "fold_rows.cuh"
-#include "mxfp8_fold_local_rows.cuh"
+#include "mxfp8_fold_admit.cuh"
 #include "../common/ptx_control.cuh"
 
 namespace chop::gemm::mxfp8_fold_cluster {

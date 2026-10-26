@@ -252,7 +252,7 @@ impl Entry {
         let mut specs = ticket.specs();
         specs[0].symbol = format!("{}_admit_v1", self.symbol());
         specs[0].body = format!(
-            "chop::gemm::mxfp8_fold_local_rows::admit<{},{},{},{},false>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
+            "chop::gemm::mxfp8_fold_admit::admit<{},{},{},{},false>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
             q.k, q.groups, q.activation_row_stride, q.activation_group_stride
         );
         specs[1].max_threads = self.tile_n * 4;

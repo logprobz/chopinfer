@@ -116,7 +116,6 @@ mod mxfp8_fold_stream;
 mod mxfp8_fold_ticket;
 mod mxfp8_prefill;
 mod mxfp8_prefill_compact;
-mod mxfp8_prefill_matrix;
 mod mxfp8_prefill_tma_matrix;
 mod mxfp8_prefill_tma_scales;
 mod mxfp8_rows;
@@ -262,9 +261,9 @@ pub struct Sm120 {
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
-    mxfp8_prefill_compacts: Vec<(crate::gemm::mxfp8_prefill_compact::Entry, u32)>,
-    mxfp8_prefill_matrices: Vec<(crate::gemm::mxfp8_prefill_matrix::Entry, u32)>,
-    mxfp8_prefill_tma_matrices: Vec<(crate::gemm::mxfp8_prefill_tma_matrix::Entry, u32)>,
+    mxfp8_prefill_compacts: Vec<(crate::gemm::mxfp8_prefill_tiles::Entry<false>, u32)>,
+    mxfp8_prefill_matrices: Vec<(crate::gemm::mxfp8_prefill_tiles::Entry<true>, u32)>,
+    mxfp8_prefill_tma_matrices: Vec<(crate::gemm::mxfp8_prefill::matrix::Entry, u32)>,
     mxfp8_prefill_tma_scales: Vec<(crate::gemm::mxfp8_prefill_tma_scales::Entry, u32)>,
     mxfp8_prefill_splits: Vec<(
         crate::gemm::mxfp8_fold::Entry,
@@ -301,7 +300,7 @@ impl Sm120 {
     /// the separately registered prefill implementation. No scratch is added.
     pub fn with_mxfp8_prefill_compact(
         mut self,
-        entry: crate::gemm::mxfp8_prefill_compact::Entry,
+        entry: crate::gemm::mxfp8_prefill_tiles::Entry<false>,
         rows: u32,
     ) -> Self {
         self.mxfp8_prefill_compacts.push((entry, rows));
@@ -312,7 +311,7 @@ impl Sm120 {
     /// retain the registered prefill fallback and its workspace contract.
     pub fn with_mxfp8_prefill_tma_matrix(
         mut self,
-        entry: crate::gemm::mxfp8_prefill_tma_matrix::Entry,
+        entry: crate::gemm::mxfp8_prefill::matrix::Entry,
         rows: u32,
     ) -> Self {
         self.mxfp8_prefill_tma_matrices.push((entry, rows));
@@ -332,7 +331,7 @@ impl Sm120 {
 
     pub fn with_mxfp8_prefill_matrix(
         mut self,
-        entry: crate::gemm::mxfp8_prefill_matrix::Entry,
+        entry: crate::gemm::mxfp8_prefill_tiles::Entry<true>,
         rows: u32,
     ) -> Self {
         self.mxfp8_prefill_matrices.push((entry, rows));
@@ -1571,7 +1570,7 @@ impl Backend for Sm120 {
             let fallback =
                 mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
             let fallback =
-                mxfp8_prefill_matrix::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
+                mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
             let fallback = mxfp8_prefill_tma_matrix::prepare(
                 fallback,
                 &self.mxfp8_prefill_tma_matrices,
@@ -1589,7 +1588,7 @@ impl Backend for Sm120 {
         let fallback =
             mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
         let fallback =
-            mxfp8_prefill_matrix::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
+            mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_matrices, op, need)?;
         let fallback = mxfp8_prefill_tma_matrix::prepare(
             fallback,
             &self.mxfp8_prefill_tma_matrices,

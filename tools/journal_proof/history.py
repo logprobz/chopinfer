@@ -145,9 +145,10 @@ class Mapper:
     not a stream (an encoder's resolve 1 and host stream 1). Any other line
     is refused. Every other identity is mapped the same way in all owners."""
 
-    def __init__(self, buffers, functions, streams, ids, closed=True):
+    def __init__(self, buffers, functions, streams, ids, closed=True, removed_buffers=(), removed_streams=()):
         self.buffers, self.functions, self.streams, self.ids = buffers, functions, streams, ids
         self.closed = closed
+        self.removed_buffers, self.removed_streams = set(removed_buffers), set(removed_streams)
         self.issued = set(ids) | set(ids.values())
         self.stream_images = set(streams.values())
 
@@ -156,6 +157,7 @@ class Mapper:
             require(value in self.functions, f'function ID {value} has no mapping')
             return self.functions[value]
         if role == 'stream':
+            require(value not in self.removed_streams, f'stream {value} was declared removed')
             # Only a recorded stream creation maps a stream. An unrecorded
             # stream (for example a test's synthetic stream) stays fixed and
             # may not share a number with any issued resource.
@@ -170,6 +172,7 @@ class Mapper:
         return self.ids[value]
 
     def __call__(self, line):
+        require(not (set(map(int, RAW.findall(line))) & self.removed_buffers), 'line uses a removed allocation')
         found = form(line)
         if found is None:
             require(not self.closed, f'unrecognized auxiliary operation form: {line[:200]}')

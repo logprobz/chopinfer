@@ -72,9 +72,14 @@ def read_layout(repo,spec,base,head,revision=None):
     for name,policy in spec.get('journals',{}).items():
         need(set(policy)<={'text_edits'} and name in decl['text_journals'],
              f'{name}: under a layout declaration only its declared text journals carry a policy (text_edits)')
+    unknown=(set(decl.get('handles', {}))|set(decl.get('operations', {})))-{f['name'] for f in spec['fixtures']}
+    need(not unknown, f'layout names unknown fixtures: {sorted(unknown)}')
     record=dict(path=spec['layout']['path'],sha256=spec['layout']['sha256'],revision=at,read_at_head=at==head['commit'],
                 description=decl['description'],removed_modules=decl['removed_modules'],added_modules=decl['added_modules'],
                 resources=sorted(decl['resources']),changes=[c['name'] for c in decl['changes']],text_journals=decl['text_journals'])
+    for key in ('handles','operations'):
+        if decl.get(key):
+            record[key]=decl[key]
     return (decl,modules),record
 
 
@@ -129,6 +134,10 @@ def check(repo,model,base_rev,head_rev,spec,base_index,head_index,declaration_re
     text_fixtures=set()
     for fixture in spec['fixtures']:
         rule=spec['auxiliary_rules'][fixture['name']]
+        if layout is not None and (fixture['name'] in layout[0].get('handles', {}) or fixture['name'] in layout[0].get('operations', {})):
+            need(not set(fixture['journals'])<=added|removed and
+                 kind_of(base,fixture['journals'])|kind_of(head,fixture['journals'])=={'device'},
+                 'position-bound declarations need a compared device fixture')
         if set(fixture['journals'])<=added|removed:
             validate_declared_only(rule)
         elif kind_of(base,fixture['journals'])|kind_of(head,fixture['journals'])=={'text'}:
@@ -300,6 +309,9 @@ def claim(coverage=None):
             f"{layout['revision']}: added allocations against declared resources, removed and added modules against both "
             'revisions\' locks, resized allocations and their spans, collectives and kernel families selected and rewritten '
             'from the base; every other line exact under the typed mapping.')
+        if layout.get('handles') or layout.get('operations'):
+            compared['layout'] += (' Exact handle creator records and operation edits are bound to fixture trace positions; '
+                                   'opaque handles attest issuance only, with no recorded resource role.')
         if not layout['read_at_head']:
             not_compared.insert(0,f"The layout declaration was read at {layout['revision']}, not at the head commit: the change "
                                   'was declared after it was made.')

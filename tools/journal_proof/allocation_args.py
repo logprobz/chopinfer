@@ -10,6 +10,8 @@ def bindings(rule,a,b,buffer_map):
     aliases={}
     sizes={}
     for slot,row in a['allocations'].items():
+        if row[1] not in buffer_map:
+            continue
         raw=row[1]
         new=buffer_map[raw]
         other=b['allocations'][new&0xffffffff]

@@ -179,6 +179,12 @@ def generate(repo, model, base_rev, head_rev, base_index, head_index, path, revi
         ai, bi = inventory(ae), inventory(be)
         removed_modules, removed_resolves, removed = module_entries(ai, set(decl['removed_modules']))
         added_modules, added_resolves, added_records = module_entries(bi, set(decl['added_modules']))
+        import handles
+        for side, events, inv, ids in (('removed', ae, ai, removed), ('added', be, bi, added_records)):
+            entries = handles.witness_entries(decl, fixture['name'], side, events, inv)
+            if entries:
+                rule[side + '_handles'] = entries
+                ids.update(e['id'] for e in entries)
         added, resized = align(decl, ai, bi, removed, added_records)
         for key, value in (('removed_modules', removed_modules), ('removed_resolves', removed_resolves),
                            ('added_allocations', added), ('resized_allocations', resized)):

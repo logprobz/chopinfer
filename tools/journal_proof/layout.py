@@ -37,14 +37,14 @@ from engine import ALLOC, KERNEL_SYMBOL, Unproven, launch, render, require
 import history
 
 SCHEMA = 'chopinfer.journal-proof.layout.v1'
-FIELDS = {'schema', 'description', 'modules', 'resources', 'collectives', 'kernels', 'text_journals'}
+FIELDS = {'schema', 'description', 'modules', 'resources', 'collectives', 'kernels', 'text_journals', 'handles', 'operations'}
 CONFIG_FIELDS = ('flags', 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_memory_bytes')
 SYMBOL = re.compile(KERNEL_SYMBOL)
 LITERAL = re.compile(r'(?:Scalar)?(?:U32|U64|I32|F32)\([-+0-9.e]+\)|NullDevicePointer')
 SPAN = re.compile(r'DeviceBufferSpanV1 \{ buffer: BundleDeviceBufferHandleV1 \{ raw: (\d+) \}, offset: (\d+), length: (\d+) \}')
 LAYOUT_FIELDS = {'planes', 'from_stride', 'to_stride', 'from_tail', 'to_tail'}
 # The witness fields a fixture's auxiliary rule may carry under a layout.
-WITNESS_FIELDS = {'added_allocations', 'removed_modules', 'resized_allocations'}
+WITNESS_FIELDS = {'added_allocations', 'removed_modules', 'resized_allocations', 'added_handles', 'removed_handles'}
 # A placeholder for a head handle that has no base counterpart: the typed
 # mapper (history.Mapper) rewrites only `raw: DIGITS`, so the head handle passes through.
 PLACEHOLDER = 'raw: @'
@@ -234,8 +234,10 @@ def parse(data):
         changes.extend(dict(_change(item, collective, resources), collective=collective) for item in entries)
     need(len({c['name'] for c in changes}) == len(changes), 'collective and kernel family names must be distinct')
     texts = _names(d.get('text_journals', []), 'text_journals')
+    import handles
+    handles.parse(d.get('handles', {}), d.get('operations', {}))
     return dict(description=d['description'], removed_modules=removed, added_modules=added, added_module_rules=rules,
-                resources=resources,
+                resources=resources, handles=d.get('handles', {}), operations=d.get('operations', {}),
                 changes=changes, text_journals=texts)
 
 
@@ -303,8 +305,11 @@ class Witness:
     """One fixture's declared additions and removals, checked against the
     declaration, the locks and both inventories (auxproof.inventory)."""
 
-    def __init__(self, decl, modules, rule, a, b):
+    def __init__(self, decl, modules, rule, a, b, ae=(), be=(), fixture=None):
         self.decl = decl
+        import handles
+        self.handles = handles.Witness(decl, fixture, rule, ae, be, a, b)
+        self.fixture = fixture
         res = decl['resources']
         # Added allocations: head slot -> resource; each a head allocation of
         # the declared bytes and alignment. Every rank that holds an added
@@ -322,6 +327,7 @@ class Witness:
             require(row is not None and row[1] == entry['head_raw'], f'added allocation {entry["head_raw"]} is not a head allocation')
             require((row[2], row[3], row[4]) == (entry['rank'], r['bytes'], r['alignment']),
                     f'added allocation {entry["head_raw"]} is not a {r["name"]} ({r["bytes"]} bytes, alignment {r["alignment"]}) of rank {entry["rank"]}')
+            need(slot not in self.handles.added, 'an added allocation has two declarations')
             self.added[slot] = r['name']
             per[(r['name'], rank_key(row))] += 1
         # The ranks that must hold an added resource are the base ranks that
@@ -783,6 +789,11 @@ class Device:
             previous = last.get(stream_key(item)) if item else None
             if item:
                 last[stream_key(item)] = item
+            if i in witness.handles.removed_notes:
+                self.expected.append(None)
+                tags['removed_handle_records'] += 1
+                self.changes.append(tags)
+                continue
             kind = declared_record(line, dropped, ai['resolves'], i, 'base')
             if kind:
                 self.expected.append(None)
@@ -801,7 +812,7 @@ class Device:
             self.expected.append(line)
             self.changes.append(tags)
         # Head notes that are declared additions.
-        self.added = {}
+        self.added = {j: 'added_handle_records' for j in witness.handles.added_notes}
         for slot, name in witness.added.items():
             self.added[alloc_b[slot][0]] = 'added_allocations'
             n = ALLOC.fullmatch(alloc_b[slot][1])
@@ -824,6 +835,8 @@ class Device:
             module = bi['modules'][row[2]][2]
             want = decl['added_module_rules'][module]['configures'].get(row[3], [])
             require(configured[ident] == want, f'added resolve {ident} of {row[3]} is configured {configured[ident]}, the declaration {want}')
+        import handles
+        handles.apply_operations(self, decl.get('operations', {}).get(witness.fixture, []), notes_a, notes_b)
         zeroed = {raw: name for slot, name in witness.added.items()
                   if decl['resources'][name]['init'] == 'zero' for raw in [bi['allocations'][slot][1]]}
         # A zero counts only on the stream the buffer was allocated on.

@@ -28,7 +28,7 @@ def authority():
 
 
 AUTHORITY=authority()
-HELPER_FILES=('allocation_args.py','auxiliary.py','auxproof.py','capture.py','common.py','engine.py','history.py','instrument.py','layout.py',
+HELPER_FILES=('allocation_args.py','auxiliary.py','auxproof.py','capture.py','common.py','engine.py','handles.py','history.py','instrument.py','layout.py',
               'pins.py','proof.py','provenance.py','replacements.py','text.py','trace_runtime.rs')
 # The producer of each sealed index schema: the external helper for v2, this
 # tool for v3.

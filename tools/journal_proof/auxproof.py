@@ -169,7 +169,7 @@ def validate_declared_only(rule):
          'a fixture of only declared added/removed journals must carry the empty auxiliary rule')
 
 
-def derive(base_events,head_events,rule,replacements=(),layout=None):
+def derive(base_events,head_events,rule,replacements=(),layout=None,fixture=None):
     """The fixture's typed identity map. With `layout` (the parsed
     declaration and its authenticated modules) the rule's layout witness
     joins the declared additions and removals, and the result gains the
@@ -204,8 +204,8 @@ def derive(base_events,head_events,rule,replacements=(),layout=None):
     witness=None
     if layout is not None:
         from layout import Witness
-        witness=Witness(layout[0],layout[1],rule,a,b)
-        inserted|=set(witness.added)
+        witness=Witness(layout[0],layout[1],rule,a,b,base_events,head_events,fixture)
+        inserted|=set(witness.added)|witness.handles.added
     deleted=set()
     replacement_by_name={r['base']['name']:r['declaration'] for r in replacements}
     for d in rule.get('removed_resolves',[]):
@@ -222,10 +222,10 @@ def derive(base_events,head_events,rule,replacements=(),layout=None):
         deleted.update(actual)
     if witness is not None:
         need(not(deleted&witness.removed_ids),'a removed module is also a removed resolve')
-        deleted|=witness.removed_ids
+        deleted|=witness.removed_ids|witness.handles.removed
     retained=[i for i in b['issued'] if i not in inserted]
     source=[i for i in a['issued'] if i not in deleted]
-    require(len(source)==len(retained),'issued ID count differs beyond exact module/resolve additions/removals')
+    require(len(source)==len(retained),'issued ID count differs beyond exact declared additions/removals')
     ids=dict(zip(source,retained))
     require(len(set(ids.values()))==len(ids),'ID mapping is not bijective')
     from replacements import module_plans
@@ -249,7 +249,7 @@ def derive(base_events,head_events,rule,replacements=(),layout=None):
             sizes[old]=w['to']
     # An allocation on a stream with no recorded creation keeps that stream,
     # which may not be the image of a created stream (history.Mapper).
-    stream_images={ids[s] for s in a['streams']}
+    stream_images={ids[s] for s in a['streams'] if s in ids}
     def mapped(row):
         kind=row[0]
         x=list(row)
@@ -259,6 +259,7 @@ def derive(base_events,head_events,rule,replacements=(),layout=None):
             slot=row[5]&0xffffffff
             require(slot in a['streams'] or slot not in stream_images,
                     f'allocation {row[1]} is on stream {slot}, which has no recorded creation and is the image of a created stream')
+            require(slot not in deleted, 'retained allocation uses a removed stream')
             x[5]=(row[5]&~0xffffffff)|(ids[slot] if slot in a['streams'] else slot)
         else:
             x[1]=ids[row[1]]
@@ -282,8 +283,8 @@ def derive(base_events,head_events,rule,replacements=(),layout=None):
         if kind:
             key={'allocation':'allocations','module':'modules','resolve':'resolves','stream':'streams'}[kind]
             require(mapped(a[key][old])==b[key][new],f'{kind} identity, rank, size or payload changed at ID {old}')
-    buffers={row[1]:b['allocations'][ids[old]][1] for old,row in a['allocations'].items()}
-    streams={old:ids[old] for old in a['streams']}
+    buffers={row[1]:b['allocations'][ids[old]][1] for old,row in a['allocations'].items() if old in ids}
+    streams={old:ids[old] for old in a['streams'] if old in ids}
     functions={old:ids[old] for old in (set(a['resolves'])|set(a['modules']))-deleted}
     functions.update(permutation)
     if witness is not None:
@@ -330,7 +331,7 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
             require(not others,f'{side}: device {host} also holds pinned journals of another fixture: {others[:3]}')
         ae=ah['events'][:max(b['records'] for b in ab+list(extra['base'].values()))]
         be=bh['events'][:max(b['records'] for b in hb+list(extra['head'].values()))]
-        derived=derive(ae,be,rule,replacements,layout)
+        derived=derive(ae,be,rule,replacements,layout,fixture['name'])
         buffers,functions,streams,ids,ai,bi=derived[:6]
         pairs={(a['create']['path'],b['create']['path']):(a,b) for a,b in zip(ab,hb)}
         require(len(pairs)==1,'fixture has multiple create generations; an explicit lifetime boundary is required')
@@ -353,10 +354,10 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         # may be one.
         fixed={int(v) for n in names for line in base[n] for v in RAW.findall(line)}
         fixed|={int(v) for line in notes_a for v in RAW.findall(line)}
-        fixed-=set(buffers)
+        fixed-={r[1] for r in ai['allocations'].values()}
         require(not(set(buffers.values())&fixed),'allocation mapping redirects a fixed resource')
         if device is not None:
-            added_raws={bi['allocations'][slot][1] for slot in witness.added}
+            added_raws={bi['allocations'][slot][1] for slot in set(witness.added)|witness.handles.added if slot in bi['allocations']}
             require(not(added_raws&fixed),'a declared added allocation has the handle of a fixed resource')
         from replacements import module_plans,rewrite_resolves
         from allocation_args import bindings,validate_spans
@@ -382,7 +383,9 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         # identity of the line's form (streams, functions, events of record
         # and wait, graphs of capture, replay and release) and every buffer.
         # Journal bodies are not a closed grammar (history.Mapper).
-        remapped=history.Mapper(buffers,functions,streams,ids,closed=False)
+        removed_buffers={r[1] for slot,r in ai['allocations'].items() if slot not in ids}
+        removed_streams=set(ai['streams'])-set(ids)
+        remapped=history.Mapper(buffers,functions,streams,ids,closed=False,removed_buffers=removed_buffers,removed_streams=removed_streams)
         cp=rule['create_policy']
         create_counts=collections.Counter()
         expected,observed,ctrace,ckept=compare(a['create_lines'],b['create_lines'],
@@ -398,7 +401,7 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
                     issued_ids=len(ids),added_ids=len(bi['issued'])-len(ai['issued']),
                     allocations=len(buffers),buffer_map={str(k):v for k,v in buffers.items()},
                     allocation_records=[dict(base_raw=r[1],head_raw=buffers[r[1]],rank=r[2],bytes=r[3],alignment=r[4],
-                                             stream_raw=r[5]) for r in ai['allocations'].values()],
+                                             stream_raw=r[5]) for r in ai['allocations'].values() if r[1] in buffers],
                     unrecorded_allocation_ranks=sum(r[2] is None for r in ai['allocations'].values()),
                     module_replacements=[dict(base_id=p['base_id'],head_id=p['head_id'],module=p['declaration']['module']) for p in plans],
                     unloaded_module_resolves=dict(base=len(ai['unloaded']),head=len(bi['unloaded'])),
@@ -443,7 +446,7 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         old=[notes_a[i] for i in hist_a]
         new=[notes_b[i] for i in hist_b]
         record.update(base_operations=len(old),head_operations=len(new),operation_kinds=history.kinds(new))
-        expected,observed,htrace,hkept=compare(old,new,hist_a,hist_b,hp,hcounts,history.Mapper(buffers,functions,streams,ids))
+        expected,observed,htrace,hkept=compare(old,new,hist_a,hist_b,hp,hcounts,history.Mapper(buffers,functions,streams,ids,removed_buffers=removed_buffers,removed_streams=removed_streams))
         for line in observed:
             history.classify(line)
         history.check_graph_nodes(notes_a,'base')

@@ -101,13 +101,12 @@ mod serving {
 
 #[cfg(feature = "diagnostic-taps")]
 mod enabled {
+    use bundle_runtime::taps as shared;
     use std::collections::BTreeMap;
 
-    use bundle_runtime::encoder::{BlockRows, Encoder};
+    use bundle_runtime::encoder::Encoder;
     use bundle_runtime::inputs::PhaseInputs;
-    use bundle_runtime::media::{
-        ArenaRun, OccurrenceItem, OccurrenceRead, OccurrenceStep, Occurrences,
-    };
+    use bundle_runtime::media::{ArenaRun, OccurrenceItem, OccurrenceRead, Occurrences};
     use runtime_bundle_abi::{BundleStreamHandleV1, HostServicesV1};
     use runtime_bundle_sdk::BatchCodecV1;
     use runtime_bundle_sdk::taps::{EncoderRows, EncoderSegment, TapError, TapSpec, TapStep, Taps};
@@ -251,10 +250,7 @@ mod enabled {
                 Vec::new()
             };
             let text = super::text::specs(&config.shape);
-            let every = specs.iter().chain(&text).cloned().collect::<Vec<_>>();
-            taps.check_layers(&every)?;
-            taps.check_sites(&every)?;
-            let text = text.iter().any(|spec| taps.selected(spec));
+            let text = shared::selects_text(&taps, &specs, &text)?;
             Ok(Self {
                 taps: Some(taps),
                 specs,
@@ -276,11 +272,7 @@ mod enabled {
         /// Whether a block tap is selected: the encoder runtime reads its
         /// blocks back only then.
         pub fn selects_blocks(&self) -> bool {
-            self.taps.as_ref().is_some_and(|taps| {
-                self.specs
-                    .iter()
-                    .any(|spec| spec.name != OUTPUT && taps.selected(spec))
-            })
+            shared::selects_blocks(self.taps.as_ref(), &self.specs, OUTPUT)
         }
 
         /// Takes the step `request`'s encoder taps after `encoder` ran: the
@@ -321,8 +313,9 @@ mod enabled {
                     .insert(*serial, Grid::of(patches, self.side, record.output_rows)?);
             }
             keep_resident(&mut self.grids, &self.occurrences);
-            let mut rows = block_rows(
+            let mut rows = shared::block_rows(
                 taps,
+                OUTPUT,
                 &self.specs,
                 &mut self.occurrences,
                 &step,
@@ -364,24 +357,14 @@ mod enabled {
                 self.encoders = rows;
                 return Ok(());
             }
-            let program = "Prefill";
-            let live = prefill.live_tokens();
-            let dir = taps.next_step().map_err(|error| error.to_string())?;
-            let mut capture = taps
-                .begin(
-                    &dir,
-                    program,
-                    encoder.ranks.len() as u32,
-                    live,
-                    &prefill.positions,
-                )
-                .map_err(|error| error.to_string())?;
-            for tap in rows {
-                capture.encoder(tap).map_err(|error| error.to_string())?;
-            }
-            capture
-                .open(&prefill.tap_items(program, live, capture.rows(), taps.from()))
-                .map_err(|error| error.to_string())?;
+            let capture = shared::begin(
+                taps,
+                "Prefill",
+                encoder.ranks.len() as u32,
+                prefill,
+                &mut rows,
+                std::iter::empty(),
+            )?;
             self.pending.push(capture);
             Ok(())
         }
@@ -404,26 +387,18 @@ mod enabled {
             if let Some(stale) = self.open.take() {
                 stale.cancel().map_err(|error| error.to_string())?;
             }
-            let live = inputs.live_tokens();
-            let dir = taps.next_step().map_err(|error| error.to_string())?;
-            let mut capture = taps
-                .begin(&dir, program, ranks, live, &inputs.positions)
-                .map_err(|error| error.to_string())?;
-            for rows in std::mem::take(&mut self.encoders) {
-                capture.encoder(rows).map_err(|error| error.to_string())?;
-            }
-            for &stage in stages {
-                for tap in super::text::taps(stage, shape) {
-                    if taps.selected(&tap.spec) {
-                        capture
-                            .declare(&tap.spec)
-                            .map_err(|error| error.to_string())?;
-                    }
-                }
-            }
-            capture
-                .open(&inputs.tap_items(program, live, capture.rows(), taps.from()))
-                .map_err(|error| error.to_string())?;
+            let capture = shared::begin(
+                taps,
+                program,
+                ranks,
+                inputs,
+                &mut self.encoders,
+                stages.iter().flat_map(|&stage| {
+                    super::text::taps(stage, shape)
+                        .into_iter()
+                        .map(|tap| tap.spec)
+                }),
+            )?;
             self.open = Some(capture);
             Ok(())
         }
@@ -455,23 +430,16 @@ mod enabled {
                 )?;
             }
             for tap in super::text::taps(stage, shape) {
-                if !taps.selected(&tap.spec) {
-                    continue;
-                }
-                for rank in 0..tap.spec.sharding.ranks(streams.len() as u32) {
-                    let index = rank as usize;
-                    let buffer = tap.buffer.span(&buffers[index].scratch);
-                    capture.capture(services, streams[index], &tap.spec, rank, buffer)?;
-                }
+                shared::capture(taps, capture, services, streams, &tap.spec, |index| {
+                    tap.buffer.span(&buffers[index].scratch)
+                })?;
             }
             Ok(())
         }
 
         /// Leaves the open step pending until `finish`.
         pub fn end(&mut self) {
-            if let Some(capture) = self.open.take() {
-                self.pending.push(capture);
-            }
+            shared::end(&mut self.open, &mut self.pending);
         }
 
         /// Publishes the pending steps on a commit and removes them on a
@@ -480,19 +448,7 @@ mod enabled {
         pub fn finish(&mut self, commit: bool) -> Result<(), String> {
             self.occurrences.finish(commit);
             self.encoders.clear();
-            let mut result = match self.open.take() {
-                Some(stale) => stale.cancel(),
-                None => Ok(()),
-            };
-            for capture in std::mem::take(&mut self.pending) {
-                let ended = if commit {
-                    capture.finish()
-                } else {
-                    capture.cancel()
-                };
-                result = result.and(ended);
-            }
-            result.map_err(|error| error.to_string())
+            shared::finish(&mut self.open, &mut self.pending, commit)
         }
 
         /// Drops what a failed `encoder` run left: the block rows it read
@@ -507,82 +463,13 @@ mod enabled {
         /// encoder rows and its open and pending steps.
         pub fn abandon(&mut self) -> Result<(), String> {
             self.encoders.clear();
-            let mut result = match self.open.take() {
-                Some(stale) => stale.cancel(),
-                None => Ok(()),
-            };
-            for stale in std::mem::take(&mut self.pending) {
-                result = result.and(stale.cancel());
-            }
-            result.map_err(|error| error.to_string())
+            shared::finish(&mut self.open, &mut self.pending, false)
         }
 
         /// Forgets a retired request's occurrences.
         pub fn retire(&mut self, request: u64) {
             self.occurrences.retire(request);
         }
-    }
-
-    /// The block taps `taps` selects of each occurrence `step` begins: the
-    /// encoder runtime's block rows of the step's encodes are kept per
-    /// encode (`Occurrences::keep`), and each occurrence gets its encode's
-    /// whole rows, in the item's row order, under its request, kind and
-    /// item, whichever step or request ran the encode.
-    fn block_rows(
-        taps: &Taps,
-        specs: &[TapSpec],
-        occurrences: &mut Occurrences,
-        step: &OccurrenceStep,
-        rows: Vec<BlockRows>,
-    ) -> Result<Vec<EncoderRows>, String> {
-        let spec = |name: &str| {
-            specs
-                .iter()
-                .find(|spec| spec.name == name && name != OUTPUT)
-                .ok_or_else(|| format!("{name} is not a declared block tap"))
-        };
-        for block in rows {
-            let spec = spec(&block.name)?;
-            if !taps.selected(spec) {
-                continue;
-            }
-            if block.bytes.len() as u64 % (u64::from(spec.cols) * spec.dtype.bytes()) != 0 {
-                return Err(format!("{}: a partial row", block.name));
-            }
-            let encode = step
-                .encodes
-                .get(block.record)
-                .ok_or_else(|| format!("{}: rows of no encode", block.name))?;
-            occurrences.keep(*encode, block.name, block.bytes);
-        }
-        let mut out: Vec<EncoderRows> = Vec::new();
-        for read in step.reads.iter().filter(|read| read.begins) {
-            for (name, bytes) in occurrences.kept(read.encode) {
-                let spec = spec(name)?;
-                let rows = bytes.len() as u64 / (u64::from(spec.cols) * spec.dtype.bytes());
-                let at = match out.iter().position(|tap| tap.spec.name == *name) {
-                    Some(at) => at,
-                    None => {
-                        out.push(EncoderRows {
-                            spec: spec.clone(),
-                            bytes: Vec::new(),
-                            segments: Vec::new(),
-                        });
-                        out.len() - 1
-                    }
-                };
-                let tap = &mut out[at];
-                let start = tap.rows();
-                tap.segments.push(EncoderSegment {
-                    start,
-                    index: 0,
-                    rows: rows as u32,
-                    ..read.segment
-                });
-                tap.bytes.extend_from_slice(bytes);
-            }
-        }
-        Ok(out)
     }
 }
 

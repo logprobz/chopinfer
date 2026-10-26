@@ -137,32 +137,65 @@ In an external model config with `mode: ab`, select the installs per arm:
 
 Seal with `--install-dir "$ROUND" --install-name base --install-name head`.
 An arm without `install` uses the first name on the command line. Unknown
-names and unused sealed installs are refused. With one install, the seal
+names, unused sealed installs and multiple installs outside `mode: ab` are
+refused. Sweep, costs and exact jobs still use one install. With one install, the seal
 keeps its existing shape; omitting `--install-name` still means `head`.
 Prompts and reporting helpers come from the first sealed source snapshot,
 so both arms receive the same inputs. Preflight, warmup, every timed visit,
 and unmatched baseline replay use the selected arm's binary and cache.
-Records and reports name each arm's install and revision. Matched-seed ABBA
+Records and reports name each arm's install and revision. A report with
+install metadata requires a complete, consistent arm map; deleting the map
+does not make the run legacy. Matched-seed ABBA
 order and token/logprob-bit exactness comparisons are unchanged.
 
-Multi-install jobs require one shared keeper, built from the first arm's
-install and options. Staging runs that install's CPU `weights identity`
-command for every arm, using each arm's own cache and options. It seals the
-results and requires identical checkpoint identity and file stamps, image
-roles, ranks, lengths, recipes and physical layouts. Serve options must
-match apart from speculation options; checkpoint, cache and keeper
-overrides in argument lists are refused. Run this staging step through
-`tools/dev/heavy.sh` before reserving GPUs.
+Multi-install jobs require one shared keeper and each build's own
+[content proof](weight-keeper.md#identity-across-builds). Supply existing
+lane-staged `content.json` files with `--content-proof base="$BASE_PROOF"
+--content-proof head="$HEAD_PROOF"`. The stage copies and seals them, so the
+job no longer depends on the original proof paths. Without these flags it
+reads `logs/weight-content-base.json` and `logs/weight-content-head.json`.
 
-The recipe includes shared and bundle-owned weight transforms. A binary
-revision may differ while recipes match, but equal checkpoint bytes alone
-do not suffice. A changed recipe is refused, including a bundle change that
-changes a transform identity without changing its output bytes. Multi-install
-staging does not generate or accept the runtime's separate
-[content proofs](weight-keeper.md#identity-across-builds). Runtime keeper
-validation and required borrowing remain in force. The CPU stub exercises
-two frozen fixture installs with `--dry-run`; it proves harness mechanics,
-not GPU exactness or performance.
+To produce proofs with the native host command, run the following once for
+each install before staging. Set the shell array `SERVE_OPTIONS` to that
+install's actual model and arm options, including its KV pool, profile or
+model options and speculation settings. The lane `stage_keeper.py` helper
+also runs this command and publishes a reusable `content.json`.
+
+```sh
+for arm in base head; do
+    bash tools/dev/heavy.sh "$ROUND/install-$arm/bin/chopinfer" weights identity \
+        --content --output "$ROUND/logs/weight-content-$arm.json" \
+        --model "$CHECKPOINT" --model-cache-dir "$ROUND/cache-$arm" \
+        --tensor-parallel-size "$RANKS" "${SERVE_OPTIONS[@]}"
+done
+```
+
+Proof generation hashes produced weight bytes on CPU and can be expensive.
+Run it sequentially before reserving GPUs. Output files must be new; keep
+them owned and protected from group/other writes. Unchanged proofs can be
+reused: tuner staging only runs fresh CPU `weights identity` planning for
+every arm, using that arm's binary, cache and options. It checks each proof's
+executable hash, checkpoint identity/stamps, recipe, layout, length and
+complete rank coverage against that fresh plan. Missing, stale, unsafe or
+mismatched proofs are refused. Serve options must match apart from
+speculation options; checkpoint, cache and keeper overrides in argument
+lists are refused. Run staging through `tools/dev/heavy.sh` too.
+
+The cross-install `content_key` matches the lane helper: checkpoint identity
+and stamps, every rank's content hash, physical layout and size, and the
+device selection. Producer executable hashes and recipes may differ across
+builds, but remain bound by each build's own proof. This permits a changed
+cubin or tuning table to change the bundle module and recipe without
+changing the shared weight bytes. Different content keys are refused.
+
+The keeper spec uses the first arm's proof and seals its `identity_sha256`.
+Every borrower, including warmup and replay, receives its own install's
+`--weight-keeper-identity` and requires borrowing. The native keeper still
+hashes its actual uploaded allocation; native borrowers still validate
+their executable, fresh recipe and checkpoint before requesting equal
+read-only content and layout. No runtime check is bypassed. The CPU stub
+exercises different recipes with matching proofs and proof refusals; it
+proves harness mechanics, not GPU exactness or performance.
 
 ## What the job does and checks
 

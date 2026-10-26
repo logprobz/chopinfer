@@ -20,8 +20,22 @@ CONFIG = {'name': 'synthetic', 'model': MODEL, 'kinds': {'greedy': 0.5, 'sampled
           'selection': {'margin': 0.015, 'spread': 0.03}}
 
 
+def fixture_content(root, name):
+    import copy
+    binary = root / f'install-{name}/bin/chopinfer'
+    recipe = json.loads(binary.with_name('identity.json').read_text())
+    proof = {'schema': 'chopinfer.weight-content.v1', 'producer_sha256': stage.digest(binary),
+             'checkpoint': recipe['checkpoint'], 'images': copy.deepcopy(recipe['images'])}
+    for image in proof['images']:
+        image['identity']['content_sha256'] = 'e' * 64
+    path = root / f'logs/weight-content-{name}.json'
+    path.write_text(json.dumps(proof))
+    path.chmod(0o600)
+    return path
+
+
 def frozen_fixture(root):
-    """Two small frozen installs with distinct binaries and equal rank recipes."""
+    """Two frozen installs with different recipes and equal proven weight bytes."""
     import shutil
     logs = root / 'logs'
     logs.mkdir(parents=True)
@@ -40,7 +54,9 @@ def frozen_fixture(root):
                           'elif "--list-model-options" in sys.argv:\n'
                           '    print("{}")\nelse:\n    sys.exit(2)\n')
         binary.chmod(0o755)
+        identity['images'][0]['recipe_identity'] = ('b' if name == 'base' else 'd') * 64
         (binary.parent / 'identity.json').write_text(json.dumps(identity))
+        fixture_content(root, name)
         source = root / f'source-{name}'
         shutil.copytree(HERE.parents[1] / 'tools/qual', source / 'tools/qual',
                         ignore=shutil.ignore_patterns('__pycache__'))
@@ -70,7 +86,7 @@ def frozen_fixture(root):
                          'ar_tokens_per_second': {'1': 100}}}
 
 
-def stage_fixture(root, model, names=('base', 'head'), destination='stage'):
+def stage_fixture(root, model, names=('base', 'head'), destination='stage', proofs=()):
     import os
     import subprocess
     config = root / 'model.json'
@@ -79,6 +95,8 @@ def stage_fixture(root, model, names=('base', 'head'), destination='stage'):
             '--install-dir', str(root), str(root / destination)]
     for name in names:
         argv += ['--install-name', name]
+    for name, path in proofs:
+        argv += ['--content-proof', f'{name}={path}']
     env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
     env['CHOPINFER_TEST_CHECKPOINT'] = str(root / 'checkpoint')
     return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30)
@@ -142,6 +160,50 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_content_proofs_admit_recipe_changes_and_refuse_invalid_proofs(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seal = json.loads((root / 'stage/runtime-seal.json').read_text())
+            installs = seal['installs']
+            self.assertEqual(installs['base']['content_key'], installs['head']['content_key'])
+            proofs = [json.loads(Path(installs[name]['weight_keeper_identity']).read_text()) for name in ('base', 'head')]
+            self.assertNotEqual(proofs[0]['producer_sha256'], proofs[1]['producer_sha256'])
+            self.assertNotEqual(proofs[0]['images'][0]['recipe_identity'], proofs[1]['images'][0]['recipe_identity'])
+            spec = json.loads((root / 'stage/keeper-spec.json').read_text())
+            self.assertEqual(spec['identity_sha256'], stage.digest(installs['base']['weight_keeper_identity']))
+            self.assertIn(installs['base']['weight_keeper_identity'], spec['argv'])
+            path = root / 'logs/weight-content-head.json'
+            proof = json.loads(path.read_text())
+            path.unlink()
+            result = stage_fixture(root, model, destination='missing-proof')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('content proof', result.stderr)
+            mutations = [lambda v: v.update(producer_sha256=proofs[0]['producer_sha256']),
+                         lambda v: v['images'][0]['identity'].update(content_sha256='f' * 64),
+                         lambda v: v['images'][0]['identity'].update(layout_sha256='f' * 64),
+                         lambda v: v['images'][0].update(recipe_identity='f' * 64),
+                         lambda v: v['images'][0].update(byte_length=8),
+                         lambda v: v['checkpoint']['stamps'][0].update(size=8),
+                         lambda v: v.update(images=[])]
+            for i, mutate in enumerate(mutations):
+                with self.subTest(proof=i):
+                    value = copy.deepcopy(proof)
+                    mutate(value)
+                    path.write_text(json.dumps(value))
+                    path.chmod(0o600)
+                    result = stage_fixture(root, model, destination=f'bad-proof-{i}')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertRegex(result.stderr, 'content proof|content_key')
+            path.write_text(json.dumps(proof))
+            alternate = root / 'content.json'
+            path.rename(alternate)
+            result = stage_fixture(root, model, destination='lane-proof', proofs=[('head', alternate)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_multi_install_requires_ab_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -251,7 +313,7 @@ class Tuner(unittest.TestCase):
             identity = json.loads(path.read_text())
             mutations = [lambda v: v['checkpoint'].update(identity='d' * 64),
                          lambda v: v['checkpoint']['stamps'][0].update(size=5),
-                         lambda v: v['images'][0].update(recipe_identity='d' * 64),
+                         lambda v: v['images'][0].update(recipe_identity='f' * 64),
                          lambda v: v['images'][0]['identity'].update(layout_sha256='d' * 64),
                          lambda v: v['images'][0].update(byte_length=5),
                          lambda v: v['images'][0].update(rank=1)]
@@ -351,6 +413,9 @@ class Tuner(unittest.TestCase):
                         self.assertIn(str(root / f'cache-{name}'), launch['serve_argv'])
                         stub = json.loads(path.with_name('stub-install.json').read_text())
                         self.assertEqual((stub['install'], stub['revision']), (name, launch['revision']))
+                        proof = Path(launch['serve_argv'][launch['serve_argv'].index('--weight-keeper-identity') + 1])
+                        self.assertEqual(proof.name, f'content-{name}.json')
+                        self.assertEqual(stub['identity_sha256'], stage.digest(proof))
                     result = json.loads((out / 'ab.json').read_text())
                     self.assertEqual(result['arm_installs'], identities)
                     for arm in identities:

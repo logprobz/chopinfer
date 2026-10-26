@@ -18,7 +18,9 @@ The wrapper's `# keeper use keeper-spec.json SHA256` header asks runner6 for
 a weight keeper started with the first arm's serve options, from which every
 arm's server borrows its weights. Repeat --install-name to seal multiple
 builds (default: head); each arm's optional install selects one by name.
-Multiple builds require matching CPU rank recipes and non-speculation options.
+Multiple builds require matching proven rank content/layouts and non-speculation
+options. Each build needs its own CPU content proof, supplied with
+--content-proof NAME=FILE or logs/weight-content-NAME.json in ROUND_DIR.
 
 --template seals without an install, prompts and tools/qual from this tree,
 for CPU dry runs only: the job refuses it outside --dry-run.
@@ -33,7 +35,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import stat
 import sys
 from pathlib import Path
 
@@ -168,9 +170,70 @@ def check_budget(config, prompts):
 
 
 
-def keeper_compatibility(config, seal, stage, checkpoint):
-    """Use fresh CPU rank recipes; changed recipes need a separate content proof
-    workflow and are refused here, even when their source weights are equal."""
+def content_proof(path, binary, recipe, ranks):
+    """Read a protected proof and bind it to this executable's fresh CPU plan."""
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError('duplicate content proof key: ' + key)
+            value[key] = item
+        return value
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise ValueError(f'cannot read weight content proof: {path}') from error
+    with os.fdopen(fd, 'rb') as stream:
+        before = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                or before.st_mode & 0o022 or before.st_size > 1 << 20):
+            raise ValueError('content proof must be a bounded owned regular file protected from other writers')
+        body = stream.read((1 << 20) + 1)
+        after = os.fstat(stream.fileno())
+        stamps = lambda s: (s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        if len(body) > 1 << 20 or stamps(before) != stamps(after):
+            raise ValueError('content proof changed while being read')
+    proof = json.loads(body, object_pairs_hook=unique)
+    if (set(proof) != {'schema', 'producer_sha256', 'checkpoint', 'images'}
+            or proof['schema'] != 'chopinfer.weight-content.v1'
+            or proof['producer_sha256'] != digest(binary)):
+        raise ValueError('content proof belongs to another executable or schema')
+    images, seen = [], set()
+    for image in proof['images']:
+        key = (image.get('image_role'), image.get('rank'))
+        identity = image.get('identity', {})
+        if (set(image) != {'image_role', 'rank', 'byte_length', 'recipe_identity', 'identity'}
+                or not isinstance(key[0], str) or not key[0] or type(key[1]) is not int
+                or not 0 <= key[1] < ranks or key in seen
+                or type(image['byte_length']) is not int or image['byte_length'] <= 0
+                or set(identity) != {'content_sha256', 'layout_sha256'}
+                or any(not isinstance(v, str) or not re.fullmatch('[0-9a-f]{64}', v)
+                       for v in [image['recipe_identity'], *identity.values()])):
+            raise ValueError('invalid rank content proof')
+        seen.add(key)
+        images.append({**image, 'identity': {**identity, 'content_sha256': ''}})
+    order = lambda image: (image['image_role'], image['rank'])
+    if (not seen or any({rank for name, rank in seen if name == role} != set(range(ranks))
+                        for role, _ in seen)
+            or proof['checkpoint'] != recipe['checkpoint']
+            or sorted(images, key=order) != sorted(recipe['images'], key=order)):
+        raise ValueError('keeper identity differs: content proof does not match fresh checkpoint, recipe or layout')
+    proof['images'].sort(key=order)
+    return body, proof
+
+
+def content_key(proof, devices):
+    """The lane staging key: checkpoint, rank content/layout/size and devices.
+    Producer executables and recipes remain bound by each build's own proof."""
+    value = {'checkpoint': proof['checkpoint'], 'devices': devices,
+             'images': [{k: image[k] for k in ('image_role', 'rank', 'byte_length', 'identity')}
+                        for image in proof['images']]}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def keeper_compatibility(config, seal, stage, checkpoint, proof_paths):
+    """Validate each build's proof against fresh recipes, then compare content."""
     import runner
     import tune
     speculation = {'--speculation', '--speculation-depths', '--speculation-widths',
@@ -178,7 +241,7 @@ def keeper_compatibility(config, seal, stage, checkpoint):
                    '--speculative-rows', '--speculative-tokens'}
     reserved = {'--model', '--checkpoint', '--bundle', '--model-cache-dir',
                 '--weight-keeper', '--weight-keeper-policy', '--weight-keeper-identity'}
-    common, identity, files = None, None, set()
+    common, compatible, files = None, None, set()
     directory = stage / 'keeper-identities'
     if directory.exists():
         shutil.rmtree(directory)
@@ -200,27 +263,35 @@ def keeper_compatibility(config, seal, stage, checkpoint):
             raise ValueError('multi-install keeper requires identical serve options apart from speculation')
         common = shared
         path = directory / f'arm-{index}.json'
-        argv = [str(Path(install['install']) / 'bin/chopinfer'), 'weights', 'identity', '--output', str(path),
-                *runner.serve_options(install['cache'], arguments, checkpoint)]
+        binary = Path(install['install']) / 'bin/chopinfer'
+        serve = runner.serve_options(install['cache'], arguments, checkpoint)
+        argv = [str(binary), 'weights', 'identity', '--output', str(path), *serve]
         # The native command plans on CPU. Hiding devices also protects against
         # an accidental device-dependent implementation in either revision.
-        with path.with_suffix('.log').open('w') as log:
-            subprocess.run(argv, env={**runner.server_environment(), 'CUDA_VISIBLE_DEVICES': '',
-                                      'PYTHONDONTWRITEBYTECODE': '1'},
-                           stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
+        runner.command(argv, path.with_suffix('.log'), 180,
+                       env={**runner.server_environment(), 'CUDA_VISIBLE_DEVICES': '', 'PYTHONDONTWRITEBYTECODE': '1'})
         value = json.loads(path.read_text())
         if (value.get('schema') != 'chopinfer.weight-recipes.v1' or value.get('content_verified') is not False
                 or not value.get('checkpoint', {}).get('stamps') or not value.get('images')):
             raise ValueError(f'{name}: missing keeper recipe identity')
-        value['images'].sort(key=lambda image: (image['image_role'], image['rank']))
-        if identity is not None and value != identity:
-            raise ValueError(f'{name}: keeper identity differs (checkpoint, rank recipe or layout)')
-        identity = value
+        body, proof = content_proof(proof_paths[name], binary, value, runner.GPUS)
+        devices = serve[serve.index('--devices') + 1] if '--devices' in serve else None
+        key = content_key(proof, devices)
+        if compatible is not None and key != compatible:
+            raise ValueError(f'{name}: keeper content_key differs')
+        compatible = key
+        target = directory / f'content-{name}.json'
+        if target.exists() and target.read_bytes() != body:
+            raise ValueError(f'{name}: content proof changed between arms')
+        target.write_bytes(body)
+        target.chmod(0o600)
+        install.update(weight_keeper_identity=str(target), content_key=key)
+        files.add(target)
         files.add(path)
     return files
 
 
-def keeper_spec(config, install, stage):
+def keeper_spec(config, install, stage, seal, proof_paths):
     """The weight keeper SPEC for runner6: the install and the first arm's
     serve options, which every arm shares but for its speculation options."""
     sys.path.insert(0, str(HERE))
@@ -230,14 +301,18 @@ def keeper_spec(config, install, stage):
     runner.MODEL, runner.GPUS = model['served_model_name'], model['tensor_parallel_size']
     runner.KV_PAGES, runner.SERVE = model['kv_pages'], model['serve_arguments']
     arm = tune.arms(config)[0]
-    arguments = tune.arm_arguments(config, arm)
     checkpoint = os.environ.get(model['checkpoint_env'])
     if not checkpoint:
         raise SystemExit(f"set {model['checkpoint_env']} (source local.env) to stage the weight keeper")
+    runner.CHECKPOINT_ENV = model['checkpoint_env']
+    files = keeper_compatibility(config, seal, stage, checkpoint, proof_paths) if proof_paths else set()
+    arguments = tune.arm_arguments(config, arm, install)
     spec = {'install': install['install'], 'argv': runner.serve_options(install['cache'], arguments, checkpoint)}
+    if 'weight_keeper_identity' in install:
+        spec['identity_sha256'] = digest(install['weight_keeper_identity'])
     path = stage / 'keeper-spec.json'
     path.write_text(json.dumps(spec, indent=1) + '\n')
-    return path
+    return path, files
 
 
 def main():
@@ -246,6 +321,8 @@ def main():
     ap.add_argument('--model', required=True, help='models/<model>/depth-tune.json')
     ap.add_argument('--install-dir', help='the integration round directory holding the frozen install')
     ap.add_argument('--install-name', action='append', help='repeat for multiple frozen installs (default: head)')
+    ap.add_argument('--content-proof', action='append', default=[], metavar='NAME=FILE',
+                    help='use a staged content proof (default for multiple installs: logs/weight-content-NAME.json)')
     ap.add_argument('--template', action='store_true', help='seal without an install, for dry runs only')
     ap.add_argument('--name', help='the job name (default: the model and install revision)')
     ap.add_argument('--job', help="a job of the model config's `jobs`, applied over its settings")
@@ -260,6 +337,16 @@ def main():
         raise SystemExit('install names must be unique simple names')
     if args.template and names != ['head']:
         raise SystemExit('template stages use only the head install; use frozen fixtures for two-install dry runs')
+    proof_paths = {}
+    if len(names) > 1:
+        proof_paths = {name: Path(args.install_dir).resolve() / 'logs' / f'weight-content-{name}.json' for name in names}
+    selected = set()
+    for item in args.content_proof:
+        name, separator, path = item.partition('=')
+        if not separator or not path or name not in proof_paths or name in selected:
+            raise SystemExit('content-proof needs one NAME=FILE per selected multi-install build')
+        selected.add(name)
+        proof_paths[name] = Path(os.path.abspath(path))
     model = json.loads(Path(args.model).read_text())
     jobs = model.pop('jobs', {})
     if args.job:
@@ -324,13 +411,10 @@ def main():
     files |= {copy / item for item in HARNESS}
     files |= {x for x in (source / 'tools/qual').rglob('*') if x.is_file() and '__pycache__' not in x.parts}
     _, first = tune.arm_install(selection, tune.arms(config)[0])
-    keeper = None if args.template or not model.get('keeper', True) else keeper_spec(config, first, stage)
-    if keeper:
-        files.add(keeper)
-        if len(names) > 1:
-            import runner
-            runner.CHECKPOINT_ENV = model['checkpoint_env']
-            files |= keeper_compatibility(config, selection, stage, os.environ[model['checkpoint_env']])
+    keeper = None
+    if not args.template and model.get('keeper', True):
+        keeper, proofs = keeper_spec(config, first, stage, selection, proof_paths)
+        files |= proofs | {keeper}
     seal = {'schema': 'chopinfer-depth-tune-seal.v1', 'ready': not args.template, 'config': config, 'install': install,
             'harness_source': str(source), 'prompts': built['prompts'], 'prompt_sources': built['sources'],
             'cold_files': cold_files, 'sha256': {str(x): digest(x) for x in sorted(files)}}

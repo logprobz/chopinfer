@@ -23,7 +23,7 @@ def main(stage):
     if not seal['ready']:
         raise SystemExit('a template stage has no executable to parse with')
     model = seal['config']['model']
-    tune.check_installs(seal)
+    tune.check_installs(seal, require_proofs=True)
     r.MODEL, r.CHECKPOINT_ENV, r.GPUS = model['served_model_name'], model['checkpoint_env'], model['tensor_parallel_size']
     r.KV_PAGES, r.KV_LINE, r.SERVE = model['kv_pages'], model['kv_pages_line'], model['serve_arguments']
     root = stage / 'validation' / f'argv-{time.time_ns()}'
@@ -32,7 +32,7 @@ def main(stage):
     for arm in tune.arms(seal['config']):
         depth = arm['depth']
         _, install = tune.arm_install(seal, arm)
-        arguments = tune.arm_arguments(seal['config'], arm)
+        arguments = tune.arm_arguments(seal['config'], arm, install)
         server = r.Server(root / arm['label'], install['install'], install['cache'], arguments)
         argv = server.server_command + ['--list-model-options']
         if any('kv-memory-fraction' in x for x in argv):
@@ -55,6 +55,8 @@ def main(stage):
         if spec['argv'] != rows[0]['argv'][rows[0]['argv'].index('--model'):-1] or \
                 spec['install'] != install['install']:
             raise SystemExit('keeper-spec.json differs from the first arm\'s serve options')
+        if 'weight_keeper_identity' in install and spec.get('identity_sha256') != tune.digest(install['weight_keeper_identity']):
+            raise SystemExit('keeper content proof differs from its spec digest')
         print('PASS: the keeper spec holds the first arm\'s serve options')
 
 

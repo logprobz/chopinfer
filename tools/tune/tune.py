@@ -144,7 +144,7 @@ def arm_identity(seal, arm):
     return {'install': name, 'revision': install.get('revision')}
 
 
-def check_installs(seal):
+def check_installs(seal, require_proofs=False):
     installs, default = sealed_installs(seal)
     if len(installs) > 1 and seal['config']['model'].get('mode') != 'ab':
         raise ValueError('multiple installs require mode ab')
@@ -153,12 +153,22 @@ def check_installs(seal):
     used = {arm_install(seal, arm)[0] for arm in arms(seal['config'])}
     if len(installs) > 1 and (unused := set(installs) - used):
         raise ValueError('unused sealed install: ' + ', '.join(sorted(unused)))
+    if len(installs) > 1 and require_proofs:
+        keys = {install.get('content_key') for install in installs.values()}
+        if len(keys) != 1 or not all(isinstance(key, str) and re.fullmatch('[0-9a-f]{64}', key) for key in keys):
+            raise ValueError('multi-install seal needs matching keeper content keys')
+        for install in installs.values():
+            proof = install.get('weight_keeper_identity')
+            if not proof or not Path(proof).is_absolute() or proof not in seal['sha256']:
+                raise ValueError('multi-install seal is missing a sealed content proof')
 
 
-def arm_arguments(config, arm):
+def arm_arguments(config, arm, install=None):
     model = config['model']
     return ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
-            *model.get('extra_arguments', []), *arm['arguments']]
+            *model.get('extra_arguments', []), *arm['arguments'],
+            *(['--weight-keeper-identity', install['weight_keeper_identity']]
+              if install and 'weight_keeper_identity' in install else [])]
 
 
 def validate(payload, dry):
@@ -176,7 +186,7 @@ def validate(payload, dry):
     for identity in m.get('cold_files', []):
         if faults.file_identity(identity['path']) != identity:
             raise RuntimeError('sealed cold image metadata changed')
-    check_installs(m)
+    check_installs(m, require_proofs=True)
     if m['ready']:
         for install in sealed_installs(m)[0].values():
             for root in (Path(install['install']), Path(install['prepared']['bundle'])):
@@ -929,7 +939,7 @@ def reference_ab(run, state, dry, keep):
         arm = declared[baseline]
         _, install = arm_install(SEAL, arm)
         identity = arm_identity(SEAL, arm)
-        arguments = arm_arguments(config, arm)
+        arguments = arm_arguments(config, arm, install)
         if keep:
             arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
         idle(run, f'reference-{baseline}', dry, (keep or {}).get('lent_mib'))
@@ -1098,7 +1108,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     label, depth = arm['label'], arm['depth']
     root = run / label
     require_keeper(model, keep)
-    arguments = arm_arguments(config, arm)
+    arguments = arm_arguments(config, arm, install)
     if keep:
         arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
     server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py',

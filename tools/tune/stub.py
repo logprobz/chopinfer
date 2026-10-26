@@ -43,8 +43,16 @@ def stub(args):
     label = Path(args.directory).parent.name
     perturb = (os.environ.get('TUNE_STUB_PERTURB') == label
                or os.environ.get('TUNE_STUB_PERTURB_INSTALL') == args.install_name)
-    (Path(args.directory) / 'stub-install.json').write_text(json.dumps(
-        {'install': args.install_name, 'revision': args.revision, 'synthetic': True}) + '\n')
+    provenance = {'install': args.install_name, 'revision': args.revision, 'synthetic': True}
+    proof_path = argument_value(args.serve, '--weight-keeper-identity', None)
+    if proof_path:
+        body = Path(proof_path).read_bytes()
+        proof = json.loads(body)
+        if (proof.get('schema') != 'chopinfer.weight-content.v1'
+                or proof['producer_sha256'] != hashlib.sha256(Path(args.binary).read_bytes()).hexdigest()):
+            raise ValueError('stub content proof belongs to another executable')
+        provenance['identity_sha256'] = hashlib.sha256(body).hexdigest()
+    (Path(args.directory) / 'stub-install.json').write_text(json.dumps(provenance) + '\n')
     preempt = os.environ.get('TUNE_STUB_PREEMPT') == label
     ignore = os.environ.get('TUNE_STUB_IGNORE_DEPTHS') == label
     ignore_confidence = os.environ.get('TUNE_STUB_IGNORE_CONFIDENCE') == label
@@ -302,6 +310,7 @@ if __name__ == '__main__':
     ap.add_argument('--gpus', type=int, required=True)
     ap.add_argument('--install-name', default='head')
     ap.add_argument('--revision', default='template')
+    ap.add_argument('--binary')
     ap.add_argument('serve', nargs=argparse.REMAINDER)
     parsed = ap.parse_args()
     parsed.serve = [x for x in parsed.serve if x != '--']

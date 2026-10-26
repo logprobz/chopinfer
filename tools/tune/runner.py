@@ -199,6 +199,7 @@ class Server:
         if dry:
             launched = [sys.executable, '-B', str(stub), '--port', str(port), '--directory', str(self.directory),
                         '--kv-pages', str(KV_PAGES), '--kv-line', KV_LINE, '--model', MODEL, '--gpus', str(GPUS),
+                        '--binary', str(Path(install) / 'bin/chopinfer'),
                         *(['--install-name', identity['install'], '--revision', identity['revision']] if identity else []),
                         '--', *arguments]
         self.launch = [sys.executable, '-B', str(HERE / 'runner.py'), 'server-child', str(self.pidfile), *launched]

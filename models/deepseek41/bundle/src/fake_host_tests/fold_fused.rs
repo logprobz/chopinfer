@@ -520,7 +520,15 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         if !(1..=32).contains(&rows) || !a.starts_with("launch ") || !b.starts_with("launch ") {
             return Err(format!("{case} changed: {a}\n{b}"));
         }
-        if symbol(a) == WO_A_INPUT {
+        let (wo_a_input, wo_b_input) = if rows == 1 {
+            (
+                "chop_deepseek41_dense_ceil_w8192_split8_v1",
+                "chop_deepseek41_dense_ceil_f32_w2048_split8_v1",
+            )
+        } else {
+            (WO_A_INPUT, WO_B_INPUT)
+        };
+        if symbol(a) == wo_a_input {
             let sliced = fold_fused::sliced(tile(rows)).unwrap();
             if symbol(b) != sliced.symbol || spans(a) != spans(b) {
                 return Err(format!(
@@ -556,7 +564,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
                 .collect();
             let mut consumed = 1;
             if id == "attention.o-a" {
-                let quantizer = before.get(i + 1).filter(|q| symbol(q) == WO_B_INPUT);
+                let quantizer = before.get(i + 1).filter(|q| symbol(q) == wo_b_input);
                 let q = spans(quantizer.ok_or("WO_a without WO_b's input quantizer")?);
                 if q[0] != old[4] {
                     return Err(format!("{id} at {case}: WO_b's input is not WO_a's output"));
@@ -650,7 +658,7 @@ fn audit(before: &[String], after: &[String]) -> Result<Vec<(String, String)>, S
         let mut consumed = 1 + folds;
         if id == "attention.o-a" {
             // WO_a's merge quantizes WO_b's input in place of its quantizer.
-            let quantizer = before.get(i + consumed).filter(|q| symbol(q) == WO_B_INPUT);
+            let quantizer = before.get(i + consumed).filter(|q| symbol(q) == wo_b_input);
             old.extend(spans(
                 quantizer.ok_or("WO_a without WO_b's input quantizer")?,
             ));

@@ -1,0 +1,6674 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Activate the unchanged locked one-row ceil-split module for Flash TP4 tests.",
+ "handles": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 1683,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 1685,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 1688,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 1691,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 1694,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 1697,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 1700,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 9657,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 9659,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 9662,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 9665,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 9668,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 9671,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 9674,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 17631,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 17633,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 17636,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 17639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 17642,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 17645,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 17648,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 25605,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 25607,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 25610,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 25613,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 25616,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 25619,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 25622,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 1631,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 1633,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 1636,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 1639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 1642,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 1645,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 1648,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 8814,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 8816,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 8819,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 8822,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 8825,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 8828,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 8831,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 15997,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 15999,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 16002,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 16005,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 16008,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 16011,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 16014,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 23180,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 23182,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 23185,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 23188,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 23191,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 23194,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 23197,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 1683,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 1685,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 1688,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 1691,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 1694,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 1697,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 1700,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 9657,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 9659,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 9662,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 9665,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 9668,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 9671,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 9674,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 17631,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 17633,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 17636,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 17639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 17642,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 17645,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 17648,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 25605,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 25607,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 25610,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 25613,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 25616,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 25619,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 25622,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 1683,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 1685,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 1688,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 1691,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 1694,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 1697,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 1700,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       555,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 9657,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 9659,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 9662,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 9665,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 9668,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 9671,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 9674,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3205,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 17631,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 17633,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 17636,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 17639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 17642,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 17645,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 17648,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5855,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 25605,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 25607,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 25610,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 25613,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 25616,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 25619,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 25622,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8505,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 1631,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 1633,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 1636,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 1639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 1642,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 1645,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 1648,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       539,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 8814,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 8816,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 8819,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 8822,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 8825,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 8828,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 8831,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2930,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 15997,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 15999,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 16002,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 16005,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 16008,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 16011,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 16014,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5321,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 23180,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 23182,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 23185,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 23188,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 23191,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 23194,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 23197,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7712,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    {
+     "name": "ceil-split.added.module.0",
+     "kind": "module",
+     "at": 2313,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.1",
+     "kind": "resolve",
+     "at": 2315,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.2",
+     "kind": "resolve",
+     "at": 2318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.3",
+     "kind": "resolve",
+     "at": 2321,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.4",
+     "kind": "resolve",
+     "at": 2324,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.5",
+     "kind": "resolve",
+     "at": 2327,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.6",
+     "kind": "resolve",
+     "at": 2330,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       743,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.7",
+     "kind": "module",
+     "at": 10409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.8",
+     "kind": "resolve",
+     "at": 10411,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.9",
+     "kind": "resolve",
+     "at": 10414,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.10",
+     "kind": "resolve",
+     "at": 10417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.11",
+     "kind": "resolve",
+     "at": 10420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.12",
+     "kind": "resolve",
+     "at": 10423,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.13",
+     "kind": "resolve",
+     "at": 10426,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3436,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.14",
+     "kind": "module",
+     "at": 18505,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.15",
+     "kind": "resolve",
+     "at": 18507,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.16",
+     "kind": "resolve",
+     "at": 18510,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.17",
+     "kind": "resolve",
+     "at": 18513,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.18",
+     "kind": "resolve",
+     "at": 18516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.19",
+     "kind": "resolve",
+     "at": 18519,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.20",
+     "kind": "resolve",
+     "at": 18522,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6129,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.module.21",
+     "kind": "module",
+     "at": 26601,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "ceil_split_deepseek41_sm120",
+       "e0526b73e8f7ba1d",
+       90408,
+       "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.22",
+     "kind": "resolve",
+     "at": 26603,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.23",
+     "kind": "resolve",
+     "at": 26606,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.24",
+     "kind": "resolve",
+     "at": 26609,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_w8192_split8_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.25",
+     "kind": "resolve",
+     "at": 26612,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split2_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.26",
+     "kind": "resolve",
+     "at": 26615,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ]
+     ]
+    },
+    {
+     "name": "ceil-split.added.resolve.27",
+     "kind": "resolve",
+     "at": 26618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8822,
+       "chop_deepseek41_dense_ceil_f32_w2048_split8_v1"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "module_activations": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    "ceil_split_deepseek41_sm120"
+   ]
+  }
+ },
+ "operations": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      77698,
+      77699,
+      77700,
+      77701,
+      77702,
+      77703,
+      77704,
+      77705,
+      77706,
+      77707,
+      77708,
+      77709,
+      77710,
+      77711,
+      77712,
+      77713,
+      77714,
+      77715,
+      77716,
+      77717,
+      77718,
+      77719,
+      77720,
+      77721,
+      77722,
+      77723,
+      77724,
+      77725
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      75942,
+      75943,
+      75944,
+      75945,
+      75946,
+      75947,
+      75948,
+      75949,
+      75950,
+      75951,
+      75952,
+      75953,
+      75954,
+      75955,
+      75956,
+      75957,
+      75958,
+      75959,
+      75960,
+      75961,
+      75962,
+      75963,
+      75964,
+      75965,
+      75966,
+      75967,
+      75968,
+      75969
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      50322,
+      50323,
+      50324,
+      50325,
+      50326,
+      50327,
+      50328,
+      50329,
+      50330,
+      50331,
+      50332,
+      50333,
+      50334,
+      50335,
+      50336,
+      50337,
+      50338,
+      50339,
+      50340,
+      50341,
+      50342,
+      50343,
+      50344,
+      50345,
+      50346,
+      50347,
+      50348,
+      50349
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      77698,
+      77699,
+      77700,
+      77701,
+      77702,
+      77703,
+      77704,
+      77705,
+      77706,
+      77707,
+      77708,
+      77709,
+      77710,
+      77711,
+      77712,
+      77713,
+      77714,
+      77715,
+      77716,
+      77717,
+      77718,
+      77719,
+      77720,
+      77721,
+      77722,
+      77723,
+      77724,
+      77725
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      75942,
+      75943,
+      75944,
+      75945,
+      75946,
+      75947,
+      75948,
+      75949,
+      75950,
+      75951,
+      75952,
+      75953,
+      75954,
+      75955,
+      75956,
+      75957,
+      75958,
+      75959,
+      75960,
+      75961,
+      75962,
+      75963,
+      75964,
+      75965,
+      75966,
+      75967,
+      75968,
+      75969
+     ]
+    }
+   }
+  ]
+ }
+}

@@ -60,9 +60,8 @@ pub fn serves(g: &Geometry, ranks: u32) -> bool {
 }
 #[cfg(test)]
 std::thread_local! {
-    /// Tests keep the served one-CTA quantizers unless they serve the twins,
-    /// so their pinned journals stay those quantizers'.
-    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+    /// Tests exercise the served split twins by default.
+    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(true)) };
 }
 /// Run `run` with the twins served (`true`) or not (`false`), whatever
 /// [`SERVED`] and [`SWITCH`] say.

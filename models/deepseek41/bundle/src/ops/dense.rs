@@ -1298,7 +1298,13 @@ mod tests {
                 assert_eq!(calls.len(), 1);
                 let call = &calls[0].launch;
                 if rows <= DECODE_BATCH || (!phase.prefill() && rows <= draft) {
-                    let decode = if crate::sm120::ceil_cached::WIDTHS.contains(&width) {
+                    let decode = if rows == 1
+                        && [(8192, DType::Bf16), (2048, DType::F32)]
+                            .contains(&(width, entry.query.input))
+                    {
+                        assert_eq!(call.plan.cluster, [8, 1, 1]);
+                        "_split8_v1"
+                    } else if crate::sm120::ceil_cached::WIDTHS.contains(&width) {
                         "_cached_v1"
                     } else {
                         "_parallel_v1"

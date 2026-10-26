@@ -124,6 +124,69 @@ impl Execution {
     }
 }
 
+/// Eager rank submissions with the shared pipeline's per-unit error poisoning.
+/// Gather joins stay with their executor and keep their own failure state.
+pub(super) struct Executor<'a> {
+    instance: &'a Instance,
+    streams: &'a [BundleStreamHandleV1],
+}
+
+impl<'a> Executor<'a> {
+    pub(super) fn new(instance: &'a Instance, streams: &'a [BundleStreamHandleV1]) -> Self {
+        Self { instance, streams }
+    }
+
+    pub(super) fn run<T>(
+        &self,
+        body: impl FnOnce() -> Result<T, DispatchError>,
+    ) -> Result<T, DispatchError> {
+        let _unwinding = PoisonOnUnwind(&self.instance.collectives);
+        body()
+    }
+
+    pub(super) fn issue(
+        &self,
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
+    ) -> Result<(), DispatchError> {
+        let streams = self.streams;
+        if self.instance.collectives.is_poisoned() {
+            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
+        }
+        if programs.len() != streams.len() || self.instance.symbols.len() != streams.len() {
+            return Err(DispatchError::InvalidPlan);
+        }
+        if let Err(error) = check_collectives(programs, collectives) {
+            self.instance.log(&error);
+            return Err(DispatchError::InvalidPlan);
+        }
+        let segments = programs
+            .iter()
+            .zip(collectives)
+            .map(|(program, waits)| collective_segments(program.as_ref(), waits.as_ref()))
+            .collect::<Vec<_>>();
+        self.run(|| {
+            let mut started = vec![false; streams.len()];
+            launch_segments(
+                &self.instance.collectives,
+                &mut Unit::default(),
+                &mut started,
+                &segments,
+                |rank, launches| {
+                    super::prefill_cache::launch(
+                        &self.instance.services,
+                        streams[rank],
+                        &self.instance.symbols[rank],
+                        launches,
+                    )
+                },
+                |_| {},
+                |_| Ok(()),
+            )
+        })
+    }
+}
+
 /// Prefill hashes retained for execution, or a legacy phase planned before
 /// staging uploads so its reason reflects the actual selected schedule.
 pub(super) enum StagedPrefill {
@@ -1161,39 +1224,7 @@ impl Instance {
         programs: &[impl AsRef<[PreparedLaunch]>],
         collectives: &[impl AsRef<[bool]>],
     ) -> Result<(), DispatchError> {
-        if self.collectives.is_poisoned() {
-            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
-        }
-        if programs.len() != streams.len() || self.symbols.len() != streams.len() {
-            return Err(DispatchError::InvalidPlan);
-        }
-        if let Err(error) = check_collectives(programs, collectives) {
-            self.log(&error);
-            return Err(DispatchError::InvalidPlan);
-        }
-        let segments = programs
-            .iter()
-            .zip(collectives)
-            .map(|(program, waits)| collective_segments(program.as_ref(), waits.as_ref()))
-            .collect::<Vec<_>>();
-        let _unwinding = PoisonOnUnwind(&self.collectives);
-        let mut started = vec![false; streams.len()];
-        launch_segments(
-            &self.collectives,
-            &mut Unit::default(),
-            &mut started,
-            &segments,
-            |rank, launches| {
-                super::prefill_cache::launch(
-                    &self.services,
-                    streams[rank],
-                    &self.symbols[rank],
-                    launches,
-                )
-            },
-            |_| {},
-            |_| Ok(()),
-        )
+        Executor::new(self, streams).issue(programs, collectives)
     }
 
     /// Capture every rank before replay, with each fork/join region in one piece.

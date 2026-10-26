@@ -1,9 +1,10 @@
 //! Split eager programs at the same layer-consumer boundaries as DSpark.
 use super::Gathers;
 use crate::instance::Instance;
+use crate::instance::execute::Executor;
 use crate::program::Stage;
 use bundle_runtime::dispatch::DispatchError;
-use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch, check_collectives};
+use bundle_runtime::pipeline::{PreparedLaunch, check_collectives};
 use std::ops::Range;
 
 #[derive(Debug)]
@@ -82,24 +83,26 @@ impl Plan {
         if programs.len() != streams.len() || flags.len() != streams.len() {
             return Err(DispatchError::InvalidPlan);
         }
-        let _unwind = PoisonOnUnwind(&instance.collectives);
-        for piece in 0..=gathers.layers.len() {
-            if piece > 0 {
-                gathers.join(&instance.services, &streams, piece - 1)?;
+        let executor = Executor::new(instance, &streams);
+        executor.run(|| {
+            for piece in 0..=gathers.layers.len() {
+                if piece > 0 {
+                    gathers.join(&instance.services, &streams, piece - 1)?;
+                }
+                let ops: Vec<_> = programs
+                    .iter()
+                    .enumerate()
+                    .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
+                    .collect();
+                let waits: Vec<_> = flags
+                    .iter()
+                    .enumerate()
+                    .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
+                    .collect();
+                executor.issue(&ops, &waits)?;
             }
-            let ops: Vec<_> = programs
-                .iter()
-                .enumerate()
-                .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
-                .collect();
-            let waits: Vec<_> = flags
-                .iter()
-                .enumerate()
-                .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
-                .collect();
-            instance.launch_eager(&streams, &ops, &waits)?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

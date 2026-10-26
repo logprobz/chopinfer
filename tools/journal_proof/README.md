@@ -560,6 +560,21 @@ pinned journals, rather than an ordinal in one journal:
 ]}}
 ```
 
+Repeated text can use a compact entry with every ordinal listed explicitly:
+
+```json
+{"operations": {"fixture-name": [
+  {"remove": {"text": "release", "lines": [410, 414, 419]}},
+  {"add": {"text": "synchronize 2", "lines": [415, 420]}}
+]}}
+```
+
+`lines` is a nonempty list of positive integer ordinals, not a range or
+pattern. An entry uses either `line` or `lines`. Compact and expanded entries
+may be mixed, but an ordinal cannot repeat on the same side, even across
+entries. The proof expands the list into ordinary exact edits and applies
+the same text, position, creator, overlap and retained-order checks.
+
 Both texts use their own side's literal handles. Every occurrence is named
 separately with its position and exact line. Missing or additional occurrences
 fail. A shifted edit fails unless it names an identical line and leaves the
@@ -575,7 +590,8 @@ declaration with the intended resources, positional handles and module
 activations. It authenticates both captures, derives the ordered map through
 `auxproof.derive`, applies the automatic resource changes, then diffs the
 retained lines and their owners. The output is a complete declaration with
-fresh `operations`, replacing any existing ones. It checks the proposed
+fresh compact `operations`, grouping repeated texts and replacing any existing
+edits. Its CLI prints total and per-fixture expanded edit counts. It checks the proposed
 edits through the fixture prover before writing them; review every edit
 before committing the declaration and generating its witness spec.
 

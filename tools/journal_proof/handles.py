@@ -14,6 +14,25 @@ from text import validate as validate_edits
 KINDS = {'allocation', 'stream', 'event', 'graph', 'mapped-gather', 'opaque', 'module', 'resolve'}
 
 
+def expand_operations(edits):
+    """Expand named ordinals only, retaining the ordinary exact edit checks."""
+    need(isinstance(edits, list), 'operations must be a list')
+    expanded = []
+    for entry in edits:
+        need(isinstance(entry, dict) and len(entry) == 1 and next(iter(entry)) in ('remove', 'add'),
+             'an operation edit is one remove or add object')
+        side, edit = next(iter(entry.items()))
+        need(isinstance(edit, dict), 'invalid operation edit')
+        if 'lines' in edit:
+            need(set(edit) == {'lines', 'text'} and isinstance(edit['lines'], list) and edit['lines'],
+                 'a compact operation needs text and a nonempty lines list')
+            expanded.extend({side: dict(line=line, text=edit['text'])} for line in edit['lines'])
+        else:
+            expanded.append(entry)
+    validate_edits(expanded)
+    return expanded
+
+
 def parse(handles, operations):
     need(isinstance(handles, dict), 'handles must map fixtures to added/removed lists')
     for fixture, groups in handles.items():
@@ -34,14 +53,16 @@ def parse(handles, operations):
                 need(all(isinstance(row, list) and row and isinstance(row[0], str)
                          and all(v is None or type(v) in (str, int) for v in row) for row in rows), 'invalid handle records')
     need(isinstance(operations, dict), 'operations must map fixtures to exact line edits')
+    normalized = {}
     for fixture, edits in operations.items():
         need(isinstance(fixture, str) and fixture, 'operations needs a fixture name')
-        validate_edits(edits)
+        edits = normalized[fixture] = expand_operations(edits)
         for entry in edits:
             edit = next(iter(entry.values()))
             need(history.form(edit['text']) is not None, 'an operation edit must have a known operation form')
             need(not re.match(r'(?:allocate|stream|event|captured|module|resolve|configure|async mapped create) ', edit['text']),
                  'creator records use resource declarations, not operation edits')
+    return normalized
 
 
 def instantiate(value, ident):

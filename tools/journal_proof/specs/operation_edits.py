@@ -18,9 +18,18 @@ import auxproof  # noqa: E402
 from common import need, unique  # noqa: E402
 from engine import Unproven  # noqa: E402
 import history  # noqa: E402
+from handles import expand_operations  # noqa: E402
 import layout  # noqa: E402
 from pins import snapshot  # noqa: E402
 from layout_spec import fixture_events, fixture_rule, fixtures_of  # noqa: E402
+
+
+def compact(edits):
+    grouped = {}
+    for entry in expand_operations(edits):
+        side, edit = next(iter(entry.items()))
+        grouped.setdefault((side, edit['text']), []).append(edit['line'])
+    return [{side: dict(text=text, lines=lines)} for (side, text), lines in grouped.items()]
 
 
 def edits(decl, modules, fixture, ae, be, rule, create, owners_a, owners_b):
@@ -54,7 +63,7 @@ def edits(decl, modules, fixture, ae, be, rule, create, owners_a, owners_b):
         if tag != 'equal':
             output.extend(dict(remove=dict(line=i + 1, text=base[i])) for i in positions_a[a0:a1])
             output.extend(dict(add=dict(line=i + 1, text=head[i])) for i in positions_b[b0:b1])
-    return output
+    return compact(output)
 
 
 def generate(repo, model, base_rev, head_rev, base_index, head_index, data):
@@ -109,8 +118,8 @@ def main(argv=None):
     result = generate(args.repo, args.model, args.base, args.head, args.base_index, args.head_index,
                       Path(args.declaration).read_bytes())
     Path(args.out).write_text(json.dumps(result, indent=1) + '\n')
-    print(json.dumps(dict(fixtures=len(result.get('operations', {})),
-                          operations=sum(map(len, result.get('operations', {}).values())))))
+    counts = {name: len(expand_operations(edits)) for name, edits in result.get('operations', {}).items()}
+    print(json.dumps(dict(fixtures=len(counts), operations=sum(counts.values()), per_fixture=counts)))
     return 0
 
 

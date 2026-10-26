@@ -32,7 +32,7 @@ class OperationEditsTests(unittest.TestCase):
         self.h.head['step'].append(line)
         generated = self.generate()
         _, notes = test_layout.events_of(self.h.head['create'])
-        self.assertEqual(generated['operations'], {self.activation.fixture: [dict(add=dict(line=len(notes) + 2, text=line))]})
+        self.assertEqual(generated['operations'], {self.activation.fixture: [dict(add=dict(lines=[len(notes) + 2], text=line))]})
         self.prove_generated(generated)
         self.h.decl.pop('operations')
         self.activation.run_case(1, 'unexplained line differences')
@@ -59,7 +59,7 @@ class OperationEditsTests(unittest.TestCase):
                       handles={fixture: {'added': [dict(name='new', kind='event', at=1,
                                                        records=[['id', '@id'], ['note', 'event @id']])]}})
         generated = self.generate()
-        self.assertEqual(generated['operations'], {fixture: [dict(add=dict(line=3, text='wait 90 1'))]})
+        self.assertEqual(generated['operations'], {fixture: [dict(add=dict(lines=[3], text='wait 90 1'))]})
         self.prove_generated(generated)
 
     def test_automatic_resource_edits_are_not_duplicated(self):
@@ -91,20 +91,25 @@ class OperationEditsTests(unittest.TestCase):
     def test_cli_writes_a_complete_declaration_for_review(self):
         h = self.h
         line = 'synchronize 1'
-        h.head['step'].append(line)
+        h.head['step'].extend([line, line])
         b, head = h.captures()
         source, target = h.root / 'input.json', h.root / 'output.json'
         source.write_bytes(h.data())
         import contextlib
         import io
-        with contextlib.redirect_stdout(io.StringIO()):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
             code = operation_edits.main(['--repo', str(h.git.repo), '--model', MODEL, '--base', b[0], '--head', head[0],
                                          '--base-index', str(b[1]), '--head-index', str(head[1]),
                                          '--declaration', str(source), '--out', str(target)])
         self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue())['per_fixture'], {self.activation.fixture: 2})
+        self.assertEqual(json.loads(output.getvalue())['operations'], 2)
         generated = json.loads(target.read_text())
         self.assertEqual(generated['module_activations'], h.decl['module_activations'])
         self.assertEqual(generated['operations'][self.activation.fixture][0]['add']['text'], line)
+        self.assertEqual(len(generated['operations'][self.activation.fixture]), 1)
+        self.assertEqual(len(generated['operations'][self.activation.fixture][0]['add']['lines']), 2)
         self.prove_generated(generated)
 
 

@@ -235,11 +235,11 @@ def parse(data):
     need(len({c['name'] for c in changes}) == len(changes), 'collective and kernel family names must be distinct')
     texts = _names(d.get('text_journals', []), 'text_journals')
     import handles
-    handles.parse(d.get('handles', {}), d.get('operations', {}))
+    operations = handles.parse(d.get('handles', {}), d.get('operations', {}))
     import activations
     activations.parse(d.get('module_activations', {}))
     return dict(description=d['description'], removed_modules=removed, added_modules=added, added_module_rules=rules,
-                resources=resources, handles=d.get('handles', {}), operations=d.get('operations', {}),
+                resources=resources, handles=d.get('handles', {}), operations=operations,
                 module_activations=d.get('module_activations', {}),
                 changes=changes, text_journals=texts)
 

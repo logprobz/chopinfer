@@ -5,6 +5,10 @@ shapes across TP1, TP2 and TP4, including tails, graph replay, admission,
 PDL producer ordering and chunk partitions. Arithmetic remains four k32 MMAs
 per 128-K chain, then F32 folds in ascending K order.
 
+Compact and matrix fetches now specialize one CUDA template and Rust
+planner. Their existing symbols, launch bounds and tile choices are kept;
+the fetch choice changes operand delivery without changing arithmetic.
+
 A bucket qualifies only when both event and exclusive median ratios are below
 0.97 on both devices. Each cell is selected stages / worst-device speedup;
 `old` retains the previous route. Counts between these exact measured rows,

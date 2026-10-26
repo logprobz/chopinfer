@@ -1,5 +1,5 @@
 //! C16/C32 row-local folds with a refilling ring of several folds in flight
-//! (`mxfp8_fold_local_rows::run_deep`), for the WQ_b and WO_b decode shapes.
+//! (`mxfp8_fold_local_wide::run_deep`), for the WQ_b and WO_b decode shapes.
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_local_rows::Entry};
 use model_deepseek41_contract::geometry::FLASH;

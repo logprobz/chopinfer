@@ -368,6 +368,15 @@ all distinct; see
 The TMA matrix prefill and the row-local and cluster folds have no packed
 entries.
 
+The row-local pair loop and deep ring share `mxfp8_fold_local_wide.cuh`;
+their separate admission entry lives in `mxfp8_fold_admit.cuh`. Cluster
+folds share `mxfp8_fold_cluster_fused.cuh`, with workspace admission and
+distributed partial storage as compile-time choices. Compact and matrix
+prefill share one fragment-fetch template and Rust planner. TMA matrix
+fetches use the main prefill ring. These templates expose separate fixed
+activation, scale, chain and reduction policies, and reject unqualified
+policy types at compile time.
+
 `Sm120::with_packed_fold_weights` serves every fold op over packed codes:
 it renames each weight-reading launch to its packed entry (moving a TMA
 prefill to the packed weight map), declares the packed layout for every

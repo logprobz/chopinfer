@@ -4,6 +4,14 @@ The packed-weight migration is complete. Bundle comparisons use
 `Sm120::with_packed_fold_weights` and packed dense weight banks. Historical
 row-major and plain-layout controls retain their original symbols and locks.
 
+The package's former row-local, cluster and TMA-matrix reference modules
+now belong to the model lab. Build them with the `build_family` example's
+`lab/fold_local_rows_reference`, `lab/mxfp8_fold_cluster_reference` and
+`lab/mxfp8_prefill_tma_matrix_reference` recipes. The reference locks keep
+the former package cubin bytes and all 62 entry symbols. Fold-core fixtures
+load these staged modules by their original names and verify their locked
+hashes; served modules still come from the bundle.
+
 The fold conformance, decode, stream, compact and fused suites keep their
 oracle, poison, PDL, status and invariance checks. Stream permutation checks
 still compare the load-time transform with the historical prepare kernel.

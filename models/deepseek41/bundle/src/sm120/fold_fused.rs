@@ -97,6 +97,11 @@ pub fn tile(rows: u32) -> Option<u32> {
         .map(|r| super::mxfp8_fold::tuning_count(r, "tile_rows"))
 }
 
+/// Exact launch rows represented by the status-fold table.
+pub fn rows() -> Vec<u32> {
+    super::mxfp8_fold::status_rows("dense_fold.status.decode", 32).collect()
+}
+
 /// The fused twin of `id`'s served cluster fold at the tile of `rows`
 /// rows.
 pub fn fused(id: &str, rows: u32) -> Option<Entry> {
@@ -269,9 +274,4 @@ mod tests {
             "chop_deepseek41_mxfp8_fused_n8192_k1280_g1_f32_local32_n48_s4x_status_v1"
         );
     }
-}
-
-/// Exact launch rows represented by the status-fold table.
-pub fn rows() -> Vec<u32> {
-    super::mxfp8_fold::status_rows("dense_fold.status.decode", 32).collect()
 }

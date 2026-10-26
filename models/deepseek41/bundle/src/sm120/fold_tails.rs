@@ -35,6 +35,7 @@ pub(crate) fn cluster(id: &str, rows: u32) -> Option<Entry> {
 }
 
 /// Exact tail rows in table order, including the measured gaps.
+#[cfg(test)]
 pub(crate) fn rows() -> Vec<u32> {
     super::mxfp8_fold::status_rows("dense_fold.status_tails.decode", 64).collect()
 }

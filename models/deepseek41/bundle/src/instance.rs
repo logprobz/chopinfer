@@ -217,6 +217,27 @@ fn verify_rows(
 }
 
 impl Instance {
+    /// Ordinary execution lowering. Part schedules supply their own row origins.
+    fn lowering<'a>(
+        &'a self,
+        rank: usize,
+        inputs: &'a bundle_runtime::upload::DeviceInputs,
+        head_rows: u32,
+    ) -> crate::lower::Lowering<'a> {
+        crate::lower::Lowering {
+            prefill_row_origin: None,
+            shape: &self.config.shape,
+            ops: &self.ops,
+            buffers: &self.buffers[rank],
+            peers: &self.buffers,
+            inputs,
+            rank: rank as u32,
+            kv: self.kv_extent(),
+            head_rows,
+            prefill_hc_fusion: true,
+        }
+    }
+
     fn items(&self) -> Items {
         self.config.create.items
     }

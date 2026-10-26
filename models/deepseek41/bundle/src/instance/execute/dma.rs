@@ -6,6 +6,7 @@ use super::Run;
 use crate::instance::Instance;
 use bundle_runtime::acquire::RankHandles;
 use bundle_runtime::dispatch::{self, DispatchError};
+use bundle_runtime::dma::subspan;
 use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::resources::{Held, allocate_span};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
@@ -131,26 +132,6 @@ pub(crate) fn drain_streams(instance: &Instance) -> Result<(), BundleAbiError> {
         instance.services.synchronize_stream(stream)?;
     }
     Ok(())
-}
-
-fn subspan(
-    span: DeviceBufferSpanV1,
-    offset: u64,
-    length: u64,
-) -> Result<DeviceBufferSpanV1, String> {
-    if offset
-        .checked_add(length)
-        .is_none_or(|end| end > span.length)
-    {
-        return Err("DMA interval exceeds its buffer view".into());
-    }
-    Ok(DeviceBufferSpanV1::new(
-        span.buffer,
-        span.offset
-            .checked_add(offset)
-            .ok_or("DMA offset overflow")?,
-        length,
-    ))
 }
 
 struct Transfer {

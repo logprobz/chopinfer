@@ -31,7 +31,7 @@ use super::indexer_graphs::Bank;
 use super::media::PrefillMedia;
 use crate::engram_rows::Hashed;
 use crate::indexer_workloads::Route as IndexerRoute;
-use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
+use crate::lower::{KvExtent, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
 pub(crate) mod ar_status;
@@ -52,7 +52,7 @@ pub(super) const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
 pub(super) struct Run {
-    prefill_engram: Option<super::prefill_engram::Plan>,
+    execution: Execution,
     /// The selected synchronous cause, absent when a prepared gather serves the phase.
     pub(super) sync_engram: Option<crate::engram_rows::SyncReason>,
     /// A decode phase whose Engram rows upload per layer and join at their
@@ -61,7 +61,6 @@ pub(super) struct Run {
     /// The graph bank: the indexer route lowering takes and an allocated
     /// step's tail rows.
     bank: Bank,
-    skip: Option<std::rc::Rc<skip::Plan>>,
     pub(super) inputs: PhaseInputs,
     cache: Option<crate::ops::latent::CacheRange>,
     arena: usize,
@@ -96,6 +95,33 @@ pub(super) struct Run {
     /// A prefill's image and text flags, when its rows read the encoder's
     /// arena (`super::media`).
     media: Option<PrefillMedia>,
+}
+
+/// A skip plan can use prepared Engram gathers for its body when DMA is absent.
+enum Execution {
+    Standard,
+    PrefillEngram(super::prefill_engram::Plan),
+    Skip {
+        plan: std::rc::Rc<skip::Plan>,
+        engram: Option<super::prefill_engram::Plan>,
+    },
+}
+
+impl Execution {
+    fn skip(&self) -> Option<&skip::Plan> {
+        match self {
+            Self::Skip { plan, .. } => Some(plan),
+            _ => None,
+        }
+    }
+
+    fn prefill_engram(&self) -> Option<&super::prefill_engram::Plan> {
+        match self {
+            Self::PrefillEngram(plan) => Some(plan),
+            Self::Skip { engram, .. } => engram.as_ref(),
+            Self::Standard => None,
+        }
+    }
 }
 
 /// Prefill hashes retained for execution, or a legacy phase planned before
@@ -411,18 +437,7 @@ impl Instance {
                 continue;
             }
             let inputs = DeviceInputs::within(self.arenas[arena][rank], layout);
-            let lowering = Lowering {
-                prefill_row_origin: None,
-                shape: &self.config.shape,
-                ops: &self.ops,
-                buffers,
-                peers: &self.buffers,
-                inputs: &inputs,
-                rank: rank as u32,
-                kv: self.kv_extent(),
-                head_rows,
-                prefill_hc_fusion: true,
-            };
+            let lowering = self.lowering(rank, &inputs, head_rows);
             let mut launches = Vec::new();
             let mut waits = Vec::new();
             let mut of = Vec::new();
@@ -640,11 +655,10 @@ impl Instance {
         let index = index_upload(self.config.shape.geometry, self.steps.get(), inputs, live);
         advance_step();
         let mut run = Run {
-            prefill_engram: None,
+            execution: Execution::Standard,
             sync_engram: None,
             ar_engram,
             bank,
-            skip: None,
             index,
             engram,
             media,
@@ -664,10 +678,13 @@ impl Instance {
         };
         let planned = (|| {
             if skipping {
-                run.skip = Some(self.plans.plan(self, &run).map_err(|error| {
-                    self.log(&error);
-                    BundleStatusV1::InternalError
-                })?);
+                run.execution = Execution::Skip {
+                    plan: self.plans.plan(self, &run).map_err(|error| {
+                        self.log(&error);
+                        BundleStatusV1::InternalError
+                    })?,
+                    engram: None,
+                };
             }
             run.sync_engram = if run.phase.prefill() {
                 self.prefill_gather_reason(&run)
@@ -681,20 +698,21 @@ impl Instance {
                 .as_ref()
                 .filter(|_| run.phase.prefill() && run.sync_engram.is_none())
             {
-                let (programs, flags, stages) = if let Some(skip) = &run.skip {
+                let (programs, flags, stages) = if let Some(skip) = run.execution.skip() {
                     let body = skip.body();
                     (&body.0, &body.1, &body.2)
                 } else {
                     (&run.programs, &run.collectives, &run.stages)
                 };
-                run.prefill_engram = Some(
-                    super::prefill_engram::Plan::new(gathers, programs, flags, stages).map_err(
-                        |error| {
-                            self.log(&error);
-                            BundleStatusV1::InternalError
-                        },
-                    )?,
-                );
+                let plan = super::prefill_engram::Plan::new(gathers, programs, flags, stages)
+                    .map_err(|error| {
+                        self.log(&error);
+                        BundleStatusV1::InternalError
+                    })?;
+                match &mut run.execution {
+                    Execution::Skip { engram, .. } => *engram = Some(plan),
+                    _ => run.execution = Execution::PrefillEngram(plan),
+                }
             }
             Ok(())
         })();
@@ -712,7 +730,7 @@ impl Instance {
             Some(SyncReason::Media)
         } else if self.taps.text() {
             Some(SyncReason::Taps)
-        } else if run.skip.as_ref().is_some_and(|skip| skip.uses_dma()) {
+        } else if run.execution.skip().is_some_and(|skip| skip.uses_dma()) {
             Some(SyncReason::PrefillSchedule)
         } else if self.prefill_engram.is_none() {
             Some(self.prefill_engram_fallback)
@@ -797,7 +815,7 @@ impl Instance {
     /// every rank's phase arena.
     fn upload(&mut self, run: &Run) -> Result<(), BundleAbiError> {
         // Only a prefill gathers its logits rows; decode rows are its items.
-        let rows = if run.skip.is_some() {
+        let rows = if run.execution.skip().is_some() {
             (0..run.head_rows).collect()
         } else if run.arena == PREFILL {
             run.inputs.logit_rows()
@@ -839,7 +857,7 @@ impl Instance {
                     .zero_device_buffer(stream, scratch.row_status)?;
                 self.services
                     .zero_device_buffer(stream, scratch.shared_row_status)?;
-                if run.skip.is_some() {
+                if run.execution.skip().is_some() {
                     self.services
                         .zero_device_buffer(stream, scratch.index_status)?;
                 }
@@ -882,7 +900,7 @@ impl Instance {
                     &self.engram,
                     run.engram
                         .as_ref()
-                        .filter(|_| run.prefill_engram.is_none() && !run.ar_engram),
+                        .filter(|_| run.execution.prefill_engram().is_none() && !run.ar_engram),
                     self.image,
                 ) {
                     let reason = run
@@ -944,13 +962,14 @@ impl Instance {
         if run.graph.is_some() {
             self.activate_indexer_graphs(run.bank);
         }
-        if let Some(plan) = &run.skip {
-            return plan.execute(self, run.prefill_engram.as_ref());
-        }
-        if let Some(plan) = &run.prefill_engram {
-            return plan
-                .execute(self, &run.programs, &run.collectives)
-                .map_err(|error| self.dispatch_failed(error));
+        match &run.execution {
+            Execution::Skip { plan, engram } => return plan.execute(self, engram.as_ref()),
+            Execution::PrefillEngram(plan) => {
+                return plan
+                    .execute(self, &run.programs, &run.collectives)
+                    .map_err(|error| self.dispatch_failed(error));
+            }
+            Execution::Standard => {}
         }
         let streams = self
             .ranks
@@ -1559,7 +1578,7 @@ impl Instance {
                                 .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
                         )?;
                     }
-                    if run.prefill_engram.is_some() {
+                    if run.execution.prefill_engram().is_some() {
                         self.prefill_engram
                             .as_ref()
                             .expect("prepared prefill gather")
@@ -1575,7 +1594,7 @@ impl Instance {
                             self.log(&error);
                             BundleAbiError::Status(BundleStatusV1::BundleError)
                         })?;
-                    if run.skip.is_none() {
+                    if run.execution.skip().is_none() {
                         let live = if self.allocated_step().is_some() && run.inputs.verify {
                             run.phase.rows()
                         } else {
@@ -1599,7 +1618,7 @@ impl Instance {
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
-                if run.prefill_engram.is_some() && self.dspark.is_none() {
+                if run.execution.prefill_engram().is_some() && self.dspark.is_none() {
                     self.prefill_engram
                         .as_ref()
                         .expect("prepared prefill gather")
@@ -1652,7 +1671,11 @@ impl Instance {
         })?;
         // DSpark's per-phase status checks only save device rows. The
         // consolidated boundary above completes every consumer stream.
-        if self.dspark.is_some() && runs.iter().any(|run| run.prefill_engram.is_some()) {
+        if self.dspark.is_some()
+            && runs
+                .iter()
+                .any(|run| run.execution.prefill_engram().is_some())
+        {
             self.prefill_engram
                 .as_ref()
                 .expect("prepared prefill gather")
@@ -1674,7 +1697,7 @@ impl Instance {
                     if run.ar_engram {
                         self.finish_ar_engram()?;
                     }
-                    if run.prefill_engram.is_some() {
+                    if run.execution.prefill_engram().is_some() {
                         self.prefill_engram
                             .as_ref()
                             .expect("prepared prefill gather")

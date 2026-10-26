@@ -1,4 +1,5 @@
 #pragma once
+#include "mxfp8_fold_policies.cuh"
 #include "fold_rows.cuh"
 #include "mxfp8_fold_admit.cuh"
 #include "mxfp8_fold_packed.cuh"
@@ -20,10 +21,16 @@ namespace chop::gemm::mxfp8_fold_local_wide {
 // four-MMA 128-K partial is folded into its output in increasing K order.
 // No partial leaves this CTA and no cross-CTA completion state is needed.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         int TileN, bool OmitFirst, bool PackedWeights = false>
+         int TileN, bool OmitFirst, bool PackedWeights = false,
+         class Activation = mxfp8_fold_policy::E4m3Ceil32,
+         class Scale = mxfp8_fold_policy::Ue8m0AtK32,
+         class Chain = mxfp8_fold_policy::FourK32,
+         class Reduction = mxfp8_fold_policy::AscendingF32>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
     const uint8_t* weights, const uint8_t* weight_scales, float* output,
     const uint8_t* workspace, const uint32_t* live_rows, uint32_t rows) {
+  static_assert(mxfp8_fold_policy::qualified<Activation, Scale, Chain, Reduction>);
+
   static_assert(K % 128 == 0 && TileN % 8 == 0 && TileN >= 8 && TileN <= 64);
   static_assert(!PackedWeights || N % 8 == 0);
   constexpr int Folds = K / 128, Threads = TileN * 4;
@@ -174,10 +181,16 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
 // eight rows a fragment load touches then fall in distinct banks. It moves
 // bytes only, never which bytes an MMA reads.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         int TileN, int Stages, bool Swizzle, bool OmitFirst, bool PackedWeights = false>
+         int TileN, int Stages, bool Swizzle, bool OmitFirst, bool PackedWeights = false,
+         class Activation = mxfp8_fold_policy::E4m3Ceil32,
+         class Scale = mxfp8_fold_policy::Ue8m0AtK32,
+         class Chain = mxfp8_fold_policy::FourK32,
+         class Reduction = mxfp8_fold_policy::AscendingF32>
 __device__ void run_deep(const uint8_t* activations, const uint8_t* activation_scales,
     const uint8_t* weights, const uint8_t* weight_scales, float* output,
     const uint8_t* workspace, const uint32_t* live_rows, uint32_t rows) {
+  static_assert(mxfp8_fold_policy::qualified<Activation, Scale, Chain, Reduction>);
+
   static_assert(K % 128 == 0 && TileN % 8 == 0 && TileN >= 8 && TileN <= 64);
   static_assert(!PackedWeights || N % 8 == 0);
   static_assert(Stages >= 3 && Stages <= K / 128);

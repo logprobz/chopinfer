@@ -1,4 +1,5 @@
 #pragma once
+#include "mxfp8_fold_policies.cuh"
 
 // Native MXFP8 prefill, with the original activation-A / weight-B MMA
 // orientation. The shared prefill ring stages codes; scales keep their
@@ -161,12 +162,18 @@ __device__ __forceinline__ void tail(
 // K / 128, strips}, box {128, 8, 1, 16}) and `weights` the packed codes.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          bool F32Output, bool SingleChain = false, bool PackedWeights = false,
-         bool MatrixFetch = false, int Stages = 2, bool OmitFirst = false>
+         bool MatrixFetch = false, int Stages = 2, bool OmitFirst = false,
+         class Activation = mxfp8_fold_policy::E4m3Ceil32,
+         class Scale = mxfp8_fold_policy::Ue8m0AtK32,
+         class Chain = mxfp8_fold_policy::FourK32,
+         class Reduction = mxfp8_fold_policy::AscendingF32>
 __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight_map,
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
     void* output, const uint32_t* live_rows, const uint32_t* status,
     uint64_t status_offset, uint32_t rows) {
+  static_assert(mxfp8_fold_policy::qualified<Activation, Scale, Chain, Reduction>);
+
   static_assert(K > 0 && K % 32 == 0 && Groups > 0);
   static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
   static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);

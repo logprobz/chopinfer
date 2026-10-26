@@ -1,4 +1,5 @@
 #pragma once
+#include "mxfp8_fold_policies.cuh"
 #include "mxfp8_prefill.cuh"
 #include "../common/ptx_matrix.cuh"
 #include "mxfp8_fold_packed.cuh"
@@ -248,9 +249,15 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
 }
 
 template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,int Rows,int Stages,bool MatrixFetch,bool OmitFirst=false,
-    bool PackedWeights=false>
+    bool PackedWeights=false,
+         class Activation = mxfp8_fold_policy::E4m3Ceil32,
+         class Scale = mxfp8_fold_policy::Ue8m0AtK32,
+         class Chain = mxfp8_fold_policy::FourK32,
+         class Reduction = mxfp8_fold_policy::AscendingF32>
 __device__ void run(const uint8_t* input,const uint8_t* as,const uint8_t* weights,const uint8_t* ws,
     void* output,const uint32_t* live_rows,const uint32_t* status,uint64_t status_offset,uint32_t rows) {
+  static_assert(mxfp8_fold_policy::qualified<Activation, Scale, Chain, Reduction>);
+
   extern __shared__ __align__(16) uint8_t arena[];
   if(blockDim.x!=Layout<Rows,Stages>::threads) __trap();
   ptx::griddep_launch_dependents();

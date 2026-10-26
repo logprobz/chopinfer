@@ -1,4 +1,5 @@
 #pragma once
+#include "mxfp8_fold_policies.cuh"
 #include "fold_rows.cuh"
 #include "mxfp8_fold_admit.cuh"
 #include "../common/ptx_control.cuh"
@@ -66,13 +67,19 @@ __device__ __forceinline__ uint32_t dynamic_shared_bytes() {
 template<int N, int K, int Groups, int RowStride, int GroupStride, int TileN,
          int Rows, int Splits, int Stages, int Pending, bool Quantize,
          uint32_t FloorBits, bool IgnoreStatus, bool PackedWeights = false,
-         bool WorkspaceAdmission = false, bool Distributed = false, bool OmitFirst = false>
+         bool WorkspaceAdmission = false, bool Distributed = false, bool OmitFirst = false,
+         class Activation = mxfp8_fold_policy::E4m3Ceil32,
+         class Scale = mxfp8_fold_policy::Ue8m0AtK32,
+         class Chain = mxfp8_fold_policy::FourK32,
+         class Reduction = mxfp8_fold_policy::AscendingF32>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
     const uint8_t* weights, const uint8_t* weight_scales, float* output,
     uint8_t* codes_out, uint8_t* scales_out, uint8_t* flags_out,
     const uint8_t* pending, uint8_t* workspace,
     const uint32_t* live_rows, uint32_t* status, uint64_t status_row_offset,
     uint32_t rows) {
+  static_assert(mxfp8_fold_policy::qualified<Activation, Scale, Chain, Reduction>);
+
   constexpr int Folds = K / 128;
   constexpr int Per = (Folds + Splits - 1) / Splits;
   constexpr int Threads = TileN * 4;

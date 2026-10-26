@@ -35,6 +35,7 @@ mod plain;
 #[path = "../../../sm120/fold_plain.rs"]
 mod plain_family;
 mod profile;
+mod schedule_pair;
 mod timing;
 use arena::Arena;
 

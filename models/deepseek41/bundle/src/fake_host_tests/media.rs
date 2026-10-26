@@ -54,7 +54,7 @@ impl std::ops::Deref for MediaHost {
 impl MediaHost {
     fn new(shape: Shape, kv: KvLayout) -> Rc<Backend<MediaHost>> {
         let host = FakeHost {
-            device: FakeDevice::default(),
+            device: FakeHost::device(shape, kv),
             logs: RefCell::new(Vec::new()),
             shape,
             kv,
@@ -469,7 +469,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// memory. The TP2 history and resource inventory remain byte-identical.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (19803, 0xa542d63d0bf23cd1)),
-    (Ranks::TP4, (50265, 0x41ceb333ff29a9aa)),
+    (Ranks::TP4, (48981, 0xaddcd9f9d53275df)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native
@@ -510,7 +510,12 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
         let inject = launches(&prefill, INJECT);
         assert_eq!(inject.len(), count, "{ranks:?}");
         let position = |line: &String| prefill.iter().position(|other| other == line).unwrap();
-        let reduced = position(launches(&prefill, "chop_row_rounding_round_deepseek41")[0]);
+        let reduction = if ranks == Ranks::TP4 {
+            "chop_comm_allreduce_phased_bf16_v1"
+        } else {
+            "chop_row_rounding_round_deepseek41"
+        };
+        let reduced = position(launches(&prefill, reduction)[0]);
         let mixed = position(launches(&prefill, "lagged_mix_collapse")[0]);
         assert!((reduced..mixed).contains(&position(inject[0])));
         let engram_layers = (0..shape.dims().layers)

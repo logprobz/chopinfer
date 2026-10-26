@@ -1,8 +1,9 @@
 use super::*;
 use crate::instance::execute::overlap::with_enabled;
 
+// BF16 KV retains the rounded F32 transport used by this overlap plan.
 fn capture(enabled: bool, rows: u32) -> (Rc<Host>, Vec<String>) {
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
     let mut instance = with_enabled(enabled, || create(&host, 4));
     host.device.journal.borrow_mut().clear();
     step(
@@ -171,7 +172,7 @@ fn prefill_overlap_poisoning_stops_after_event_or_partial_rank_failure() {
         (1, first_wait, "wait "),
         (2, first_side + 1, "launch "),
     ] {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
         let mut instance = with_enabled(true, || create(&host, 4));
         let successes = journal[..at]
             .iter()

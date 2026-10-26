@@ -14,7 +14,8 @@ fn report() -> BundleRawClusterResidencyV1 {
     }
 }
 fn host() -> Rc<Host> {
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    // BF16 KV retains F32 partials and their rounded prefill gather.
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
     host.device.residency.set(Some(report()));
     host
 }
@@ -89,7 +90,7 @@ fn prefill_bf16_gather_keeps_decode_on_its_original_transport() {
 fn prefill_bf16_gather_keeps_verify_and_drafter_transports() {
     let mut traces = Vec::new();
     for enabled in [false, true] {
-        let host = host();
+        let host = super::bf16_partials::host(true);
         host.speculation.set(Some((3, 16)));
         let mut instance = with_bf16_gather(enabled, || create(&host, 4));
         step(

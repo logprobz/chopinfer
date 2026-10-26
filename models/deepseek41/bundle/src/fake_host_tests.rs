@@ -580,9 +580,33 @@ fn index(shape: &Shape, rank: u32, layouts: &BTreeMap<String, String>) -> (Vec<u
 }
 
 impl FakeHost {
+    fn device(shape: Shape, kv: KvLayout) -> FakeDevice {
+        let device = FakeDevice::default();
+        // The native Flash TP4 default requires resident BF16 collectives.
+        // Refusal tests replace this report explicitly.
+        if shape.geometry == &FLASH && shape.ranks() == 4 && kv.storage == KvStorage::Native {
+            device.residency.set(Some(BundleRawClusterResidencyV1 {
+                multiprocessor_count: 188,
+                usable_multiprocessors: 188,
+                max_active_clusters: 188,
+                flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+                    | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+                ..BundleRawClusterResidencyV1::unreported()
+            }));
+        }
+        device.ordinary_symbols.borrow_mut().extend(
+            [
+                "chop_comm_owned_round_bf16_v1",
+                "chop_comm_owned_sum_bf16_v1",
+            ]
+            .map(String::from),
+        );
+        device
+    }
+
     pub(crate) fn new(shape: Shape, kv: KvLayout) -> Rc<Host> {
         Rc::new(Backend::new(FakeHost {
-            device: FakeDevice::default(),
+            device: Self::device(shape, kv),
             logs: RefCell::new(Vec::new()),
             shape,
             kv,
@@ -1283,7 +1307,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77801, 0xa3c35189af896969),
+        (74573, 0x99eb72adee00e613),
     ),
     (
         "deepseek41-flash-tp4",
@@ -1623,8 +1647,8 @@ fn create_refuses_an_expert_bank_its_routed_ops_read_in_another_layout() {
 fn a_partial_instance_launches_the_lowered_stages_in_program_order() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     // The partial instance launches the row ops', the all-reduce's and the
-    // mixers' entries: the embedding widened, reduced through the F32 pair
-    // and rounded, before the streams take it; the first sublayer's mixer
+    // mixers' entries: the embedding widened, reduced through the BF16
+    // partial collective, before the streams take it; the first sublayer's mixer
     // before its input norm; the F32 head collapse, then the F32 final
     // norm, last.
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -1642,9 +1666,7 @@ fn a_partial_instance_launches_the_lowered_stages_in_program_order() {
     let order = [
         "chop_row_embedding_deepseek41_tp4_v1",
         "chop_row_rounding_widen_deepseek41_w5120_v1",
-        "chop_comm_reduce_scatter_f32_v1",
-        "chop_comm_allgather_scattered_f32_v1",
-        "chop_row_rounding_round_deepseek41_w5120_v1",
+        "chop_comm_allreduce_phased_oneshot_bf16_v1",
         kernels_sm120_broadcast(),
         "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
         "chop_row_rmsnorm_deepseek41_w5120_v1",
@@ -1752,11 +1774,23 @@ fn every_kv_layout_lowers_every_stage() {
                 0
             }
         );
+        // Native prefills replace each F32 scatter/gather/round triple
+        // with one BF16-partial collective. Decode retains the triple.
+        let bf16_partials = launches("chop_comm_allreduce_phased_oneshot_bf16_v1");
+        assert_eq!(
+            bf16_partials,
+            if kv.storage == KvStorage::Native {
+                (2 * FLASH.layers() as usize + 1) * shape.ranks() as usize
+            } else {
+                0
+            }
+        );
         counts.push((
             kv.storage,
             journal.iter().filter(|l| l.starts_with("launch")).count()
                 + 2 * fused_candidates
                 + fused_prefill
+                + 2 * bf16_partials
                 - packed
                 - cache_producers
                 - hierarchical_groups,
@@ -1767,7 +1801,8 @@ fn every_kv_layout_lowers_every_stage() {
         assert_eq!(host.acquired.get(), host.released.get());
     }
     // After the validated query packs, cache producers, group/final merges
-    // and fused candidates and prefill finishes, both layouts lower the same stages.
+    // and fused candidates, prefill finishes and BF16 collectives, both
+    // layouts lower the same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

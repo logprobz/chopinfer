@@ -204,12 +204,9 @@ fn package_defaults_select_dma_for_upper_skip_only() {
     );
     assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
     assert_ne!(dspark, capture_with(Some("0"), true, &defaults, 8192, true));
-    // Without the BF16 gather it was measured with, the default keeps
-    // the SM transport.
-    assert_disabled_journal(
-        &capture(None, false, &defaults, 8192),
-        &capture(Some("0"), false, &defaults, 8192),
-    );
+    // Native BF16 partials prepare their prefill reduction independently
+    // of the rounded F32 gather selection.
+    assert_eq!(capture(None, false, &defaults, 8192), unset);
 }
 
 #[test]

@@ -420,9 +420,9 @@ fn composed_trace_capacity(
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
             && s.contains(if dma && (!skip || mode == 0) {
-                "chop_comm_owned_sum_round_f32_v1"
+                "chop_comm_owned_sum_bf16_v1"
             } else {
-                "chop_comm_allreduce_phased_round_f32_v1"
+                "chop_comm_allreduce_phased_turns_bf16_v1"
             })));
         super::prefill_cache_capacity::assert_arena_streams(&host, &cache, lines, cached);
         if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {

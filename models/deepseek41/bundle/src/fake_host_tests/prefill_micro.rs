@@ -129,7 +129,8 @@ fn prefill_micro_long_context_odd_endpoint_captures_after_join() {
     assert_eq!(
         submitted
             .iter()
-            .filter(|s| s.starts_with("launch ") && s.contains("chop_comm_reduce_scatter_f32_v1"))
+            .filter(|s| s.starts_with("launch ")
+                && s.contains("chop_comm_allreduce_phased_turns_bf16_v1"))
             .count(),
         4 * 162
     );
@@ -211,7 +212,13 @@ fn prefill_micro_reduces_both_parts_at_every_boundary() {
         let mains = host.device.rank_streams.borrow();
         let mut counts = BTreeMap::<u32, usize>::new();
         for line in &journal {
-            if line.starts_with("launch ") && line.contains("chop_comm_reduce_scatter_f32_v1") {
+            if line.starts_with("launch ") && line.contains("chop_comm_allreduce_phased_") {
+                let symbol = if rows < 2048 {
+                    "chop_comm_allreduce_phased_bf16_v1"
+                } else {
+                    "chop_comm_allreduce_phased_turns_bf16_v1"
+                };
+                assert!(line.contains(symbol), "{line}");
                 let stream = line.split_whitespace().nth(1).unwrap().parse().unwrap();
                 *counts.entry(stream).or_default() += 1;
                 assert!(!mains.values().any(|&m| m == stream));
@@ -238,7 +245,7 @@ fn prefill_micro_reduces_both_parts_at_every_boundary() {
 #[test]
 fn prefill_micro_journal_preserves_cross_boundary_scratch_lifetimes() {
     let (host, journal) = capture(8191);
-    audit_journal(&host, &journal, "chop_comm_reduce_scatter_f32_v1");
+    audit_journal(&host, &journal, "chop_comm_allreduce_phased_turns_bf16_v1");
 }
 
 pub(super) fn audit_journal(host: &Host, journal: &[String], comm_symbol: &str) {

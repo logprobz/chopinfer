@@ -953,14 +953,40 @@ fn sync_dspark_instance(host: &Rc<Host>, overlap: bool) -> BundleInstanceV1 {
 #[test]
 fn disabled_prefill_engram_keeps_selected_schedule_reason() {
     bundle_runtime::routes::with_logging(|| {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = sync_dspark_instance(&host, true);
-        let tokens = vec![7; 1024];
-        let batch = step_with_stride(&[(701, 0, 0, &tokens, Phase::Prefill)], true, 16, None);
-        assert_sync_engram(&host, &mut instance, &batch, &["prefill_schedule"]);
-        instance.retire_request(701).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
+        for dspark in [false, true] {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            // Expose mapped Engram tables for both AR and DSpark.
+            host.drafter.set(true);
+            let mut instance = if dspark {
+                sync_dspark_instance(&host, true)
+            } else {
+                crate::instance::prefill_engram::with_enabled(false, || {
+                    crate::instance::execute::overlap::with_mode(2, || {
+                        api()
+                            .create(
+                                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
+                                    Rc::clone(&host),
+                                ))),
+                                &crate::config::tests::record(&host.shape, host.kv, 4, false),
+                            )
+                            .unwrap()
+                    })
+                })
+            };
+            let tokens = vec![7; 1024];
+            let batch = step_with_stride(&[(701, 0, 0, &tokens, Phase::Prefill)], dspark, 16, None);
+            // The native BF16 micro plan serves AR. DSpark keeps its full
+            // schedule, so its explicitly disabled gather supplies the reason.
+            let reason = if dspark {
+                "prefill_disabled"
+            } else {
+                "prefill_schedule"
+            };
+            assert_sync_engram(&host, &mut instance, &batch, &[reason]);
+            instance.retire_request(701).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
     });
 }
 

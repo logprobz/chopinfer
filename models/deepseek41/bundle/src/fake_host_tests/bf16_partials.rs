@@ -14,6 +14,8 @@ pub(super) fn host(admitted: bool) -> Rc<Host> {
                 | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
             ..BundleRawClusterResidencyV1::unreported()
         }));
+    } else {
+        host.device.residency.set(None);
     }
     host
 }

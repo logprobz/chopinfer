@@ -68,7 +68,7 @@ pub(crate) fn prefill_only_partials(shape: &Shape, storage: KvStorage) -> bool {
 }
 
 #[cfg(test)]
-thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) }; }
+thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
 
 #[cfg(test)]
 pub(crate) fn with_bf16_partials<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

@@ -771,6 +771,13 @@ fn trace(
     steps: impl FnOnce(&mut BundleInstanceV1),
 ) -> (Scratch, Vec<String>) {
     host.kv_pages.set(1024);
+    host.device.ordinary_symbols.borrow_mut().extend(
+        [
+            "chop_comm_owned_sum_bf16_v1",
+            "chop_comm_owned_round_bf16_v1",
+        ]
+        .map(String::from),
+    );
     let mut instance = crate::buffers::unaliased(|| create(host));
     let scratch = crate::instance::scratch_for_test(instance.handle());
     steps(&mut instance);

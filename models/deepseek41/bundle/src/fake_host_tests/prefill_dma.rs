@@ -1,6 +1,6 @@
 use super::*;
 use crate::instance::execute::overlap::with_mode;
-use crate::ops::with_dma;
+use crate::ops::{with_dma, with_partial_setting};
 use std::collections::BTreeSet;
 
 mod bf16;
@@ -46,7 +46,9 @@ fn capture(mode: u8, rows: u64) -> Vec<String> {
 }
 
 fn capture_on(host: &Rc<Host>, mode: u8, rows: u64) -> Vec<String> {
-    let mut instance = with_dma(true, || with_mode(mode, || create(host, 4)));
+    let mut instance = with_partial_setting(Some("0"), || {
+        with_dma(true, || with_mode(mode, || create(host, 4)))
+    });
     host.device.journal.borrow_mut().clear();
     let batch = prompt(7, 0, 0, rows, true);
     instance
@@ -241,8 +243,10 @@ fn prefill_dma_pushes_only_where_the_host_allows_it() {
     for (pull_only, pushes) in [(false, 12), (true, 0)] {
         let host = host();
         host.pull_only.set(pull_only);
-        let mut instance = with_dma(true, || {
-            crate::ops::with_dma_push(true, || create(&host, 4))
+        let mut instance = with_partial_setting(Some("0"), || {
+            with_dma(true, || {
+                crate::ops::with_dma_push(true, || create(&host, 4))
+            })
         });
         let journal = host.device.journal.borrow().clone();
         let issued = copy_ranks(&host, &journal);
@@ -270,7 +274,7 @@ fn prefill_dma_keeps_short_prefills_and_decode_on_the_original_schedule() {
     let short = capture(0, 511);
     assert!(!short.iter().any(|s| s.starts_with("peer-copy ")));
     let host = host();
-    let mut instance = with_dma(true, || create(&host, 4));
+    let mut instance = with_partial_setting(Some("0"), || with_dma(true, || create(&host, 4)));
     step(
         &mut instance,
         &prompt(7, 0, 0, 8192, true),
@@ -325,7 +329,9 @@ fn prefill_dma_orders_a_small_part_that_uses_the_composed_transport() {
 fn prefill_dma_partial_copy_failure_poisoning_prevents_capture_or_retry() {
     for mode in [0, 2] {
         let host = host();
-        let mut instance = with_dma(true, || with_mode(mode, || create(&host, 4)));
+        let mut instance = with_partial_setting(Some("0"), || {
+            with_dma(true, || with_mode(mode, || create(&host, 4)))
+        });
         host.device.journal.borrow_mut().clear();
         host.device.fail_copy.set(Some(2));
         let batch = prompt(7, 0, 0, 8191, true);
@@ -360,11 +366,13 @@ fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
         let host = host();
         let observed = Rc::new(OwnerHost::new(Rc::clone(&host)));
         let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
-        let mut instance = with_dma(true, || {
-            with_mode(mode, || {
-                api()
-                    .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
-                    .unwrap()
+        let mut instance = with_partial_setting(Some("0"), || {
+            with_dma(true, || {
+                with_mode(mode, || {
+                    api()
+                        .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
+                        .unwrap()
+                })
             })
         });
         let created = host.device.journal.borrow().clone();
@@ -468,11 +476,13 @@ fn prefill_dma_failed_teardown_retains_private_buffers() {
     let host = host();
     let observed = Rc::new(owner_host::OwnerHost::new(Rc::clone(&host)));
     let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
-    let mut instance = with_dma(true, || {
-        with_mode(2, || {
-            api()
-                .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
-                .unwrap()
+    let mut instance = with_partial_setting(Some("0"), || {
+        with_dma(true, || {
+            with_mode(2, || {
+                api()
+                    .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
+                    .unwrap()
+            })
         })
     });
     step(

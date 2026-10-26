@@ -3,6 +3,7 @@
 //! module line here.
 
 mod ceil_parallel;
+mod dense_decode;
 mod embedding_replicated;
 mod f32_blocked;
 mod f32_decode;

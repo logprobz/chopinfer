@@ -1,6 +1,6 @@
 //! Every production fold symbol against its row-major twin at exact shapes.
 #[path = "../../sm120/packed_serving.rs"]
-mod family;
+pub(super) mod family;
 use family::Entry;
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers as Buffers;
@@ -65,7 +65,7 @@ fn fused_buffers(
     }
 }
 
-fn launches(entry: &Entry, rows: u32) -> LabResult<([Vec<Launch>; 2], u64)> {
+pub(super) fn launches(entry: &Entry, rows: u32) -> LabResult<([Vec<Launch>; 2], u64)> {
     let q = entry.base().query;
     let b = buffers(entry, rows);
     let need = Need::rows(rows);
@@ -192,7 +192,7 @@ fn launches(entry: &Entry, rows: u32) -> LabResult<([Vec<Launch>; 2], u64)> {
     Ok(([row_major, packed], workspace))
 }
 
-fn images(entry: &Entry, rows: u32, workspace: u64, seed: u64) -> LabResult<Vec<Image>> {
+pub(super) fn images(entry: &Entry, rows: u32, workspace: u64, seed: u64) -> LabResult<Vec<Image>> {
     let [b, second] = buffers(entry, rows);
     let q = entry.base().query;
     let layout = Mxfp8FoldLayout {

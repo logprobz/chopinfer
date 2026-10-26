@@ -9,7 +9,7 @@ mod sweep;
 
 use super::Serving;
 use kernel_core::route::RouteTag;
-use runtime_bundle_sdk::warmup::{VerifyShape, verify_shapes, waves};
+use runtime_bundle_sdk::warmup::{AllocatedShape, VerifyShape, verify_shapes, waves};
 pub use sweep::{memory_regression, sweep};
 
 #[derive(Clone, Debug)]
@@ -19,6 +19,7 @@ pub struct Envelope {
     pub packed_prompts: u32,
     pub decode_buckets: Vec<u32>,
     pub verify: Vec<VerifyShape>,
+    pub allocated: Vec<AllocatedShape>,
     pub probes: Vec<u32>,
 }
 
@@ -36,6 +37,9 @@ impl Envelope {
             verify: serving
                 .verify_warmup()
                 .map_or_else(Vec::new, |v| verify_shapes(serving.sequences as usize, &v)),
+            allocated: serving
+                .verify_warmup()
+                .map_or_else(Vec::new, |v| v.allocated),
             probes: Vec::new(),
         }
     }

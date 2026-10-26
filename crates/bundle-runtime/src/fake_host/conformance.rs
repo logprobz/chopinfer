@@ -8,8 +8,8 @@ pub use route_guard::Envelope;
 
 pub use accounting::ObservedHost;
 pub use startup::{
-    Coverage, Item, PackageSpeculation, Phase, Serving, Startup, VerifyOptions, serving_startup,
-    serving_startup_of, startup_profiles,
+    AllocationOptions, Coverage, Item, PackageSpeculation, Phase, Serving, Startup, VerifyOptions,
+    serving_startup, serving_startup_of, startup_profiles,
 };
 
 pub use crate::conformance_suite as suite;

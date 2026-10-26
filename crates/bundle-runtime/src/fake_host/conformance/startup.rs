@@ -9,8 +9,10 @@ use std::collections::BTreeMap;
 use runtime_bundle_abi::{BundleAbiError, BundleInstanceV1, BundleKeptRowsV1, BundleStatusV1};
 use runtime_bundle_sdk::modalities::auto_served;
 use runtime_bundle_sdk::warmup::{
-    VerifyWarmup, context_ladder, item_rows, narrows_rows, served_verify_rows, verify_shapes, waves,
+    AllocatedShape, AllocationWarmup, VerifyWarmup, allocated_shapes, context_ladder, item_rows,
+    narrows_rows, served_verify_rows, verify_shapes, waves,
 };
+use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
 
 use super::super::{RecordingSink, SinkLimits};
 use super::kept;
@@ -55,6 +57,15 @@ pub struct VerifyOptions {
     pub rows: Option<u32>,
     pub graph_rows: Option<u32>,
     pub widths: Vec<u32>,
+    pub depths: Vec<(usize, usize)>,
+    pub allocation: Option<AllocationOptions>,
+}
+
+/// The profile's confidence calibration and per-item allocation floor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllocationOptions {
+    pub floor: u32,
+    pub calibration: VerifyCalibrationV1,
 }
 
 /// What a package declares for speculation, from the builders the package
@@ -122,8 +133,47 @@ impl Serving {
             .iter()
             .map(|&rows| rows as usize)
             .collect();
+        let item_rows = item_rows(&buckets, tokens);
+        let widths: Vec<_> = self
+            .verify
+            .widths
+            .iter()
+            .map(|&width| width as usize)
+            .collect();
+        let allocated = self
+            .verify
+            .allocation
+            .as_ref()
+            .map_or_else(Vec::new, |allocation| {
+                assert!(
+                    package.bundle_drafter,
+                    "{profile}: allocation needs bundle drafts"
+                );
+                allocated_shapes(
+                    self.sequences as usize,
+                    &AllocationWarmup {
+                        maximum_draft_tokens: tokens,
+                        step_rows: rows,
+                        drafting_items: package.maximum_draft_items.map(|items| items as usize),
+                        item_rows: &item_rows,
+                        widths: &widths,
+                        floor: allocation.floor as usize,
+                    },
+                    |items| {
+                        self.verify
+                            .depths
+                            .iter()
+                            .rev()
+                            .find(|&&(from, _)| from <= items)
+                            .map(|&(_, depth)| depth)
+                    },
+                )
+                .into_iter()
+                .filter(|shape| shape.width <= graphed_rows)
+                .collect()
+            });
         Some(VerifyWarmup {
-            item_rows: item_rows(&buckets, tokens),
+            item_rows,
             maximum_draft_tokens: tokens,
             step_rows: warmed_rows,
             drafting_items: package.maximum_draft_items.map(|items| items as usize),
@@ -135,9 +185,49 @@ impl Serving {
                 .map(|&width| width as usize)
                 .filter(|&width| width > warmed_rows && width <= graphed_rows)
                 .collect(),
-            // Profiles never enable verify allocation.
-            allocated: Vec::new(),
+            // Unpinned waves follow the profile's balanced allocation policy.
+            allocated,
         })
+    }
+
+    /// The allocation sent with one warmup step, using the profile's calibration.
+    pub fn allocation(&self, width: usize, items: usize) -> VerifyAllocationV1 {
+        let allocation = self
+            .verify
+            .allocation
+            .as_ref()
+            .expect("profile enables allocation");
+        VerifyAllocationV1::new(
+            width as u32,
+            allocation.floor,
+            allocation.calibration.clone(),
+            vec![SamplingKindV1::Sampled; items],
+        )
+    }
+
+    pub(super) fn allocated_drafts(&self, shape: &AllocatedShape) -> Vec<usize> {
+        let drafting = shape.items.min(
+            self.package
+                .as_ref()
+                .unwrap()
+                .maximum_draft_items
+                .map_or(shape.items, |n| n as usize),
+        );
+        let reserved = shape.reserved_rows - shape.items;
+        assert_eq!(
+            reserved % drafting,
+            0,
+            "fresh allocated waves reserve a common depth"
+        );
+        (0..shape.items)
+            .map(|index| {
+                if index < drafting {
+                    reserved / drafting
+                } else {
+                    0
+                }
+            })
+            .collect()
     }
 
     /// The verify rows the host reports to the bundle (`query_speculation`),
@@ -210,6 +300,8 @@ pub struct Coverage {
     pub waves: Vec<usize>,
     /// The host's verify keys, (row bucket, item bucket), one step each.
     pub verify_keys: Vec<(usize, usize)>,
+    /// Allocated widths and reservations, each executed with device results.
+    pub allocated: Vec<AllocatedShape>,
     /// The context ladder's prompt lengths, one drafting step each.
     pub contexts: Vec<usize>,
     /// Whether a step of one more drafting item than the package's
@@ -258,6 +350,16 @@ pub trait Startup: Sized + 'static {
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError>;
     /// The encoded step of `items`, with the KV pages each slot needs.
     fn step(&self, items: &[Item]) -> Vec<u8>;
+    /// Run an allocated verify step with device results. Adapters for profiles
+    /// without allocation need no implementation; an enabled profile fails closed.
+    fn execute_allocated_step(
+        &self,
+        _instance: &mut BundleInstanceV1,
+        _items: &[Item],
+        _allocation: VerifyAllocationV1,
+    ) -> Result<(), BundleAbiError> {
+        Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
+    }
     /// Run the serving execution export. Prompt ends distinguish setup chunks
     /// from final chunks when a bundle negotiates a prefill extension.
     fn execute_route_step(
@@ -300,8 +402,49 @@ fn profiles(json: &str) -> BTreeMap<String, Serving> {
                         .map(|width| width.trim().parse::<u32>().expect("verify width"))
                         .collect()
                 }),
+                depths: speculation.get("depths").map_or_else(Vec::new, |value| {
+                    value
+                        .as_str()
+                        .expect("verify depths")
+                        .split(',')
+                        .map(|entry| {
+                            let (items, depth) = entry.split_once(':').expect("items:depth");
+                            (
+                                items.trim().parse().expect("depth items"),
+                                depth.trim().parse().expect("draft depth"),
+                            )
+                        })
+                        .collect()
+                }),
+                allocation: speculation
+                    .get("confidence")
+                    .filter(|value| !value.is_null())
+                    .map(|confidence| {
+                        assert_eq!(
+                            speculation["mode"].as_str(),
+                            Some("balanced"),
+                            "allocation needs balanced speculation"
+                        );
+                        let pairs = |kind: &str| -> Vec<(f32, f32)> {
+                            serde_json::from_value(confidence[kind].clone())
+                                .expect("confidence calibration")
+                        };
+                        let floor = number(&confidence["floor"], "confidence floor");
+                        let calibration =
+                            VerifyCalibrationV1::new(&pairs("greedy"), &pairs("sampled"))
+                                .expect("valid confidence calibration");
+                        assert!(
+                            floor as usize <= calibration.positions(),
+                            "confidence floor exceeds positions"
+                        );
+                        AllocationOptions { floor, calibration }
+                    }),
             };
             assert!(verify.graph_rows != Some(0) && verify.widths.iter().all(|&width| width > 0));
+            assert!(
+                verify.depths.iter().all(|&(items, _)| items > 0)
+                    && verify.depths.windows(2).all(|pair| pair[0].0 < pair[1].0)
+            );
             let mut serving = Serving {
                 profile: name.clone(),
                 tensor_parallel: number(&profile["tensor_parallel"], "tensor_parallel"),
@@ -523,6 +666,50 @@ fn serve<S: Startup>(serving: &Serving) -> Coverage {
                 .verify_keys
                 .push((shape.row_bucket, shape.item_bucket));
         }
+        for shape in &verify.allocated {
+            let label = format!(
+                "{profile} allocated width {} reserved {} items {}",
+                shape.width, shape.reserved_rows, shape.items
+            );
+            let admitted = requests.admit(shape.items);
+            requests.prefill(&mut instance, &admitted, PROMPT_TOKENS, &label);
+            let items: Vec<_> = admitted
+                .iter()
+                .zip(serving.allocated_drafts(shape))
+                .map(|(&request, drafts)| {
+                    requests.item(
+                        request,
+                        PROMPT_TOKENS,
+                        drafts as u64 + 1,
+                        if drafts == 0 {
+                            Phase::Decode
+                        } else {
+                            Phase::Verify
+                        },
+                    )
+                })
+                .collect();
+            adapter
+                .execute_allocated_step(
+                    &mut instance,
+                    &items,
+                    serving.allocation(shape.width, shape.items),
+                )
+                .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+            // The fake host does not execute allocation kernels. Only each
+            // request's bonus row is known to be kept for every allocation.
+            let accepted: Vec<_> = items
+                .iter()
+                .filter(|item| item.phase == Phase::Verify)
+                .map(|item| kept(item.request, 1))
+                .collect();
+            instance
+                .commit_accepted(&accepted)
+                .unwrap_or_else(|error| panic!("{label}: commit: {error:?}"));
+            requests.steps += 1;
+            Requests::<S>::retire(&mut instance, &admitted, &label);
+            coverage.allocated.push(*shape);
+        }
         // The context ladder: one request whose first drafting step, at the
         // deepest pin, catches the drafter up on its prompt. Every served
         // context exceeds the ladder's longest prompt.
@@ -671,12 +858,13 @@ pub(super) fn servings<S: Startup>() -> Vec<Serving> {
 fn start<S: Startup>(serving: &Serving) -> Coverage {
     let served = serve::<S>(serving);
     println!(
-        "ServingStartup {}: modalities {}, waves {:?}, {} verify keys {:?}, contexts {:?}, drafting limit refused {}, {} steps",
+        "ServingStartup {}: modalities {}, waves {:?}, {} verify keys {:?}, allocated {:?}, contexts {:?}, drafting limit refused {}, {} steps",
         served.profile,
         served.modalities.join(","),
         served.waves,
         served.verify_keys.len(),
         served.verify_keys,
+        served.allocated,
         served.contexts,
         served.drafting_limit_refused,
         served.steps

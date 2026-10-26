@@ -189,7 +189,13 @@ pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Fail
                 let lo = group.partition_point(|s| s.rows < sample.rows.saturating_sub(radius));
                 let hi = group.partition_point(|s| s.rows <= sample.rows.saturating_add(radius));
                 let neighbour = !interior && (lo..hi).any(|j| less(j) && totals[j] < totals[i]);
-                if neighbour || interior || tag.symbol == crate::routes::MAPPED_GATHER_SYMBOL {
+                // Allocated widths and reservations are distinct shapes, often
+                // without a neighbour. Every fallback there needs an allowance.
+                if sample.mode.starts_with("allocated-verify-")
+                    || neighbour
+                    || interior
+                    || tag.symbol == crate::routes::MAPPED_GATHER_SYMBOL
+                {
                     failed.insert(Failure {
                         entry: tag.entry.clone(),
                         mode: sample.mode.clone(),
@@ -441,6 +447,33 @@ mod tests {
         assert!(check("ar", &failed, &[], Tier::Quick, &[mapped_tag()]).is_err());
         let allow = parse("[[allow]]\nprofiles = [\"ar\"]\nphase = \"prefill\"\nrows = [[7, 7]]\nfamily = \"engram_gather\"\nsymbol = \"host.gather_mapped_rows\"\nentry = \"engram/sync/ar_prefill\"\nreason = \"AR prefill uses synchronous gathers\"\ntask = \"ar-prefill-engram\"\n").unwrap();
         assert!(check("ar", &failed, &allow, Tier::Full, &[mapped_tag()]).is_ok());
+    }
+
+    #[test]
+    fn allocated_singletons_require_an_exact_fallback_allowance() {
+        for class in [RouteClass::Baseline, RouteClass::Reference] {
+            let tag: Tag = RouteTag::new("base", class, "gemm", []).into();
+            let sample = |mode: &str| Sample {
+                mode: mode.into(),
+                phase: "verify".into(),
+                rows: 8,
+                symbols: BTreeMap::from([("base".into(), 1), ("gemm/base".into(), 1)]),
+            };
+            for tier in [Tier::Quick, Tier::Cpu, Tier::Full] {
+                let tags = [tag.clone()];
+                let failed = failures(
+                    &[sample("allocated-verify-items-2-reserved-12")],
+                    &tags,
+                    tier,
+                );
+                assert_eq!(failed.len(), 1);
+                assert!(check("profile", &failed, &[], tier, &tags).is_err());
+                let allow = parse("[[allow]]\nprofiles = [\"profile\"]\nphase = \"verify\"\nrows = [[8, 8]]\nfamily = \"gemm\"\nsymbol = \"base\"\nentry = \"gemm/base\"\nreason = \"Existing allocated fallback with served evidence\"\ntask = \"allocated-route-coverage\"\n").unwrap();
+                assert!(check("profile", &failed, &allow, tier, &tags).is_ok());
+                assert!(check("other-profile", &failed, &allow, tier, &tags).is_err());
+                assert!(failures(&[sample("verify-items-2")], &tags, tier).is_empty());
+            }
+        }
     }
 
     #[test]

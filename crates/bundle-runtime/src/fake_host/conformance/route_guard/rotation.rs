@@ -174,6 +174,7 @@ mod tests {
                     packed_prompts: 8,
                     decode_buckets: vec![1, 8],
                     verify: vec![],
+                    allocated: vec![],
                     probes: vec![17, 47],
                 },
                 tags: vec![RouteTag::new(

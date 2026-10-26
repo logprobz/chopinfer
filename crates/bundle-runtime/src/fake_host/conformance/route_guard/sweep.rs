@@ -20,6 +20,7 @@ struct Case {
     rows: u32,
     offset: u32,
     lengths: Vec<u32>,
+    allocated: bool,
 }
 
 pub(super) fn modes(envelope: &Envelope) -> Vec<(String, u32, u32)> {
@@ -98,6 +99,7 @@ fn cases(
                 rows: r,
                 offset,
                 lengths,
+                allocated: false,
             });
         }
     }
@@ -108,6 +110,7 @@ fn cases(
             rows: r,
             offset: 5,
             lengths: vec![1; r as usize],
+            allocated: false,
         });
     }
     for shape in &envelope.verify {
@@ -117,9 +120,32 @@ fn cases(
             rows: shape.row_bucket as u32,
             offset: 5,
             lengths: shape.drafts.iter().map(|n| *n as u32 + 1).collect(),
+            allocated: false,
         });
     }
     cases
+}
+
+fn allocated_cases(serving: &Serving, envelope: &Envelope) -> Vec<Case> {
+    envelope
+        .allocated
+        .iter()
+        .map(|shape| Case {
+            mode: format!(
+                "allocated-verify-items-{}-reserved-{}",
+                shape.items, shape.reserved_rows
+            ),
+            phase: Phase::Verify,
+            rows: shape.width as u32,
+            offset: 5,
+            lengths: serving
+                .allocated_drafts(shape)
+                .into_iter()
+                .map(|drafts| drafts as u32 + 1)
+                .collect(),
+            allocated: true,
+        })
+        .collect()
 }
 
 fn execute<S: Startup>(
@@ -127,20 +153,25 @@ fn execute<S: Startup>(
     instance: &mut BundleInstanceV1,
     items: &[Item],
     prompt_ends: &[u64],
+    allocation: Option<runtime_bundle_sdk::VerifyAllocationV1>,
     label: &str,
 ) {
-    adapter
-        .execute_route_step(
+    let allocated = allocation.is_some();
+    if let Some(allocation) = allocation {
+        adapter.execute_allocated_step(instance, items, allocation)
+    } else {
+        adapter.execute_route_step(
             instance,
             items,
             prompt_ends,
             &mut RecordingSink::<S::Limits>::default(),
         )
-        .unwrap_or_else(|e| panic!("{label}: execute: {e}"));
+    }
+    .unwrap_or_else(|e| panic!("{label}: execute: {e}"));
     let kept: Vec<_> = items
         .iter()
         .filter(|i| i.phase == Phase::Verify)
-        .map(|i| super::super::kept(i.request, i.tokens.len() as u32))
+        .map(|i| super::super::kept(i.request, if allocated { 1 } else { i.tokens.len() as u32 }))
         .collect();
     if kept.is_empty() {
         instance.commit()
@@ -201,7 +232,7 @@ fn shard<S: Startup>(
             let setup: Vec<_> = (0..case.lengths.len())
                 .map(|slot| item(slot, start, count, Phase::Prefill))
                 .collect();
-            execute(&adapter, &mut instance, &setup, &prompt_ends, &label);
+            execute(&adapter, &mut instance, &setup, &prompt_ends, None, &label);
             start += count;
             adapter.route_device().clear_route_journal();
             budget.check();
@@ -225,7 +256,17 @@ fn shard<S: Startup>(
             })
             .collect();
         let counter = crate::routes::RouteCounter::begin(true);
-        execute(&adapter, &mut instance, &items, &prompt_ends, &label);
+        let allocation = case
+            .allocated
+            .then(|| serving.allocation(case.rows as usize, items.len()));
+        execute(
+            &adapter,
+            &mut instance,
+            &items,
+            &prompt_ends,
+            allocation,
+            &label,
+        );
         let selected = counter.finish().expect("sweep counter");
         let mut symbols = BTreeMap::new();
         for symbol in adapter.launched(0) {
@@ -354,6 +395,12 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
             .all(|shape| envelope.verify.contains(shape)),
         "missing host verify shape"
     );
+    assert!(
+        host.allocated
+            .iter()
+            .all(|shape| envelope.allocated.contains(shape)),
+        "missing host allocated verify shape"
+    );
     let tags = merge(S::new(serving).route_tags()).expect("consistent route registrations");
     let seed = seed();
     let mut group = 0;
@@ -382,7 +429,7 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
     if let Some(rotation) = &rotation {
         rotation.report(bundle, profile);
     }
-    let cases = cases(
+    let mut cases = cases(
         &envelope,
         &tags,
         tier,
@@ -391,6 +438,7 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
         seed,
         rotation.as_ref().map(|r| (r, profile)),
     );
+    cases.extend(allocated_cases(serving, &envelope));
     assert!(!cases.is_empty());
     let count = cases.len();
     let pieces = pieces::Pieces::configured(tier, bundle, profile, seed, count);
@@ -481,6 +529,12 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
         "{profile}: route sweep {tier:?}, seed={seed}, {count} cases, {:.3}s, workers={shards}, max_setup={setup:.3}s",
         started.elapsed().as_secs_f64()
     );
+    if !envelope.allocated.is_empty() {
+        println!(
+            "{profile}: allocated verify shapes {:?}",
+            envelope.allocated
+        );
+    }
     if let Err(error) = audit::check(profile, &failures, &allow, tier, &tags) {
         panic!("{error}");
     }
@@ -517,6 +571,7 @@ pub fn memory_regression<S: Startup>() {
             rows,
             offset: 0,
             lengths: vec![rows],
+            allocated: false,
         })
         .collect();
     let (samples, _, _) = shard::<S>(serving, &envelope, &cases, false);
@@ -536,6 +591,7 @@ mod tests {
             packed_prompts: 8,
             decode_buckets: vec![1, 8],
             verify: vec![],
+            allocated: vec![],
             probes: vec![446, 789],
         };
         let tags = vec![RouteTag::new(

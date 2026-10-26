@@ -2054,3 +2054,33 @@ symbol = "host.gather_mapped_rows"
 rows = [[512, 2048]]
 reason = "Served upper-skip prefill with the phased DMA transport from 512 rows takes the synchronous Engram gather: Instance::prefill_gather_reason (src/instance/execute.rs:746) refuses prepared gathers when skip.uses_dma(). This is unchanged served behavior exposed by the DMA test default"
 task = "C10/C24-integrate-prepared-gathers-with-DMA"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
+symbol = "chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
+rows = [[8, 8], [16, 16]]
+reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reserve 12 rows at width 8, and 3, 4 or 5 items reserve 18, 24 or 30 rows at width 16. The same-shape CPU sweep observes this cached drafter router stage at the freeze. The C6b GPU bitwise A/B on 2026-10-26 covers the adopted allocation at 64-row capacity and floor 1, with matched token IDs and selected-logprob bits equal. Retain this exact gap until router reuse covers these drafting counts"
+task = "C6b-allocated-router-reuse"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
+symbol = "chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
+rows = [[8, 8], [16, 16]]
+reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reserve 12 rows at width 8, and 3, 4 or 5 items reserve 18, 24 or 30 rows at width 16. The same-shape CPU sweep observes this cached drafter router stage at the freeze. The C6b GPU bitwise A/B on 2026-10-26 covers the adopted allocation at 64-row capacity and floor 1, with matched token IDs and selected-logprob bits equal. Retain this exact gap until router reuse covers these drafting counts"
+task = "C6b-allocated-router-reuse"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
+symbol = "chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
+rows = [[8, 8], [16, 16]]
+reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reserve 12 rows at width 8, and 3, 4 or 5 items reserve 18, 24 or 30 rows at width 16. The same-shape CPU sweep observes this cached drafter router stage at the freeze. The C6b GPU bitwise A/B on 2026-10-26 covers the adopted allocation at 64-row capacity and floor 1, with matched token IDs and selected-logprob bits equal. Retain this exact gap until router reuse covers these drafting counts"
+task = "C6b-allocated-router-reuse"

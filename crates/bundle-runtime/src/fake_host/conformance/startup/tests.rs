@@ -77,13 +77,14 @@ impl Bundle for Probe {
         Ok(())
     }
 
-    fn execute(&mut self, request: &[u8], _sink: &mut ExecuteResultSinkV1) -> BundleStatusV1 {
+    fn execute(&mut self, request: &[u8], sink: &mut ExecuteResultSinkV1) -> BundleStatusV1 {
         let Ok(batch) = BatchRequestV1::decode(request) else {
             return BundleStatusV1::InvalidArgument;
         };
         let items = batch.items();
         let verify = items.iter().filter(|item| item.is_verify()).count();
         let refused = match self.refuse.as_slice() {
+            b"allocation" => batch.verify_allocation().is_some(),
             b"mixed" => verify > 0 && items.iter().any(BatchItemV1::is_decode),
             b"shallow" => items
                 .iter()
@@ -97,6 +98,13 @@ impl Bundle for Probe {
         };
         if refused {
             return BundleStatusV1::Unsupported;
+        }
+        for item in items.iter().filter(|item| item.bundle_drafts()) {
+            sink.emit_draft_tokens(
+                item.request_id(),
+                &vec![1; item.phase_tokens() as usize - 1],
+            )
+            .unwrap();
         }
         BundleStatusV1::Success
     }
@@ -190,6 +198,7 @@ const IMAGES: u8 = 8;
 const NO_ENCODER: u8 = 9;
 /// Selects video, which the package does not provide.
 const UNPROVIDED: u8 = 10;
+const ALLOCATION: u8 = 11;
 
 struct Limits;
 impl SinkLimits for Limits {
@@ -267,6 +276,7 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
             CONTEXT => b"context",
             LIMITED => b"drafting",
             NO_ENCODER => b"encoder",
+            ALLOCATION => b"allocation",
             _ => b"",
         };
         let mut record = refuse.to_vec();
@@ -284,7 +294,17 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
                 let end = item.start + u64::from(rows);
                 let batch = match item.phase {
                     Phase::Verify => {
-                        BatchItemV1::verify(item.request, rows, false, item.tokens.clone())
+                        let bundle = self.1.bundle_drafts();
+                        BatchItemV1::verify(
+                            item.request,
+                            rows,
+                            bundle,
+                            if bundle {
+                                item.tokens[..1].to_vec()
+                            } else {
+                                item.tokens.clone()
+                            },
+                        )
                     }
                     phase => BatchItemV1::new(
                         item.request,
@@ -303,6 +323,20 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
             .encode()
             .unwrap()
     }
+    fn execute_allocated_step(
+        &self,
+        instance: &mut BundleInstanceV1,
+        items: &[Item],
+        allocation: VerifyAllocationV1,
+    ) -> Result<(), BundleAbiError> {
+        let batch = BatchRequestV1::decode(&self.step(items))
+            .unwrap()
+            .with_verify_allocation(allocation);
+        instance.execute(
+            &batch.encode().unwrap(),
+            &mut RecordingSink::<Limits>::default(),
+        )
+    }
     fn token(&self, position: u64) -> u32 {
         position as u32 + 1
     }
@@ -316,6 +350,63 @@ fn keys(warmup: &VerifyWarmup) -> Vec<(usize, usize)> {
         .iter()
         .map(|shape| (shape.row_bucket, shape.item_bucket))
         .collect()
+}
+
+fn allocated_serving() -> Serving {
+    let mut document: serde_json::Value = serde_json::from_str(PROFILES).unwrap();
+    let speculation = &mut document["profiles"]["tp1-mtp"]["speculation"];
+    speculation["mode"] = "balanced".into();
+    speculation["depths"] = "1:1,4:0".into();
+    speculation["widths"] = "4,8,16".into();
+    speculation["graph_rows"] = 4.into();
+    speculation["confidence"] = serde_json::json!({
+        "floor": 0, "greedy": vec![[1.0, 0.0]; 3], "sampled": vec![[0.5, 0.25]; 3]
+    });
+    let mut serving = profiles(&document.to_string()).remove("tp1-mtp").unwrap();
+    let mut package = Adapter::<NONE>::servings().pop().unwrap().package.unwrap();
+    package.bundle_drafter = true;
+    serving.package = Some(package);
+    serving
+}
+
+#[test]
+fn profile_confidence_drives_allocated_startup_and_envelope() {
+    let mut serving = allocated_serving();
+    let expected = vec![
+        AllocatedShape {
+            items: 2,
+            width: 4,
+            reserved_rows: 8,
+        },
+        AllocatedShape {
+            items: 3,
+            width: 4,
+            reserved_rows: 12,
+        },
+    ];
+    assert_eq!(serving.verify_warmup().unwrap().allocated, expected);
+    assert_eq!(
+        super::super::Envelope::served(&serving, 8192).allocated,
+        expected
+    );
+    assert_eq!(serve::<Adapter<NONE>>(&serving).allocated, expected);
+    let allocation = serving.allocation(4, 2);
+    assert_eq!(allocation.floor(), 0);
+    assert_eq!(allocation.calibration().positions(), 3);
+    serving.verify.graph_rows = Some(3);
+    assert!(serving.verify_warmup().unwrap().allocated.is_empty());
+    serving.verify.graph_rows = Some(4);
+    serving.verify.depths = vec![(1, 0)];
+    assert!(serving.verify_warmup().unwrap().allocated.is_empty());
+    serving.verify.depths = vec![(1, 1), (4, 0)];
+    serving.verify.allocation = None;
+    assert!(serving.verify_warmup().unwrap().allocated.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "allocated width 4 reserved 8 items 2: Status(BundleStatusV1(2))")]
+fn startup_does_not_omit_a_refused_allocated_wave() {
+    serve::<Adapter<ALLOCATION>>(&allocated_serving());
 }
 
 #[test]

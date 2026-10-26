@@ -15,6 +15,8 @@ use bundle_runtime::fake_host::{RecordingSink, SinkLimits};
 use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
+mod allocated;
+
 /// A served configuration: its rank count and the host's (drafts, verify
 /// tokens), none without speculation.
 struct Case {
@@ -325,6 +327,7 @@ struct Served {
     host: Rc<Host>,
     observed: Rc<ObservedHost<dspark::host::MappedHost>>,
     serving: conformance::Serving,
+    allocated_epoch: Cell<u64>,
 }
 
 #[test]
@@ -515,6 +518,7 @@ impl conformance::Startup for Served {
             )))),
             host,
             serving: serving.clone(),
+            allocated_epoch: Cell::new(0),
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
@@ -628,6 +632,15 @@ impl conformance::Startup for Served {
         let encoded = runtime_bundle_sdk::prefill::encode(&batch, &boundaries)
             .expect("served prefill boundaries");
         instance.execute_prefill(&encoded, sink)
+    }
+
+    fn execute_allocated_step(
+        &self,
+        instance: &mut BundleInstanceV1,
+        items: &[conformance::Item],
+        allocation: runtime_bundle_sdk::VerifyAllocationV1,
+    ) -> Result<(), BundleAbiError> {
+        allocated::execute(self, instance, items, allocation)
     }
 
     fn token(&self, position: u64) -> u32 {

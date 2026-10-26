@@ -1,4 +1,6 @@
 //! Native MXFP8 prefill tiles over the shared TMA ring, with fold128 arithmetic.
+pub mod matrix;
+
 use super::mxfp8_fold::{self, Entry};
 use super::mxfp8_fold_packed;
 use kernel_build::{CubinSpec, EntryParam as P, EntrySpec};

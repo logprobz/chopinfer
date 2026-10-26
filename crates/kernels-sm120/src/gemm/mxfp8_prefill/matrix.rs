@@ -1,5 +1,5 @@
 //! Matrix fragment loads over the native warp-specialized TMA ring.
-use super::{mxfp8_fold, mxfp8_prefill};
+use crate::gemm::{mxfp8_fold, mxfp8_prefill};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, View};
 use kernel_core::contract::Refusal;

@@ -19,7 +19,8 @@ pub mod mxfp8_fold_reuse;
 pub mod mxfp8_fold_stream;
 pub mod mxfp8_fold_ticket;
 pub mod mxfp8_prefill;
-pub mod mxfp8_prefill_compact;
+pub mod mxfp8_prefill_tiles;
+pub use mxfp8_prefill_tiles::{compact as mxfp8_prefill_compact, matrix as mxfp8_prefill_matrix};
 pub mod mxfp8_prefill_split;
 pub mod prefetch;
 pub mod stacked;
@@ -3335,8 +3336,7 @@ mod tests {
     }
 }
 
-pub mod mxfp8_prefill_matrix;
 
-pub mod mxfp8_prefill_tma_matrix;
+pub use mxfp8_prefill::matrix as mxfp8_prefill_tma_matrix;
 
 pub mod mxfp8_prefill_tma_scales;

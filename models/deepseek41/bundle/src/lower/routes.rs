@@ -52,11 +52,7 @@ impl Lowering<'_> {
             && matches!(stage, Stage::InputNorm(..) | Stage::QuantizeInput(..))
         {
             let selected = crate::ops::norm_prefill::qualified(self.shape.geometry, phase);
-            let admitted = (64..=2624)
-                .step_by(128)
-                .chain([8192])
-                .map(|r| r..=r)
-                .collect::<Vec<_>>();
+            let admitted = crate::Kernels::prefill_norm_route_rows(self.shape);
             for item in launches.iter_mut() {
                 // Widening is retained by both paths and is not a displaced norm.
                 if !selected && item.launch.symbol != crate::Kernels::norm_route_symbol(self.shape)
@@ -116,5 +112,24 @@ impl Lowering<'_> {
             );
             item.launch.bindings.set_route(Some(tag));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn prefill_norm_route_rows_keep_ordered_singletons() {
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        assert_eq!(
+            crate::Kernels::prefill_norm_route_rows(&shape),
+            (64..=2624)
+                .step_by(128)
+                .chain([8192])
+                .map(|rows| rows..=rows)
+                .collect::<Vec<_>>()
+        );
     }
 }

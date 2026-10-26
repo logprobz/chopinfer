@@ -373,6 +373,47 @@ impl crate::Kernels {
     pub(crate) fn router_in_norm_route_rows() -> std::ops::RangeInclusive<u32> {
         router_norm::ROWS..=router_norm::ROWS
     }
+
+    fn table_route_rows(
+        g: &model_deepseek41_contract::geometry::Geometry,
+        family: model_deepseek41_contract::tuning::Family,
+        op: &str,
+        weights: &str,
+        shape: &[(&str, u32)],
+        bucket: u32,
+    ) -> Vec<std::ops::RangeInclusive<u32>> {
+        model_deepseek41_contract::tuning::table(g, family)
+            .into_iter()
+            .flat_map(|table| table.rows())
+            .filter(|row| {
+                row.key.op == op
+                    && row.key.weights == weights
+                    && row.key.bucket == bucket
+                    && row.key.shape.len() == shape.len()
+                    && shape
+                        .iter()
+                        .all(|&(key, value)| row.key.shape.get(key) == Some(&value))
+            })
+            .map(|row| {
+                let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+                first..=last
+            })
+            .collect()
+    }
+
+    pub(crate) fn prefill_norm_route_rows(
+        shape: &crate::shape::Shape,
+    ) -> Vec<std::ops::RangeInclusive<u32>> {
+        Self::table_route_rows(
+            shape.geometry,
+            model_deepseek41_contract::tuning::Family::Norm,
+            "norm.input_admit.prefill",
+            "bf16",
+            &[("width", shape.geometry.shape.hidden)],
+            model_deepseek41_contract::serving::PREFILL_TOKENS,
+        )
+    }
+
     pub(crate) fn norm_route_symbol(shape: &crate::shape::Shape) -> String {
         rows::norm_symbol(shape.geometry, shape.dims().hidden)
     }

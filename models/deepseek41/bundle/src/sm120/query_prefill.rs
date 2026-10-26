@@ -61,11 +61,27 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
         return Ok(backend);
     }
     let entry = selected()?.reference;
+    let admitted = model_deepseek41_contract::tuning::table(
+        g,
+        model_deepseek41_contract::tuning::Family::Norm,
+    )
+    .into_iter()
+    .flat_map(|table| table.rows())
+    .filter(|row| {
+        row.key.op == "norm.query_admit.prefill"
+            && row.key.weights == "bf16"
+            && row.key.shape == [("width".into(), g.shape.attention.q_rank)].into()
+            && row.key.bucket == PREFILL_TOKENS
+    })
+    .map(|row| {
+        let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+        first..=last
+    });
     let tag = kernel_core::route::RouteTag::new(
         &entry.symbol,
         kernel_core::route::RouteClass::Fast,
         FAMILY,
-        [PREFILL_TOKENS..=PREFILL_TOKENS],
+        admitted,
     );
     Ok(backend.with_rmsnorm_quantize(entry).with_route_tags([tag]))
 }

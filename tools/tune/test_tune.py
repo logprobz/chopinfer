@@ -48,6 +48,8 @@ def frozen_fixture(root):
         binary.parent.mkdir(parents=True)
         binary.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
                           f'# Synthetic revision {revision}\n'
+                          'if "fixture-ar" in sys.argv and any(x.startswith(("--speculation", "--speculative-", "--draft-")) for x in sys.argv):\n'
+                          '    sys.exit("--speculation requires positive --speculative-tokens")\n'
                           'if sys.argv[1:3] == ["weights", "identity"]:\n'
                           '    out = Path(sys.argv[sys.argv.index("--output") + 1])\n'
                           '    out.write_text(Path(__file__).with_name("identity.json").read_text())\n'
@@ -160,6 +162,80 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_ar_has_no_draft_arguments_and_refuses_depth_controls(self):
+        config = {'model': {'mode': 'ab', 'speculation_mode': 'off', 'serve_arguments': [],
+                            'arms': [{'label': 'a'}, {'label': 'b'}]}}
+        self.assertEqual(tune.arm_arguments(config, {'label': 'a', 'depth': 0, 'arguments': []}), [])
+        import copy
+        for override in ({'depths': [0]}, {'max_depth': 1}, {'mode': 'sweep'},
+                         {'arms': [{'label': 'a', 'depth': 0}]}, {'arms': [{'label': 'a', 'depth': 1}]},
+                         {'extra_arguments': ['--speculation', 'balanced']},
+                         {'serve_arguments': ['--draft-cost', '1']},
+                         {'arms': [{'label': 'a', 'arguments': ['--speculative-tokens', '0']}]}):
+            with self.subTest(override=override):
+                invalid = copy.deepcopy(config)
+                invalid['model'].update(override)
+                with self.assertRaisesRegex(ValueError, 'AR'):
+                    tune.arms(invalid)
+        import stub
+        self.assertEqual(stub.options([], ar=True), ('off', 0, 32))
+        with self.assertRaisesRegex(ValueError, 'requires positive'):
+            stub.options(['--speculation', 'balanced'], ar=True)
+
+    def test_ar_environment_arms_run_ab_cold_and_exact_with_frozen_parsers(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model.update(speculation_mode='off', max_depth=0, serve_arguments=['--profile', 'fixture-ar'],
+                         arms=[{'label': 'a', 'env': {'CHOPINFER_TEST_PREFILL': None}},
+                               {'label': 'b', 'install': 'head', 'env': {'CHOPINFER_TEST_PREFILL': '1'}}])
+            for case in ('ab', 'cold', 'exact'):
+                if case == 'cold':
+                    backing = root / 'rank.bin'
+                    backing.write_bytes(b'\0' * 4096)
+                    model['cold_engram'] = {'images': [{'path': str(backing), 'bytes': 4096,
+                        'views': [{'name': 'fixture', 'offset': 0, 'bytes': 4096}]}]}
+                    model['planning'].update(tokens_per_second={'1': 10}, ar_tokens_per_second={'1': 10})
+                if case == 'exact':
+                    model.pop('cold_engram')
+                    model.update(mode='exact', kinds={'greedy': .5, 'sampled': .5})
+                names = ('head',) if case == 'exact' else ('base', 'head')
+                result = stage_fixture(root, model, names=names, destination=f'stage-{case}')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                staged = root / f'stage-{case}'
+                spec = json.loads((staged / 'keeper-spec.json').read_text())
+                self.assertFalse(any(tune.draft_option(word) for word in spec['argv']))
+                env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+                env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                           CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'), CHOPINFER_TEST_PREFILL='inherited')
+                preflight = subprocess.run([sys.executable, '-B', str(staged / 'harness/preflight.py'), str(staged)],
+                    env=env, text=True, capture_output=True, timeout=30)
+                self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+                out = root / f'run-{case}'
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                    '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                    env=env, text=True, capture_output=True, timeout=90)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(summary['windows']['executed'], 8 if case == 'exact' else 4)
+                for row in summary['processes'].values():
+                    self.assertEqual(row['speculation_mode'], 'off')
+                launches = list(out.glob('*/server/launch.json')) + list(out.glob('references/*/launch.json'))
+                self.assertGreaterEqual(len(launches), 2 if case == 'exact' else 5)
+                for path in launches:
+                    launch = json.loads(path.read_text())
+                    self.assertFalse(any(tune.draft_option(word) for word in launch['serve_argv']))
+                    self.assertEqual(json.loads(path.with_name('argv-preflight.log.exit.json').read_text())['exit_code'], 0)
+                    controls = json.loads(path.with_name('stub-install.json').read_text())['model_controls']
+                    self.assertEqual(controls.get('CHOPINFER_TEST_PREFILL'), launch['env']['CHOPINFER_TEST_PREFILL'])
+                if case == 'exact':
+                    self.assertEqual(len(list((out / 'a/reference').glob('*.json'))), 2)
+                else:
+                    self.assertTrue(summary['exactness']['passed'])
+
+
     def test_content_proofs_admit_recipe_changes_and_refuse_invalid_proofs(self):
         import copy
         with tempfile.TemporaryDirectory() as directory:

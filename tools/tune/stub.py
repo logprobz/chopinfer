@@ -24,9 +24,13 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tune import argument_value, confidence_chooses, confidence_floor
+from tune import argument_value, confidence_chooses, confidence_floor, draft_option
 
-def options(arguments):
+def options(arguments, ar=False):
+    if ar:
+        if any(draft_option(word) for word in arguments):
+            raise ValueError('--speculation requires positive --speculative-tokens; AR cannot pass draft flags')
+        return 'off', 0, 32
     mode, depth, rows = 'balanced', 5, 32
     for flag, value in zip(arguments, arguments[1:]):
         if flag == '--speculation':
@@ -43,7 +47,8 @@ def stub(args):
     label = Path(args.directory).parent.name
     perturb = (os.environ.get('TUNE_STUB_PERTURB') == label
                or os.environ.get('TUNE_STUB_PERTURB_INSTALL') == args.install_name)
-    provenance = {'install': args.install_name, 'revision': args.revision, 'synthetic': True}
+    provenance = {'install': args.install_name, 'revision': args.revision, 'synthetic': True,
+                  'model_controls': {key: value for key, value in os.environ.items() if key.startswith('CHOPINFER_')}}
     proof_path = argument_value(args.serve, '--weight-keeper-identity', None)
     if proof_path:
         body = Path(proof_path).read_bytes()
@@ -57,7 +62,7 @@ def stub(args):
     ignore = os.environ.get('TUNE_STUB_IGNORE_DEPTHS') == label
     ignore_confidence = os.environ.get('TUNE_STUB_IGNORE_CONFIDENCE') == label
     claim_confidence = os.environ.get('TUNE_STUB_CLAIM_CONFIDENCE') == label
-    mode, depth, verify_rows = options(args.serve)
+    mode, depth, verify_rows = options(args.serve, args.ar)
     confidence = argument_value(args.serve, '--speculation-confidence', 'off') != 'off'
     floor = confidence_floor(args.serve) or 0
     widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
@@ -191,7 +196,7 @@ def stub(args):
         def do_GET(self):
             if self.path == '/health':
                 self.respond({'status': 'ready', 'synthetic': True,
-                              'serving': {'profile': {'speculation': {'mode': mode, 'tokens': 5}}}})
+                              'serving': {'profile': {'speculation': {'mode': mode, 'tokens': 0 if args.ar else 5}}}})
             elif self.path == '/v1/models':
                 self.respond({'data': [{'id': args.model}]})
             elif self.path == '/metrics':
@@ -311,6 +316,7 @@ if __name__ == '__main__':
     ap.add_argument('--install-name', default='head')
     ap.add_argument('--revision', default='template')
     ap.add_argument('--binary')
+    ap.add_argument('--ar', action='store_true')
     ap.add_argument('serve', nargs=argparse.REMAINDER)
     parsed = ap.parse_args()
     parsed.serve = [x for x in parsed.serve if x != '--']

@@ -33,7 +33,9 @@ def main(stage):
         depth = arm['depth']
         _, install = tune.arm_install(seal, arm)
         arguments = tune.arm_arguments(seal['config'], arm, install)
-        server = r.Server(root / arm['label'], install['install'], install['cache'], arguments)
+        server = r.Server(root / arm['label'], install['install'], install['cache'], arguments,
+                          environment=tune.arm_environment(seal['config'], arm), ar=model['speculation_mode'] == 'off',
+                          bundle=tune.arm_bundle(seal['config'], install))
         argv = server.server_command + ['--list-model-options']
         if any('kv-memory-fraction' in x for x in argv):
             raise SystemExit('the tuner serves the test KV mode, never a KV memory fraction')
@@ -44,7 +46,8 @@ def main(stage):
         if result.returncode != 0:
             raise SystemExit(f"{arm['label']}: exit {result.returncode}: {result.stderr[-2000:]}")
         json.loads(result.stdout)
-        rows.append({'arm': arm['label'], 'depth': depth, 'argv': argv, 'exit': 0, **tune.arm_identity(seal, arm)})
+        rows.append({'arm': arm['label'], 'depth': depth, 'argv': argv, 'exit': 0, **tune.arm_identity(seal, arm),
+                     **({'env': arm['env']} if arm.get('env') else {})})
     (root / 'preflight.json').write_text(json.dumps({'passed': True, 'cpu_only': True, 'cases': rows}, indent=2) + '\n')
     print(f'PASS: {len(rows)} frozen server parsers, no CUDA: {root}')
     keeper = stage / 'keeper-spec.json'
@@ -52,7 +55,7 @@ def main(stage):
         # The keeper loads what the first arm's server would.
         spec = json.loads(keeper.read_text())
         _, install = tune.arm_install(seal, tune.arms(seal['config'])[0])
-        if spec['argv'] != rows[0]['argv'][rows[0]['argv'].index('--model'):-1] or \
+        if spec['argv'] != rows[0]['argv'][4:-1] or \
                 spec['install'] != install['install']:
             raise SystemExit('keeper-spec.json differs from the first arm\'s serve options')
         if 'weight_keeper_identity' in install and spec.get('identity_sha256') != tune.digest(install['weight_keeper_identity']):

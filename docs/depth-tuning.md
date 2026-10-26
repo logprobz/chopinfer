@@ -199,6 +199,29 @@ proves harness mechanics, not GPU exactness or performance.
 
 ## What the job does and checks
 
+Native AR jobs declare `speculation_mode: "off"`, use `mode: ab`, `exact`
+or `costs`, and omit arm `depth` and model `depths`. Omit `max_depth` or set
+it to zero. AR uses the install's sealed prepared package with `--bundle`
+and `--checkpoint`; select its AR profile in `serve_arguments`, for example
+`["--profile", "tp4-ar"]`. This avoids a speculative default from direct
+model preparation. No speculation or draft flags are appended or accepted
+in AR argument lists. Health must report mode off and zero draft tokens.
+AR dry runs require a frozen install and parse every launch with its native
+`--list-model-options` before starting the CPU stub. The stub also rejects
+draft flags in AR mode. Speculative jobs retain their existing arguments.
+
+Arms can declare model environment controls as `env`, with strings to set
+values and `null` to unset them. For example an AR A/B can compare
+`{"label": "a", "env": {"CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM": null}}`
+against `{"label": "b", "env": {"CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM": "1"}}`.
+The controls apply to parser checks, CPU identity probes, warmup, timed
+visits and reference replay, and are recorded in launch receipts. Only
+`CHOPINFER_*` model controls are accepted; checkpoint, tracing, cold-control
+and launcher settings cannot be overridden. The first arm supplies the
+keeper baseline and may only unset controls, since the queue's keeper spec
+does not carry an environment. Later arms may set controls. Their native
+keeper identity checks remain mandatory.
+
 For sweep, costs and exact modes, a depth schedule is fixed for a server's lifetime, so the job runs one
 server per arm and reuses it for every window: by default one arm per depth,
 the deepest first. Each server borrows its weights from the weight keeper

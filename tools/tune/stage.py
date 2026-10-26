@@ -264,12 +264,13 @@ def keeper_compatibility(config, seal, stage, checkpoint, proof_paths):
         common = shared
         path = directory / f'arm-{index}.json'
         binary = Path(install['install']) / 'bin/chopinfer'
-        serve = runner.serve_options(install['cache'], arguments, checkpoint)
+        serve = runner.serve_options(install['cache'], arguments, checkpoint, tune.arm_bundle(config, install))
         argv = [str(binary), 'weights', 'identity', '--output', str(path), *serve]
         # The native command plans on CPU. Hiding devices also protects against
         # an accidental device-dependent implementation in either revision.
+        environment = runner.apply_environment(runner.server_environment(), tune.arm_environment(config, arm))
         runner.command(argv, path.with_suffix('.log'), 180,
-                       env={**runner.server_environment(), 'CUDA_VISIBLE_DEVICES': '', 'PYTHONDONTWRITEBYTECODE': '1'})
+                       env={**environment, 'CUDA_VISIBLE_DEVICES': '', 'PYTHONDONTWRITEBYTECODE': '1'})
         value = json.loads(path.read_text())
         if (value.get('schema') != 'chopinfer.weight-recipes.v1' or value.get('content_verified') is not False
                 or not value.get('checkpoint', {}).get('stamps') or not value.get('images')):
@@ -301,13 +302,16 @@ def keeper_spec(config, install, stage, seal, proof_paths):
     runner.MODEL, runner.GPUS = model['served_model_name'], model['tensor_parallel_size']
     runner.KV_PAGES, runner.SERVE = model['kv_pages'], model['serve_arguments']
     arm = tune.arms(config)[0]
+    if any(value is not None for value in tune.arm_environment(config, arm).values()):
+        raise ValueError('the keeper baseline arm may only unset environment controls; put overrides in later arms')
     checkpoint = os.environ.get(model['checkpoint_env'])
     if not checkpoint:
         raise SystemExit(f"set {model['checkpoint_env']} (source local.env) to stage the weight keeper")
     runner.CHECKPOINT_ENV = model['checkpoint_env']
     files = keeper_compatibility(config, seal, stage, checkpoint, proof_paths) if proof_paths else set()
     arguments = tune.arm_arguments(config, arm, install)
-    spec = {'install': install['install'], 'argv': runner.serve_options(install['cache'], arguments, checkpoint)}
+    spec = {'install': install['install'],
+            'argv': runner.serve_options(install['cache'], arguments, checkpoint, tune.arm_bundle(config, install))}
     if 'weight_keeper_identity' in install:
         spec['identity_sha256'] = digest(install['weight_keeper_identity'])
     path = stage / 'keeper-spec.json'
@@ -351,6 +355,8 @@ def main():
     jobs = model.pop('jobs', {})
     if args.job:
         model = {**model, **jobs[args.job], 'job': args.job}
+    if args.template and model.get('speculation_mode') == 'off':
+        raise SystemExit('AR dry runs need a frozen install for native parser validation')
     workload = json.loads((ROOT / model['workload']).read_text())
     for c in model['concurrencies']:
         if c * model.get('groups', {}).get(str(c), 1) > workload['prompts']:

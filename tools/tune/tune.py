@@ -163,12 +163,34 @@ def check_installs(seal, require_proofs=False):
                 raise ValueError('multi-install seal is missing a sealed content proof')
 
 
+def draft_option(word):
+    return word.startswith(('--speculation', '--speculative-', '--draft-'))
+
+
+def arm_environment(config, arm):
+    environment = arm.get('env', {})
+    owned = {'CHOPINFER_DATA', config['model'].get('checkpoint_env'), 'CHOPINFER_WEIGHT_KEEPER_DIR',
+             'CHOPINFER_STEP_TRACE', 'CHOPINFER_ROUTE_COUNTERS', 'CHOPINFER_MAPPED_ROW_CONTROL'}
+    if (not isinstance(environment, dict)
+            or any(not re.fullmatch('CHOPINFER_[A-Z0-9_]+', key) or key in owned
+                   or (value is not None and (not isinstance(value, str) or '\0' in value))
+                   for key, value in environment.items())):
+        raise ValueError('arm env must name model controls with string or null values, without launcher overrides')
+    return environment
+
+
 def arm_arguments(config, arm, install=None):
     model = config['model']
-    return ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
+    speculation = [] if model['speculation_mode'] == 'off' else [
+        '--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}"]
+    return [*speculation,
             *model.get('extra_arguments', []), *arm['arguments'],
             *(['--weight-keeper-identity', install['weight_keeper_identity']]
               if install and 'weight_keeper_identity' in install else [])]
+
+
+def arm_bundle(config, install):
+    return install['prepared']['bundle'] if config['model']['speculation_mode'] == 'off' else None
 
 
 def validate(payload, dry):
@@ -625,7 +647,20 @@ def arms(config):
     0..max_depth), the deepest first (it also runs the reference pass), then
     the rest ascending."""
     model = config['model']
+    if model.get('speculation_mode') == 'off':
+        if ('depths' in model or model.get('max_depth', 0) != 0 or model.get('mode', 'sweep') == 'sweep'
+                or any('depth' in arm for arm in model.get('arms', []))):
+            raise ValueError('AR jobs cannot declare depth arms or depth sweeps')
+        declared = [{'arguments': [], **arm, 'depth': 0} for arm in model.get('arms') or [{'label': 'ar'}]]
+        for arm in declared:
+            if any(draft_option(word) for word in [*model.get('serve_arguments', []),
+                                                  *arm_arguments(config, arm)]):
+                raise ValueError('AR jobs cannot pass speculation or draft flags')
+            arm_environment(config, arm)
+        return declared
     if model.get('arms'):
+        for arm in model['arms']:
+            arm_environment(config, arm)
         return [{'arguments': [], **arm} for arm in model['arms']]
     depths = model.get('depths') or list(range(model['max_depth'] + 1))
     deepest = max(depths)
@@ -944,7 +979,9 @@ def reference_ab(run, state, dry, keep):
             arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
         idle(run, f'reference-{baseline}', dry, (keep or {}).get('lent_mib'))
         server = r.Server(run / 'references' / baseline, install['install'], install['cache'],
-                          arguments, dry, S / 'stub.py', identity=identity)
+                          arguments, dry, S / 'stub.py', identity=identity,
+                          environment=arm_environment(config, arm), ar=model['speculation_mode'] == 'off',
+                          bundle=arm_bundle(config, install))
         state.setdefault('reference_processes', {})[baseline] = identity
         if dry:
             server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
@@ -1112,13 +1149,16 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     if keep:
         arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
     server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py',
-                      identity=identity)
+                      identity=identity, environment=arm_environment(config, arm), ar=model['speculation_mode'] == 'off',
+                      bundle=arm_bundle(config, install))
     cold = faults.ColdEngram(server, config['cold_engram']) if config.get('cold_engram') else None
     if model.get('mode') == 'ab' and dry:
         server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
     records = state.setdefault('warmup_processes', {}) if warmup_only else state['processes']
     record = records[label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {}, **identity,
                                           'reference_pass': reference_pass}
+    if arm.get('env'):
+        record['env'] = arm['env']
     power = Power(root, dry)
     kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
 
@@ -1137,6 +1177,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         record['speculation_mode'] = mode
         if mode != model['speculation_mode']:
             raise RuntimeError(f"{label}: serves speculation {mode}, expected {model['speculation_mode']}")
+        if mode == 'off' and server.health['serving']['profile']['speculation'].get('tokens') != 0:
+            raise RuntimeError(f'{label}: AR profile reports draft tokens')
         log = (server.directory / 'server.log').read_text(errors='replace')
         record['confidence'] = confidence_startup(log, [*model['serve_arguments'], *arguments])
         record['weights'] = weight_source(log)

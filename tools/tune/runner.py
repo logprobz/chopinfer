@@ -161,12 +161,13 @@ def trace_rows(path, offset=0):
     return rows
 
 
-def serve_options(cache, arguments, checkpoint):
+def serve_options(cache, arguments, checkpoint, bundle=None):
     """A server's serve options other than `--listen`: the direct path of
     the checkpoint over the prepared package in `cache`, the model config's
     options and `arguments`. A weight keeper's SPEC holds these."""
-    return ['--model', checkpoint, '--tensor-parallel-size', str(GPUS), '--model-cache-dir', str(cache),
-            '--served-model-name', MODEL, '--drain-timeout-ms', '5000', '--kv-pages', str(KV_PAGES), *SERVE,
+    selection = (['--model', checkpoint, '--tensor-parallel-size', str(GPUS), '--model-cache-dir', str(cache)]
+                 if bundle is None else ['--bundle', str(bundle), '--checkpoint', checkpoint])
+    return [*selection, '--served-model-name', MODEL, '--drain-timeout-ms', '5000', '--kv-pages', str(KV_PAGES), *SERVE,
             *arguments]
 
 
@@ -175,16 +176,28 @@ def server_environment():
             if k != 'OPENAI_API_KEY' and (not k.startswith('CHOPINFER_') or k in KEPT | {CHECKPOINT_ENV})}
 
 
+def apply_environment(environment, overrides):
+    environment = dict(environment)
+    for key, value in overrides.items():
+        if value is None:
+            environment.pop(key, None)
+        else:
+            environment[key] = value
+    return environment
+
+
 class Server:
     """One direct-path server of `install` and its prepared package in
     `cache`, serving the checkpoint with `arguments` added: the arm's own
     speculation options, or none for the package profile's defaults."""
 
-    def __init__(self, directory, install, cache, arguments, dry=False, stub=None, identity=None):
+    def __init__(self, directory, install, cache, arguments, dry=False, stub=None, identity=None,
+                 environment=None, ar=False, bundle=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True)
         self.dry = dry
         self.identity = identity or {}
+        self.environment, self.ar = environment or {}, ar
         self.pidfile = self.directory / 'server-group.json'
         self.process = self.log = None
         with socket.socket() as sock:
@@ -193,13 +206,15 @@ class Server:
         self.url = f'http://127.0.0.1:{port}'
         self.env = server_environment()
         self.env.update(CHOPINFER_STEP_TRACE='1', CHOPINFER_ROUTE_COUNTERS='1', PYTHONDONTWRITEBYTECODE='1')
+        self.env = apply_environment(self.env, self.environment)
         self.server_command = [str(Path(install) / 'bin/chopinfer'), 'serve', '--listen', f'127.0.0.1:{port}',
-                               *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'))]
+                               *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'), bundle)]
         launched = self.server_command
         if dry:
             launched = [sys.executable, '-B', str(stub), '--port', str(port), '--directory', str(self.directory),
                         '--kv-pages', str(KV_PAGES), '--kv-line', KV_LINE, '--model', MODEL, '--gpus', str(GPUS),
                         '--binary', str(Path(install) / 'bin/chopinfer'),
+                        *(['--ar'] if ar else []),
                         *(['--install-name', identity['install'], '--revision', identity['revision']] if identity else []),
                         '--', *arguments]
         self.launch = [sys.executable, '-B', str(HERE / 'runner.py'), 'server-child', str(self.pidfile), *launched]
@@ -207,8 +222,12 @@ class Server:
     def start(self):
         write(self.directory / 'launch.json', {'argv': self.launch, 'serve_argv': self.server_command,
                                               **self.identity,
+                                              **({'env': self.environment} if self.environment else {}),
                                               'dry_run': self.dry, 'startup_timeout_seconds': 240,
                                               'lifetime_timeout_seconds': 2100})
+        if self.dry and self.ar:
+            command([*self.server_command, '--list-model-options'], self.directory / 'argv-preflight.log', 180,
+                    env={**self.env, 'CUDA_VISIBLE_DEVICES': ''})
         self.log = (self.directory / 'server.log').open('w')
         started = time.monotonic()
         self.process = subprocess.Popen(self.launch, stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True,

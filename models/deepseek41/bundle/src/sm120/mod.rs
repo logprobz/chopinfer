@@ -1019,25 +1019,17 @@ impl crate::Kernels {
     /// column-block pair replaced (packaged and locked for the labs), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
-    /// The row-major TMA matrix, row-local and cluster folds have no packed
-    /// entries and serve no instance; only the kernel lab launches them.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
-        ![
-            prefill_tma_matrix::CUBIN,
-            fold_local_rows::CUBIN,
-            fold_cluster::CUBIN,
+        (![
+            projection_reuse::FOLD_CUBIN,
+            projection_reuse::HEAD_CUBIN,
+            head_last::CUBIN,
+            prefill_matrix::CUBIN,
+            prefill_tma_scales::CUBIN,
+            fold_fused::CUBIN,
         ]
         .contains(&cubin)
-            && (![
-                projection_reuse::FOLD_CUBIN,
-                projection_reuse::HEAD_CUBIN,
-                head_last::CUBIN,
-                prefill_matrix::CUBIN,
-                prefill_tma_scales::CUBIN,
-                fold_fused::CUBIN,
-            ]
-            .contains(&cubin)
-                || projection_reuse::enabled(shape.geometry, shape.ranks()))
+            || projection_reuse::enabled(shape.geometry, shape.ranks()))
             && (cubin != dense_dual::CUBIN || dense_dual::enabled(shape.geometry, shape.ranks()))
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id

@@ -1,0 +1,11 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Remove three unserved fold reference modules from the package. Their byte-identical cubins and entry declarations remain in the model lab's reference lock families.",
+  "modules": {
+    "removed": [
+      "fold_local_rows_deepseek41_sm120",
+      "mxfp8_fold_cluster_deepseek41_sm120",
+      "fold_tma_matrix_deepseek41_sm120"
+    ]
+  }
+}

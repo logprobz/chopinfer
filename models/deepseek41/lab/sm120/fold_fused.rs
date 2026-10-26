@@ -107,3 +107,31 @@ pub fn cubins() -> Vec<CubinSpec> {
     spec.entries.extend(WIDE.iter().map(|&s| wide_spec(s)));
     vec![spec]
 }
+
+/// Locked row-major references retained after their package retirement.
+pub fn reference_modules() -> Vec<(String, String, Vec<String>)> {
+    [
+        include_str!("../kernels.lock.d/fold_local_rows_reference.lock"),
+        include_str!("../kernels.lock.d/mxfp8_fold_cluster_reference.lock"),
+        include_str!("../kernels.lock.d/mxfp8_prefill_tma_matrix_reference.lock"),
+    ]
+    .into_iter()
+    .flat_map(|text| {
+        serde_json::from_str::<Vec<serde_json::Value>>(text)
+            .expect("retained reference lock")
+            .into_iter()
+            .map(|row| {
+                (
+                    row["name"].as_str().unwrap().to_owned(),
+                    row["cubin_sha256"].as_str().unwrap().to_owned(),
+                    row["entries"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|entry| entry["symbol"].as_str().unwrap().to_owned())
+                        .collect(),
+                )
+            })
+    })
+    .collect()
+}

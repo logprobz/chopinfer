@@ -139,6 +139,32 @@ fn quantize_launch(
     })
 }
 
+pub(super) fn reference_module(symbol: &str) -> Option<(&'static str, &'static str)> {
+    static MODULES: OnceLock<Vec<(String, String, Vec<String>)>> = OnceLock::new();
+    MODULES
+        .get_or_init(fused_family::reference_modules)
+        .iter()
+        .find(|(_, _, symbols)| symbols.iter().any(|entry| entry == symbol))
+        .map(|(name, hash, _)| (name.as_str(), hash.as_str()))
+}
+
+fn has_reference(symbol: &str) -> bool {
+    fold_cubin_for_symbol(symbol).is_some() || reference_module(symbol).is_some()
+}
+
+pub(super) fn reference_bytes(name: &str, hash: &str) -> LabResult<Vec<u8>> {
+    let path = root().join("cubins").join(format!("{name}.cubin"));
+    let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err(format!("{name}: reference must be a regular file"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{name}: {e}"))?;
+    if kernel_build::digest(&bytes) != hash {
+        return Err(format!("{name}: retained reference hash differs"));
+    }
+    Ok(bytes)
+}
+
 /// Functions of `calls`: a bundle cubin's where the bundle holds the
 /// symbol, otherwise the fused family's.
 pub(super) fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
@@ -158,7 +184,11 @@ pub(super) fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
                     .map_err(|e| format!("{name}: {e}"))?;
                 (name, bytes)
             }
-            None => return Err(format!("no cubin holds {}", call.symbol)),
+            None => {
+                let (name, hash) = reference_module(&call.symbol)
+                    .ok_or_else(|| format!("no cubin holds {}", call.symbol))?;
+                (name.to_owned(), reference_bytes(name, hash)?)
+            }
         };
         if !loaded.contains_key(&name) {
             loaded.insert(name.clone(), s.load_cubin(&bytes)?);
@@ -187,6 +217,8 @@ pub(super) fn served_modules(calls: &[Launch]) -> Value {
     for c in calls {
         if let Some((name, bytes)) = fold_cubin_for_symbol(&c.symbol) {
             map.insert(name.into(), json!(kernel_build::digest(bytes)));
+        } else if let Some((name, hash)) = reference_module(&c.symbol) {
+            map.insert(name.to_owned(), json!(hash));
         }
     }
     Value::Object(map)
@@ -1337,7 +1369,7 @@ fn fused_catalog() {
                 {
                     c.plan.validate_geometry().unwrap();
                     assert!(
-                        fold_cubin_for_symbol(&c.symbol).is_some() || lab.contains(&c.symbol),
+                        has_reference(&c.symbol) || lab.contains(&c.symbol),
                         "{}",
                         c.symbol
                     );
@@ -1348,12 +1380,7 @@ fn fused_catalog() {
                 assert_eq!(arm.calls[1].plan.cluster, wo.arms[0].calls[2].plan.cluster);
                 assert_eq!(arm.calls[2].plan.grid, wo.arms[0].calls[5].plan.grid);
             }
-            assert!(
-                wo.arms[0]
-                    .calls
-                    .iter()
-                    .all(|c| fold_cubin_for_symbol(&c.symbol).is_some())
-            );
+            assert!(wo.arms[0].calls.iter().all(|c| has_reference(&c.symbol)));
             cases.push(json!({"case":"wo","tile":tile,"rows":rows,"arms":wo.arms.iter().map(|arm| json!({"label":arm.label,"calls":symbols(&arm.calls)})).collect::<Vec<_>>(),"served_modules":served_modules(&wo.arms[0].calls)}));
             for &(id, n, k, groups) in STATUS {
                 let input = data::empty(&base_of(n, k, groups), rows);
@@ -1379,7 +1406,7 @@ fn fused_catalog() {
                 {
                     call.plan.validate_geometry().unwrap();
                     assert!(
-                        fold_cubin_for_symbol(&call.symbol).is_some() || lab.contains(&call.symbol),
+                        has_reference(&call.symbol) || lab.contains(&call.symbol),
                         "{}",
                         call.symbol
                     );
@@ -1416,7 +1443,7 @@ fn wide_fused_catalog_keeps_full_row_references_and_packed_candidates() {
                 let entry = sm120::fold_verify::entry(id).unwrap();
                 assert_eq!(call.symbol, entry.packed_spec().unwrap().symbol);
                 assert_eq!(call.plan, entry.plan(rows).unwrap());
-                assert!(fold_cubin_for_symbol(&call.symbol).is_some());
+                assert!(has_reference(&call.symbol));
             }
         }
         for &(id, n, k, groups) in &STATUS[1..] {

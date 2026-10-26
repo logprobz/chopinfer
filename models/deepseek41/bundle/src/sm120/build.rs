@@ -158,8 +158,6 @@ mod fold_cluster;
 #[allow(dead_code)]
 mod fold_fused;
 #[allow(dead_code)]
-mod fold_local_rows;
-#[allow(dead_code)]
 mod fold_verify;
 #[allow(dead_code)]
 mod fold_verify_local;
@@ -215,8 +213,6 @@ mod mxfp8_fold_stream;
 mod own_entries;
 #[allow(dead_code, reason = "the bundle selects measured prefill rows")]
 mod prefill_matrix;
-#[allow(dead_code, reason = "the bundle selects the qualified TMA row bucket")]
-mod prefill_tma_matrix;
 #[allow(dead_code, reason = "the bundle selects measured staged-scale rows")]
 mod prefill_tma_scales;
 #[allow(dead_code)]
@@ -394,10 +390,6 @@ pub fn selection(
             prefill_matrix::CUBIN.into(),
             model_deepseek41_contract::geometry::FLASH.id,
         ));
-        owners.push((
-            prefill_tma_matrix::CUBIN.into(),
-            model_deepseek41_contract::geometry::FLASH.id,
-        ));
     }
 
     for g in geometries
@@ -547,8 +539,6 @@ pub fn selection(
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
-            owners.push((fold_local_rows::CUBIN.into(), geometry.id));
-            owners.push((fold_cluster::CUBIN.into(), geometry.id));
             owners.push((fold_fused::CUBIN.into(), geometry.id));
             owners.push((fold_verify::CUBIN.into(), geometry.id));
             owners.push((fold_verify_local::CUBIN.into(), geometry.id));
@@ -708,13 +698,8 @@ pub fn selection(
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
     specs.extend(dspark_projection::cubins(geometries).expect("bounded drafter projection cubins"));
     specs.extend(prefill_matrix::cubins(geometries).expect("qualified prefill matrix cubin"));
-    specs.extend(
-        prefill_tma_matrix::cubins(geometries).expect("qualified prefill TMA matrix cubin"),
-    );
     specs.extend(prefill_tma_scales::cubins(geometries).expect("qualified staged-scale cubin"));
     specs.extend(dense_dual::cubins(geometries).expect("captured dual fold cubin"));
-    specs.extend(fold_local_rows::cubins(geometries).expect("captured row-local fold cubin"));
-    specs.extend(fold_cluster::cubins(geometries).expect("measured cluster fold cubin"));
     specs.extend(fold_fused::cubins(geometries).expect("measured status fold cubin"));
     specs.extend(fold_verify::cubins(geometries).expect("wide status fold cubin"));
     specs.extend(fold_verify_local::cubins(geometries).expect("tiled local fold cubin"));

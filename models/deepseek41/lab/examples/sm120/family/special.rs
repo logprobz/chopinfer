@@ -416,14 +416,46 @@ pub fn recipes() -> Vec<Recipe> {
             Export::None,
         ),
         recipe(
-            Root::Bundle,
-            bundle_deepseek41::sm120::fold_cluster::FAMILY,
+            Root::Lab,
+            "fold_local_rows_reference",
             || {
-                let (name, spec) =
+                let (_, spec) = bundle_deepseek41::sm120::fold_local_rows::cubins(
+                    std::slice::from_ref(&FLASH),
+                )?
+                .pop()
+                .ok_or("missing retained fold reference")?;
+                Ok(vec![
+                    family(Root::Lab, "fold_local_rows_reference", vec![spec]).pinned(),
+                ])
+            },
+            Export::None,
+        ),
+        recipe(
+            Root::Lab,
+            "mxfp8_fold_cluster_reference",
+            || {
+                let (_, spec) =
                     bundle_deepseek41::sm120::fold_cluster::cubins(std::slice::from_ref(&FLASH))?
                         .pop()
-                        .ok_or("the bundle builds no cluster family")?;
-                Ok(vec![family(Root::Bundle, name, vec![spec]).pinned()])
+                        .ok_or("missing retained fold reference")?;
+                Ok(vec![
+                    family(Root::Lab, "mxfp8_fold_cluster_reference", vec![spec]).pinned(),
+                ])
+            },
+            Export::None,
+        ),
+        recipe(
+            Root::Lab,
+            "mxfp8_prefill_tma_matrix_reference",
+            || {
+                let (_, spec) = bundle_deepseek41::sm120::prefill_tma_matrix::cubins(
+                    std::slice::from_ref(&FLASH),
+                )?
+                .pop()
+                .ok_or("missing retained fold reference")?;
+                Ok(vec![
+                    family(Root::Lab, "mxfp8_prefill_tma_matrix_reference", vec![spec]).pinned(),
+                ])
             },
             Export::None,
         ),

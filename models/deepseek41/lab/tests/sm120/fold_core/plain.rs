@@ -290,8 +290,10 @@ const SERVED: usize = 2;
 /// The served module of `symbol` and whether this change swizzled it (the
 /// plain family rebuilds it).
 pub fn modules(symbol: &str) -> LabResult<(&'static str, bool)> {
-    let (name, _) = fold_cubin_for_symbol(symbol)
+    let name = fold_cubin_for_symbol(symbol)
         .or_else(|| fold_cubin_for_symbol(&kernels_sm120::gemm::mxfp8_fold_packed::symbol(symbol)))
+        .map(|(name, _)| name)
+        .or_else(|| fused::reference_module(symbol).map(|(name, _)| name))
         .ok_or_else(|| format!("missing served {symbol}"))?;
     let plain = format!("{}{name}", plain_family::PREFIX);
     Ok((name, plain_names().contains(&plain)))
@@ -325,6 +327,10 @@ fn load(s: &Session, calls: &[Launch], arm: usize) -> LabResult<Functions> {
         if !loaded.contains_key(&name) {
             let bytes = if fold_cubin_for_symbol(&call.symbol).is_some_and(|(n, _)| n == name) {
                 fold_cubin_for_symbol(&call.symbol).unwrap().1.to_vec()
+            } else if let Some((reference, hash)) = fused::reference_module(&call.symbol)
+                && reference == name
+            {
+                fused::reference_bytes(reference, hash)?
             } else {
                 std::fs::read(root().join("cubins").join(format!("{name}.cubin")))
                     .map_err(|e| format!("{name}: {e}"))?

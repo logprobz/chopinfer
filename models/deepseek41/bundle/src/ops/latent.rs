@@ -203,7 +203,7 @@ impl GlueOps {
         )?;
         let wide_rows = shape.verify_decode_rows();
         let query_rope_wide =
-            if target && crate::sm120::latent_scheduled::wide_query(wide_rows, wide_rows) {
+            if target && crate::Kernels::wide_latent_query_rows(wide_rows, wide_rows) {
                 Some(asks.ask(
                     "glue.query_rope wide verify",
                     exact::need(wide_rows, exact::verify(wide_rows)),
@@ -331,7 +331,7 @@ impl GlueOps {
         let mut bind = Bind::default();
         let buffers = query_rope_buffers(&mut bind, views);
         let op = if matches!(phase, crate::program::Phase::Verify { .. })
-            && crate::sm120::latent_scheduled::wide_query(64, rows)
+            && crate::Kernels::wide_latent_query_rows(64, rows)
         {
             self.query_rope_wide.as_ref()
         } else {

@@ -256,6 +256,34 @@ class LayoutTests(unittest.TestCase):
 
     # The declared change.
 
+    def test_operation_cannot_duplicate_automatic_resource_zero(self):
+        fixture = self.green_spec()['fixtures'][0]['name']
+        _, notes = events_of(self.head['create'])
+        zero = f'zero 1 {bare(GEN + 13, 256)}'
+        self.decl['operations'] = {fixture: [dict(add=dict(line=notes.index(zero) + 1, text=zero))]}
+        report = self.run_case(1)
+        self.assertIn('operation overlaps another declaration', json.dumps(report))
+
+    def test_operation_removal_cannot_overlap_a_kernel_rewrite(self):
+        fixture = self.green_spec()['fixtures'][0]['name']
+        _, created = events_of(self.base['create'])
+        self.decl['operations'] = {fixture: [dict(remove=dict(line=len(created) + 1, text=self.base['step'][0]))]}
+        report = self.run_case(1)
+        self.assertIn('operation overlaps another declaration', json.dumps(report))
+
+    def test_position_declaration_cannot_name_an_unknown_fixture(self):
+        self.decl['operations'] = {'unknown-fixture': []}
+        report = self.run_case(2)
+        self.assertIn('layout names unknown fixtures', json.dumps(report))
+
+    def test_position_declaration_needs_a_compared_device_fixture(self):
+        self.text = (['text'], ['text'])
+        b, h = self.captures()
+        fixture = next(f['name'] for f in self.generate(b, h)['fixtures'] if TEXT in f['journals'])
+        self.decl['operations'] = {fixture: []}
+        report = self.run_case(2)
+        self.assertIn('position-bound declarations need a compared device fixture', json.dumps(report))
+
     def test_declared_split_is_proven(self):
         report = self.run_case(0)
         self.assertEqual({v['verdict'] for v in report['journals'].values()}, {'PROVEN'})

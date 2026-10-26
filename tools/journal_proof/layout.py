@@ -835,8 +835,6 @@ class Device:
             module = bi['modules'][row[2]][2]
             want = decl['added_module_rules'][module]['configures'].get(row[3], [])
             require(configured[ident] == want, f'added resolve {ident} of {row[3]} is configured {configured[ident]}, the declaration {want}')
-        import handles
-        handles.apply_operations(self, decl.get('operations', {}).get(witness.fixture, []), notes_a, notes_b)
         zeroed = {raw: name for slot, name in witness.added.items()
                   if decl['resources'][name]['init'] == 'zero' for raw in [bi['allocations'][slot][1]]}
         # A zero counts only on the stream the buffer was allocated on.
@@ -863,6 +861,8 @@ class Device:
         # relative to the buffer's uses is checked here.
         initialization_order(notes_b, {raw: (name, alloc_b[raw & 0xffffffff][0], at[raw], streams[raw])
                                        for raw, name in zeroed.items() if raw in at})
+        import handles
+        handles.apply_operations(self, decl.get('operations', {}).get(witness.fixture, []), notes_a, notes_b)
 
     def launch(self, item, previous, line, tags):
         chosen = [c for c in self.decl['changes'] if c['from_symbol'] == item['symbol'] and selects(c.get('when', {}), item, previous)]

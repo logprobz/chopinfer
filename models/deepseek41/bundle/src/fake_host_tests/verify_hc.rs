@@ -168,12 +168,12 @@ use super::*;
 // per rank. Every other operation, allocation and the five other verify
 // widths' complete histories remain identical.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xbcd344397531f737)),
-    (6, (8040, 0xd38acfbb115a6353)),
-    (8, (7720, 0xed06e5d6829fef3f)),
-    (12, (8216, 0x2a19edca94df4504)),
-    (16, (8052, 0xf4f166f09067e0b2)),
-    (32, (7744, 0x645fedf44235188c)),
+    (4, (7880, 0x73aec128f9d83538)),
+    (6, (8040, 0xa69efc962054d488)),
+    (8, (7720, 0xe5bcb9bdaa073062)),
+    (12, (8216, 0x9d52230065c7d18d)),
+    (16, (8052, 0x43b9bd5a8058d716)),
+    (32, (7744, 0xcd9cc0bc3baa78ff)),
 ];
 
 #[test]

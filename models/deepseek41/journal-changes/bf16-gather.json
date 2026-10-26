@@ -1,0 +1,7062 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Prepare the unchanged locked rounded-gather module and its three zeroed protocol buffers on each Flash TP4 rank.",
+ "handles": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 368,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 372,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 376,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 726,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 730,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 734,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1084,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1088,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1092,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 1442,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 1446,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 1450,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 1775,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 1777,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 1780,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 9765,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 9767,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 9770,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 17755,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 17757,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 17760,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 25745,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 25747,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 25750,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 359,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 363,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 700,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 704,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 708,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1045,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1049,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1053,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 1390,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 1394,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 1398,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 1723,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 1725,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       567,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 1728,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       567,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 8922,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 8924,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2964,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 8927,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2964,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 16121,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 16123,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5361,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 16126,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5361,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 23320,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 23322,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7758,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 23325,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7758,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 368,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 372,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 376,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 726,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 730,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 734,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1084,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1088,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1092,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 1442,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 1446,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 1450,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 1775,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 1777,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 1780,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 9765,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 9767,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 9770,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 17755,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 17757,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 17760,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 25745,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 25747,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 25750,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 368,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 372,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 376,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 726,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 730,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 734,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1084,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1088,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1092,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 1442,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 1446,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 1450,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 1775,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 1777,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 1780,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       583,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 9765,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 9767,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 9770,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3239,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 17755,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 17757,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 17760,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5895,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 25745,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 25747,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 25750,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8551,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 359,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 363,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 700,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 704,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 708,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1045,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1049,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1053,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 1390,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 1394,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 1398,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 1723,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 1725,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       567,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 1728,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       567,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 8922,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 8924,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2964,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 8927,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       2964,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 16121,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 16123,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5361,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 16126,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       5361,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 23320,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 23322,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7758,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 23325,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       7758,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    {
+     "name": "bf16-gather.added.allocation.0",
+     "kind": "allocation",
+     "at": 537,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       184549376,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.1",
+     "kind": "allocation",
+     "at": 541,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       33800,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.2",
+     "kind": "allocation",
+     "at": 545,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       4,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.3",
+     "kind": "allocation",
+     "at": 1038,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       184549376,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.4",
+     "kind": "allocation",
+     "at": 1042,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       33800,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.5",
+     "kind": "allocation",
+     "at": 1046,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       4,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.6",
+     "kind": "allocation",
+     "at": 1539,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       184549376,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.7",
+     "kind": "allocation",
+     "at": 1543,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       33800,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.8",
+     "kind": "allocation",
+     "at": 1547,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       4,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.9",
+     "kind": "allocation",
+     "at": 2040,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 184549376 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       184549376,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.10",
+     "kind": "allocation",
+     "at": 2044,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 33800 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       33800,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.allocation.11",
+     "kind": "allocation",
+     "at": 2048,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 4 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       4,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.12",
+     "kind": "module",
+     "at": 2415,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.13",
+     "kind": "resolve",
+     "at": 2417,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.14",
+     "kind": "resolve",
+     "at": 2420,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       775,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.15",
+     "kind": "module",
+     "at": 10527,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.16",
+     "kind": "resolve",
+     "at": 10529,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.17",
+     "kind": "resolve",
+     "at": 10532,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       3474,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.18",
+     "kind": "module",
+     "at": 18639,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.19",
+     "kind": "resolve",
+     "at": 18641,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.20",
+     "kind": "resolve",
+     "at": 18644,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       6173,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.module.21",
+     "kind": "module",
+     "at": 26751,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "comm_rounded_phased_deepseek41_sm120",
+       "6cb3c25f561daa9b",
+       72760,
+       "754a1b49c7886e3b98f39d8478a1d3556815a48be66e75d1bf2d57097d239ec6"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.22",
+     "kind": "resolve",
+     "at": 26753,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_round_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "bf16-gather.added.resolve.23",
+     "kind": "resolve",
+     "at": 26756,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       8872,
+       "chop_comm_allreduce_phased_oneshot_round_f32_v1"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "module_activations": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    "comm_rounded_phased_deepseek41_sm120"
+   ]
+  }
+ },
+ "operations": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967425 }, offset: 0, length: 184549376 }",
+     "lines": [
+      130
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967426 }, offset: 0, length: 33800 }",
+     "lines": [
+      132
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967427 }, offset: 0, length: 4 }",
+     "lines": [
+      134
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967539 }, offset: 0, length: 184549376 }",
+     "lines": [
+      260
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967540 }, offset: 0, length: 33800 }",
+     "lines": [
+      262
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967541 }, offset: 0, length: 4 }",
+     "lines": [
+      264
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967653 }, offset: 0, length: 184549376 }",
+     "lines": [
+      390
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967654 }, offset: 0, length: 33800 }",
+     "lines": [
+      392
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967655 }, offset: 0, length: 4 }",
+     "lines": [
+      394
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967767 }, offset: 0, length: 184549376 }",
+     "lines": [
+      520
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967768 }, offset: 0, length: 33800 }",
+     "lines": [
+      522
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967769 }, offset: 0, length: 4 }",
+     "lines": [
+      524
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      77778,
+      77779,
+      77780,
+      77781,
+      77782,
+      77783,
+      77784,
+      77785,
+      77786,
+      77787,
+      77788,
+      77789,
+      77790,
+      77791,
+      77792,
+      77793,
+      77794,
+      77795,
+      77796,
+      77797,
+      77798,
+      77799,
+      77800,
+      77801
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967421 }, offset: 0, length: 184549376 }",
+     "lines": [
+      125
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967422 }, offset: 0, length: 33800 }",
+     "lines": [
+      127
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967423 }, offset: 0, length: 4 }",
+     "lines": [
+      129
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967531 }, offset: 0, length: 184549376 }",
+     "lines": [
+      250
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967532 }, offset: 0, length: 33800 }",
+     "lines": [
+      252
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967533 }, offset: 0, length: 4 }",
+     "lines": [
+      254
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 184549376 }",
+     "lines": [
+      375
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 33800 }",
+     "lines": [
+      377
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967643 }, offset: 0, length: 4 }",
+     "lines": [
+      379
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967751 }, offset: 0, length: 184549376 }",
+     "lines": [
+      500
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967752 }, offset: 0, length: 33800 }",
+     "lines": [
+      502
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967753 }, offset: 0, length: 4 }",
+     "lines": [
+      504
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      76022,
+      76023,
+      76024,
+      76025,
+      76026,
+      76027,
+      76028,
+      76029,
+      76030,
+      76031,
+      76032,
+      76033,
+      76034,
+      76035,
+      76036,
+      76037,
+      76038,
+      76039,
+      76040,
+      76041,
+      76042,
+      76043,
+      76044,
+      76045
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967425 }, offset: 0, length: 184549376 }",
+     "lines": [
+      130
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967426 }, offset: 0, length: 33800 }",
+     "lines": [
+      132
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967427 }, offset: 0, length: 4 }",
+     "lines": [
+      134
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967539 }, offset: 0, length: 184549376 }",
+     "lines": [
+      260
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967540 }, offset: 0, length: 33800 }",
+     "lines": [
+      262
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967541 }, offset: 0, length: 4 }",
+     "lines": [
+      264
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967653 }, offset: 0, length: 184549376 }",
+     "lines": [
+      390
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967654 }, offset: 0, length: 33800 }",
+     "lines": [
+      392
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967655 }, offset: 0, length: 4 }",
+     "lines": [
+      394
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967767 }, offset: 0, length: 184549376 }",
+     "lines": [
+      520
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967768 }, offset: 0, length: 33800 }",
+     "lines": [
+      522
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967769 }, offset: 0, length: 4 }",
+     "lines": [
+      524
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      50242,
+      50243,
+      50244,
+      50245,
+      50246,
+      50247,
+      50248,
+      50249,
+      50250,
+      50251,
+      50252,
+      50253,
+      50254,
+      50255,
+      50256,
+      50257,
+      50258,
+      50259,
+      50260,
+      50261,
+      50262,
+      50263,
+      50264,
+      50265
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967425 }, offset: 0, length: 184549376 }",
+     "lines": [
+      130
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967426 }, offset: 0, length: 33800 }",
+     "lines": [
+      132
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967427 }, offset: 0, length: 4 }",
+     "lines": [
+      134
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967539 }, offset: 0, length: 184549376 }",
+     "lines": [
+      260
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967540 }, offset: 0, length: 33800 }",
+     "lines": [
+      262
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967541 }, offset: 0, length: 4 }",
+     "lines": [
+      264
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967653 }, offset: 0, length: 184549376 }",
+     "lines": [
+      390
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967654 }, offset: 0, length: 33800 }",
+     "lines": [
+      392
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967655 }, offset: 0, length: 4 }",
+     "lines": [
+      394
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967767 }, offset: 0, length: 184549376 }",
+     "lines": [
+      520
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967768 }, offset: 0, length: 33800 }",
+     "lines": [
+      522
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967769 }, offset: 0, length: 4 }",
+     "lines": [
+      524
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      77778,
+      77779,
+      77780,
+      77781,
+      77782,
+      77783,
+      77784,
+      77785,
+      77786,
+      77787,
+      77788,
+      77789,
+      77790,
+      77791,
+      77792,
+      77793,
+      77794,
+      77795,
+      77796,
+      77797,
+      77798,
+      77799,
+      77800,
+      77801
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967421 }, offset: 0, length: 184549376 }",
+     "lines": [
+      125
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967422 }, offset: 0, length: 33800 }",
+     "lines": [
+      127
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967423 }, offset: 0, length: 4 }",
+     "lines": [
+      129
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967531 }, offset: 0, length: 184549376 }",
+     "lines": [
+      250
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967532 }, offset: 0, length: 33800 }",
+     "lines": [
+      252
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967533 }, offset: 0, length: 4 }",
+     "lines": [
+      254
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 184549376 }",
+     "lines": [
+      375
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 33800 }",
+     "lines": [
+      377
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967643 }, offset: 0, length: 4 }",
+     "lines": [
+      379
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967751 }, offset: 0, length: 184549376 }",
+     "lines": [
+      500
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967752 }, offset: 0, length: 33800 }",
+     "lines": [
+      502
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967753 }, offset: 0, length: 4 }",
+     "lines": [
+      504
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      76022,
+      76023,
+      76024,
+      76025,
+      76026,
+      76027,
+      76028,
+      76029,
+      76030,
+      76031,
+      76032,
+      76033,
+      76034,
+      76035,
+      76036,
+      76037,
+      76038,
+      76039,
+      76040,
+      76041,
+      76042,
+      76043,
+      76044,
+      76045
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": [
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967476 }, offset: 0, length: 184549376 }",
+     "lines": [
+      197
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967477 }, offset: 0, length: 33800 }",
+     "lines": [
+      199
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967478 }, offset: 0, length: 4 }",
+     "lines": [
+      201
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967633 }, offset: 0, length: 184549376 }",
+     "lines": [
+      384
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967634 }, offset: 0, length: 33800 }",
+     "lines": [
+      386
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967635 }, offset: 0, length: 4 }",
+     "lines": [
+      388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 184549376 }",
+     "lines": [
+      571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967791 }, offset: 0, length: 33800 }",
+     "lines": [
+      573
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967792 }, offset: 0, length: 4 }",
+     "lines": [
+      575
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967947 }, offset: 0, length: 184549376 }",
+     "lines": [
+      758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967948 }, offset: 0, length: 33800 }",
+     "lines": [
+      760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967949 }, offset: 0, length: 4 }",
+     "lines": [
+      762
+     ]
+    }
+   }
+  ]
+ }
+}

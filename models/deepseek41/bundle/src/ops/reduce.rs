@@ -178,7 +178,7 @@ fn selected(shape: &Shape, setting: Option<&str>) -> bool {
 
 pub(crate) fn requested(_shape: &Shape) -> bool {
     #[cfg(test)]
-    return IN_TESTS.get();
+    return IN_TESTS.get().unwrap_or_else(|| selected(_shape, None));
     #[cfg(not(test))]
     {
         let setting = std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER");
@@ -206,7 +206,7 @@ fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
 }
 
 #[cfg(test)]
-thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) }; }
 
 /// `Skip` is the unset default: ordered DMA for the negotiated upper-skip
 /// executor only, with the BF16 gather it was measured with. Full-schedule
@@ -452,13 +452,13 @@ fn dma_defaults_to_upper_skip_and_keeps_explicit_controls() {
 
 #[cfg(test)]
 pub(crate) fn with_bf16_gather<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
+    struct Reset(Option<bool>);
     impl Drop for Reset {
         fn drop(&mut self) {
             IN_TESTS.set(self.0);
         }
     }
-    let _reset = Reset(IN_TESTS.replace(enabled));
+    let _reset = Reset(IN_TESTS.replace(Some(enabled)));
     run()
 }
 

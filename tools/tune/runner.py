@@ -170,6 +170,11 @@ def serve_options(cache, arguments, checkpoint):
             *arguments]
 
 
+def server_environment():
+    return {k: v for k, v in os.environ.items()
+            if k != 'OPENAI_API_KEY' and (not k.startswith('CHOPINFER_') or k in KEPT | {CHECKPOINT_ENV})}
+
+
 class Server:
     """One direct-path server of `install` and its prepared package in
     `cache`, serving the checkpoint with `arguments` added: the arm's own
@@ -185,8 +190,7 @@ class Server:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
         self.url = f'http://127.0.0.1:{port}'
-        self.env = {k: v for k, v in os.environ.items()
-                    if k != 'OPENAI_API_KEY' and (not k.startswith('CHOPINFER_') or k in KEPT | {CHECKPOINT_ENV})}
+        self.env = server_environment()
         self.env.update(CHOPINFER_STEP_TRACE='1', CHOPINFER_ROUTE_COUNTERS='1', PYTHONDONTWRITEBYTECODE='1')
         self.server_command = [str(Path(install) / 'bin/chopinfer'), 'serve', '--listen', f'127.0.0.1:{port}',
                                *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'))]

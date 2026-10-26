@@ -29,7 +29,9 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -164,6 +166,56 @@ def check_budget(config, prompts):
 
 
 
+def keeper_compatibility(config, seal, stage, checkpoint):
+    """Use fresh CPU rank recipes; changed recipes need a separate content proof
+    workflow and are refused here, even when their source weights are equal."""
+    import runner
+    import tune
+    speculation = {'--speculation', '--speculation-depths', '--speculation-widths',
+                   '--speculation-graph-rows', '--speculation-confidence', '--speculation-costs',
+                   '--speculative-rows', '--speculative-tokens'}
+    reserved = {'--model', '--checkpoint', '--bundle', '--model-cache-dir',
+                '--weight-keeper', '--weight-keeper-policy', '--weight-keeper-identity'}
+    common, identity, files = None, None, set()
+    directory = stage / 'keeper-identities'
+    directory.mkdir()
+    for index, arm in enumerate(tune.arms(config)):
+        name, install = tune.arm_install(seal, arm)
+        arguments = tune.arm_arguments(config, arm)
+        options = [*runner.SERVE, *arguments]
+        if any(word.split('=', 1)[0] in reserved for word in options):
+            raise ValueError('multi-install keeper options cannot override the checkpoint, cache or keeper')
+        shared, iterator = [], iter(options)
+        for word in iterator:
+            if word in speculation:
+                if next(iterator, None) is None:
+                    raise ValueError(f'missing speculation value: {word}')
+            else:
+                shared.append(word)
+        if common is not None and shared != common:
+            raise ValueError('multi-install keeper requires identical serve options apart from speculation')
+        common = shared
+        path = directory / f'arm-{index}.json'
+        argv = [str(Path(install['install']) / 'bin/chopinfer'), 'weights', 'identity', '--output', str(path),
+                *runner.serve_options(install['cache'], arguments, checkpoint)]
+        # The native command plans on CPU. Hiding devices also protects against
+        # an accidental device-dependent implementation in either revision.
+        with path.with_suffix('.log').open('w') as log:
+            subprocess.run(argv, env={**runner.server_environment(), 'CUDA_VISIBLE_DEVICES': '',
+                                      'PYTHONDONTWRITEBYTECODE': '1'},
+                           stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
+        value = json.loads(path.read_text())
+        if (value.get('schema') != 'chopinfer.weight-recipes.v1' or value.get('content_verified') is not False
+                or not value.get('checkpoint', {}).get('stamps') or not value.get('images')):
+            raise ValueError(f'{name}: missing keeper recipe identity')
+        value['images'].sort(key=lambda image: (image['image_role'], image['rank']))
+        if identity is not None and value != identity:
+            raise ValueError(f'{name}: keeper identity differs (checkpoint, rank recipe or layout)')
+        identity = value
+        files.add(path)
+    return files
+
+
 def keeper_spec(config, install, stage):
     """The weight keeper SPEC for runner6: the install and the first arm's
     serve options, which every arm shares but for its speculation options."""
@@ -174,8 +226,7 @@ def keeper_spec(config, install, stage):
     runner.MODEL, runner.GPUS = model['served_model_name'], model['tensor_parallel_size']
     runner.KV_PAGES, runner.SERVE = model['kv_pages'], model['serve_arguments']
     arm = tune.arms(config)[0]
-    arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
-                 *model.get('extra_arguments', []), *arm['arguments']]
+    arguments = tune.arm_arguments(config, arm)
     checkpoint = os.environ.get(model['checkpoint_env'])
     if not checkpoint:
         raise SystemExit(f"set {model['checkpoint_env']} (source local.env) to stage the weight keeper")
@@ -190,7 +241,7 @@ def main():
     ap.add_argument('stage')
     ap.add_argument('--model', required=True, help='models/<model>/depth-tune.json')
     ap.add_argument('--install-dir', help='the integration round directory holding the frozen install')
-    ap.add_argument('--install-name', default='head')
+    ap.add_argument('--install-name', action='append', help='repeat for multiple frozen installs (default: head)')
     ap.add_argument('--template', action='store_true', help='seal without an install, for dry runs only')
     ap.add_argument('--name', help='the job name (default: the model and install revision)')
     ap.add_argument('--job', help="a job of the model config's `jobs`, applied over its settings")
@@ -200,6 +251,11 @@ def main():
         raise SystemExit('stage outside the repository, under $CHOPINFER_DATA')
     if bool(args.template) == bool(args.install_dir):
         raise SystemExit('give exactly one of --install-dir and --template')
+    names = args.install_name or ['head']
+    if len(names) != len(set(names)) or any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', n) for n in names):
+        raise SystemExit('install names must be unique simple names')
+    if args.template and names != ['head']:
+        raise SystemExit('template stages use only the head install; use frozen fixtures for two-install dry runs')
     model = json.loads(Path(args.model).read_text())
     jobs = model.pop('jobs', {})
     if args.job:
@@ -212,7 +268,11 @@ def main():
         install, files = {'install': str(stage / 'install'), 'cache': str(stage / 'cache'), 'source': str(ROOT),
                           'revision': 'template', 'prepared': {'bundle': ''}}, set()
     else:
-        install, files = frozen(Path(args.install_dir).resolve(), args.install_name)
+        installs, files = {}, set()
+        for name in names:
+            installs[name], sealed = frozen(Path(args.install_dir).resolve(), name)
+            files |= sealed
+        install = installs[names[0]]
     source = Path(install['source'])
     stage.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(source / 'tools/qual'))
@@ -222,6 +282,13 @@ def main():
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
+    import tune
+    selection = {'config': config, 'install': install}
+    if len(names) > 1:
+        selection.update(installs=installs, default_install=names[0])
+    tune.check_installs(selection)
+    if len(names) > 1 and not model.get('keeper', True):
+        raise ValueError('multi-install jobs require keeper staging')
     if 'allow_fallbacks' in model:
         config['allow_fallbacks'] = model['allow_fallbacks']
     cold_files = []
@@ -252,12 +319,19 @@ def main():
         shutil.copy2(HERE / item, copy / item)
     files |= {copy / item for item in HARNESS}
     files |= {x for x in (source / 'tools/qual').rglob('*') if x.is_file() and '__pycache__' not in x.parts}
-    keeper = None if args.template or not model.get('keeper', True) else keeper_spec(config, install, stage)
+    _, first = tune.arm_install(selection, tune.arms(config)[0])
+    keeper = None if args.template or not model.get('keeper', True) else keeper_spec(config, first, stage)
     if keeper:
         files.add(keeper)
+        if len(names) > 1:
+            import runner
+            runner.CHECKPOINT_ENV = model['checkpoint_env']
+            files |= keeper_compatibility(config, selection, stage, os.environ[model['checkpoint_env']])
     seal = {'schema': 'chopinfer-depth-tune-seal.v1', 'ready': not args.template, 'config': config, 'install': install,
             'harness_source': str(source), 'prompts': built['prompts'], 'prompt_sources': built['sources'],
             'cold_files': cold_files, 'sha256': {str(x): digest(x) for x in sorted(files)}}
+    if len(names) > 1:
+        seal.update(installs=installs, default_install=names[0])
     (stage / 'runtime-seal.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
     payload = digest(stage / 'runtime-seal.json')
     text = (copy / 'tune.job.in').read_text()

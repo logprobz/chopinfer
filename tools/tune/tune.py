@@ -122,6 +122,43 @@ def digest(path):
     return h.hexdigest()
 
 
+def sealed_installs(seal):
+    if 'installs' in seal:
+        return seal['installs'], seal['default_install']
+    install = seal['install']
+    leaf = Path(install['install']).name
+    name = leaf[len('install-'):] if leaf.startswith('install-') else 'head'
+    return {name: install}, name
+
+
+def arm_install(seal, arm):
+    installs, default = sealed_installs(seal)
+    name = arm.get('install', default)
+    if name not in installs:
+        raise ValueError(f"{arm['label']}: unsealed install {name}")
+    return name, installs[name]
+
+
+def arm_identity(seal, arm):
+    name, install = arm_install(seal, arm)
+    return {'install': name, 'revision': install.get('revision')}
+
+
+def check_installs(seal):
+    installs, default = sealed_installs(seal)
+    if default not in installs or installs[default] != seal['install']:
+        raise ValueError('default install differs from the first sealed install')
+    used = {arm_install(seal, arm)[0] for arm in arms(seal['config'])}
+    if len(installs) > 1 and (unused := set(installs) - used):
+        raise ValueError('unused sealed install: ' + ', '.join(sorted(unused)))
+
+
+def arm_arguments(config, arm):
+    model = config['model']
+    return ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
+            *model.get('extra_arguments', []), *arm['arguments']]
+
+
 def validate(payload, dry):
     global SEAL, spec_metrics
     body = (STAGE / 'runtime-seal.json').read_bytes()
@@ -137,12 +174,13 @@ def validate(payload, dry):
     for identity in m.get('cold_files', []):
         if faults.file_identity(identity['path']) != identity:
             raise RuntimeError('sealed cold image metadata changed')
+    check_installs(m)
     if m['ready']:
-        install = m['install']
-        for root in (Path(install['install']), Path(install['prepared']['bundle'])):
-            for path in (root, *root.rglob('*')):
-                if path.is_symlink() or path.stat().st_mode & 0o022:
-                    raise RuntimeError('unsafe frozen install path: ' + str(path))
+        for install in sealed_installs(m)[0].values():
+            for root in (Path(install['install']), Path(install['prepared']['bundle'])):
+                for path in (root, *root.rglob('*')):
+                    if path.is_symlink() or path.stat().st_mode & 0o022:
+                        raise RuntimeError('unsafe frozen install path: ' + str(path))
     SEAL = m
     sys.path.insert(0, str(Path(m['harness_source']) / 'tools/qual'))
     import spec_metrics as imported
@@ -193,7 +231,8 @@ def keeper(run, dry):
         return None
     if dry:
         return {'directory': directory, 'lent_mib': {}, 'synthetic': True}
-    binary = Path(SEAL['install']['install']) / 'bin/chopinfer'
+    _, install = arm_install(SEAL, arms(SEAL['config'])[0])
+    binary = Path(install['install']) / 'bin/chopinfer'
     log = run / 'keeper-status.txt'
     code = r.command([binary, 'weights', 'status', '--keeper-dir', directory], log, 60, check=False)
     text = log.read_text(errors='replace')

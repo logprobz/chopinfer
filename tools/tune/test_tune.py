@@ -20,6 +20,70 @@ CONFIG = {'name': 'synthetic', 'model': MODEL, 'kinds': {'greedy': 0.5, 'sampled
           'selection': {'margin': 0.015, 'spread': 0.03}}
 
 
+def frozen_fixture(root):
+    """Two small frozen installs with distinct binaries and equal rank recipes."""
+    import shutil
+    logs = root / 'logs'
+    logs.mkdir(parents=True)
+    identity = {'schema': 'chopinfer.weight-recipes.v1', 'content_verified': False,
+                'checkpoint': {'identity': 'a' * 64, 'stamps': [{'size': 4}]},
+                'images': [{'image_role': 'weights', 'rank': 0, 'recipe_identity': 'b' * 64,
+                            'byte_length': 4, 'identity': {'content_sha256': '', 'layout_sha256': 'c' * 64}}]}
+    for name, revision in (('base', '1' * 40), ('head', '2' * 40)):
+        binary = root / f'install-{name}' / 'bin/chopinfer'
+        binary.parent.mkdir(parents=True)
+        binary.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
+                          f'# Synthetic revision {revision}\n'
+                          'if sys.argv[1:3] == ["weights", "identity"]:\n'
+                          '    out = Path(sys.argv[sys.argv.index("--output") + 1])\n'
+                          '    out.write_text(Path(__file__).with_name("identity.json").read_text())\n'
+                          'elif "--list-model-options" in sys.argv:\n'
+                          '    print("{}")\nelse:\n    sys.exit(2)\n')
+        binary.chmod(0o755)
+        (binary.parent / 'identity.json').write_text(json.dumps(identity))
+        source = root / f'source-{name}'
+        shutil.copytree(HERE.parents[1] / 'tools/qual', source / 'tools/qual',
+                        ignore=shutil.ignore_patterns('__pycache__'))
+        (source / '.commit').write_text(revision + '\n')
+        bundle = root / f'cache-{name}' / 'fixture'
+        bundle.mkdir(parents=True)
+        (bundle / 'manifest.json').write_text('{}\n')
+        (logs / f'version-{name}.txt').write_text(f'fixture ({revision})\n')
+        (logs / f'install-{name}.sha256').write_text(f'{stage.digest(binary)}  {binary}\n')
+        (logs / f'prepare-{name}.json').write_text(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
+        stage.protect(binary.parent.parent)
+        stage.protect(bundle)
+    workload = root / 'workload.json'
+    workload.write_text(json.dumps({'name': 'fixture', 'prompts': 128, 'mix': [{'kind': 'chat', 'weight': 1}],
+                                   'sources': {'globs': [], 'min_bytes': 0, 'max_bytes': 0}}))
+    return {'model': 'fixture', 'workload': str(workload), 'mode': 'ab', 'repeats': 2,
+            'concurrencies': [1], 'speculation_mode': 'balanced',
+            'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1, 'install': 'head'}],
+            'pairs': [['a', 'b']], 'served_model_name': 'fixture',
+            'checkpoint_env': 'CHOPINFER_TEST_CHECKPOINT', 'tensor_parallel_size': 1,
+            'kv_pages': 64, 'kv_pages_line': 'fixture: {pages} KV pages', 'serve_arguments': [],
+            'max_depth': 1, 'verify_rows': 32, 'work_seconds': 900, 'queue_timeout_seconds': 1000,
+            'tokens': {'default': 64}, 'warm': [], 'warm_tokens': 8, 'kinds': {'sampled': 1},
+            'sampling': {'seed': 7, 'temperature': 1.0, 'top_p': 1.0}, 'selection': CONFIG['selection'],
+            'planning': {'startup_seconds': 1, 'process_overhead_seconds': 1, 'settle_seconds': 1,
+                         'process_reserve_seconds': 1, 'tokens_per_second': {'1': 100},
+                         'ar_tokens_per_second': {'1': 100}}}
+
+
+def stage_fixture(root, model, names=('base', 'head'), destination='stage'):
+    import os
+    import subprocess
+    config = root / 'model.json'
+    config.write_text(json.dumps(model))
+    argv = [sys.executable, '-B', str(HERE / 'stage.py'), '--model', str(config),
+            '--install-dir', str(root), str(root / destination)]
+    for name in names:
+        argv += ['--install-name', name]
+    env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+    env['CHOPINFER_TEST_CHECKPOINT'] = str(root / 'checkpoint')
+    return subprocess.run(argv, env=env, text=True, capture_output=True, timeout=30)
+
+
 def window(run, label, kind, c, depth, rate, histogram):
     record = {'name': f'{kind}-c{c}', 'kind': kind, 'concurrency': c, 'depth': depth, 'tokens': 256,
               'request_seconds': c * 256 / rate, 'request_tokens_per_second': rate,
@@ -78,6 +142,100 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_stage_two_installs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            seal = json.loads((root / 'stage/runtime-seal.json').read_text())
+            self.assertIn('installs', list(seal))
+            self.assertEqual(set(seal['installs']), {'base', 'head'})
+            self.assertEqual(seal['default_install'], 'base')
+            self.assertEqual(seal['install'], seal['installs']['base'])
+            self.assertTrue(all(str(root / f'install-{name}/bin/chopinfer') in seal['sha256']
+                                for name in ('base', 'head')))
+
+    def test_stage_refuses_unknown_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['arms'][1]['install'] = 'missing'
+            result = stage_fixture(root, model)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('unsealed install', result.stderr)
+
+    def test_stage_refuses_unused_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['arms'][1].pop('install')
+            result = stage_fixture(root, model)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('unused sealed install: head', result.stderr)
+
+    def test_single_install_seal_keeps_legacy_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            result = stage_fixture(root, model, names=())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            path = root / 'stage/runtime-seal.json'
+            original = path.read_bytes()
+            seal = json.loads(original)
+            self.assertEqual(set(seal), {'schema', 'ready', 'config', 'install', 'harness_source', 'prompts',
+                                         'prompt_sources', 'cold_files', 'sha256'})
+            self.assertNotIn('name', seal['install'])
+            result = stage_fixture(root, model, names=('head',))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(tune.arm_install(seal, {'label': 'legacy'})[0], 'head')
+
+    def test_keeper_refuses_different_recipes_and_serve_options(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            path = root / 'install-head/bin/identity.json'
+            identity = json.loads(path.read_text())
+            mutations = [lambda v: v['checkpoint'].update(identity='d' * 64),
+                         lambda v: v['checkpoint']['stamps'][0].update(size=5),
+                         lambda v: v['images'][0].update(recipe_identity='d' * 64),
+                         lambda v: v['images'][0]['identity'].update(layout_sha256='d' * 64),
+                         lambda v: v['images'][0].update(byte_length=5),
+                         lambda v: v['images'][0].update(rank=1)]
+            for i, mutate in enumerate(mutations):
+                with self.subTest(identity=i):
+                    value = copy.deepcopy(identity)
+                    mutate(value)
+                    path.write_text(json.dumps(value))
+                    result = stage_fixture(root, model, destination=f'identity-{i}')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('keeper identity differs', result.stderr)
+            path.write_text(json.dumps(identity))
+            model['arms'][1]['arguments'] = ['--kv-pages', '65']
+            result = stage_fixture(root, model, destination='options')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('identical serve options', result.stderr)
+            model['arms'][1]['arguments'] = ['--speculation-widths', '8,16']
+            result = stage_fixture(root, model, destination='speculation')
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_keeper_uses_first_arm_install_and_preserves_cli_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['arms'][0]['install'] = 'head'
+            model['arms'][1]['install'] = 'base'
+            result = stage_fixture(root, model, names=('head', 'base'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seal = json.loads((root / 'stage/runtime-seal.json').read_text())
+            self.assertEqual(tune.arm_install(seal, {'label': 'default'})[0], 'head')
+            result = stage_fixture(root, model, destination='first-base')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            spec = json.loads((root / 'first-base/keeper-spec.json').read_text())
+            self.assertEqual(spec['install'], str(root / 'install-head'))
+
     def test_weighted_targets_step_support_and_coverage(self):
         def mutate(root, function):
             for path in root.glob('*/windows/*.json'):

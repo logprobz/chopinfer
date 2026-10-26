@@ -1,12 +1,14 @@
 use super::*;
-use crate::ops::with_bf16_gather;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 fn create_sparse(host: &Rc<Host>) -> BundleInstanceV1 {
     create_with_services(host, HostServicesTableV1::new(Rc::clone(host)))
 }
 
-fn create_with_services(host: &Rc<Host>, services: HostServicesTableV1) -> BundleInstanceV1 {
+pub(super) fn create_with_services(
+    host: &Rc<Host>,
+    services: HostServicesTableV1,
+) -> BundleInstanceV1 {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
@@ -20,17 +22,17 @@ fn create_with_services(host: &Rc<Host>, services: HostServicesTableV1) -> Bundl
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    with_bf16_gather(true, || {
-        with_dma(true, || {
-            with_mode(0, || {
+    {
+        {
+            crate::instance::execute::overlap::with_mode(0, || {
                 api()
                     .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                     .unwrap()
                     .create(services, &record)
                     .unwrap()
             })
-        })
-    })
+        }
+    }
 }
 
 fn capture(rows: u64, enabled: Option<bool>) -> Vec<String> {
@@ -85,7 +87,8 @@ fn capture_on(host: &Rc<Host>, rows: u64, enabled: Option<bool>, dspark: bool) -
         run();
     }
     instance.commit().unwrap();
-    let journal = host.device.journal.borrow().clone();
+    let mut journal = host.device.journal.borrow().clone();
+    journal.extend(count_metadata(host));
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     journal
@@ -106,7 +109,10 @@ fn compute_without_consumers_by_stream(
     journal: &[String],
 ) -> std::collections::BTreeMap<&str, Vec<&String>> {
     let mut streams = std::collections::BTreeMap::<&str, Vec<&String>>::new();
-    for line in compute(journal).into_iter().filter(|line| !consumer(line)) {
+    for line in compute(journal)
+        .into_iter()
+        .filter(|line| !consumer(line) && !producer(line))
+    {
         streams
             .entry(line.split_whitespace().nth(1).unwrap())
             .or_default()
@@ -115,92 +121,12 @@ fn compute_without_consumers_by_stream(
     streams
 }
 
-#[test]
-fn sparse_dma_preserves_compute_and_orders_only_the_required_rows() {
-    with_partial_setting(Some("0"), || {
-        for rows in [8192, 8191] {
-            let reference = capture(rows, Some(false));
-            let candidate = capture(rows, None);
-            assert_eq!(
-                reference
-                    .iter()
-                    .filter(|line| line.starts_with("launch ")
-                        && line.contains("chop_comm_allreduce_phased_round_f32_v1"))
-                    .count(),
-                73 * 4
-            );
-            assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
-            let before = compute(&reference)
-                .into_iter()
-                .filter(|line| !consumer(line))
-                .collect::<Vec<_>>();
-            let after = compute(&candidate)
-                .into_iter()
-                .filter(|line| !consumer(line))
-                .collect::<Vec<_>>();
-            assert_eq!(before.len(), after.len());
-            for (index, (before, after)) in before.iter().zip(&after).enumerate() {
-                assert_eq!(before, after, "compute dispatch {index}");
-            }
-            assert_eq!(
-                split_chains(&reference, &candidate),
-                if rows == 8192 {
-                    (40 * 4, 20 * 4)
-                } else {
-                    (0, 0)
-                }
-            );
-            // Producer slicing requires the BF16 send buffers.
-            assert_eq!(split_producers(&reference, &candidate).unwrap(), 0);
-            let copies = candidate
-                .iter()
-                .filter(|line| line.starts_with("peer-copy "))
-                .collect::<Vec<_>>();
-            assert_eq!(copies.len(), 73 * 24);
-            let upper_rows: u64 = (0..16)
-                .map(|layer| 2496 - 128 * layer - (8192 - rows))
-                .sum();
-            let reduced_rows = 41 * rows + 2 * upper_rows;
-            let bytes: u64 = copies
-                .iter()
-                .map(|line| super::super::shared_overlap::journal_spans(line)[0].2)
-                .sum();
-            assert_eq!(bytes, reduced_rows * u64::from(FLASH.shape.hidden) * 18);
-            assert_eq!(
-                candidate
-                    .iter()
-                    .filter(|line| line.starts_with("launch ")
-                        && line.contains("chop_comm_allreduce_phased_round_f32_v1"))
-                    .count(),
-                0
-            );
-            assert_eq!(
-                candidate
-                    .iter()
-                    .filter(|line| line.starts_with("launch ")
-                        && line.contains("chop_comm_reduce_scatter_f32_v1"))
-                    .count(),
-                8 * 4
-            );
-            assert_eq!(audit(&candidate).unwrap(), 73 * (24 * 2 + 4 * 3));
-            let missing = candidate
-                .into_iter()
-                .filter(|line| !line.starts_with("wait "))
-                .collect::<Vec<_>>();
-            assert!(
-                audit(&missing).is_err(),
-                "missing peer joins must expose the alias"
-            );
-        }
-    });
-}
-
 /// A DSpark target chunk takes the same ordered transport: every compute
 /// launch, feature capture and commit keeps its operands, and only the
 /// phased reductions become owner sums and ordered peer copies.
 #[test]
 fn sparse_dma_serves_dspark_target_prefill() {
-    with_partial_setting(Some("0"), || {
+    {
         for rows in [8192, 8191] {
             let reference = capture_with(rows, Some(false), true);
             let candidate = capture_with(rows, None, true);
@@ -214,12 +140,15 @@ fn sparse_dma_serves_dspark_target_prefill() {
                     .iter()
                     .filter(|line| {
                         line.starts_with("launch ")
-                            && line.contains("chop_comm_allreduce_phased_round_f32_v1")
+                            && (line.contains("chop_comm_allreduce_phased_bf16_v1")
+                                || line.contains("chop_comm_allreduce_phased_turns_bf16_v1"))
                     })
                     .count()
             };
-            let reductions = phased(&reference) / 4;
-            assert_eq!(phased(&reference), reductions * 4);
+            // Eight short cone calls retain the phased BF16 transport.
+            assert_eq!(phased(&reference), 81 * 4);
+            assert_eq!(phased(&candidate), 8 * 4);
+            let reductions = (phased(&reference) - phased(&candidate)) / 4;
             assert_eq!(reductions, 73);
             assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
             // Default asynchronous Engram gathers can change the interleaving
@@ -238,9 +167,10 @@ fn sparse_dma_serves_dspark_target_prefill() {
                     (0, 0)
                 }
             );
-            // Producer slicing requires the BF16 send buffers.
-            assert_eq!(split_producers(&reference, &candidate).unwrap(), 0);
-            assert_eq!(phased(&candidate), 0);
+            assert_eq!(
+                split_producers(&reference, &candidate).unwrap(),
+                if rows == 8192 { 36 * 4 } else { 0 }
+            );
             assert_eq!(
                 candidate
                     .iter()
@@ -255,7 +185,7 @@ fn sparse_dma_serves_dspark_target_prefill() {
                 .collect::<Vec<_>>();
             assert!(audit(&missing).is_err());
         }
-    });
+    };
 }
 
 #[test]
@@ -270,7 +200,7 @@ fn sparse_dma_keeps_small_cones_on_the_existing_transport() {
 
 #[test]
 fn sparse_dma_finishes_mapped_uploads_before_compute() {
-    with_partial_setting(Some("0"), || {
+    {
         let host = host();
         host.drafter.set(true);
         host.device.residency.set(Some(BundleRawClusterResidencyV1 {
@@ -326,7 +256,7 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
         assert_eq!(
             journal
                 .iter()
-                .filter(|line| line.starts_with("launch ") && line.contains(SUM))
+                .filter(|line| line.starts_with("launch ") && line.contains(BF16_SUM))
                 .count(),
             73 * 4
         );
@@ -334,7 +264,7 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
-    });
+    };
 }
 
 #[test]
@@ -394,7 +324,6 @@ fn dspark_sparse_dma_keeps_the_synchronous_engram_destinations() {
 
 #[test]
 fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
-    use crate::ops::with_partial_setting;
     let phased = |journal: &[String]| {
         journal
             .iter()
@@ -412,9 +341,7 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
             .count()
     };
     for rows in [8192, 8191] {
-        let (reference, candidate) = with_partial_setting(Some("prefill"), || {
-            (capture(rows, Some(false)), capture(rows, None))
-        });
+        let (reference, candidate) = { (capture(rows, Some(false)), capture(rows, None)) };
         assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
         assert_eq!(phased(&reference) - phased(&candidate), 73 * 4);
         assert_eq!(count(&candidate, SUM), 0);
@@ -488,18 +415,11 @@ fn stream(line: &str) -> &str {
     line.split_whitespace().nth(1).unwrap()
 }
 
-fn capture_consumed(rows: u64, consume: bool) -> Vec<String> {
-    crate::ops::with_partial_setting(Some("prefill"), || {
-        crate::ops::with_dma_consume(consume, || capture(rows, None))
-    })
-}
-
 /// Walk each stream's consumer launches in submission order: an unsplit
 /// launch is unchanged; a split chain is four chains over the owner
 /// intervals, the rank's own first. Returns the split chains and how many
 /// of them end in the certifying norm-ceil.
 fn split_chains(serial: &[String], pipelined: &[String]) -> (usize, usize) {
-    let spans = super::super::shared_overlap::journal_spans;
     let streams = serial
         .iter()
         .filter(|l| consumer(l))
@@ -524,39 +444,10 @@ fn split_chains(serial: &[String], pipelined: &[String]) -> (usize, usize) {
             }
             let chain = &s[i..i + 3];
             let parts = &p[j..j + 12];
-            let mut offsets = vec![BTreeSet::new(); 3];
-            for (k, part) in parts.iter().enumerate() {
-                let original = chain[k % 3];
-                let norm = if chain[2].contains(&format!(" {CERTIFIED_NORM} ")) {
-                    CERTIFIED_NORM
-                } else {
-                    CONSUMERS[2]
-                };
-                let kind = [CONSUMERS[0], CONSUMERS[1], norm][k % 3];
-                assert!(part.contains(&format!(" {kind} ")), "{part}");
-                let (whole, piece) = (spans(original), spans(part));
-                assert_eq!(whole.len(), piece.len());
-                for (position, (w, q)) in whole.iter().zip(&piece).enumerate() {
-                    if w == q {
-                        continue;
-                    }
-                    if w.2 == 4 && q.2 == 4 {
-                        // The live count cell.
-                        continue;
-                    }
-                    assert_eq!((q.0, q.2 * 4), (w.0, w.2), "{part}");
-                    assert!(q.1 >= w.1 && q.1 + q.2 <= w.1 + w.2);
-                    offsets[k % 3].insert((position, (q.1 - w.1) / q.2));
-                }
-            }
-            // Every row argument is cut into the four owner quarters.
-            for set in &offsets {
-                let mut per = BTreeMap::<usize, BTreeSet<u64>>::new();
-                for &(position, quarter) in set {
-                    per.entry(position).or_default().insert(quarter);
-                }
-                assert!(!per.is_empty());
-                assert!(per.values().all(|q| q.len() == 4));
+            let (rank, counts) = count_table(pipelined, st);
+            for (at, part) in parts.iter().enumerate() {
+                let quarter = (rank + 4 - (at / 3) as u64) % 4;
+                exact_slice(chain[at % 3], part, quarter, counts).unwrap();
             }
             chains += 1;
             certified += usize::from(chain[2].contains(&format!(" {CERTIFIED_NORM} ")));
@@ -568,65 +459,10 @@ fn split_chains(serial: &[String], pipelined: &[String]) -> (usize, usize) {
     (chains, certified)
 }
 
-#[test]
-fn dma_consumes_each_gathered_interval_as_it_lands() {
-    let serial = capture_consumed(8192, false);
-    let pipelined = capture_consumed(8192, true);
-    let others = |j: &[String]| {
-        compute(j)
-            .into_iter()
-            .filter(|l| !consumer(l))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(others(&serial), others(&pipelined));
-    // The copies and owner sums are the call's in either case.
-    let transport = |j: &[String]| {
-        j.iter()
-            .filter(|l| l.starts_with("peer-copy ") || transport_launch(l))
-            .count()
-    };
-    assert_eq!(transport(&serial), transport(&pipelined));
-    // On every rank: the 38 full-row calls followed by the chain (two
-    // others go to the dense quantizer) and the 2240- and 2496-row cone
-    // calls, whose mix is the r8 c4 pipeline. The 20 full-row chains before
-    // MoE end in the norm-ceil that certifies the router's operands.
-    assert_eq!(split_chains(&serial, &pipelined), (40 * 4, 20 * 4));
-    audit(&pipelined).unwrap();
-    // Without the waits before each interval's consumers, an expand reads
-    // reduced rows its gather copy may still be writing.
-    let mut early = Vec::new();
-    for (at, line) in pipelined.iter().enumerate() {
-        let next = pipelined[at + 1..].iter().find(|l| !l.starts_with("wait "));
-        if line.starts_with("wait ")
-            && next.is_some_and(|n| consumer(n) && stream(n) == stream(line))
-        {
-            continue;
-        }
-        early.push(line.clone());
-    }
-    assert!(early.len() < pipelined.len());
-    assert!(audit(&early).is_err());
-}
-
-#[test]
-fn dma_keeps_consumers_after_calls_it_cannot_split() {
-    // 8191-row calls do not divide into whole eight-row mix tiles per owner.
-    assert_eq!(capture_consumed(8191, true), capture_consumed(8191, false));
-}
-
 const PRODUCER: &str = "chop_moe_deepseek41_sum_add_f32_k6_w5120_l384_t8192_v1";
 
 fn producer(line: &str) -> bool {
     line.starts_with("launch ") && line.contains(&format!(" {PRODUCER} "))
-}
-
-fn capture_produced(rows: u64, produce: bool) -> Vec<String> {
-    crate::ops::with_partial_setting(Some("prefill"), || {
-        crate::ops::with_dma_consume(true, || {
-            crate::ops::with_dma_produce(produce, || capture(rows, None))
-        })
-    })
 }
 
 /// Walk each stream's route-row sums in submission order: an unsplit
@@ -634,7 +470,6 @@ fn capture_produced(rows: u64, produce: bool) -> Vec<String> {
 /// intervals in send order, the interval for scatter phase 0's destination
 /// first and the rank's own last. Returns the split launches.
 fn split_producers(serial: &[String], split: &[String]) -> Result<usize, String> {
-    let spans = super::super::shared_overlap::journal_spans;
     let streams = serial
         .iter()
         .filter(|l| producer(l))
@@ -660,36 +495,9 @@ fn split_producers(serial: &[String], split: &[String]) -> Result<usize, String>
             let parts = p
                 .get(j..j + 4)
                 .ok_or("a split producer has fewer than four parts")?;
-            let whole = spans(s[i]);
-            let mut quarters = Vec::new();
-            for part in parts {
-                let piece = spans(part);
-                if whole.len() != piece.len() {
-                    return Err(format!("argument count differs: {part}"));
-                }
-                let mut quarter = BTreeSet::new();
-                for (w, q) in whole.iter().zip(&piece) {
-                    if w == q || (w.2 == 4 && q.2 == 4) {
-                        // Shared arguments, and the live count cell.
-                        continue;
-                    }
-                    // Cone inputs are capacity views read from their first
-                    // row, so a quarter of the launch's rows may be less than
-                    // a quarter of the view.
-                    if q.0 != w.0 || q.2 * 4 > w.2 || q.1 < w.1 || q.1 + q.2 > w.1 + w.2 {
-                        return Err(format!("not an owner quarter: {part}"));
-                    }
-                    quarter.insert((q.1 - w.1) / q.2);
-                }
-                // Routed rows, route ids, addend and output, one quarter.
-                if quarter.len() != 1 {
-                    return Err(format!("row arguments cover different quarters: {part}"));
-                }
-                quarters.extend(quarter);
-            }
-            let own = quarters[3];
-            if quarters != (1..=4).map(|step| (own + step) % 4).collect::<Vec<_>>() {
-                return Err(format!("intervals out of send order: {quarters:?}"));
+            let (rank, counts) = count_table(split, st);
+            for (at, part) in parts.iter().enumerate() {
+                exact_slice(s[i], part, (rank + at as u64 + 1) % 4, counts)?;
             }
             count += 1;
             i += 1;
@@ -702,89 +510,20 @@ fn split_producers(serial: &[String], split: &[String]) -> Result<usize, String>
     Ok(count)
 }
 
-#[test]
-fn dma_produces_each_sent_interval_before_its_pull() {
-    let serial = capture_produced(8192, false);
-    let split = capture_produced(8192, true);
-    let others = |j: &[String]| {
-        compute(j)
-            .into_iter()
-            .filter(|l| !producer(l))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(others(&serial), others(&split));
-    let copies = |j: &[String]| j.iter().filter(|l| l.starts_with("peer-copy ")).count();
-    assert_eq!(copies(&serial), copies(&split));
-    let sums = |j: &[String]| j.iter().filter(|l| transport_launch(l)).count();
-    assert_eq!(sums(&serial), sums(&split));
-    let calls = split_producers(&serial, &split).unwrap();
-    // On every rank: the 20 full-row MoE calls and the 16 cone calls.
-    assert_eq!(calls, 36 * 4);
-    // A split call rounds each of its three sent intervals on its own; an
-    // unsplit one rounds the rows outside the rank's interval in one or two.
-    let rounds = |j: &[String]| {
-        j.iter()
-            .filter(|l| l.contains(&format!(" {BF16_ROUND} ")))
-            .count()
-    };
-    assert_eq!(rounds(&split) - rounds(&serial), 36 * 6);
-    audit(&split).unwrap();
-    // Skipping one interval's producer leaves rows a peer pulls unwritten.
-    let first = split.iter().position(|l| producer(l)).unwrap();
-    let skipped = split
-        .iter()
-        .enumerate()
-        .filter(|&(at, _)| at != first)
-        .map(|(_, l)| l.clone())
-        .collect::<Vec<_>>();
-    assert!(split_producers(&serial, &skipped).is_err());
-    // Without the waits before each pull, a peer copy reads rows its source
-    // may still be rounding.
-    let mut early = Vec::new();
-    for (at, line) in split.iter().enumerate() {
-        let next = split[at + 1..].iter().find(|l| !l.starts_with("wait "));
-        if line.starts_with("wait ")
-            && next.is_some_and(|n| n.starts_with("peer-copy ") && stream(n) == stream(line))
-        {
-            continue;
-        }
-        early.push(line.clone());
-    }
-    assert!(early.len() < split.len());
-    assert!(audit(&early).is_err());
-}
-
-#[test]
-fn dma_keeps_the_producer_before_calls_it_cannot_split() {
-    // 8191-row calls do not divide into whole 32-row owner intervals.
-    assert_eq!(capture_produced(8191, true), capture_produced(8191, false));
-}
-
 /// The served transports with every copy pushed against pulled: the same
 /// launches and the same copies, each issued by its source, ordered.
 #[test]
 fn dma_pushes_every_copy_from_its_source() {
-    let served = |rows: u64, consume: bool, produce: bool, push: bool| {
+    let served = |rows: u64, pull_only: bool| {
         let host = host();
-        let journal = crate::ops::with_partial_setting(Some("prefill"), || {
-            crate::ops::with_dma_consume(consume, || {
-                crate::ops::with_dma_produce(produce, || {
-                    crate::ops::with_dma_push(push, || capture_on(&host, rows, None, false))
-                })
-            })
-        });
+        host.pull_only.set(pull_only);
+        let journal = capture_on(&host, rows, None, false);
         let issued = super::copy_ranks(&host, &journal);
         (journal, issued)
     };
-    for (rows, consume, produce) in [
-        (8192, false, false),
-        (8192, true, false),
-        (8192, true, true),
-        (8191, true, true),
-    ] {
-        let (pulled, pulls) = served(rows, consume, produce, false);
-        let (pushed, pushes) = served(rows, consume, produce, true);
+    for rows in [8192, 8191] {
+        let (pulled, pulls) = served(rows, true);
+        let (pushed, pushes) = served(rows, false);
         let launches = |j: &[String]| {
             j.iter()
                 .filter(|l| l.starts_with("launch "))
@@ -822,9 +561,315 @@ fn dma_pushes_every_copy_from_its_source() {
             early.push(line.clone());
         }
         assert!(early.len() < pushed.len());
-        assert!(
-            audit_transport(&early).is_err(),
-            "{rows} {consume} {produce}"
-        );
+        assert!(audit_transport(&early).is_err(), "{rows}");
     }
+}
+
+#[test]
+fn interval_dependencies_require_consumer_and_producer_joins() {
+    let pushed = capture(8192, None);
+    audit(&pushed).unwrap();
+    let at = pushed
+        .iter()
+        .enumerate()
+        .find_map(|(at, line)| {
+            let next = pushed[at + 1..]
+                .iter()
+                .find(|next| stream(next) == stream(line) && !next.starts_with("wait "));
+            (line.starts_with("wait ") && next.is_some_and(|next| next.contains(CONSUMERS[0])))
+                .then_some(at)
+        })
+        .expect("a gather join before an interval consumer");
+    let mut early = pushed.clone();
+    early.remove(at);
+    let error = audit(&early).expect_err("consumer ran before its gather completed");
+    assert!(error.contains(CONSUMERS[0]), "{error}");
+
+    // A destination-only host retains pulls. Each interval copy must wait
+    // for that source's producer and BF16 rounding, independently of sums.
+    let host = host();
+    host.pull_only.set(true);
+    let pulled = capture_on(&host, 8192, None, false);
+    audit(&pulled).unwrap();
+    let at = pulled
+        .iter()
+        .enumerate()
+        .find_map(|(at, line)| {
+            if !line.starts_with("wait ") {
+                return None;
+            }
+            let next = pulled[at + 1..]
+                .iter()
+                .find(|next| stream(next) == stream(line) && !next.starts_with("wait "))?;
+            if !next.starts_with("peer-copy ") {
+                return None;
+            }
+            let event = line.split_whitespace().nth(2)?;
+            let record = pulled[..at].iter().rposition(|before| {
+                before.starts_with("record ") && before.split_whitespace().nth(2) == Some(event)
+            })?;
+            let source = stream(&pulled[record]);
+            let mut launches = pulled[..record]
+                .iter()
+                .rev()
+                .filter(|before| before.starts_with("launch ") && stream(before) == source);
+            let rounded = launches.next()?.contains(BF16_ROUND);
+            (rounded && producer(launches.next()?)).then_some(at)
+        })
+        .expect("a pull join after one interval's producer and rounding");
+    let mut early = pulled.clone();
+    early.remove(at);
+    let error = audit(&early).expect_err("copy ran before its source rounded the interval");
+    assert!(error.contains("peer-copy "), "{error}");
+}
+
+#[test]
+fn interval_audits_reject_changed_launch_configurations() {
+    let reference = capture(8192, Some(false));
+    let split = capture(8192, None);
+    assert_eq!(split_chains(&reference, &split), (160, 80));
+    assert_eq!(split_producers(&reference, &split).unwrap(), 144);
+    let mut bad = split.clone();
+    let at = bad
+        .iter()
+        .position(|line| line.contains(CONSUMERS[0]))
+        .unwrap();
+    bad[at] = bad[at].replacen("grid_z: 1", "grid_z: 2", 1);
+    assert!(
+        std::panic::catch_unwind(|| split_chains(&reference, &bad)).is_err(),
+        "an unrelated consumer grid change escaped"
+    );
+    let mut bad = split.clone();
+    let at = bad.iter().position(|line| producer(line)).unwrap();
+    bad[at] = bad[at].replacen("grid_z: 1", "grid_z: 2", 1);
+    assert!(
+        split_producers(&reference, &bad).is_err(),
+        "an unrelated producer grid change escaped"
+    );
+    let argument = |line: &str, at: usize, value: String| {
+        let mut args = super::super::query_window::arguments(line);
+        args[at] = value;
+        format!("{} [{}]", line.split_once(" [").unwrap().0, args.join(", "))
+    };
+    let expands: Vec<_> = split
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.contains(CONSUMERS[0]) && stream(line) == "2")
+        .map(|(at, _)| at)
+        .collect();
+    let mut bad = split.clone();
+    let first = super::super::query_window::arguments(&bad[expands[0]])[0].clone();
+    let second = super::super::query_window::arguments(&bad[expands[1]])[0].clone();
+    bad[expands[0]] = argument(&bad[expands[0]], 0, second);
+    bad[expands[1]] = argument(&bad[expands[1]], 0, first);
+    assert!(
+        std::panic::catch_unwind(|| split_chains(&reference, &bad)).is_err(),
+        "mismatched quarters within a consumer escaped"
+    );
+    let at = split
+        .iter()
+        .position(|line| line.contains(CERTIFIED_NORM))
+        .unwrap();
+    let mut bad = split.clone();
+    bad[at] = argument(&bad[at], 9, "ScalarF32Bits(0)".into());
+    assert!(
+        std::panic::catch_unwind(|| split_chains(&reference, &bad)).is_err(),
+        "an unrelated norm scalar escaped"
+    );
+    let at = split.iter().position(|line| producer(line)).unwrap();
+    let mut bad = split.clone();
+    bad[at] = argument(&bad[at], 3, "ScalarU32(99)".into());
+    assert!(
+        split_producers(&reference, &bad).is_err(),
+        "a changed producer rank escaped"
+    );
+    let mut bad = split.clone();
+    let live = super::super::query_window::arguments(&bad[at])[2].clone();
+    let span = super::super::shared_overlap::journal_spans(&live)[0];
+    bad[at] = argument(
+        &bad[at],
+        2,
+        live.replacen(
+            &format!("offset: {},", span.1),
+            &format!("offset: {},", span.1 + 4),
+            1,
+        ),
+    );
+    assert!(
+        split_producers(&reference, &bad).is_err(),
+        "a wrong live-count cell escaped"
+    );
+}
+
+/// Exact prefill count-table identities, from their create-time uploaded
+/// contents and allocation ranks rather than first use in a launch.
+fn count_metadata(host: &Host) -> Vec<String> {
+    let expected: Vec<u8> = (0..=8192_u32).flat_map(u32::to_le_bytes).collect();
+    let allocations = host.device.allocation_ranks.borrow();
+    let mut tables = BTreeMap::new();
+    for (&(raw, offset), bytes) in host.uploads.borrow().iter() {
+        let (rank, length) = allocations[&(raw as u32)];
+        if *bytes == expected && offset == 0 && length == expected.len() as u64 {
+            assert!(
+                tables
+                    .insert(rank, (raw, offset, expected.len() as u64))
+                    .is_none()
+            );
+        }
+    }
+    assert_eq!(tables.len(), 4);
+    host.device
+        .stream_ranks
+        .borrow()
+        .iter()
+        .map(|(&stream, &rank)| {
+            let (raw, offset, length) = tables[&rank];
+            format!("prefill-counts {stream} {rank} {raw} {offset} {length}")
+        })
+        .collect()
+}
+
+fn count_table(journal: &[String], stream: &str) -> (u64, Span) {
+    let prefix = format!("prefill-counts {stream} ");
+    let lines: Vec<_> = journal
+        .iter()
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .collect();
+    assert_eq!(lines.len(), 1);
+    let values: Vec<u64> = lines[0]
+        .split_whitespace()
+        .map(|word| word.parse().unwrap())
+        .collect();
+    assert_eq!(values.len(), 4);
+    (values[0], (values[1], values[2], values[3]))
+}
+
+/// Compare the entire launch after only the specified owner slice. ABI
+/// positions are checked independently of the production row-layout table.
+fn exact_slice(original: &str, part: &str, quarter: u64, counts: Span) -> Result<(), String> {
+    use super::super::query_window::{arguments, symbol};
+    let spans = super::super::shared_overlap::journal_spans;
+    let hidden = u64::from(FLASH.shape.hidden);
+    let streams = u64::from(FLASH.shape.hc.streams);
+    let flat = hidden * streams * 2;
+    let mut rows: Vec<(usize, u64)>;
+    let (live, row_offset, dimension, step, capacity) = match symbol(original) {
+        name if name == CONSUMERS[0] => {
+            rows = vec![
+                (0, flat),
+                (1, hidden * 2),
+                (2, streams * 4),
+                (3, streams * streams * 4),
+                (4, flat),
+            ];
+            (5, None, "grid_y", 1, false)
+        }
+        name if name == CONSUMERS[1] => {
+            rows = vec![
+                (0, flat),
+                (4, streams * 4),
+                (5, hidden * 2),
+                (6, streams * 4),
+                (7, streams * 4),
+                (8, streams * streams * 4),
+            ];
+            (9, None, "grid_x", 8, false)
+        }
+        name if name == CONSUMERS[2] || name == CERTIFIED_NORM => {
+            rows = vec![
+                (0, hidden * 2),
+                (2, hidden * 2),
+                (4, hidden),
+                (5, hidden / 32),
+            ];
+            if name == CERTIFIED_NORM {
+                rows.push((10, 4));
+            }
+            (6, Some(8), "grid_x", 1, false)
+        }
+        PRODUCER => {
+            let top_k = u64::from(FLASH.shape.moe.top_k);
+            rows = vec![
+                (0, top_k * hidden * 4),
+                (1, top_k * 4),
+                (4, hidden * 4),
+                (5, hidden * 4),
+            ];
+            (2, None, "grid_x", 1, true)
+        }
+        _ => return Err("not an interval ABI".into()),
+    };
+    let (old_header, _) = original.split_once(" [").ok_or("missing arguments")?;
+    let (new_header, _) = part.split_once(" [").ok_or("missing arguments")?;
+    let grid = old_header
+        .split_once(&format!("{dimension}: "))
+        .ok_or("missing row grid")?
+        .1
+        .split(',')
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .map_err(|_| "invalid row grid")?;
+    let total = grid * step;
+    if !total.is_multiple_of(32) || quarter >= 4 {
+        return Err("invalid interval extent".into());
+    }
+    let count = total / 4;
+    let begin = count * quarter;
+    let expected_header = old_header.replacen(
+        &format!("{dimension}: {grid},"),
+        &format!("{dimension}: {},", grid / 4),
+        1,
+    );
+    if new_header != expected_header {
+        return Err(format!("unrelated launch configuration: {part}"));
+    }
+    let old = arguments(original);
+    let actual = arguments(part);
+    if old.len() != actual.len() {
+        return Err("argument count changed".into());
+    }
+    if row_offset.is_some() && old[3] != "NullDevicePointer" {
+        rows.push((3, hidden * 4));
+    }
+    for (at, (before, after)) in old.iter().zip(&actual).enumerate() {
+        if let Some(&(_, bytes)) = rows.iter().find(|&&(index, _)| index == at) {
+            let (whole, piece) = (spans(before), spans(after));
+            if whole.len() != 1 || piece.len() != 1 {
+                return Err("row argument is not one span".into());
+            }
+            let w = whole[0];
+            let exact_rows = !capacity || at == 5;
+            if w.2 < total * bytes
+                || (exact_rows && w.2 != total * bytes)
+                || piece[0] != (w.0, w.1 + begin * bytes, count * bytes)
+            {
+                return Err(format!(
+                    "argument {at} is not owner quarter {quarter}: {part}"
+                ));
+            }
+        } else if at == live {
+            let original = spans(before);
+            if original.len() != 1
+                || original[0].2 != 4
+                || counts.2 != 8193 * 4
+                || spans(after) != vec![(counts.0, counts.1 + count * 4, 4)]
+            {
+                return Err(format!("live count is not its rank's table cell: {part}"));
+            }
+        } else if Some(at) == row_offset {
+            let first = before
+                .strip_prefix("ScalarU64(")
+                .and_then(|s| s.strip_suffix(')'))
+                .ok_or("row offset is not U64")?
+                .parse::<u64>()
+                .map_err(|_| "invalid row offset")?;
+            if *after != format!("ScalarU64({})", first + begin) {
+                return Err("wrong status row offset".into());
+            }
+        } else if before != after {
+            return Err(format!("unrelated argument {at} changed: {part}"));
+        }
+    }
+    Ok(())
 }

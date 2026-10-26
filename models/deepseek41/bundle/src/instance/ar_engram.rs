@@ -1,5 +1,4 @@
-//! Per-layer Engram uploads for AR decode graphs. They are the default;
-//! `CHOPINFER_DEEPSEEK41_AR_ENGRAM=0` keeps the synchronous route.
+//! Per-layer Engram uploads for AR decode graphs.
 //!
 //! The synchronous route has the engine thread gather every Engram layer's
 //! table rows for every rank before the step's first launch. Here the host
@@ -11,7 +10,7 @@
 //! (`dspark::cycle::graphs`). The staged bytes, the kernels and their order
 //! on every stream are unchanged; only when the copies run moves.
 //!
-//! The switch also serves a DSpark instance's decode steps without drafts:
+//! This route also serves a DSpark instance's decode steps without drafts:
 //! their host-hashed ids go through the gathers DSpark's drafted steps use
 //! (`instance::dspark::cycle`).
 
@@ -26,57 +25,11 @@ use runtime_bundle_abi::{
     MappedGatherStatsV1,
 };
 
-const SWITCH: &str = "CHOPINFER_DEEPSEEK41_AR_ENGRAM";
 /// Logs each step's per-layer host and exposed wait times when set to 1.
 const TRACE: &str = "CHOPINFER_DEEPSEEK41_AR_ENGRAM_TRACE";
 
-/// The switch's decision for its raw value: absent or `1` serves AR decode
-/// through the per-layer route, `0` keeps the synchronous route.
-fn decide(value: Option<&str>) -> Result<bool, BundleStatusV1> {
-    match value {
-        None | Some("1") => Ok(true),
-        Some("0") => Ok(false),
-        Some(_) => Err(BundleStatusV1::InvalidArgument),
-    }
-}
-
-pub(super) fn enabled() -> Result<bool, BundleStatusV1> {
-    #[cfg(test)]
-    return decide(IN_TESTS.get());
-    #[cfg(not(test))]
-    match std::env::var(SWITCH) {
-        Ok(value) => decide(Some(&value)),
-        Err(std::env::VarError::NotPresent) => decide(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(BundleStatusV1::InvalidArgument),
-    }
-}
-
 pub(super) fn traced() -> bool {
     cfg!(test) || std::env::var_os(TRACE).is_some_and(|value| value == "1")
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Tests exercise the served per-layer route by default.
-    static IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn with_enabled<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    with_switch(Some(if value { "1" } else { "0" }), run)
-}
-
-/// Runs `run` as if the switch held `value`.
-#[cfg(test)]
-pub(crate) fn with_switch<T>(value: Option<&'static str>, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<&'static str>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(IN_TESTS.replace(value));
-    run()
 }
 
 /// The prepared gathers of an instance serving AR decode through them.
@@ -168,17 +121,14 @@ pub(super) fn layer_major(
 impl Instance {
     /// Prepares one gather per Engram layer whose planes are every rank's
     /// codes and scales staging, sized for the widest decode bucket, when
-    /// the switch is on and the instance serves AR with mapped tables.
+    /// the instance serves AR with mapped tables.
     pub(super) fn prepare_ar_engram(&mut self) -> Result<(), BundleAbiError> {
-        let enabled = enabled().map_err(BundleAbiError::Status)?;
         self.ar_engram_fallback = if !self.services.has_async_mapped_gather() {
             crate::engram_rows::SyncReason::NoAsyncService
-        } else if !enabled {
-            crate::engram_rows::SyncReason::ArDecodeDisabled
         } else {
             crate::engram_rows::SyncReason::NoPreparedGather
         };
-        if !enabled || self.dspark.is_some() || !self.services.has_async_mapped_gather() {
+        if self.dspark.is_some() || !self.services.has_async_mapped_gather() {
             return Ok(());
         }
         let Some(tables) = self
@@ -262,7 +212,7 @@ impl Instance {
         }
         self.ar_engram = Some(state);
         self.log(&format!(
-            "{SWITCH}: decode buckets 1..={capacity} join {} Engram layers at their consumers",
+            "AR Engram: decode buckets 1..={capacity} join {} Engram layers at their consumers",
             tables.len()
         ));
         Ok(())

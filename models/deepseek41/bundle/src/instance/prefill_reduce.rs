@@ -34,15 +34,8 @@ impl super::Instance {
             .reduce
             .as_mut()
             .expect("admitted partial reduction");
-        let scope = if reduce.prefill_only_partials() {
-            "prefill"
-        } else {
-            "all"
-        };
         reduce.admit_prefill(true);
-        self.log(&format!(
-            "BF16 partials admitted: scope={scope}, rank-ordered F32 sum of rounded partials"
-        ));
+        self.log("BF16 partials admitted: scope=prefill, rank-ordered F32 sum of rounded partials");
         Ok(())
     }
 

@@ -7,8 +7,7 @@
 //! keep the device hash.
 use super::*;
 use crate::engram_rows::{EngramRows, Step};
-use crate::fake_host_tests::ar_engram::{launches, order};
-use crate::instance::ar_engram::{with_enabled, with_switch};
+use crate::fake_host_tests::ar_engram::order;
 use model_deepseek41_contract::own_ops::engram::HashTables;
 
 /// The token request `7 + slot` decodes at `position`.
@@ -49,23 +48,10 @@ fn oracle_ids(histories: &[Vec<u32>], items: &[(u64, u64)]) -> crate::engram_row
     rows.hash(&steps).unwrap()
 }
 
-/// Each row write a gather made: the upload that follows a synchronous
-/// gather line, sorted.
-fn row_writes(lines: &[String]) -> Vec<String> {
-    let mut writes: Vec<String> = lines
-        .windows(2)
-        .filter(|pair| pair[0].starts_with("mapped gather ") && pair[1].starts_with("upload "))
-        .map(|pair| format!("{} {}", pair[0], pair[1]))
-        .collect();
-    writes.sort();
-    writes
-}
-
 /// One route's run of the schedule.
 struct Run {
     host: Rc<Host>,
     /// Where the first decode step's journal starts.
-    from: usize,
     /// Each step's execute journal lines.
     journals: Vec<Vec<String>>,
 }
@@ -78,9 +64,9 @@ enum Planned {
 }
 
 /// Four three-token prompts, then each planned step, committed.
-fn schedule(ranks: Ranks, steps: &[Planned], on: bool) -> Run {
+fn schedule(ranks: Ranks, steps: &[Planned]) -> Run {
     let shape = Shape::new(&FLASH, ranks).unwrap();
-    let (host, mut instance) = with_enabled(on, || create(shape));
+    let (host, mut instance) = create(shape);
     let ids = crate::instance::dspark_hash_ids(instance.handle()).unwrap();
     let mut histories = Vec::new();
     for slot in 0..4 {
@@ -92,7 +78,6 @@ fn schedule(ranks: Ranks, steps: &[Planned], on: bool) -> Run {
         instance.commit().unwrap();
         histories.push((0..3).collect::<Vec<u32>>());
     }
-    let from = host.journal.borrow().len();
     let mut journals = Vec::new();
     for planned in steps {
         let begin = host.journal.borrow().len();
@@ -101,7 +86,7 @@ fn schedule(ranks: Ranks, steps: &[Planned], on: bool) -> Run {
                 let sink = execute(&mut instance, &host, &undrafted(items));
                 journals.push(host.journal.borrow()[begin..].to_vec());
                 assert!(sink.draft_tokens().is_empty());
-                if on {
+                {
                     let (span, stride) = ids;
                     let hashed = oracle_ids(&histories, items);
                     let layers = FLASH.shape.engram.layers.len();
@@ -149,15 +134,11 @@ fn schedule(ranks: Ranks, steps: &[Planned], on: bool) -> Run {
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    Run {
-        host,
-        from,
-        journals,
-    }
+    Run { host, journals }
 }
 
 #[test]
-fn undrafted_dspark_steps_join_each_engram_layer_without_changing_launches() {
+fn undrafted_dspark_steps_join_each_engram_layer_with_oracle_ids() {
     // Every slot, its replay, a smaller bucket, a drafted step, every slot
     // after it, and one row.
     let steps = [
@@ -169,24 +150,13 @@ fn undrafted_dspark_steps_join_each_engram_layer_without_changing_launches() {
         Planned::Undrafted(&[(2, 7)]),
     ];
     for ranks in [Ranks::TP4, Ranks::TP2, Ranks::TP1] {
-        let off = schedule(ranks, &steps, false);
-        let on = schedule(ranks, &steps, true);
-        assert_eq!(
-            launches(&off.host, off.from),
-            launches(&on.host, on.from),
-            "ranks={}",
-            ranks.get()
-        );
+        let on = schedule(ranks, &steps);
         let count = ranks.count();
-        for ((planned, off), on) in steps.iter().zip(&off.journals).zip(&on.journals) {
-            assert_eq!(row_writes(off), row_writes(on));
-            let (off, on) = (order(off), order(on));
+        for (planned, on) in steps.iter().zip(&on.journals) {
+            let on = order(on);
             if matches!(planned, Planned::Drafted) {
-                assert_eq!(on, off, "a drafted step keeps the device hash");
                 continue;
             }
-            assert!(!off.contains(&"ids") && !off.contains(&"wait"));
-            assert!(off.contains(&"sync"));
             // Both layers enqueued, the prefix pieces; every rank joins
             // layer 1, the middle pieces; every rank joins layer 14, the
             // last pieces; both gathers complete.
@@ -221,30 +191,5 @@ fn undrafted_dspark_steps_join_each_engram_layer_without_changing_launches() {
             })
             .collect();
         assert_eq!(rows, [4, 4, 2, 4, 1]);
-    }
-}
-
-/// `0` keeps the synchronous route for DSpark's undrafted steps too, and
-/// an unset switch serves them per layer.
-#[test]
-fn the_switch_governs_undrafted_dspark_steps() {
-    for (value, deferred) in [(None, true), (Some("1"), true), (Some("0"), false)] {
-        let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
-        let (host, mut instance) = with_switch(value, || create(shape));
-        execute(
-            &mut instance,
-            &host,
-            &super::super::prompt(7, 0, 0, 3, true),
-        );
-        instance.commit().unwrap();
-        let begin = host.journal.borrow().len();
-        execute(&mut instance, &host, &undrafted(&[(0, 3)]));
-        instance.commit().unwrap();
-        let step = order(&host.journal.borrow()[begin..]);
-        assert_eq!(step.contains(&"ids"), deferred, "{value:?}");
-        assert_eq!(!step.contains(&"sync"), deferred, "{value:?}");
-        instance.retire_request(7).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
     }
 }

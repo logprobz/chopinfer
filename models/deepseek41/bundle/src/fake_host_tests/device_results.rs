@@ -115,6 +115,12 @@ fn default_ar_readiness_precedes_status_waits_and_releases_every_event() {
             .iter()
             .position(|line| line == "ready-sample")
             .unwrap();
+        assert!(
+            lines[..sample]
+                .iter()
+                .all(|line| !line.starts_with("synchronize ")),
+            "sampling must be submitted before any stream synchronization"
+        );
         let readback = lines
             .iter()
             .position(|line| line.starts_with("download "))
@@ -227,24 +233,22 @@ fn ready_ar_steps_complete_their_per_layer_engram_uploads() {
 }
 
 fn ready_ar_steps_at(count: u32) {
-    use super::ar_engram::{launches, order};
-    let run = |on: bool| {
+    use super::ar_engram::order;
+    let run = || {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(true);
         let mut instance = crate::device_results::with_override(None, || {
-            crate::instance::ar_engram::with_enabled(on, || {
-                let record = crate::config::tests::record(&host.shape, host.kv, count, false);
-                api()
-                    .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
-                    .unwrap()
-                    .create(
-                        HostServicesTableV1::new(Rc::new(super::dspark::host::MappedHost::new(
-                            Rc::clone(&host),
-                        ))),
-                        &record,
-                    )
-                    .unwrap()
-            })
+            let record = crate::config::tests::record(&host.shape, host.kv, count, false);
+            api()
+                .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+                .unwrap()
+                .create(
+                    HostServicesTableV1::new(Rc::new(super::dspark::host::MappedHost::new(
+                        Rc::clone(&host),
+                    ))),
+                    &record,
+                )
+                .unwrap()
         });
         for slot in 0..count {
             step(
@@ -254,7 +258,6 @@ fn ready_ar_steps_at(count: u32) {
             );
         }
         let ids = (1..=u64::from(count)).collect::<Vec<_>>();
-        let from = host.device.journal.borrow().len();
         let mut steps = Vec::new();
         for (epoch, position) in [(9, 3), (10, 4)] {
             let request = decode(
@@ -283,19 +286,14 @@ fn ready_ar_steps_at(count: u32) {
             steps.push(host.device.journal.borrow()[begin..].to_vec());
             instance.commit().unwrap();
         }
-        let launched = launches(&host, from);
         for id in &ids {
             instance.retire_request(*id).unwrap();
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
-        (launched, steps)
+        steps
     };
-    let (off, off_steps) = run(false);
-    let (on, on_steps) = run(true);
-    assert_eq!(off, on);
-    for (off, on) in off_steps.iter().zip(&on_steps) {
-        assert!(order(off).contains(&"sync") && !order(off).contains(&"ids"));
+    for on in &run() {
         let kinds = order(on);
         assert!(!kinds.contains(&"sync"));
         assert_eq!(kinds.iter().filter(|&&k| k == "ids").count(), 2);

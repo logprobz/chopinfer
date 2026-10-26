@@ -919,20 +919,7 @@ fn lifecycles(mut each: impl FnMut(&str, &Scratch, &[String])) {
         |host: &Rc<Host>| crate::instance::execute::overlap::with_mode(2, || create(host, 4));
     let (scratch, journal) = trace(&host, micro, long_steps);
     each("micro prefill", &scratch, &journal);
-    for mode in [0, 2] {
-        let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
-        host.device
-            .ordinary_symbols
-            .borrow_mut()
-            .insert("chop_comm_owned_sum_round_f32_v1".into());
-        let dma = |host: &Rc<Host>| {
-            crate::ops::with_dma(true, || {
-                crate::instance::execute::overlap::with_mode(mode, || create(host, 4))
-            })
-        };
-        let (scratch, journal) = trace(&host, dma, long_steps);
-        each(&format!("DMA prefill mode {mode}"), &scratch, &journal);
-    }
+
     let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
     let profile = |host: &Rc<Host>| {
         crate::instance::prefill_engram::with_enabled(true, || {
@@ -957,7 +944,7 @@ fn regions_hold_over_every_lifecycle() {
         assert!(refusals.is_empty(), "{label}: {refusals:#?}");
         traced += 1;
     });
-    assert_eq!(traced, 6 + 3 + 2 + 5);
+    assert_eq!(traced, 6 + 3 + 2 + 3);
 }
 
 /// Regions of `a` and `b`, two 64-byte buffers of one rank.

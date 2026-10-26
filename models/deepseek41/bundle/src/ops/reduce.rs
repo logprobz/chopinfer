@@ -6,8 +6,7 @@
 //! row's bits as one rank holds it.
 //! Native Flash TP4 prefills default to the separate BF16 AllReduce
 //! contract, rounding each completed local partial before transport.
-//! Decode and verification retain F32 partials; the explicit zero switch
-//! keeps F32 partials in every phase.
+//! Decode, verification and other shapes retain F32 partials.
 //!
 //! Each rank's op keeps comm state regions (`OpInfo::state`) that its
 //! peers write; every rank allocates the same regions, zeroed at create.
@@ -28,190 +27,32 @@ use crate::shape::Shape;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Partials {
     Off,
-    All,
     Prefill,
 }
 
-fn partials_selected(shape: &Shape, storage: KvStorage, setting: Option<&str>) -> Partials {
-    if shape.ranks() != 4 || shape.geometry != &model_deepseek41_contract::geometry::FLASH {
-        return Partials::Off;
-    }
-    match setting {
-        Some("1") => Partials::All,
-        Some("prefill") => Partials::Prefill,
-        None if storage == KvStorage::Native => Partials::Prefill,
-        _ => Partials::Off,
-    }
-}
-
 fn partials_mode(shape: &Shape, storage: KvStorage) -> Partials {
-    #[cfg(test)]
-    return partials_selected(shape, storage, PARTIALS_IN_TESTS.get());
-    #[cfg(not(test))]
+    if shape.ranks() == 4
+        && shape.geometry == &model_deepseek41_contract::geometry::FLASH
+        && storage == KvStorage::Native
     {
-        let setting = std::env::var("CHOPINFER_DEEPSEEK41_BF16_PARTIALS");
-        let value = match &setting {
-            Ok(value) => Some(value.as_str()),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(std::env::VarError::NotUnicode(_)) => Some(""),
-        };
-        partials_selected(shape, storage, value)
+        Partials::Prefill
+    } else {
+        Partials::Off
     }
 }
 
 pub(crate) fn bf16_partials_requested(shape: &Shape, storage: KvStorage) -> bool {
-    partials_mode(shape, storage) != Partials::Off
-}
-
-pub(crate) fn prefill_only_partials(shape: &Shape, storage: KvStorage) -> bool {
     partials_mode(shape, storage) == Partials::Prefill
 }
 
-#[cfg(test)]
-thread_local! { static PARTIALS_IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
-
-#[cfg(test)]
-pub(crate) fn with_bf16_partials<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    with_partial_setting(Some(if enabled { "1" } else { "0" }), run)
+pub(crate) fn prefill_only_partials(shape: &Shape, storage: KvStorage) -> bool {
+    bf16_partials_requested(shape, storage)
 }
 
-#[cfg(test)]
-pub(crate) fn with_partial_setting<T>(setting: Option<&'static str>, run: impl FnOnce() -> T) -> T {
-    struct Reset(Option<&'static str>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            PARTIALS_IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(PARTIALS_IN_TESTS.replace(setting));
-    run()
+pub(crate) fn requested(shape: &Shape) -> bool {
+    shape.geometry == &model_deepseek41_contract::geometry::FLASH
 }
 
-#[cfg(test)]
-#[test]
-fn bf16_partials_default_only_to_qualified_prefill_and_keep_controls() {
-    use bundle_runtime::geometry::Ranks;
-    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
-    for geometry in GEOMETRIES {
-        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-            let Ok(shape) = Shape::new(geometry, ranks) else {
-                continue;
-            };
-            for setting in [Some("0"), Some(""), Some("invalid")] {
-                assert_eq!(
-                    partials_selected(&shape, KvStorage::Native, setting),
-                    Partials::Off
-                );
-            }
-            let selected = geometry == &FLASH && ranks == Ranks::TP4;
-            assert_eq!(
-                partials_selected(&shape, KvStorage::Native, None),
-                if selected {
-                    Partials::Prefill
-                } else {
-                    Partials::Off
-                }
-            );
-            assert_eq!(
-                partials_selected(&shape, KvStorage::Native, Some("1")),
-                if selected {
-                    Partials::All
-                } else {
-                    Partials::Off
-                }
-            );
-            assert_eq!(
-                partials_selected(&shape, KvStorage::Native, Some("prefill")),
-                if selected {
-                    Partials::Prefill
-                } else {
-                    Partials::Off
-                }
-            );
-            assert_eq!(
-                partials_selected(&shape, KvStorage::Bf16, None),
-                Partials::Off
-            );
-            assert_eq!(
-                partials_selected(&shape, KvStorage::Bf16, Some("prefill")),
-                if selected {
-                    Partials::Prefill
-                } else {
-                    Partials::Off
-                }
-            );
-            assert!(matches!(
-                with_partial_setting(None, || query(&shape, KvStorage::Native)),
-                CommQuery::AllReduceRounded { .. }
-            ));
-            assert!(matches!(
-                with_partial_setting(Some("prefill"), || query(&shape, KvStorage::Native)),
-                CommQuery::AllReduceRounded { .. }
-            ));
-            assert!(matches!(
-                with_bf16_partials(false, || query(&shape, KvStorage::Native)),
-                CommQuery::AllReduceRounded { .. }
-            ));
-            assert_eq!(
-                matches!(
-                    with_bf16_partials(true, || query(&shape, KvStorage::Native)),
-                    CommQuery::AllReduce {
-                        dtype: DType::Bf16,
-                        fused_residual: false,
-                        fused_rmsnorm: None,
-                        ..
-                    }
-                ),
-                selected
-            );
-        }
-    }
-}
-
-fn selected(shape: &Shape, setting: Option<&str>) -> bool {
-    match setting {
-        Some("1") => true,
-        None => shape.geometry == &model_deepseek41_contract::geometry::FLASH,
-        _ => false,
-    }
-}
-
-pub(crate) fn requested(_shape: &Shape) -> bool {
-    #[cfg(test)]
-    return IN_TESTS.get().unwrap_or_else(|| selected(_shape, None));
-    #[cfg(not(test))]
-    {
-        let setting = std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER");
-        match setting {
-            Ok(value) => selected(_shape, Some(&value)),
-            Err(std::env::VarError::NotPresent) => selected(_shape, None),
-            Err(std::env::VarError::NotUnicode(_)) => false,
-        }
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
-    use bundle_runtime::geometry::Ranks;
-    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
-    for geometry in GEOMETRIES {
-        let shape = Shape::new(geometry, Ranks::TP4).unwrap();
-        assert_eq!(selected(&shape, None), geometry == &FLASH);
-        assert!(selected(&shape, Some("1")));
-        for value in ["0", "", "invalid"] {
-            assert!(!selected(&shape, Some(value)));
-        }
-    }
-}
-
-#[cfg(test)]
-thread_local! { static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) }; }
-
-/// `Skip` is the unset default: ordered DMA for the negotiated upper-skip
-/// executor only, with the BF16 gather it was measured with. Full-schedule
-/// and two-part executions keep the SM transport unless `1` selects
-/// `Explicit`.
 /// The element format a prefill DMA reduction copies between ranks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DmaPayload {
@@ -262,106 +103,29 @@ pub(crate) enum RowLocalKind {
     Produce,
 }
 
-/// Whether DMA runs the row-local consumers of each gathered owner
-/// interval as it lands. Unset selects it; `0` keeps them after the call.
+/// Interval consumers remain subject to their row and operation gates.
 pub(crate) fn dma_consume_requested() -> bool {
-    #[cfg(test)]
-    return CONSUME_IN_TESTS.get();
-    #[cfg(not(test))]
-    {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME").as_deref() != Ok("0")
-    }
+    true
 }
 
-#[cfg(test)]
-thread_local! { static CONSUME_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(test)]
-pub(crate) fn with_dma_consume<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            CONSUME_IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(CONSUME_IN_TESTS.replace(enabled));
-    run()
-}
-
-/// Whether DMA runs the producer of each interval a rank sends as its own
-/// launch, so each destination pulls that interval as soon as it is
-/// produced and rounded. Unset selects it; `0` keeps one producer launch
-/// before the call.
+/// Interval producers remain subject to their BF16 payload and row gates.
 pub(crate) fn dma_produce_requested() -> bool {
-    #[cfg(test)]
-    return PRODUCE_IN_TESTS.get();
-    #[cfg(not(test))]
-    {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE").as_deref() != Ok("0")
-    }
+    true
 }
 
-#[cfg(test)]
-thread_local! { static PRODUCE_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(test)]
-pub(crate) fn with_dma_produce<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            PRODUCE_IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(PRODUCE_IN_TESTS.replace(enabled));
-    run()
-}
-
-/// Whether DMA issues each peer copy on its source's stream, where the
-/// host allows it (`execute::dma::pushes`). Unset selects it; `0` keeps
-/// every copy on its destination's stream.
+/// Source-stream copies require the host's successful capability probe.
 pub(crate) fn dma_push_requested() -> bool {
-    #[cfg(test)]
-    return PUSH_IN_TESTS.get();
-    #[cfg(not(test))]
-    {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH").as_deref() != Ok("0")
-    }
-}
-
-#[cfg(test)]
-thread_local! { static PUSH_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(test)]
-pub(crate) fn with_dma_push<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            PUSH_IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(PUSH_IN_TESTS.replace(enabled));
-    run()
+    true
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PrefillDma {
     Off,
     Skip,
-    Explicit,
 }
 
 impl PrefillDma {
-    fn read(setting: Option<&str>) -> Self {
-        match setting {
-            Some("1") => Self::Explicit,
-            None => Self::Skip,
-            _ => Self::Off,
-        }
-    }
-
-    /// The policy an instance keeps: `Skip` holds only for a create record
-    /// whose prefill profile negotiates upper-skip chunks and whose BF16
-    /// gather is prepared; otherwise it allocates nothing.
+    /// DMA serves negotiated upper-skip chunks with a prepared BF16 gather.
     pub(crate) fn admit(
         self,
         prefill: model_deepseek41_contract::prefill_profile::Profile,
@@ -377,89 +141,14 @@ impl PrefillDma {
         self != Self::Off
     }
 
-    /// Full-schedule and two-part executions require explicit selection.
+    /// Full-schedule executors do not use DMA.
     pub(crate) fn serves_full_schedule(self) -> bool {
-        self == Self::Explicit
+        false
     }
 }
 
 pub(crate) fn dma_requested() -> PrefillDma {
-    #[cfg(test)]
-    return DMA_IN_TESTS.get();
-    #[cfg(not(test))]
-    {
-        match std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA") {
-            Ok(value) => PrefillDma::read(Some(&value)),
-            Err(std::env::VarError::NotPresent) => PrefillDma::read(None),
-            Err(std::env::VarError::NotUnicode(_)) => PrefillDma::Off,
-        }
-    }
-}
-
-#[cfg(test)]
-thread_local! { static DMA_IN_TESTS: std::cell::Cell<PrefillDma> = const { std::cell::Cell::new(PrefillDma::Skip) }; }
-
-#[cfg(test)]
-pub(crate) fn with_dma<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    with_dma_setting(Some(if enabled { "1" } else { "0" }), run)
-}
-
-#[cfg(test)]
-pub(crate) fn with_dma_setting<T>(setting: Option<&str>, run: impl FnOnce() -> T) -> T {
-    struct Reset(PrefillDma);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            DMA_IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(DMA_IN_TESTS.replace(PrefillDma::read(setting)));
-    run()
-}
-
-#[cfg(test)]
-#[test]
-fn dma_defaults_to_upper_skip_and_keeps_explicit_controls() {
-    use model_deepseek41_contract::prefill_profile::Profile;
-    let skip = Profile {
-        chunk: 8192,
-        skip: true,
-    };
-    let full = Profile::default();
-    let chunked = Profile {
-        chunk: 8192,
-        skip: false,
-    };
-    let explicit = PrefillDma::read(Some("1"));
-    assert_eq!(explicit, PrefillDma::Explicit);
-    for (prefill, bf16) in [(skip, true), (skip, false), (full, true), (chunked, true)] {
-        assert_eq!(explicit.admit(prefill, bf16), PrefillDma::Explicit);
-    }
-    assert!(explicit.enabled() && explicit.serves_full_schedule());
-    let unset = PrefillDma::read(None);
-    assert_eq!(unset, PrefillDma::Skip);
-    assert_eq!(unset.admit(skip, true), PrefillDma::Skip);
-    assert!(unset.enabled() && !unset.serves_full_schedule());
-    for (prefill, bf16) in [(skip, false), (full, true), (chunked, true)] {
-        assert_eq!(unset.admit(prefill, bf16), PrefillDma::Off);
-    }
-    for setting in [Some("0"), Some(""), Some("invalid")] {
-        let off = PrefillDma::read(setting);
-        assert_eq!(off, PrefillDma::Off);
-        assert_eq!(off.admit(skip, true), PrefillDma::Off);
-        assert!(!off.enabled() && !off.serves_full_schedule());
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn with_bf16_gather<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(Option<bool>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(IN_TESTS.replace(Some(enabled)));
-    run()
+    PrefillDma::Skip
 }
 
 struct Prefill {
@@ -483,12 +172,8 @@ pub(crate) struct ReduceOps {
 }
 
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
-/// in rank order from zero and rounded once to BF16. The opt-in candidate
-/// declares its additional input rounding through the BF16 query.
-pub(crate) fn query(shape: &Shape, storage: KvStorage) -> CommQuery {
-    if partials_mode(shape, storage) == Partials::All {
-        return partial_query(shape);
-    }
+/// in rank order from zero and rounded once to BF16.
+pub(crate) fn query(shape: &Shape, _storage: KvStorage) -> CommQuery {
     rounded_query(shape)
 }
 
@@ -626,11 +311,6 @@ impl ReduceOps {
         self.bf16_partials != Partials::Off
     }
 
-    /// Decode and verify share the BF16 protocol only in all-phase mode.
-    pub(crate) fn decode_partials(&self) -> bool {
-        self.bf16_partials == Partials::All
-    }
-
     pub(crate) fn prefill_only_partials(&self) -> bool {
         self.bf16_partials == Partials::Prefill
     }
@@ -642,9 +322,6 @@ impl ReduceOps {
     }
 
     pub(crate) fn prefill_state(&self) -> Option<std::ops::Range<usize>> {
-        if self.bf16_partials == Partials::All {
-            return Some(0..self.state.len());
-        }
         self.prefill
             .as_ref()
             .filter(|p| p.admitted)
@@ -782,5 +459,49 @@ impl ReduceOps {
             live_rows: bind.view(views.live_rows),
         };
         bind.launch(&self.widen, &buffers, Counts::rows(rows))
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+
+    #[test]
+    fn partials_and_gather_keep_their_geometry_and_storage_gates() {
+        for geometry in GEOMETRIES {
+            for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+                let Ok(shape) = Shape::new(geometry, ranks) else {
+                    continue;
+                };
+                assert_eq!(requested(&shape), geometry == &FLASH);
+                for storage in [KvStorage::Native, KvStorage::Bf16] {
+                    assert_eq!(
+                        bf16_partials_requested(&shape, storage),
+                        geometry == &FLASH && ranks == Ranks::TP4 && storage == KvStorage::Native,
+                    );
+                    assert!(matches!(
+                        query(&shape, storage),
+                        CommQuery::AllReduceRounded { .. }
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dma_requires_negotiated_skip_and_a_prepared_gather() {
+        use model_deepseek41_contract::prefill_profile::Profile;
+        for (chunk, skip, gather) in [
+            (0, false, true),
+            (8192, false, true),
+            (8192, true, false),
+            (8192, true, true),
+        ] {
+            let policy = dma_requested().admit(Profile { chunk, skip }, gather);
+            assert_eq!(policy.enabled(), chunk > 0 && skip && gather);
+            assert!(!policy.serves_full_schedule());
+        }
     }
 }

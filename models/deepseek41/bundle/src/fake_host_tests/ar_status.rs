@@ -4,7 +4,6 @@
 //! of 16 times without synchronizing a stream, and a flagged word in any of
 //! the 16 status parts refuses the step with the separate reads' message.
 use super::*;
-use crate::instance::execute::ar_status::with_enabled;
 
 /// Index sources of Flash, then two row status planes on each of 4 ranks.
 const SOURCES: usize = 8;
@@ -15,20 +14,10 @@ fn kind(line: &str) -> &str {
     line.split(' ').next().unwrap_or_default()
 }
 
-/// The status reads' lines: the packet's joins and copies, and the
-/// separate reads' downloads and synchronizations.
-fn status_line(line: &str) -> bool {
-    matches!(
-        kind(line),
-        "download" | "synchronize" | "record" | "wait" | "copy" | "peer-copy"
-    )
-}
-
 /// Each decode step's journal (1, 2, 8 and again 1 live rows, the last
-/// replaying the first's graph) of a Flash TP4 instance with the packet on
-/// or off.
-fn decode_journals(packet: bool) -> Vec<Vec<String>> {
-    with_enabled(packet, || {
+/// replaying the first's graph), and its ordered rank streams.
+fn decode_journals() -> (Vec<u32>, Vec<Vec<String>>) {
+    {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 8);
@@ -57,118 +46,22 @@ fn decode_journals(packet: bool) -> Vec<Vec<String>> {
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
-        steps
-    })
-}
-
-/// Lines with each stream, graph and buffer handle renumbered by first
-/// use: the packet's buffer and events take fake handles at create, so
-/// later handles' raw numbers shift between runs.
-fn canonical(lines: &[String]) -> Vec<String> {
-    let mut handles = BTreeMap::<String, usize>::new();
-    let mut number = |key: String| {
-        let next = handles.len();
-        *handles.entry(key).or_insert(next)
-    };
-    lines
-        .iter()
-        .map(|line| {
-            let mut words = line.splitn(3, ' ');
-            let kind = words.next().unwrap_or_default();
-            let stream = words.next().unwrap_or_default();
-            let mut rest = words.next().unwrap_or_default().to_owned();
-            if matches!(kind, "replay" | "captured") {
-                let (graph, tail) = rest.split_once(' ').unwrap_or((rest.as_str(), ""));
-                rest = format!("g#{} {tail}", number(format!("g{graph}")));
-            }
-            let mut parts = rest.split("raw: ");
-            let stream = number(format!("s{stream}"));
-            let mut out = format!("{kind} s#{stream} {}", parts.next().unwrap());
-            for part in parts {
-                let digits = part.chars().take_while(char::is_ascii_digit).count();
-                let raw = number(format!("r{}", &part[..digits]));
-                out.push_str(&format!("raw: #{raw}{}", &part[digits..]));
-            }
-            out
-        })
-        .collect()
-}
-
-#[test]
-fn ar_decode_steps_read_their_status_back_once_with_the_same_work() {
-    let separate = decode_journals(false);
-    let packet = decode_journals(true);
-    assert_eq!(separate.len(), packet.len());
-    for (step, (old, new)) in separate.iter().zip(&packet).enumerate() {
-        let work = |lines: &[String]| {
-            canonical(
-                &lines
-                    .iter()
-                    .filter(|l| !status_line(l))
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            )
-        };
-        let (old_work, new_work) = (work(old), work(new));
-        assert!(
-            old_work
-                .iter()
-                .any(|l| kind(l) == "launch" || kind(l) == "replay"),
-            "step {step}"
-        );
-        if let Some(at) =
-            (0..old_work.len().max(new_work.len())).find(|&i| old_work.get(i) != new_work.get(i))
-        {
-            panic!(
-                "step {step} differs at {at}:\n{:?}\n{:?}",
-                old_work.get(at),
-                new_work.get(at)
-            );
-        }
-        let count = |lines: &[String], what: &str| lines.iter().filter(|l| kind(l) == what).count();
-        // The separate reads: one download per index source and plane,
-        // after one synchronization of rank 0 for the index sources and one
-        // of each rank for its planes, and one synchronization after each.
-        assert_eq!(
-            count(old, "download"),
-            count(new, "download") + PARTS - 1,
-            "step {step}"
-        );
-        assert_eq!(
-            count(old, "synchronize"),
-            count(new, "synchronize") + 1 + SOURCES + RANKS * 3,
-            "step {step}"
-        );
-        // The packet: rank 0 waits on each peer's work, copies rank 0's
-        // index sources and planes and pulls each peer's planes.
-        assert_eq!(
-            count(new, "record"),
-            count(old, "record") + RANKS - 1,
-            "step {step}"
-        );
-        assert_eq!(
-            count(new, "wait"),
-            count(old, "wait") + RANKS - 1,
-            "step {step}"
-        );
-        assert_eq!(
-            count(new, "copy"),
-            count(old, "copy") + SOURCES + 2,
-            "step {step}"
-        );
-        assert_eq!(
-            count(new, "peer-copy"),
-            count(old, "peer-copy") + 2 * (RANKS - 1),
-            "step {step}"
-        );
+        let streams = host
+            .device
+            .rank_streams
+            .borrow()
+            .values()
+            .copied()
+            .collect();
+        (streams, steps)
     }
 }
 
 /// The logs of a one-row decode step whose status read back flagged word
 /// `part` of the 16 (index sources in order, then each rank's two planes),
-/// with the packet on or off.
-fn refusal(packet: bool, part: usize) -> Vec<String> {
-    with_enabled(packet, || {
+/// through the packet.
+fn refusal(part: usize) -> Vec<String> {
+    {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = create(&host, 4);
@@ -177,14 +70,9 @@ fn refusal(packet: bool, part: usize) -> Vec<String> {
             &prompt(7, 0, 0, 3, true),
             &mut Views::default(),
         );
-        if packet {
-            let mut words = vec![0_u8; PARTS * 4];
-            words[part * 4] = 1;
-            host.injected.replace(Some(words));
-        } else {
-            host.injected.replace(Some(1_u32.to_le_bytes().to_vec()));
-            host.injected_after.set(part);
-        }
+        let mut words = vec![0_u8; PARTS * 4];
+        words[part * 4] = 1;
+        host.injected.replace(Some(words));
         let from = host.logs.borrow().len();
         let error = instance
             .execute(&decode(&[(7, 0, 3, 1)]), &mut Views::default())
@@ -197,7 +85,7 @@ fn refusal(packet: bool, part: usize) -> Vec<String> {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
         logs
-    })
+    }
 }
 
 #[test]
@@ -205,9 +93,7 @@ fn a_flagged_status_part_refuses_the_step_with_the_separate_reads_message() {
     let layers = FLASH.shape.csa.index_sources;
     assert_eq!(layers.len(), SOURCES);
     for part in 0..PARTS {
-        let old = refusal(false, part);
-        let new = refusal(true, part);
-        assert_eq!(old, new, "part {part}");
+        let old = refusal(part);
         let expected = if let Some(layer) = layers.get(part) {
             format!(
                 "the index selection of layer {layer} met a non-finite score in row 0 (request Some(7))"
@@ -229,26 +115,66 @@ fn a_flagged_status_part_refuses_the_step_with_the_separate_reads_message() {
 /// its journal is the packet-free one.
 #[test]
 fn a_step_wider_than_the_packet_keeps_the_separate_reads() {
-    let journal = |packet: bool| {
-        with_enabled(packet, || {
-            let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-            let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-            let mut instance = create(&host, 4);
-            let rows = crate::instance::execute::ar_status::ROWS;
-            let from = host.device.journal.borrow().len();
-            step(
-                &mut instance,
-                &prompt(7, 0, 0, u64::from(rows) + 8, true),
-                &mut Views::default(),
-            );
-            let journal = canonical(&host.device.journal.borrow()[from..]);
-            instance.retire_request(7).unwrap();
-            instance.destroy().unwrap();
-            assert_eq!(host.acquired.get(), host.released.get());
-            journal
-        })
+    let journal = || {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let mut instance = create(&host, 4);
+        let rows = crate::instance::execute::ar_status::ROWS;
+        let from = host.device.journal.borrow().len();
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, u64::from(rows) + 8, true),
+            &mut Views::default(),
+        );
+        let journal = host.device.journal.borrow()[from..].to_vec();
+        instance.retire_request(7).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        journal
     };
-    let separate = journal(false);
+    let separate = journal();
     assert!(separate.iter().filter(|l| kind(l) == "download").count() >= PARTS);
-    assert_eq!(journal(true), separate);
+}
+
+#[test]
+fn ar_decode_steps_read_their_status_back_once() {
+    let (streams, journals) = decode_journals();
+    assert_eq!(streams.len(), RANKS);
+    for (rows, journal) in [1_usize, 2, 8, 1].into_iter().zip(journals) {
+        let count = |what: &str| journal.iter().filter(|line| kind(line) == what).count();
+        assert!(count("launch") + count("replay") > 0);
+        assert_eq!(count("download"), 1);
+        // Legacy logits views still synchronize their owning rank after
+        // the consolidated status readback.
+        assert_eq!(count("synchronize"), rows.min(RANKS));
+        let download = journal
+            .iter()
+            .position(|line| kind(line) == "download")
+            .unwrap();
+        let sync = journal
+            .iter()
+            .position(|line| kind(line) == "synchronize")
+            .unwrap();
+        assert!(download < sync);
+        assert_eq!(count("copy"), SOURCES + 2);
+        assert_eq!(count("peer-copy"), 2 * (RANKS - 1));
+        let first_copy = journal
+            .iter()
+            .position(|line| kind(line) == "copy")
+            .unwrap();
+        let joins = &journal[first_copy - 2 * (RANKS - 1)..first_copy];
+        for (pair, peer) in joins.chunks_exact(2).zip(&streams[1..]) {
+            let record: Vec<_> = pair[0].split_whitespace().collect();
+            let wait: Vec<_> = pair[1].split_whitespace().collect();
+            assert_eq!(record[0], "record");
+            assert_eq!(record[1], peer.to_string());
+            assert_eq!(wait, ["wait", &streams[0].to_string(), record[2]]);
+        }
+        assert!(
+            journal[first_copy..download]
+                .iter()
+                .filter(|line| matches!(kind(line), "copy" | "peer-copy"))
+                .all(|line| line.split_whitespace().nth(1).unwrap() == streams[0].to_string())
+        );
+    }
 }

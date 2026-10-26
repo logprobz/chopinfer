@@ -954,10 +954,9 @@ impl crate::Kernels {
     pub(crate) fn one_row_twin_lines(shape: &crate::shape::Shape) -> Vec<String> {
         let mut lines = Vec::new();
         if query_window::serves(shape.geometry, shape.ranks()) {
-            lines.push(format!(
-                "{}: one-row decode runs each layer's query RoPE and window write as one launch",
-                query_window::SWITCH
-            ));
+            lines.push(
+                "one-row decode runs each layer's query RoPE and window write as one launch".into(),
+            );
         }
         if ceil_split::serves(shape.geometry, shape.ranks()) {
             let widths = ceil_split::SERVED
@@ -965,8 +964,7 @@ impl crate::Kernels {
                 .map(|(width, input, parts)| format!("w{width} {input:?} over {parts} CTAs"))
                 .collect::<Vec<_>>();
             lines.push(format!(
-                "{}: one-row dense quantizers split: {}",
-                ceil_split::SWITCH,
+                "one-row dense quantizers split: {}",
                 widths.join(", ")
             ));
         }
@@ -1732,11 +1730,9 @@ mod one_row_twin_lines {
 
     use crate::shape::Shape;
 
-    fn lines(ranks: Ranks, served: bool) -> Vec<String> {
+    fn lines(ranks: Ranks) -> Vec<String> {
         let shape = Shape::new(&FLASH, ranks).unwrap();
-        super::query_window::with_served(served, || {
-            super::ceil_split::with_served(served, || crate::Kernels::one_row_twin_lines(&shape))
-        })
+        crate::Kernels::one_row_twin_lines(&shape)
     }
 
     /// A served run names each twin it serves with these lines, which the
@@ -1744,15 +1740,14 @@ mod one_row_twin_lines {
     #[test]
     fn served_twins_name_themselves_at_startup() {
         assert_eq!(
-            lines(Ranks::TP4, true),
+            lines(Ranks::TP4),
             [
-                "CHOPINFER_DEEPSEEK41_QUERY_WINDOW_TWIN: one-row decode runs each layer's query RoPE \
+                "one-row decode runs each layer's query RoPE \
                  and window write as one launch",
-                "CHOPINFER_DEEPSEEK41_CEIL_SPLIT: one-row dense quantizers split: w8192 Bf16 over 8 \
+                "one-row dense quantizers split: w8192 Bf16 over 8 \
                  CTAs, w2048 F32 over 8 CTAs",
             ]
         );
-        assert!(lines(Ranks::TP4, false).is_empty());
-        assert!(lines(Ranks::TP2, true).is_empty());
+        assert!(lines(Ranks::TP2).is_empty());
     }
 }

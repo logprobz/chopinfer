@@ -29,7 +29,7 @@ impl Instance {
         let Some(device) = &mut self.dspark else {
             return Ok(());
         };
-        device.cycle.undrafted = ar_engram::enabled().map_err(BundleAbiError::Status)?;
+        device.cycle.undrafted = true;
         let memory = device
             .cycle
             .memory
@@ -177,7 +177,7 @@ impl Instance {
         if device.cycle.undrafted {
             let layers = device.cycle.layers.len();
             self.log(&format!(
-                "CHOPINFER_DEEPSEEK41_AR_ENGRAM: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
+                "AR Engram: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
             ));
         }
         if early {

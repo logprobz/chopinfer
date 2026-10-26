@@ -30,9 +30,6 @@ pub const PARTS: [u32; 3] = [2, 4, 8];
 /// (d2-0463g1).
 pub const SERVED: [(u32, DType, u32); 2] = [(8192, DType::Bf16, 8), (2048, DType::F32, 8)];
 
-/// Set to zero to keep the served one-CTA quantizers at one row.
-pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_CEIL_SPLIT";
-
 pub fn cubin_name(g: &Geometry) -> String {
     format!("ceil_split_{}_sm120", g.kernel_tag)
 }
@@ -44,39 +41,15 @@ pub fn is_cubin(cubin: &str) -> bool {
 }
 
 /// Whether `g` at `ranks` registers [`SERVED`] twins: Flash TP4 once a
-/// width is measured, unless [`SWITCH`] is zero.
+/// width is measured.
 pub fn serves(g: &Geometry, ranks: u32) -> bool {
     if g.id != FLASH.id || ranks != 4 {
         return false;
     }
-    #[cfg(test)]
-    if let Some(forced) = FORCED.get() {
-        return forced;
-    }
     SERVED
         .iter()
         .any(|&(width, input, _)| WIDTHS.contains(&(width, input)))
-        && std::env::var(SWITCH).as_deref() != Ok("0")
 }
-#[cfg(test)]
-std::thread_local! {
-    /// Tests exercise the served split twins by default.
-    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(true)) };
-}
-/// Run `run` with the twins served (`true`) or not (`false`), whatever
-/// [`SERVED`] and [`SWITCH`] say.
-#[cfg(test)]
-pub(crate) fn with_served<T>(served: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            FORCED.set(self.0);
-        }
-    }
-    let _restore = Restore(FORCED.replace(Some(served)));
-    run()
-}
-
 /// Whether `g` at `ranks` quantizes one row of `width` columns of `input`
 /// with a split twin.
 pub fn serves_width(g: &Geometry, ranks: u32, width: u32, input: DType) -> bool {

@@ -49,19 +49,6 @@ pub(super) fn arguments(line: &str) -> Vec<String> {
     items
 }
 
-/// Each decode step's launch lines, steps of 1, 2, 8 and again 1 live
-/// rows, on an instance of `layout` with the twins served or apart.
-fn run_case(layout: KvLayout, served: bool) -> Vec<Vec<String>> {
-    crate::sm120::query_window::with_served(served, || {
-        let (cubins, steps) = decode_steps(layout);
-        assert_eq!(
-            cubins.contains(&crate::sm120::query_window::CUBIN.to_owned()),
-            served
-        );
-        steps
-    })
-}
-
 /// The cubins a Flash TP4 instance of `layout` loads, and each decode
 /// step's launch lines, steps of 1, 2, 8 and again 1 live rows (the last
 /// replaying the first's graph).
@@ -112,11 +99,6 @@ pub(super) fn decode_steps(layout: KvLayout) -> (Vec<String>, Vec<Vec<String>>) 
     assert_eq!(host.acquired.get(), host.released.get());
     assert_launches_fit_configured_shared(&host.device.journal.borrow(), &shape.topology());
     (cubins, steps)
-}
-
-pub(super) fn replaced(line: &str) -> bool {
-    let s = symbol(line);
-    s == ROPE || s.starts_with(WINDOW) || s.starts_with(TWIN)
 }
 
 pub(super) fn stream(line: &str) -> &str {
@@ -187,74 +169,27 @@ pub(super) fn first_difference(what: &str, a: &[String], b: &[String]) {
 }
 
 #[test]
-fn one_row_decode_runs_each_layers_rope_and_window_write_as_one_twin_launch() {
+fn one_row_decode_uses_twins_and_wider_steps_keep_the_pair() {
     for layout in KV_LAYOUTS {
-        let reference = canonical(&run_case(layout, false), replaced);
-        let serving = canonical(&run_case(layout, true), replaced);
+        let (cubins, steps) = decode_steps(layout);
+        assert!(cubins.contains(&crate::sm120::query_window::CUBIN.to_owned()));
         let count = |lines: &[String], prefix: &str| {
             lines
                 .iter()
-                .filter(|l| symbol(l).starts_with(prefix))
+                .filter(|line| symbol(line).starts_with(prefix))
                 .count()
         };
-        // The first one-row step records its graph; the last replays it.
-        let [first, two, eight, last] = [0, 1, 2, 3].map(|i| (&reference[i], &serving[i]));
-        let layers = 40 * 4;
-        assert_eq!(count(first.0, ROPE), layers);
-        assert_eq!(count(first.0, WINDOW), layers);
-        assert_eq!(count(first.0, TWIN), 0);
-        assert_eq!(count(first.1, ROPE), 0);
-        assert_eq!(count(first.1, WINDOW), 0);
-        assert_eq!(count(first.1, TWIN), layers);
-        let suffix = if layout.storage == KvStorage::Bf16 {
-            "bf16_v1"
-        } else {
-            "native_v1"
-        };
-        assert!(
-            first
-                .1
-                .iter()
-                .filter(|l| symbol(l).starts_with(TWIN))
-                .all(|l| symbol(l).ends_with(suffix))
-        );
-        // Every other launch keeps its place and bindings.
-        let others = |lines: &[String]| {
-            lines
-                .iter()
-                .filter(|l| !replaced(l))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        first_difference("one-row launches", &others(first.0), &others(first.1));
-        // Each twin binds its layer's served RoPE and window write operands.
-        let ropes: Vec<_> = first.0.iter().filter(|l| symbol(l) == ROPE).collect();
-        let windows: Vec<_> = first
-            .0
-            .iter()
-            .filter(|l| symbol(l).starts_with(WINDOW))
-            .collect();
-        let twins: Vec<_> = first
-            .1
-            .iter()
-            .filter(|l| symbol(l).starts_with(TWIN))
-            .collect();
-        for ((rope, window), twin) in ropes.iter().zip(&windows).zip(&twins) {
-            assert_eq!(stream(rope), stream(twin));
-            let rope = arguments(rope);
-            let mut expected = vec![
-                rope[0].clone(),
-                rope[1].clone(),
-                rope[2].clone(),
-                rope[4].clone(),
-            ];
-            expected.extend(arguments(window));
-            assert_eq!(arguments(twin), expected);
+        assert_eq!(count(&steps[0], TWIN), 40 * 4);
+        assert_eq!(count(&steps[0], ROPE), 0);
+        assert_eq!(count(&steps[0], WINDOW), 0);
+        for step in &steps[1..3] {
+            assert_eq!(count(step, TWIN), 0);
+            assert_eq!(count(step, ROPE), 40 * 4);
+            assert_eq!(count(step, WINDOW), 40 * 4);
         }
-        // Wider steps keep the served pair; the replayed step launches none.
-        first_difference("two-row launches", two.0, two.1);
-        first_difference("eight-row launches", eight.0, eight.1);
-        first_difference("replayed one-row launches", last.0, last.1);
-        assert_eq!(count(two.1, TWIN) + count(eight.1, TWIN), 0);
+        assert!(
+            steps[3].is_empty(),
+            "the final one-row step replays its graph"
+        );
     }
 }

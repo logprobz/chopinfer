@@ -5,57 +5,21 @@
 //! consumer and before the piece that holds it.
 use super::*;
 use crate::engram_rows::{EngramRows, Step};
-use crate::instance::ar_engram::{indices, with_switch};
+use crate::instance::ar_engram::indices;
 use model_deepseek41_contract::own_ops::engram::HashTables;
 
-fn create_mapped(host: &Rc<Host>, items: u32, on: bool) -> BundleInstanceV1 {
-    create_switched(host, items, Some(if on { "1" } else { "0" }))
-        .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()))
-}
-
-/// An AR instance on mapped tables created as if the switch held `value`.
-fn create_switched(
-    host: &Rc<Host>,
-    items: u32,
-    value: Option<&'static str>,
-) -> Result<BundleInstanceV1, BundleAbiError> {
+/// An AR instance on mapped tables using prepared gathers.
+fn create_mapped(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
     host.drafter.set(true);
     let record = crate::config::tests::record(&host.shape, host.kv, items, false);
-    with_switch(value, || {
-        api().create(
-            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
-            &record,
-        )
-    })
-}
-
-/// Each stream's launch lines from `from` on, in journal order. Stream
-/// identities follow their rank and creation order, so earlier buffer
-/// reservations do not change which stream a launch uses.
-pub(super) fn launches(host: &Host, from: usize) -> BTreeMap<String, Vec<String>> {
-    let mut result = BTreeMap::<String, Vec<String>>::new();
-    let streams: BTreeMap<_, _> = host
-        .device
-        .stream_ranks
-        .borrow()
-        .iter()
-        .enumerate()
-        .map(|(order, (&slot, &rank))| (slot, format!("{rank}.{order}")))
-        .collect();
-    for line in host.device.journal.borrow()[from..]
-        .iter()
-        .filter(|line| line.starts_with("launch "))
     {
-        let mut fields = line.splitn(3, ' ');
-        assert_eq!(fields.next(), Some("launch"));
-        let slot: u32 = fields.next().unwrap().parse().unwrap();
-        let stream = &streams[&slot];
-        result
-            .entry(stream.clone())
-            .or_default()
-            .push(format!("launch {stream} {}", fields.next().unwrap()));
+        api()
+            .create(
+                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
+                &record,
+            )
+            .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()))
     }
-    result
 }
 
 /// The tokens of request `request`'s prompt: three, as `prompt` writes.
@@ -105,8 +69,6 @@ fn oracle_ids(positions: &[u64], live: u64) -> crate::engram_rows::Hashed {
 /// One route's run of a schedule.
 struct Run {
     host: Rc<Host>,
-    /// Where the first decode step's journal starts.
-    from: usize,
     /// The id span and Engram layers, when the route prepared its gathers.
     spans: Option<(DeviceBufferSpanV1, Vec<u32>)>,
     /// Each decode step's journal lines.
@@ -115,11 +77,11 @@ struct Run {
 
 /// Runs the schedule on one route: `items` prompts, then a decode step of
 /// the first `live` requests for each of `steps`.
-fn schedule(ranks: Ranks, items: u32, steps: &[u64], on: bool) -> Run {
+fn schedule(ranks: Ranks, items: u32, steps: &[u64]) -> Run {
     let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create_mapped(&host, items, on);
+    let mut instance = create_mapped(&host, items);
     let spans = indices(instance.handle());
-    assert_eq!(spans.is_some(), on);
+    assert!(spans.is_some());
     for slot in 0..u64::from(items) {
         step(
             &mut instance,
@@ -127,7 +89,6 @@ fn schedule(ranks: Ranks, items: u32, steps: &[u64], on: bool) -> Run {
             &mut Views::default(),
         );
     }
-    let from = host.device.journal.borrow().len();
     let mut journals = Vec::new();
     let mut positions = vec![PROMPT; items as usize];
     for &live in steps {
@@ -136,7 +97,7 @@ fn schedule(ranks: Ranks, items: u32, steps: &[u64], on: bool) -> Run {
         step(&mut instance, &decode_step(&positions, live), &mut views);
         assert_eq!(u64::from(views.rows()), live);
         journals.push(host.device.journal.borrow()[begin..].to_vec());
-        if on {
+        {
             let (span, layers) = spans.as_ref().unwrap();
             let hashed = oracle_ids(&positions, live);
             let columns = hashed.ids().len() / hashed.rows() / layers.len();
@@ -174,7 +135,6 @@ fn schedule(ranks: Ranks, items: u32, steps: &[u64], on: bool) -> Run {
     assert_eq!(host.acquired.get(), host.released.get());
     Run {
         host,
-        from,
         spans,
         journals,
     }
@@ -211,7 +171,7 @@ pub(super) fn order(lines: &[String]) -> Vec<&'static str> {
 }
 
 #[test]
-fn ar_decode_joins_each_engram_layer_without_changing_launches() {
+fn ar_decode_joins_each_engram_layer_with_oracle_ids() {
     // (ranks, items, live rows of each decode step): a capture, a replay,
     // a smaller bucket, a one-row step, then the first bucket again.
     for (ranks, items, steps) in [
@@ -224,30 +184,15 @@ fn ar_decode_joins_each_engram_layer_without_changing_launches() {
         (Ranks::TP1, 2, &[1, 1][..]),
     ] {
         let Run {
-            host: off_host,
-            from: off_from,
-            journals: off_steps,
-            ..
-        } = schedule(ranks, items, steps, false);
-        let Run {
             host: on_host,
-            from: on_from,
             spans,
             journals: on_steps,
-        } = schedule(ranks, items, steps, true);
-        assert_eq!(
-            launches(&off_host, off_from),
-            launches(&on_host, on_from),
-            "ranks={} items={items}",
-            ranks.get()
-        );
+        } = schedule(ranks, items, steps);
         let (_, layers) = spans.unwrap();
         assert_eq!(layers, FLASH.shape.engram.layers);
         let ranks = ranks.count();
-        for ((&live, off), on) in steps.iter().zip(&off_steps).zip(&on_steps) {
-            let off = order(off);
+        for (&live, on) in steps.iter().zip(&on_steps) {
             let on = order(on);
-            assert!(!off.contains(&"ids") && !off.contains(&"wait"));
             // Ids, both layers enqueued, then the prefix pieces; every rank
             // joins layer 1, the middle pieces run; every rank joins layer
             // 14, the last pieces run; both gathers complete.
@@ -270,7 +215,6 @@ fn ar_decode_joins_each_engram_layer_without_changing_launches() {
             assert_eq!(groups[1].1, ranks);
             assert_eq!(groups[3].1, ranks);
             assert_eq!(groups[5].1, 2);
-            assert!(off.contains(&"sync"));
         }
         let logs = on_host.logs.borrow();
         let traced: Vec<serde_json::Value> = logs
@@ -303,7 +247,7 @@ fn ar_decode_joins_each_engram_layer_without_changing_launches() {
 #[test]
 fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP2).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create_mapped(&host, 8, true);
+    let mut instance = create_mapped(&host, 8);
     for slot in 0..2 {
         step(
             &mut instance,
@@ -356,28 +300,5 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     instance.retire_request(9).unwrap();
     instance.retire_request(10).unwrap();
     instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
-}
-
-/// The per-layer route serves AR decode when the switch is unset or 1, `0`
-/// keeps the synchronous route, and any other value refuses creation.
-#[test]
-fn the_per_layer_route_is_the_default_and_zero_disables_it() {
-    for (value, prepared) in [(None, true), (Some("1"), true), (Some("0"), false)] {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP2).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = create_switched(&host, 8, value)
-            .unwrap_or_else(|error| panic!("{value:?}: {error:?}: {:?}", host.logs.borrow()));
-        assert_eq!(indices(instance.handle()).is_some(), prepared, "{value:?}");
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP2).unwrap(), KV_LAYOUTS[0]);
-    let error = create_switched(&host, 8, Some("yes"))
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(
-        error,
-        BundleAbiError::Status(BundleStatusV1::InvalidArgument)
-    );
     assert_eq!(host.acquired.get(), host.released.get());
 }

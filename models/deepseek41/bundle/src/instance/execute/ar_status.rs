@@ -13,12 +13,6 @@ use super::Run;
 use crate::dspark::device::slice;
 use crate::instance::Instance;
 
-/// Whether AR steps read their status back in one packet.
-pub(crate) const SERVED: bool = true;
-
-/// Set to zero to keep the separate status reads.
-pub(crate) const SWITCH: &str = "CHOPINFER_DEEPSEEK41_AR_STATUS_PACKET";
-
 /// The live rows a packet holds: the decode batch.
 pub(crate) const ROWS: u32 = model_deepseek41_contract::serving::DECODE_BATCH;
 
@@ -27,33 +21,6 @@ pub(crate) struct Packet {
     buffer: DeviceBufferSpanV1,
     /// Each peer rank's work done, which rank 0's stream waits for.
     ready: Vec<BundleEventHandleV1>,
-}
-
-pub(crate) fn enabled() -> bool {
-    #[cfg(test)]
-    if let Some(forced) = IN_TESTS.get() {
-        return forced;
-    }
-    SERVED && std::env::var(SWITCH).as_deref() != Ok("0")
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Tests exercise the served packet by default.
-    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(SERVED)) };
-}
-
-/// Runs `run` with the packet switched on or off.
-#[cfg(test)]
-pub(crate) fn with_enabled<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(IN_TESTS.replace(Some(value)));
-    run()
 }
 
 enum Part {
@@ -65,7 +32,7 @@ impl Instance {
     /// Binds the packet reserved before KV sizing and creates each peer
     /// rank's ready event when the packet serves AR.
     pub(crate) fn prepare_ar_status(&mut self) -> Result<(), BundleAbiError> {
-        if !enabled() || self.dspark.is_some() {
+        if self.dspark.is_some() {
             return Ok(());
         }
         let sources = self.config.shape.geometry.shape.csa.index_sources.len() as u64;
@@ -82,7 +49,7 @@ impl Instance {
         }
         self.ar_status = Some(Packet { buffer, ready });
         self.log(&format!(
-            "{SWITCH}: AR steps of 1..={ROWS} rows read {} status parts back at once",
+            "AR status packet: steps of 1..={ROWS} rows read {} status parts back at once",
             sources + planes
         ));
         Ok(())

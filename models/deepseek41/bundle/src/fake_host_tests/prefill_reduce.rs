@@ -1,6 +1,5 @@
 use super::*;
 use crate::instance::execute::overlap::with_mode;
-use crate::ops::with_bf16_gather;
 const ROUND_SYMBOL: &str = "chop_comm_allreduce_phased_round_f32_v1";
 
 fn report() -> BundleRawClusterResidencyV1 {
@@ -30,7 +29,7 @@ fn count(journal: &[String], symbol: &str) -> usize {
 fn prefill_bf16_gather_routes_every_hidden_reduction_after_admission() {
     for (rows, expected) in [(511, 0), (512, 81), (1057, 81), (8191, 81), (8192, 81)] {
         let host = host();
-        let mut instance = with_bf16_gather(true, || create(&host, 4));
+        let mut instance = create(&host, 4);
         assert_eq!(host.device.residency_queries.borrow().len(), 8);
         host.device.journal.borrow_mut().clear();
         step(
@@ -51,78 +50,6 @@ fn prefill_bf16_gather_routes_every_hidden_reduction_after_admission() {
 }
 
 #[test]
-fn prefill_bf16_gather_keeps_decode_on_its_original_transport() {
-    let mut traces = Vec::new();
-    for enabled in [false, true] {
-        let host = host();
-        let mut instance = with_bf16_gather(enabled, || create(&host, 4));
-        step(
-            &mut instance,
-            &prompt(7, 0, 0, 1024, true),
-            &mut Views::default(),
-        );
-        host.device.journal.borrow_mut().clear();
-        step(
-            &mut instance,
-            &decode(&[(7, 0, 1024, 9)]),
-            &mut Views::default(),
-        );
-        let journal = host.device.journal.borrow();
-        assert_eq!(count(&journal, ROUND_SYMBOL), 0);
-        assert_eq!(
-            count(&journal, "chop_comm_allgather_scattered_f32_v1"),
-            4 * 81
-        );
-        traces.push(
-            journal
-                .iter()
-                .filter(|s| s.starts_with("launch "))
-                .map(|s| s.split_whitespace().nth(2).unwrap().to_owned())
-                .collect::<Vec<_>>(),
-        );
-        drop(journal);
-        instance.destroy().unwrap();
-    }
-    assert_eq!(traces[0], traces[1]);
-}
-
-#[test]
-fn prefill_bf16_gather_keeps_verify_and_drafter_transports() {
-    let mut traces = Vec::new();
-    for enabled in [false, true] {
-        let host = super::bf16_partials::host(true);
-        host.speculation.set(Some((3, 16)));
-        let mut instance = with_bf16_gather(enabled, || create(&host, 4));
-        step(
-            &mut instance,
-            &prompt(7, 0, 0, 1024, true),
-            &mut Views::default(),
-        );
-        host.device.journal.borrow_mut().clear();
-        instance
-            .execute(
-                &verify(&[(7, 0, 1024, &[7, 8, 9, 10])]),
-                &mut Views::default(),
-            )
-            .unwrap();
-        instance.commit_accepted(&[kept(7, 4)]).unwrap();
-        let journal = host.device.journal.borrow();
-        assert_eq!(count(&journal, ROUND_SYMBOL), 0);
-        assert!(count(&journal, "chop_comm_allgather_scattered_f32_v1") >= 4 * 81);
-        traces.push(
-            journal
-                .iter()
-                .filter(|s| s.starts_with("launch "))
-                .map(|s| s.split_whitespace().nth(2).unwrap().to_owned())
-                .collect::<Vec<_>>(),
-        );
-        drop(journal);
-        instance.destroy().unwrap();
-    }
-    assert_eq!(traces[0], traces[1]);
-}
-
-#[test]
 fn prefill_bf16_gather_falls_back_on_unproven_residency() {
     for kind in 0..4 {
         let host = host();
@@ -134,7 +61,7 @@ fn prefill_bf16_gather_falls_back_on_unproven_residency() {
             _ => value.usable_multiprocessors = 1,
         }
         host.device.residency.set(Some(value));
-        let mut instance = with_bf16_gather(true, || create(&host, 4));
+        let mut instance = create(&host, 4);
         host.device.journal.borrow_mut().clear();
         step(
             &mut instance,
@@ -155,7 +82,7 @@ fn prefill_bf16_gather_falls_back_on_unproven_residency() {
 #[test]
 fn prefill_bf16_gather_micro_journal_keeps_all_cross_stream_spans_disjoint() {
     let host = host();
-    let mut instance = with_bf16_gather(true, || with_mode(2, || create(&host, 4)));
+    let mut instance = with_mode(2, || create(&host, 4));
     host.device.journal.borrow_mut().clear();
     step(
         &mut instance,
@@ -172,7 +99,7 @@ fn prefill_bf16_gather_micro_journal_keeps_all_cross_stream_spans_disjoint() {
 fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
     use bundle_runtime::entry::Bundle;
     let host = host();
-    let mut instance = with_bf16_gather(true, || with_mode(2, || create(&host, 4)));
+    let mut instance = with_mode(2, || create(&host, 4));
     step(
         &mut instance,
         &prompt(7, 0, 0, 1024, false),
@@ -229,7 +156,7 @@ fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
 #[test]
 fn prefill_bf16_gather_partial_rank_failure_poisoning_is_terminal() {
     let reference = host();
-    let mut instance = with_bf16_gather(true, || with_mode(2, || create(&reference, 4)));
+    let mut instance = with_mode(2, || create(&reference, 4));
     reference.device.journal.borrow_mut().clear();
     step(
         &mut instance,
@@ -247,7 +174,7 @@ fn prefill_bf16_gather_partial_rank_failure_poisoning_is_terminal() {
         .filter(|s| s.starts_with("launch "))
         .count();
     let host = host();
-    let mut instance = with_bf16_gather(true, || with_mode(2, || create(&host, 4)));
+    let mut instance = with_mode(2, || create(&host, 4));
     host.device.fail_launch.set(Some(before as u32 + 1));
     assert_eq!(
         instance.execute(&prompt(7, 0, 0, 1024, true), &mut Views::default()),

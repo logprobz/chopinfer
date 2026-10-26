@@ -334,9 +334,7 @@ fn adopted_ar_buffers_precede_serving_kv_sizing() {
     for serving in Served::servings() {
         let fixture = Served::new(&serving);
         fixture.host.drafter.set(true);
-        let mut instance = crate::instance::ar_engram::with_enabled(true, || {
-            crate::instance::execute::ar_status::with_enabled(true, || fixture.create().unwrap())
-        });
+        let mut instance = { fixture.create().unwrap() };
         let logs = fixture.host.logs.borrow();
         let memory: Vec<serde_json::Value> = logs
             .iter()
@@ -781,7 +779,7 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                 host.speculation
                     .set(Some((serving.draft_tokens, serving.verify_rows())));
             }
-            let mut instance = crate::instance::ar_engram::with_enabled(prepared, || {
+            let mut instance = {
                 crate::instance::prefill_engram::with_enabled(prepared, || {
                     api()
                         .create(
@@ -797,7 +795,7 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                         )
                         .unwrap()
                 })
-            });
+            };
             for (phase, start, tokens, sync, fast) in [
                 (
                     Phase::Prefill,
@@ -826,6 +824,7 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                     },
                 ),
             ] {
+                let prepared = prepared || phase == Phase::Decode;
                 let before = host.mapped_gather_calls.get();
                 let from = host.logs.borrow().len();
                 let batch = step_with_stride(

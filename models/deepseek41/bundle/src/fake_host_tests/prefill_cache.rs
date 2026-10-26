@@ -275,23 +275,16 @@ fn decoded_prefill_routes_winning_offsets_and_fuses_mixed_outputs() {
     );
 }
 
-pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> {
-    composed_trace_offsets(mode, dma, skip, cached, &[0, 8192])
+pub(super) fn composed_trace(mode: u8, skip: bool, cached: bool) -> Vec<String> {
+    composed_trace_offsets(mode, skip, cached, &[0, 8192])
 }
 
-fn composed_trace_offsets(
-    mode: u8,
-    dma: bool,
-    skip: bool,
-    cached: bool,
-    offsets: &[u64],
-) -> Vec<String> {
-    composed_trace_capacity(mode, dma, skip, cached, offsets, 1, 0)
+fn composed_trace_offsets(mode: u8, skip: bool, cached: bool, offsets: &[u64]) -> Vec<String> {
+    composed_trace_capacity(mode, skip, cached, offsets, 1, 0)
 }
 
 fn composed_trace_capacity(
     mode: u8,
-    dma: bool,
     skip: bool,
     cached: bool,
     offsets: &[u64],
@@ -299,7 +292,6 @@ fn composed_trace_capacity(
     slot: u64,
 ) -> Vec<String> {
     use crate::instance::execute::overlap::with_mode;
-    use crate::ops::{with_bf16_gather, with_dma};
     use runtime_bundle_sdk::prefill::{Boundary, encode};
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -312,10 +304,13 @@ fn composed_trace_capacity(
             | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
         ..BundleRawClusterResidencyV1::unreported()
     }));
-    host.device
-        .ordinary_symbols
-        .borrow_mut()
-        .insert("chop_comm_owned_sum_round_f32_v1".into());
+    host.device.ordinary_symbols.borrow_mut().extend(
+        [
+            "chop_comm_owned_sum_bf16_v1",
+            "chop_comm_owned_round_bf16_v1",
+        ]
+        .map(String::from),
+    );
     let mut record = crate::config::tests::record(&shape, KV_LAYOUTS[0], capacity, false);
     if skip {
         let at = record
@@ -332,8 +327,8 @@ fn composed_trace_capacity(
         record.extend_from_slice(&(options.len() as u32).to_le_bytes());
         record.extend_from_slice(&options);
     }
-    let mut instance = with_dma(dma, || {
-        with_bf16_gather(true, || {
+    let mut instance = {
+        {
             with_mode(mode, || {
                 api()
                     .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
@@ -341,8 +336,8 @@ fn composed_trace_capacity(
                     .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
                     .unwrap()
             })
-        })
-    });
+        }
+    };
     let cache = crate::instance::prefill_cache_for_test(instance.handle(), cached);
     assert_eq!(cache.len(), 4);
     let mut submitted = Vec::new();
@@ -395,7 +390,7 @@ fn composed_trace_capacity(
             } else {
                 0
             },
-            "mode={mode} dma={dma} skip={skip} offset={offset}"
+            "mode={mode} skip={skip} offset={offset}"
         );
         if mode == 2 && !skip {
             assert_eq!(attention.len(), 2 * 4 * 40);
@@ -419,7 +414,7 @@ fn composed_trace_capacity(
             assert_eq!(retained, 0, "retained native-key attention");
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
-            && s.contains(if dma && (!skip || mode == 0) {
+            && s.contains(if skip && mode == 0 {
                 "chop_comm_owned_sum_bf16_v1"
             } else {
                 "chop_comm_allreduce_phased_turns_bf16_v1"
@@ -435,9 +430,8 @@ fn composed_trace_capacity(
             } else {
                 ""
             };
-            let name = format!(
-                "{prefix}mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
-            );
+            let name =
+                format!("{prefix}mode-{mode}-skip-{skip}-cache-{cached}-offset-{offset}.journal");
             std::fs::write(root.join(&name), lines.join("\n")).unwrap();
             super::decode_attention::export_handles(&host.device, root, &name);
             std::fs::write(root.join(format!("{name}.full")), journal.join("\n")).unwrap();
@@ -460,8 +454,7 @@ fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
         (0, true, true, 608 + 152),
         (2, true, false, 392 + 152),
     ] {
-        let trace =
-            composed_trace_offsets(mode, false, skip, cached, &[0, 8192, 16384, 24576, 32768]);
+        let trace = composed_trace_offsets(mode, skip, cached, &[0, 8192, 16384, 24576, 32768]);
         assert_eq!(
             trace
                 .iter()
@@ -472,9 +465,9 @@ fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
     }
 }
 
-fn compare_composed(mode: u8, dma: bool, skip: bool) {
-    let old = composed_trace(mode, dma, skip, false);
-    let new = composed_trace(mode, dma, skip, true);
+fn compare_composed(mode: u8, skip: bool) {
+    let old = composed_trace(mode, skip, false);
+    let new = composed_trace(mode, skip, true);
     compare_traces(old, new);
 }
 
@@ -541,32 +534,23 @@ fn compare_traces(old: Vec<String>, new: Vec<String>) {
 
 #[test]
 fn decoded_prefill_composes_with_overlap_bf16_and_dma() {
-    for (mode, dma) in [(0, false), (1, false), (2, false), (0, true), (2, true)] {
-        compare_composed(mode, dma, false);
+    for mode in [0, 1, 2] {
+        compare_composed(mode, false);
     }
 }
 
 #[test]
 fn decoded_prefill_keeps_skipped_row_parts_on_native_attention() {
     for mode in [0, 2] {
-        compare_composed(mode, false, true);
+        compare_composed(mode, true);
     }
 }
 
 #[test]
 fn capacity32_decoded_prefill_composes_with_overlap_and_retained_rows() {
-    for (mode, dma, skip) in [
-        (0, false, false),
-        (1, false, false),
-        (2, false, false),
-        (0, true, false),
-        (2, true, false),
-        (0, false, true),
-        (2, false, true),
-    ] {
-        let trace = |cached| {
-            composed_trace_capacity(mode, dma, skip, cached, &[0, 8192, 16384, 24576], 32, 31)
-        };
+    for (mode, skip) in [(0, false), (1, false), (2, false), (0, true), (2, true)] {
+        let trace =
+            |cached| composed_trace_capacity(mode, skip, cached, &[0, 8192, 16384, 24576], 32, 31);
         compare_traces(trace(false), trace(true));
     }
 }

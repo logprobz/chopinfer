@@ -1,9 +1,6 @@
 use super::*;
-use crate::instance::execute::overlap::with_mode;
-use crate::ops::{with_dma, with_partial_setting};
 use std::collections::BTreeSet;
 
-mod bf16;
 mod defaults;
 mod skip;
 
@@ -39,26 +36,6 @@ fn copy_ranks(host: &Host, journal: &[String]) -> Vec<(u32, u32, u32)> {
             (ranks[&number(1)], number(2) - 1, number(3) - 1)
         })
         .collect()
-}
-
-fn capture(mode: u8, rows: u64) -> Vec<String> {
-    capture_on(&host(), mode, rows)
-}
-
-fn capture_on(host: &Rc<Host>, mode: u8, rows: u64) -> Vec<String> {
-    let mut instance = with_partial_setting(Some("0"), || {
-        with_dma(true, || with_mode(mode, || create(host, 4)))
-    });
-    host.device.journal.borrow_mut().clear();
-    let batch = prompt(7, 0, 0, rows, true);
-    instance
-        .execute(&batch, &mut Views::default())
-        .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
-    instance.commit().unwrap();
-    let journal = host.device.journal.borrow().clone();
-    instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
-    journal
 }
 
 /// Whether span `index` of `line` is only read: a peer copy's source, and
@@ -165,242 +142,48 @@ fn audit_with(journal: &[String], transport_too: bool) -> Result<usize, String> 
     Ok(accesses)
 }
 
-#[test]
-fn prefill_dma_preserves_all_owner_intervals_and_orders_every_transfer() {
-    for (mode, rows, calls) in [(0, 8192, 81), (0, 8191, 81), (2, 8191, 162)] {
-        let journal = capture(mode, rows);
-        let copies = journal
-            .iter()
-            .filter(|s| s.starts_with("peer-copy "))
-            .collect::<Vec<_>>();
-        assert_eq!(copies.len(), calls * 24);
-        assert_eq!(
-            journal
-                .iter()
-                .filter(|s| s.starts_with("launch ") && s.contains(SUM))
-                .count(),
-            calls * 4
-        );
-        assert!(
-            !journal
-                .iter()
-                .any(|s| s.starts_with("launch ") && s.contains("chop_comm_reduce_scatter_f32_v1"))
-        );
-        let bytes = copies
-            .iter()
-            .map(|s| {
-                let spans = super::shared_overlap::journal_spans(s);
-                assert_eq!(spans.len(), 2);
-                assert_eq!(spans[0].2, spans[1].2);
-                spans[0].2
-            })
-            .sum::<u64>();
-        assert_eq!(bytes, 81 * 18 * rows * u64::from(FLASH.shape.hidden));
-        assert_eq!(audit(&journal).unwrap(), calls * (24 * 2 + 4 * 3));
-        let missing_waits = journal
-            .into_iter()
-            .filter(|s| !s.starts_with("wait "))
-            .collect::<Vec<_>>();
-        assert!(
-            audit(&missing_waits).is_err(),
-            "a removed producer/join wait must fail ordering"
-        );
-    }
-}
-
-/// Creation pushes once per ordered pair where the host allows it, and
-/// every step's copy then runs on its source's stream; a host that refuses
-/// the first push leaves the instance pulling, step for step as before.
-#[test]
-fn prefill_dma_pushes_only_where_the_host_allows_it() {
-    for (mode, rows) in [(0, 8192), (0, 8191), (2, 8191)] {
-        let pull_host = host();
-        pull_host.pull_only.set(true);
-        let pulled = capture_on(&pull_host, mode, rows);
-        for pull_only in [false, true] {
-            let host = host();
-            host.pull_only.set(pull_only);
-            let journal = crate::ops::with_dma_push(true, || capture_on(&host, mode, rows));
-            if pull_only {
-                assert_eq!(journal, pulled);
-                continue;
-            }
-            let issued = copy_ranks(&host, &journal);
-            assert_eq!(issued.len(), copy_ranks(&host, &pulled).len());
-            assert!(issued.iter().all(|&(issuer, from, _)| issuer == from));
-            assert_eq!(audit(&journal), audit(&pulled));
-            assert!(audit_transport(&pulled).is_ok());
-            assert_eq!(audit_transport(&journal), audit_transport(&pulled));
-            let missing_waits = journal
-                .into_iter()
-                .filter(|s| !s.starts_with("wait "))
-                .collect::<Vec<_>>();
-            assert!(audit(&missing_waits).is_err());
-        }
-    }
-    // The setup pushes: one per ordered pair, each on its source's owner
-    // stream, or none past the refused first.
-    for (pull_only, pushes) in [(false, 12), (true, 0)] {
-        let host = host();
-        host.pull_only.set(pull_only);
-        let mut instance = with_partial_setting(Some("0"), || {
-            with_dma(true, || {
-                crate::ops::with_dma_push(true, || create(&host, 4))
-            })
-        });
-        let journal = host.device.journal.borrow().clone();
-        let issued = copy_ranks(&host, &journal);
-        assert_eq!(issued.len(), pushes);
-        assert!(
-            issued
-                .iter()
-                .all(|&(issuer, from, to)| issuer == from && from != to)
-        );
-        assert_eq!(
-            issued
-                .iter()
-                .map(|&(_, from, to)| (from, to))
-                .collect::<BTreeSet<_>>()
-                .len(),
-            pushes
-        );
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
-}
-
-#[test]
-fn prefill_dma_keeps_short_prefills_and_decode_on_the_original_schedule() {
-    let short = capture(0, 511);
-    assert!(!short.iter().any(|s| s.starts_with("peer-copy ")));
-    let host = host();
-    let mut instance = with_partial_setting(Some("0"), || with_dma(true, || create(&host, 4)));
-    step(
-        &mut instance,
-        &prompt(7, 0, 0, 8192, true),
-        &mut Views::default(),
-    );
-    host.device.journal.borrow_mut().clear();
-    step(
-        &mut instance,
-        &decode(&[(7, 0, 8192, 9)]),
-        &mut Views::default(),
-    );
-    let journal = host.device.journal.borrow();
-    assert!(!journal.iter().any(|s| s.contains(SUM)));
-    let copies: Vec<_> = journal
-        .iter()
-        .filter(|s| s.starts_with("peer-copy "))
-        .collect();
-    assert_eq!(copies.len(), 6);
-    for (part, line) in copies.iter().enumerate() {
-        let words: Vec<_> = line.split_whitespace().collect();
-        assert_eq!(words[2], (part / 2 + 2).to_string());
-        assert_eq!(words[3], "1");
-        let spans = super::shared_overlap::journal_spans(line);
-        assert_eq!(spans.len(), 2);
-        assert!(spans.iter().all(|span| span.2 == 4));
-    }
-    drop(journal);
-    instance.destroy().unwrap();
-}
-
-#[test]
-fn prefill_dma_orders_a_small_part_that_uses_the_composed_transport() {
-    let journal = capture(2, 1057);
-    assert_eq!(
-        journal
-            .iter()
-            .filter(|s| s.starts_with("launch ") && s.contains(SUM))
-            .count(),
-        81 * 4
-    );
-    assert_eq!(
-        journal
-            .iter()
-            .filter(|s| s.starts_with("launch ") && s.contains("chop_comm_reduce_scatter_f32_v1"))
-            .count(),
-        81 * 4
-    );
-    assert!(audit(&journal).unwrap() > 0);
-}
-
-#[test]
-fn prefill_dma_partial_copy_failure_poisoning_prevents_capture_or_retry() {
-    for mode in [0, 2] {
-        let host = host();
-        let mut instance = with_partial_setting(Some("0"), || {
-            with_dma(true, || with_mode(mode, || create(&host, 4)))
-        });
-        host.device.journal.borrow_mut().clear();
-        host.device.fail_copy.set(Some(2));
-        let batch = prompt(7, 0, 0, 8191, true);
-        assert_eq!(
-            instance.execute(&batch, &mut Views::default()),
-            Err(BundleAbiError::Status(BundleStatusV1::HostError))
-        );
-        let submitted = host.device.journal.borrow().clone();
-        assert_eq!(
-            submitted
-                .iter()
-                .filter(|s| s.starts_with("peer-copy "))
-                .count(),
-            2
-        );
-        assert_eq!(
-            instance.capture_prefix_state(7, 8191, &[200]),
-            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
-        );
-        assert!(instance.execute(&batch, &mut Views::default()).is_err());
-        assert!(instance.destroy().is_err());
-        assert_eq!(*host.device.journal.borrow(), submitted);
-    }
-}
-
 mod owner_host;
 
+fn sparse_request(rows: u64) -> Vec<u8> {
+    use runtime_bundle_sdk::prefill::{Boundary, encode};
+    encode(
+        &prompt(7, 0, 0, rows, true),
+        &[Boundary {
+            request_id: 7,
+            prompt_tokens: rows,
+            chunk_end: rows,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap()
+}
+
 #[test]
-fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
-    use owner_host::OwnerHost;
-    for mode in [0, 2] {
+fn sparse_dma_owns_peer_buffers_and_drains_compute_before_free() {
+    for fail_drain in [false, true] {
         let host = host();
-        let observed = Rc::new(OwnerHost::new(Rc::clone(&host)));
-        let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
-        let mut instance = with_partial_setting(Some("0"), || {
-            with_dma(true, || {
-                with_mode(mode, || {
-                    api()
-                        .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
-                        .unwrap()
-                })
-            })
-        });
+        let observed = Rc::new(owner_host::OwnerHost::new(Rc::clone(&host)));
+        let mut instance =
+            skip::create_with_services(&host, HostServicesTableV1::new(Rc::clone(&observed)));
         let created = host.device.journal.borrow().clone();
         host.device.journal.borrow_mut().clear();
-        step(
-            &mut instance,
-            &prompt(7, 0, 0, 8191, true),
-            &mut Views::default(),
-        );
+        instance
+            .execute_prefill(&sparse_request(8192), &mut Views::default())
+            .unwrap();
+        instance.commit().unwrap();
         let prefill_end = host.device.journal.borrow().len();
         step(
             &mut instance,
-            &decode(&[(7, 0, 8191, 9)]),
+            &decode(&[(7, 0, 8192, 9)]),
             &mut Views::default(),
         );
         let journal = host.device.journal.borrow().clone();
-        let execution = journal
+        let execution: BTreeSet<u32> = journal
             .iter()
             .filter(|line| line.starts_with("launch ") || line.starts_with("peer-copy "))
-            .map(|line| {
-                line.split_whitespace()
-                    .nth(1)
-                    .unwrap()
-                    .parse::<u32>()
-                    .unwrap()
-            })
-            .collect::<BTreeSet<_>>();
-        let peers = journal[..prefill_end]
+            .map(|line| line.split_whitespace().nth(1).unwrap().parse().unwrap())
+            .collect();
+        let peers: BTreeSet<u64> = journal[..prefill_end]
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
             .flat_map(|line| {
@@ -408,23 +191,16 @@ fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
                     .into_iter()
                     .map(|span| span.0)
             })
-            .collect::<BTreeSet<_>>();
-        assert_eq!(peers.len(), 16);
+            .collect();
+        assert!(!peers.is_empty());
         let owners = observed.owners.borrow();
-        let lifetime = peers
-            .iter()
-            .map(|buffer| owners[buffer].0)
-            .collect::<BTreeSet<_>>();
+        let lifetime: BTreeSet<u32> = peers.iter().map(|buffer| owners[buffer].0).collect();
         assert_eq!(lifetime.len(), 4);
         assert!(
             lifetime.is_disjoint(&execution),
-            "peer ownership must not fence compute or copy streams"
+            "allocation ownership must not fence compute or DMA"
         );
-        assert_eq!(
-            peers.iter().map(|buffer| owners[buffer].1).sum::<u64>(),
-            4 * 480 * 1024 * 1024
-        );
-        for &stream in &lifetime {
+        for stream in lifetime {
             let last = created
                 .iter()
                 .rposition(|line| {
@@ -435,73 +211,74 @@ fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
             assert!(
                 created[last + 1..]
                     .iter()
-                    .any(|line| line == &format!("synchronize {stream}")),
-                "allocation-ready fence"
+                    .any(|line| line == &format!("synchronize {stream}"))
             );
         }
         drop(owners);
         assert!(audit(&journal).unwrap() > 0);
-        assert!(
-            audit(
-                &journal
-                    .iter()
-                    .filter(|line| !line.starts_with("wait "))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            )
-            .is_err()
-        );
         host.device.journal.borrow_mut().clear();
-        instance.destroy().unwrap();
-        let released = host.device.journal.borrow();
-        let first_free = released
-            .iter()
-            .position(|line| line.starts_with("free "))
-            .unwrap();
-        for stream in execution {
+        if fail_drain {
+            observed.fail_sync.set(execution.iter().next().copied());
+            let released = host.released.get();
+            assert!(instance.destroy().is_err());
+            assert_eq!(host.released.get(), released);
+            assert!(!observed.owners.borrow().is_empty());
             assert!(
-                released[..first_free]
+                host.device
+                    .journal
+                    .borrow()
                     .iter()
-                    .any(|line| line == &format!("synchronize {stream}")),
-                "drain final compute and DMA before free"
+                    .all(|line| !line.starts_with("free "))
             );
+        } else {
+            instance.destroy().unwrap();
+            let released = host.device.journal.borrow();
+            let first_free = released
+                .iter()
+                .position(|line| line.starts_with("free "))
+                .unwrap();
+            for stream in execution {
+                assert!(
+                    released[..first_free]
+                        .iter()
+                        .any(|line| line == &format!("synchronize {stream}"))
+                );
+            }
+            assert!(observed.owners.borrow().is_empty());
+            assert_eq!(host.acquired.get(), host.released.get());
         }
-        assert!(observed.owners.borrow().is_empty());
-        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 
 #[test]
-fn prefill_dma_failed_teardown_retains_private_buffers() {
+fn sparse_dma_copy_failure_poisoning_prevents_capture_or_retry() {
     let host = host();
-    let observed = Rc::new(owner_host::OwnerHost::new(Rc::clone(&host)));
-    let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
-    let mut instance = with_partial_setting(Some("0"), || {
-        with_dma(true, || {
-            with_mode(2, || {
-                api()
-                    .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
-                    .unwrap()
-            })
-        })
-    });
-    step(
-        &mut instance,
-        &prompt(7, 0, 0, 8191, true),
-        &mut Views::default(),
-    );
-    let main = *host.device.rank_streams.borrow().get(&0).unwrap();
+    let mut instance =
+        skip::create_with_services(&host, HostServicesTableV1::new(Rc::clone(&host)));
     host.device.journal.borrow_mut().clear();
-    observed.fail_sync.set(Some(main));
+    host.device.fail_copy.set(Some(2));
+    let request = sparse_request(8192);
     assert_eq!(
-        instance.destroy(),
+        instance.execute_prefill(&request, &mut Views::default()),
         Err(BundleAbiError::Status(BundleStatusV1::HostError))
     );
-    let retained = host.device.journal.borrow().clone();
-    assert!(!retained.iter().any(|line| line.starts_with("free ")));
-    assert!(!observed.owners.borrow().is_empty());
-    assert!(host.acquired.get() > host.released.get());
-    // The SDK makes a failed destroy terminal and retains the resources.
-    assert_eq!(instance.destroy(), Err(BundleAbiError::Poisoned));
-    assert_eq!(*host.device.journal.borrow(), retained);
+    let submitted = host.device.journal.borrow().clone();
+    assert_eq!(
+        submitted
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .count(),
+        2
+    );
+    assert_eq!(
+        instance.capture_prefix_state(7, 8192, &[200]),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    assert!(
+        instance
+            .execute_prefill(&request, &mut Views::default())
+            .is_err()
+    );
+    assert!(instance.destroy().is_err());
+    assert_eq!(*host.device.journal.borrow(), submitted);
 }

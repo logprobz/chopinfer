@@ -134,7 +134,7 @@ pub struct Instance {
     ar_engram_fallback: crate::engram_rows::SyncReason,
     /// The preparation cause, after phase-specific media, taps and schedule gates.
     prefill_engram_fallback: crate::engram_rows::SyncReason,
-    /// AR steps' one status readback, when switched on.
+    /// AR steps' one status readback.
     ar_status: Option<execute::ar_status::Packet>,
     /// Kept upper-skip plans of short prompts.
     plans: execute::plan_cache::Cache,
@@ -808,9 +808,7 @@ impl Instance {
         memory.take("prefill_engram");
         if self.dspark.is_none() {
             let (_, pool, stream) = ranks[0];
-            if ar_engram::enabled().map_err(BundleAbiError::Status)?
-                && services.has_async_mapped_gather()
-            {
+            if services.has_async_mapped_gather() {
                 let layers = self
                     .engram
                     .as_ref()
@@ -826,7 +824,7 @@ impl Instance {
                         Some(allocate_span(services, pool, stream, bytes, held)?);
                 }
             }
-            if execute::ar_status::enabled() {
+            {
                 let sources = shape.geometry.shape.csa.index_sources.len() as u64;
                 let planes = 2 * ranks.len() as u64;
                 let bytes = (sources + planes) * u64::from(execute::ar_status::ROWS) * 4;

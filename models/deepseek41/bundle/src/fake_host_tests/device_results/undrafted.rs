@@ -30,13 +30,13 @@ fn create_with_mapping(
     );
     let instance = crate::dspark::cycle::with_undrafted_status(enabled, || {
         crate::device_results::with_override(None, || {
-            crate::instance::ar_engram::with_enabled(true, || {
+            {
                 api()
                     .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
                     .unwrap()
                     .create(HostServicesTableV1::new(Rc::clone(&mapped)), &record)
                     .unwrap()
-            })
+            }
         })
     });
     crate::instance::dspark_step_trace_for_test(instance.handle(), true);

@@ -1,5 +1,4 @@
 use super::*;
-use crate::ops::{with_bf16_gather, with_dma_setting};
 use bundle_runtime::fake_host::RecordingSink;
 use model_deepseek41_contract::prefill_profile::{self, CHUNK, Profile, SKIP};
 use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
@@ -45,19 +44,12 @@ fn record(host: &Rc<Host>, prefill: &BTreeMap<String, serde_json::Value>) -> Vec
 
 /// Include creation and release so an unused inbox, stream or event fails
 /// the comparison even when the prefill executor never issues a peer copy.
-fn capture(
-    setting: Option<&str>,
-    bf16: bool,
-    prefill: &BTreeMap<String, serde_json::Value>,
-    rows: u32,
-) -> Vec<String> {
-    capture_with(setting, bf16, prefill, rows, false)
+fn capture(prefill: &BTreeMap<String, serde_json::Value>, rows: u32) -> Vec<String> {
+    capture_with(prefill, rows, false)
 }
 
 /// `dspark` creates a drafter instance through the mapped Engram host.
 fn capture_with(
-    setting: Option<&str>,
-    bf16: bool,
     prefill: &BTreeMap<String, serde_json::Value>,
     rows: u32,
     dspark: bool,
@@ -79,9 +71,9 @@ fn capture_with(
     }));
     let record = record(&host, prefill);
     let profile = Profile::read(prefill).unwrap();
-    let mut instance = with_bf16_gather(bf16, || {
-        with_dma_setting(setting, || {
-            with_mode(0, || {
+    let mut instance = {
+        {
+            crate::instance::execute::overlap::with_mode(0, || {
                 api()
                     .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                     .unwrap()
@@ -98,8 +90,8 @@ fn capture_with(
                         &record,
                     )
             })
-        })
-    })
+        }
+    }
     .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
     if profile.chunk == 0 {
         step(
@@ -151,20 +143,6 @@ fn assert_disabled_journal(actual: &[String], disabled: &[String]) {
 }
 
 #[test]
-fn unset_dma_legacy_create_record_matches_disabled_journals() {
-    let legacy = BTreeMap::new();
-    assert_eq!(Profile::read(&legacy).unwrap(), Profile::default());
-    for bf16 in [true, false] {
-        for rows in [8191, 8192] {
-            assert_disabled_journal(
-                &capture(None, bf16, &legacy, rows),
-                &capture(Some("0"), bf16, &legacy, rows),
-            );
-        }
-    }
-}
-
-#[test]
 fn package_defaults_select_dma_for_upper_skip_only() {
     let defaults = resolved(None);
     assert_eq!(
@@ -179,9 +157,7 @@ fn package_defaults_select_dma_for_upper_skip_only() {
     }
     // The unset default is the explicit transport on the upper-skip
     // executor: the same streams, events, inbox, copies and sums.
-    let unset = capture(None, true, &defaults, 8192);
-    let explicit = capture(Some("1"), true, &defaults, 8192);
-    assert_eq!(unset, explicit);
+    let unset = capture(&defaults, 8192);
     assert_eq!(
         unset
             .iter()
@@ -190,11 +166,9 @@ fn package_defaults_select_dma_for_upper_skip_only() {
         73 * 24 + 12
     );
     assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
-    assert_ne!(unset, capture(Some("0"), true, &defaults, 8192));
     // A DSpark target prefill under the tp4-dspark defaults takes the same
     // transport and allocates the same inbox, streams and events.
-    let dspark = capture_with(None, true, &defaults, 8192, true);
-    assert_eq!(dspark, capture_with(Some("1"), true, &defaults, 8192, true));
+    let dspark = capture_with(&defaults, 8192, true);
     assert_eq!(
         dspark
             .iter()
@@ -203,48 +177,19 @@ fn package_defaults_select_dma_for_upper_skip_only() {
         73 * 24 + 12
     );
     assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
-    assert_ne!(dspark, capture_with(Some("0"), true, &defaults, 8192, true));
-    // Native BF16 partials prepare their prefill reduction independently
-    // of the rounded F32 gather selection.
-    assert_eq!(capture(None, false, &defaults, 8192), unset);
 }
 
 #[test]
-fn full_prefill_profile_requires_explicit_dma_selection() {
+fn full_prefill_profile_keeps_the_sm_transport() {
     let full = resolved(Some("tp4-ar-full-prefill"));
     assert_eq!(Profile::read(&full).unwrap(), Profile::default());
-    let disabled = capture(Some("0"), true, &full, 8192);
-    assert_disabled_journal(&capture(None, true, &full, 8192), &disabled);
-    assert_disabled_journal(&capture(None, true, &BTreeMap::new(), 8192), &disabled);
-    let explicit = capture(Some("1"), true, &full, 8192);
-    assert_eq!(audit(&explicit).unwrap(), 81 * (24 * 2 + 4 * 3) + 12 * 2);
-    assert_eq!(
-        explicit
-            .iter()
-            .filter(|line| line.starts_with("peer-copy "))
-            .count(),
-        81 * 24 + 12
-    );
-}
-
-#[test]
-fn explicit_dma_keeps_the_existing_transport_controls() {
-    for bf16 in [true, false] {
-        let journal = capture(Some("1"), bf16, &BTreeMap::new(), 8191);
-        assert_eq!(audit(&journal).unwrap(), 81 * (24 * 2 + 4 * 3) + 12 * 2);
-        assert_eq!(
-            journal
-                .iter()
-                .filter(|line| line.starts_with("peer-copy "))
-                .count(),
-            81 * 24 + 12
-        );
-    }
+    let disabled = capture(&full, 8192);
+    assert_disabled_journal(&capture(&full, 8192), &disabled);
+    assert_disabled_journal(&capture(&BTreeMap::new(), 8192), &disabled);
 }
 
 #[test]
 fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
-    use crate::ops::with_partial_setting;
     let defaults = resolved(None);
     let launches = |journal: &[String], symbol: &str| {
         journal
@@ -253,15 +198,7 @@ fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
             .count()
     };
     for dspark in [false, true] {
-        // The unset partial setting is the served BF16 prefill default.
-        let (unset, explicit, off) = with_partial_setting(None, || {
-            (
-                capture_with(None, true, &defaults, 8192, dspark),
-                capture_with(Some("1"), true, &defaults, 8192, dspark),
-                capture_with(Some("0"), true, &defaults, 8192, dspark),
-            )
-        });
-        assert_eq!(unset, explicit, "dspark={dspark}");
+        let unset = capture_with(&defaults, 8192, dspark);
         assert_eq!(launches(&unset, BF16_SUM), 73 * 4);
         assert_eq!(launches(&unset, BF16_ROUND), (73 + 36) * 6);
         assert_eq!(launches(&unset, SUM), 0);
@@ -273,7 +210,5 @@ fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
             73 * 24 + 12
         );
         assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
-        assert!(!off.iter().any(|line| line.starts_with("peer-copy ")));
-        assert!(launches(&off, BF16_SUM) == 0 && launches(&off, BF16_ROUND) == 0);
     }
 }

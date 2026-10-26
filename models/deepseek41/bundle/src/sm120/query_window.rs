@@ -19,9 +19,6 @@ pub const ROWS: u32 = 1;
 /// bit and saved 2 us per layer.
 pub const SERVED: bool = true;
 
-/// Set to zero to keep the served RoPE and window write apart.
-pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_QUERY_WINDOW_TWIN";
-
 /// One twin per window format, beside the served fused window entry of the
 /// same format.
 pub fn entries() -> Vec<Entry> {
@@ -37,37 +34,13 @@ pub fn entries() -> Vec<Entry> {
         .collect()
 }
 
-/// Whether `g` at `ranks` runs the twins: Flash TP4 once they serve, unless
-/// [`SWITCH`] is zero.
+/// Whether `g` at `ranks` runs the twins: Flash TP4.
 pub fn serves(g: &Geometry, ranks: u32) -> bool {
     if g.id != FLASH.id || ranks != 4 {
         return false;
     }
-    #[cfg(test)]
-    if let Some(forced) = FORCED.get() {
-        return forced;
-    }
-    SERVED && std::env::var(SWITCH).as_deref() != Ok("0")
+    SERVED
 }
-#[cfg(test)]
-std::thread_local! {
-    /// Tests exercise the served query-window twins by default.
-    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(SERVED)) };
-}
-/// Run `run` with the twins served (`true`) or kept apart (`false`),
-/// whatever [`SERVED`] and [`SWITCH`] say.
-#[cfg(test)]
-pub(crate) fn with_served<T>(served: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            FORCED.set(self.0);
-        }
-    }
-    let _restore = Restore(FORCED.replace(Some(served)));
-    run()
-}
-
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
     if !geometries.iter().any(|g| g.id == FLASH.id) {
         return Ok(Vec::new());

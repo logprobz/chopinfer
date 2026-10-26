@@ -211,7 +211,7 @@ impl Plan {
             last_source: source,
             endpoints: items
                 .iter()
-                .map(|item| item.prefix + item.rows.end - item.rows.start)
+                .map(|item| item.prefix + (item.rows.end - item.rows.start))
                 .collect(),
             layers,
             logits: logits.to_vec(),

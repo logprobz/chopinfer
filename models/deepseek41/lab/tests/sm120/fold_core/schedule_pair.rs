@@ -306,16 +306,52 @@ fn check_case(session: &Session, case: &Case, rows: u32) -> LabResult<()> {
             return Err("null candidate was accepted".into());
         }
     }
+    let expected = buffers[0]
+        .iter()
+        .map(|b| Ok((arena.read(b.output)?, arena.read(b.status)?)))
+        .collect::<LabResult<Vec<_>>>()?;
     for banks in &buffers {
         for (bank, input) in inputs.iter().enumerate() {
             reset(&arena, &banks[bank], input, rows, rows, false)?;
         }
     }
-    let timing = timing::arms(session, false, 3, |arm, stream| {
-        graphs[usize::from(arm == 2)]
+    // Batch device work into one graph launch so host issue gaps do not
+    // dominate these short kernels. The duplicate A arm uses the same graph.
+    const REPLAYS: usize = 32;
+    let timed_graphs = prepared
+        .iter()
+        .map(|p| {
+            session.capture(|stream| {
+                for _ in 0..REPLAYS {
+                    issue(session, &arena, &functions, &p.calls, stream)?;
+                }
+                Ok(())
+            })
+        })
+        .collect::<LabResult<Vec<_>>>()?;
+    let mut timing = timing::arms(session, false, 3, |arm, stream| {
+        timed_graphs[usize::from(arm == 2)]
             .launch(stream)
             .map_err(|e| e.to_string())
     })?;
+    timing["replays_per_sample"] = json!(REPLAYS);
+    timing["graph_launches_per_sample"] = json!(1);
+    for (bank, input) in inputs.iter().enumerate() {
+        compare(
+            &arena,
+            &[buffers[0][bank], buffers[1][bank]],
+            input,
+            rows,
+            rows,
+            false,
+            None,
+        )?;
+        if arena.read(buffers[0][bank].output)? != expected[bank].0
+            || arena.read(buffers[0][bank].status)? != expected[bank].1
+        {
+            return Err("batched timing changed the checked output/status bytes".into());
+        }
+    }
     println!(
         "SCHEDULE_PAIR_CASE {}",
         json!({

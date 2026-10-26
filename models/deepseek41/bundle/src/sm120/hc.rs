@@ -192,7 +192,27 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
 }
 
 pub(super) fn warp_buckets() -> Vec<u32> {
-    super::hc_finish_norm::selected_rows("hc.lagged_warp.decode", 32)
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{self, Family},
+    };
+    (1..=32)
+        .filter(|&rows| {
+            tuning::select(
+                &FLASH,
+                Family::Hc,
+                "hc.lagged_warp.decode",
+                "f32",
+                &[
+                    ("groups", FLASH.shape.hc.streams),
+                    ("width", FLASH.shape.hidden),
+                ],
+                32,
+                rows,
+            )
+            .is_some()
+        })
+        .collect()
 }
 
 /// `g`'s original entries: the first cubin's, then the F32 head.

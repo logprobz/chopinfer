@@ -56,17 +56,29 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     baseline_quantizers(g, ranks)?
         .into_iter()
         .try_fold(backend, |backend, entry| {
-            let warps = super::ceil_parallel::tuning_choice(
-                g,
-                "norm.ceil_prefill.prefill",
-                ranks,
-                &entry,
-                entry.capacity,
-            )
-            .map_or_else(
-                || selected_warps(entry.query.width),
-                |row| row.knobs["warps"].count().expect("prefill quantizer warps"),
-            );
+            use kernel_core::contract::DType;
+            use model_deepseek41_contract::tuning::{self, Family};
+            let op = match entry.query.input {
+                DType::Bf16 => Some("norm.ceil_prefill_bf16.prefill"),
+                DType::F32 => Some("norm.ceil_prefill_f32.prefill"),
+                _ => None,
+            };
+            let warps = op
+                .and_then(|op| {
+                    tuning::select(
+                        g,
+                        Family::Norm,
+                        op,
+                        "none",
+                        &[("ranks", ranks), ("width", entry.query.width)],
+                        entry.capacity,
+                        1,
+                    )
+                })
+                .map_or_else(
+                    || selected_warps(entry.query.width),
+                    |row| row.knobs["warps"].count().expect("prefill quantizer warps"),
+                );
             Ok(backend.with_block_quantize(prefill(entry, warps)?))
         })
 }

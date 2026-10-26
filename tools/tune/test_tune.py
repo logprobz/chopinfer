@@ -484,6 +484,38 @@ class Tuner(unittest.TestCase):
             result = stage_fixture(root, model, destination='lane-proof', proofs=[('head', alternate)])
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_single_install_uses_an_explicit_content_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['arms'] = [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}]
+            path = root / 'logs/weight-content-head.json'
+            result = stage_fixture(root, model, names=('head',), proofs=[('head', path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seal = json.loads((root / 'stage/runtime-seal.json').read_text())
+            self.assertNotIn('installs', seal)
+            install = seal['install']
+            self.assertRegex(install['content_key'], '^[0-9a-f]{64}$')
+            self.assertIn(install['weight_keeper_identity'], seal['sha256'])
+            spec = json.loads((root / 'stage/keeper-spec.json').read_text())
+            self.assertEqual(spec['identity_sha256'], stage.digest(install['weight_keeper_identity']))
+            self.assertIn(install['weight_keeper_identity'], spec['argv'])
+            proof = json.loads(path.read_text())
+            proof['images'][0]['recipe_identity'] = 'f' * 64
+            bad = root / 'bad-content.json'
+            bad.write_text(json.dumps(proof))
+            bad.chmod(0o600)
+            result = stage_fixture(root, model, names=('head',), destination='bad', proofs=[('head', bad)])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('content proof', result.stderr)
+            result = stage_fixture(root, model, names=('head',), destination='unknown', proofs=[('base', path)])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('content-proof needs one NAME=FILE per selected build', result.stderr)
+            result = stage_fixture(root, model, names=('head',), destination='plain')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seal = json.loads((root / 'plain/runtime-seal.json').read_text())
+            self.assertNotIn('weight_keeper_identity', seal['install'])
+
     def test_multi_install_requires_ab_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

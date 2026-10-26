@@ -360,8 +360,10 @@ def main():
     selected = set()
     for item in args.content_proof:
         name, separator, path = item.partition('=')
-        if not separator or not path or name not in proof_paths or name in selected:
-            raise SystemExit('content-proof needs one NAME=FILE per selected multi-install build')
+        # A single install has no default proof, but an explicit one is checked
+        # against every arm's fresh recipe exactly as for multiple installs.
+        if not separator or not path or name not in names or name in selected:
+            raise SystemExit('content-proof needs one NAME=FILE per selected build')
         selected.add(name)
         proof_paths[name] = Path(os.path.abspath(path))
     model = json.loads(Path(args.model).read_text())

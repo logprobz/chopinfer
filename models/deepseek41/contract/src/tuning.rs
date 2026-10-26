@@ -17,8 +17,8 @@ fn parse_family(family: Family, text: &str) -> Result<Table, TuningError> {
     for row in table.rows() {
         let mut parts = row.key.op.split('.');
         if parts.next() != Some(family.name())
-            || !parts.next().is_some_and(|part| !part.is_empty())
-            || !parts.next().is_some_and(|part| !part.is_empty())
+            || parts.next().is_none_or(str::is_empty)
+            || parts.next().is_none_or(str::is_empty)
             || parts.next().is_some()
         {
             return Err(TuningError(format!(

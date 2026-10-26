@@ -198,6 +198,14 @@ entry's numerical identity and is never a tuning knob. Another model adopts
 a shared template only when its current entries are bitwise equal under
 the chosen policies. Sharing is never forced.
 
+On 2026-10-26, CPU source inspection found that GLM's C1-C8 FP8 block-128
+strip chains cannot use the dense decode fold template through new policy
+types alone. The template's fixed byte operands, K32 MMA loop and UE8M0
+scale loads cannot express GLM's BF16 operands, eight K16 MMAs per chain
+and F32 block-scale FMA. Adoption would require porting GLM's compute body
+and TMA staging. The shared policy interface stays available; GLM keeps its
+current entries. No GPU twins or step-time measurements were run.
+
 ## Adding a GPU backend
 
 Implement `kernel_core::backend::Backend` for the target. Generic model code

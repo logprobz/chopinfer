@@ -1,0 +1,4 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Retire unpinned prefill overlap and micro traces and the unreachable full-schedule DMA executor. No pinned journal, served operation, allocation, module or handle change is authorized."
+}

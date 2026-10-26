@@ -152,8 +152,7 @@ fn prefill_state_gpu() -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "passed":true, "negotiated_chunk":8192, "snapshot_tokens":snapshots, "logits_rows":8, "vocabulary":width,
             "rank_snapshots":16, "rank_kv_pages":16, "files":files, "live_resources":0,
-            "reference":config.reference, "mode":std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP")?,
-            "dma":std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA").ok(),
+            "reference":config.reference,
         }))?,
     )?;
     Ok(())

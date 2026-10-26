@@ -173,8 +173,8 @@ logprob bits. GPU exclusive attribution includes peer copies.
 For sequential DMA, GPU envelopes at offsets 0 and 24576 fell from
 2014.0/2142.1 ms to 1877.1/1980.4 ms, gains of 6.8%/7.6%. Exclusive GPU time
 fell from 2014.0/2142.1 ms to 1858.2/1960.7 ms. Communication unions fell
-from 525.7/553.8 ms to 343.0/343.1 ms. These measurements covered the former full-schedule executor. The current
-automatic DMA route is upper-skip only; its inbox adds 160 MiB per GPU
+from 525.7/553.8 ms to 343.0/343.1 ms. These measurements covered the former
+full-schedule executor. The current automatic DMA route is upper-skip only; its inbox adds 160 MiB per GPU
 relative to BF16 transport.
 
 Two-part DMA hid about 404 ms of communication but increased its paired GPU

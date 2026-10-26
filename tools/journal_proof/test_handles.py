@@ -68,12 +68,14 @@ class HandleTests(unittest.TestCase):
         self.assertEqual(detail['history']['status'], 'COMPARED')
         return args
 
-    def refused(self, args):
+    def refused(self, args, reason):
         try:
             result, _, detail = prove(*args)
-        except (Invalid, Unproven):
+        except (Invalid, Unproven) as error:
+            self.assertRegex(str(error), reason)
             return
         self.assertEqual(result['step.txt']['verdict'], 'UNPROVEN', detail)
+        self.assertRegex(' '.join(result['step.txt']['reasons']), reason)
 
     def test_each_handle_addition_and_removal(self):
         for kind in ('allocation', 'stream', 'event', 'graph', 'mapped-gather', 'opaque'):
@@ -104,7 +106,15 @@ class HandleTests(unittest.TestCase):
                             b[-1][1] = b[-1][1].replace('90', '91')
                         else:
                             rule[side + '_handles'] = []
-                        self.refused((a, b, d, rule))
+                        reason = {
+                            'undeclared': 'issued ID count',
+                            'absent': 'issued ID count' if kind == 'event' else 'handle absent or wrong kind',
+                            'wrong-kind': 'handle absent or wrong kind',
+                            'wrong-position': 'issuance is at the wrong position',
+                            'after-map': 'unexplained line differences',
+                            'missing-witness': 'missing declared witnesses',
+                        }[mutation]
+                        self.refused((a, b, d, rule), reason)
 
     def test_operation_edits_are_exact_and_exhaustive(self):
         a, b, d, rule = self.green('event')
@@ -125,23 +135,29 @@ class HandleTests(unittest.TestCase):
                     bb.append(['note', 'wait 90 2'])
                 else:
                     dd['operations']['host'][1]['add']['line'] = 2
-                self.refused((aa, bb, dd, rr))
+                reason = {
+                    'undeclared': 'unexplained line differences',
+                    'absent': 'add operation 3 is not the declared line',
+                    'extra': '1 unexplained line differences',
+                    'wrong-position': 'add operation 2 is not the declared line',
+                }[mutation]
+                self.refused((aa, bb, dd, rr), reason)
 
     def test_opaque_requires_actual_issuance(self):
         a, b, d, rule = self.green('opaque')
         b.pop(0)
-        self.refused((a, b, d, rule))
+        self.refused((a, b, d, rule), 'device issue sequence is incomplete or reused')
 
     def test_mapped_gather_requires_both_proxy_and_service_creator(self):
         a, b, d, rule = self.green('mapped-gather')
         b.pop(1)
-        self.refused((a, b, d, rule))
+        self.refused((a, b, d, rule), 'creator trace records differ')
 
     def test_added_stream_cannot_redirect_a_synthetic_base_stream(self):
         a, b, d, rule = case('stream')
         a[-1][1] = 'record 1 1'
         b[-1][1] = 'record 1 2'
-        self.refused((a, b, d, rule))
+        self.refused((a, b, d, rule), 'added stream redirects a fixed synthetic stream')
 
     def test_removed_resources_cannot_be_used_by_retained_lines(self):
         for kind, line in (
@@ -151,17 +167,44 @@ class HandleTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 a, b, d, rule = case(kind, 'removed')
                 a[-1][1] = b[-1][1] = line
-                self.refused((a, b, d, rule))
+                reason = {'event': 'issued ID 1 was not issued', 'stream': 'stream 1 was declared removed',
+                          'allocation': 'line uses a removed allocation'}[kind]
+                self.refused((a, b, d, rule), reason)
 
     def test_duplicate_handle_witness_is_refused(self):
         a, b, d, rule = case('event')
         rule['added_handles'] *= 2
-        self.refused((a, b, d, rule))
+        self.refused((a, b, d, rule), 'unknown or repeated handle witness')
+
+    def test_positional_allocation_cannot_take_a_fixed_resource_raw(self):
+        line = f'zero 90 DeviceBufferSpanV1 {{ buffer: BundleDeviceBufferHandleV1 {{ raw: {GEN + 2} }}, offset: 0, length: 64 }}'
+        a = [['id', 1], ['note', 'event 1'], ['note', line]]
+        b = a[:2] + creation('allocation', 2) + [['note', line]]
+        _, _, d, rule = case('allocation')
+        d['handles']['host']['added'][0]['at'] = 3
+        rule['added_handles'][0]['id'] = 2
+        self.refused((a, b, d, rule), 'a declared added allocation has the handle of a fixed resource')
+
+    def test_retained_allocation_cannot_use_a_removed_stream(self):
+        a = creation('stream', 1) + creation('allocation', 2) + [['note', 'synchronize 90']]
+        b = creation('allocation', 1) + [['note', 'synchronize 90']]
+        a[-2][5] = b[-2][5] = GEN + 1
+        _, _, d, rule = case('stream', 'removed')
+        result, _, detail = prove(a, b, d, rule)
+        self.assertEqual(result['step.txt']['verdict'], 'UNPROVEN', detail)
+        self.assertEqual(detail['error'], 'retained allocation uses a removed stream')
+
+    def test_allocation_cannot_have_positional_and_resource_declarations(self):
+        a, b, d, rule = case('allocation')
+        d['resources'] = {'added': [dict(name='extra', bytes=64, alignment=256, per_rank=1,
+            lifetime='instance', init='none', alongside=dict(bytes=64, alignment=256))]}
+        rule['added_allocations'] = [dict(resource='extra', head_raw=GEN + 1, rank=0)]
+        self.refused((a, b, d, rule), 'an added allocation has two declarations')
 
     def test_declared_creator_cannot_hide_in_operation_edits(self):
         a, b, d, rule = case('event')
         d['operations'] = {'host': [dict(add=dict(line=1, text='event 1'))]}
-        self.refused((a, b, d, rule))
+        self.refused((a, b, d, rule), 'creator records use resource declarations')
 
 
 if __name__ == '__main__':

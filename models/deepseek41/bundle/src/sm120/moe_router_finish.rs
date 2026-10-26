@@ -244,6 +244,18 @@ pub(crate) fn with_base_admission<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+fn selected(site: &str, set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    super::moe::choice(
+        &model_deepseek41_contract::geometry::FLASH,
+        site,
+        phase,
+        &[("experts", set.count), ("top_k", set.top_k)],
+        64,
+        rows,
+    )
+    .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,16 +368,4 @@ mod tests {
             }
         }
     }
-}
-
-fn selected(site: &str, set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
-    super::moe::choice(
-        &model_deepseek41_contract::geometry::FLASH,
-        site,
-        phase,
-        &[("experts", set.count), ("top_k", set.top_k)],
-        64,
-        rows,
-    )
-    .is_some()
 }

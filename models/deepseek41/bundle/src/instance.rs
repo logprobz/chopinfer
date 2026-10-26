@@ -127,7 +127,9 @@ pub struct Instance {
     prefill_engram: Option<prefill_engram::Gathers>,
     /// AR decode's per-layer Engram uploads, when switched on.
     ar_engram: Option<ar_engram::State>,
+    /// The preparation failure used when no AR decode gather serves a phase.
     ar_engram_fallback: crate::engram_rows::SyncReason,
+    /// The preparation cause, after phase-specific media, taps and schedule gates.
     prefill_engram_fallback: crate::engram_rows::SyncReason,
     /// AR steps' one status readback, when switched on.
     ar_status: Option<execute::ar_status::Packet>,

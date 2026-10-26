@@ -138,6 +138,7 @@ pub struct Gathered {
     phases: Vec<GatheredPhase>,
     /// Every target row is a decode row without drafts.
     undrafted: bool,
+    /// The host target combines distinct input kinds.
     mixed: bool,
 }
 
@@ -155,7 +156,6 @@ struct GatheredPhase {
     prefill: bool,
     hashed: Hashed,
     destinations: Vec<Vec<Destination>>,
-    reason: engram_rows::SyncReason,
 }
 
 fn prefix(span: Span, bytes: u64) -> Result<Span, String> {
@@ -346,7 +346,6 @@ impl Staging {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(GatheredPhase {
-            reason: engram_rows::SyncReason::HostTarget,
             prefill,
             hashed,
             destinations,
@@ -474,8 +473,11 @@ pub struct Adapter<'a, P> {
 }
 
 impl<P> Adapter<'_, P> {
-    fn upload(&mut self, gathered: Gathered) -> Result<(), String> {
-        for phase in gathered.phases {
+    fn upload(
+        &mut self,
+        phases: Vec<(GatheredPhase, engram_rows::SyncReason)>,
+    ) -> Result<(), String> {
+        for (phase, reason) in phases {
             for (rank, destinations) in self.ranks.iter().zip(&phase.destinations) {
                 self.staging
                     .rows
@@ -489,7 +491,7 @@ impl<P> Adapter<'_, P> {
                         },
                         destinations,
                         &phase.hashed,
-                        phase.reason,
+                        reason,
                     )
                     .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
             }
@@ -664,7 +666,7 @@ impl<P: Program> Host for Adapter<'_, P> {
             || staging.hash(rows, text, ranks),
         )
     }
-    fn upload_engram(&mut self, mut gathered: Gathered) -> Result<(), String> {
+    fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
         let started = self.times.is_some().then(std::time::Instant::now);
         let deferred = match gathered.undrafted() {
             Some(hashed) => self.program.defer_engram(hashed),
@@ -674,14 +676,14 @@ impl<P: Program> Host for Adapter<'_, P> {
             Ok(true) => Ok(()),
             Ok(false) => {
                 let mut phases = Vec::new();
-                for mut phase in gathered.phases {
+                for phase in gathered.phases {
                     if phase.prefill
                         && phase.hashed.rows() > 0
                         && self.program.stage_prefill_engram(&phase.hashed)?
                     {
                         continue;
                     }
-                    phase.reason = if phase.prefill || gathered.undrafted {
+                    let reason = if phase.prefill || gathered.undrafted {
                         self.program
                             .sync_engram_reason(&phase.hashed, phase.prefill)
                     } else if gathered.mixed {
@@ -689,10 +691,9 @@ impl<P: Program> Host for Adapter<'_, P> {
                     } else {
                         engram_rows::SyncReason::HostTarget
                     };
-                    phases.push(phase);
+                    phases.push((phase, reason));
                 }
-                gathered.phases = phases;
-                self.upload(gathered)
+                self.upload(phases)
             }
             Err(error) => Err(error),
         };

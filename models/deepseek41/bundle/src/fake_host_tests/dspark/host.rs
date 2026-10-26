@@ -3,6 +3,18 @@
 use super::*;
 use runtime_bundle_abi::{BundleMappedGatherHandleV1, MappedGatherPlaneV1, MappedGatherStatsV1};
 
+/// Services backed by the model fake device, with optional encoder support.
+pub(in crate::fake_host_tests) trait MappedServices:
+    HostServicesBackendV1
+{
+    fn fake(&self) -> &FakeHost;
+}
+impl MappedServices for Host {
+    fn fake(&self) -> &FakeHost {
+        self
+    }
+}
+
 struct Gather {
     producer: BundleStreamHandleV1,
     indices: DeviceBufferSpanV1,
@@ -12,7 +24,7 @@ struct Gather {
     waited_at: usize,
 }
 pub(in crate::fake_host_tests) struct MappedHost {
-    host: Rc<Host>,
+    host: Rc<dyn MappedServices>,
     gathers: std::cell::RefCell<std::collections::BTreeMap<u64, Gather>>,
     peer_copies: bool,
     delayed_completion: bool,
@@ -20,7 +32,7 @@ pub(in crate::fake_host_tests) struct MappedHost {
     fail_gather: std::cell::Cell<Option<(&'static str, usize)>>,
 }
 impl MappedHost {
-    pub(in crate::fake_host_tests) fn new(host: Rc<Host>) -> Self {
+    pub(in crate::fake_host_tests) fn new<H: MappedServices + 'static>(host: Rc<H>) -> Self {
         Self {
             host,
             gathers: Default::default(),
@@ -57,7 +69,9 @@ impl MappedHost {
         {
             if after == 0 {
                 self.fail_gather.set(None);
-                self.host.note(format!("async mapped failure {stage}"));
+                self.host
+                    .fake()
+                    .note(format!("async mapped failure {stage}"));
                 return Err(BundleStatusV1::HostError);
             }
             self.fail_gather.set(Some((selected, after - 1)));
@@ -84,10 +98,10 @@ impl MappedHost {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
-        if self.host.capturing_on_device_of(stream.slot()) {
+        if self.host.fake().capturing_on_device_of(stream.slot()) {
             return Err(BundleStatusV1::InvalidState);
         }
-        let g = self.host.shape.geometry;
+        let g = self.host.fake().shape.geometry;
         let e = &g.shape.engram;
         let table = e.layers.iter().enumerate().find_map(|(index, layer)| {
             ["weight", "scale"].into_iter().find_map(|part| {
@@ -104,7 +118,7 @@ impl MappedHost {
         });
         let (rows, width) = table.ok_or(BundleStatusV1::NotFound)?;
         if gather.image.raw == 0
-            || gather.rank >= self.host.shape.ranks()
+            || gather.rank >= self.host.fake().shape.ranks()
             || gather.row_bytes != u64::from(width)
             || gather.rows.is_empty()
             || gather.rows.iter().any(|&row| row >= rows)
@@ -112,7 +126,7 @@ impl MappedHost {
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        self.host.note(format!(
+        self.host.fake().note(format!(
             "mapped gather {} {}",
             gather.rank,
             String::from_utf8_lossy(gather.view_id)
@@ -165,7 +179,8 @@ impl HostServicesBackendV1 for MappedHost {
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
         self.host.copy_device_to_host(stream, destination, source)?;
-        self.completed_at.set(self.host.journal.borrow().len());
+        self.completed_at
+            .set(self.host.fake().journal.borrow().len());
         Ok(())
     }
     forward!(copy_device_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: DeviceBufferSpanV1) -> ());
@@ -178,12 +193,12 @@ impl HostServicesBackendV1 for MappedHost {
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
         assert_eq!(
-            self.host.stream_ranks.borrow()[&stream.slot()] + 1,
+            self.host.fake().stream_ranks.borrow()[&stream.slot()] + 1,
             destination_context.slot()
         );
         assert_ne!(destination_context, source_context);
-        assert!(!self.host.capturing_on_device_of(stream.slot()));
-        self.host.note(format!(
+        assert!(!self.host.fake().capturing_on_device_of(stream.slot()));
+        self.host.fake().note(format!(
             "peer results {} {}",
             source_context.slot(),
             destination_context.slot()
@@ -239,12 +254,12 @@ impl HostServicesBackendV1 for MappedHost {
         indices: DeviceBufferSpanV1,
         planes: &[MappedGatherPlaneV1],
     ) -> HostServiceResultV1<BundleMappedGatherHandleV1> {
-        self.host.check_span(indices);
-        if planes.is_empty() || self.host.capturing_on_device_of(producer.slot()) {
+        self.host.fake().check_span(indices);
+        if planes.is_empty() || self.host.fake().capturing_on_device_of(producer.slot()) {
             return Err(BundleStatusV1::InvalidArgument);
         }
         for plane in planes {
-            self.host.check_span(plane.destination);
+            self.host.fake().check_span(plane.destination);
             if plane.row_bytes == 0
                 || !plane.destination.length.is_multiple_of(plane.row_bytes)
                 || plane.index_offset + plane.destination.length / plane.row_bytes * 4
@@ -255,6 +270,7 @@ impl HostServicesBackendV1 for MappedHost {
         }
         let rank = *self
             .host
+            .fake()
             .stream_ranks
             .borrow()
             .get(&producer.slot())
@@ -277,6 +293,7 @@ impl HostServicesBackendV1 for MappedHost {
             },
         );
         self.host
+            .fake()
             .note(format!("async mapped create {}", gather.slot()));
         Ok(gather)
     }
@@ -290,7 +307,12 @@ impl HostServicesBackendV1 for MappedHost {
         let gather = gathers
             .get_mut(&handle.raw)
             .ok_or(BundleStatusV1::StaleHandle)?;
-        if gather.pending.is_some() || self.host.capturing_on_device_of(gather.producer.slot()) {
+        if gather.pending.is_some()
+            || self
+                .host
+                .fake()
+                .capturing_on_device_of(gather.producer.slot())
+        {
             return Err(BundleStatusV1::InvalidState);
         }
         if rows == 0
@@ -303,7 +325,7 @@ impl HostServicesBackendV1 for MappedHost {
         }
         gather.pending = Some(rows);
         gather.waited.clear();
-        self.host.note(format!(
+        self.host.fake().note(format!(
             "async mapped ids {} {}",
             gather.indices.length, rows
         ));
@@ -321,7 +343,8 @@ impl HostServicesBackendV1 for MappedHost {
                 .get_mut(&handle.raw)
                 .ok_or(BundleStatusV1::StaleHandle)?;
             let rows = gather.pending.ok_or(BundleStatusV1::InvalidState)?;
-            if self.host.capturing_on_device_of(stream.slot()) || !gather.waited.insert(stream.raw)
+            if self.host.fake().capturing_on_device_of(stream.slot())
+                || !gather.waited.insert(stream.raw)
             {
                 return Err(BundleStatusV1::InvalidState);
             }
@@ -337,6 +360,7 @@ impl HostServicesBackendV1 for MappedHost {
             (rows, planes)
         };
         self.host
+            .fake()
             .note(format!("async mapped wait {}", stream.slot()));
         for plane in planes {
             let destination = DeviceBufferSpanV1::new(
@@ -360,7 +384,7 @@ impl HostServicesBackendV1 for MappedHost {
             .borrow_mut()
             .get_mut(&handle.raw)
             .expect("live gather")
-            .waited_at = self.host.journal.borrow().len();
+            .waited_at = self.host.fake().journal.borrow().len();
         Ok(())
     }
     fn complete_mapped_gather(
@@ -384,7 +408,7 @@ impl HostServicesBackendV1 for MappedHost {
             return Ok(None);
         }
         gather.pending = None;
-        self.host.note("async mapped complete".into());
+        self.host.fake().note("async mapped complete".into());
         Ok(Some(MappedGatherStatsV1::default()))
     }
     fn release_mapped_gather(&self, handle: BundleMappedGatherHandleV1) -> HostServiceResultV1<()> {
@@ -395,6 +419,7 @@ impl HostServicesBackendV1 for MappedHost {
             .release_event(BundleEventHandleV1::from_raw(handle.raw))?;
         self.gathers.borrow_mut().remove(&handle.raw);
         self.host
+            .fake()
             .note(format!("async mapped release {}", handle.slot()));
         Ok(())
     }
@@ -404,7 +429,7 @@ impl HostServicesBackendV1 for MappedHost {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
-        self.host.count_mapped_gather();
+        self.host.fake().count_mapped_gather();
         self.emulate_mapped_rows(stream, destination, gather)
     }
 }

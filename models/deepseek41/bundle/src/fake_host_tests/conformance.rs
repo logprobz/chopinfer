@@ -825,3 +825,146 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
         });
     }
 }
+
+/// Check selected reasons against independent calls for a real execute and commit.
+pub(super) fn assert_sync_engram(
+    host: &FakeHost,
+    instance: &mut BundleInstanceV1,
+    batch: &[u8],
+    reasons: &[&str],
+) {
+    let before = host.mapped_gather_calls.get();
+    let from = host.logs.borrow().len();
+    instance
+        .execute(batch, &mut RecordingSink::<Limits>::default())
+        .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+    use runtime_bundle_sdk::BatchCodecV1;
+    let decoded = BatchCodecV1::decode(batch).unwrap();
+    if decoded.items().iter().any(|item| item.is_verify()) {
+        let kept = decoded
+            .items()
+            .iter()
+            .map(|item| BundleKeptRowsV1 {
+                struct_size: std::mem::size_of::<BundleKeptRowsV1>() as u32,
+                reserved: 0,
+                request_id: item.request_id(),
+                kept_rows: item.phase_tokens(),
+                reserved_tail: 0,
+            })
+            .collect::<Vec<_>>();
+        instance.commit_accepted(&kept).unwrap();
+    } else {
+        instance.commit().unwrap();
+    }
+    let mut selected = BTreeMap::<String, u64>::new();
+    for record in host.logs.borrow()[from..]
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["schema"] == "chopinfer.route.v1")
+    {
+        for (entry, value) in record["entries"].as_object().unwrap() {
+            if value["symbol"] == bundle_runtime::routes::MAPPED_GATHER_SYMBOL {
+                *selected.entry(entry.clone()).or_default() += value["launches"].as_u64().unwrap();
+            }
+        }
+    }
+    let per_phase =
+        2 * u64::from(host.shape.ranks()) * u64::from(host.shape.geometry.engram_layers());
+    let expected = reasons
+        .iter()
+        .map(|reason| (format!("engram/sync/{reason}"), per_phase))
+        .collect();
+    assert_eq!(selected, expected);
+    assert_eq!(
+        host.mapped_gather_calls.get() - before,
+        selected.values().sum::<u64>()
+    );
+}
+
+fn sync_dspark_instance(host: &Rc<Host>, overlap: bool) -> BundleInstanceV1 {
+    host.drafter.set(true);
+    host.speculation.set(Some((3, 32)));
+    crate::instance::prefill_engram::with_enabled(false, || {
+        crate::instance::execute::overlap::with_enabled(overlap, || {
+            api()
+                .create(
+                    HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(
+                        host,
+                    )))),
+                    &crate::config::tests::record(&host.shape, host.kv, 4, false),
+                )
+                .unwrap()
+        })
+    })
+}
+
+#[test]
+fn disabled_prefill_engram_keeps_selected_schedule_reason() {
+    bundle_runtime::routes::with_logging(|| {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = sync_dspark_instance(&host, true);
+        let tokens = vec![7; 1024];
+        let batch = step_with_stride(&[(701, 0, 0, &tokens, Phase::Prefill)], true, 16, None);
+        assert_sync_engram(&host, &mut instance, &batch, &["prefill_schedule"]);
+        instance.retire_request(701).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    });
+}
+
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn disabled_prefill_engram_keeps_taps_reason() {
+    if std::env::var_os(super::TAPS_CHILD).is_none() {
+        let directory =
+            std::env::temp_dir().join(format!("engram-reason-taps-{}", std::process::id()));
+        super::in_child(
+            "fake_host_tests::conformance::disabled_prefill_engram_keeps_taps_reason",
+            &directory,
+            &[("CHOPINFER_TAPS_SITES", "L02.x.hc.attn.pre")],
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+        return;
+    }
+    bundle_runtime::routes::with_logging(|| {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = sync_dspark_instance(&host, false);
+        let batch = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], true, 8, None);
+        assert_sync_engram(&host, &mut instance, &batch, &["taps"]);
+        instance.retire_request(701).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    });
+}
+
+#[test]
+fn engram_reasons_distinguish_mixed_and_host_targets() {
+    bundle_runtime::routes::with_logging(|| {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = sync_dspark_instance(&host, false);
+        let first = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], false, 8, None);
+        assert_sync_engram(&host, &mut instance, &first, &["prefill_disabled"]);
+        let mixed = step_with_stride(
+            &[
+                (702, 1, 0, &[1, 2, 3], Phase::Prefill),
+                (701, 0, 3, &[4], Phase::Decode),
+            ],
+            false,
+            8,
+            None,
+        );
+        assert_sync_engram(
+            &host,
+            &mut instance,
+            &mixed,
+            &["prefill_disabled", "mixed_target"],
+        );
+        let verify = step_with_stride(&[(701, 0, 4, &[5, 6, 7, 8], Phase::Verify)], false, 8, None);
+        assert_sync_engram(&host, &mut instance, &verify, &["host_target"]);
+        for request in [701, 702] {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    });
+}

@@ -53,8 +53,10 @@ const DECODE: usize = 1;
 pub(super) const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
-struct Run {
+pub(super) struct Run {
     prefill_engram: Option<super::prefill_engram::Plan>,
+    /// The selected synchronous cause, absent when a prepared gather serves the phase.
+    pub(super) sync_engram: Option<crate::engram_rows::SyncReason>,
     /// A decode phase whose Engram rows upload per layer and join at their
     /// consumers (`super::ar_engram`) instead of before the first launch.
     ar_engram: bool,
@@ -65,7 +67,7 @@ struct Run {
     skip: Option<std::rc::Rc<skip::Plan>>,
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
-    inputs: PhaseInputs,
+    pub(super) inputs: PhaseInputs,
     cache: Option<crate::ops::latent::CacheRange>,
     arena: usize,
     layout: InputLayout,
@@ -99,6 +101,26 @@ struct Run {
     /// A prefill's image and text flags, when its rows read the encoder's
     /// arena (`super::media`).
     media: Option<PrefillMedia>,
+}
+
+/// Prefill hashes retained for execution, or a legacy phase planned before
+/// staging uploads so its reason reflects the actual selected schedule.
+pub(super) enum StagedPrefill {
+    Hashes(Hashed),
+    Planned {
+        run: Result<Box<Run>, BundleStatusV1>,
+        /// Advance the index-tag sequence at its original target planning boundary.
+        advance_step: bool,
+    },
+}
+
+impl StagedPrefill {
+    pub(super) fn inputs_mut(&mut self) -> Option<&mut PhaseInputs> {
+        match self {
+            Self::Planned { run: Ok(run), .. } => Some(&mut run.inputs),
+            _ => None,
+        }
+    }
 }
 
 /// What a step's index selections read besides their rows: each row's tag,
@@ -493,7 +515,20 @@ impl Instance {
         media: Option<PrefillMedia>,
         staged_engram: Option<Hashed>,
     ) -> Result<Run, BundleStatusV1> {
-        let (phase, arena, layout, mut graph) = self.phase_of(&inputs)?;
+        let mut inputs = inputs;
+        self.prepare_run(&mut inputs, media, staged_engram, || {
+            self.steps.set(self.steps.get() + 1)
+        })
+    }
+
+    fn prepare_run(
+        &self,
+        inputs: &mut PhaseInputs,
+        media: Option<PrefillMedia>,
+        staged_engram: Option<Hashed>,
+        advance_step: impl FnOnce(),
+    ) -> Result<Run, BundleStatusV1> {
+        let (phase, arena, layout, mut graph) = self.phase_of(inputs)?;
         // An allocated step's items verify device-chosen counts, so it
         // takes the route that reads no host count, in its own bank.
         let allocated = self.allocated_tail_rows().filter(|_| inputs.verify);
@@ -507,7 +542,7 @@ impl Instance {
                 &self.config.shape,
                 self.config.kv.storage,
                 phase,
-                &inputs,
+                inputs,
             ))
         };
         let ar_engram = arena == DECODE && self.ar_engram_serves(graph);
@@ -551,7 +586,7 @@ impl Instance {
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        let cache = prefill_cache_range(&inputs);
+        let cache = prefill_cache_range(inputs);
         let skipping = self.skip_prefill && arena == PREFILL;
         let (programs, collectives, stages) = if skipping {
             (Vec::new(), Vec::new(), Vec::new())
@@ -573,7 +608,7 @@ impl Instance {
             let upload = tail_upload(
                 self.config.shape.geometry,
                 self.extent,
-                &inputs,
+                inputs,
                 phase,
                 &buffers.state,
             )
@@ -584,7 +619,7 @@ impl Instance {
             tails.extend(upload);
         }
         let window = self.config.shape.geometry.shape.attention.window;
-        let window = window_upload(&inputs, self.extent.bucket, window).map_err(|error| {
+        let window = window_upload(inputs, self.extent.bucket, window).map_err(|error| {
             self.log(&error);
             BundleStatusV1::InvalidArgument
         })?;
@@ -596,7 +631,7 @@ impl Instance {
             return Err(BundleStatusV1::InvalidArgument);
         }
         let engram = match self.engram.as_ref().filter(|_| self.dspark.is_none()) {
-            Some(engram) => Some(engram.hash(&inputs).map_err(|error| {
+            Some(engram) => Some(engram.hash(inputs).map_err(|error| {
                 self.log(&format!("Engram rows: {error}"));
                 BundleStatusV1::InvalidArgument
             })?),
@@ -607,10 +642,11 @@ impl Instance {
         } else {
             inputs.live_tokens()
         };
-        let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs, live);
-        self.steps.set(self.steps.get() + 1);
+        let index = index_upload(self.config.shape.geometry, self.steps.get(), inputs, live);
+        advance_step();
         let mut run = Run {
             prefill_engram: None,
+            sync_engram: None,
             ar_engram,
             bank,
             dma: None,
@@ -621,7 +657,7 @@ impl Instance {
             engram,
             media,
             window,
-            inputs,
+            inputs: std::mem::take(inputs),
             cache,
             arena,
             layout,
@@ -634,61 +670,129 @@ impl Instance {
             tails,
             phase,
         };
-        if skipping {
-            run.skip = Some(self.plans.plan(self, &run).map_err(|error| {
-                self.log(&error);
-                BundleStatusV1::InternalError
-            })?);
-        } else {
-            run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
-                self.log(&error);
-                BundleStatusV1::InternalError
-            })?;
-            if run.micro.is_some() {
-                // The micro plan rebuilds attention with smaller row parts.
-                // Its prefix and tail contain no cache consumers or producers.
-                run.cache = None;
-            }
-            if run.micro.is_none() {
-                run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
+        let planned = (|| {
+            if skipping {
+                run.skip = Some(self.plans.plan(self, &run).map_err(|error| {
+                    self.log(&error);
+                    BundleStatusV1::InternalError
+                })?);
+            } else {
+                run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
                     self.log(&error);
                     BundleStatusV1::InternalError
                 })?;
-                if run.dma.is_none() {
-                    run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+                if run.micro.is_some() {
+                    // The micro plan rebuilds attention with smaller row parts.
+                    // Its prefix and tail contain no cache consumers or producers.
+                    run.cache = None;
+                }
+                if run.micro.is_none() {
+                    run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
                         self.log(&error);
                         BundleStatusV1::InternalError
                     })?;
+                    if run.dma.is_none() {
+                        run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+                            self.log(&error);
+                            BundleStatusV1::InternalError
+                        })?;
+                    }
                 }
             }
-        }
-        // Alternate communication schedules keep their existing upload path.
-        // Upper-skip and ordinary eager programs retain their exact launches.
-        let eligible = run.phase.prefill()
-            && run.media.is_none()
-            && run.engram.is_some()
-            && run.dma.is_none()
-            && run.skip.as_ref().is_none_or(|skip| !skip.uses_dma())
-            && run.micro.is_none()
-            && run.overlap.is_none()
-            && !self.taps.text();
-        if let Some(gathers) = self.prefill_engram.as_ref().filter(|_| eligible) {
-            let (programs, flags, stages) = if let Some(skip) = &run.skip {
-                let body = skip.body();
-                (&body.0, &body.1, &body.2)
+            run.sync_engram = if run.phase.prefill() {
+                self.prefill_gather_reason(&run)
+            } else if run.arena == DECODE {
+                (!run.ar_engram).then_some(self.ar_engram_fallback)
             } else {
-                (&run.programs, &run.collectives, &run.stages)
+                Some(crate::engram_rows::SyncReason::HostTarget)
             };
-            run.prefill_engram = Some(
-                super::prefill_engram::Plan::new(gathers, programs, flags, stages).map_err(
-                    |error| {
-                        self.log(&error);
-                        BundleStatusV1::InternalError
-                    },
-                )?,
-            );
+            if let Some(gathers) = self
+                .prefill_engram
+                .as_ref()
+                .filter(|_| run.phase.prefill() && run.sync_engram.is_none())
+            {
+                let (programs, flags, stages) = if let Some(skip) = &run.skip {
+                    let body = skip.body();
+                    (&body.0, &body.1, &body.2)
+                } else {
+                    (&run.programs, &run.collectives, &run.stages)
+                };
+                run.prefill_engram = Some(
+                    super::prefill_engram::Plan::new(gathers, programs, flags, stages).map_err(
+                        |error| {
+                            self.log(&error);
+                            BundleStatusV1::InternalError
+                        },
+                    )?,
+                );
+            }
+            Ok(())
+        })();
+        if let Err(error) = planned {
+            *inputs = std::mem::take(&mut run.inputs);
+            return Err(error);
         }
         Ok(run)
+    }
+
+    /// Decide eligibility and the synchronous cause from the same selected plan.
+    fn prefill_gather_reason(&self, run: &Run) -> Option<crate::engram_rows::SyncReason> {
+        use crate::engram_rows::SyncReason;
+        if run.media.is_some() {
+            Some(SyncReason::Media)
+        } else if self.taps.text() {
+            Some(SyncReason::Taps)
+        } else if run.dma.is_some()
+            || run.skip.as_ref().is_some_and(|skip| skip.uses_dma())
+            || run.micro.is_some()
+            || run.overlap.is_some()
+        {
+            Some(SyncReason::PrefillSchedule)
+        } else if self.prefill_engram.is_none() {
+            Some(self.prefill_engram_fallback)
+        } else if run.engram.is_none() {
+            Some(SyncReason::NoPreparedGather)
+        } else {
+            None
+        }
+    }
+
+    /// Plan a legacy DSpark prefill without issuing encoder or gather work.
+    /// Execution consumes this plan after the original staging uploads and encode.
+    pub(super) fn stage_sync_prefill(
+        &self,
+        request: &[u8],
+        inputs: &mut PhaseInputs,
+        hashed: &Hashed,
+    ) -> StagedPrefill {
+        let advance_step = std::cell::Cell::new(false);
+        let planned = (|| {
+            let media = if self.media.is_some() {
+                let batch =
+                    BatchCodecV1::decode(request).map_err(|_| BundleStatusV1::InvalidArgument)?;
+                let plan = crate::encoders::ARENA
+                    .plan(batch.media(), inputs, batch.items().len())
+                    .map_err(|_| BundleStatusV1::InvalidArgument)?;
+                super::media::flags(
+                    &plan.source_rows,
+                    &inputs.token_ids,
+                    self.config.shape.geometry.shape.tokens.image,
+                )
+                .map_err(|_| BundleStatusV1::InvalidArgument)?
+            } else {
+                None
+            };
+            let mut run = self.prepare_run(inputs, media, Some(hashed.clone()), || {
+                advance_step.set(true)
+            })?;
+            // Staging performs the synchronous upload before target execution.
+            run.engram = None;
+            Ok(Box::new(run))
+        })();
+        StagedPrefill::Planned {
+            run: planned,
+            advance_step: advance_step.get(),
+        }
     }
 
     /// The serving pages and request state the stages address.
@@ -815,26 +919,9 @@ impl Instance {
                         .filter(|_| run.prefill_engram.is_none() && !run.ar_engram),
                     self.image,
                 ) {
-                    use crate::engram_rows::SyncReason;
-                    let reason = if run.phase.prefill() {
-                        if run.media.is_some() {
-                            SyncReason::Media
-                        } else if self.taps.text() {
-                            SyncReason::Taps
-                        } else if run.dma.is_some()
-                            || run.skip.as_ref().is_some_and(|skip| skip.uses_dma())
-                            || run.micro.is_some()
-                            || run.overlap.is_some()
-                        {
-                            SyncReason::PrefillSchedule
-                        } else {
-                            self.prefill_engram_fallback
-                        }
-                    } else if run.arena == DECODE {
-                        self.ar_engram_fallback
-                    } else {
-                        SyncReason::HostTarget
-                    };
+                    let reason = run
+                        .sync_engram
+                        .expect("synchronous gather has a selected cause");
                     engram
                         .gather(
                             &self.services,
@@ -1389,15 +1476,19 @@ impl Instance {
         &mut self,
         request: &[u8],
         sink: &mut ExecuteResultSinkV1,
-        step: PackedStep,
-        prefill_engram: Option<Hashed>,
+        mut step: PackedStep,
+        mut prefill_engram: Option<StagedPrefill>,
         mut times: Option<&mut crate::dspark::timing::TargetTimes>,
     ) -> BundleStatusV1 {
-        let mut items = items(&step.prefill);
+        let prefill = prefill_engram
+            .as_mut()
+            .and_then(StagedPrefill::inputs_mut)
+            .unwrap_or(&mut step.prefill);
+        let mut items = items(prefill);
         items.extend(self::items(&step.decode));
         // The encoder runs before the step opens: a failure leaves no step
         // to cancel, and the prefill's injects read what it wrote.
-        let media = match self.encode(request, &step.prefill) {
+        let media = match self.encode(request, prefill) {
             Ok(media) => media,
             Err(error) => {
                 if let Some(media) = &self.media
@@ -1410,22 +1501,33 @@ impl Instance {
         };
         // A diagnostic build writes the step's encoder rows (`crate::taps`).
         if let Some(encoder) = self.media.as_ref().map(|media| &media.encoder)
-            && let Err(error) = self.taps.step(
-                &self.services,
-                self.ranks[0].2,
-                encoder,
-                request,
-                &step.prefill,
-            )
+            && let Err(error) =
+                self.taps
+                    .step(&self.services, self.ranks[0].2, encoder, request, prefill)
         {
             self.log(&format!("encoder taps: {error}"));
             return BundleStatusV1::InternalError;
         }
         let mut runs = Vec::new();
-        for (inputs, media, hashed) in [
-            (step.prefill, media, prefill_engram),
-            (step.decode, None, None),
-        ] {
+        let hashes = match prefill_engram {
+            Some(StagedPrefill::Hashes(hashed)) => Some(hashed),
+            Some(StagedPrefill::Planned { run, advance_step }) => {
+                if advance_step {
+                    self.steps.set(self.steps.get() + 1);
+                }
+                let run = match run {
+                    Ok(run) => run,
+                    Err(error) => return error,
+                };
+                if run.media != media {
+                    return BundleStatusV1::InvalidArgument;
+                }
+                runs.push(*run);
+                None
+            }
+            None => None,
+        };
+        for (inputs, media, hashed) in [(step.prefill, media, hashes), (step.decode, None, None)] {
             if inputs.request_ids.is_empty() {
                 continue;
             }

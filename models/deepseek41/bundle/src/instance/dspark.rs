@@ -44,7 +44,8 @@ struct Work<'a> {
     step: Option<PackedStep>,
     sink: Option<&'a mut ExecuteResultSinkV1>,
     target_times: Option<crate::dspark::timing::TargetTimes>,
-    prefill_hashes: Option<crate::engram_rows::Hashed>,
+    /// Retained IDs or the selected legacy plan, including its synchronous cause.
+    prefill_engram: Option<super::execute::StagedPrefill>,
 }
 
 impl Program for Work<'_> {
@@ -84,7 +85,12 @@ impl Program for Work<'_> {
             .as_deref_mut()
             .ok_or("DSpark target has no sink")?;
         let mut position = 0;
-        for phase in [&mut step.prefill, &mut step.decode] {
+        let prefill = self
+            .prefill_engram
+            .as_mut()
+            .and_then(super::execute::StagedPrefill::inputs_mut)
+            .unwrap_or(&mut step.prefill);
+        for phase in [prefill, &mut step.decode] {
             for item in 0..phase.request_ids.len() {
                 let target = rows
                     .get(position)
@@ -109,7 +115,7 @@ impl Program for Work<'_> {
             self.request,
             sink,
             step,
-            self.prefill_hashes.take(),
+            self.prefill_engram.take(),
             self.target_times.as_mut(),
         );
         if status != BundleStatusV1::Success {
@@ -161,13 +167,22 @@ impl Program for Work<'_> {
         &mut self,
         hashed: &crate::engram_rows::Hashed,
     ) -> Result<bool, String> {
+        if self.prefill_engram.is_some() {
+            return Err("DSpark prefill already staged".into());
+        }
         if self.instance.prefill_engram.is_none() {
+            let step = self
+                .step
+                .as_mut()
+                .ok_or("DSpark prefill has no packed step")?;
+            self.prefill_engram = Some(self.instance.stage_sync_prefill(
+                self.request,
+                &mut step.prefill,
+                hashed,
+            ));
             return Ok(false);
         }
-        if self.prefill_hashes.is_some() {
-            return Err("DSpark prefill hashes already staged".into());
-        }
-        self.prefill_hashes = Some(hashed.clone());
+        self.prefill_engram = Some(super::execute::StagedPrefill::Hashes(hashed.clone()));
         Ok(true)
     }
 
@@ -178,7 +193,12 @@ impl Program for Work<'_> {
     ) -> crate::engram_rows::SyncReason {
         use crate::engram_rows::SyncReason;
         if prefill {
-            return self.instance.prefill_engram_fallback;
+            return match &self.prefill_engram {
+                Some(super::execute::StagedPrefill::Planned { run: Ok(run), .. }) => {
+                    run.sync_engram.expect("legacy prefill has a cause")
+                }
+                _ => self.instance.prefill_engram_fallback,
+            };
         }
         let Some(device) = &self.instance.dspark else {
             return SyncReason::NoPreparedGather;
@@ -344,7 +364,7 @@ impl Instance {
             target_times: times
                 .as_ref()
                 .map(|_| crate::dspark::timing::TargetTimes::default()),
-            prefill_hashes: None,
+            prefill_engram: None,
         };
         let mut host = Adapter {
             program: &mut program,

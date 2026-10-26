@@ -19,21 +19,12 @@
 //! own ops only choose drafts, which the target's verify accepts or
 //! rejects, so they ask nothing.
 
-use kernel_core::backend::Need;
-use kernel_core::contract::{AttentionPhase, RecurrentPhase};
-use kernel_core::precision::ExecutionPhase;
-use kernel_core::properties::{Anchors, Chunk, Invariance, Rows};
+use bundle_runtime::exact;
+pub(crate) use bundle_runtime::exact::{Kind, need, verify};
+use kernel_core::properties::{Anchors, Chunk, Invariance};
 use model_glm5next_contract::contract::PREFILL_GRANULE;
 
 use crate::program::Phase;
-
-/// The kind of phase an op is prepared for, however its family names it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Kind {
-    Prefill,
-    Decode,
-    Verify,
-}
 
 impl From<Phase> for Kind {
     fn from(phase: Phase) -> Kind {
@@ -45,42 +36,9 @@ impl From<Phase> for Kind {
     }
 }
 
-impl From<AttentionPhase> for Kind {
-    fn from(phase: AttentionPhase) -> Kind {
-        match phase {
-            AttentionPhase::Prefill => Kind::Prefill,
-            AttentionPhase::Decode => Kind::Decode,
-            AttentionPhase::Verify => Kind::Verify,
-        }
-    }
-}
-
-impl From<RecurrentPhase> for Kind {
-    fn from(phase: RecurrentPhase) -> Kind {
-        match phase {
-            RecurrentPhase::Prefill => Kind::Prefill,
-            RecurrentPhase::Decode => Kind::Decode,
-            RecurrentPhase::Verify { .. } => Kind::Verify,
-        }
-    }
-}
-
-impl From<ExecutionPhase> for Kind {
-    fn from(phase: ExecutionPhase) -> Kind {
-        match phase {
-            ExecutionPhase::Prefill => Kind::Prefill,
-            ExecutionPhase::Decode => Kind::Decode,
-            ExecutionPhase::Verify => Kind::Verify,
-        }
-    }
-}
-
 /// What a prefill op needs: its rows kept over chunk splits on the
 /// granule.
-pub(crate) const PREFILL: Invariance = Invariance {
-    chunk: Chunk::Granule(PREFILL_GRANULE),
-    ..Invariance::NONE
-};
+pub(crate) const PREFILL: Invariance = exact::prefill(PREFILL_GRANULE);
 
 /// `exact` with the anchors a prefill op that writes per-slot state needs:
 /// its state at anchors on the granule's multiples. Other phases' needs
@@ -94,35 +52,15 @@ pub(crate) fn with_state(exact: Invariance) -> Invariance {
     }
 }
 
-/// What a verify op of up to `rows` rows needs: each row's one-row bits.
-pub(crate) const fn verify(rows: u32) -> Invariance {
-    Invariance {
-        rows: Rows::OneRow { max: rows },
-        ..Invariance::NONE
-    }
-}
-
 /// What an op serving every phase needs: [`PREFILL`] and the one-row bits
 /// of verify launches of up to `rows` rows.
 pub(crate) const fn every_phase(rows: u32) -> Invariance {
-    Invariance {
-        rows: Rows::OneRow { max: rows },
-        ..PREFILL
-    }
+    exact::every_phase(PREFILL, rows)
 }
 
 /// What an op of `phase`'s kind needs, prepared for `capacity` rows.
 pub(crate) fn of_phase(phase: impl Into<Kind>, capacity: u32) -> Invariance {
-    match phase.into() {
-        Kind::Prefill => PREFILL,
-        Kind::Decode => Invariance::NONE,
-        Kind::Verify => verify(capacity),
-    }
-}
-
-/// `Need::rows(capacity)` with `exact`.
-pub(crate) fn need(capacity: u32, exact: Invariance) -> Need {
-    Need::rows(capacity).with_exact(exact)
+    exact::of_phase(PREFILL, phase, capacity)
 }
 
 /// The most rows a verify launch carries: the widest decode or verify step

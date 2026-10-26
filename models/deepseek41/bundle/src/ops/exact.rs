@@ -12,19 +12,12 @@
 //!
 //! Ops that serve every phase ask both.
 
-use kernel_core::backend::Need;
-use kernel_core::properties::{Chunk, Invariance, Rows};
+use bundle_runtime::exact;
+pub(crate) use bundle_runtime::exact::{Kind, need, verify};
+use kernel_core::properties::Invariance;
 use model_deepseek41_contract::serving::PREFILL_GRANULE;
 
 use crate::program::Phase;
-
-/// The kind of phase an op is prepared for.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Kind {
-    Prefill,
-    Decode,
-    Verify,
-}
 
 impl From<Phase> for Kind {
     fn from(phase: Phase) -> Kind {
@@ -36,51 +29,17 @@ impl From<Phase> for Kind {
     }
 }
 
-impl From<kernel_core::precision::ExecutionPhase> for Kind {
-    fn from(phase: kernel_core::precision::ExecutionPhase) -> Kind {
-        use kernel_core::precision::ExecutionPhase;
-        match phase {
-            ExecutionPhase::Prefill => Kind::Prefill,
-            ExecutionPhase::Decode => Kind::Decode,
-            ExecutionPhase::Verify => Kind::Verify,
-        }
-    }
-}
-
 /// What a prefill op needs: its rows kept over chunk splits on the
 /// granule.
-pub(crate) const PREFILL: Invariance = Invariance {
-    chunk: Chunk::Granule(PREFILL_GRANULE),
-    ..Invariance::NONE
-};
-
-/// What a verify op of up to `rows` rows needs: each row's one-row bits.
-pub(crate) const fn verify(rows: u32) -> Invariance {
-    Invariance {
-        rows: Rows::OneRow { max: rows },
-        ..Invariance::NONE
-    }
-}
+pub(crate) const PREFILL: Invariance = exact::prefill(PREFILL_GRANULE);
 
 /// What an op serving every phase needs: [`PREFILL`] and the one-row bits
 /// of verify launches of up to `rows` rows.
 pub(crate) const fn every_phase(rows: u32) -> Invariance {
-    Invariance {
-        rows: Rows::OneRow { max: rows },
-        ..PREFILL
-    }
+    exact::every_phase(PREFILL, rows)
 }
 
 /// What an op of `phase`'s kind needs, prepared for `capacity` rows.
 pub(crate) fn of_phase(phase: impl Into<Kind>, capacity: u32) -> Invariance {
-    match phase.into() {
-        Kind::Prefill => PREFILL,
-        Kind::Decode => Invariance::NONE,
-        Kind::Verify => verify(capacity),
-    }
-}
-
-/// `Need::rows(capacity)` with `exact`.
-pub(crate) fn need(capacity: u32, exact: Invariance) -> Need {
-    Need::rows(capacity).with_exact(exact)
+    exact::of_phase(PREFILL, phase, capacity)
 }

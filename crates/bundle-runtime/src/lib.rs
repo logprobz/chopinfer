@@ -17,6 +17,7 @@ pub mod drafter;
 pub mod encoder;
 pub mod entries;
 pub mod entry;
+pub mod exact;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_host;
 pub mod geometry;

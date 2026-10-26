@@ -105,7 +105,6 @@ ANNOTATIONS = [
     re.compile(rf'{_LABEL} drafts OwnedDraftTokensV1 \{{ request_id: {_N}, tokens: \[(?:{_N}(?:, {_N})*)?\] \}}'),
 ]
 BUFFER_HANDLE = re.compile(r'(BundleDeviceBufferHandleV1 \{ raw: )(\d+)( \})')
-LAUNCH_SYMBOL = re.compile(rf'(?<!\w){KERNEL_SYMBOL}(?!\w)')
 
 
 def form(line):
@@ -186,7 +185,8 @@ class Mapper:
         require(not (set(map(int, RAW.findall(line))) & self.removed_buffers), 'line uses a removed allocation')
         kind, m, roles = found
         if kind == 'launch' and self.removed_symbols:
-            require(not (set(LAUNCH_SYMBOL.findall(line)) & self.removed_symbols),
+            # Rank-plan launches also accept symbols outside KERNEL_SYMBOL.
+            require(not any(re.search(r'(?<!\w)' + re.escape(symbol) + r'(?!\w)', line) for symbol in self.removed_symbols),
                     'launch uses a deactivated symbol without a surviving provider')
         for group in range(len(roles), 0, -1):
             new = self.identity(roles[group - 1], int(m[group]))

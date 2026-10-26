@@ -151,6 +151,32 @@ class ActivationTests(unittest.TestCase):
         self.h.base['step'] = self.h.head['step'] = [line]
         self.run_case(1, 'launch uses a deactivated symbol')
 
+    def rank_deactivation(self, owner):
+        from unittest.mock import patch
+        self.reverse()
+        symbol = 'external_kernel_v1'
+        self.h.base['create'][2] = ('resolve', 3, 2, symbol)
+        records = self.h.decl['handles'][self.fixture]['removed'][1]['records']
+        records[1][1] = 'resolve @id ' + symbol
+        records[2][3] = symbol
+        for world in (self.h.base, self.h.head):
+            world.setdefault(owner, []).append('launch r0 ' + symbol)
+        with patch.dict(toy.SYMBOLS, comm_f32=[symbol]):
+            self.run_case(1, 'launch uses a deactivated symbol')
+            # A different symbol containing the removed name stays literal.
+            for world in (self.h.base, self.h.head):
+                world[owner][-1] += '_other'
+            self.run_case()
+
+    def test_deactivated_rank_symbol_is_refused_in_create(self):
+        self.rank_deactivation('create')
+
+    def test_deactivated_rank_symbol_is_refused_in_step(self):
+        self.rank_deactivation('step')
+
+    def test_deactivated_rank_symbol_is_refused_in_history(self):
+        self.rank_deactivation('history')
+
     def test_deactivated_launch_requires_an_exact_removal_or_substitution(self):
         self.reverse()
         line = toy.launch(1, F32, 4, ['ScalarU32(64)'])

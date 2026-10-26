@@ -54,10 +54,32 @@ def load(run, allow_void=False):
 
 def arm_installs(run, rows):
     path = Path(run) / 'summary.json'
-    installs = json.loads(path.read_text()).get('arm_installs', {}) if path.exists() else {}
-    for row in rows if installs else []:
+    summary = json.loads(path.read_text()) if path.exists() else {}
+    config = json.loads((Path(run) / 'config.json').read_text())
+    import tune
+    processes = summary.get('processes', {})
+    metadata = ('arm_installs' in summary or any('install' in arm for arm in config['model'].get('arms', []))
+                or any('install' in row or 'revision' in row for row in [*rows, *processes.values()]))
+    if not metadata:
+        return {}
+    declared = tune.arms(config)
+    installs = summary.get('arm_installs')
+    if (not isinstance(installs, dict) or set(installs) != {arm['label'] for arm in declared}
+            or any(not isinstance(value, dict) or set(value) != {'install', 'revision'}
+                   or any(not isinstance(v, str) or not v for v in value.values()) for value in installs.values())):
+        raise ValueError('missing or incomplete arm install provenance')
+    for arm in declared:
+        if 'install' in arm and arm['install'] != installs[arm['label']]['install']:
+            raise ValueError('arm install provenance differs from its configuration')
+    if config['model'].get('mode') != 'ab' and len({v['install'] for v in installs.values()}) > 1:
+        raise ValueError('multiple installs require mode ab')
+    for row in rows:
         if {key: row.get(key) for key in ('install', 'revision')} != installs.get(row.get('arm')):
             raise ValueError('window install or revision differs from its arm')
+    for visit in tune.visits(config):
+        if visit['label'] in processes and {key: processes[visit['label']].get(key) for key in ('install', 'revision')} \
+                != installs.get(visit['arm']):
+            raise ValueError('process install provenance differs from its arm')
     return installs
 
 

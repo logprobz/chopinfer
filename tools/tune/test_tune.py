@@ -142,6 +142,57 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_multi_install_requires_ab_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            for mode in ('sweep', 'costs', 'exact'):
+                with self.subTest(mode=mode):
+                    model['mode'] = mode
+                    result = stage_fixture(root, model, destination=mode)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('multiple installs require mode ab', result.stderr)
+
+    def test_metadata_jobs_require_complete_consistent_provenance(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root)
+            identities = {'a': {'install': 'base', 'revision': '1' * 40},
+                          'b': {'install': 'head', 'revision': '2' * 40}}
+            for arm in config['model']['arms']:
+                arm['install'] = identities[arm['label']]['install']
+            tune.r.write(root / 'config.json', config)
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                tune.r.write(path, {**row, **identities[row['arm']]})
+            for label, process in summary['processes'].items():
+                process.update(identities[label.split('-')[0]])
+            for value in (None, {}, {'a': identities['a']}, {**identities, 'b': {'install': 'head'}}):
+                with self.subTest(map=value):
+                    modified = copy.deepcopy(summary)
+                    if value is not None:
+                        modified['arm_installs'] = value
+                    tune.r.write(root / 'summary.json', modified)
+                    with self.assertRaisesRegex(ValueError, 'provenance'):
+                        report.ab(root)
+            summary['arm_installs'] = identities
+            tune.r.write(root / 'summary.json', summary)
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            path = root / 'b-r1/windows/c8.json'
+            row = json.loads(path.read_text())
+            tune.r.write(path, {**row, **identities['a']})
+            for present in (True, False):
+                with self.subTest(mixed=True, present=present):
+                    modified = copy.deepcopy(summary)
+                    if not present:
+                        modified.pop('arm_installs')
+                    tune.r.write(root / 'summary.json', modified)
+                    with self.assertRaisesRegex(ValueError, 'provenance|revision differs'):
+                        report.ab(root)
+            ab_fixture(root)
+            self.assertEqual(report.ab(root)['status'], 'valid')
+
     def test_stage_two_installs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

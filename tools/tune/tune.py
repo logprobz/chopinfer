@@ -146,6 +146,8 @@ def arm_identity(seal, arm):
 
 def check_installs(seal):
     installs, default = sealed_installs(seal)
+    if len(installs) > 1 and seal['config']['model'].get('mode') != 'ab':
+        raise ValueError('multiple installs require mode ab')
     if default not in installs or installs[default] != seal['install']:
         raise ValueError('default install differs from the first sealed install')
     used = {arm_install(seal, arm)[0] for arm in arms(seal['config'])}

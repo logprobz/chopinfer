@@ -105,6 +105,7 @@ ANNOTATIONS = [
     re.compile(rf'{_LABEL} drafts OwnedDraftTokensV1 \{{ request_id: {_N}, tokens: \[(?:{_N}(?:, {_N})*)?\] \}}'),
 ]
 BUFFER_HANDLE = re.compile(r'(BundleDeviceBufferHandleV1 \{ raw: )(\d+)( \})')
+LAUNCH_SYMBOL = re.compile(rf'(?<!\w){KERNEL_SYMBOL}(?!\w)')
 
 
 def form(line):
@@ -148,10 +149,11 @@ class Mapper:
     not a stream (an encoder's resolve 1 and host stream 1). Any other line
     is refused. Every other identity is mapped the same way in all owners."""
 
-    def __init__(self, buffers, functions, streams, ids, closed=True, removed_buffers=(), removed_streams=()):
+    def __init__(self, buffers, functions, streams, ids, closed=True, removed_buffers=(), removed_streams=(), removed_symbols=()):
         self.buffers, self.functions, self.streams, self.ids = buffers, functions, streams, ids
         self.closed = closed
         self.removed_buffers, self.removed_streams = set(removed_buffers), set(removed_streams)
+        self.removed_symbols = set(removed_symbols)
         self.issued = set(ids) | set(ids.values())
         self.stream_images = set(streams.values())
 
@@ -183,6 +185,9 @@ class Mapper:
             return BUFFER_HANDLE.sub(lambda r: f'{r[1]}{self.buffers.get(int(r[2]), int(r[2]))}{r[3]}', line)
         require(not (set(map(int, RAW.findall(line))) & self.removed_buffers), 'line uses a removed allocation')
         kind, m, roles = found
+        if kind == 'launch' and self.removed_symbols:
+            require(not (set(LAUNCH_SYMBOL.findall(line)) & self.removed_symbols),
+                    'launch uses a deactivated symbol without a surviving provider')
         for group in range(len(roles), 0, -1):
             new = self.identity(roles[group - 1], int(m[group]))
             line = line[:m.start(group)] + str(new) + line[m.end(group):]

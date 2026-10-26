@@ -391,7 +391,9 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         # Journal bodies are not a closed grammar (history.Mapper).
         removed_buffers={r[1] for slot,r in ai['allocations'].items() if slot not in ids}
         removed_streams=set(ai['streams'])-set(ids)
-        remapped=history.Mapper(buffers,functions,streams,ids,closed=False,removed_buffers=removed_buffers,removed_streams=removed_streams)
+        removed_symbols=witness.handles.removed_symbols if device is not None else ()
+        remapped=history.Mapper(buffers,functions,streams,ids,closed=False,removed_buffers=removed_buffers,removed_streams=removed_streams,
+                                removed_symbols=removed_symbols)
         cp=rule['create_policy']
         create_counts=collections.Counter()
         expected,observed,ctrace,ckept=compare(a['create_lines'],b['create_lines'],
@@ -452,7 +454,8 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         old=[notes_a[i] for i in hist_a]
         new=[notes_b[i] for i in hist_b]
         record.update(base_operations=len(old),head_operations=len(new),operation_kinds=history.kinds(new))
-        expected,observed,htrace,hkept=compare(old,new,hist_a,hist_b,hp,hcounts,history.Mapper(buffers,functions,streams,ids,removed_buffers=removed_buffers,removed_streams=removed_streams))
+        expected,observed,htrace,hkept=compare(old,new,hist_a,hist_b,hp,hcounts,history.Mapper(buffers,functions,streams,ids,removed_buffers=removed_buffers,removed_streams=removed_streams,
+                                                                                         removed_symbols=removed_symbols))
         for line in observed:
             history.classify(line)
         history.check_graph_nodes(notes_a,'base')

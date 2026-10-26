@@ -774,6 +774,12 @@ class MapperTests(unittest.TestCase):
         line = self.view(4294967300, 4294967301)
         self.assertEqual(mapper(line), line)
 
+    def test_removed_buffer_cannot_survive_in_an_annotation(self):
+        import history
+        mapper = history.Mapper({}, {}, {}, {}, closed=False, removed_buffers={4294967300})
+        with self.assertRaisesRegex(history.Unproven, 'line uses a removed allocation'):
+            mapper(self.view(4294967301, 4294967300))
+
     def test_a_fixed_stream_may_not_be_the_image_of_a_created_stream(self):
         from engine import Unproven
         # Created stream 2 maps to 3; fixed stream 3 would alias it.

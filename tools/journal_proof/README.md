@@ -532,6 +532,10 @@ must match its lock, the resolved symbols must belong to that lock, and the
 entire lock entry must be byte-identical in both revisions. `removed` uses
 base positions and records. The opposite side must not load that module in
 this fixture; other fixtures may keep loading it without a declaration.
+An activated or deactivated symbol may not also be resolved outside that
+activation on either side. Retained launches cannot use a deactivated
+symbol with no surviving provider; remove or substitute those launches
+explicitly. The operation generator also makes such uses explicit edits.
 
 No kind implicitly authorizes uses or releases of a new or removed handle.
 The spec generator reads declared handle positions before aligning the other

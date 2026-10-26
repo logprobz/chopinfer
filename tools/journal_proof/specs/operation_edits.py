@@ -30,7 +30,7 @@ def edits(decl, modules, fixture, ae, be, rule, create, owners_a, owners_b):
     device = layout.Device(decl, witness, ae, be, ai, bi, create)
     mapper = history.Mapper(buffers, functions, streams, ids, closed=False,
                             removed_buffers={r[1] for i, r in ai['allocations'].items() if i not in ids},
-                            removed_streams=set(ai['streams']) - set(ids))
+                            removed_streams=set(ai['streams']) - set(ids), removed_symbols=witness.handles.removed_symbols)
     base = [row[1] for row in ae if row[0] == 'note']
     head = [row[1] for row in be if row[0] == 'note']
     old, new, positions_a, positions_b = [], [], [], []

@@ -34,7 +34,13 @@ def check(decl, fixture, modules, witness, a, b):
             need(locked is not None and locked[0] == 'unchanged', f'{row[2]}: module activation is not authenticated')
             require(len(row) == 6 and row[5] == locked[1]['sha256'],
                     f'{row[2]}: activated payload is not the locked SHA-256')
+        outside = {r[3] for j, r in inv['resolves'].items() if j not in resolves}
+        outside.update(r[3] for r in other['resolves'].values())
         for i in resolves:
             row = inv['resolves'][i]
             name = inv['modules'][row[2]][2]
             require(row[3] in modules[name][1]['symbols'], f'{row[3]} is not an entry of its locked module')
+            require(row[3] not in outside,
+                    f'{row[3]} is also resolved from a module the activation does not change')
+    witness.removed_symbols = {a['resolves'][i][3] for i in witness.removed if i in a['resolves']}
+    witness.removed_symbols.difference_update(r[3] for r in b['resolves'].values())

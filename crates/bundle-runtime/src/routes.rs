@@ -3,6 +3,9 @@ use kernel_core::route::{RouteClass, RouteTag};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+/// Reserved route symbol for bundle-facing synchronous mapped-row calls.
+pub const MAPPED_GATHER_SYMBOL: &str = "host.gather_mapped_rows";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RouteCounts {
     pub fallback_launches: u64,

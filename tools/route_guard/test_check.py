@@ -160,6 +160,27 @@ class CheckTests(unittest.TestCase):
         path.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
         return path, route
 
+    def test_sync_host_symbol_rejects_fast_metadata(self):
+        for baseline in (0, 2):
+            with self.subTest(baseline=baseline):
+                self.tags = [tag for tag in self.tags if tag['family'] != 'engram_gather']
+                steps, route = self.host_steps()
+                sync = self.tags.pop()
+                fast = {**sync, 'entry': 'engram/mislabelled', 'class': 'Fast'}
+                self.tags.append(fast)
+                route['entries'] = {fast['entry']: {**fast, 'launches': 4 - baseline}}
+                if baseline:
+                    self.tags.append(sync)
+                    route['entries'][sync['entry']] = {**sync, 'launches': baseline}
+                route.update(fallback_launches=baseline,
+                             families={'engram_gather': baseline} if baseline else {})
+                self.write_classes()
+                steps.write_text(json.dumps({'schema': 'chopinfer.step.v1', 'route': route}) + '\n')
+                with self.assertRaisesRegex(CHECK.EvidenceError, 'synchronous mapped gather'):
+                    CHECK.load_classes(self.classes)
+                self.assertEqual(self.run_check('--steps', steps), 2)
+                self.tags = [tag for tag in self.tags if tag['family'] != 'engram_gather']
+
     def test_host_calls_use_steps_without_nsys(self):
         steps, _ = self.host_steps()
         self.assertEqual(self.run_check('--steps', steps), 1)

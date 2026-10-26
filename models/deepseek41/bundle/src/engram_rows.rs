@@ -78,7 +78,7 @@ impl SyncReason {
 
     fn tag(self) -> kernel_core::route::RouteTag {
         kernel_core::route::RouteTag::new(
-            "host.gather_mapped_rows",
+            bundle_runtime::routes::MAPPED_GATHER_SYMBOL,
             kernel_core::route::RouteClass::Baseline,
             "engram_gather",
             [],

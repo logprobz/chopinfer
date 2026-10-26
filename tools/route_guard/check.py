@@ -13,6 +13,9 @@ import tomllib
 from fnmatch import fnmatchcase
 
 
+MAPPED_GATHER_SYMBOL = 'host.gather_mapped_rows'
+
+
 class EvidenceError(ValueError):
     pass
 
@@ -26,6 +29,8 @@ def load_classes(path):
     for tag in document['tags']:
         if tag['class'] not in ('Fast', 'Baseline', 'Reference'):
             raise EvidenceError('invalid route class')
+        if tag['symbol'] == MAPPED_GATHER_SYMBOL and tag['class'] == 'Fast':
+            raise EvidenceError('a synchronous mapped gather cannot be a Fast route')
         identity = tag['entry']
         if identity in entries:
             raise EvidenceError(f'duplicate route entry {identity}')

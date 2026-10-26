@@ -97,6 +97,12 @@ pub(super) struct Failure {
 }
 
 pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Failure> {
+    assert!(
+        !tags
+            .iter()
+            .any(|tag| tag.symbol == crate::routes::MAPPED_GATHER_SYMBOL && tag.class == "Fast"),
+        "a synchronous mapped gather cannot be a Fast route"
+    );
     // A reused symbol cannot establish which registration was selected. Require
     // all its launches to carry an entry before interpreting admission gaps.
     let fallback_symbols: BTreeSet<_> = tags
@@ -105,9 +111,11 @@ pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Fail
         .map(|tag| tag.symbol.as_str())
         .collect();
     // This reserved host symbol needs evidence even in models with no tags.
-    let mut entries = BTreeMap::<&str, Vec<&str>>::from([("host.gather_mapped_rows", Vec::new())]);
+    let mut entries =
+        BTreeMap::<&str, Vec<&str>>::from([(crate::routes::MAPPED_GATHER_SYMBOL, Vec::new())]);
     for tag in tags.iter().filter(|tag| {
-        fallback_symbols.contains(tag.symbol.as_str()) || tag.symbol == "host.gather_mapped_rows"
+        fallback_symbols.contains(tag.symbol.as_str())
+            || tag.symbol == crate::routes::MAPPED_GATHER_SYMBOL
     }) {
         entries.entry(&tag.symbol).or_default().push(&tag.entry);
     }
@@ -181,7 +189,7 @@ pub(super) fn failures(samples: &[Sample], tags: &[Tag], tier: Tier) -> Vec<Fail
                 let lo = group.partition_point(|s| s.rows < sample.rows.saturating_sub(radius));
                 let hi = group.partition_point(|s| s.rows <= sample.rows.saturating_add(radius));
                 let neighbour = !interior && (lo..hi).any(|j| less(j) && totals[j] < totals[i]);
-                if neighbour || interior || tag.symbol == "host.gather_mapped_rows" {
+                if neighbour || interior || tag.symbol == crate::routes::MAPPED_GATHER_SYMBOL {
                     failed.insert(Failure {
                         entry: tag.entry.clone(),
                         mode: sample.mode.clone(),
@@ -355,7 +363,7 @@ mod tests {
             phase: "prefill".into(),
             rows: 7,
             symbols: BTreeMap::from([
-                ("host.gather_mapped_rows".into(), raw),
+                (crate::routes::MAPPED_GATHER_SYMBOL.into(), raw),
                 ("engram/sync/ar_prefill".into(), selected),
             ]),
         }
@@ -363,13 +371,36 @@ mod tests {
 
     fn mapped_tag() -> Tag {
         RouteTag::new(
-            "host.gather_mapped_rows",
+            crate::routes::MAPPED_GATHER_SYMBOL,
             RouteClass::Baseline,
             "engram_gather",
             [],
         )
         .with_entry("engram/sync/ar_prefill")
         .into()
+    }
+
+    #[test]
+    fn mapped_gather_rejects_fast_evidence() {
+        for baseline in [0, 2] {
+            let mut fast = mapped_tag();
+            fast.entry = "engram/mislabelled".into();
+            fast.class = "Fast".into();
+            let mut sample = mapped_sample(4, baseline);
+            sample.symbols.insert(fast.entry.clone(), 4 - baseline);
+            let mut tags = vec![fast];
+            if baseline > 0 {
+                tags.push(mapped_tag());
+            }
+            let error = std::panic::catch_unwind(|| failures(&[sample], &tags, Tier::Quick))
+                .expect_err("Fast metadata must not cover synchronous calls");
+            let message = error
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| error.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(message.contains("synchronous mapped gather cannot be a Fast route"));
+        }
     }
 
     #[test]

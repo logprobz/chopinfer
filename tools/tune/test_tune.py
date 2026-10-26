@@ -162,10 +162,62 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_default_kv_pool_omits_fixed_flags_and_cold_requires_it(self):
+        from unittest.mock import patch
+        with patch.object(tune.r, 'KV_PAGES', 'default'):
+            self.assertNotIn('--kv-pages', tune.r.serve_options('cache', [], 'checkpoint'))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['cold_engram'] = {'warm_fraction': .1}
+            result = stage_fixture(root, model)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('cold Engram requires the full default KV pool', result.stderr)
+
+    def test_fixed_and_default_pool_stub_checks_counts_and_pressure(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env['CHOPINFER_WEIGHT_KEEPER_DIR'] = str(root / 'synthetic-keeper')
+            for case, pool, controls, expected in [('fixed', 64, {}, 'passed'),
+                ('default', 'default', {}, 'passed'),
+                ('changed', 'default', {'TUNE_STUB_KV_CHANGE_LABEL': 'b-r0'}, 'failed')]:
+                model['kv_pages'] = pool
+                result = stage_fixture(root, model, destination=f'stage-{case}')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                staged = root / f'stage-{case}'
+                spec = json.loads((staged / 'keeper-spec.json').read_text())
+                self.assertEqual('--kv-pages' in spec['argv'], pool != 'default')
+                out = root / case
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                    '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                    env={**env, **controls}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(summary['status'], expected, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0 if expected == 'passed' else 1)
+                if expected == 'passed':
+                    for row in summary['processes'].values():
+                        self.assertEqual(row['kv_pages_per_rank'], [4096 if pool == 'default' else 64])
+                        self.assertEqual(row['metrics']['preemptions'], 0)
+                        self.assertEqual(row['metrics']['prefix_cache_evictions'], 0)
+                    for path in out.glob('*/server/launch.json'):
+                        argv = json.loads(path.read_text())['serve_argv']
+                        self.assertEqual('--kv-pages' in argv, pool != 'default')
+                else:
+                    self.assertIn('default KV pages', ' '.join(summary['errors']))
+
     def test_matched_cold_reports_latency_cells_and_voids_warm_visits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, summary = ab_fixture(root, concurrencies=[1])
+            config['model']['kv_pages'] = 'default'
+            summary['kv_pages_per_rank'] = [4096]
+            for process in summary['processes'].values():
+                process['kv_pages_per_rank'] = [4096]
+            tune.r.write(root / 'summary.json', summary)
             config['cold_engram'] = {'warm_fraction': .1, 'matched': {'lengths': [8, 32], 'tolerance': 0}}
             tune.r.write(root / 'config.json', config)
             for path in list(root.glob('*/windows/*.json')):
@@ -221,6 +273,7 @@ class Tuner(unittest.TestCase):
             model['cold_engram'] = {'warm_fraction': .1, 'matched': {'lengths': [64, 128], 'tolerance': 0},
                 'images': [{'path': str(backing), 'bytes': 4096,
                             'views': [{'name': 'fixture', 'offset': 0, 'bytes': 4096}]}]}
+            model['kv_pages'] = 'default'
             result = stage_fixture(root, model)
             self.assertEqual(result.returncode, 0, result.stderr)
             staged = root / 'stage'
@@ -286,6 +339,7 @@ class Tuner(unittest.TestCase):
                                {'label': 'b', 'install': 'head', 'env': {'CHOPINFER_TEST_PREFILL': '1'}}])
             for case in ('ab', 'cold', 'exact'):
                 if case == 'cold':
+                    model['kv_pages'] = 'default'
                     backing = root / 'rank.bin'
                     backing.write_bytes(b'\0' * 4096)
                     model['cold_engram'] = {'images': [{'path': str(backing), 'bytes': 4096,
@@ -541,6 +595,7 @@ class Tuner(unittest.TestCase):
                 self.assertEqual(row['argv'][0], str(root / f"install-{row['install']}/bin/chopinfer"))
             for case, control in (('standard', {}), ('different', {'TUNE_STUB_PERTURB_INSTALL': 'head'}), ('cold', {})):
                 if case == 'cold':
+                    model['kv_pages'] = 'default'
                     # Replay must follow the baseline arm even when it names
                     # the second sealed install.
                     model['arms'][0]['install'] = 'head'
@@ -595,7 +650,8 @@ class Tuner(unittest.TestCase):
                         self.assertEqual(summary['page_cache_warmup']['install'], 'base')
                     else:
                         self.assertGreater(summary['exactness']['replayed_keys'], 0)
-                        self.assertEqual(summary['reference_processes']['a'], identities['a'])
+                        self.assertEqual({k: summary['reference_processes']['a'][k] for k in ('install', 'revision')}, identities['a'])
+                        self.assertEqual(summary['reference_processes']['a']['kv_pages_per_rank'], [4096])
                         reference = json.loads((out / 'references/a/launch.json').read_text())
                         self.assertEqual(reference['serve_argv'][0], str(root / 'install-head/bin/chopinfer'))
                     path = next(out.glob('*/windows/*.json'))
@@ -942,7 +998,7 @@ class Tuner(unittest.TestCase):
                       'model': {'mode': 'ab', 'repeats': 2, 'concurrencies': [1], 'speculation_mode': 'balanced',
                                 'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}], 'pairs': [['a', 'b']],
                                 'served_model_name': 'fixture', 'checkpoint_env': 'CHOPINFER_TEST_CHECKPOINT',
-                                'tensor_parallel_size': 1, 'kv_pages': 64, 'kv_pages_line': 'fixture: {pages} KV pages',
+                                'tensor_parallel_size': 1, 'kv_pages': 'default', 'kv_pages_line': 'fixture: {pages} KV pages',
                                 'serve_arguments': [], 'max_depth': 1, 'verify_rows': 32,
                                 'planning': {'process_reserve_seconds': 1}}}
             seal = {'ready': False, 'config': config, 'install': {'install': str(root / 'install'),

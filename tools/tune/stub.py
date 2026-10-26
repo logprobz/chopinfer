@@ -45,6 +45,10 @@ def options(arguments, ar=False):
 def stub(args):
     lock = threading.Lock()
     label = Path(args.directory).parent.name
+    if args.kv_pages is None:
+        args.kv_pages = int(os.environ.get('TUNE_STUB_DEFAULT_KV_PAGES', '4096'))
+        if os.environ.get('TUNE_STUB_KV_CHANGE_LABEL') == label:
+            args.kv_pages += 1
     perturb = (os.environ.get('TUNE_STUB_PERTURB') == label
                or os.environ.get('TUNE_STUB_PERTURB_INSTALL') == args.install_name)
     provenance = {'install': args.install_name, 'revision': args.revision, 'synthetic': True,
@@ -314,7 +318,7 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, required=True)
     ap.add_argument('--directory', required=True)
-    ap.add_argument('--kv-pages', type=int, required=True)
+    ap.add_argument('--kv-pages', type=int)
     ap.add_argument('--kv-line', required=True)
     ap.add_argument('--model', required=True)
     ap.add_argument('--gpus', type=int, required=True)

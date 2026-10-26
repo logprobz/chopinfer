@@ -193,12 +193,39 @@ def arm_bundle(config, install):
     return install['prepared']['bundle'] if config['model']['speculation_mode'] == 'off' else None
 
 
+def check_kv_config(config):
+    model = config['model']
+    pool = model.get('kv_pages')
+    if config.get('cold_engram') and pool != 'default':
+        raise ValueError('cold Engram requires the full default KV pool')
+    if pool == 'default':
+        for arm in arms(config):
+            if any(word.split('=', 1)[0] in ('--kv-pages', '--kv-memory-fraction', '--gpu-memory-utilization')
+                   for word in [*model.get('serve_arguments', []), *arm_arguments(config, arm)]):
+                raise ValueError('default KV pool cannot have an explicit size or memory fraction override')
+
+
+def kv_pages(log, config, state, label):
+    model = config['model']
+    pattern = re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)')
+    pages = [int(value) for value in re.findall(pattern, log)]
+    if not pages or any(value <= 0 for value in pages):
+        raise RuntimeError(f'{label}: missing or invalid KV page count')
+    if model['kv_pages'] == 'default':
+        if state.setdefault('kv_pages_per_rank', pages) != pages:
+            raise RuntimeError(f"{label}: default KV pages {pages} differ from job baseline {state['kv_pages_per_rank']}")
+    elif any(value != model['kv_pages'] for value in pages):
+        raise RuntimeError(f"{label}: KV pages {pages}, expected {model['kv_pages']} per rank")
+    return pages
+
+
 def validate(payload, dry):
     global SEAL, spec_metrics
     body = (STAGE / 'runtime-seal.json').read_bytes()
     if hashlib.sha256(body).hexdigest() != payload:
         raise RuntimeError('runtime seal differs from the job wrapper')
     m = json.loads(body)
+    check_kv_config(m['config'])
     if not dry and not m['ready']:
         raise RuntimeError('template only')
     for path, wanted in m['sha256'].items():
@@ -1045,7 +1072,11 @@ def reference_ab(run, state, dry, keep):
             state['power'][f'reference-{baseline}-before'] = reference_power
             power.start()
             server.start()
-            if keep and weight_source((server.directory / 'server.log').read_text())['source'] != 'borrowed':
+            log = (server.directory / 'server.log').read_text()
+            reference_pages = kv_pages(log, config, state, baseline)
+            if model['kv_pages'] == 'default':
+                state['reference_processes'][baseline]['kv_pages_per_rank'] = reference_pages
+            if keep and weight_source(log)['source'] != 'borrowed':
                 raise RuntimeError('reference process did not borrow keeper weights')
             for c, expected in sorted(by_concurrency.items()):
                 donors = [(tuple(row['prompt']), row['seed'], len(row['token_ids']))
@@ -1057,6 +1088,7 @@ def reference_ab(run, state, dry, keep):
                                       state['power']['before']['enforced_power_limits_w'])
             state['power'][f'reference-{baseline}-after'] = end_power
             r.write(server.directory / 'exactness.json', {'passed': True, **identity,
+                    'kv_pages_per_rank': reference_pages,
                     'requests_per_concurrency': {str(c): len(v) for c, v in by_concurrency.items()},
                     'power_before': reference_power, 'power_after': end_power})
         finally:
@@ -1193,7 +1225,6 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     if arm.get('env'):
         record['env'] = arm['env']
     power = Power(root, dry)
-    kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
 
     def memory(when):
         if not dry:
@@ -1218,10 +1249,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         wanted = 'borrowed' if keep else 'loaded'
         if (not dry or model.get('mode') == 'ab') and record['weights']['source'] != wanted:
             raise RuntimeError(f"{label}: weights {record['weights']}, expected {wanted}")
-        found = kv_line.findall(log)
-        record['kv_pages_per_rank'] = [int(x) for x in found]
-        if not found or any(int(x) != r.KV_PAGES for x in found):
-            raise RuntimeError(f'{label}: KV pages {found}, expected {r.KV_PAGES} per rank')
+        record['kv_pages_per_rank'] = kv_pages(log, config, state, label)
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
             if cold:

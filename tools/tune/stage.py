@@ -407,6 +407,7 @@ def main():
         if model.get('mode') != 'ab':
             raise SystemExit('cold_engram requires mode ab')
         config['cold_engram'] = cold
+        tune.check_kv_config(config)
         for image in cold.get('images', []):
             path = Path(image['path'])
             import faults
@@ -418,6 +419,7 @@ def main():
             files.discard(path)
         if not args.template and not cold.get('images'):
             raise SystemExit('cold_engram needs explicit rank image sources and Engram view ranges')
+    tune.check_kv_config(config)
     if model.get('mode') == 'ab' and model.get('speculation_mode') != 'off' and not model.get('keeper', True):
         raise SystemExit('A/B speculative visits require keeper staging')
     seconds = check_budget(config, len(built['prompts']))

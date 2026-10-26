@@ -167,7 +167,8 @@ def serve_options(cache, arguments, checkpoint, bundle=None):
     options and `arguments`. A weight keeper's SPEC holds these."""
     selection = (['--model', checkpoint, '--tensor-parallel-size', str(GPUS), '--model-cache-dir', str(cache)]
                  if bundle is None else ['--bundle', str(bundle), '--checkpoint', checkpoint])
-    return [*selection, '--served-model-name', MODEL, '--drain-timeout-ms', '5000', '--kv-pages', str(KV_PAGES), *SERVE,
+    pool = [] if KV_PAGES == 'default' else ['--kv-pages', str(KV_PAGES)]
+    return [*selection, '--served-model-name', MODEL, '--drain-timeout-ms', '5000', *pool, *SERVE,
             *arguments]
 
 
@@ -212,7 +213,8 @@ class Server:
         launched = self.server_command
         if dry:
             launched = [sys.executable, '-B', str(stub), '--port', str(port), '--directory', str(self.directory),
-                        '--kv-pages', str(KV_PAGES), '--kv-line', KV_LINE, '--model', MODEL, '--gpus', str(GPUS),
+                        *([] if KV_PAGES == 'default' else ['--kv-pages', str(KV_PAGES)]),
+                        '--kv-line', KV_LINE, '--model', MODEL, '--gpus', str(GPUS),
                         '--binary', str(Path(install) / 'bin/chopinfer'),
                         *(['--ar'] if ar else []),
                         *(['--install-name', identity['install'], '--revision', identity['revision']] if identity else []),

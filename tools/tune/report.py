@@ -358,6 +358,15 @@ def ab_validity(config, rows, summary):
     processes = summary.get('processes', {})
     if set(processes) != {v['label'] for v in visits}:
         raise ValueError('wrong process visit counts')
+    if matched and config['model'].get('kv_pages') != 'default':
+        raise ValueError('matched cold acceptance requires the full default KV pool')
+    if config['model'].get('kv_pages') == 'default':
+        pages = summary.get('kv_pages_per_rank')
+        records = [*processes.values(), *summary.get('warmup_processes', {}).values(),
+                   *summary.get('reference_processes', {}).values()]
+        if (not isinstance(pages, list) or not pages or any(type(n) is not int or n <= 0 for n in pages)
+                or any(row.get('kv_pages_per_rank') != pages for row in records)):
+            raise ValueError('default KV page counts are missing or differ across job processes')
     groups = [processes[v['label']].get('process_group') for v in visits]
     if any(type(group) is not int or group <= 0 for group in groups) or len(set(groups)) != len(visits):
         raise ValueError('A/B visits must use fresh process groups')
@@ -671,6 +680,9 @@ def ab(run):
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
            'arm_installs': arm_installs(run, rows),
            'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and (not cold or bool(matched))}
+    if config['model'].get('kv_pages') == 'default':
+        out['kv_pages_per_rank'] = {label: process.get('kv_pages_per_rank')
+                                    for label, process in summary.get('processes', {}).items()}
     if cold:
         out['cold_prompt_assignment'] = summary.get('cold_prompt_assignment', {})
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',

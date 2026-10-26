@@ -38,7 +38,7 @@ less than the tokens their drafts add. Measure the step costs first (the
 ## Inputs
 
 - `models/<model>/depth-tune.json`: the served model name, checkpoint
-  variable, tensor parallel size, test KV pages and the bundle's KV log line,
+  variable, tensor parallel size, KV pool and the bundle's KV log line,
   serve options, speculation mode, deepest depth (the drafter's published
   block), verify row capacity, concurrencies, timed repeats per arm, tokens
   per window, prompt groups per concurrency, kinds (sampled only: speed,
@@ -199,6 +199,16 @@ proves harness mechanics, not GPU exactness or performance.
 
 ## What the job does and checks
 
+Set `kv_pages` to a positive page count for the fixed test pool, or to
+`"default"` for the full pool selected by the native profile. Default-pool
+servers and keeper specs receive no `--kv-pages`; explicit size or memory
+fraction overrides are refused. The tuner records the actual startup page
+counts and requires equality across all arms, warmup and baseline replay.
+Both modes require zero preemptions and zero prefix-cache evictions. Cold
+Engram jobs require `kv_pages: "default"`; a fixed test pool does not admit
+a cold-memory measurement. `TUNE_STUB_DEFAULT_KV_PAGES` supplies a synthetic
+default and `TUNE_STUB_KV_CHANGE_LABEL` tests a mismatched visit.
+
 Native AR jobs declare `speculation_mode: "off"`, use `mode: ab`, `exact`
 or `costs`, and omit arm `depth` and model `depths`. Omit `max_depth` or set
 it to zero. AR uses the install's sealed prepared package with `--bundle`
@@ -236,7 +246,7 @@ request per prompt group, so all streams start in the same step; low
 concurrencies serve several groups in turn so one prompt does not decide
 them. Warm windows run the same kind. An arm starts only while its reserve of the work budget remains. Every
 output must equal the reference bit for bit: draft depth never changes an
-emitted token. Servers run the test KV mode with zero preemptions and
+emitted token. Servers use the declared KV pool with zero preemptions and
 evictions, report their speculation mode, record memory after warmup and GPU
 memory at readiness, after each warm window and at the end, and never draft
 past their depth. Power limits are recorded and constant; SM clocks are

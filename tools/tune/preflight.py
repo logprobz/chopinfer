@@ -23,6 +23,7 @@ def main(stage):
     if not seal['ready']:
         raise SystemExit('a template stage has no executable to parse with')
     model = seal['config']['model']
+    tune.check_kv_config(seal['config'])
     tune.check_installs(seal, require_proofs=True)
     r.MODEL, r.CHECKPOINT_ENV, r.GPUS = model['served_model_name'], model['checkpoint_env'], model['tensor_parallel_size']
     r.KV_PAGES, r.KV_LINE, r.SERVE = model['kv_pages'], model['kv_pages_line'], model['serve_arguments']

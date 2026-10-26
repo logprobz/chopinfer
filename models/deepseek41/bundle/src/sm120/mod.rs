@@ -447,10 +447,20 @@ impl crate::Kernels {
         shape: &crate::shape::Shape,
     ) -> Option<Vec<std::ops::RangeInclusive<u32>>> {
         hc_prefill_expand_mix::qualified(shape.geometry).then(|| {
-            hc_prefill_expand_mix::BUCKETS
-                .iter()
-                .flat_map(|(_, rows)| rows.iter().map(|&r| r..=r))
-                .collect()
+            Self::table_route_rows(
+                shape.geometry,
+                model_deepseek41_contract::tuning::Family::Hc,
+                "hc.expand_mix.prefill",
+                "f32",
+                &[
+                    ("groups", shape.geometry.shape.hc.streams),
+                    ("width", shape.geometry.shape.hidden),
+                ],
+                model_deepseek41_contract::serving::PREFILL_TOKENS,
+            )
+            .into_iter()
+            .flat_map(|rows| rows.map(|row| row..=row))
+            .collect()
         })
     }
 

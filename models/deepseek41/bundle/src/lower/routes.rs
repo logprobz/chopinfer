@@ -143,4 +143,15 @@ mod tests {
         );
         assert!(crate::Kernels::router_in_norm_route_rows(&tp2).is_empty());
     }
+
+    #[test]
+    fn prefill_hc_route_rows_keep_ordered_singletons() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+            assert_eq!(
+                crate::Kernels::prefill_hc_route_rows(&shape),
+                Some(vec![64..=64, 320..=320, 8192..=8192])
+            );
+        }
+    }
 }

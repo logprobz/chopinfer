@@ -1,10 +1,9 @@
 # Prefill communication
 
-Native Flash TP4 now defaults to BF16 input partials for prefill only; see
-[communication-partials.md](communication-partials.md). Set
-`CHOPINFER_DEEPSEEK41_BF16_PARTIALS=0` to retain the F32-partial arithmetic
-described below. The DMA transport carries the partial format of the
-collective it replaces. Overlap remains off by default and must be bitwise
+Native Flash TP4 uses BF16 input partials for prefill only; see
+[communication-partials.md](communication-partials.md). Other storage and
+geometry gates retain F32 partials. The DMA transport carries the partial
+format of the collective it replaces. Overlap remains off by default and must be bitwise
 against its selected sequential path.
 
 The optional attention schedule splits the final output projection into two
@@ -86,14 +85,16 @@ existing status, commit and capture paths.
 The original mode passed full-chunk GPU bitwise and prefix-hit comparisons.
 It remains experimental because its original wall time was slower. CPU
 ordering checks alone do not establish numerical equality or a speedup.
+The full-schedule DMA and all-phase BF16 selectors have been removed.
+The overlap and explicit full-schedule sections below record earlier
+experiments; their executor cleanup is separate.
 
 ## BF16 gather after the rank sum
 
-Flash defaults to the existing phased F32 rounded transport for target
-prefills at TP4, with whole 1024-element hidden-row granules and at least
-512 rows per call. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` retains the
-composed F32 scatter, F32 gather and BF16 round. Value `1` opts other
-compatible geometries into the transport. The overlap switch selects the
+Flash TP4 prefills with BF16 KV use the phased F32 rounded transport, with
+whole 1024-element hidden-row granules and at least 512 rows per call.
+Other geometries and unmet admission gates retain composed F32 scatter,
+F32 gather and BF16 round. The overlap switch selects the
 compute schedule independently and still defaults to sequential execution.
 
 Every owner adds F32 partials from zero in ascending rank order, converts
@@ -139,21 +140,14 @@ Both overlap modes remain explicit experiments.
 
 ## Ordered DMA transport
 
-An unset `CHOPINFER_DEEPSEEK41_PREFILL_DMA` selects DMA for the negotiated
-upper-skip executor only (see [sparse DMA admission](#sparse-dma-admission)):
-the create record's prefill profile must negotiate upper-skip chunks and the
-BF16 gather must be prepared. Package defaults are 8192-row chunks with
-upper-layer skip, so they take it. Legacy create records without prefill
-options, the explicit full-prefill profile and chunked profiles without skip
-allocate no DMA inbox, owner stream or events. DSpark instances take the
-upper-skip default for their target prefill chunks. Full-schedule and
-two-part executions keep the SM transport unless `1` is set, and DSpark
-instances keep it there even then. `0`, or any
-value other than `1`, turns DMA off everywhere. Negotiated skip uses its own
-executor. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` selects the original
-F32 transport when DMA is off, and also turns off the upper-skip default.
-Overlap remains off by default, and `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0`
-retains sequential work.
+DMA serves the negotiated upper-skip executor only (see
+[sparse DMA admission](#sparse-dma-admission)): the create record must
+negotiate upper-skip chunks and prepare the BF16 gather. Package defaults
+use 8192-row chunks with upper-layer skip, including DSpark target chunks.
+Legacy create records without prefill options, full-prefill profiles and
+chunked profiles without skip allocate no DMA inbox, owner stream or events.
+Full-schedule and two-part execution keep SM transport. Overlap remains off
+by default. The DMA and BF16-gather experiment switches are removed.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
 text-request Flash TP4 autoregressive prefills. It applies to sequential
@@ -300,8 +294,8 @@ The GPU-time route decision does not establish a quiet-host TTFT gain.
 ### Sparse DMA admission
 
 The exact upper-skip schedule takes DMA for native Flash TP4, single-request
-text prefill with overlap disabled, both by default and with
-`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1`; `0` retains the SM transport. This
+text prefill with overlap disabled. Shape and capability gates retain
+the SM transport elsewhere. This
 includes a DSpark instance's target prefill chunks: their Engram rows,
 feature captures and feature packing run as ordinary launches on each
 rank's main stream, and every DMA call joins all main streams on its final
@@ -359,8 +353,7 @@ Each rank's gather copies move to its own copy lane, which records an event
 after each phase. Its main stream runs the chain on its own interval right
 after its sum, then on each other interval once that interval's copy event
 fires, while the later copies proceed. The final peer-read join is
-unchanged. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_CONSUME=0` keeps the chain
-after the call.
+unchanged. Calls outside these gates keep their consumers after the call.
 
 Each interval's launch keeps the original symbol and arguments. Its row
 views are narrowed to the interval, its live count is read from the prefill
@@ -418,8 +411,7 @@ interval last. Each destination pulls on its copy lane, each pull waiting
 only for its own source's event for that phase; the lane first waits for
 its rank's main stream to reach the call. The owner sum waits for the
 rank's own interval and its three pulls, and still adds every rank's rows
-in rank order. `CHOPINFER_DEEPSEEK41_PREFILL_DMA_PRODUCE=0` keeps one sum
-launch before the call.
+in rank order. Calls outside these gates keep one sum launch before the call.
 
 Each interval's launch keeps the original symbol and arguments, with its
 row views narrowed to the interval, its live count read from the prefill
@@ -462,7 +454,7 @@ host from before pushes refuses the first with `InvalidArgument` before
 submitting anything, and the instance then pulls; a later refusal fails
 creation, never a step. The bundle logs the direction it chose ("prefill
 DMA copies: pushed by each source" or "pulled by each destination").
-`CHOPINFER_DEEPSEEK41_PREFILL_DMA_PUSH=0` keeps every copy a pull.
+The capability probe selects pulls only when the host cannot issue pushes.
 
 A pushing call issues the same copies with the same bytes, in the same
 permutation order, each on its source's main stream (or its lane where the

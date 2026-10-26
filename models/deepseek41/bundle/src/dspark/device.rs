@@ -75,8 +75,6 @@ pub(crate) struct Device {
     /// `dspark_draft_chunk_items` model option.
     pub draft_chunk_items: usize,
     pub computed_positions: u32,
-    /// Opt-in until the packed commit passes state and served comparisons.
-    pub batch_commit: bool,
     #[cfg(feature = "diagnostic-taps")]
     pub draft_check: Option<std::path::PathBuf>,
     #[cfg(feature = "diagnostic-taps")]
@@ -100,7 +98,7 @@ pub(crate) struct Rank {
     pub feature_counts: Vec<Span>,
     pub feature_codes: Span,
     pub feature_scales: Span,
-    pub commit: Option<CommitStorage>,
+    pub commit: CommitStorage,
     pub predecessor_ids: Span,
     pub draft_ids: Span,
     pub confidence: Span,
@@ -129,39 +127,6 @@ pub(crate) struct CommitStorage {
     pub inputs: DeviceInputs,
     pub codes: Span,
     pub scales: Span,
-}
-
-pub(crate) fn batch_commit_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = BATCH_COMMIT_OVERRIDE.with(std::cell::Cell::get) {
-        return enabled;
-    }
-    matches!(
-        std::env::var("CHOPINFER_DSPARK_BATCHED_COMMIT").as_deref(),
-        Ok("1") | Err(std::env::VarError::NotPresent)
-    )
-}
-
-#[cfg(test)]
-thread_local! {
-    static BATCH_COMMIT_OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn with_batch_commit<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    with_batch_commit_setting(Some(enabled), run)
-}
-
-#[cfg(test)]
-pub(crate) fn with_batch_commit_setting<T>(enabled: Option<bool>, run: impl FnOnce() -> T) -> T {
-    struct Reset(Option<bool>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            BATCH_COMMIT_OVERRIDE.with(|value| value.set(self.0));
-        }
-    }
-    let _reset = Reset(BATCH_COMMIT_OVERRIDE.with(|value| value.replace(enabled)));
-    run()
 }
 
 pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
@@ -304,7 +269,6 @@ impl Device {
             step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
             draft_chunk_items,
             computed_positions: BLOCK_ROWS,
-            batch_commit: batch_commit_enabled(),
             #[cfg(feature = "diagnostic-taps")]
             draft_check: std::env::var_os("CHOPINFER_DSPARK_DRAFT_CHECK")
                 .map(std::path::PathBuf::from),
@@ -414,18 +378,16 @@ impl Device {
         let g = self.shape.geometry;
         if self.ranks.is_empty() {
             self.cycle.memory = Some(self.cycle.hash.allocate(services, pool, stream, held)?);
-            if self.cycle.early_enabled {
-                let side = services.create_stream(context, 0)?;
-                held.push(Held::Stream(side));
-                self.cycle.early_stream = Some(side);
-                self.cycle.early_ids = Some(allocate_span(
-                    services,
-                    pool,
-                    side,
-                    self.cycle.hash.shape.output_bytes(),
-                    held,
-                )?);
-            }
+            let side = services.create_stream(context, 0)?;
+            held.push(Held::Stream(side));
+            self.cycle.early_stream = Some(side);
+            self.cycle.early_ids = Some(allocate_span(
+                services,
+                pool,
+                side,
+                self.cycle.hash.shape.output_bytes(),
+                held,
+            )?);
             self.cycle.diagnostics = Some(allocate_span(
                 services,
                 pool,
@@ -447,26 +409,23 @@ impl Device {
         let markov = u64::from(g.shape.dspark.markov_rank);
         let targets = g.shape.dspark.targets.len() as u64;
         let mut alloc = |bytes| allocate_span(services, pool, stream, bytes, held);
-        if self.prefetch.enabled {
-            let declaration =
-                model_deepseek41_contract::state::request_state(g, KvStorage::Native, true);
-            let ring = declaration
-                .buffers
-                .iter()
-                .find(|buffer| buffer.name == "dspark.ring")
-                .ok_or(BundleAbiError::InvalidRange("DSpark ring declaration"))?;
-            let bytes =
-                u64::from(self.config.slots) * ring.layers * ring.planes.iter().sum::<u64>();
-            self.prefetch.ranks.push(super::prefetch::Memory {
-                undo_ring: alloc(bytes)?,
-                next_ring: alloc(bytes)?,
-                draft_ids: alloc(rows * 4)?,
-                confidence: alloc(rows * 4)?,
-                status: super::status::Status::new(alloc(
-                    u64::from(super::state::BATCH_PROJECTION_ROWS + 8 * BLOCK_ROWS) * 8,
-                )?),
-            });
-        }
+        let declaration =
+            model_deepseek41_contract::state::request_state(g, KvStorage::Native, true);
+        let ring = declaration
+            .buffers
+            .iter()
+            .find(|buffer| buffer.name == "dspark.ring")
+            .ok_or(BundleAbiError::InvalidRange("DSpark ring declaration"))?;
+        let bytes = u64::from(self.config.slots) * ring.layers * ring.planes.iter().sum::<u64>();
+        self.prefetch.ranks.push(super::prefetch::Memory {
+            undo_ring: alloc(bytes)?,
+            next_ring: alloc(bytes)?,
+            draft_ids: alloc(rows * 4)?,
+            confidence: alloc(rows * 4)?,
+            status: super::status::Status::new(alloc(
+                u64::from(super::state::BATCH_PROJECTION_ROWS + 8 * BLOCK_ROWS) * 8,
+            )?),
+        });
         let layout = InputLayout::new::<DeepSeek>(DRAFT_ROWS.max(self.config.window), DRAFT_ROWS);
         let cells = self.config.window + BLOCK_ROWS;
         let metadata_layout = super::upload::Layout::new(layout.end, items, rows, u64::from(cells))
@@ -483,18 +442,14 @@ impl Device {
         let inputs = DeviceInputs::within(arena, &layout);
         // Keep draft metadata offsets and uploads unchanged. Commit has a
         // separate row domain, allocated before the host sizes the KV pool.
-        let commit_inputs = if self.batch_commit {
-            let layout = InputLayout::new::<DeepSeek>(COMMIT_ROWS, 1);
-            Some(DeviceInputs::within(
-                PhaseArena {
-                    arena: alloc(layout.end)?,
-                    block_tables: arena.block_tables,
-                },
-                &layout,
-            ))
-        } else {
-            None
-        };
+        let commit_layout = InputLayout::new::<DeepSeek>(COMMIT_ROWS, 1);
+        let commit_inputs = DeviceInputs::within(
+            PhaseArena {
+                arena: alloc(commit_layout.end)?,
+                block_tables: arena.block_tables,
+            },
+            &commit_layout,
+        );
         let stride = u64::from(cells) * u64::from(g.shape.attention.head_dim);
         let window = Window {
             codes: alloc(items * stride)?,
@@ -555,11 +510,7 @@ impl Device {
             + u64::from(TARGET_ROWS)
                 * (u64::from(self.config.stages) + g.shape.csa.index_sources.len() as u64 + 1)
             + rows;
-        let feature_rows = if self.batch_commit {
-            COMMIT_ROWS
-        } else {
-            self.config.window
-        };
+        let feature_rows = COMMIT_ROWS;
         let feature_codes;
         let feature_scales;
         self.ranks.push(Rank {
@@ -599,11 +550,11 @@ impl Device {
                 )
                 .map_err(|_| BundleAbiError::InvalidRange("DSpark feature scales"))?
             },
-            commit: commit_inputs.map(|inputs| CommitStorage {
-                inputs,
+            commit: CommitStorage {
+                inputs: commit_inputs,
                 codes: feature_codes,
                 scales: feature_scales,
-            }),
+            },
             predecessor_ids: plane(metadata_layout.predecessor_ids)?,
             draft_ids: alloc(rows * 4)?,
             confidence: alloc(rows * 4)?,
@@ -624,11 +575,7 @@ impl Device {
             noise: plane(metadata_layout.noise)?,
             reduce_state,
             gather_state,
-            engram_early: if self.cycle.early_enabled {
-                Some(alloc(early_engram_bytes(g))?)
-            } else {
-                None
-            },
+            engram_early: Some(alloc(early_engram_bytes(g))?),
         });
         Ok(())
     }

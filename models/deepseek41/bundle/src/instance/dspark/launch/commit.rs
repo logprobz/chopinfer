@@ -109,10 +109,7 @@ impl Instance {
             for (rank, buffers) in bound.iter().enumerate() {
                 let stream = self.ranks[rank].2;
                 let stored = &device.ranks[rank];
-                let commit = stored
-                    .commit
-                    .as_ref()
-                    .ok_or("DSpark commit storage is absent")?;
+                let commit = &stored.commit;
                 measure(
                     times.as_deref_mut().map(|t| &mut t.projection.upload_us),
                     || {

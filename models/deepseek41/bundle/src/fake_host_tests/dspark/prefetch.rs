@@ -1,6 +1,6 @@
 use super::*;
 use crate::dspark::execution::Input;
-use crate::dspark::prefetch::{Feedback, with_enabled};
+use crate::dspark::prefetch::Feedback;
 use crate::dspark::state::{Kind, Rows};
 use crate::instance::{dspark_prefetch_for_test, set_image_flags_for_test};
 use runtime_bundle_abi::device_results::*;
@@ -60,9 +60,8 @@ fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
 fn private_successor_restores_current_state_and_skips_the_next_draft() {
     for ranks in [Ranks::TP1, Ranks::TP4] {
         for accepted in 0..=5 {
-            let (host, mut instance) = with_enabled(true, || {
-                create_with_limits(Shape::new(&FLASH, ranks).unwrap(), 1, 32)
-            });
+            let (host, mut instance) =
+                create_with_limits(Shape::new(&FLASH, ranks).unwrap(), 1, 32);
             execute(
                 &mut instance,
                 &host,
@@ -138,9 +137,7 @@ fn private_successor_restores_current_state_and_skips_the_next_draft() {
 
 #[test]
 fn a_different_host_commit_discards_the_prediction_and_runs_normal_work() {
-    let (host, mut instance) = with_enabled(true, || {
-        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32)
-    });
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32);
     execute(
         &mut instance,
         &host,
@@ -173,9 +170,7 @@ fn a_different_host_commit_discards_the_prediction_and_runs_normal_work() {
 
 #[test]
 fn cancellation_and_slot_reuse_cannot_consume_a_private_successor() {
-    let (host, mut instance) = with_enabled(true, || {
-        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32)
-    });
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32);
     execute(
         &mut instance,
         &host,
@@ -205,9 +200,7 @@ fn cancellation_and_slot_reuse_cannot_consume_a_private_successor() {
 fn drafts_restore_the_text_bias_only_while_image_flags_may_be_set() {
     for (flags, uploads) in [(false, 2), (true, 3)] {
         let ranks = Ranks::TP4;
-        let (host, mut instance) = with_enabled(true, || {
-            create_with_limits(Shape::new(&FLASH, ranks).unwrap(), 1, 32)
-        });
+        let (host, mut instance) = create_with_limits(Shape::new(&FLASH, ranks).unwrap(), 1, 32);
         execute(
             &mut instance,
             &host,

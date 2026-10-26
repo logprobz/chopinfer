@@ -241,27 +241,25 @@ fn undrafted_status_errors_refuse_commit_after_private_ready_submission() {
 }
 
 #[test]
-fn undrafted_small_or_disabled_status_packet_keeps_rank_validation() {
-    for (enabled, capacity) in [(Some(false), None), (None, Some(4))] {
-        let (host, mut instance) = create(1, true);
-        prefill(&host, &mut instance, 1);
-        crate::instance::dspark_boundary_for_test(instance.handle(), enabled, capacity);
-        let mut sink = sink(&host, 1, 7);
-        let from = host.journal.borrow().len();
-        instance
-            .execute(&decode(&[(1, 0, 3, 17)]), &mut sink)
-            .unwrap();
-        assert_eq!(
-            host.journal.borrow()[from..]
-                .iter()
-                .filter(|line| line.starts_with("download "))
-                .count(),
-            4
-        );
-        assert!(!sink.ready.is_empty());
-        instance.commit().unwrap();
-        instance.retire_request(1).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
+fn undrafted_small_status_packet_keeps_rank_validation() {
+    let (host, mut instance) = create(1, true);
+    prefill(&host, &mut instance, 1);
+    crate::instance::dspark_boundary_for_test(instance.handle(), Some(4));
+    let mut sink = sink(&host, 1, 7);
+    let from = host.journal.borrow().len();
+    instance
+        .execute(&decode(&[(1, 0, 3, 17)]), &mut sink)
+        .unwrap();
+    assert_eq!(
+        host.journal.borrow()[from..]
+            .iter()
+            .filter(|line| line.starts_with("download "))
+            .count(),
+        4
+    );
+    assert!(!sink.ready.is_empty());
+    instance.commit().unwrap();
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

@@ -1,21 +1,17 @@
 use super::*;
-use crate::dspark::device::{batch_commit_enabled, with_batch_commit_setting};
 
 #[test]
 fn dspark_prefill_defaults_match_explicit_opt_ins() {
-    assert!(batch_commit_enabled(), "batched commit must default on");
     let run = |setting| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.speculation.set(Some((5, 32)));
-        let mut instance = with_batch_commit_setting(setting, || {
-            create_backend_with_setting(
-                &host,
-                setting,
-                true,
-                dspark::host::MappedHost::with_delayed_completion(Rc::clone(&host)),
-            )
-            .unwrap()
-        });
+        let mut instance = create_backend_with_setting(
+            &host,
+            setting,
+            true,
+            dspark::host::MappedHost::with_delayed_completion(Rc::clone(&host)),
+        )
+        .unwrap();
         let enabled = setting != Some(false);
         assert_eq!(
             indices(instance.handle()).len(),
@@ -58,7 +54,7 @@ fn dspark_prefill_defaults_match_explicit_opt_ins() {
                 (row["schema"] == "chopinfer.deepseek41.commit-shape.v1").then_some(row)
             })
             .unwrap();
-        assert_eq!(record["projection_passes"], if enabled { 3 } else { 6 });
+        assert_eq!(record["projection_passes"], 3);
         instance.retire_request(7).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
@@ -73,7 +69,7 @@ fn dspark_prefill_defaults_match_explicit_opt_ins() {
     assert_ne!(
         default,
         run(Some(false)),
-        "explicit opt-outs must retain the previous paths"
+        "the prefill Engram opt-out keeps synchronous gathers"
     );
 }
 

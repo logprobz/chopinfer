@@ -144,9 +144,8 @@ pub(super) fn metadata(items: u32, k: u32, epoch: u64) -> DeviceCycleMetadataV1 
 #[test]
 fn c8_device_feedback_queues_a_successor_after_current_completion() {
     let items = 8;
-    let (host, mut instance) = crate::dspark::prefetch::with_enabled(true, || {
-        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), items, 32)
-    });
+    let (host, mut instance) =
+        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), items, 32);
     let prompt = BatchRequestV1::new(
         BatchWireVersionV1::V3,
         (1..=items)

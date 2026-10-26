@@ -11,7 +11,6 @@ use runtime_bundle_abi::device_results::{
 use std::collections::BTreeMap;
 
 pub(crate) struct Cache {
-    pub enabled: bool,
     pub ranks: Vec<Memory>,
     pub graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub plan: Option<Plan>,
@@ -33,7 +32,6 @@ pub(crate) struct Memory {
 impl Cache {
     pub fn new() -> Self {
         Self {
-            enabled: enabled(),
             ranks: Vec::new(),
             graphs: BTreeMap::new(),
             plan: None,
@@ -182,32 +180,6 @@ impl Feedback {
             drafts,
         }))
     }
-}
-
-fn enabled() -> bool {
-    #[cfg(test)]
-    if let Some(value) = TEST_ENABLED.with(std::cell::Cell::get) {
-        return value;
-    }
-    // Qualified bitwise on the GPU at C1 and C8; =0 keeps the serial path.
-    std::env::var_os("CHOPINFER_DSPARK_PREFETCH").is_none_or(|v| v == "1")
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn with_enabled<T>(value: bool, f: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TEST_ENABLED.with(|cell| cell.set(self.0));
-        }
-    }
-    let _restore = Restore(TEST_ENABLED.with(|cell| cell.replace(Some(value))));
-    f()
 }
 
 #[cfg(test)]

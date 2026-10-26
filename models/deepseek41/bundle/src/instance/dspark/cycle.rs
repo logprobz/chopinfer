@@ -111,16 +111,14 @@ impl Instance {
         let joined = self.services.create_event(self.ranks[0].0)?;
         self.held.push(Held::Event(joined));
         device.cycle.draft_joined = Some(joined);
-        if device.prefetch.enabled {
-            for &(context, _, _) in &self.ranks {
-                let event = self.services.create_event(context)?;
-                self.held.push(Held::Event(event));
-                device.prefetch.done.push(event);
-            }
-            let event = self.services.create_event(self.ranks[0].0)?;
+        for &(context, _, _) in &self.ranks {
+            let event = self.services.create_event(context)?;
             self.held.push(Held::Event(event));
-            device.prefetch.joined = Some(event);
+            device.prefetch.done.push(event);
         }
+        let event = self.services.create_event(self.ranks[0].0)?;
+        self.held.push(Held::Event(event));
+        device.prefetch.joined = Some(event);
         for &(context, _, _) in &self.ranks {
             for events in [
                 &mut device.results.target_ready,
@@ -182,7 +180,7 @@ impl Instance {
         }
         if early {
             self.log(
-                "CHOPINFER_DSPARK_ENGRAM_EARLY: drafted steps gather each item's first Engram rows before the drafter",
+                "DSpark drafted steps gather each item's first Engram rows before the drafter",
             );
         }
         Ok(())

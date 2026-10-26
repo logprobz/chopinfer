@@ -43,9 +43,7 @@ Flash TP4 prefill uses native block-scaled expert tiles. At TP4 the rank
 image stores the backbone's routed gate/up bank in 64-row by 128-K row
 tiles with each 64-byte block of the codes in quad-lane order
 (`row-tiles-64x128-lanes`), which the native tiles read and the exact BF16
-expert path does not. `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` unset or
-`1` selects native; `0` or any other value selects the exact path, so a TP4
-create refuses and logs why. TP1 and TP2 store rows and run the exact path.
+expert path does not. TP1 and TP2 store rows and run the exact path.
 The native tiles use the trained operand grids and change the F32
 accumulation order within each 32-K group. Decode, verify and draft experts
 keep their existing paths; at TP4 the backbone's decode and verify gate/up
@@ -359,7 +357,6 @@ chunk ends.
 
 DSpark prefill batches commit projections across prompts and overlaps each
 Engram layer's mapped gather with target compute by default.
-`CHOPINFER_DSPARK_BATCHED_COMMIT=0` restores separate commit projections;
 `CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM=0` restores synchronous prefill gathers.
 AR prefill gathers remain opt-in. The shared host now reads ahead for both
 synchronous and asynchronous mapped gathers, with independent overrides

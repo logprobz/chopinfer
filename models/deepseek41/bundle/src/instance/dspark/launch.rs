@@ -41,15 +41,8 @@ impl Instance {
     ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark absent")?;
         let stream = self.ranks[rank].2;
-        if device.prefetch.enabled {
-            let (span, bytes) = crate::dspark::upload::pack(device.ranks[rank].metadata, &updates)?;
-            upload(&self.services, stream, span, &bytes)
-        } else {
-            for (span, bytes) in updates {
-                upload(&self.services, stream, span, &bytes)?;
-            }
-            Ok(())
-        }
+        let (span, bytes) = crate::dspark::upload::pack(device.ranks[rank].metadata, &updates)?;
+        upload(&self.services, stream, span, &bytes)
     }
 
     fn drafter_launch(
@@ -429,40 +422,7 @@ impl Instance {
         }
         let indexed = self.prepare_indexed_retention(plan, &copies)?;
         finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
-        if device.batch_commit {
-            self.project_commit_batches(plan, times.as_deref_mut())?;
-        } else {
-            let mut offsets = [0, u64::from(DECODE_BASE)];
-            for item in plan.items() {
-                let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
-                if item.project_from_staging {
-                    for stage in 0..device.config.stages {
-                        let project = if self.skip_prefill && phase == 0 {
-                            transfers::staged_retained_projection
-                        } else {
-                            transfers::staged_projection
-                        };
-                        for pass in project(
-                            device.config,
-                            *item,
-                            stage,
-                            offsets[phase],
-                            device.config.window,
-                        )? {
-                            if let Some(times) = times.as_deref_mut() {
-                                times.passes += 1;
-                                times.rows += u64::from(pass.rows);
-                            }
-                            self.project_chunk_timed(
-                                pass,
-                                times.as_deref_mut().map(|t| &mut t.projection),
-                            )?;
-                        }
-                    }
-                }
-                offsets[phase] += u64::from(item.rows.kind.target_rows()?);
-            }
-        }
+        self.project_commit_batches(plan, times.as_deref_mut())?;
         let started = times.as_ref().map(|_| std::time::Instant::now());
         if let Some(indexed) = indexed {
             self.submit_indexed_retention(indexed)?;

@@ -46,62 +46,47 @@ fn commits(host: &Host) -> Vec<serde_json::Value> {
 
 #[test]
 fn batched_commit_preserves_continued_and_mixed_prompt_cursors() {
-    let mut evidence = Vec::new();
-    for enabled in [false, true] {
-        let (host, mut instance) = crate::dspark::device::with_batch_commit(enabled, || {
-            create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32)
-        });
-        crate::instance::dspark_step_trace_for_test(instance.handle(), true);
-        let mut starts = [0; 6];
-        let mut contexts = Vec::new();
-        for lengths in [[192, 193, 255, 256, 7, 789], [191, 195, 257, 260, 1, 789]] {
-            execute(&mut instance, &host, &packed(&starts, &lengths));
-            instance.commit().unwrap();
-            for (i, start) in starts.iter_mut().enumerate() {
-                *start += u64::from(lengths[i]);
-                let context = state(&instance, i as u64 + 1);
-                assert_eq!(context.end, *start);
-                contexts.push((
-                    context.end,
-                    context.retained_start,
-                    context.projected().to_vec(),
-                ));
-            }
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32);
+    crate::instance::dspark_step_trace_for_test(instance.handle(), true);
+    let mut starts = [0; 6];
+    for (lengths, projected, retained) in [
+        (
+            [192, 193, 255, 256, 7, 789],
+            [192, 193, 255, 256, 0, 789],
+            [64, 65, 127, 128, 0, 661],
+        ),
+        (
+            [191, 195, 257, 260, 1, 789],
+            [383, 388, 512, 516, 0, 1578],
+            [255, 260, 384, 388, 0, 1450],
+        ),
+    ] {
+        execute(&mut instance, &host, &packed(&starts, &lengths));
+        instance.commit().unwrap();
+        for (i, start) in starts.iter_mut().enumerate() {
+            *start += u64::from(lengths[i]);
+            let context = state(&instance, i as u64 + 1);
+            assert_eq!(context.end, *start);
+            assert_eq!(context.retained_start, retained[i]);
+            assert_eq!(context.projected(), &[projected[i]; 3]);
         }
-        let records = commits(&host);
-        assert_eq!(records.len(), 2);
-        for record in &records {
-            let passes = record["projection_passes"].as_u64().unwrap();
-            if enabled {
-                assert_eq!(passes, 3);
-            } else {
-                assert!(passes > 3);
-            }
-        }
-        evidence.push((
-            contexts,
-            records
-                .iter()
-                .map(|r| r["projection_rows"].clone())
-                .collect::<Vec<_>>(),
-        ));
-        for id in 1..=6 {
-            instance.retire_request(id).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
     }
-    assert_eq!(
-        evidence[0], evidence[1],
-        "batching must keep every projected row and cursor"
-    );
+    let records = commits(&host);
+    assert_eq!(records.len(), 2);
+    for (record, rows) in records.iter().zip([5055, 5076]) {
+        assert_eq!(record["projection_passes"], 3);
+        assert_eq!(record["projection_rows"], rows);
+    }
+    for id in 1..=6 {
+        instance.retire_request(id).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 #[test]
 fn batched_commit_configures_large_kv_projection_before_launch() {
-    let (host, mut instance) = crate::dspark::device::with_batch_commit(true, || {
-        create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32)
-    });
+    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32);
     execute(
         &mut instance,
         &host,
@@ -137,9 +122,8 @@ fn batched_commit_configures_large_kv_projection_before_launch() {
 #[test]
 fn batched_commit_errors_cannot_publish_cursors_or_resume() {
     for failure in ["gather", "launch", "status"] {
-        let (host, mut instance) = crate::dspark::device::with_batch_commit(true, || {
-            create_with_limits(Shape::new(&FLASH, Ranks::TP1).unwrap(), 16, 32)
-        });
+        let (host, mut instance) =
+            create_with_limits(Shape::new(&FLASH, Ranks::TP1).unwrap(), 16, 32);
         execute(&mut instance, &host, &packed(&[0], &[193]));
         match failure {
             "gather" => host.device.fail_copy.set(Some(0)),

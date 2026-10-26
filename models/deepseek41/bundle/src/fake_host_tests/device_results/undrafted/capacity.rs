@@ -29,7 +29,7 @@ fn undrafted_status_accepts_equal_capacity_and_refuses_one_extra_word() {
     assert!(needed > 4 && needed < 65_536);
     instance.commit().unwrap();
     for (position, capacity, downloads) in [(4, needed, 1), (5, needed - 4, 4)] {
-        crate::instance::dspark_boundary_for_test(instance.handle(), None, Some(capacity));
+        crate::instance::dspark_boundary_for_test(instance.handle(), Some(capacity));
         let from = host.journal.borrow().len();
         instance
             .execute(
@@ -80,7 +80,7 @@ fn undrafted_status_falls_back_only_when_saved_bytes_exceed_packet_capacity() {
             let mut result = sink(&host, count, 900 + step);
             let from = host.journal.borrow().len();
             instance.execute(&request, &mut result).unwrap();
-            let boundary = crate::instance::dspark_boundary_for_test(instance.handle(), None, None);
+            let boundary = crate::instance::dspark_boundary_for_test(instance.handle(), None);
             let lengths = download_lengths(&host, from);
             let saved_bytes = lengths.iter().sum::<u64>();
             assert_eq!(boundary.packet.length, 65_536);

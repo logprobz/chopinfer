@@ -9,7 +9,7 @@ impl Instance {
     /// buffers and packet have the same lifetime as the drafted boundary.
     pub(in crate::instance) fn check_undrafted_status(&self) -> Result<bool, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        if !device.cycle.undrafted_status || !device.cycle.boundary_enabled {
+        if !device.cycle.undrafted_status {
             return Ok(false);
         }
         if device.cycle.pending.is_some() || device.results.metadata.is_some() {
@@ -52,12 +52,6 @@ impl Instance {
         let Some(pending) = &device.cycle.pending else {
             return Ok(false);
         };
-        if !device.cycle.boundary_enabled
-            || (!device.prefetch.enabled
-                && (pending.inputs.len() != 1 || pending.drafts.len() != 1))
-        {
-            return Ok(false);
-        }
         if pending.packed_diagnostics.borrow().is_some() {
             return Err("DSpark boundary was collected twice".into());
         }
@@ -71,19 +65,14 @@ impl Instance {
             .map(|rank| rank.status.pending())
             .collect::<Result<Vec<_>, _>>()?;
         let diagnostic_bytes = pending.drafts.len() as u64 * u64::from(BLOCK_ROWS) * 8;
-        let feedback = device
-            .results
-            .metadata
-            .as_ref()
-            .filter(|_| device.prefetch.enabled)
-            .map(|metadata| {
-                let rows: u64 = metadata
-                    .items
-                    .iter()
-                    .map(|item| u64::from(item.acceptance.draft_tokens) + 1)
-                    .sum();
-                (metadata, crate::dspark::results::SAMPLE_OFFSET + rows * 256)
-            });
+        let feedback = device.results.metadata.as_ref().map(|metadata| {
+            let rows: u64 = metadata
+                .items
+                .iter()
+                .map(|item| u64::from(item.acceptance.draft_tokens) + 1)
+                .sum();
+            (metadata, crate::dspark::results::SAMPLE_OFFSET + rows * 256)
+        });
         let status_bytes = sources.iter().try_fold(0_u64, |sum, span| {
             sum.checked_add(span.length)
                 .ok_or("DSpark status extent overflow")
@@ -192,7 +181,6 @@ impl Instance {
 
 #[cfg(test)]
 pub(crate) struct TestView {
-    pub enabled: bool,
     pub packet: runtime_bundle_abi::DeviceBufferSpanV1,
     pub status: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
     pub diagnostics: [runtime_bundle_abi::DeviceBufferSpanV1; 2],
@@ -202,22 +190,17 @@ pub(crate) struct TestView {
 #[cfg(test)]
 pub(crate) fn for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
-    enabled: Option<bool>,
     capacity: Option<u64>,
 ) -> TestView {
     crate::instance::INSTANCES.with(|table| {
         let mut table = table.borrow_mut();
         let instance = table.get_mut(handle).expect("live instance");
         let device = instance.dspark.as_mut().expect("drafter");
-        if let Some(enabled) = enabled {
-            device.cycle.boundary_enabled = enabled;
-        }
         if let Some(capacity) = capacity {
             let packet = device.cycle.diagnostics.expect("packet");
             device.cycle.diagnostics = Some(slice(packet, 0, capacity).unwrap());
         }
         TestView {
-            enabled: device.cycle.boundary_enabled,
             packet: device.cycle.diagnostics.expect("packet"),
             status: device
                 .ranks

@@ -28,8 +28,7 @@ fn c1_boundary_preserves_all_status_sources_and_confidence_words() {
             &super::super::prompt(7, 0, 0, 3, true),
         );
         instance.commit().unwrap();
-        let view = dspark_boundary_for_test(instance.handle(), None, None);
-        assert!(view.enabled);
+        let view = dspark_boundary_for_test(instance.handle(), None);
         let prefix: u64 = (0..ranks.count()).map(status_bytes).sum();
         let ids = [11_u32, 12, 13, 14, 15];
         let confidence = [0x8000_0000_u32, 1, 0x7fc0_1234, 0x7f80_0000, 0xff80_0000];
@@ -144,40 +143,38 @@ fn every_rank_status_failure_still_refuses_publication() {
 }
 
 #[test]
-fn disabled_or_small_packet_keeps_the_legacy_boundary() {
-    for (enabled, capacity) in [(Some(false), None), (None, Some(40))] {
-        let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
-        execute(
-            &mut instance,
-            &host,
-            &super::super::prompt(7, 0, 0, 3, true),
-        );
-        instance.commit().unwrap();
-        dspark_boundary_for_test(instance.handle(), enabled, capacity);
-        let begin = host.journal.borrow().len();
-        let sink = execute(&mut instance, &host, &verify(7, 0, 3, 5));
-        assert_eq!(sink.draft_tokens(), [(7, vec![0; 5])]);
-        assert_eq!(
-            host.journal.borrow()[begin..]
-                .iter()
-                .filter(|s| s.starts_with("download "))
-                .count(),
-            5
-        );
-        instance.cancel().unwrap();
-        assert!(crate::instance::dspark_context(instance.handle(), 7).is_none());
-        instance.retire_request(7).unwrap();
-        execute(
-            &mut instance,
-            &host,
-            &super::super::prompt(8, 0, 0, 3, true),
-        );
-        instance.commit().unwrap();
-        execute(&mut instance, &host, &verify(8, 0, 3, 5));
-        instance.commit_accepted(&[kept(8, 1)]).unwrap();
-        assert_eq!(state(&instance, 8).end, 4);
-        instance.retire_request(8).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
+fn small_packet_keeps_the_legacy_boundary() {
+    let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(7, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    dspark_boundary_for_test(instance.handle(), Some(40));
+    let begin = host.journal.borrow().len();
+    let sink = execute(&mut instance, &host, &verify(7, 0, 3, 5));
+    assert_eq!(sink.draft_tokens(), [(7, vec![0; 5])]);
+    assert_eq!(
+        host.journal.borrow()[begin..]
+            .iter()
+            .filter(|s| s.starts_with("download "))
+            .count(),
+        5
+    );
+    instance.cancel().unwrap();
+    assert!(crate::instance::dspark_context(instance.handle(), 7).is_none());
+    instance.retire_request(7).unwrap();
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(8, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    execute(&mut instance, &host, &verify(8, 0, 3, 5));
+    instance.commit_accepted(&[kept(8, 1)]).unwrap();
+    assert_eq!(state(&instance, 8).end, 4);
+    instance.retire_request(8).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

@@ -66,9 +66,6 @@ impl Instance {
         let Some(feedback) = device.prefetch.feedback.take() else {
             return Ok(());
         };
-        if !device.prefetch.enabled {
-            return Ok(());
-        }
         let state = device
             .runtime
             .as_ref()

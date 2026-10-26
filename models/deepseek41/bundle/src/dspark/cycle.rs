@@ -35,16 +35,12 @@ pub(crate) struct Cycle {
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
     pub boundary_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
-    pub boundary_enabled: bool,
     /// Opt-in status aggregation and ready logits for a pure undrafted step.
     pub undrafted_status: bool,
     pub pending: Option<Pending>,
-    /// Whether drafted steps gather each item's first rows early
-    /// (`early_enabled`), decided at create.
-    pub early_enabled: bool,
     /// Rank 0's side stream producing the early ids, so their reads wait
     /// for no queued device work, and the ids' storage on it. Both are
-    /// acquired at create when enabled.
+    /// acquired at create.
     pub early_stream: Option<runtime_bundle_abi::BundleStreamHandleV1>,
     pub early_ids: Option<DeviceBufferSpanV1>,
     pub early: Option<Early>,
@@ -72,25 +68,8 @@ pub(crate) struct Early {
     pub rows: Option<u32>,
 }
 
-/// Whether drafted steps gather each item's first Engram rows before the
-/// drafter: on unless `CHOPINFER_DSPARK_ENGRAM_EARLY` holds something other
-/// than `1`, so `0` keeps every row behind the drafter.
-pub(crate) fn early_enabled() -> bool {
-    #[cfg(test)]
-    return EARLY_IN_TESTS.get();
-    #[cfg(not(test))]
-    early_decision(std::env::var_os("CHOPINFER_DSPARK_ENGRAM_EARLY").as_deref())
-}
-
-/// The switch's decision for its raw value, `None` being unset.
-fn early_decision(value: Option<&std::ffi::OsStr>) -> bool {
-    value.is_none_or(|value| value == "1")
-}
-
 #[cfg(test)]
 thread_local! {
-    /// Tests follow the served early-gather route unless explicitly overridden.
-    static EARLY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     static UNDRAFTED_STATUS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -111,30 +90,6 @@ pub(crate) fn with_undrafted_status<T>(enabled: bool, run: impl FnOnce() -> T) -
     }
     let _restore = Restore(UNDRAFTED_STATUS_IN_TESTS.replace(enabled));
     run()
-}
-
-/// Runs `run` as if the early switch held `value`.
-#[cfg(test)]
-pub(crate) fn with_early<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            EARLY_IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(EARLY_IN_TESTS.replace(value));
-    run()
-}
-
-#[cfg(test)]
-#[test]
-fn early_rows_default_on_and_keep_the_control() {
-    use std::ffi::OsStr;
-    assert!(early_decision(None));
-    assert!(early_decision(Some(OsStr::new("1"))));
-    for value in ["0", "", "invalid"] {
-        assert!(!early_decision(Some(OsStr::new(value))));
-    }
 }
 
 /// A layer owns its pinned gather slot and the target piece consuming it.
@@ -158,11 +113,8 @@ impl Cycle {
             draft_done: Vec::new(),
             draft_joined: None,
             boundary_ready: Vec::new(),
-            boundary_enabled: std::env::var_os("CHOPINFER_DSPARK_BOUNDARY_PACKET")
-                .is_none_or(|value| value == "1"),
             undrafted_status: undrafted_status_enabled(),
             pending: None,
-            early_enabled: early_enabled(),
             early_stream: None,
             early_ids: None,
             early: None,

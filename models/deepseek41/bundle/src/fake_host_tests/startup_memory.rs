@@ -53,54 +53,42 @@ fn indexed_retention_metadata_is_dspark_only_and_precedes_kv_sizing() {
 
 #[test]
 fn batched_commit_storage_is_dspark_only_and_precedes_kv_sizing() {
-    use crate::dspark::device::{COMMIT_ROWS, with_batch_commit};
+    use crate::dspark::device::COMMIT_ROWS;
     use model_deepseek41_contract::serving::DeepSeek;
-    let extra = bundle_runtime::upload::InputLayout::new::<DeepSeek>(COMMIT_ROWS, 1).end
-        + u64::from(COMMIT_ROWS - FLASH.shape.attention.window)
-            * FLASH.shape.dspark.targets.len() as u64
-            * u64::from(FLASH.shape.hidden)
-            * 33
-            / 32;
+    let codes = u64::from(COMMIT_ROWS)
+        * FLASH.shape.dspark.targets.len() as u64
+        * u64::from(FLASH.shape.hidden);
+    let sizes = [
+        bundle_runtime::upload::InputLayout::new::<DeepSeek>(COMMIT_ROWS, 1).end,
+        codes,
+        codes / 32,
+    ];
     for speculation in [None, Some((3, 16))] {
-        let run = |enabled| {
-            with_batch_commit(enabled, || {
-                let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-                host.speculation.set(speculation);
-                let mut instance = create(&host, 4);
-                let result = records(&host);
-                instance.destroy().unwrap();
-                assert_eq!(host.acquired.get(), host.released.get());
-                result
-            })
-        };
-        let before = run(false);
-        let after = run(true);
-        assert_eq!(before.len(), 4);
-        assert_eq!(after.len(), 4);
-        for (before, after) in before.iter().zip(&after) {
-            if speculation.is_none() {
-                assert_eq!(before, after, "AR allocation must be unchanged");
-            } else {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.speculation.set(speculation);
+        let mut instance = create(&host, 4);
+        let records = records(&host);
+        assert_eq!(records.len(), 4);
+        for (rank, record) in records.iter().enumerate() {
+            assert_eq!(
+                record["after_kv"], 0,
+                "commit storage must precede KV sizing"
+            );
+            for bytes in sizes {
                 assert_eq!(
-                    after["total"].as_u64().unwrap() - before["total"].as_u64().unwrap(),
-                    extra
+                    host.device
+                        .allocation_ranks
+                        .borrow()
+                        .values()
+                        .filter(|&&(owner, size)| owner as usize == rank && size == bytes)
+                        .count(),
+                    usize::from(speculation.is_some()),
+                    "rank {rank}, commit allocation {bytes}"
                 );
-                assert_eq!(
-                    after["bytes"]["dspark"].as_u64().unwrap()
-                        - before["bytes"]["dspark"].as_u64().unwrap(),
-                    extra
-                );
-                assert_eq!(
-                    before["after_kv"], after["after_kv"],
-                    "commit storage must reduce the KV budget, not its reserve"
-                );
-                for (name, bytes) in before["bytes"].as_object().unwrap() {
-                    if name != "dspark" {
-                        assert_eq!(bytes, &after["bytes"][name]);
-                    }
-                }
             }
         }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 

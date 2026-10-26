@@ -459,6 +459,79 @@ sequences, pairing every kept ID in order (role, rank, alignment, size or a
 declared resize) and taking a head allocation as added only when it is a
 declared added resource.
 
+A layout may also declare exact handle changes per fixture in `handles`.
+Each fixture has `added` and/or `removed` lists. Each entry names a resource,
+its `kind`, its one-based `at` ordinal in that side's complete auxiliary
+trace, and its exact consecutive creator `records`:
+
+```json
+{"handles": {"fixture-name": {
+  "added": [{"name": "status.peer-ready", "kind": "event", "at": 241,
+             "records": [["id", "@id"], ["note", "event @id"]]}],
+  "removed": [{"name": "old-stream", "kind": "stream", "at": 92,
+               "records": [["id", "@id"], ["note", "stream @id"],
+                           ["stream", "@id", 1]]}]
+}}}
+```
+
+The auxiliary witness uses `added_handles` and `removed_handles`, each a
+list of `{"handle": "status.peer-ready", "id": 123}` objects. The declaration
+fixes the kind, position and creator records; the witness supplies only the
+ID. `@id` is that issued slot and `@raw` is its generation-1 raw handle.
+As a complete JSON value they expand to integers; inside a note they expand
+to decimal text. Every declared resource needs exactly one witnessed ID,
+with exactly the declared records at that position. The retained issued IDs
+pair bijectively in their original order, after these additions and removals.
+
+Supported kinds and creator records after `["id", "@id"]`:
+
+- `event`: `["note", "event @id"]`.
+- `stream`: its `stream @id` note and `["stream", "@id", rank]` metadata.
+- `graph`: `["note", "captured STREAM @id NODES"]`. Its capture begin,
+  launches, replay and release still need comparison or exact declarations;
+  recorded node counts are checked against the captured launches.
+- `mapped-gather`: its `event @id` proxy note and
+  `async mapped create @id` service note, covering the same issued ID once.
+- `allocation`: its exact `allocate BYTES ALIGNMENT` note and
+  `["allocation", "@raw", rank, bytes, alignment, stream_raw]` metadata.
+  This positional form supports single-rank additions and removals.
+  It authorizes only creation; initialization and uses need separate exact
+  declarations. The existing `resources.added` form retains its rank,
+  lifetime, initialization and collective-use checks.
+- `opaque`: only the `id` trace record, with no typed metadata or creator
+  note anywhere in the compared trace. This proves issuance at that point,
+  not a host-service role. Peer access and model-owned host handles without
+  creator notes use this form. A missing trace record cannot be supplied by
+  a declaration. Use a descriptive resource name, but do not claim its type
+  was authenticated.
+
+Modules and resolves continue to use the existing locked-module declarations.
+No kind implicitly authorizes uses or releases of a new or removed handle.
+The spec generator reads declared handle positions before aligning the other
+resources; it does not infer which handle changes are allowed.
+
+For operation substitutions that the existing collective, kernel or resource
+rules cannot express, `operations` maps a fixture name to the same exact
+add/remove edit format as `text_edits`. Here `line` is the one-based note
+ordinal in the complete fixture device history, including create and all
+pinned journals, rather than an ordinal in one journal:
+
+```json
+{"operations": {"fixture-name": [
+  {"remove": {"line": 410, "text": "synchronize 2"}},
+  {"add": {"line": 414, "text": "wait 1 123"}}
+]}}
+```
+
+Both texts use their own side's literal handles. Every occurrence is named
+separately with its position and exact line. Missing, additional or shifted
+occurrences fail. Creator records cannot be edited this way, and overlapping
+resource or operation declarations fail. All retained lines still compare
+under the ordered identity map, including their order across create, pinned
+journals and history. These fields require a compared device fixture; unknown
+or text-only fixtures fail. `IDENTICAL` still requires byte-identical bodies,
+and `--require identity` still checks the complete identity checklist.
+
 A device that records no allocation ranks (a test that never registers
 its synthetic streams) is keyed per rank by its synthetic stream, which the
 typed mapping keeps fixed; a stream shared by several ranks fails the per-rank

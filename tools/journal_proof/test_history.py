@@ -760,6 +760,7 @@ class MapperTests(unittest.TestCase):
             m=self.mapper(closed)
             self.assertEqual(m(f'readback 2 {span} 4'),f'readback 3 {mapped} 4')
             self.assertEqual(m(f'peer copy 2 1 {span} 2 {span}'),f'peer copy 3 1 {mapped} 2 {mapped}')
+            self.assertEqual(m(f'peer-copy 2 2 1 {span} {span}'),f'peer-copy 3 2 1 {mapped} {mapped}')
 
     def test_a_fixed_stream_may_not_be_the_image_of_a_created_stream(self):
         from engine import Unproven

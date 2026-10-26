@@ -22,6 +22,9 @@ FORMS = [
     # A copy between two ranks' buffers on `stream`; the contexts are host
     # contexts (rank slots), fixed and compared literally.
     ('copy', re.compile(rf'peer copy (\d+) \d+ {_SPAN} \d+ {_SPAN}'), ('stream',)),
+    # The model host's spelling records source and destination contexts
+    # before the spans; both contexts remain literal rank slots.
+    ('copy', re.compile(rf'peer-copy (\d+) \d+ \d+ {_SPAN} {_SPAN}'), ('stream',)),
     ('download', re.compile(rf'download (\d+) {_SPAN}'), ('stream',)),
     # A model's readback line (its download_line): the stream, the source and
     # the byte count read.
@@ -82,7 +85,7 @@ NOT_COMPARED = [
 _BY_WORD = collections.defaultdict(list)
 for _form in FORMS:
     _word = _form[1].pattern.split(' ', 1)[0]
-    assert _word.isalpha(), _form
+    assert re.fullmatch(r'[a-z]+(?:-[a-z]+)*', _word), _form
     _BY_WORD[_word].append(_form)
 
 # Journal bodies (create and pinned journals, never the history) also hold

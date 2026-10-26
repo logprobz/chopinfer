@@ -266,7 +266,7 @@ fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
         });
         assert_eq!(unset, explicit, "dspark={dspark}");
         assert_eq!(launches(&unset, BF16_SUM), 73 * 4);
-        assert_eq!(launches(&unset, BF16_ROUND), 73 * 6);
+        assert_eq!(launches(&unset, BF16_ROUND), (73 + 36) * 6);
         assert_eq!(launches(&unset, SUM), 0);
         assert_eq!(
             unset

@@ -149,6 +149,8 @@ fn sparse_dma_preserves_compute_and_orders_only_the_required_rows() {
                 (0, 0)
             }
         );
+        // Producer slicing requires the BF16 send buffers.
+        assert_eq!(split_producers(&reference, &candidate).unwrap(), 0);
         let copies = candidate
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
@@ -233,6 +235,8 @@ fn sparse_dma_serves_dspark_target_prefill() {
                 (0, 0)
             }
         );
+        // Producer slicing requires the BF16 send buffers.
+        assert_eq!(split_producers(&reference, &candidate).unwrap(), 0);
         assert_eq!(phased(&candidate), 0);
         assert_eq!(
             candidate
@@ -409,14 +413,17 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
         assert_eq!(phased(&reference) - phased(&candidate), 73 * 4);
         assert_eq!(count(&candidate, SUM), 0);
         assert_eq!(count(&candidate, BF16_SUM), 73 * 4);
-        assert_eq!(count(&candidate, BF16_ROUND), 73 * 6);
+        assert_eq!(
+            count(&candidate, BF16_ROUND),
+            73 * 6 + if rows == 8192 { 36 * 6 } else { 0 }
+        );
         let before = compute(&reference)
             .into_iter()
-            .filter(|line| !consumer(line))
+            .filter(|line| !consumer(line) && !producer(line))
             .collect::<Vec<_>>();
         let after = compute(&candidate)
             .into_iter()
-            .filter(|line| !consumer(line))
+            .filter(|line| !consumer(line) && !producer(line))
             .collect::<Vec<_>>();
         assert_eq!(before, after);
         assert_eq!(
@@ -426,6 +433,10 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
             } else {
                 (0, 0)
             }
+        );
+        assert_eq!(
+            split_producers(&reference, &candidate).unwrap(),
+            if rows == 8192 { 36 * 4 } else { 0 }
         );
         let copies = candidate
             .iter()

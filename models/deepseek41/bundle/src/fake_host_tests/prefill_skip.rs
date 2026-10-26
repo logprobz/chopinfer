@@ -243,6 +243,7 @@ fn exact_prefill_profiles_execute_capture_restore_and_continue() {
 
 #[test]
 fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
+    let mut mismatches = Vec::new();
     for dspark in [false, true] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(dspark);
@@ -306,7 +307,24 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         instance.retire_request(2).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+        let (name, expected) = if dspark {
+            (
+                "flash-tp4-dspark-shared-anchor.journal",
+                (73250, 0xd8a8b0869d7e6f48),
+            )
+        } else {
+            (
+                "flash-tp4-ar-shared-anchor.journal",
+                (70500, 0x0d52cbdf6ee1351f),
+            )
+        };
+        if let Err(error) =
+            bundle_runtime::fake_host::check_journal(&host.device.journal.borrow(), expected, name)
+        {
+            mismatches.push(format!("{name}: {error}"));
+        }
     }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
 #[test]

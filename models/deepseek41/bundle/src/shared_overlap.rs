@@ -31,14 +31,9 @@ use runtime_bundle_abi::{
 use crate::program::Stage;
 use bundle_runtime::pipeline::launch_all;
 
-/// Set to zero to retain serial graph captures. Positive values limit rows.
+/// Positive values limit the number of rows in overlapped graph captures.
 #[cfg_attr(test, allow(dead_code))]
 pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_SHARED_OVERLAP";
-
-/// Set to zero to keep the window KV projection on the compute stream in
-/// every overlapped bucket.
-#[cfg_attr(test, allow(dead_code))]
-pub const KV_SWITCH: &str = "CHOPINFER_DEEPSEEK41_KV_OVERLAP";
 
 /// The largest decode or verify phase whose window KV projection binds the
 /// shared expert's workspace and row status: the dense decode buckets.
@@ -49,30 +44,7 @@ pub fn kv_rows() -> u32 {
 /// Whether `phase`'s window KV projection binds the independent workspace
 /// and row status, which lets it run beside the query chain.
 pub(crate) fn kv_relocated(phase: crate::program::Phase) -> bool {
-    #[cfg(test)]
-    if KV_REFERENCE.get() {
-        return false;
-    }
     !phase.prefill() && phase.rows() <= kv_rows()
-}
-
-#[cfg(test)]
-thread_local! {
-    static KV_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `run` with every window KV projection bound to the compute stream's
-/// workspace and row status, as before the overlap.
-#[cfg(test)]
-pub(crate) fn with_kv_reference<T>(run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            KV_REFERENCE.set(self.0);
-        }
-    }
-    let _restore = Restore(KV_REFERENCE.replace(true));
-    run()
 }
 
 /// Which graph buckets overlap, read at create (which creates each rank's
@@ -87,24 +59,20 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Every bucket on one stream.
-    pub const OFF: Self = Self {
-        max_rows: 0,
-        kv: false,
-    };
     /// Every bucket overlapped, the default.
     pub const ALL: Self = Self {
         max_rows: u32::MAX,
         kv: true,
     };
 
-    /// The settings [`SWITCH`]'s `value` and [`KV_SWITCH`]'s `kv` name.
-    pub fn read(value: Option<&str>, kv: Option<&str>) -> Self {
-        let kv = kv != Some("0");
+    /// The positive row limit selected by [`SWITCH`].
+    pub fn read(value: Option<&str>) -> Self {
         match value.map(str::parse::<u32>) {
-            Some(Ok(0)) => Self::OFF,
-            Some(Ok(max_rows)) => Self { max_rows, kv },
-            None | Some(Err(_)) => Self { kv, ..Self::ALL },
+            Some(Ok(max_rows)) if max_rows > 0 => Self {
+                max_rows,
+                ..Self::ALL
+            },
+            _ => Self::ALL,
         }
     }
 
@@ -113,12 +81,9 @@ impl Settings {
     /// [`with_settings_in_tests`].
     pub fn from_env() -> Self {
         #[cfg(test)]
-        return IN_TESTS.get().unwrap_or_else(|| Self::read(None, None));
+        return IN_TESTS.get().unwrap_or_else(|| Self::read(None));
         #[cfg(not(test))]
-        Self::read(
-            std::env::var(SWITCH).ok().as_deref(),
-            std::env::var(KV_SWITCH).ok().as_deref(),
-        )
+        Self::read(std::env::var(SWITCH).ok().as_deref())
     }
 
     /// Whether any bucket overlaps.
@@ -1030,17 +995,13 @@ mod tests {
                 stages[omitted]
             );
         }
-        assert!(Settings::read(None, None).serves(192));
-        assert!(!Settings::read(Some("0"), None).serves(1));
-        assert!(!Settings::read(Some("8"), None).serves(32));
-        assert!(Settings::read(None, None).serves_kv(64));
-        assert!(!Settings::read(None, None).serves_kv(65));
-        assert!(!Settings::read(None, Some("0")).serves_kv(32));
-        assert!(Settings::read(None, Some("0")).serves(32));
-        assert!(!Settings::read(Some("0"), None).serves_kv(1));
-        assert!(Settings::read(Some("16"), None).serves_kv(16));
-        assert!(!Settings::read(Some("16"), None).serves_kv(32));
-        assert_eq!(Settings::read(None, None), Settings::ALL);
-        assert_eq!(Settings::read(Some("0"), Some("1")), Settings::OFF);
+        assert!(Settings::read(None).serves(192));
+        assert!(!Settings::read(Some("8")).serves(32));
+        assert!(Settings::read(None).serves_kv(64));
+        assert!(!Settings::read(None).serves_kv(65));
+        assert!(Settings::read(Some("16")).serves_kv(16));
+        assert!(!Settings::read(Some("16")).serves_kv(32));
+        assert_eq!(Settings::read(None), Settings::ALL);
+        assert_eq!(Settings::read(Some("0")), Settings::ALL);
     }
 }

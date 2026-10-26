@@ -1385,7 +1385,7 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
 }
 
 /// The Flash TP4 journals with the explicit native MoE prefill switch
-/// (`sm120::moe_native`, `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=1`): the
+/// (`sm120::moe_native`): the
 /// native modules load, every prefill expert projection launches the
 /// native tiles within their configured shared memory, decode keeps its
 /// experts, and the lifecycle releases everything. Every prefill step's
@@ -1403,11 +1403,11 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
         .unwrap();
     let mut mismatches = Vec::new();
     for kv in KV_LAYOUTS {
-        let host = crate::sm120::moe_native::with_native(true, || {
+        let host = {
             let host = FakeHost::new(shape, kv);
             journal_steps(&host);
             host
-        });
+        };
         assert_eq!(host.acquired.get(), host.released.get(), "{:?}", kv.storage);
         assert!(
             host.device
@@ -1450,31 +1450,6 @@ fn native_moe_prefill_switch_runs_the_tp4_journal() {
         }
     }
     assert!(mismatches.is_empty(), "{mismatches:#?}");
-}
-
-/// Opting out of native MoE prefill refuses a Flash TP4 instance, and says
-/// why: its exact prefill kernels read the backbone gate/up bank as rows,
-/// which TP4 stores in quad-lane row tiles (`sm120::moe_row_tiles_op`).
-/// Nothing stays held.
-#[test]
-fn native_moe_prefill_opt_out_refuses_the_row_tiled_tp4_bank() {
-    crate::sm120::moe_native::with_native(false, || {
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        for kv in KV_LAYOUTS {
-            let host = FakeHost::new(shape, kv);
-            let record = crate::config::tests::record(&shape, kv, 4, false);
-            let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
-            assert!(created.is_err(), "{:?}", kv.storage);
-            let reason = crate::sm120::moe_row_tiles_op::NATIVE_OFF;
-            assert!(
-                host.logs.borrow().iter().any(|line| line.contains(reason)),
-                "{:?}: {:?}",
-                kv.storage,
-                host.logs.borrow()
-            );
-            assert_eq!(host.acquired.get(), host.released.get());
-        }
-    });
 }
 
 /// Every launch of `lines` fits its entry's dynamic shared memory: the

@@ -14,7 +14,7 @@
 //! are never part of a plan.
 //!
 //! `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE`: unset or `1` keeps plans,
-//! `0` lowers every step, `verify` keeps plans and lowers every hit again,
+//! `verify` keeps plans and lowers every hit again,
 //! refusing the step if the fresh plan differs from the kept one.
 //!
 //! At most `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS` plans are kept
@@ -45,7 +45,6 @@ pub(crate) const DEFAULT_PLANS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Mode {
-    Off,
     On,
     Verify,
 }
@@ -54,9 +53,8 @@ impl Mode {
     fn read(setting: Option<&str>) -> Result<Self, String> {
         match setting {
             None | Some("1") => Ok(Self::On),
-            Some("0") => Ok(Self::Off),
             Some("verify") => Ok(Self::Verify),
-            Some(other) => Err(format!("{SWITCH}={other:?} is not 0, 1 or verify")),
+            Some(other) => Err(format!("{SWITCH}={other:?} is not 1 or verify")),
         }
     }
 }
@@ -180,10 +178,7 @@ impl Cache {
     /// `run`'s upper-skip plan: the kept plan of its key, or a fresh one,
     /// kept when the run is eligible.
     pub(super) fn plan(&self, instance: &Instance, run: &Run) -> Result<Rc<skip::Plan>, String> {
-        let key = match self.mode {
-            Mode::Off => None,
-            Mode::On | Mode::Verify => key(run),
-        };
+        let key = key(run);
         let Some(key) = key else {
             return skip::Plan::prepare(instance, run).map(Rc::new);
         };
@@ -384,7 +379,7 @@ mod tests {
     fn the_switch_defaults_on_and_refuses_other_values() {
         assert_eq!(Mode::read(None), Ok(Mode::On));
         assert_eq!(Mode::read(Some("1")), Ok(Mode::On));
-        assert_eq!(Mode::read(Some("0")), Ok(Mode::Off));
+        assert!(Mode::read(Some("0")).is_err());
         assert_eq!(Mode::read(Some("verify")), Ok(Mode::Verify));
         assert!(Mode::read(Some("on")).is_err());
         assert!(Mode::read(Some("")).is_err());

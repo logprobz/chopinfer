@@ -19,8 +19,7 @@ use std::collections::BTreeMap;
 
 /// Why a tiled install refuses native-off prefill.
 pub const NATIVE_OFF: &str = "DeepSeek's TP4 backbone gate/up bank is stored in row tiles, \
-which only native MoE prefill reads: CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL=0 selects exact \
-prefill kernels that read it as rows";
+which requires native MoE prefill kernels that read its tile layout";
 
 /// The layout the gate/up consumers of `set` read at `ranks`: the served
 /// plan's for the TP4 backbone bank, rows for every other bank and rank

@@ -5,26 +5,7 @@ use model_deepseek41_contract::geometry::FLASH;
 pub const MAX_ROWS: u32 = 64;
 
 pub fn enabled(shape: &Shape) -> bool {
-    #[cfg(test)]
-    if REFERENCE.with(|flag| flag.get()) {
-        return false;
-    }
     shape.geometry == &FLASH && shape.ranks() == 4
-}
-
-#[cfg(test)]
-std::thread_local! { static REFERENCE: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
-
-#[cfg(test)]
-pub(crate) fn with_reference<T>(run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            REFERENCE.with(|flag| flag.set(self.0));
-        }
-    }
-    let _restore = Restore(REFERENCE.with(|flag| flag.replace(true)));
-    run()
 }
 
 #[cfg(test)]
@@ -95,8 +76,6 @@ mod tests {
             }
         }
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        assert!(enabled(&shape));
-        with_reference(|| assert!(!enabled(&shape)));
         assert!(enabled(&shape));
     }
 }

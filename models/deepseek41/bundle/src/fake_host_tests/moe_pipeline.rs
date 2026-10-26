@@ -8,7 +8,7 @@ use super::*;
 /// tiles above.
 #[test]
 fn native_prefill_runs_wide_gate_up_tiles_above_the_fused_rows() {
-    crate::sm120::moe_native::with_native(true, check_native_gate_up_tiles);
+    check_native_gate_up_tiles();
 }
 
 fn check_native_gate_up_tiles() {

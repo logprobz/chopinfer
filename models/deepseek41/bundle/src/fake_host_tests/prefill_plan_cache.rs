@@ -273,13 +273,14 @@ fn lifecycle_on(mode: Mode, dspark: bool) -> (Vec<String>, (u64, u64)) {
 
 #[test]
 fn kept_plans_issue_the_fresh_lowerings_journal() {
-    let (fresh, counts) = lifecycle(Mode::Off);
-    assert_eq!(counts, (0, 0));
+    let (fresh, counts) = lifecycle(Mode::Verify);
+    assert_eq!(counts, (7, 4));
     assert!(fresh.iter().filter(|l| l.starts_with("launch ")).count() > 50_000);
     // Four kept plans (1, 7, 22 and 64 rows); every other eligible prefill
     // reuses one. The scored, two-prompt, 65-row and prefixed prefills lower
     // fresh.
-    for mode in [Mode::On, Mode::Verify] {
+    {
+        let mode = Mode::On;
         let (kept, counts) = lifecycle(mode);
         assert_eq!(kept.len(), fresh.len(), "{mode:?}");
         if let Some(at) = (0..fresh.len()).find(|&at| kept[at] != fresh[at]) {
@@ -294,11 +295,12 @@ fn kept_plans_issue_the_fresh_lowerings_journal() {
 
 #[test]
 fn a_dspark_target_keeps_plans_with_the_fresh_lowerings_journal() {
-    let (fresh, counts) = lifecycle_on(Mode::Off, true);
-    assert_eq!(counts, (0, 0));
+    let (fresh, counts) = lifecycle_on(Mode::Verify, true);
+    assert_eq!(counts, (9, 4));
     // The same plans as without DSpark, and the 22-row plan reused beside a
     // verify item with drafts.
-    for mode in [Mode::On, Mode::Verify] {
+    {
+        let mode = Mode::On;
         let (kept, counts) = lifecycle_on(mode, true);
         assert_eq!(kept.len(), fresh.len(), "{mode:?}");
         if let Some(at) = (0..fresh.len()).find(|&at| kept[at] != fresh[at]) {
@@ -349,9 +351,10 @@ fn a_full_plan_cache_drops_its_least_recently_used_plan() {
     // least recently used), 5 is lowered again and drops 3, 9 is reused and
     // 3 is lowered again and drops 5.
     let lengths = [3, 5, 3, 9, 5, 9, 3];
-    let (fresh, counts, kept) = one_at_a_time(Mode::Off, 2, &lengths);
-    assert_eq!((counts, kept), ((0, 0), (vec![], 0)));
-    for mode in [Mode::On, Mode::Verify] {
+    let (fresh, counts, kept) = one_at_a_time(Mode::Verify, 2, &lengths);
+    assert_eq!((counts, kept), ((2, 5), (vec![3, 9], 3)));
+    {
+        let mode = Mode::On;
         let (journal, counts, kept) = one_at_a_time(mode, 2, &lengths);
         assert_eq!(journal.len(), fresh.len(), "{mode:?}");
         if let Some(at) = (0..fresh.len()).find(|&at| journal[at] != fresh[at]) {

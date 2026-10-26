@@ -1,6 +1,6 @@
 //! Default native block-scaled MoE prefill, a within-bound path that
-//! changes bits (models/deepseek41/lab/native_moe_prefill.md). With
-//! `CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL` unset or `1`, Flash TP4's target expert
+//! changes bits (models/deepseek41/lab/native_moe_prefill.md).
+//! Flash TP4's target expert
 //! bank runs its gate/up and down tiles through native MXFP4 x MXFP8 MMA
 //! in every prefill step, whatever its row count, so a prompt row's
 //! arithmetic still does not depend on the chunking. Routing, the gate/up
@@ -27,7 +27,6 @@ use model_deepseek41_contract::{
     moe::Experts,
 };
 
-pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_NATIVE_MOE_PREFILL";
 pub const CUBIN: &str = entries::CUBIN;
 pub const CEIL_CUBIN: &str = entries::CEIL_CUBIN;
 pub const WIDE_CUBIN: &str = entries::WIDE_CUBIN;
@@ -40,35 +39,9 @@ const QUANTIZER: &str = "_moe_ceil_";
 /// same either way.
 pub const FUSED_CEIL_ROWS: u32 = 2048;
 
-fn selected(setting: Option<&str>) -> bool {
-    matches!(setting, None | Some("1"))
-}
-
-/// Whether the instance selects native MoE prefill, on by default.
+/// Native prefill is selected wherever its topology and phase gates apply.
 pub fn requested() -> bool {
-    #[cfg(test)]
-    return IN_TESTS.get();
-    #[cfg(not(test))]
-    match std::env::var(SWITCH) {
-        Ok(value) => selected(Some(&value)),
-        Err(std::env::VarError::NotPresent) => selected(None),
-        Err(_) => false,
-    }
-}
-
-#[cfg(test)]
-thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(test)]
-pub(crate) fn with_native<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _reset = Reset(IN_TESTS.replace(enabled));
-    run()
+    true
 }
 
 /// The topology and bank the entries compile for.
@@ -416,19 +389,6 @@ mod tests {
     use model_deepseek41_contract::moe;
 
     #[test]
-    fn switch_defaults_on_and_keeps_the_explicit_opt_out() {
-        assert!(selected(None));
-        assert!(selected(Some("1")));
-        for value in [Some("0"), Some(""), Some("true")] {
-            assert!(!selected(value));
-        }
-        assert!(requested());
-        assert!(!with_native(false, requested));
-        assert!(with_native(true, requested));
-        assert!(requested());
-    }
-
-    #[test]
     fn applies_to_every_target_prefill_and_nothing_else() {
         let target = entries::target_set();
         for set in moe::expert_sets(&FLASH) {
@@ -554,10 +514,7 @@ mod tests {
                 let base_symbols = base.info().symbols.clone();
                 let (b, workspace) = views(base.as_ref());
                 let old = base.launches(&b, workspace, Counts::rows(rows)).unwrap();
-                let unchanged =
-                    with_native(false, || prepare(&FLASH, 4, set, kind, usage, serving())).unwrap();
-                assert_eq!(unchanged.info().symbols, base_symbols);
-                let op = with_native(true, || prepare(&FLASH, 4, set, kind, usage, base)).unwrap();
+                let op = prepare(&FLASH, 4, set, kind, usage, base).unwrap();
                 let quantizer = base_symbols
                     .iter()
                     .filter(|(s, _)| s.contains(QUANTIZER))
@@ -773,10 +730,7 @@ mod tests {
             .chained_mlp_projection(&query, usage, Need::rows(8))
             .unwrap();
         let symbols = base.info().symbols.clone();
-        let op = with_native(true, || {
-            prepare(&FLASH, 4, set, GatedMlpProjection::Down, usage, base)
-        })
-        .unwrap();
+        let op = { prepare(&FLASH, 4, set, GatedMlpProjection::Down, usage, base) }.unwrap();
         assert_eq!(op.info().symbols, symbols);
     }
 }

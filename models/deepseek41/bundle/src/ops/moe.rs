@@ -716,14 +716,10 @@ mod tests {
 
     #[test]
     fn measured_crossover_survives_phase_wide_preparation() {
-        crate::sm120::moe_native::with_native(false, check_exact_crossover);
+        check_exact_crossover();
     }
 
-    // Opting out retains the measured exact expert buckets at every phase.
-    // A row-tiled bank refuses the opt-out, whose exact prefill kernels
-    // read rows (`sm120::moe_row_tiles_op`); its decode and verify buckets,
-    // which native prefill leaves as they are, keep the same selection and
-    // read the bank in tiles.
+    // Native prefill leaves the other phases and banks on their measured buckets.
     fn check_exact_crossover() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
@@ -733,13 +729,7 @@ mod tests {
                 let prepare = || MoeOps::prepare(kernels.backend.as_ref(), &shape, &asks, set);
                 let layout = crate::Kernels::moe_gate_up_layout(&shape, set);
                 let tiled = layout.tiled();
-                let ops = if tiled {
-                    let native_off = crate::sm120::moe_row_tiles_op::NATIVE_OFF;
-                    assert_eq!(prepare().err(), Some(Refused::Rule(native_off.into())));
-                    crate::sm120::moe_native::with_native(true, prepare).unwrap()
-                } else {
-                    prepare().unwrap()
-                };
+                let ops = prepare().unwrap();
                 assert_eq!(ops.gate_up_layout(), layout);
                 assert_eq!(tiled, ranks == Ranks::TP4 && set.count == 384);
                 let most = asks.asked().iter().map(|a| a.workspace).max().unwrap();

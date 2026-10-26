@@ -1,5 +1,5 @@
 use super::*;
-use crate::shared_overlap::{Settings, with_kv_reference, with_settings_in_tests};
+use crate::shared_overlap::{Settings, with_settings_in_tests};
 
 fn captured(settings: Settings, ranks: Ranks) -> Vec<String> {
     let shape = Shape::new(&FLASH, ranks).unwrap();
@@ -41,7 +41,6 @@ fn captured(settings: Settings, ranks: Ranks) -> Vec<String> {
 #[test]
 fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
     for ranks in [Ranks::TP2, Ranks::TP4] {
-        let serial = captured(Settings::OFF, ranks);
         let parallel = captured(Settings::ALL, ranks);
         // Each launch with its config and operands. The routed gate after
         // an r2 join (directly after its wait) drops programmatic
@@ -65,17 +64,14 @@ fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
             values.sort();
             (values, joined)
         };
-        let (serial_launches, unjoined) = launches(&serial);
-        let (parallel_launches, joined) = launches(&parallel);
-        assert_eq!(serial_launches, parallel_launches);
-        assert_eq!(unjoined, 0);
+        let (_, joined) = launches(&parallel);
         let finishes = parallel
             .iter()
             .filter(|s| s.starts_with("launch ") && s.contains("_finish_r2v"))
             .count();
         assert_eq!(joined, finishes);
         let waits = |lines: &[String]| lines.iter().filter(|s| s.starts_with("wait ")).count();
-        assert!(waits(&parallel) > waits(&serial));
+        assert!(waits(&parallel) > 0);
         let streams = |lines: &[String]| {
             lines
                 .iter()
@@ -84,11 +80,10 @@ fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
                 .collect::<std::collections::BTreeSet<_>>()
         };
         let count = if ranks == Ranks::TP2 { 2 } else { 4 };
-        assert_eq!(streams(&serial).len(), count);
         assert_eq!(streams(&parallel).len(), count * 2);
-        // TP4 decode runs the direct-load MoE buckets under both settings.
+        // TP4 decode runs the direct-load MoE buckets.
         assert_eq!(
-            serial
+            parallel
                 .iter()
                 .any(|s| s.starts_with("launch ") && s.contains("_moe_bandwidth_direct_")),
             ranks == Ranks::TP4
@@ -156,13 +151,10 @@ fn shared_overlap_replay_failure_poisoning_prevents_a_second_submission() {
 
 #[test]
 fn shared_overlap_refuses_invalid_quantized_decode_rows() {
-    for (settings, plane) in [Settings::OFF, Settings::ALL]
-        .into_iter()
-        .flat_map(|s| [(s, 0), (s, 1)])
-    {
+    for plane in [0, 1] {
         let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        let mut instance = with_settings_in_tests(settings, || create(&host, 4));
+        let mut instance = create(&host, 4);
         step(
             &mut instance,
             &prompt(7, 0, 0, 3, true),
@@ -454,254 +446,4 @@ fn the_scratch_audit_takes_attention_inputs_from_the_fork() {
     };
     assert_eq!(audit(region(span(7, 0, 2048))), (0, 1, 0));
     assert_eq!(audit(region(span(6, 512, 64))), (0, 1, 1));
-}
-
-/// One lifecycle's journal from its first step, in phase cases: a 32-row
-/// prompt, 31 one-row prompts, decode at 1, 8 and 32 rows and, on the
-/// native layout, a 32-row verify. `reference` binds each window KV
-/// projection as before the overlap.
-fn kv_lifecycle(ranks: Ranks, kv: KvLayout, settings: Settings, reference: bool) -> Vec<String> {
-    let run = || {
-        let shape = Shape::new(&FLASH, ranks).unwrap();
-        let host = FakeHost::new(shape, kv);
-        if kv.storage == KvStorage::Native {
-            host.speculation.set(Some((5, 32)));
-        }
-        let mut instance = with_settings_in_tests(settings, || create(&host, 32));
-        let mut records = Vec::new();
-        let mut ends = [1_u64; 32];
-        let mark = |records: &mut Vec<String>, case: String, from: usize| {
-            records.push(case);
-            records.extend_from_slice(&host.device.journal.borrow()[from..]);
-        };
-        for slot in 0..32 {
-            let count = if slot == 0 { 32 } else { 1 };
-            let from = host.device.journal.borrow().len();
-            step(
-                &mut instance,
-                &prompt(slot + 1, slot, 0, count, true),
-                &mut Views::default(),
-            );
-            mark(&mut records, format!("case prefill{count}"), from);
-            ends[slot as usize] = count;
-        }
-        for count in [1, 8, 32] {
-            let from = host.device.journal.borrow().len();
-            let items = (0..count)
-                .map(|i| (i + 1, i, ends[i as usize], 7))
-                .collect::<Vec<_>>();
-            step(&mut instance, &decode(&items), &mut Views::default());
-            mark(&mut records, format!("case decode{count}"), from);
-            for end in &mut ends[..count as usize] {
-                *end += 1;
-            }
-        }
-        if kv.storage == KvStorage::Native {
-            let from = host.device.journal.borrow().len();
-            let tokens = vec![7; 4];
-            let items = (0..8)
-                .map(|i| (i + 1, i, ends[i as usize], tokens.as_slice()))
-                .collect::<Vec<_>>();
-            instance
-                .execute(&verify(&items), &mut Views::default())
-                .unwrap();
-            instance
-                .commit_accepted(&(1..=8).map(|i| kept(i, 4)).collect::<Vec<_>>())
-                .unwrap();
-            mark(&mut records, "case verify32".into(), from);
-        }
-        for id in 1..=32 {
-            instance.retire_request(id).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-        records
-    };
-    if reference {
-        with_kv_reference(run)
-    } else {
-        run()
-    }
-}
-
-/// A launch line without its stream and with each span reduced to its
-/// length.
-fn placement_free(line: &str) -> String {
-    let rest = line
-        .strip_prefix("launch ")
-        .and_then(|s| s.split_once(' '))
-        .map_or(line, |(_, rest)| rest);
-    let mut parts = rest.split("DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: ");
-    let mut out = parts.next().unwrap().to_owned();
-    for part in parts {
-        out.push_str("span length: ");
-        out.push_str(part.split_once(", length: ").unwrap().1);
-    }
-    out
-}
-
-/// Whether `line` launches a window KV projection kernel of `shape`, not
-/// the C1 dual fold that computes it with the query.
-fn kv_launch(shape: &Shape, line: &str) -> bool {
-    let q = crate::ops::dense::projections(shape)
-        .into_iter()
-        .find(|d| d.id == "attention.kv")
-        .unwrap()
-        .query;
-    line.starts_with("launch ")
-        && line.contains("chop_")
-        && !line.contains("chop_mxfp8_dual_")
-        && line.contains(&format!("_n{}_k{}_g{}_", q.n, q.k, q.groups))
-}
-
-/// The window KV projection binds the shared expert's workspace and row
-/// status in decode and verify phases, and, overlapped, runs beside the
-/// query chain. Against the journal before the change, relocation alone
-/// changes only those launches' spans; the overlap adds only fork and join
-/// events and moves those launches to the side stream in captures. Every
-/// other line, prefill included, is identical.
-#[test]
-fn the_window_kv_overlap_changes_only_its_projection() {
-    let serial = Settings {
-        kv: false,
-        ..Settings::ALL
-    };
-    for (ranks, kv) in [
-        (Ranks::TP4, KV_LAYOUTS[0]),
-        (Ranks::TP4, KV_LAYOUTS[1]),
-        (Ranks::TP2, KV_LAYOUTS[0]),
-    ] {
-        let shape = Shape::new(&FLASH, ranks).unwrap();
-        let before = kv_lifecycle(ranks, kv, serial, true);
-        let relocated = kv_lifecycle(ranks, kv, serial, false);
-        let overlapped = kv_lifecycle(ranks, kv, Settings::ALL, false);
-        // Relocation: equal lengths, only decode and verify KV launches differ.
-        assert_eq!(before.len(), relocated.len());
-        let mut case = String::new();
-        let mut moved = 0;
-        for (a, b) in before.iter().zip(&relocated) {
-            if a.starts_with("case ") {
-                assert_eq!(a, b);
-                case = a.clone();
-            }
-            let decode = case.starts_with("case decode") || case.starts_with("case verify");
-            if kv_launch(&shape, a) && decode {
-                assert_ne!(a, b, "{case}: an unrelocated KV launch");
-                assert_eq!(placement_free(a), placement_free(b), "{case}");
-                moved += 1;
-            } else {
-                assert_eq!(a, b, "{case}");
-            }
-        }
-        assert!(moved > 0);
-        // Overlap: the same lines plus fork and join events; each decode
-        // or verify KV launch moves, with the same operands, to the side
-        // stream between a fork and its join. Graph pieces split only
-        // between whole regions, so their boundaries may move.
-        let event = |line: &str| {
-            line.starts_with("record ")
-                || line.starts_with("wait ")
-                || line.starts_with("capture ")
-                || line.starts_with("captured ")
-        };
-        let kv_of = |lines: &[String]| {
-            let mut case = String::new();
-            let (mut kept, mut moved) = (Vec::new(), Vec::new());
-            for line in lines {
-                if line.starts_with("case ") {
-                    case = line.clone();
-                }
-                let decode = case.starts_with("case decode") || case.starts_with("case verify");
-                if event(line) {
-                    continue;
-                } else if decode && kv_launch(&shape, line) {
-                    moved.push(line.clone());
-                } else {
-                    kept.push(line.clone());
-                }
-            }
-            (kept, moved)
-        };
-        let (kept, serial) = kv_of(&relocated);
-        let (sided_kept, sided) = kv_of(&overlapped);
-        if let Some(at) =
-            (0..kept.len().max(sided_kept.len())).find(|&i| kept.get(i) != sided_kept.get(i))
-        {
-            panic!(
-                "overlap changed line {at}: {:?} became {:?}",
-                kept.get(at),
-                sided_kept.get(at)
-            );
-        }
-        assert_eq!(sided.len(), serial.len());
-        for (a, b) in sided.iter().zip(&serial) {
-            assert_eq!(placement_free(a), placement_free(b));
-        }
-        // Each KV region records and waits for a fork and a join.
-        let fork_join = |lines: &[String]| {
-            lines
-                .iter()
-                .filter(|l| l.starts_with("record ") || l.starts_with("wait "))
-                .count()
-        };
-        let events = fork_join(&overlapped) - fork_join(&relocated);
-        assert!(events > 0 && events % 4 == 0, "{events}");
-        // Every moved launch sits on the side stream inside a region.
-        let count = sided.len();
-        let sided: std::collections::HashSet<&String> = sided.iter().collect();
-        let split = |prefix: &str, line: &str| {
-            line.strip_prefix(prefix)
-                .and_then(|rest| rest.split_once(' '))
-                .map(|(stream, event)| (stream.to_owned(), event.to_owned()))
-        };
-        let mut open: Option<String> = None;
-        let mut inside = 0;
-        for (i, line) in overlapped.iter().enumerate() {
-            if let (Some((recorder, recorded)), Some((waiter, waited))) = (
-                split("record ", line),
-                overlapped.get(i + 1).and_then(|next| split("wait ", next)),
-            ) && recorded == waited
-            {
-                open = match open {
-                    // The side stream records the join.
-                    Some(side) if side == recorder => None,
-                    None if overlapped
-                        .get(i + 2)
-                        .is_some_and(|next| next.starts_with(&format!("launch {waiter} "))) =>
-                    {
-                        Some(waiter)
-                    }
-                    // Packet joins lead to copies, not a side-stream region.
-                    None => None,
-                    Some(_) => panic!("nested overlap region"),
-                };
-            }
-            if sided.contains(line) {
-                let side = open.as_ref().expect("a KV launch outside a region");
-                assert!(line.starts_with(&format!("launch {side} ")), "{line}");
-                inside += 1;
-            }
-        }
-        assert!(open.is_none());
-        assert_eq!(inside, count);
-        assert!(inside > 0);
-        // Each decode and verify case's regions bind disjoint scratch, with a
-        // KV region per backbone layer and rank where the KV projection runs
-        // on its own (the C1 dual fold computes it with the query at TP4).
-        let mut cases = overlapped.split(|line| line.starts_with("case ")).skip(1);
-        for name in overlapped.iter().filter(|line| line.starts_with("case ")) {
-            let lines = cases.next().unwrap();
-            let regions = audit_regions(lines);
-            assert_eq!(regions.collisions, 0, "{name}");
-            if name.starts_with("case decode") || name.starts_with("case verify") {
-                let dual = lines.iter().any(|l| l.contains("chop_mxfp8_dual_"));
-                let layers = (FLASH.layers() * shape.ranks()) as usize;
-                if dual {
-                    assert_eq!(regions.kv, 0, "{name}");
-                } else {
-                    assert!(regions.kv >= layers, "{name}: {}", regions.kv);
-                }
-            }
-        }
-    }
 }

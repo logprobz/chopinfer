@@ -1,5 +1,6 @@
 #pragma once
 #include "mxfp8_prefill.cuh"
+#include "../common/ptx_matrix.cuh"
 #include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_prefill_compact {
@@ -17,10 +18,10 @@ namespace chop::gemm::mxfp8_prefill_compact {
 // A task owns this arena until it drains every outstanding async copy.
 // Its virtual tile index is independent of the entry wrapper's grid.
 template<int Rows, int Stages> struct Layout {
-  static_assert(Rows == 16 || Rows == 32 || Rows == 64);
-  static_assert(Stages == 2 || Stages == 3);
-  static constexpr int threads = Rows == 64 ? 256 : 128;
-  static constexpr int row_groups = Rows == 64 ? 2 : 1;
+  static_assert(Rows == 16 || Rows == 32 || Rows == 64 || Rows == 128);
+  static_assert(Stages >= 2 && Stages <= 4);
+  static constexpr int threads = Rows >= 64 ? 256 : 128;
+  static constexpr int row_groups = Rows >= 64 ? 2 : 1;
   static constexpr int fragments = Rows / row_groups / 16;
   static constexpr int code_bytes = (Rows + 128) * 128;
   static constexpr int stage_bytes = code_bytes + (Rows + 128) * 4;
@@ -135,12 +136,14 @@ __device__ __forceinline__ void load(uint8_t* stage,int fold,uint3 tile,
 }
 
 template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,
-    int Rows,int Stages,bool OmitFirst=false,bool PackedWeights=false>
+    int Rows,int Stages,bool MatrixFetch,bool OmitFirst=false,bool PackedWeights=false>
 __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
     const uint8_t* input,const uint8_t* as,const uint8_t* weights,const uint8_t* ws,
     void* output,const uint32_t* status,uint64_t status_offset) {
   using L=Layout<Rows,Stages>;
   static_assert(K>0 && K%32==0 && Groups>0);
+  static_assert(MatrixFetch ? Rows >= 32 : Rows <= 64);
+  static_assert(MatrixFetch || Stages <= 3);
   static_assert(GroupStride>=K && RowStride>=(Groups-1)*GroupStride+K);
   static_assert(RowStride%32==0 && GroupStride%32==0);
   static_assert(!PackedWeights || (N%8==0 && K%64==0));
@@ -176,9 +179,15 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
 #pragma unroll
       for(int m=0;m<L::fragments;++m) {
         const int row=wm*(Rows/L::row_groups)+m*16+quad;
+        if constexpr(MatrixFetch) {
+          const int matrix_row=wm*(Rows/L::row_groups)+m*16+(lane&15);
+          const int matrix_k=step*32+(lane>>4)*16;
+          ptx::ldmatrix_b16<4,false>(a[m].v,codes+offset(matrix_row,matrix_k));
+        } else {
 #pragma unroll
-        for(int i=0;i<4;++i)
-          a[m].v[i]=word(codes,row+(i%2)*8,step*32+(i/2)*16+lane4*4);
+          for(int i=0;i<4;++i)
+            a[m].v[i]=word(codes,row+(i%2)*8,step*32+(i/2)*16+lane4*4);
+        }
         sa[m]=(scales[row+(lane4&1)*8]>>(step*8))&255;
       }
 #pragma unroll
@@ -192,6 +201,10 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
                 +offset(row,packed_at(half,row,step*32+lane4*4)/16*16));
           b[n].v[0]=step%2 ? piece[n].z : piece[n].x;
           b[n].v[1]=step%2 ? piece[n].w : piece[n].y;
+        } else if constexpr(MatrixFetch) {
+          const int matrix_row=Rows+wn*32+n*8+(lane&7);
+          const int matrix_k=step*32+((lane>>3)&1)*16;
+          ptx::ldmatrix_b16<2,false>(b[n].v,codes+offset(matrix_row,matrix_k));
         } else {
 #pragma unroll
           for(int i=0;i<2;++i) b[n].v[i]=word(codes,row,step*32+i*16+lane4*4);
@@ -234,7 +247,7 @@ __device__ void task(uint3 tile,uint8_t* arena,uint32_t live,
       }
 }
 
-template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,int Rows,int Stages,bool OmitFirst=false,
+template<int N,int K,int Groups,int RowStride,int GroupStride,bool F32Output,int Rows,int Stages,bool MatrixFetch,bool OmitFirst=false,
     bool PackedWeights=false>
 __device__ void run(const uint8_t* input,const uint8_t* as,const uint8_t* weights,const uint8_t* ws,
     void* output,const uint32_t* live_rows,const uint32_t* status,uint64_t status_offset,uint32_t rows) {
@@ -244,6 +257,6 @@ __device__ void run(const uint8_t* input,const uint8_t* as,const uint8_t* weight
   ptx::griddep_wait();
   const uint32_t live=min(rows,*live_rows);
   if(blockIdx.y*Rows>=live) return;
-  task<N,K,Groups,RowStride,GroupStride,F32Output,Rows,Stages,OmitFirst,PackedWeights>(blockIdx,arena,live,input,as,weights,ws,output,status,status_offset);
+  task<N,K,Groups,RowStride,GroupStride,F32Output,Rows,Stages,MatrixFetch,OmitFirst,PackedWeights>(blockIdx,arena,live,input,as,weights,ws,output,status,status_offset);
 }
 } // namespace chop::gemm::mxfp8_prefill_compact

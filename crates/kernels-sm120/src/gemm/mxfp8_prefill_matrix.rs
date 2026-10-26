@@ -87,7 +87,7 @@ impl Entry {
         }
         let q = self.base.query;
         spec.body = format!(
-            "chop::gemm::mxfp8_prefill_matrix::run<{},{},{},{},{},{},{tile},{},{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
+            "chop::gemm::mxfp8_prefill_compact::run<{},{},{},{},{},{},{tile},{},true,{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
             q.n,
             q.k,
             q.groups,
@@ -237,7 +237,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     bases.sort_by(|a, b| a.symbol.cmp(&b.symbol));
     bases.dedup_by(|a, b| a.symbol == b.symbol && a.query == b.query);
     let mut spec = mxfp8_fold::cubin_spec(name, &bases)?;
-    spec.headers = vec!["#include \"gemm/mxfp8_prefill_matrix.cuh\"".into()];
+    spec.headers = vec!["#include \"gemm/mxfp8_prefill_compact.cuh\"".into()];
     spec.entries = entries
         .iter()
         .map(Entry::specs)

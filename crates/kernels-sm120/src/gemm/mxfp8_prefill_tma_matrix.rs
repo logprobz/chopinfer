@@ -31,20 +31,15 @@ impl Entry {
         let mut specs = mxfp8_prefill::specs(&self.base)?;
         specs[0].symbol = format!("{}_admit_v1", self.symbol());
         specs[1].symbol = self.symbol();
-        for spec in &mut specs {
-            spec.body = spec
-                .body
-                .replace("mxfp8_prefill::", "mxfp8_prefill_tma_matrix::");
-        }
         specs[1].body = specs[1].body.replace(
             ",false>(activation_map",
-            &format!(",false,{}>(activation_map", self.stages),
+            &format!(",false,false,true,{},false>(activation_map", self.stages),
         );
         let mut control = specs[1].clone();
         control.symbol.push_str("_omit_first_v1");
         control.body = control.body.replace(
-            &format!(",false,{}>(activation_map", self.stages),
-            &format!(",true,{}>(activation_map", self.stages),
+            &format!(",false,false,true,{},false>(activation_map", self.stages),
+            &format!(",false,false,true,{},true>(activation_map", self.stages),
         );
         specs.push(control);
         Ok(specs)
@@ -102,7 +97,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     bases.sort_by(|a, b| a.symbol.cmp(&b.symbol));
     bases.dedup_by(|a, b| a.symbol == b.symbol && a.query == b.query);
     let mut spec = mxfp8_fold::cubin_spec(name, &bases)?;
-    spec.headers = vec!["#include \"gemm/mxfp8_prefill_tma_matrix.cuh\"".into()];
+    spec.headers = vec!["#include \"gemm/mxfp8_prefill.cuh\"".into()];
     spec.entries = entries
         .iter()
         .map(Entry::specs)

@@ -101,7 +101,7 @@ impl Entry {
         }
         let q = self.base.query;
         spec.body = format!(
-            "chop::gemm::mxfp8_prefill_compact::run<{},{},{},{},{},{},{tile},{},{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
+            "chop::gemm::mxfp8_prefill_compact::run<{},{},{},{},{},{},{tile},{},false,{}{}>(activations,activation_scales,weights,weight_scales,output,live_rows,status,status_row_offset,rows);",
             q.n,
             q.k,
             q.groups,

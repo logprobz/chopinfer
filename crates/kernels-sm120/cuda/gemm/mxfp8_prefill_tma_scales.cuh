@@ -2,15 +2,14 @@
 
 // Stage code tiles with TMA and packed scale words with cp.async. Every
 // output keeps four k32 MMAs from zero, then the ascending 128-K F32 fold.
-#include "mxfp8_prefill_tma_matrix.cuh"
 #include "mxfp8_prefill.cuh"
 
 namespace chop::gemm::mxfp8_prefill_tma_scales {
 constexpr int tile = 128, math_warps = 8;
 constexpr int plane_bytes = tile * 128, code_bytes = 2 * plane_bytes;
 constexpr int stage_bytes = code_bytes + 2 * tile * 4;
-using mxfp8_prefill_tma_matrix::validate;
-using mxfp8_prefill_tma_matrix::tail;
+using mxfp8_prefill::validate;
+using mxfp8_prefill::tail;
 
 // With PackedWeights, `weight_map` is the 4-D packed map of
 // mxfp8_prefill::run and `weights` the packed codes.
@@ -42,7 +41,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   if (token0 >= live) return;
   // Only complete live token tiles may enter the TMA ring.
   if (token0 + tile > live) {
-    tail<N, K, Groups, RowStride, GroupStride, F32Output, OmitFirst, PackedWeights>(
+    tail<N, K, Groups, RowStride, GroupStride, F32Output, false, PackedWeights, OmitFirst>(
         activations, weights, activation_scales, weight_scales, output,
         status, status_offset, live, token0, column0, group);
     return;

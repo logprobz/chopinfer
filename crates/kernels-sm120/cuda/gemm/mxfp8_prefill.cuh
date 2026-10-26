@@ -6,9 +6,10 @@
 #include "prefill_mainloop.cuh"
 #include "mxfp8_fold.cuh"
 #include "mxfp8_fold_packed.cuh"
+#include "../common/ptx_matrix.cuh"
 
 namespace chop::gemm::mxfp8_prefill {
-constexpr int tile = 128, stages = 2, math_warps = 8;
+constexpr int tile = 128, math_warps = 8;
 constexpr int plane_bytes = tile * 128, stage_bytes = 2 * plane_bytes;
 
 // Admit each activation row once across every group, before any tile reads
@@ -79,7 +80,7 @@ __device__ __forceinline__ ptx::A4 packed_words(
 // box must never read a token beyond the device live bound. Only this
 // boundary tile takes the smaller register loop; complete tiles use TMA.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool SingleChain, bool PackedWeights = false>
+         bool F32Output, bool SingleChain, bool PackedWeights = false, bool OmitFirst = false>
 __device__ __forceinline__ void tail(
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -140,7 +141,7 @@ __device__ __forceinline__ void tail(
 #pragma unroll
         for (int v = 0; v < 4; ++v) {
           if constexpr (SingleChain) total.v[v] = partial.v[v];
-          else total.v[v] = __fadd_rn(total.v[v], partial.v[v]);
+          else if (!OmitFirst || f != 0) total.v[v] = __fadd_rn(total.v[v], partial.v[v]);
         }
       }
 #pragma unroll
@@ -159,7 +160,8 @@ __device__ __forceinline__ void tail(
 // With PackedWeights, `weight_map` is the 4-D packed map (dims {128, 8,
 // K / 128, strips}, box {128, 8, 1, 16}) and `weights` the packed codes.
 template<int N, int K, int Groups, int RowStride, int GroupStride,
-         bool F32Output, bool SingleChain = false, bool PackedWeights = false>
+         bool F32Output, bool SingleChain = false, bool PackedWeights = false,
+         bool MatrixFetch = false, int Stages = 2, bool OmitFirst = false>
 __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight_map,
     const uint8_t* activations, const uint8_t* weights,
     const uint8_t* activation_scales, const uint8_t* weight_scales,
@@ -169,6 +171,9 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
   static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
   static_assert(!PackedWeights || (N % 8 == 0 && K % 64 == 0 && K >= 128));
+  static_assert(Stages == 2 || Stages == 3);
+  static_assert(!MatrixFetch || (!SingleChain && !PackedWeights));
+  constexpr int stages = Stages;
   __shared__ uint64_t full[stages], empty[stages];
   extern __shared__ uint8_t raw[];
   uint8_t* storage = prefill::align_swizzle_storage(raw);
@@ -183,7 +188,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   // A partial K box may not read padding or the next activation group.
   // Dense unpadded rows use the tensor map's out-of-bounds zero fill.
   if (token0 + tile > live || (K % 128 != 0 && RowStride > K)) {
-    tail<N, K, Groups, RowStride, GroupStride, F32Output, SingleChain, PackedWeights>(
+    tail<N, K, Groups, RowStride, GroupStride, F32Output, SingleChain, PackedWeights, OmitFirst>(
         activations, weights, activation_scales, weight_scales, output,
         status, status_offset, live, token0, column0, group);
     return;
@@ -342,10 +347,19 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int m = 0; m < 4; ++m) {
           const int local = wm * 64 + m * 16 + quad;
+          if constexpr (MatrixFetch) {
+            const int matrix_row = wm * 64 + m * 16 + (lane & 15);
+            const int matrix_k = step * 32 + (lane >> 4) * 16;
+            ptx::ldmatrix_b16<4,false>(af[m].v,a+smem::swizzle_128(a,matrix_row*128+matrix_k,128));
 #pragma unroll
-          for (int i = 0; i < 4; ++i) {
-            af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
-                ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+            for (int i = 0; i < 4; ++i)
+              if (!((active >> (2 * m + i % 2)) & 1) || k >= K) af[m].v[i] = 0;
+          } else {
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+              af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
+                  ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+            }
           }
           const uint32_t row = token0 + local + (lane4 & 1) * 8;
           sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
@@ -355,9 +369,17 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
         for (int n = 0; n < 4; ++n) {
           const int local = wn * 32 + n * 8 + quad;
           const uint32_t col = column0 + local;
+          if constexpr (MatrixFetch) {
+            const int matrix_row = wn * 32 + n * 8 + (lane & 7);
+            const int matrix_k = step * 32 + ((lane >> 3) & 1) * 16;
+            ptx::ldmatrix_b16<2,false>(bf[n].v,b+smem::swizzle_128(b,matrix_row*128+matrix_k,128));
 #pragma unroll
-          for (int i = 0; i < 2; ++i)
-            bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+            for (int i = 0; i < 2; ++i) if (col >= N || k >= K) bf[n].v[i] = 0;
+          } else {
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+              bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+          }
           sb[n] = col < N && k < K
               ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
         }
@@ -377,10 +399,19 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int m = 0; m < 4; ++m) {
           const int local = wm * 64 + m * 16 + quad;
+          if constexpr (MatrixFetch) {
+            const int matrix_row = wm * 64 + m * 16 + (lane & 15);
+            const int matrix_k = step * 32 + (lane >> 4) * 16;
+            ptx::ldmatrix_b16<4,false>(af[m].v,a+smem::swizzle_128(a,matrix_row*128+matrix_k,128));
 #pragma unroll
-          for (int i = 0; i < 4; ++i) {
-            af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
-                ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+            for (int i = 0; i < 4; ++i)
+              if (!((active >> (2 * m + i % 2)) & 1) || k >= K) af[m].v[i] = 0;
+          } else {
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+              af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
+                  ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+            }
           }
           const uint32_t row = token0 + local + (lane4 & 1) * 8;
           sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
@@ -390,9 +421,17 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
         for (int n = 0; n < 4; ++n) {
           const int local = wn * 32 + n * 8 + quad;
           const uint32_t col = column0 + local;
+          if constexpr (MatrixFetch) {
+            const int matrix_row = wn * 32 + n * 8 + (lane & 7);
+            const int matrix_k = step * 32 + ((lane >> 3) & 1) * 16;
+            ptx::ldmatrix_b16<2,false>(bf[n].v,b+smem::swizzle_128(b,matrix_row*128+matrix_k,128));
 #pragma unroll
-          for (int i = 0; i < 2; ++i)
-            bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+            for (int i = 0; i < 2; ++i) if (col >= N || k >= K) bf[n].v[i] = 0;
+          } else {
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+              bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+          }
           sb[n] = col < N && k < K
               ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
         }
@@ -415,7 +454,7 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int v = 0; v < 4; ++v) {
           if constexpr (SingleChain) total[m][n].v[v] = partial[m][n].v[v];
-          else total[m][n].v[v] = __fadd_rn(total[m][n].v[v], partial[m][n].v[v]);
+          else if (!OmitFirst || f != 0) total[m][n].v[v] = __fadd_rn(total[m][n].v[v], partial[m][n].v[v]);
         }
   }
 #pragma unroll

@@ -125,6 +125,9 @@ pub struct Instance {
     /// Per-layer gather IDs, reserved before serving KV sizing.
     prefill_engram_inputs: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
     prefill_engram: Option<prefill_engram::Gathers>,
+    /// AR gather IDs and status storage, reserved before serving KV sizing.
+    ar_engram_inputs: Option<runtime_bundle_abi::DeviceBufferSpanV1>,
+    ar_status_buffer: Option<runtime_bundle_abi::DeviceBufferSpanV1>,
     /// AR decode's per-layer Engram uploads, when switched on.
     ar_engram: Option<ar_engram::State>,
     /// The preparation failure used when no AR decode gather serves a phase.
@@ -803,6 +806,34 @@ impl Instance {
             }
         }
         memory.take("prefill_engram");
+        if self.dspark.is_none() {
+            let (_, pool, stream) = ranks[0];
+            if ar_engram::enabled().map_err(BundleAbiError::Status)?
+                && services.has_async_mapped_gather()
+            {
+                let layers = self
+                    .engram
+                    .as_ref()
+                    .and_then(|engram| engram.tables())
+                    .map_or(0, <[_]>::len);
+                if layers > 0 {
+                    let engram = &shape.geometry.shape.engram;
+                    let bytes = u64::from(self.config.create.items.capacity())
+                        * u64::from((engram.max_ngram - 1) * engram.heads)
+                        * 4
+                        * layers as u64;
+                    self.ar_engram_inputs =
+                        Some(allocate_span(services, pool, stream, bytes, held)?);
+                }
+            }
+            if execute::ar_status::enabled() {
+                let sources = shape.geometry.shape.csa.index_sources.len() as u64;
+                let planes = 2 * ranks.len() as u64;
+                let bytes = (sources + planes) * u64::from(execute::ar_status::ROWS) * 4;
+                self.ar_status_buffer = Some(allocate_span(services, pool, stream, bytes, held)?);
+            }
+        }
+        memory.take("ar_engram");
         let (pages, pools) = acquire::serving_kv(
             log,
             self.config.kv.layout_id,
@@ -1035,6 +1066,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         prefill_reduce_runs: 0,
         prefill_engram_inputs: Vec::new(),
         prefill_engram: None,
+        ar_engram_inputs: None,
+        ar_status_buffer: None,
         ar_engram: None,
         ar_engram_fallback: crate::engram_rows::SyncReason::NoPreparedGather,
         prefill_engram_fallback: crate::engram_rows::SyncReason::NoPreparedGather,

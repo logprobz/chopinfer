@@ -327,6 +327,58 @@ struct Served {
     serving: conformance::Serving,
 }
 
+#[test]
+fn adopted_ar_buffers_precede_serving_kv_sizing() {
+    use conformance::Startup;
+    let mut late = Vec::new();
+    for serving in Served::servings() {
+        let fixture = Served::new(&serving);
+        fixture.host.drafter.set(true);
+        let mut instance = crate::instance::ar_engram::with_enabled(true, || {
+            crate::instance::execute::ar_status::with_enabled(true, || fixture.create().unwrap())
+        });
+        let logs = fixture.host.logs.borrow();
+        let memory: Vec<serde_json::Value> = logs
+            .iter()
+            .filter_map(|line| line.strip_prefix("startup memory: "))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(memory.len(), serving.tensor_parallel as usize);
+        let pages = logs
+            .iter()
+            .find(|line| line.contains(" KV pages per rank, "))
+            .unwrap();
+        eprintln!("{}: {pages}; memory={memory:?}", serving.profile);
+        for record in &memory {
+            let bytes = record["bytes"]["ar_engram"].as_u64().unwrap_or(0);
+            let expected = if serving.draft_tokens == 0 && record["rank"] == 0 {
+                let engram = &FLASH.shape.engram;
+                let ids = u64::from(DECODE_BATCH * (engram.max_ngram - 1) * engram.heads)
+                    * engram.layers.len() as u64
+                    * 4;
+                let status = (FLASH.shape.csa.index_sources.len() as u64
+                    + 2 * u64::from(serving.tensor_parallel))
+                    * u64::from(DECODE_BATCH)
+                    * 4;
+                ids + status
+            } else {
+                0
+            };
+            assert_eq!(bytes, expected, "{}: {record}", serving.profile);
+            if record["after_kv"] != 0 {
+                late.push((serving.profile.clone(), record.clone()));
+            }
+        }
+        drop(logs);
+        instance.destroy().unwrap();
+        assert_eq!(fixture.host.acquired.get(), fixture.host.released.get());
+    }
+    assert!(
+        late.is_empty(),
+        "AR buffers allocated after KV sizing: {late:?}"
+    );
+}
+
 impl conformance::Startup for Served {
     type Observer = bundle_runtime::fake_host::NoObserver;
 

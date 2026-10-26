@@ -29,15 +29,31 @@ fn create_switched(
     })
 }
 
-/// Each stream's launch lines from `from` on, in journal order.
+/// Each stream's launch lines from `from` on, in journal order. Stream
+/// identities follow their rank and creation order, so earlier buffer
+/// reservations do not change which stream a launch uses.
 pub(super) fn launches(host: &Host, from: usize) -> BTreeMap<String, Vec<String>> {
     let mut result = BTreeMap::<String, Vec<String>>::new();
+    let streams: BTreeMap<_, _> = host
+        .device
+        .stream_ranks
+        .borrow()
+        .iter()
+        .enumerate()
+        .map(|(order, (&slot, &rank))| (slot, format!("{rank}.{order}")))
+        .collect();
     for line in host.device.journal.borrow()[from..]
         .iter()
         .filter(|line| line.starts_with("launch "))
     {
-        let stream = line.split_whitespace().nth(1).unwrap().to_owned();
-        result.entry(stream).or_default().push(line.clone());
+        let mut fields = line.splitn(3, ' ');
+        assert_eq!(fields.next(), Some("launch"));
+        let slot: u32 = fields.next().unwrap().parse().unwrap();
+        let stream = &streams[&slot];
+        result
+            .entry(stream.clone())
+            .or_default()
+            .push(format!("launch {stream} {}", fields.next().unwrap()));
     }
     result
 }

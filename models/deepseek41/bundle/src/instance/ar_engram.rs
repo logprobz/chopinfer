@@ -20,7 +20,7 @@ use crate::dspark::cycle::LayerGather;
 use crate::engram_rows::Hashed;
 use crate::indexer_workloads::Route as IndexerRoute;
 use bundle_runtime::graphs::{GraphCache, GraphKey, GraphReservation};
-use bundle_runtime::resources::{allocate_span, upload_bytes};
+use bundle_runtime::resources::upload_bytes;
 use runtime_bundle_abi::{
     BundleAbiError, BundleStatusV1, DeviceBufferSpanV1 as Span, MappedGatherPlaneV1,
     MappedGatherStatsV1,
@@ -203,14 +203,10 @@ impl Instance {
         let capacity = self.items().capacity();
         let bytes = u64::from(capacity) * columns as u64 * 4;
         // Ids live on rank 0's stream, the producer every gather reads.
-        let (_, pool, stream) = self.ranks[0];
-        let indices = allocate_span(
-            &self.services,
-            pool,
-            stream,
-            bytes * tables.len() as u64,
-            &mut self.held,
-        )?;
+        let (_, _, stream) = self.ranks[0];
+        let indices = self
+            .ar_engram_inputs
+            .ok_or(BundleAbiError::InvalidRange("AR Engram reserved IDs"))?;
         let mut state = State {
             indices,
             layers: Vec::new(),

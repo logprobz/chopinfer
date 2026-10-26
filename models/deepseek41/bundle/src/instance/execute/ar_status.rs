@@ -29,7 +29,7 @@ pub(crate) struct Packet {
     ready: Vec<BundleEventHandleV1>,
 }
 
-fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     #[cfg(test)]
     if let Some(forced) = IN_TESTS.get() {
         return forced;
@@ -63,23 +63,17 @@ enum Part {
 }
 
 impl Instance {
-    /// Allocates the packet on rank 0 and each peer rank's ready event,
-    /// when the packet serves and the instance serves AR.
+    /// Binds the packet reserved before KV sizing and creates each peer
+    /// rank's ready event when the packet serves AR.
     pub(crate) fn prepare_ar_status(&mut self) -> Result<(), BundleAbiError> {
         if !enabled() || self.dspark.is_some() {
             return Ok(());
         }
         let sources = self.config.shape.geometry.shape.csa.index_sources.len() as u64;
         let planes = 2 * self.ranks.len() as u64;
-        let bytes = (sources + planes) * u64::from(ROWS) * 4;
-        let (_, pool, stream) = self.ranks[0];
-        let buffer = bundle_runtime::resources::allocate_span(
-            &self.services,
-            pool,
-            stream,
-            bytes,
-            &mut self.held,
-        )?;
+        let buffer = self
+            .ar_status_buffer
+            .ok_or(BundleAbiError::InvalidRange("AR reserved status packet"))?;
         let mut ready = Vec::with_capacity(self.ranks.len());
         for &(context, _, _) in self.ranks.iter().skip(1) {
             let event = self.services.create_event(context)?;

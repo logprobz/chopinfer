@@ -35,7 +35,8 @@ struct Router {
 impl PreparedOp<ProjectionBuffers<View>> for Router {
     fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
         use kernel_core::route::{RouteClass, RouteTag};
-        let mut tag = if (family::ROWS[0]..=8192).contains(&counts.rows) {
+        let admitted = crate::Kernels::zero_router_route_rows();
+        let mut tag = if admitted.iter().any(|rows| rows.contains(&counts.rows)) {
             RouteTag::new(
                 launch.symbol.clone(),
                 RouteClass::Fast,
@@ -45,7 +46,7 @@ impl PreparedOp<ProjectionBuffers<View>> for Router {
         } else {
             self.base.route(counts, launch)?
         };
-        tag.admitted.push(family::ROWS[0]..=8192);
+        tag.admitted.extend(admitted);
         tag.wrappers.push("zero-router");
         Some(tag)
     }
@@ -221,6 +222,35 @@ mod tests {
             }
         }
         assert_eq!(family::ROWS.len(), 27);
+    }
+
+    #[test]
+    fn route_rows_append_after_the_base_ranges_and_wrappers() {
+        let old = base();
+        let new = prepare(&tp4(), base()).unwrap();
+        let buffers = buffers();
+        let workspace = View {
+            handle: 10,
+            bytes: new.info().workspace,
+        };
+        for rows in [1, 319, 320, 8192] {
+            let counts = Counts::rows(rows);
+            for launch in new.launches(&buffers, workspace, counts).unwrap() {
+                let mut expected = if rows < 320 {
+                    old.route(counts, &launch).unwrap()
+                } else {
+                    kernel_core::route::RouteTag::new(
+                        &launch.symbol,
+                        kernel_core::route::RouteClass::Fast,
+                        "f32_projection",
+                        [],
+                    )
+                };
+                expected.admitted.push(320..=8192);
+                expected.wrappers.push("zero-router");
+                assert_eq!(new.route(counts, &launch), Some(expected));
+            }
+        }
     }
     #[test]
     fn changed_geometry_bad_buffers_and_aliases_are_refused() {

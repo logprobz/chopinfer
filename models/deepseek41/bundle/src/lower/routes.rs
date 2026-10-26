@@ -43,7 +43,7 @@ impl Lowering<'_> {
                     RouteClass::Fast,
                     "f32_projection",
                     "router-in-norm",
-                    [crate::Kernels::router_in_norm_route_rows()],
+                    crate::Kernels::router_in_norm_route_rows(self.shape),
                 );
                 item.launch.bindings.set_route(Some(tag));
             }
@@ -131,5 +131,16 @@ mod tests {
                 .map(|rows| rows..=rows)
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn router_norm_route_rows_keep_the_topology_gate() {
+        let tp4 = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let tp2 = crate::shape::Shape::new(&FLASH, Ranks::TP2).unwrap();
+        assert_eq!(
+            crate::Kernels::router_in_norm_route_rows(&tp4),
+            [8192..=8192]
+        );
+        assert!(crate::Kernels::router_in_norm_route_rows(&tp2).is_empty());
     }
 }

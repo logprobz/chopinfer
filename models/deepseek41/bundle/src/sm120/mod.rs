@@ -370,8 +370,34 @@ impl crate::Kernels {
         tags
     }
 
-    pub(crate) fn router_in_norm_route_rows() -> std::ops::RangeInclusive<u32> {
-        router_norm::ROWS..=router_norm::ROWS
+    pub(crate) fn router_in_norm_route_rows(
+        shape: &crate::shape::Shape,
+    ) -> Vec<std::ops::RangeInclusive<u32>> {
+        Self::table_route_rows(
+            shape.geometry,
+            model_deepseek41_contract::tuning::Family::F32,
+            "f32.router_norm.prefill",
+            "bf16",
+            &[
+                ("ranks", shape.ranks()),
+                ("experts", shape.geometry.shape.moe.experts),
+            ],
+            router_norm::ROWS,
+        )
+        .into_iter()
+        .filter(|rows| router_norm::applies(shape.geometry, shape.ranks(), *rows.start()))
+        .collect()
+    }
+
+    fn zero_router_route_rows() -> Vec<std::ops::RangeInclusive<u32>> {
+        Self::table_route_rows(
+            &model_deepseek41_contract::geometry::FLASH,
+            model_deepseek41_contract::tuning::Family::F32,
+            "f32.router_zero.prefill",
+            "bf16",
+            &[("ranks", 4), ("experts", 384)],
+            8192,
+        )
     }
 
     fn table_route_rows(

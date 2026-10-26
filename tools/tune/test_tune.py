@@ -432,7 +432,7 @@ class Tuner(unittest.TestCase):
                                             ('keeper', {'CHOPINFER_WEIGHT_KEEPER_DIR': ''}, 'failed'),
                                             ('cached', {'TUNE_STUB_CACHED': 'a-r0'}, 'failed'),
                                             ('power', {'TUNE_DRY_POWER_CHANGE_LABEL': 'after-a-r0'}, 'void'),
-                                            ('slowcold', {'TUNE_STUB_PREFILL_DELAY_SECONDS': '0.25'}, 'passed'),
+                                            ('slowcold', {'TUNE_STUB_PREFILL_DELAY_SECONDS': '1.5'}, 'passed'),
                                             ('standard', {}, 'passed')]:
                 out = root / case
                 if case == 'standard':

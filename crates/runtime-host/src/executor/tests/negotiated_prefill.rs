@@ -11,7 +11,7 @@ fn extra_endpoints_require_the_separate_bundle_declaration() {
     let original = BatchRequestV1::new(
         BatchWireVersionV1::V3,
         vec![BatchItemV1::new(1, false, 64, false, vec![0; 64])],
-        vec![BatchAppendV1::new(128, 192, 64, vec![0, 1, 2], None)],
+        vec![BatchAppendV1::new(128, 64, 192, vec![0, 1, 2], None)],
     )
     .encode()
     .unwrap();

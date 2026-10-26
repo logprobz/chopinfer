@@ -294,7 +294,7 @@ mod tests {
             let original = BatchRequestV1::new(
                 version,
                 vec![BatchItemV1::new(7, false, 64, false, vec![1; 64])],
-                vec![BatchAppendV1::new(128, 192, 64, vec![1, 2, 3], None)],
+                vec![BatchAppendV1::new(128, 64, 192, vec![1, 2, 3], None)],
             )
             .encode()
             .unwrap();

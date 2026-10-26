@@ -741,6 +741,36 @@ fn a_pessimistic_tbt_fit_keeps_the_progress_floor() {
     }
 }
 
+#[test]
+fn shared_prefix_cut_capability_does_not_enable_tbt_cuts() {
+    for cuts in [false, true] {
+        let mut s = Scheduler::new(
+            SchedulerConfig::new(64, 128, 8192, 2048, 1)
+                .unwrap()
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_guaranteed_prefill_chunks(2048)
+                .unwrap()
+                .with_prefill_cuts(cuts)
+                .with_prefill_budget(tbt(1, 0)),
+            KvGeometry::new(64, 65536).unwrap(),
+        )
+        .unwrap();
+        train(&mut s, 1);
+        submit(&mut s, 1, 1, 1000);
+        let batch = s.next_batch().unwrap().unwrap();
+        commit_only(&mut s, &batch);
+        submit(&mut s, 2, 4096, 8);
+        for _ in 0..2 {
+            let batch = s.next_batch().unwrap().unwrap();
+            assert_eq!(batch.prefill_cap(), None);
+            assert_eq!(prefill_tokens(&batch), 2048);
+            commit_only(&mut s, &batch);
+        }
+        assert!(!prefilling(&s, 2..3));
+    }
+}
+
 /// A 64-token granule beside `decoders` decoding requests, with a 64-token
 /// step budget, so the mixed prefill cap is 64 - `decoders`: a long prompt
 /// still prefills, in chunks ending on the granule or at its end, and the

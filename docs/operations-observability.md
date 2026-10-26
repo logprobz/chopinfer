@@ -455,6 +455,10 @@ Step and request logs are not replay inputs; they omit token contents.
   The new scopes read clocks only while step tracing is enabled. They add
   no device synchronization and do not change tokens or event order.
 
+In DeepSeek's DSpark phase timings in `chopinfer.step.v1`, legacy prefill
+planning is now charged to `upload` instead of `target_lower` because it
+runs inside the staging upload timer.
+
 The served A/B tuner records per-window clocks, per-visit major faults and
 job/visit enforced power limits. A changing limit voids the whole job.
 Its [cold Engram workload](depth-tuning.md#cold-engram-workload) pairs an

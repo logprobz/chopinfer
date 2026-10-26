@@ -667,6 +667,8 @@ impl<P: Program> Host for Adapter<'_, P> {
         )
     }
     fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
+        // Legacy prefill planning runs in this scope, so step.v1 charges it
+        // to upload rather than target_lower.
         let started = self.times.is_some().then(std::time::Instant::now);
         let deferred = match gathered.undrafted() {
             Some(hashed) => self.program.defer_engram(hashed),

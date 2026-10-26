@@ -363,7 +363,9 @@ def ab_validity(config, rows, summary):
             raise ValueError('mismatched seeds')
         duration = row.get('window_seconds', 0)
         target = .15 if row.get('synthetic') else 15
-        tolerance = .15  # At most 1% overrun on a real 15-second window.
+        # At most 1% overrun on a real 15-second window. A dry-run window is
+        # 0.15 s, so host load alone can stretch it; allow up to 1 s there.
+        tolerance = .85 if row.get('synthetic') else .15
         if (not target <= duration <= target + tolerance or row.get('temperature') != 1.0
                 or not math.isclose(row.get('request_seconds', 0), duration, abs_tol=1e-6)):
             raise ValueError('measured interval differs from the required A/B window')

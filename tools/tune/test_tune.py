@@ -137,7 +137,9 @@ class Tuner(unittest.TestCase):
             self.assertEqual(result['weighted']['a/b']['coverage_gaps'], ['c8/i8-r64'])
             self.assertEqual(result['pairs']['a/b']['8']['cells']['i8-r16']['verdict'], 'informational')
 
-            base = json.loads((HERE.parents[1] / 'models/deepseek41/depth-tune.json').read_text())
+            # The model that declares the repository job, found without naming it.
+            configs = [json.loads(path.read_text()) for path in sorted(HERE.parents[1].glob('models/*/depth-tune.json'))]
+            base = next(c for c in configs if 'confidence-ab-decode' in c.get('jobs', {}))
             model = {**base, **base['jobs']['confidence-ab-decode'], 'tensor_parallel_size': 1}
             # Recreate the repository job with resolved throughput gains and
             # the disjoint decode/verify shapes its two arms serve.

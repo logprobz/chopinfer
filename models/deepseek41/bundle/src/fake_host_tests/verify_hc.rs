@@ -171,12 +171,12 @@ use super::*;
 // handles. The six verify bodies and every retained full-history operation
 // stay identical under the ordered resource map.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x3c0921348475553d)),
-    (6, (8040, 0xc04ff05f855b8dc5)),
-    (8, (7720, 0xf8df1ad416e49950)),
-    (12, (8216, 0xab1c078384eb0cc2)),
-    (16, (8052, 0xefb1eb7716c335aa)),
-    (32, (7744, 0xd2baa7e92db29cc1)),
+    (4, (7880, 0xb4737f7550f49c97)),
+    (6, (8040, 0x0a62ceac5b24f8b3)),
+    (8, (7720, 0x6a04786eb7d646ef)),
+    (12, (8216, 0x3a974c0fef0db0f8)),
+    (16, (8052, 0xc142e68f2dbe8bc2)),
+    (32, (7744, 0xb468317469c865a2)),
 ];
 
 #[test]

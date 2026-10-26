@@ -1,0 +1,390 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Adopt joined DSpark undrafted status. With device results enabled by default, each pinned TP4 verify fixture adds one private readiness event per rank during creation. Every retained operation and pinned body remains identical under the ordered typed handle map.",
+ "handles": {
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    {
+     "name": "undrafted_event_0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "undrafted_event_3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  }
+ }
+}

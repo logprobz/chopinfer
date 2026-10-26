@@ -136,15 +136,16 @@ impl Plan {
         let features: Vec<_> = if instance.dspark.is_some() {
             items
                 .iter()
-                .map(|item| {
+                .zip(&cone.endpoints)
+                .map(|(item, &end)| {
                     let rows = item.rows.end - item.rows.start;
                     let keep = rows
                         - prefill_cone::feature_offset(item.prefix, rows, g.shape.attention.window);
                     PrefillFeatureRange {
                         packed_start: item.rows.end - keep,
                         rows: keep,
-                        position: u64::from(item.prefix + rows - keep),
-                        end: u64::from(item.prefix + rows),
+                        position: u64::from(end - keep),
+                        end: u64::from(end),
                     }
                 })
                 .collect()

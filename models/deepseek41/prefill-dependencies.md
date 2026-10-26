@@ -1,9 +1,46 @@
-The accepted serving profile guarantees a fixed chunk grid (2048 or 8192
-rows), every prompt end, and complete state after each chunk. It restricts
-public prefill captures to those boundaries and publishes complete terminal
-decode state for multi-turn reuse. The exact dependency cone is implemented
+The serving profile guarantees a fixed chunk grid (2048 or 8192 rows), every
+prompt end, and complete state after each chunk. It also admits the
+scheduler's repeat anchors, previously observed shared prefixes and boundaries
+shared by queued requests. These extra cuts align to 64 tokens. It publishes
+complete terminal decode state for multi-turn reuse. The exact dependency cone is implemented
 behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
 `tp4-dspark` profiles set. Their `-full-prefill` profiles keep full execution.
+
+The bundle declares extra cuts through the optional
+`chop_bundle_prefill_cuts_api_v1` export. Its grid declaration, entry table
+layout and envelope bytes are unchanged. Old hosts use the grid-only export;
+new hosts keep the grid-only contract for bundles without this capability.
+Profiles with no guaranteed grid do not enable it. The scheduler retains
+the absolute grid after an extra cut, so a cut at 4032 is followed by 8192,
+unless another selected anchor or the prompt end comes first. This mechanism
+does not enable timing-budget cuts. TBT-selected cuts remain a separate
+opt-in serving policy and are never the default here.
+
+Every extra endpoint is an actual chunk end. Its plan closes dependencies
+from all 136 physical target-ring cells and the raw DSpark history, including
+the six cells preserved from an earlier large commit. The aligned input cone
+starts with up to 2624 rows at layer 20 and tapers to 192 at layer 39.
+Compressed and index-key producers still cover every row. A restore uses the
+ordinary complete-state snapshot; no repair pass or approximate state is used.
+
+Each retained anchor allocates 53 snapshot pages for AR or 125 for DSpark.
+At 56,960 bytes per page this is 2.88 MiB or 6.79 MiB per rank, respectively,
+in addition to the shared token pages. One DSpark restart point consumes the
+pool space of 8000 tokens. For a 32K request, adding one shared endpoint to
+its four grid anchors raises snapshot pages from 212 to 265 for AR and from
+500 to 625 for DSpark. A rounded prompt end or an additional shared boundary
+can add further snapshots. Existing anchor eviction remains in effect;
+superseded-anchor eviction is a separate change.
+
+For an added cut at 4032 in an otherwise 8192-chunked 32K prompt, the CPU
+oracle counts 25,536 additional upper-layer output rows and 28,160 additional
+window-key rows, for both AR and DSpark. These counts describe extra cold
+prefill work, not measured latency. GPU bitwise checks and served measurements
+must qualify the added endpoints before making an accuracy or speed claim.
+
+```sh
+python3 -B models/deepseek41/prefill_cone.py --contract guaranteed --chunk 8192 --tokens 32768 --cuts 4032
+```
 
 A short upper-skip prefill reuses its plan instead of lowering every rank
 again (`bundle/src/instance/execute/plan_cache.rs`). A plan is kept for one
@@ -372,11 +409,13 @@ row addresses. Final streams and lagged pre coefficients are gathered in
 ascending logits order before the head. No skipped hidden row reaches the
 head. Engram remains entirely in the complete lower prefix.
 
-The scheduler's grid and capture restrictions are in
+The scheduler's grid and capture rules are in
 `crates/runtime-scheduler/src/lib.rs:3596,3727`. The optional
 `chop_bundle_prefill_api_v1` export declares the grid and accepts a bounded
 envelope around unchanged batch bytes. Legacy tables and batch schemas
 remain unchanged; a legacy execute call always runs the full schedule.
+The separate cuts export also accepts scheduler-selected endpoints before
+the next grid boundary, each with the same complete-state requirement.
 Scored/media requests and diagnostic per-layer taps use full execution.
 The device-result executor path also keeps full execution until it has a
 negotiated prefill entry; it still respects the declared capture grid.

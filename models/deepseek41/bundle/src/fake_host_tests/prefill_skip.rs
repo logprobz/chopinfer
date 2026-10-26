@@ -69,6 +69,8 @@ pub(super) fn create_profile_with_options(
     api()
         .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
         .unwrap()
+        .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+        .unwrap()
         .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
         .unwrap()
         .create(services, &record)
@@ -237,6 +239,101 @@ fn exact_prefill_profiles_execute_capture_restore_and_continue() {
             assert_eq!(host.acquired.get(), host.released.get());
         }
     }
+}
+
+#[test]
+fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
+    for dspark in [false, true] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(dspark);
+        if dspark {
+            host.speculation.set(Some((5, 32)));
+        }
+        let mut instance = create_profile(&host, 8192, true);
+        assert_eq!(instance.prefill_cuts_policy().unwrap().chunk_tokens, 8192);
+        let request = runtime_bundle_sdk::prefill::encode_with_cuts(
+            &prompt(1, 0, 0, 4032, false),
+            &[Boundary {
+                request_id: 1,
+                prompt_tokens: 8257,
+                chunk_end: 4032,
+                chunk_tokens: 8192,
+            }],
+        )
+        .unwrap();
+        // The original entry remains grid-only, even in a new bundle.
+        assert_eq!(
+            instance.execute_prefill(&request, &mut Sink::default()),
+            Err(runtime_bundle_abi::BundleAbiError::Status(
+                BundleStatusV1::InvalidArgument
+            ))
+        );
+        let mut sink = Sink::default();
+        instance.execute_prefill_cuts(&request, &mut sink).unwrap();
+        assert!(sink.views.is_empty());
+        instance.commit().unwrap();
+        let snapshot_pages = instance.describe_prefix_state().unwrap();
+        assert_eq!(snapshot_pages, if dspark { 125 } else { 53 });
+        let pages: Vec<_> = (130..130 + snapshot_pages).collect();
+        instance.capture_prefix_state(1, 4032, &pages).unwrap();
+        instance.retire_request(1).unwrap();
+        instance
+            .restore_prefix_state_in_slot(2, &(0..4032).collect::<Vec<_>>(), &pages, 0)
+            .unwrap();
+        for (start, rows, terminal) in [(4032, 4160, false), (8192, 65, true)] {
+            let request = runtime_bundle_sdk::prefill::encode_with_cuts(
+                &prompt(2, 0, start, rows, terminal),
+                &[Boundary {
+                    request_id: 2,
+                    prompt_tokens: 8257,
+                    chunk_end: start + rows,
+                    chunk_tokens: 8192,
+                }],
+            )
+            .unwrap();
+            let mut sink = Sink::default();
+            instance.execute_prefill_cuts(&request, &mut sink).unwrap();
+            assert_eq!(
+                sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(),
+                u32::from(terminal)
+            );
+            instance.commit().unwrap();
+            assert_eq!(
+                crate::instance::ledger_state(instance.handle(), 0),
+                (Some((2, start + rows)), false)
+            );
+        }
+        instance.retire_request(2).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
+fn scheduler_cuts_refuse_unaligned_ends_and_leave_full_prefill_disabled() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = create_profile(&host, 8192, true);
+    let request = runtime_bundle_sdk::prefill::encode_with_cuts(
+        &prompt(1, 0, 0, 63, false),
+        &[Boundary {
+            request_id: 1,
+            prompt_tokens: 8257,
+            chunk_end: 63,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        instance.execute_prefill_cuts(&request, &mut Sink::default()),
+        Err(runtime_bundle_abi::BundleAbiError::Status(
+            BundleStatusV1::InvalidArgument
+        ))
+    );
+    instance.destroy().unwrap();
+    let mut full = create_profile(&host, 0, false);
+    assert_eq!(full.prefill_cuts_policy().unwrap().chunk_tokens, 0);
+    full.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 #[test]

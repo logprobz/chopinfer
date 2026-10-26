@@ -6,11 +6,23 @@ use bundle_runtime::table::with_instance;
 use runtime_bundle_abi::prefill::BundlePrefillPolicyV1;
 use runtime_bundle_abi::{BundleHandleV1, BundleStatusV1, ExecuteResultSinkV1};
 
+runtime_bundle_abi::export_prefill_cuts_api_v1!(PREFILL_CUTS_API, describe_cuts, execute_cuts,);
+
 pub(crate) fn describe(handle: BundleHandleV1) -> BundlePrefillPolicyV1 {
+    policy(handle, false)
+}
+
+fn describe_cuts(handle: BundleHandleV1) -> BundlePrefillPolicyV1 {
+    policy(handle, true)
+}
+
+fn policy(handle: BundleHandleV1, cuts: bool) -> BundlePrefillPolicyV1 {
     let mut chunk = 0;
     let status = Instance::instances().with(|table| {
         with_instance(table, handle, |instance| {
-            chunk = instance.config.prefill.chunk;
+            if !cuts || instance.config.prefill.scheduler_cuts() {
+                chunk = instance.config.prefill.chunk;
+            }
             BundleStatusV1::Success
         })
     });
@@ -30,16 +42,42 @@ pub(crate) fn execute(
         Ok(envelope) => envelope,
         Err(_) => return BundleStatusV1::InvalidArgument,
     };
+    execute_envelope(handle, envelope, sink, false)
+}
+
+fn execute_cuts(
+    handle: BundleHandleV1,
+    bytes: &[u8],
+    sink: &mut ExecuteResultSinkV1,
+) -> BundleStatusV1 {
+    let envelope = match runtime_bundle_sdk::prefill::decode_with_cuts(bytes) {
+        Ok(envelope) => envelope,
+        Err(_) => return BundleStatusV1::InvalidArgument,
+    };
+    execute_envelope(handle, envelope, sink, true)
+}
+
+fn execute_envelope(
+    handle: BundleHandleV1,
+    envelope: runtime_bundle_sdk::prefill::Envelope<'_>,
+    sink: &mut ExecuteResultSinkV1,
+    cuts: bool,
+) -> BundleStatusV1 {
     Instance::instances().with(|table| {
         with_instance(table, handle, |instance| {
             if instance.ledger.step().is_some() {
                 return BundleStatusV1::InvalidState;
             }
             if instance.config.prefill.chunk == 0
-                || envelope
-                    .boundaries
-                    .iter()
-                    .any(|b| b.chunk_tokens != instance.config.prefill.chunk)
+                || (cuts && !instance.config.prefill.scheduler_cuts())
+                || envelope.boundaries.iter().any(|b| {
+                    b.chunk_tokens != instance.config.prefill.chunk
+                        || (cuts
+                            && b.chunk_end != b.prompt_tokens
+                            && !b.chunk_end.is_multiple_of(u64::from(
+                                model_deepseek41_contract::serving::PREFILL_GRANULE,
+                            )))
+                })
             {
                 return BundleStatusV1::InvalidArgument;
             }

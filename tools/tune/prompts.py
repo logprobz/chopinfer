@@ -25,6 +25,73 @@ LANGUAGE = {'.rs': 'rust', '.py': 'python'}
 COMMENT = {'.rs': '//', '.py': '#'}
 
 
+def from_file(path, data, repository):
+    """Load literal prompts from an external JSON array or JSON-lines file."""
+    import os
+    import faults
+    path, repository = Path(path), Path(repository).resolve()
+    if (not data or not path.is_absolute() or Path(data).resolve() not in path.parents
+            or repository in path.parents or path == repository):
+        raise ValueError('prompt_file must be an absolute external path under CHOPINFER_DATA')
+    fd = faults.open_regular(path)
+    with os.fdopen(fd, 'rb') as stream:
+        before = os.fstat(stream.fileno())
+        body = stream.read()
+        after = os.fstat(stream.fileno())
+    identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    if identity(before) != identity(after) or len(body) != before.st_size:
+        raise ValueError('prompt_file changed while being read')
+    values = ([json.loads(line) for line in body.splitlines() if line.strip()] if path.suffix.lower() == '.jsonl'
+              else json.loads(body))
+    if not isinstance(values, list) or not values:
+        raise ValueError('prompt_file must contain a nonempty array or JSON-lines records')
+    prompts = []
+    for index, value in enumerate(values):
+        value = {'prompt': value} if isinstance(value, str) else value
+        if (not isinstance(value, dict) or set(value) - {'prompt', 'messages', 'kind', 'target_length'}
+                or ('prompt' in value) == ('messages' in value)):
+            raise ValueError('external prompt needs one literal prompt or messages')
+        if 'prompt' in value:
+            if not isinstance(value['prompt'], str) or not value['prompt']:
+                raise ValueError('external prompt must be a nonempty string')
+            content, kind = {'prompt': value['prompt']}, 'completion'
+        else:
+            messages = value['messages']
+            if (not isinstance(messages, list) or not messages or any(not isinstance(m, dict)
+                    or set(m) != {'role', 'content'} or not isinstance(m['role'], str) or not m['role']
+                    or not isinstance(m['content'], str) for m in messages)):
+                raise ValueError('external messages must contain literal role/content strings')
+            content, kind = {'messages': messages}, 'chat'
+        kind = value.get('kind', kind)
+        if not isinstance(kind, str) or not kind:
+            raise ValueError('external prompt kind must be a nonempty string')
+        record = {'index': index, 'kind': kind, 'source': {'external_index': index}, **content,
+                  'sha256': hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()}
+        if 'target_length' in value:
+            if type(value['target_length']) is not int or value['target_length'] <= 0:
+                raise ValueError('external target_length must be a positive token count')
+            record['target_length'] = value['target_length']
+        prompts.append(record)
+    return {'prompts': prompts, 'sources': {},
+            'prompt_file': {'path': str(path), 'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()}}
+
+
+def validate_external_lengths(records, tokens, matched):
+    """Every external prompt must fit its target after the served tokenizer."""
+    if len(records) != len(tokens):
+        raise ValueError('external prompt tokenizer result count differs')
+    for record, prompt in zip(records, tokens):
+        declared = record.get('target_length')
+        targets = matched['lengths'] if matched else ([declared] if declared else [])
+        tolerance = matched['tolerance'] if matched else 0
+        if declared is not None:
+            if declared not in targets:
+                raise ValueError(f"external prompt length target {declared} is not a declared cell")
+            targets = [declared]
+        if targets and not any(abs(len(prompt) - target) <= tolerance for target in targets):
+            raise ValueError(f"external prompt length at index {record['index']} is {len(prompt)}, expected {targets} +/- {tolerance}")
+
+
 def exhausted():
     raise RuntimeError('unseen cold prompt budget exhausted')
 

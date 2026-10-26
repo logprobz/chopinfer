@@ -162,6 +162,63 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_external_prompt_file_seals_literals_and_checks_tokenized_lengths(self):
+        import os
+        import subprocess
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'CHOPINFER_DATA': directory}):
+            root = Path(directory)
+            model = frozen_fixture(root)
+            entries = [{'prompt': f'Code {i}:'.ljust(256, 'x'), 'kind': 'coding', 'target_length': 12} for i in range(4)]
+            entries += [{'messages': [{'role': 'user', 'content': f'Chat {i}:'.ljust(512, 'y')}],
+                         'kind': 'chat', 'target_length': 16} for i in range(4)]
+            entries[0] = entries[0]['prompt']
+            source = root / 'prompts.json'
+            source.write_text(json.dumps(entries))
+            model['prompt_file'] = str(source)
+            model['kv_pages'] = 'default'
+            backing = root / 'rank.bin'
+            backing.write_bytes(b'\0' * 4096)
+            model['cold_engram'] = {'matched': {'lengths': [12, 16], 'tolerance': 0},
+                'images': [{'path': str(backing), 'bytes': 4096,
+                            'views': [{'name': 'fixture', 'offset': 0, 'bytes': 4096}]}]}
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seal = json.loads((root / 'stage/runtime-seal.json').read_text())
+            self.assertIn('prompt_file', list(seal))
+            self.assertEqual(seal['prompt_file'], {'path': str(source), 'size': source.stat().st_size,
+                                                   'sha256': stage.digest(source)})
+            self.assertEqual(seal['sha256'][str(source)], stage.digest(source))
+            self.assertEqual(seal['prompts'][0]['prompt'], entries[0])
+            self.assertEqual(seal['prompts'][4]['messages'], entries[4]['messages'])
+            source = root / 'prompts.jsonl'
+            source.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n')
+            model['prompt_file'] = str(source)
+            model.pop('workload')
+            result = stage_fixture(root, model, destination='jsonl-stage')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'jsonl-stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env['CHOPINFER_WEIGHT_KEEPER_DIR'] = str(root / 'synthetic-keeper')
+            def run(stage_dir, out):
+                return subprocess.run([sys.executable, '-B', str(stage_dir / 'harness/tune.py'), '--dry-run',
+                    '--output', str(root / out), '--payload-sha', stage.digest(stage_dir / 'runtime-seal.json')],
+                    env=env, text=True, capture_output=True, timeout=90)
+            result = run(staged, 'valid')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            summary = json.loads((root / 'valid/summary.json').read_text())
+            self.assertEqual(summary['windows'], {'planned': 8, 'executed': 8})
+            entries[1]['target_length'] = 16
+            source.write_text('\n'.join(json.dumps(entry) for entry in entries) + '\n')
+            result = run(staged, 'tampered')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('sealed file changed', result.stderr)
+            result = stage_fixture(root, model, destination='wrong-length-stage')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = run(root / 'wrong-length-stage', 'wrong-length')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('prompt length', result.stdout + result.stderr)
+
     def test_default_kv_pool_omits_fixed_flags_and_cold_requires_it(self):
         from unittest.mock import patch
         with patch.object(tune.r, 'KV_PAGES', 'default'):

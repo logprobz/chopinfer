@@ -52,6 +52,32 @@ less than the tokens their drafts add. Measure the step costs first (the
   the install's own source snapshot, so a revision always gives the same
   prompts.
 
+A job may replace the generated workload with `prompt_file`, an absolute
+path under `$CHOPINFER_DATA` outside the repository. It accepts a JSON array
+or `.jsonl` file, one literal prompt per record. Records may be strings or
+objects with exactly one of `prompt` (a string) and `messages` (literal
+role/content strings), plus optional `kind` and `target_length`:
+
+```json
+[
+  {"prompt": "Literal coding prompt...", "kind": "coding", "target_length": 8192},
+  {"messages": [{"role": "user", "content": "Literal chat prompt..."}],
+   "kind": "chat", "target_length": 32768}
+]
+```
+
+The examples show the format; replace their text with the actual prompts.
+`workload` may be omitted when `prompt_file` is set. Staging keeps the
+literal content, seals the file's absolute path, byte size and SHA256, and
+refuses symlinks or a file that changes while being read. The job verifies
+the seal again, tokenizes with the served tokenizer and chat template, and
+checks lengths before timing. In matched cold mode every external prompt
+must fit a declared length cell within its tolerance, including any
+explicit `target_length`. With no matched mode, an explicit target length
+is exact. Out-of-range external prompts are refused rather than discarded.
+Matched pair sets are drawn from these validated inputs. Keep the prompt
+file and all generated evidence outside the repository.
+
 ## Running
 
 1. Seal a stage outside the tree, on a frozen integration install

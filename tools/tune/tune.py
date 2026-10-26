@@ -232,6 +232,11 @@ def validate(payload, dry):
         actual = Path(path)
         if not actual.is_absolute() or actual.is_symlink() or digest(actual) != wanted:
             raise RuntimeError('sealed file changed: ' + path)
+    if 'prompt_file' in m:
+        source = m['prompt_file']
+        if (m['sha256'].get(source['path']) != source['sha256']
+                or Path(source['path']).stat().st_size != source['size']):
+            raise RuntimeError('sealed prompt file identity differs')
     for identity in m.get('cold_files', []):
         if faults.file_identity(identity['path']) != identity:
             raise RuntimeError('sealed cold image metadata changed')
@@ -1252,6 +1257,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         record['kv_pages_per_rank'] = kv_pages(log, config, state, label)
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
+            if 'prompt_file' in SEAL:
+                prompt_builder.validate_external_lengths(SEAL['prompts'], state['tokens'], matched_cold(config))
             if cold:
                 matched = matched_cold(config)
                 state['cold_pools'] = (prompt_builder.matched_visit_pools(state['tokens'], visits(config),

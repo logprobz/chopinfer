@@ -370,7 +370,10 @@ def main():
         model = {**model, **jobs[args.job], 'job': args.job}
     if args.template and model.get('speculation_mode') == 'off':
         raise SystemExit('AR dry runs need a frozen install for native parser validation')
-    workload = json.loads((ROOT / model['workload']).read_text())
+    external = (builder.from_file(model['prompt_file'], os.environ.get('CHOPINFER_DATA'), ROOT)
+                if 'prompt_file' in model else None)
+    workload = ({'name': 'external-prompts', 'prompts': len(external['prompts'])} if external else
+                json.loads((ROOT / model['workload']).read_text()))
     for c in model['concurrencies']:
         if c * model.get('groups', {}).get(str(c), 1) > workload['prompts']:
             raise SystemExit(f"C{c}: its prompt groups need more than the workload's {workload['prompts']} prompts")
@@ -387,7 +390,9 @@ def main():
     stage.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(source / 'tools/qual'))
     import bench
-    built = builder.build(workload, source, lambda i: bench.stream_prompt('diverse', i).strip())
+    built = external or builder.build(workload, source, lambda i: bench.stream_prompt('diverse', i).strip())
+    if external:
+        files.add(Path(external['prompt_file']['path']))
     name = args.name or f"depth tune {model['model']}{' ' + args.job if args.job else ''} {install['revision'][:10]}"
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
@@ -441,6 +446,10 @@ def main():
             'cold_files': cold_files, 'sha256': {str(x): digest(x) for x in sorted(files)}}
     if len(names) > 1:
         seal.update(installs=installs, default_install=names[0])
+    if external:
+        seal['prompt_file'] = external['prompt_file']
+        if seal['sha256'][external['prompt_file']['path']] != external['prompt_file']['sha256']:
+            raise ValueError('prompt_file changed before sealing')
     (stage / 'runtime-seal.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
     payload = digest(stage / 'runtime-seal.json')
     text = (copy / 'tune.job.in').read_text()

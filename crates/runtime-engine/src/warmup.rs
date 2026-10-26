@@ -1,13 +1,10 @@
 //! Shapes that startup warmup drives through the engine; the shared rule
 //! lives in `runtime_bundle_sdk::warmup`, so a bundle's CPU conformance
 //! scenario drives the same shapes.
+use crate::{DraftSource, SpeculationConfig, SpeculationMode};
 pub use runtime_bundle_sdk::warmup::{
     AllocatedShape, VerifyShape, VerifyWarmup, context_ladder, verify_shapes,
 };
-use runtime_scheduler::DraftBudget;
-
-use crate::SpeculationConfig;
-use crate::speculation::{AcceptanceEstimate, PlanCandidate, SpeculationPolicy};
 
 /// One step the engine executed during startup warmup: its rows by phase
 /// and the draft tokens its verify items accepted. Warmup reads these to
@@ -33,55 +30,29 @@ pub fn allocated_shapes(
     sequences: usize,
     item_rows: &[usize],
 ) -> Vec<AllocatedShape> {
-    if config.verify_allocation().is_none() {
+    let (Some(allocation), SpeculationMode::Balanced(depths), DraftSource::Bundle) =
+        (config.verify_allocation(), config.mode(), config.source())
+    else {
         return Vec::new();
-    }
-    // The executor's rounding of a draft count to its row buckets.
-    let round = |count: usize| {
-        item_rows
-            .iter()
-            .copied()
-            .filter(|&rows| rows <= count + 1)
-            .max()
-            .unwrap_or(1)
-            .saturating_sub(1)
-            .min(count)
     };
-    let acceptance = AcceptanceEstimate::initial();
-    let mut shapes: Vec<AllocatedShape> = Vec::new();
-    for items in 2..=sequences {
-        let Some(spare) = config.maximum_verify_tokens().checked_sub(items) else {
-            break;
-        };
-        // As the scheduler offers a fresh request with output left for its
-        // deepest drafts, and the engine plans and rounds them.
-        let candidate = PlanCandidate {
+    let widths: Vec<_> = config
+        .verify_widths()
+        .widths()
+        .iter()
+        .map(|&n| usize::from(n))
+        .collect();
+    runtime_bundle_sdk::warmup::allocated_shapes(
+        sequences,
+        &runtime_bundle_sdk::warmup::AllocationWarmup {
             maximum_draft_tokens: config.maximum_draft_tokens(),
-            acceptance: &acceptance,
-            fresh: true,
-            remaining_tokens: usize::MAX,
-        };
-        let mut policy = SpeculationPolicy::new(config).with_draft_rounding(round);
-        let drafts = policy.plan(&vec![candidate; items], DraftBudget::new(spare, spare));
-        let Some(allocation) = policy.take_allocation() else {
-            continue;
-        };
-        let reserved_rows = items + drafts.iter().map(|&count| round(count)).sum::<usize>();
-        let width = allocation.width.min(reserved_rows);
-        if width > items
-            && reserved_rows > width
-            && !shapes
-                .iter()
-                .any(|shape| (shape.width, shape.reserved_rows) == (width, reserved_rows))
-        {
-            shapes.push(AllocatedShape {
-                items,
-                width,
-                reserved_rows,
-            });
-        }
-    }
-    shapes
+            step_rows: config.maximum_verify_tokens(),
+            drafting_items: config.maximum_draft_items(),
+            item_rows,
+            widths: &widths,
+            floor: allocation.floor(),
+        },
+        |items| depths.at(items),
+    )
 }
 
 #[cfg(test)]
@@ -91,6 +62,66 @@ mod tests {
         DraftDepths, DraftSource, SpeculationConfig, SpeculationMode, VerifyAllocation,
         VerifyWidths,
     };
+
+    use crate::speculation::{AcceptanceEstimate, PlanCandidate, SpeculationPolicy};
+    use runtime_scheduler::DraftBudget;
+
+    // Keep the engine planner as an independent oracle for the SDK's fresh waves.
+    fn policy_shapes(
+        config: SpeculationConfig,
+        sequences: usize,
+        item_rows: &[usize],
+    ) -> Vec<AllocatedShape> {
+        if config.verify_allocation().is_none() {
+            return Vec::new();
+        }
+        // The executor's rounding of a draft count to its row buckets.
+        let round = |count: usize| {
+            item_rows
+                .iter()
+                .copied()
+                .filter(|&rows| rows <= count + 1)
+                .max()
+                .unwrap_or(1)
+                .saturating_sub(1)
+                .min(count)
+        };
+        let acceptance = AcceptanceEstimate::initial();
+        let mut shapes: Vec<AllocatedShape> = Vec::new();
+        for items in 2..=sequences {
+            let Some(spare) = config.maximum_verify_tokens().checked_sub(items) else {
+                break;
+            };
+            // As the scheduler offers a fresh request with output left for its
+            // deepest drafts, and the engine plans and rounds them.
+            let candidate = PlanCandidate {
+                maximum_draft_tokens: config.maximum_draft_tokens(),
+                acceptance: &acceptance,
+                fresh: true,
+                remaining_tokens: usize::MAX,
+            };
+            let mut policy = SpeculationPolicy::new(config).with_draft_rounding(round);
+            let drafts = policy.plan(&vec![candidate; items], DraftBudget::new(spare, spare));
+            let Some(allocation) = policy.take_allocation() else {
+                continue;
+            };
+            let reserved_rows = items + drafts.iter().map(|&count| round(count)).sum::<usize>();
+            let width = allocation.width.min(reserved_rows);
+            if width > items
+                && reserved_rows > width
+                && !shapes
+                    .iter()
+                    .any(|shape| (shape.width, shape.reserved_rows) == (width, reserved_rows))
+            {
+                shapes.push(AllocatedShape {
+                    items,
+                    width,
+                    reserved_rows,
+                });
+            }
+        }
+        shapes
+    }
 
     fn config(capacity: usize, floor: usize) -> SpeculationConfig {
         SpeculationConfig::new(
@@ -153,5 +184,76 @@ mod tests {
         );
         let plain = config(48, 1).with_verify_allocation(None);
         assert!(allocated_shapes(plain, 32, &rows).is_empty());
+    }
+
+    #[test]
+    fn allocated_waves_keep_the_served_capacity_and_depth_schedule() {
+        let config = SpeculationConfig::new(
+            5,
+            64,
+            SpeculationMode::Balanced(DraftDepths::parse("1:5,8:3,16:3,32:0").unwrap()),
+            DraftSource::Bundle,
+        )
+        .unwrap()
+        .with_verify_widths(VerifyWidths::parse("6,8,16,32,64").unwrap())
+        .with_verify_allocation(config(64, 1).verify_allocation());
+        assert_eq!(
+            triples(&allocated_shapes(config, 32, &[2, 3, 4, 5, 6])),
+            [
+                (2, 8, 12),
+                (3, 16, 18),
+                (4, 16, 24),
+                (5, 16, 30),
+                (6, 32, 36),
+                (7, 32, 42),
+                (8, 32, 48),
+                (9, 32, 54),
+                (10, 32, 60),
+                (11, 32, 55),
+                (13, 32, 52),
+                (14, 32, 56),
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_allocated_warmup_matches_engine_planning() {
+        let mut cases = 0;
+        for capacity in [8, 17, 32, 48, 64] {
+            for floor in [0, 1, 3, 5] {
+                for schedule in ["1:3", "1:5,8:3,16:3,32:0", "3:2,9:0"] {
+                    for rows in [&[1, 2, 3, 4, 5, 6][..], &[1, 2, 4], &[2, 6]] {
+                        for limit in [None, Some(0), Some(1), Some(3)] {
+                            for widths in [
+                                VerifyWidths::NONE,
+                                VerifyWidths::parse("6,8,16,32,64").unwrap(),
+                            ] {
+                                let config = SpeculationConfig::new(
+                                    5,
+                                    capacity,
+                                    SpeculationMode::Balanced(
+                                        DraftDepths::parse(schedule).unwrap(),
+                                    ),
+                                    DraftSource::Bundle,
+                                )
+                                .unwrap()
+                                .with_verify_widths(widths)
+                                .with_maximum_draft_items(limit)
+                                .with_verify_allocation(
+                                    config(capacity, floor).verify_allocation(),
+                                );
+                                assert_eq!(
+                                    allocated_shapes(config, 32, rows),
+                                    policy_shapes(config, 32, rows),
+                                    "{config:?}, rows={rows:?}"
+                                );
+                                cases += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 1440);
     }
 }

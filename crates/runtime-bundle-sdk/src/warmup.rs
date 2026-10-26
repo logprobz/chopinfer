@@ -2,8 +2,10 @@
 //! publishes readiness, and a bundle's CPU conformance tests drive the same
 //! wave sizes, so a step the host's warmup sends cannot first fail on a GPU.
 
+mod allocation;
 mod shapes;
 
+pub use allocation::{AllocationWarmup, allocated_shapes};
 pub use shapes::{AllocatedShape, VerifyShape, VerifyWarmup, context_ladder, verify_shapes};
 
 /// Wave sizes: the powers of two below `sequences`, then `sequences`.

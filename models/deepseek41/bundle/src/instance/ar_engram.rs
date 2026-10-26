@@ -57,10 +57,8 @@ pub(super) fn traced() -> bool {
 
 #[cfg(test)]
 thread_local! {
-    /// The switch's raw value in tests, `None` being unset. Tests keep the
-    /// synchronous route unless they set it, so their pinned journals stay
-    /// that route's.
-    static IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) };
+    /// Tests exercise the served per-layer route by default.
+    static IN_TESTS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]

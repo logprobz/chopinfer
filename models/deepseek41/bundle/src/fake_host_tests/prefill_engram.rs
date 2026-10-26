@@ -243,11 +243,21 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
                 .execute(&decode(&[(7, 0, rows, 7)]), &mut Views::default())
                 .unwrap();
             instance.commit().unwrap();
-            assert!(
-                !host.journal.borrow()[before_decode..]
-                    .iter()
-                    .any(|s| s.starts_with("async mapped ids "))
-            );
+            // Decode uses its own prepared gathers under either prefill setting.
+            for (prefix, expected) in [
+                ("async mapped ids ", 2),
+                ("async mapped wait ", 2 * ranks.count()),
+                ("async mapped complete", 2),
+            ] {
+                assert_eq!(
+                    host.journal.borrow()[before_decode..]
+                        .iter()
+                        .filter(|s| s.starts_with(prefix))
+                        .count(),
+                    expected,
+                    "{prefix}"
+                );
+            }
             let observed = launches(&host);
             if let Some(reference) = &reference {
                 assert_eq!(&observed, reference, "ranks={} rows={rows}", ranks.get());

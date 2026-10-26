@@ -51,9 +51,8 @@ pub fn serves(g: &Geometry, ranks: u32) -> bool {
 }
 #[cfg(test)]
 std::thread_local! {
-    /// Tests keep the served RoPE and window write apart unless they serve
-    /// the twins, so their pinned journals stay the pair's.
-    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+    /// Tests exercise the served query-window twins by default.
+    static FORCED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(SERVED)) };
 }
 /// Run `run` with the twins served (`true`) or kept apart (`false`),
 /// whatever [`SERVED`] and [`SWITCH`] say.
@@ -114,6 +113,6 @@ mod tests {
                 .len(),
             1
         );
-        assert!(!serves(&FLASH, 4));
+        assert!(serves(&FLASH, 4));
     }
 }

@@ -203,7 +203,14 @@ fn decode_journal(reference: bool) {
             .filter(|&(layer, s)| crate::ops::exact_f32::widens(&FLASH, layer, s))
             .count();
         assert_eq!(widened, 48);
-        assert_eq!(count("chop_deepseek41_window_fused_"), layers * ranks);
+        assert_eq!(
+            count("chop_deepseek41_window_fused_"),
+            if reference { layers * ranks } else { 0 }
+        );
+        assert_eq!(
+            count("chop_deepseek41_query_window_twin_"),
+            if reference { 0 } else { layers * ranks }
+        );
         assert_eq!(count("chop_deepseek41_latent_window_rope_v1"), 0);
         let saved = 5 * layers + widened;
         assert_eq!(saved, 248);

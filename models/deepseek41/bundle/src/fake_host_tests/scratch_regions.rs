@@ -152,6 +152,8 @@ const OUTPUTS: &[Listed] = &[
     // The query RoPE's BF16 attention query, every column of every head.
     ("chop_deepseek41_latent_query_rope_v1", 1),
     ("chop_deepseek41_latent_query_rope_heads_v1", 1),
+    ("chop_deepseek41_query_window_twin_native_v1", 1),
+    ("chop_deepseek41_query_window_twin_bf16_v1", 1),
     // One Engram layer's table rows decoded to BF16.
     ("chop_row_mxfp8_decode_v1", 3),
     // The final weighted collapse of the streams.

@@ -89,8 +89,14 @@ survives restore. A failed copy must poison the runtime.
 
 The configured position capacity must hold the full five-position block
 even when K is smaller. If it cannot, admission refuses that draft step; the
-caller can schedule K=0. Confidence values never change this choice or the
-emitted prefix.
+caller can schedule K=0. With the adopted confidence calibration, batch
+wire V7 allocates draft prefixes within the scheduler's verify width. Each
+rank prepares the allocation and reserved-row head storage at startup;
+ordinary steps retain their existing layout. The `tp4-dspark` profile keeps
+64 speculative rows and graph rows, widths 6, 8, 16, 32 and 64, and depths
+`1:5,8:3,16:3,32:0`. Its floor-one greedy and sampled calibration pairs are
+identical. Confidence changes verification budgets, not committed target
+state or the acceptance rule.
 
 The CPU tests cover state transitions, retained contents, projection order
 and the synchronous host-call journal. Their synthetic logits check budget

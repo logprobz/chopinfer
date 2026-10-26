@@ -9,7 +9,12 @@ use super::*;
 use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
 
 /// An instance of `items` slots and `rows` verify rows whose host allocates.
-fn create_allocating(shape: Shape, items: u32, rows: u32) -> (Rc<Host>, BundleInstanceV1) {
+fn create_with_allocation(
+    shape: Shape,
+    items: u32,
+    rows: u32,
+    allocates: bool,
+) -> (Rc<Host>, BundleInstanceV1) {
     use model_deepseek41_contract::verify_allocation::OPTION;
     use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
     let declared = ModelOptionsV1 {
@@ -18,13 +23,12 @@ fn create_allocating(shape: Shape, items: u32, rows: u32) -> (Rc<Host>, BundleIn
             .geometry
             .model_options(shape.geometry.runtime_defaults()),
     };
-    let resolved = declared
-        .resolve(
-            &[(OPTION.to_owned(), "true".to_owned())]
-                .into_iter()
-                .collect(),
-        )
-        .unwrap();
+    let overrides = if allocates {
+        vec![]
+    } else {
+        vec![(OPTION.to_owned(), "false".to_owned())]
+    };
+    let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
     host.speculation.set(Some((5, rows)));
@@ -151,7 +155,7 @@ fn device_step(
 fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
     for shape in crate::shape::topologies() {
         let (items, width) = (8_u32, 16_u32);
-        let (host, mut instance) = create_allocating(shape, 8, 48);
+        let (host, mut instance) = create_with_allocation(shape, 8, 48, true);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -331,7 +335,7 @@ fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
         .unwrap()
         .symbols();
     for (items, drafts, width, reserved) in [(8, 3, 16, 32), (8, 5, 16, 48), (16, 3, 32, 64)] {
-        let (host, mut instance) = create_allocating(shape, items, reserved);
+        let (host, mut instance) = create_with_allocation(shape, items, reserved, true);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -372,8 +376,9 @@ fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
 }
 
 #[test]
-fn allocated_verify_steps_are_refused_without_the_hosts_option() {
-    let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
+fn allocated_verify_steps_are_refused_when_preparation_is_disabled() {
+    let (host, mut instance) =
+        create_with_allocation(Shape::new(&FLASH, Ranks::TP4).unwrap(), 4, 32, false);
     let prefill = BatchRequestV1::new(
         BatchWireVersionV1::V3,
         vec![BatchItemV1::new(1, false, 3, true, vec![1, 2, 3])],
@@ -434,9 +439,9 @@ fn an_allocating_host_gets_the_allocation_ops_and_storage() {
     ];
     for allocates in [false, true] {
         let overrides = if allocates {
-            vec![(OPTION.to_owned(), "true".to_owned())]
-        } else {
             vec![]
+        } else {
+            vec![(OPTION.to_owned(), "false".to_owned())]
         };
         let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);

@@ -51,14 +51,25 @@ fills the width even when every score is low. It is bypassed when only one
 item can compete for rows, when the floor fills the width, or when all
 reserved drafts already fit.
 
+The `tp4-dspark` profile enables allocation with the stored sampled
+calibration for contract
+`deepseek41.confidence.hidden-f32.markov-bf16.acc-f32-chain128.out-f32.v1`.
+Its floor is one, and its five greedy coefficient pairs equal its five
+sampled pairs. The profile keeps 64 speculative rows, verify widths
+6, 8, 16, 32 and 64, graph rows 64, and depths `1:5,8:3,16:3,32:0`.
+In the 2026-10-26 comparison, all 290 matched requests were bitwise equal.
+Coding request throughput improved by 8.40% at C4 and 3.57% at C8; chat
+request throughput fell by 1.56% at C4 and 3.48% at C8.
+
 The drafter keeps a five-row backbone and computes either three or five
-proposal heads as described above. The default
-profile already verifies up to five drafts at C1. At C4 its 16-row width
-leaves 12 draft rows to distribute, while the default 32-row capacity can
-reserve all five drafts per item. At C8 the same capacity fits only three
-reserved drafts per item; reserving five requires 48 rows, even when the
-target still computes 32. Request output and KV limits can reduce these
-reservations. See [serving profiles](../../docs/serving-profiles.md#drafter-confidence)
+proposal heads as described above. The default profile verifies up to
+five drafts at C1. At C4 its 16-row width leaves 12 draft rows to distribute.
+The 64-row capacity can reserve all five drafts per item at C4 and C8:
+these reservations need 24 and 48 rows respectively, including one target
+row per item. Request output and KV limits can reduce these reservations.
+The depth, cost and calibration jobs explicitly disable allocation when
+collecting unallocated controls; comparison arms set their own calibration.
+See [serving profiles](../../docs/serving-profiles.md#drafter-confidence)
 for the calibration and [depth tuning](../../docs/depth-tuning.md#confidence-calibration)
 for fitting it from sampled runs without allocation. Records from allocated
 steps cannot distinguish unverified drafts from rejected ones and must not

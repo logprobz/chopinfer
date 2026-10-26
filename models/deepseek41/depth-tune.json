@@ -102,7 +102,11 @@
       ],
       "work_seconds": 2400,
       "queue_timeout_seconds": 2700,
-      "repeats": 2
+      "repeats": 2,
+      "extra_arguments": [
+        "--speculation-confidence",
+        "off"
+      ]
     },
     "high": {
       "concurrencies": [
@@ -118,7 +122,11 @@
       ],
       "work_seconds": 2400,
       "queue_timeout_seconds": 2700,
-      "repeats": 2
+      "repeats": 2,
+      "extra_arguments": [
+        "--speculation-confidence",
+        "off"
+      ]
     },
     "confidence": {
       "concurrencies": [
@@ -142,7 +150,9 @@
       ],
       "extra_arguments": [
         "--speculation-widths",
-        "32"
+        "32",
+        "--speculation-confidence",
+        "off"
       ],
       "work_seconds": 1200,
       "queue_timeout_seconds": 1500,
@@ -220,7 +230,11 @@
         }
       ],
       "work_seconds": 1500,
-      "queue_timeout_seconds": 1800
+      "queue_timeout_seconds": 1800,
+      "extra_arguments": [
+        "--speculation-confidence",
+        "off"
+      ]
     },
     "confidence-exact": {
       "verify_widths": [

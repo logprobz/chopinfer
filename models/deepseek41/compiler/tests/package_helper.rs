@@ -327,7 +327,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                         {"name": "text_config.indexer_prefill_tile", "default_is_qualified": true,
                              "definition": {"type": "boolean", "default": true}},
                         {"name": "verify_allocation", "default_is_qualified": true,
-                             "definition": {"type": "boolean", "default": false}},
+                             "definition": {"type": "boolean", "default": true}},
                         {"name": "verify_graph_rows", "default_is_qualified": true,
                              "definition": {"type": "integer", "default": 64, "minimum": 1, "maximum": 192}}]
             })
@@ -352,7 +352,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "text_config.candidate_topk_blocks": blocks,
                 "text_config.indexer_mma": true,
                 "text_config.indexer_prefill_tile": true,
-                "verify_allocation": false,
+                "verify_allocation": true,
                 "verify_graph_rows": 64,
             });
             assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);

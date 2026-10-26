@@ -390,6 +390,13 @@ Step records expose `undrafted_ready` and `undrafted_status_packets`;
 commit records expose `retention_kernel_launches`, `retention_copy_calls`
 and `retention_metadata_bytes` so gates can assert which path executed.
 
+The `tp4-dspark` profile allocates verify drafts using the stored floor-one
+sampled confidence calibration, with the same five pairs for greedy
+requests. It keeps 64 speculative rows, widths 6, 8, 16, 32 and 64, graph
+rows 64, and depths `1:5,8:3,16:3,32:0`. See
+[DSpark confidence](dspark-confidence.md) for the numerical contract and
+allocation rules and the measured workload tradeoff.
+
 For untimed transition diagnostics, build the bundle with `state-capture`.
 This feature keeps native launches and ready logits enabled. Set
 `CHOPINFER_DSPARK_STATE_DIR` to a private external directory, create its

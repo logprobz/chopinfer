@@ -259,7 +259,7 @@ def derive(base_events,head_events,rule,replacements=(),layout=None,fixture=None
             slot=row[5]&0xffffffff
             require(slot in a['streams'] or slot not in stream_images,
                     f'allocation {row[1]} is on stream {slot}, which has no recorded creation and is the image of a created stream')
-            require(slot not in deleted, 'retained allocation uses a removed stream')
+            require(slot not in a['streams'] or slot not in deleted, 'retained allocation uses a removed stream')
             x[5]=(row[5]&~0xffffffff)|(ids[slot] if slot in a['streams'] else slot)
         else:
             x[1]=ids[row[1]]
@@ -359,6 +359,12 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         if device is not None:
             added_raws={bi['allocations'][slot][1] for slot in set(witness.added)|witness.handles.added if slot in bi['allocations']}
             require(not(added_raws&fixed),'a declared added allocation has the handle of a fixed resource')
+            added_streams=witness.handles.added & set(bi['streams'])
+            if added_streams:
+                fixed_streams={int(found[1][i+1]) for line in notes_a if (found:=history.form(line))
+                               for i,role in enumerate(found[2]) if role=='stream'}-set(ai['streams'])
+                fixed_streams|={row[5]&0xffffffff for row in ai['allocations'].values()}-set(ai['streams'])
+                require(not(added_streams & fixed_streams),'a declared added stream redirects a fixed synthetic stream')
         from replacements import module_plans,rewrite_resolves
         from allocation_args import bindings,validate_spans
         plans,_,_=module_plans(ai,bi,ids,replacements)

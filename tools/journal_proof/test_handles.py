@@ -137,6 +137,27 @@ class HandleTests(unittest.TestCase):
         b.pop(1)
         self.refused((a, b, d, rule))
 
+    def test_added_stream_cannot_redirect_a_synthetic_base_stream(self):
+        a, b, d, rule = case('stream')
+        a[-1][1] = 'record 1 1'
+        b[-1][1] = 'record 1 2'
+        self.refused((a, b, d, rule))
+
+    def test_removed_resources_cannot_be_used_by_retained_lines(self):
+        for kind, line in (
+                ('event', 'record 90 1'),
+                ('stream', 'synchronize 1'),
+                ('allocation', 'zero 90 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967297 }, offset: 0, length: 64 }')):
+            with self.subTest(kind=kind):
+                a, b, d, rule = case(kind, 'removed')
+                a[-1][1] = b[-1][1] = line
+                self.refused((a, b, d, rule))
+
+    def test_duplicate_handle_witness_is_refused(self):
+        a, b, d, rule = case('event')
+        rule['added_handles'] *= 2
+        self.refused((a, b, d, rule))
+
     def test_declared_creator_cannot_hide_in_operation_edits(self):
         a, b, d, rule = case('event')
         d['operations'] = {'host': [dict(add=dict(line=1, text='event 1'))]}

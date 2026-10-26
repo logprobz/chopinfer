@@ -27,11 +27,12 @@ def parse(handles, operations):
                 name = entry['name']
                 need(isinstance(name, str) and name and name not in names, 'handle names must be distinct within a fixture')
                 names.add(name)
-                need(entry['kind'] in KINDS, 'unknown declared handle kind; modules/resolves use module declarations')
+                need(isinstance(entry['kind'], str) and entry['kind'] in KINDS, 'unknown declared handle kind; modules/resolves use module declarations')
                 need(type(entry['at']) is int and entry['at'] > 0, 'handle at must be a one-based trace record ordinal')
                 rows = entry['records']
                 need(isinstance(rows, list) and rows and rows[0] == ['id', '@id'], 'handle records must start with [id, @id]')
-                need(all(isinstance(row, list) and row and isinstance(row[0], str) for row in rows), 'invalid handle records')
+                need(all(isinstance(row, list) and row and isinstance(row[0], str)
+                         and all(v is None or type(v) in (str, int) for v in row) for row in rows), 'invalid handle records')
     need(isinstance(operations, dict), 'operations must map fixtures to exact line edits')
     for fixture, edits in operations.items():
         need(isinstance(fixture, str) and fixture, 'operations needs a fixture name')

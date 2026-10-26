@@ -3510,12 +3510,16 @@ impl ServedEngineV1 {
         let prefill_policy = instance
             .prefill_policy()
             .map_err(|error| format!("invalid bundle prefill declaration: {error}"))?;
+        let prefill_cuts = instance
+            .prefill_cuts_policy()
+            .map_err(|error| format!("invalid bundle prefill cuts declaration: {error}"))?;
         let config = if prefill_policy.chunk_tokens == 0 {
             config
         } else {
             config
                 .with_guaranteed_prefill_chunks(prefill_policy.chunk_tokens as usize)
                 .map_err(|error| format!("unusable bundle prefill chunk size: {error:?}"))?
+                .with_prefill_cuts(prefill_cuts.chunk_tokens != 0)
         };
         let snapshot_pages = if prefix_capability
             && (self.prefix_cache || (offload_capability && self.kv_offload.budget_bytes != 0))

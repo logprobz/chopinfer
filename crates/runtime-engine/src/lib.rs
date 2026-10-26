@@ -152,6 +152,13 @@ impl EngineConfig {
         Ok(self)
     }
 
+    /// Enables additional prefix cuts after the bundle declares complete state there.
+    #[must_use]
+    pub const fn with_prefill_cuts(mut self, enabled: bool) -> Self {
+        self.scheduler = self.scheduler.with_prefill_cuts(enabled);
+        self
+    }
+
     /// Enables prefix caching. Each anchor holds a bundle snapshot of
     /// `state_pages` KV pages; the executor must capture and restore them.
     #[must_use]

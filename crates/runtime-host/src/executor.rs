@@ -904,6 +904,10 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
 /// them. Naming them here also lets a test drive every failure path between a
 /// successful `execute` and its finalizer without a device.
 pub trait BundleExecutionV1 {
+    fn prefill_cuts_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+        Ok(0)
+    }
+
     fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
         Ok(0)
     }
@@ -1047,6 +1051,10 @@ pub trait BundleExecutionV1 {
 }
 
 impl BundleExecutionV1 for LoadedBundleInstanceV1 {
+    fn prefill_cuts_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+        Self::prefill_cuts_policy(self).map(|policy| policy.chunk_tokens)
+    }
+
     fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
         Self::prefill_policy(self).map(|policy| policy.chunk_tokens)
     }
@@ -1190,7 +1198,11 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
                 if sink.device.is_some() {
                     return Err(BundleAbiError::Status(BundleStatusV1::Unsupported));
                 }
-                Self::execute_prefill(self, request, &mut sink)
+                if self.prefill_cuts_policy()?.chunk_tokens != 0 {
+                    Self::execute_prefill_cuts(self, request, &mut sink)
+                } else {
+                    Self::execute_prefill(self, request, &mut sink)
+                }
             } else {
                 Self::execute(self, request, &mut sink)
             };
@@ -1288,7 +1300,20 @@ fn negotiated_prefill_request(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    runtime_bundle_sdk::prefill::encode(&request, &boundaries)
+    let cuts = instance
+        .prefill_cuts_chunk_tokens()
+        .map_err(|e| executor_error_v1(format!("bundle prefill cuts declaration failed: {e}")))?;
+    if cuts != 0 && cuts != chunk {
+        return Err(executor_error_v1(
+            "prefill cuts declaration changed".to_owned(),
+        ));
+    }
+    let encode = if cuts == 0 {
+        runtime_bundle_sdk::prefill::encode
+    } else {
+        runtime_bundle_sdk::prefill::encode_with_cuts
+    };
+    encode(&request, &boundaries)
         .map_err(|e| executor_error_v1(format!("invalid guaranteed prefill: {e}")))
 }
 
@@ -3613,6 +3638,7 @@ mod tests {
     /// A bundle execution that emits exactly the rows a test hands it.
     struct FakeExecutionV1 {
         prefill_chunk: u32,
+        prefill_cuts: bool,
         envelopes: Vec<Vec<u8>>,
         /// Every request execute received, as sent.
         requests: Vec<Vec<u8>>,
@@ -3639,6 +3665,7 @@ mod tests {
         fn emitting(emitted: Vec<OwnedLogitsRowV1>) -> Self {
             Self {
                 prefill_chunk: 0,
+                prefill_cuts: false,
                 envelopes: Vec::new(),
                 requests: Vec::new(),
                 device_results: false,
@@ -3674,6 +3701,14 @@ mod tests {
     }
 
     impl BundleExecutionV1 for FakeExecutionV1 {
+        fn prefill_cuts_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
+            Ok(if self.prefill_cuts {
+                self.prefill_chunk
+            } else {
+                0
+            })
+        }
+
         fn prefill_chunk_tokens(&self) -> Result<u32, BundleAbiError> {
             Ok(self.prefill_chunk)
         }
@@ -3765,7 +3800,11 @@ mod tests {
             self.requests.push(request.to_vec());
             if request.starts_with(runtime_bundle_sdk::prefill::MAGIC) {
                 assert_ne!(self.prefill_chunk, 0);
-                runtime_bundle_sdk::prefill::decode(request).unwrap();
+                if self.prefill_cuts {
+                    runtime_bundle_sdk::prefill::decode_with_cuts(request).unwrap();
+                } else {
+                    runtime_bundle_sdk::prefill::decode(request).unwrap();
+                }
                 self.envelopes.push(request.to_vec());
             }
             self.calls.push(CallV1::Execute);

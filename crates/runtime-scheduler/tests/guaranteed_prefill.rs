@@ -7,13 +7,18 @@ use runtime_scheduler::{
 };
 
 fn scheduler(chunk: usize, guaranteed: bool) -> Scheduler {
+    scheduler_with_cuts(chunk, guaranteed, false)
+}
+
+fn scheduler_with_cuts(chunk: usize, guaranteed: bool, cuts: bool) -> Scheduler {
     let mut config = SchedulerConfig::new(4, 64, 8192, chunk, 1)
         .unwrap()
         .with_prefill_granule(64)
         .unwrap()
         .with_maximum_scored_rows(64)
         .unwrap()
-        .with_prefix_cache(1);
+        .with_prefix_cache(1)
+        .with_prefill_cuts(cuts);
     if guaranteed {
         config = config.with_guaranteed_prefill_chunks(chunk).unwrap();
     }
@@ -113,6 +118,94 @@ fn shared_prefix_cannot_add_an_incomplete_boundary() {
         let expected = if guaranteed { 256 } else { 192 };
         assert_eq!(rows, [(0, expected)]);
         assert_eq!(captures, [expected]);
+        finish(&mut s, 2);
+    }
+}
+
+#[test]
+fn declared_cuts_capture_observed_prefixes_and_restore_them() {
+    for cuts in [false, true] {
+        let mut s = scheduler_with_cuts(256, true, cuts);
+        let first = (0..529).collect::<Vec<u32>>();
+        submit(&mut s, 1, &first, false);
+        finish(&mut s, 1);
+        let mut second = first[..192].to_vec();
+        second.extend(1000..1337);
+        submit(&mut s, 2, &second, false);
+        let (rows, captures) = step(&mut s);
+        let expected = if cuts { 192 } else { 256 };
+        assert_eq!(rows, [(0, expected)]);
+        assert_eq!(captures, [expected]);
+        let (rows, _) = finish(&mut s, 2);
+        assert_eq!(
+            rows[0],
+            (expected, 512.min((expected / 256 + 1) * 256) - expected)
+        );
+        let mut third = first[..192].to_vec();
+        third.extend(2000..2337);
+        submit(&mut s, 3, &third, false);
+        s.admit().unwrap();
+        assert_eq!(
+            s.cached_tokens(RequestId::new(3)).unwrap(),
+            if cuts { 192 } else { 0 }
+        );
+        if cuts {
+            s.complete_prefix_restore(RequestId::new(3)).unwrap();
+            let (rows, _) = finish(&mut s, 3);
+            assert_eq!(rows[0], (192, 64));
+        } else {
+            finish(&mut s, 3);
+        }
+        s.audit().unwrap();
+    }
+}
+
+#[test]
+fn declared_cuts_add_rounded_prompt_anchors_for_repeats() {
+    for cuts in [false, true] {
+        let mut s = scheduler_with_cuts(256, true, cuts);
+        let tokens = (0..465).collect::<Vec<u32>>();
+        submit(&mut s, 1, &tokens, false);
+        let (rows, captures) = finish(&mut s, 1);
+        if cuts {
+            assert_eq!(rows, [(0, 256), (256, 192), (448, 17)]);
+            assert_eq!(captures, [256, 448, 465]);
+        } else {
+            assert_eq!(captures, [256, 465]);
+        }
+        submit(&mut s, 2, &tokens, false);
+        s.admit().unwrap();
+        assert_eq!(
+            s.cached_tokens(RequestId::new(2)).unwrap(),
+            if cuts { 448 } else { 256 }
+        );
+        s.complete_prefix_restore(RequestId::new(2)).unwrap();
+        finish(&mut s, 2);
+    }
+}
+
+#[test]
+fn declared_cuts_share_queued_requests_at_the_last_whole_granule() {
+    for cuts in [false, true] {
+        let mut s = scheduler_with_cuts(256, true, cuts);
+        let first = (0..529).collect::<Vec<u32>>();
+        let mut second = first[..209].to_vec();
+        second.extend(1000..1320);
+        submit(&mut s, 1, &first, false);
+        submit(&mut s, 2, &second, false);
+        s.share_prompt_prefixes(&[RequestId::new(1), RequestId::new(2)])
+            .unwrap();
+        let (rows, captures) = step(&mut s);
+        if cuts {
+            assert_eq!(rows, [(0, 192)]);
+            assert_eq!(captures, [192]);
+            s.admit().unwrap();
+            assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 192);
+            s.complete_prefix_restore(RequestId::new(2)).unwrap();
+        } else {
+            assert!(rows.iter().all(|row| *row == (0, 256)));
+        }
+        finish(&mut s, 1);
         finish(&mut s, 2);
     }
 }

@@ -382,6 +382,7 @@ pub struct SchedulerConfig {
     scheduled_token_budget: usize,
     prefill_chunk_limit: usize,
     guaranteed_prefill_chunks: Option<usize>,
+    prefill_cuts: bool,
     lone_prefill_expansion: bool,
     maximum_scored_rows: usize,
     decode_cost: usize,
@@ -430,6 +431,7 @@ impl SchedulerConfig {
             scheduled_token_budget,
             prefill_chunk_limit,
             guaranteed_prefill_chunks: None,
+            prefill_cuts: false,
             lone_prefill_expansion: false,
             maximum_scored_rows: usize::MAX,
             decode_cost,
@@ -458,7 +460,7 @@ impl SchedulerConfig {
 
     /// Opt unscored text prefills into a fixed absolute chunk grid. Every
     /// grid boundary and prompt end is complete state and may be captured.
-    /// Shared prefixes cannot introduce additional prefill boundaries.
+    /// Shared prefixes introduce additional boundaries only with `with_prefill_cuts`.
     /// Scored and media requests keep their ordinary complete-row path.
     pub const fn with_guaranteed_prefill_chunks(
         mut self,
@@ -482,6 +484,15 @@ impl SchedulerConfig {
     #[must_use]
     pub const fn guaranteed_prefill_chunks(self) -> Option<usize> {
         self.guaranteed_prefill_chunks
+    }
+
+    /// Allow the ordinary prefix capture points within a guaranteed grid.
+    /// Enable only after the bundle declares complete state at scheduler cuts.
+    /// This does not enable timing-selected cuts or change the chunk budget.
+    #[must_use]
+    pub const fn with_prefill_cuts(mut self, enabled: bool) -> Self {
+        self.prefill_cuts = enabled;
+        self
     }
 
     /// Positions a chunk may end at before the prompt end: multiples of
@@ -1129,6 +1140,7 @@ pub struct PreparedBatchCommit {
 struct RequestRecord {
     spec: RequestSpec,
     guaranteed_prefill_chunks: Option<usize>,
+    prefill_cuts: bool,
     state: RequestState,
     handle: Option<SequenceHandle>,
     reserved_blocks: usize,
@@ -1473,6 +1485,7 @@ impl Scheduler {
         self.requests.push(RequestRecord {
             spec,
             guaranteed_prefill_chunks,
+            prefill_cuts: guaranteed_prefill_chunks.is_some() && self.config.prefill_cuts,
             state: RequestState::Queued,
             handle: None,
             reserved_blocks: 0,
@@ -1550,7 +1563,8 @@ impl Scheduler {
                             && self.requests[leader]
                                 .guaranteed_prefill_chunks
                                 .is_none_or(|chunk| {
-                                    tokens.is_multiple_of(chunk)
+                                    self.requests[leader].prefill_cuts
+                                        || tokens.is_multiple_of(chunk)
                                         || *tokens == self.requests[leader].spec.prompt_tokens
                                 })
                             && !chain.splits_media(*tokens)
@@ -3606,7 +3620,9 @@ impl Scheduler {
         else {
             return Vec::new();
         };
-        if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks {
+        if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks
+            && !self.requests[index].prefill_cuts
+        {
             let prompt = self.requests[index].spec.prompt_tokens;
             let mut points = Vec::new();
             let mut next = hit / chunk * chunk;
@@ -3673,6 +3689,16 @@ impl Scheduler {
         let repeat = (start + prompt.saturating_sub(start + 1) / chunk * chunk) / granule * granule;
         if repeat > start && absent(repeat) {
             points.push(repeat);
+        }
+        if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks {
+            let mut next = hit / chunk * chunk;
+            while let Some(end) = next.checked_add(chunk).filter(|&end| end < prompt) {
+                points.push(end);
+                next = end;
+            }
+            if prompt > hit {
+                points.push(prompt);
+            }
         }
         points.sort_unstable();
         points.dedup();
@@ -3742,7 +3768,11 @@ impl Scheduler {
                 .saturating_add(1)
                 .saturating_mul(chunk)
                 .min(Self::prefill_target(record));
-            return end - start;
+            return if record.prefill_cuts {
+                (end - start).min(Self::chunk_remaining(record, false))
+            } else {
+                end - start
+            };
         }
         let remaining = Self::chunk_remaining(record, spans);
         let limit = Self::request_chunk_limit(record, chunk_limit, maximum_scored_rows);

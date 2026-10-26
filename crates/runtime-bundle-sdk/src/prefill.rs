@@ -41,7 +41,7 @@ pub struct Envelope<'a> {
     pub boundaries: Vec<Boundary>,
 }
 
-fn validate(batch: &BatchRequestV1, boundaries: &[Boundary]) -> Result<(), Error> {
+fn validate(batch: &BatchRequestV1, boundaries: &[Boundary], cuts: bool) -> Result<(), Error> {
     if boundaries.len() > batch.items().len() {
         return Err(Error::Contract("too many prefill boundaries"));
     }
@@ -86,7 +86,8 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary]) -> Result<(), Error
             .checked_add(u64::from(item.phase_tokens()))
             .ok_or(Error::Contract("prefill append overflows"))?;
         if boundary.chunk_end != end
-            || end != next.min(boundary.prompt_tokens)
+            || end > next.min(boundary.prompt_tokens)
+            || (!cuts && end != next.min(boundary.prompt_tokens))
             || end <= append.previous_tokens()
             || item.expects_logits() != (end == boundary.prompt_tokens)
         {
@@ -99,8 +100,18 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary]) -> Result<(), Error
 }
 
 pub fn encode(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error> {
+    encode_policy(original, boundaries, false)
+}
+
+/// Encode endpoints for a separately negotiated complete-state cuts API.
+/// The scheduler and bundle enforce the bundle's declared prefill granule.
+pub fn encode_with_cuts(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error> {
+    encode_policy(original, boundaries, true)
+}
+
+fn encode_policy(original: &[u8], boundaries: &[Boundary], cuts: bool) -> Result<Vec<u8>, Error> {
     let batch = BatchCodecV1::decode(original)?;
-    validate(&batch, boundaries)?;
+    validate(&batch, boundaries, cuts)?;
     let size =
         u32::try_from(original.len()).map_err(|_| Error::Contract("prefill batch is too large"))?;
     let count = u32::try_from(boundaries.len())
@@ -133,6 +144,15 @@ pub fn encode(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error
 }
 
 pub fn decode(bytes: &[u8]) -> Result<Envelope<'_>, Error> {
+    decode_policy(bytes, false)
+}
+
+/// Decode only after the bundle opted into complete-state scheduler cuts.
+pub fn decode_with_cuts(bytes: &[u8]) -> Result<Envelope<'_>, Error> {
+    decode_policy(bytes, true)
+}
+
+fn decode_policy(bytes: &[u8], cuts: bool) -> Result<Envelope<'_>, Error> {
     let mut reader = BatchReaderV1::new("prefill envelope", bytes);
     reader.expect_magic(MAGIC)?;
     let size = reader.u32()? as usize;
@@ -156,7 +176,7 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope<'_>, Error> {
         boundaries.push(boundary);
     }
     reader.finish()?;
-    validate(&batch, &boundaries)?;
+    validate(&batch, &boundaries, cuts)?;
     Ok(Envelope {
         original,
         batch,
@@ -256,6 +276,60 @@ mod tests {
             },
         ] {
             assert!(encode(&original, &[wrong]).is_err());
+        }
+    }
+
+    #[test]
+    fn scheduler_cuts_require_separate_admission_and_preserve_grid_bytes() {
+        for version in [
+            BatchWireVersionV1::V1,
+            BatchWireVersionV1::V2,
+            BatchWireVersionV1::V3,
+        ] {
+            let original = batch(version);
+            assert_eq!(
+                encode(&original, &[boundary()]).unwrap(),
+                encode_with_cuts(&original, &[boundary()]).unwrap()
+            );
+            let original = BatchRequestV1::new(
+                version,
+                vec![BatchItemV1::new(7, false, 64, false, vec![1; 64])],
+                vec![BatchAppendV1::new(128, 192, 64, vec![1, 2, 3], None)],
+            )
+            .encode()
+            .unwrap();
+            let cut = Boundary {
+                request_id: 7,
+                prompt_tokens: 529,
+                chunk_end: 192,
+                chunk_tokens: 256,
+            };
+            assert!(encode(&original, &[cut]).is_err());
+            let bytes = encode_with_cuts(&original, &[cut]).unwrap();
+            assert!(decode(&bytes).is_err());
+            let read = decode_with_cuts(&bytes).unwrap();
+            assert_eq!(read.original, original);
+            assert_eq!(read.boundaries, [cut]);
+            for invalid in [
+                Boundary {
+                    chunk_end: 191,
+                    ..cut
+                },
+                Boundary {
+                    chunk_tokens: 80,
+                    ..cut
+                },
+                Boundary {
+                    prompt_tokens: 191,
+                    ..cut
+                },
+                Boundary {
+                    prompt_tokens: 192,
+                    ..cut
+                },
+            ] {
+                assert!(encode_with_cuts(&original, &[invalid]).is_err());
+            }
         }
     }
 }

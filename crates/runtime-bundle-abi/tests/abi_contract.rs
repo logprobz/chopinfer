@@ -2677,6 +2677,82 @@ fn optional_prefill_keeps_legacy_execute_and_transaction_guards() {
     instance.destroy().unwrap();
 }
 
+abi::export_prefill_cuts_api_v1!(
+    FIXTURE_PREFILL_CUTS_API,
+    |_| abi::prefill::BundlePrefillPolicyV1::guaranteed(2048),
+    |handle, request: &[u8], sink: &mut ExecuteResultSinkV1| {
+        match request.strip_prefix(b"cut:") {
+            Some(original) => fixture_execute(handle, original, sink),
+            None => abi::BundleStatusV1::InvalidArgument,
+        }
+    },
+);
+
+#[test]
+fn optional_prefill_cuts_preserve_both_legacy_directions() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    for cuts in [false, true] {
+        reset_calls();
+        // An old host attaches only the original export even when a new
+        // bundle also exports the separate cuts table.
+        let mut api = fixture_api().with_prefill_api(FIXTURE_PREFILL_API).unwrap();
+        if cuts {
+            api = api.with_prefill_cuts_api(FIXTURE_PREFILL_CUTS_API).unwrap();
+        }
+        let mut instance = api.create(fixture_table(), &[]).unwrap();
+        assert_eq!(instance.prefill_policy().unwrap().chunk_tokens, 2048);
+        assert_eq!(
+            instance.prefill_cuts_policy().unwrap().chunk_tokens,
+            if cuts { 2048 } else { 0 }
+        );
+        assert!(
+            instance
+                .execute_prefill(b"cut:a", &mut fixture_sink())
+                .is_err()
+        );
+        instance
+            .execute_prefill(b"negotiated:a", &mut fixture_sink())
+            .unwrap();
+        instance.commit().unwrap();
+        instance.execute(b"a", &mut fixture_sink()).unwrap();
+        instance.cancel().unwrap();
+        if cuts {
+            instance
+                .execute_prefill_cuts(b"cut:a", &mut fixture_sink())
+                .unwrap();
+            assert_eq!(
+                instance.execute_prefill(b"negotiated:a", &mut fixture_sink()),
+                Err(BundleAbiError::Lifecycle("execute"))
+            );
+            instance.cancel().unwrap();
+        } else {
+            assert!(
+                instance
+                    .execute_prefill_cuts(b"cut:a", &mut fixture_sink())
+                    .is_err()
+            );
+        }
+        instance.destroy().unwrap();
+    }
+    reset_calls();
+    let mut instance = fixture_api()
+        .with_prefill_cuts_api(FIXTURE_PREFILL_CUTS_API)
+        .unwrap()
+        .create(fixture_table(), &[])
+        .unwrap();
+    assert_eq!(
+        instance.prefill_cuts_policy(),
+        Err(BundleAbiError::InvalidRange("prefill cuts policy"))
+    );
+    instance.destroy().unwrap();
+    let header = include_str!("../../../include/chop_bundle_v1.h");
+    assert!(header.contains("chop_bundle_prefill_cuts_api_v1(void)"));
+    assert_eq!(
+        abi::prefill::PREFILL_CUTS_API_SYMBOL_V1,
+        b"chop_bundle_prefill_cuts_api_v1\0"
+    );
+}
+
 fn fixture_create(
     host_services: HostServicesV1,
     configuration: &[u8],

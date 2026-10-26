@@ -1958,6 +1958,16 @@ typedef struct chop_bundle_prefill_table_v1 {
 
 const chop_bundle_prefill_table_v1 *chop_bundle_prefill_api_v1(void);
 
+/* Optional capability for scheduler-selected prefill cuts. This separate
+ * export uses the existing table and envelope layouts. Zero chunk_tokens
+ * disables it for an instance. Otherwise its policy must match the grid
+ * export's chunk_tokens. Its execute callback also admits positive appends
+ * ending before the next grid/prompt boundary, at the bundle's declared
+ * prefill granule. Every admitted end publishes complete persistent state.
+ * The original export remains grid-only. Old hosts ignore this export;
+ * new hosts retain the grid contract for bundles that do not enable it. */
+const chop_bundle_prefill_table_v1 *chop_bundle_prefill_cuts_api_v1(void);
+
 #ifdef __cplusplus
 }
 #endif

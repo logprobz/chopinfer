@@ -285,6 +285,11 @@ fn loaded_instance_forwards_retirement_and_pins_library_after_failure() {
 #[derive(Clone, Copy)]
 enum FixtureEntryV1 {
     Table,
+    Prefill,
+    PrefillCuts,
+    NullPrefillCuts,
+    ShortPrefillCuts,
+    MissingPrefillCutsCallback,
     /// The V1 table, and a chat frontend table under its optional export.
     Frontend,
     Null,
@@ -308,7 +313,13 @@ fn build_fixture_module(
     let source = directory.join(format!("{name}.rs"));
     let module = directory.join(format!("{name}.{}", fixture_module_extension()));
     let returned = match entry {
-        FixtureEntryV1::Table | FixtureEntryV1::Frontend => "&raw const API",
+        FixtureEntryV1::Table
+        | FixtureEntryV1::Frontend
+        | FixtureEntryV1::Prefill
+        | FixtureEntryV1::PrefillCuts
+        | FixtureEntryV1::NullPrefillCuts
+        | FixtureEntryV1::ShortPrefillCuts
+        | FixtureEntryV1::MissingPrefillCutsCallback => "&raw const API",
         FixtureEntryV1::Null => "core::ptr::null()",
         FixtureEntryV1::Retirement
         | FixtureEntryV1::IncompleteRetirement
@@ -434,6 +445,43 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const ApiV1 {{
             .expect("the fixture frontend source is writable");
     }
 
+    if matches!(
+        entry,
+        FixtureEntryV1::Prefill
+            | FixtureEntryV1::PrefillCuts
+            | FixtureEntryV1::NullPrefillCuts
+            | FixtureEntryV1::ShortPrefillCuts
+            | FixtureEntryV1::MissingPrefillCutsCallback
+    ) {
+        let source_text = PREFILL_FIXTURE_SOURCE
+            .replace(
+                "CUTS_SIZE",
+                if matches!(entry, FixtureEntryV1::ShortPrefillCuts) {
+                    "8"
+                } else {
+                    "core::mem::size_of::<Prefill>() as u32"
+                },
+            )
+            .replace(
+                "CUTS_EXECUTE",
+                if matches!(entry, FixtureEntryV1::MissingPrefillCutsCallback) {
+                    "None"
+                } else {
+                    "Some(execute)"
+                },
+            );
+        let mut file = OpenOptions::new().append(true).open(&source).unwrap();
+        file.write_all(source_text.as_bytes()).unwrap();
+        if !matches!(entry, FixtureEntryV1::Prefill) {
+            let returned = if matches!(entry, FixtureEntryV1::NullPrefillCuts) {
+                "core::ptr::null()"
+            } else {
+                "&CUTS"
+            };
+            write!(file, "\n#[unsafe(no_mangle)]\npub extern \"C\" fn chop_bundle_prefill_cuts_api_v1() -> *const Prefill {{ {returned} }}\n").unwrap();
+        }
+    }
+
     let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let output = Command::new(compiler)
         .args(["--edition=2024", "--crate-type=cdylib"])
@@ -448,6 +496,71 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const ApiV1 {{
         String::from_utf8_lossy(&output.stderr)
     );
     module
+}
+
+const PREFILL_FIXTURE_SOURCE: &str = r#"
+#[repr(C)]
+pub struct Policy { struct_size: u32, status: Status, chunk_tokens: u32, reserved: u32 }
+#[repr(C)]
+pub struct Prefill {
+    struct_size: u32, abi_version: u32,
+    describe: Option<extern "C" fn(Handle) -> Policy>,
+    // SAFETY-REVIEWED: the generated ABI fixture uses the existing execute signature.
+    execute: Option<unsafe extern "C" fn(Handle, ByteView, ResultSink) -> Status>,
+}
+extern "C" fn describe(_: Handle) -> Policy {
+    Policy { struct_size: 16, status: Status(0), chunk_tokens: 256, reserved: 0 }
+}
+static GRID: Prefill = Prefill {
+    struct_size: core::mem::size_of::<Prefill>() as u32, abi_version: 1,
+    describe: Some(describe), execute: Some(execute),
+};
+static CUTS: Prefill = Prefill {
+    struct_size: CUTS_SIZE, abi_version: 1,
+    describe: Some(describe), execute: CUTS_EXECUTE,
+};
+#[unsafe(no_mangle)]
+pub extern "C" fn chop_bundle_prefill_api_v1() -> *const Prefill { &GRID }
+"#;
+
+#[test]
+fn native_prefill_cuts_are_optional_and_validate_their_table() {
+    let fixture = TempDirectory::new("runtime-bundle-abi-native-prefill-cuts");
+    for (name, entry, grid, cuts) in [
+        ("legacy", FixtureEntryV1::Table, 0, 0),
+        ("grid", FixtureEntryV1::Prefill, 256, 0),
+        ("cuts", FixtureEntryV1::PrefillCuts, 256, 256),
+    ] {
+        let module = build_fixture_module(fixture.path(), name, BUNDLE_ABI_VERSION_V1, entry);
+        let library =
+            BundleLibraryV1::open_verified_image(&fs::read(module).unwrap(), name).unwrap();
+        let mut instance = library
+            .create(
+                HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1)),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(instance.prefill_policy().unwrap().chunk_tokens, grid);
+        assert_eq!(instance.prefill_cuts_policy().unwrap().chunk_tokens, cuts);
+        instance.destroy().unwrap();
+    }
+    for (name, entry) in [
+        ("null_cuts", FixtureEntryV1::NullPrefillCuts),
+        ("short_cuts", FixtureEntryV1::ShortPrefillCuts),
+        ("missing_cuts", FixtureEntryV1::MissingPrefillCutsCallback),
+    ] {
+        let module = build_fixture_module(fixture.path(), name, BUNDLE_ABI_VERSION_V1, entry);
+        let library =
+            BundleLibraryV1::open_verified_image(&fs::read(module).unwrap(), name).unwrap();
+        assert!(
+            library
+                .create(
+                    HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1)),
+                    &[]
+                )
+                .is_err()
+        );
+    }
 }
 
 /// A frontend whose every answer echoes its input: open and parser_open

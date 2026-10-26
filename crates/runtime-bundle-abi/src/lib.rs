@@ -3208,6 +3208,7 @@ fn validate_host_services(raw: &BundleHostServicesV1) -> Result<(), BundleAbiErr
 pub struct BundleApiV1 {
     raw: BundleRawApiV1,
     prefill: Option<prefill::BundlePrefillApiV1>,
+    prefill_cuts: Option<prefill::BundlePrefillApiV1>,
     device_results: Option<device_results::BundleExecuteDeviceResultsFnV1>,
     retire_request_v1: Option<BundleRetireRequestFnV1>,
     commit_accepted_v1: Option<BundleCommitAcceptedFnV1>,
@@ -3216,6 +3217,15 @@ pub struct BundleApiV1 {
 }
 
 impl BundleApiV1 {
+    pub fn with_prefill_cuts_api(
+        mut self,
+        api: prefill::BundlePrefillApiV1,
+    ) -> Result<Self, BundleAbiError> {
+        api.validate()?;
+        self.prefill_cuts = Some(api);
+        Ok(self)
+    }
+
     pub fn with_prefill_api(
         mut self,
         api: prefill::BundlePrefillApiV1,
@@ -3254,6 +3264,7 @@ impl BundleApiV1 {
         Ok(Self {
             raw,
             prefill: None,
+            prefill_cuts: None,
             device_results: None,
             retire_request_v1: None,
             commit_accepted_v1: None,
@@ -3540,6 +3551,40 @@ impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
 }
 
 impl BundleInstanceV1 {
+    /// A separate opt-in for complete state at scheduler-selected prefill cuts.
+    /// Disabled instances and legacy bundles retain the grid-only policy.
+    pub fn prefill_cuts_policy(&self) -> Result<prefill::BundlePrefillPolicyV1, BundleAbiError> {
+        if self.is_poisoned() {
+            return Err(BundleAbiError::Poisoned);
+        }
+        let Some(api) = self.api.prefill_cuts else {
+            return Ok(prefill::BundlePrefillPolicyV1::disabled());
+        };
+        let policy = api.describe_prefill_v1.expect("validated callback")(self.handle);
+        policy.validate()?;
+        if policy.chunk_tokens != 0 && policy.chunk_tokens != self.prefill_policy()?.chunk_tokens {
+            return Err(BundleAbiError::InvalidRange("prefill cuts policy"));
+        }
+        Ok(policy)
+    }
+
+    pub fn execute_prefill_cuts<S: LogitsRowSinkV1>(
+        &mut self,
+        request: &[u8],
+        sink: &mut S,
+    ) -> Result<(), BundleAbiError> {
+        if self.prefill_cuts_policy()?.chunk_tokens == 0 {
+            return Err(BundleAbiError::MissingApiCallback(
+                "execute_prefill_cuts_v1",
+            ));
+        }
+        let extension = self.api.prefill_cuts.expect("enabled cuts policy");
+        let mut api = self.api;
+        api.raw.execute = extension.execute_prefill_v1;
+        api.device_results = None;
+        self.execute_with_api(api, request, sink)
+    }
+
     /// A bundle's optional instance-specific scheduling declaration. Older
     /// bundles return the disabled policy without another native call.
     pub fn prefill_policy(&self) -> Result<prefill::BundlePrefillPolicyV1, BundleAbiError> {

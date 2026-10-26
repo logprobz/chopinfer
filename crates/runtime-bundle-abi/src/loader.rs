@@ -251,6 +251,7 @@ pub struct BundleLibraryV1 {
     frontend: Option<crate::BundleFrontendApiFnV1>,
     device_results: Option<crate::device_results::BundleGetDeviceResultsApiFnV1>,
     prefill: Option<crate::prefill::BundleGetPrefillApiFnV1>,
+    prefill_cuts: Option<crate::prefill::BundleGetPrefillApiFnV1>,
 }
 
 impl BundleLibraryV1 {
@@ -363,6 +364,11 @@ impl BundleLibraryV1 {
         let prefill = optional(crate::prefill::PREFILL_API_SYMBOL_V1).map(|symbol| unsafe {
             std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillApiFnV1>(symbol)
         });
+        // SAFETY-REVIEWED: the separate cuts export has the same V1 C getter signature.
+        let prefill_cuts =
+            optional(crate::prefill::PREFILL_CUTS_API_SYMBOL_V1).map(|symbol| unsafe {
+                std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillApiFnV1>(symbol)
+            });
         Ok(Self {
             api,
             library,
@@ -372,6 +378,7 @@ impl BundleLibraryV1 {
             frontend,
             device_results,
             prefill,
+            prefill_cuts,
         })
     }
 
@@ -530,9 +537,19 @@ impl BundleLibraryV1 {
     }
 
     fn api_with_prefill(&self) -> Result<BundleApiV1, BundleAbiError> {
-        let Some(getter) = self.prefill else {
-            return Ok(self.api);
-        };
+        let mut api = self.api;
+        if let Some(getter) = self.prefill {
+            api = api.with_prefill_api(Self::read_prefill_api(getter)?)?;
+        }
+        if let Some(getter) = self.prefill_cuts {
+            api = api.with_prefill_cuts_api(Self::read_prefill_api(getter)?)?;
+        }
+        Ok(api)
+    }
+
+    fn read_prefill_api(
+        getter: crate::prefill::BundleGetPrefillApiFnV1,
+    ) -> Result<crate::prefill::BundlePrefillApiV1, BundleAbiError> {
         // SAFETY-REVIEWED: the loaded native module owns the returned immutable table.
         let pointer = unsafe { getter() };
         if pointer.is_null() {
@@ -547,7 +564,7 @@ impl BundleLibraryV1 {
             header.abi_version,
         )?;
         // SAFETY-REVIEWED: the header covers the complete known table prefix.
-        self.api.with_prefill_api(unsafe { pointer.read() })
+        Ok(unsafe { pointer.read() })
     }
 }
 
@@ -563,6 +580,20 @@ pub struct LoadedBundleInstanceV1 {
 }
 
 impl LoadedBundleInstanceV1 {
+    pub fn prefill_cuts_policy(
+        &self,
+    ) -> Result<crate::prefill::BundlePrefillPolicyV1, BundleAbiError> {
+        self.instance.prefill_cuts_policy()
+    }
+
+    pub fn execute_prefill_cuts<S: LogitsRowSinkV1>(
+        &mut self,
+        request: &[u8],
+        sink: &mut S,
+    ) -> Result<(), BundleAbiError> {
+        self.instance.execute_prefill_cuts(request, sink)
+    }
+
     pub fn prefill_policy(&self) -> Result<crate::prefill::BundlePrefillPolicyV1, BundleAbiError> {
         self.instance.prefill_policy()
     }

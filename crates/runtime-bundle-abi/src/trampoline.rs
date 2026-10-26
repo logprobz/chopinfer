@@ -3480,6 +3480,10 @@ pub unsafe fn dispatch_bundle_execute_v1(
 #[macro_export]
 macro_rules! export_prefill_api_v1 {
     ($table:ident, $describe:expr, $execute:expr $(,)?) => {
+        $crate::export_prefill_api_v1!(@export $table, $describe, $execute, chop_bundle_prefill_api_v1);
+    };
+    (@export $table:ident, $describe:expr, $execute:expr, $symbol:ident) => {
+        pub static $table: $crate::prefill::BundlePrefillApiV1 = {
         extern "C" fn __bundle_describe_prefill_v1(
             handle: $crate::BundleHandleV1,
         ) -> $crate::prefill::BundlePrefillPolicyV1 {
@@ -3502,21 +3506,32 @@ macro_rules! export_prefill_api_v1 {
             unsafe { $crate::dispatch_bundle_execute_v1(handle, request, sink, $execute) }
         }
 
-        pub static $table: $crate::prefill::BundlePrefillApiV1 =
             $crate::prefill::BundlePrefillApiV1 {
                 struct_size: ::core::mem::size_of::<$crate::prefill::BundlePrefillApiV1>() as u32,
                 abi_version: $crate::BUNDLE_ABI_VERSION_V1,
                 describe_prefill_v1: Some(__bundle_describe_prefill_v1),
                 execute_prefill_v1: Some(__bundle_execute_prefill_v1),
-            };
+            }
+        };
 
         // SAFETY-REVIEWED: this optional C export returns a static immutable table.
         #[allow(unsafe_code)]
         #[unsafe(no_mangle)]
-        pub extern "C" fn chop_bundle_prefill_api_v1() -> *const $crate::prefill::BundlePrefillApiV1
+        pub extern "C" fn $symbol() -> *const $crate::prefill::BundlePrefillApiV1
         {
             &$table
         }
+    };
+}
+
+/// Export complete-state scheduler cuts separately from the legacy grid API.
+/// A zero chunk disables this capability for the instance. An enabled policy
+/// must declare the same chunk as the grid API, and its execute callback must
+/// validate shorter endpoints against the bundle's prefill granule.
+#[macro_export]
+macro_rules! export_prefill_cuts_api_v1 {
+    ($table:ident, $describe:expr, $execute:expr $(,)?) => {
+        $crate::export_prefill_api_v1!(@export $table, $describe, $execute, chop_bundle_prefill_cuts_api_v1);
     };
 }
 

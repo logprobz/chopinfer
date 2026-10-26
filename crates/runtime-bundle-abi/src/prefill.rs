@@ -5,6 +5,11 @@ use crate::{BundleAbiError, BundleExecuteFnV1, BundleHandleV1, BundleStatusV1};
 
 pub const PREFILL_API_SYMBOL_V1: &[u8] = b"chop_bundle_prefill_api_v1\0";
 
+/// Optional capability accepting scheduler-selected cuts before the next grid
+/// boundary. It uses the existing table and envelope layouts through a separate
+/// export, so hosts that only know the grid contract keep that contract.
+pub const PREFILL_CUTS_API_SYMBOL_V1: &[u8] = b"chop_bundle_prefill_cuts_api_v1\0";
+
 /// Zero chunk_tokens disables the contract. Otherwise the host schedules
 /// unscored text requests to the next absolute multiple of chunk_tokens or
 /// their prompt end, and captures prefill state only at those boundaries.

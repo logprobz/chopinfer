@@ -259,6 +259,12 @@ class Tuner(unittest.TestCase):
                 self.assertEqual(row['argv'][0], str(root / f"install-{row['install']}/bin/chopinfer"))
             for case, control in (('standard', {}), ('different', {'TUNE_STUB_PERTURB_INSTALL': 'head'}), ('cold', {})):
                 if case == 'cold':
+                    # Replay must follow the baseline arm even when it names
+                    # the second sealed install.
+                    model['arms'][0]['install'] = 'head'
+                    model['arms'][1]['install'] = 'base'
+                    identities = {'a': {'install': 'head', 'revision': '2' * 40},
+                                  'b': {'install': 'base', 'revision': '1' * 40}}
                     backing = root / 'rank.bin'
                     backing.write_bytes(b'\0' * 4096)
                     model['cold_engram'] = {'images': [{'path': str(backing), 'bytes': 4096,
@@ -305,6 +311,14 @@ class Tuner(unittest.TestCase):
                     else:
                         self.assertGreater(summary['exactness']['replayed_keys'], 0)
                         self.assertEqual(summary['reference_processes']['a'], identities['a'])
+                        reference = json.loads((out / 'references/a/launch.json').read_text())
+                        self.assertEqual(reference['serve_argv'][0], str(root / 'install-head/bin/chopinfer'))
+                    path = next(out.glob('*/windows/*.json'))
+                    row = json.loads(path.read_text())
+                    row['revision'] = 'wrong'
+                    path.write_text(json.dumps(row))
+                    with self.assertRaisesRegex(ValueError, 'revision differs'):
+                        report.ab(out)
 
     def test_weighted_targets_step_support_and_coverage(self):
         def mutate(root, function):

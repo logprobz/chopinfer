@@ -84,7 +84,8 @@ fake-host journal mode and resets the count before each measured execute and
 commit. DeepSeek's prepared-wait emulator does not add synchronous evidence.
 Raw `host.gather_mapped_rows` counts must exactly match selected entries,
 including when no tag was declared. Missing and duplicated selections fail
-before allowance checks. Every synchronous shape needs an allowance with a
+before allowance checks. Fast metadata on this reserved synchronous symbol is
+invalid, even when its counts match. Every synchronous shape needs an allowance with a
 reason and removal task, including a constant synchronous route. AR prefill
 uses `ar-prefill-engram`; old test-default routes name the chunk that removes
 them. Other models with no mapped gathers need no tags or allowances.
@@ -95,3 +96,8 @@ metadata, family totals and allowances, and retains raw-evidence checks for
 kernels in a mixed capture. The raw synchronous count is a fake-host sweep
 check, not an independent counter in serving step records. No synthetic CUDA
 launch or new journal line is introduced by this guard.
+
+DeepSeek depth-tuning jobs temporarily allow the `engram_gather` fallback
+family because AR prefill still gathers synchronously. C10 removes that
+allowance when AR prefill moves to prepared gathers. The tuner seals the
+job's allowances into its runtime configuration and checks every window.

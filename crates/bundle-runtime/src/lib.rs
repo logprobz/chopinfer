@@ -26,6 +26,8 @@ pub mod index;
 pub mod inputs;
 pub mod kv;
 pub mod lanes;
+#[cfg(any(test, feature = "test-support"))]
+pub mod launch_rows;
 pub mod ledger;
 pub mod logits;
 pub mod media;

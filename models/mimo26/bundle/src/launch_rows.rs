@@ -4,7 +4,6 @@
 //! `PreparedLaunch::rows`, so tests compare these records to keep the rows
 //! of every launch unchanged.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 pub use bundle_runtime::pipeline::*;
@@ -12,6 +11,8 @@ pub use bundle_runtime::pipeline::*;
 use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::geometry::BundleGeometry;
 use bundle_runtime::graphs::GraphCache;
+use bundle_runtime::launch_rows as observed;
+use bundle_runtime::launch_rows::Records;
 use bundle_runtime::pipeline as shared;
 use runtime_bundle_abi::{BundleCudaSymbolHandleV1, BundleStreamHandleV1, HostServicesV1};
 
@@ -24,18 +25,16 @@ pub struct Recorded {
 }
 
 thread_local! {
-    static RECORDED: RefCell<Vec<Recorded>> = const { RefCell::new(Vec::new()) };
+    static RECORDED: Records<Recorded> = const { Records::new() };
 }
 
 fn record(stream: BundleStreamHandleV1, lane: &str, launches: &[PreparedLaunch]) {
     RECORDED.with(|recorded| {
-        recorded
-            .borrow_mut()
-            .extend(launches.iter().map(|launch| Recorded {
-                stream: stream.slot(),
-                symbol: launch.symbol.clone(),
-                line: format!("{lane}\t{}\t{}", launch.symbol, launch.rows),
-            }))
+        recorded.extend(launches.iter().map(|launch| Recorded {
+            stream: stream.slot(),
+            symbol: launch.symbol.clone(),
+            line: format!("{lane}\t{}\t{}", launch.symbol, launch.rows),
+        }))
     });
 }
 
@@ -50,8 +49,9 @@ pub fn launch_all(
     symbols: &BTreeMap<String, BundleCudaSymbolHandleV1>,
     launches: &[PreparedLaunch],
 ) -> Result<(), DispatchError> {
-    record(stream, &format!("stream {}", stream.raw), launches);
-    shared::launch_all(services, stream, symbols, launches)
+    observed::launch_all(services, stream, symbols, launches, |stream, launches| {
+        record(stream, &format!("stream {}", stream.raw), launches);
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -79,22 +79,19 @@ pub fn run_ranks<G: BundleGeometry>(
     graph: Option<(u32, u32)>,
     graphs: &mut GraphCache<G>,
     collectives: &Collectives,
-    mut prepare: impl FnMut(usize) -> Result<Program, DispatchError>,
+    prepare: impl FnMut(usize) -> Result<Program, DispatchError>,
     submitted: impl FnMut(usize),
 ) -> Result<(), DispatchError> {
-    shared::run_ranks(
+    observed::run_ranks(
         services,
         streams,
         symbols,
         graph,
         graphs,
         collectives,
-        |rank| {
-            let program = prepare(rank)?;
-            record(streams[rank], &format!("rank {rank}"), &program.launches);
-            Ok(program)
-        },
+        prepare,
         submitted,
+        record,
     )
 }
 

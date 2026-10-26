@@ -2094,3 +2094,43 @@ symbol = "host.gather_mapped_rows"
 rows = [[1, 2048]]
 reason = "Ordinary AR prefill keeps prepared Engram gathers off by default"
 task = "ar-prefill-engram"
+
+[[allow]]
+profiles = ["tp4-ar"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/prefill_schedule"
+symbol = "host.gather_mapped_rows"
+rows = [[512, 8192]]
+reason = "Served upper-skip prefill with the phased DMA transport from 512 rows takes the synchronous Engram gather: Instance::prefill_gather_reason (src/instance/execute.rs:746) refuses prepared gathers when skip.uses_dma(). This is unchanged served behavior exposed by the DMA test default"
+task = "C10/C24-integrate-prepared-gathers-with-DMA"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/prefill_schedule"
+symbol = "host.gather_mapped_rows"
+rows = [[512, 8192]]
+reason = "Served upper-skip prefill with the phased DMA transport from 512 rows takes the synchronous Engram gather: Instance::prefill_gather_reason (src/instance/execute.rs:746) refuses prepared gathers when skip.uses_dma(). This is unchanged served behavior exposed by the DMA test default"
+task = "C10/C24-integrate-prepared-gathers-with-DMA"
+
+[[allow]]
+profiles = ["tp4-ar-upper-skip-2048"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/prefill_schedule"
+symbol = "host.gather_mapped_rows"
+rows = [[512, 2048]]
+reason = "Served upper-skip prefill with the phased DMA transport from 512 rows takes the synchronous Engram gather: Instance::prefill_gather_reason (src/instance/execute.rs:746) refuses prepared gathers when skip.uses_dma(). This is unchanged served behavior exposed by the DMA test default"
+task = "C10/C24-integrate-prepared-gathers-with-DMA"
+
+[[allow]]
+profiles = ["tp4-dspark-upper-skip-2048"]
+phase = "prefill"
+family = "engram_gather"
+entry = "engram/sync/prefill_schedule"
+symbol = "host.gather_mapped_rows"
+rows = [[512, 2048]]
+reason = "Served upper-skip prefill with the phased DMA transport from 512 rows takes the synchronous Engram gather: Instance::prefill_gather_reason (src/instance/execute.rs:746) refuses prepared gathers when skip.uses_dma(). This is unchanged served behavior exposed by the DMA test default"
+task = "C10/C24-integrate-prepared-gathers-with-DMA"

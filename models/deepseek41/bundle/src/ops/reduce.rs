@@ -397,7 +397,7 @@ pub(crate) fn dma_requested() -> PrefillDma {
 }
 
 #[cfg(test)]
-thread_local! { static DMA_IN_TESTS: std::cell::Cell<PrefillDma> = const { std::cell::Cell::new(PrefillDma::Off) }; }
+thread_local! { static DMA_IN_TESTS: std::cell::Cell<PrefillDma> = const { std::cell::Cell::new(PrefillDma::Skip) }; }
 
 #[cfg(test)]
 pub(crate) fn with_dma<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

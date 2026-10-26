@@ -22,7 +22,25 @@ impl crate::Kernels {
     }
 
     pub(crate) fn small_norm_buckets(query: bool) -> Vec<(u32, u32)> {
-        let warps = if query { 16 } else { 32 };
-        vec![(2, warps), (4, warps)]
+        use model_deepseek41_contract::tuning::{self, Family};
+        let (op, width) = if query {
+            ("norm.query_small.decode", FLASH.shape.attention.q_rank)
+        } else {
+            ("norm.input_small.decode", FLASH.shape.hidden)
+        };
+        (1..=4)
+            .filter_map(|rows| {
+                let row = tuning::select(
+                    &FLASH,
+                    Family::Norm,
+                    op,
+                    "bf16",
+                    &[("ranks", 4), ("width", width)],
+                    4,
+                    rows,
+                )?;
+                Some((rows, row.knobs["warps"].count().expect("small norm warps")))
+            })
+            .collect()
     }
 }

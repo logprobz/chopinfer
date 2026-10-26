@@ -11,10 +11,19 @@ use model_deepseek41_contract::{
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 pub(crate) fn qualified(g: &Geometry, phase: Phase) -> bool {
-    let rows = phase.rows();
+    use model_deepseek41_contract::tuning::{self, Family};
     g == &FLASH
         && phase.prefill()
-        && (rows == 8192 || ((64..=2624).contains(&rows) && (rows - 64).is_multiple_of(128)))
+        && tuning::select(
+            g,
+            Family::Norm,
+            "norm.input_admit.prefill",
+            "bf16",
+            &[("width", g.shape.hidden)],
+            PREFILL_TOKENS,
+            phase.rows(),
+        )
+        .is_some()
 }
 
 pub(crate) struct NormPrefillOps {

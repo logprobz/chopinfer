@@ -192,7 +192,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
 }
 
 pub(super) fn warp_buckets() -> Vec<u32> {
-    vec![1, 4, 6, 8, 12, 16, 32]
+    super::hc_finish_norm::selected_rows("hc.lagged_warp.decode", 32)
 }
 
 /// `g`'s original entries: the first cubin's, then the F32 head.

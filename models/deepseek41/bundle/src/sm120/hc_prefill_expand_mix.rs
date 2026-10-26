@@ -63,9 +63,9 @@ pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
     if !qualified(g) {
         return backend;
     }
-    BUCKETS
-        .iter()
-        .fold(backend, |backend, &((rows, chains), buckets)| {
-            backend.with_sinkhorn_prefill_expand_mix(entry(g, rows, chains), buckets.to_vec())
+    super::hc_finish_norm::prefill_buckets("hc.expand_mix.prefill")
+        .into_iter()
+        .fold(backend, |backend, ((rows, chains), buckets)| {
+            backend.with_sinkhorn_prefill_expand_mix(entry(g, rows, chains), buckets)
         })
 }

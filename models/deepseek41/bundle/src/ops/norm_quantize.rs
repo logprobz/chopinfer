@@ -7,7 +7,21 @@ use model_deepseek41_contract::{rows, serving::DECODE_BATCH};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 pub(crate) fn small_selected(phase: Phase) -> bool {
-    matches!(phase, Phase::Decode(2 | 4))
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{self, Family},
+    };
+    matches!(phase, Phase::Decode(_))
+        && tuning::select(
+            &FLASH,
+            Family::Norm,
+            "norm.small_admit.decode",
+            "bf16",
+            &[("ranks", 4)],
+            4,
+            phase.rows(),
+        )
+        .is_some()
 }
 
 pub(crate) struct NormQuantizeOps {

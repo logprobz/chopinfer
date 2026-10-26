@@ -40,5 +40,42 @@ pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
 }
 
 pub(crate) fn buckets() -> Vec<(u32, u32)> {
-    vec![(1, 32), (8, 32)]
+    cached_buckets(
+        "norm.input_cached.decode",
+        model_deepseek41_contract::geometry::FLASH.shape.hidden,
+    )
+}
+
+pub(crate) fn choice(
+    g: &Geometry,
+    op: &str,
+    width: u32,
+    bucket: u32,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    use model_deepseek41_contract::tuning::{self, Family};
+    tuning::select(
+        g,
+        Family::Norm,
+        op,
+        "bf16",
+        &[("width", width)],
+        bucket,
+        rows,
+    )
+}
+
+pub(crate) fn cached_buckets(op: &str, width: u32) -> Vec<(u32, u32)> {
+    (1..=64)
+        .filter_map(|rows| {
+            let row = choice(
+                &model_deepseek41_contract::geometry::FLASH,
+                op,
+                width,
+                64,
+                rows,
+            )?;
+            Some((rows, row.knobs["warps"].count().expect("cached norm warps")))
+        })
+        .collect()
 }

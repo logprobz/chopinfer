@@ -1,7 +1,4 @@
-use crate::{
-    program::Phase,
-    sm120::{hc_cols, hc_finish_norm as tail, hc_prefill_expand_mix, hc_round_chain},
-};
+use crate::{program::Phase, sm120::hc_prefill_expand_mix};
 use kernel_build::tuning::{Key, Knob, Knobs, Row, Table, Target};
 use model_deepseek41_contract::{
     geometry::FLASH,
@@ -78,7 +75,7 @@ fn generated() -> Table {
         &shape(),
         32,
         "warp",
-        plain(tail::migration_mixer_buckets()),
+        plain(vec![1, 4, 6, 8, 12, 16, 32]),
     );
     for ranks in [1, 2, 4] {
         let mut s = shape();
@@ -90,7 +87,23 @@ fn generated() -> Table {
             &s,
             64,
             "chain",
-            counts(hc_round_chain::buckets(ranks), "warps"),
+            counts(
+                if ranks == 4 {
+                    vec![
+                        (1, 8),
+                        (2, 8),
+                        (3, 8),
+                        (4, 8),
+                        (5, 4),
+                        (6, 4),
+                        (7, 4),
+                        (8, 4),
+                    ]
+                } else {
+                    vec![(1, 8), (8, 4)]
+                },
+                "warps",
+            ),
         );
     }
     add(
@@ -100,7 +113,12 @@ fn generated() -> Table {
         &shape(),
         64,
         "pair",
-        plain(tail::pair_buckets()),
+        plain(
+            [1, 4, 6, 8, 12, 16, 32]
+                .into_iter()
+                .chain(33..=64)
+                .collect(),
+        ),
     );
     add(
         &mut t,
@@ -109,7 +127,12 @@ fn generated() -> Table {
         &shape(),
         64,
         "chain",
-        counts(tail::chain_buckets(), "warps"),
+        counts(
+            [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
+                .into_iter()
+                .chain((33..=64).map(|r| (r, 4))),
+            "warps",
+        ),
     );
     add(
         &mut t,
@@ -118,7 +141,7 @@ fn generated() -> Table {
         &shape(),
         64,
         "rows",
-        counts(tail::row_buckets(), "tile"),
+        counts([(32, 2)], "tile"),
     );
     add(
         &mut t,
@@ -127,7 +150,7 @@ fn generated() -> Table {
         &shape(),
         64,
         "twin",
-        counts(tail::TWIN_BUCKETS, "warps"),
+        counts([(6, 32)], "warps"),
     );
     add(
         &mut t,
@@ -136,20 +159,37 @@ fn generated() -> Table {
         &shape(),
         64,
         "cols",
-        hc_cols::buckets().into_iter().map(|b| {
-            (
-                b.rows,
-                [
-                    ("tile".into(), Knob::Count(b.tile)),
-                    ("warps".into(), Knob::Count(b.warps)),
-                    ("transposed".into(), Knob::Flag(b.transposed)),
-                ]
-                .into(),
-            )
-        }),
+        [1, 8, 16, 32]
+            .into_iter()
+            .chain(33..=64)
+            .map(|rows| kernels_sm120::sinkhorn_hc::finish_split::Bucket {
+                rows,
+                tile: if rows == 1 { 2 } else { 4 },
+                warps: 32,
+                transposed: true,
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|b| {
+                (
+                    b.rows,
+                    [
+                        ("tile".into(), Knob::Count(b.tile)),
+                        ("warps".into(), Knob::Count(b.warps)),
+                        ("transposed".into(), Knob::Flag(b.transposed)),
+                    ]
+                    .into(),
+                )
+            }),
     );
     for (site, buckets) in [
-        ("lagged_mix", tail::migration_prefill_buckets()),
+        (
+            "lagged_mix",
+            vec![
+                ((8, 8), vec![64, 192]),
+                ((8, 4), vec![2240, 2496, 2624, 8192]),
+            ],
+        ),
         (
             "expand_mix",
             hc_prefill_expand_mix::BUCKETS
@@ -185,6 +225,13 @@ fn generated() -> Table {
                 .into_iter()
                 .enumerate()
             {
+                // These two mixers have fixed prepared capacities; only the
+                // finish and wide mixer queries use the instance's verify bound.
+                if (site == "decode_mix" && capacity != 32)
+                    || (site == "draft_mix" && capacity != 60)
+                {
+                    continue;
+                }
                 add(
                     &mut t,
                     site,
@@ -242,4 +289,19 @@ fn differential() {
     }
     assert!(cases > 50_000);
     eprintln!("HC differential: {cases} cases");
+    for capacity in 32..=64 {
+        for rows in 0..=8193 {
+            for phase in [
+                Phase::Decode(rows),
+                Phase::Verify { rows, items: 1 },
+                Phase::Prefill { rows },
+            ] {
+                assert_eq!(
+                    crate::ops::Ops::migration_hc_actual(phase, capacity),
+                    crate::ops::Ops::migration_hc_choices(phase, capacity),
+                    "{phase:?} capacity={capacity}"
+                );
+            }
+        }
+    }
 }

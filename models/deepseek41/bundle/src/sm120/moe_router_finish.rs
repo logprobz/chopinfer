@@ -28,15 +28,7 @@ pub(crate) fn qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     if DISABLED.get() {
         return false;
     }
-    if small_gap(set, phase, rows) {
-        return true;
-    }
-    match (set.count, set.top_k, phase) {
-        (384, 6, ExecutionPhase::Decode) => [1, 8, 16, 32].contains(&rows),
-        (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
-        (128, 3, ExecutionPhase::Decode) => rows == 1,
-        _ => false,
-    }
+    small_gap(set, phase, rows) || selected("router_finish", set, phase, rows)
 }
 
 // Additional TP4 backbone widths qualified as complete MoE graphs. The
@@ -47,13 +39,7 @@ pub(crate) fn small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool 
     if BASE_ADMISSION.get() {
         return false;
     }
-    set.count == 384
-        && set.top_k == 6
-        && matches!(
-            (phase, rows),
-            (ExecutionPhase::Decode, 2 | 4)
-                | (ExecutionPhase::Verify, 2 | 3 | 5 | 7 | 9..=15 | 17..=31)
-        )
+    selected("router_gap", set, phase, rows)
 }
 
 pub(crate) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows: u32) -> bool {
@@ -61,10 +47,7 @@ pub(crate) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows:
     if DISABLED.get() {
         return false;
     }
-    set.count == 384
-        && set.top_k == 6
-        && phase == ExecutionPhase::Verify
-        && (33..=maximum_rows.min(64)).contains(&rows)
+    rows <= maximum_rows && selected("router_wide", set, phase, rows)
 }
 
 // TP4, 250 W, 2026-10-21, captured full MoE graphs, every case bitwise
@@ -97,12 +80,7 @@ pub(crate) fn wide(set: Experts, phase: ExecutionPhase, rows: u32, maximum_rows:
 // C32 cycle (the finish saves 0.34 ms at C32; same profile, 2026-10-21).
 pub(crate) fn r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
     qualified(set, phase, rows)
-        && (small_gap(set, phase, rows)
-            || matches!(
-                (set.count, set.top_k, phase, rows),
-                (384, 6, ExecutionPhase::Decode, 1 | 8 | 16 | 32)
-                    | (384, 6, ExecutionPhase::Verify, 4 | 6 | 16 | 32)
-            ))
+        && (small_gap(set, phase, rows) || selected("router_r2", set, phase, rows))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -378,4 +356,16 @@ mod tests {
             }
         }
     }
+}
+
+fn selected(site: &str, set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    super::moe::choice(
+        &model_deepseek41_contract::geometry::FLASH,
+        site,
+        phase,
+        &[("experts", set.count), ("top_k", set.top_k)],
+        64,
+        rows,
+    )
+    .is_some()
 }

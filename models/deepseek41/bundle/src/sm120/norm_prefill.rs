@@ -52,5 +52,16 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
 }
 
 pub(crate) fn selected() -> Result<Entry, String> {
-    Ok(entries()?.pop().expect("cached prefill norm"))
+    let cached = super::norm_quantize_cached::choice(
+        &FLASH,
+        "norm.input_strategy.prefill",
+        FLASH.shape.hidden,
+        PREFILL_TOKENS,
+        1,
+    )
+    .is_some_and(|row| row.schedule == "cached");
+    Ok(entries()?
+        .into_iter()
+        .find(|entry| entry.cache_groups == cached)
+        .expect("prefill norm strategy"))
 }

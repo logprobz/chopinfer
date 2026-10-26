@@ -40,18 +40,26 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Sm120 {
 }
 
 pub(crate) fn buckets(ranks: u32) -> Vec<(u32, u32)> {
-    if ranks == 4 {
-        vec![
-            (1, 8),
-            (2, 8),
-            (3, 8),
-            (4, 8),
-            (5, 4),
-            (6, 4),
-            (7, 4),
-            (8, 4),
-        ]
-    } else {
-        vec![(1, 8), (8, 4)]
-    }
+    use model_deepseek41_contract::{
+        geometry::FLASH,
+        tuning::{self, Family},
+    };
+    (1..=64)
+        .filter_map(|rows| {
+            let row = tuning::select(
+                &FLASH,
+                Family::Hc,
+                "hc.round_chain.decode",
+                "f32",
+                &[
+                    ("groups", FLASH.shape.hc.streams),
+                    ("width", FLASH.shape.hidden),
+                    ("ranks", ranks),
+                ],
+                64,
+                rows,
+            )?;
+            Some((rows, row.knobs["warps"].count().expect("HC chain warps")))
+        })
+        .collect()
 }

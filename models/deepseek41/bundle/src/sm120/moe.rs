@@ -79,8 +79,15 @@ pub fn prefill_selected(
     rows: u32,
 ) -> bool {
     streamed_qualified(g, ranks)
-        && [512, 2048, 4096].contains(&rows)
-        && !(experts == 128 && kind == GatedMlpProjection::Down && rows == 2048)
+        && choice(
+            g,
+            projection_site(kind, "prefill_gate_up", "prefill_down"),
+            kernel_core::precision::ExecutionPhase::Prefill,
+            &[("ranks", ranks), ("experts", experts)],
+            PREFILL_TOKENS,
+            rows,
+        )
+        .is_some()
 }
 
 pub fn serving_prefill_projections(
@@ -93,7 +100,16 @@ pub fn serving_prefill_projections(
     let mut entries = Vec::new();
     for entry in prefill_projections(g)? {
         let projection = entry.query.projection;
-        for rows in [512, 2048, 4096] {
+        for rows in selected_rows(
+            g,
+            projection_site(projection.projection, "prefill_gate_up", "prefill_down"),
+            kernel_core::precision::ExecutionPhase::Prefill,
+            &[
+                ("ranks", ranks),
+                ("experts", projection.gemm.grouped.unwrap().experts),
+            ],
+            entry.tokens_capacity,
+        ) {
             if prefill_selected(
                 g,
                 ranks,
@@ -171,7 +187,15 @@ pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, 
 /// Rows above 64, prefill, other geometries and other ranks keep the old
 /// entries. The backend excludes streamed entries from prefill selection.
 pub fn streamed_qualified(g: &Geometry, ranks: u32) -> bool {
-    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4
+    choice(
+        g,
+        "streamed",
+        kernel_core::precision::ExecutionPhase::Decode,
+        &[("ranks", ranks)],
+        64,
+        1,
+    )
+    .is_some()
 }
 
 pub fn serving_streamed_projections(
@@ -204,15 +228,39 @@ pub fn serving_compact_projections(
         .into_iter()
         .filter(|e| {
             e.row_tile == 16
-                && e.query
-                    .projection
-                    .gemm
-                    .grouped
-                    .is_some_and(|g| g.experts == 128 && g.top_k == 3)
+                && e.query.projection.gemm.grouped.is_some_and(|set| {
+                    choice(
+                        g,
+                        projection_site(
+                            e.query.projection.projection,
+                            "compact_gate_up",
+                            "compact_down",
+                        ),
+                        kernel_core::precision::ExecutionPhase::Decode,
+                        &[
+                            ("ranks", ranks),
+                            ("experts", set.experts),
+                            ("top_k", set.top_k),
+                        ],
+                        e.tokens_capacity,
+                        1,
+                    )
+                    .is_some()
+                })
         })
         .map(|e| {
+            let maximum = projection_limit(
+                g,
+                ranks,
+                &e,
+                projection_site(
+                    e.query.projection.projection,
+                    "compact_gate_up",
+                    "compact_down",
+                ),
+            );
             e.with_compact_columns()
-                .and_then(|e| e.with_max_rows(1))
+                .and_then(|e| e.with_max_rows(maximum))
                 .map(|e| e.with_phase(kernel_core::precision::ExecutionPhase::Decode))
                 .map_err(|e| e.to_string())
         })
@@ -220,10 +268,25 @@ pub fn serving_compact_projections(
 }
 
 pub fn streamed_routes(g: &Geometry) -> Vec<row_bias::Route> {
+    use model_deepseek41_contract::tuning::{self, Family};
     moe::expert_sets(g)
         .into_iter()
         .flat_map(|set| {
-            [8, 64].map(|capacity| row_bias::Route {
+            let capacities = if let Some(table) = tuning::table(g, Family::Moe) {
+                table
+                    .rows()
+                    .iter()
+                    .filter(|row| {
+                        row.key.op == "moe.route.decode"
+                            && row.key.shape.get("experts") == Some(&set.count)
+                            && row.key.shape.get("top_k") == Some(&set.top_k)
+                    })
+                    .map(|row| row.key.bucket)
+                    .collect::<Vec<_>>()
+            } else {
+                vec![8, 64]
+            };
+            capacities.into_iter().map(move |capacity| row_bias::Route {
                 local: LocalRoute {
                     experts: set.count,
                     local_experts: set.count,
@@ -276,17 +339,33 @@ pub fn serving_active_projections(
     g: &Geometry,
     ranks: u32,
 ) -> Result<Vec<quantized::Projection>, String> {
-    if g.id != model_deepseek41_contract::geometry::FLASH.id || ranks != 4 {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
         return Ok(Vec::new());
     }
     active_projections(g, ranks)?
         .into_iter()
         .filter(|e| {
-            e.gate_up()
-                && e.tokens_capacity == DECODE_BATCH
-                && e.query.projection.gemm.grouped.unwrap().experts == g.shape.moe.experts
+            e.gate_up() && e.tokens_capacity == DECODE_BATCH && {
+                let set = e.query.projection.gemm.grouped.unwrap();
+                choice(
+                    g,
+                    "active_gate_up",
+                    kernel_core::precision::ExecutionPhase::Decode,
+                    &[
+                        ("ranks", ranks),
+                        ("experts", set.experts),
+                        ("top_k", set.top_k),
+                    ],
+                    e.tokens_capacity,
+                    1,
+                )
+                .is_some()
+            }
         })
-        .map(|e| e.with_max_rows(1).map_err(|e| e.to_string()))
+        .map(|e| {
+            let maximum = projection_limit(g, ranks, &e, "active_gate_up");
+            e.with_max_rows(maximum).map_err(|e| e.to_string())
+        })
         .collect()
 }
 
@@ -509,4 +588,97 @@ pub(crate) fn migration_direct_choice(
     rows: u32,
 ) -> bool {
     super::moe_direct::stage_selected(site, experts, phase, rows)
+}
+
+pub(crate) fn choice(
+    g: &Geometry,
+    site: &str,
+    phase: kernel_core::precision::ExecutionPhase,
+    shape: &[(&str, u32)],
+    bucket: u32,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    use kernel_core::precision::ExecutionPhase;
+    use model_deepseek41_contract::tuning::{self, Family};
+    let phase = match phase {
+        ExecutionPhase::Decode => "decode",
+        ExecutionPhase::Verify => "verify",
+        ExecutionPhase::Prefill => "prefill",
+    };
+    tuning::select(
+        g,
+        Family::Moe,
+        &format!("moe.{site}.{phase}"),
+        "mxfp4",
+        shape,
+        bucket,
+        rows,
+    )
+}
+fn projection_site(
+    kind: GatedMlpProjection,
+    gate: &'static str,
+    down: &'static str,
+) -> &'static str {
+    match kind {
+        GatedMlpProjection::GateUp => gate,
+        GatedMlpProjection::Down => down,
+    }
+}
+
+fn projection_limit(g: &Geometry, ranks: u32, entry: &quantized::Projection, site: &str) -> u32 {
+    let set = entry
+        .query
+        .projection
+        .gemm
+        .grouped
+        .expect("expert projection");
+    let row = choice(
+        g,
+        site,
+        kernel_core::precision::ExecutionPhase::Decode,
+        &[
+            ("ranks", ranks),
+            ("experts", set.experts),
+            ("top_k", set.top_k),
+        ],
+        entry.tokens_capacity,
+        1,
+    )
+    .expect("admitted projection");
+    row.key.rows.map_or(row.key.bucket, |[_, hi]| hi)
+}
+fn selected_rows(
+    g: &Geometry,
+    site: &str,
+    phase: kernel_core::precision::ExecutionPhase,
+    shape: &[(&str, u32)],
+    bucket: u32,
+) -> Vec<u32> {
+    use model_deepseek41_contract::tuning::{self, Family};
+    let Some(table) = tuning::table(g, Family::Moe) else {
+        return Vec::new();
+    };
+    let phase = match phase {
+        kernel_core::precision::ExecutionPhase::Decode => "decode",
+        kernel_core::precision::ExecutionPhase::Verify => "verify",
+        kernel_core::precision::ExecutionPhase::Prefill => "prefill",
+    };
+    let op = format!("moe.{site}.{phase}");
+    table
+        .rows()
+        .iter()
+        .filter(|row| {
+            row.key.op == op
+                && row.key.bucket == bucket
+                && row.key.shape.len() == shape.len()
+                && shape
+                    .iter()
+                    .all(|(key, value)| row.key.shape.get(*key) == Some(value))
+        })
+        .flat_map(|row| {
+            let [lo, hi] = row.key.rows.unwrap_or([1, bucket]);
+            lo..=hi
+        })
+        .collect()
 }

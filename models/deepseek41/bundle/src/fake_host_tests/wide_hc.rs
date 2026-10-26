@@ -36,9 +36,10 @@ fn decode_serves_measured_wide_hc_pairs() {
                     32 => "_hc_round_rows_r2_v1 ",
                     _ => "_hc_round_chain_w4_v1 ",
                 };
-                let bucket = crate::sm120::hc_cols::BUCKETS
+                let bucket = crate::sm120::hc_cols::decode_buckets()
                     .iter()
-                    .find(|b| b.rows == rows);
+                    .find(|b| b.rows == rows)
+                    .copied();
                 let (first, second) = match bucket {
                     Some(b) => {
                         let first = format!("{} ", producer.symbol(b.tile, b.transposed));

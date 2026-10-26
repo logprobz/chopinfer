@@ -24,14 +24,23 @@ pub fn selected(
     usage: OperationUse,
 ) -> bool {
     g.id == FLASH.id
-        && ranks == 4
-        && matches!(
-            (set.count, set.top_k, usage.capacity),
-            (384, 6, 8192) | (128, 3, 8192 | 4096)
-        )
-        && kind == GatedMlpProjection::GateUp
-        && usage.phase == ExecutionPhase::Prefill
         && !usage.graph
+        && super::moe::choice(
+            g,
+            match kind {
+                GatedMlpProjection::GateUp => "pipeline_gate_up",
+                GatedMlpProjection::Down => "pipeline_down",
+            },
+            usage.phase,
+            &[
+                ("ranks", ranks),
+                ("experts", set.count),
+                ("top_k", set.top_k),
+            ],
+            usage.capacity,
+            1,
+        )
+        .is_some()
 }
 pub fn prepare(
     g: &Geometry,

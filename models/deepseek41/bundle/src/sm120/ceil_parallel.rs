@@ -46,8 +46,10 @@ pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
 /// Flash TP4 includes the target intermediate in its wide verify forms.
 /// Other topologies retain their target decode and drafter row limits.
 pub(crate) fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
-    if g.id == FLASH.id && ranks == 4 {
-        return CAPACITY;
+    if let Some(row) = tuning_choice(g, "norm.ceil_capacity.decode", ranks, entry, entry.capacity) {
+        return row.knobs["capacity"]
+            .count()
+            .expect("parallel quantizer capacity");
     }
     let main = model_deepseek41_contract::moe::expert_sets(g)[0];
     let intermediate = main.top_k * (g.shape.moe.intermediate / ranks);
@@ -59,6 +61,31 @@ pub(crate) fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) 
     } else {
         SMALL_DRAFT_ROWS
     }
+}
+
+pub(crate) fn tuning_choice(
+    g: &Geometry,
+    op: &str,
+    ranks: u32,
+    entry: &block_quantize::Entry,
+    bucket: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    use model_deepseek41_contract::tuning::{self, Family};
+    let input = match entry.query.input {
+        kernel_core::contract::DType::Bf16 => "bf16",
+        kernel_core::contract::DType::F32 => "f32",
+        _ => return None,
+    };
+    let (site, phase) = op.rsplit_once('.').expect("quantizer site and phase");
+    tuning::select(
+        g,
+        Family::Norm,
+        &format!("{site}_{input}.{phase}"),
+        "none",
+        &[("ranks", ranks), ("width", entry.query.width)],
+        bucket,
+        1,
+    )
 }
 
 pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<block_quantize::Entry>, String> {
@@ -83,11 +110,20 @@ pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<block_quantize::Entry>
 
 pub fn activation(g: &Geometry, ranks: u32) -> Result<silu_mul_quantize::Entry, String> {
     let mut entry = super::shared::activation(g, ranks)?;
-    entry.capacity = if g.id == FLASH.id && ranks == 4 {
-        CAPACITY
-    } else {
-        SMALL_DRAFT_ROWS
-    };
+    entry.capacity = model_deepseek41_contract::tuning::select(
+        g,
+        model_deepseek41_contract::tuning::Family::Norm,
+        "norm.activation_capacity.decode",
+        "none",
+        &[("ranks", ranks)],
+        CAPACITY,
+        1,
+    )
+    .map_or(SMALL_DRAFT_ROWS, |row| {
+        row.knobs["capacity"]
+            .count()
+            .expect("parallel activation capacity")
+    });
     entry.symbol = format!("{}_parallel_v1", entry.symbol.strip_suffix("_v1").unwrap());
     entry.parallel().map_err(|e| e.to_string())
 }
@@ -127,7 +163,11 @@ pub(crate) fn registered_quantizers(
     let intermediate = g.shape.moe.top_k * (g.shape.moe.intermediate / ranks);
     let draft = g.shape.dspark.top_k * (g.shape.moe.intermediate / ranks);
     for entry in &mut entries {
-        if entry.query == model_deepseek41_contract::moe::quantizer(intermediate)
+        if let Some(row) = tuning_choice(g, "norm.ceil_registered.decode", ranks, entry, CAPACITY) {
+            entry.capacity = row.knobs["capacity"]
+                .count()
+                .expect("registered quantizer capacity");
+        } else if entry.query == model_deepseek41_contract::moe::quantizer(intermediate)
             && intermediate != draft
         {
             // A generic capacity-64 expert chain can still serve small

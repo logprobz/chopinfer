@@ -23,21 +23,38 @@ use model_deepseek41_contract::moe::Experts;
 // the result. Local-fold candidates remain unselected. A separate measured
 // router epilogue may fuse projection reduction, selection and metadata.
 pub(super) fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
-    use ExecutionPhase::{Decode, Verify};
-    let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
-    out.extend([1, 2, 4, 5, 6, 8, 16, 32, 64].map(|rows| (Verify, rows)));
-    if set.count == 128 {
-        out.push((Verify, 48));
-    } else {
-        out.extend((33..=maximum_verify_rows.min(63)).map(|rows| (Verify, rows)));
-    }
-    for rows in 2..=32 {
-        if super::moe_router_finish::small_gap(set, Verify, rows) && !out.contains(&(Verify, rows))
-        {
-            out.push((Verify, rows));
+    let mut out = Vec::new();
+    for phase in [ExecutionPhase::Decode, ExecutionPhase::Verify] {
+        for rows in 1..=64 {
+            let Some(row) = super::moe::choice(
+                &model_deepseek41_contract::geometry::FLASH,
+                "direct_admit",
+                phase,
+                &[("experts", set.count), ("top_k", set.top_k)],
+                64,
+                rows,
+            ) else {
+                continue;
+            };
+            if row.schedule == "wide" && rows > maximum_verify_rows {
+                continue;
+            }
+            if row.schedule == "gap" && !super::moe_router_finish::small_gap(set, phase, rows) {
+                continue;
+            }
+            out.push((
+                row.knobs["order"]
+                    .count()
+                    .expect("direct registration order"),
+                phase,
+                rows,
+            ));
         }
     }
-    out
+    out.sort_by_key(|&(order, _, _)| order);
+    out.into_iter()
+        .map(|(_, phase, rows)| (phase, rows))
+        .collect()
 }
 
 pub(super) fn prepare_set(
@@ -123,22 +140,15 @@ fn strips2(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
 }
 
 pub(super) fn stage_selected(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) -> bool {
-    use ExecutionPhase::{Decode, Verify};
-    match site {
-        "absorb" => experts == 384 && matches!((phase, rows), (Decode, 32) | (Verify, 32)),
-        "strip2" => experts == 384 && matches!(rows, 16 | 32),
-        "wide" => experts == 384 && phase == Verify && (33..=64).contains(&rows),
-        "small" => rows <= 8,
-        "gate_grid" => experts == 384 && matches!((phase, rows), (Decode, 8 | 32) | (Verify, 32)),
-        "gate_resident" => {
-            experts == 384
-                && (matches!(rows, 16 | 32) || (phase == Verify && matches!(rows, 4 | 6)))
-        }
-        "gate_finish" => {
-            experts == 384 && matches!((phase, rows), (Decode, 1 | 8 | 16) | (Verify, 4 | 6 | 16))
-        }
-        _ => unreachable!("direct selection site"),
-    }
+    super::moe::choice(
+        &model_deepseek41_contract::geometry::FLASH,
+        site,
+        phase,
+        &[("experts", experts)],
+        64,
+        rows,
+    )
+    .is_some()
 }
 
 fn prepare(

@@ -72,5 +72,16 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
 
 /// Both strategies passed bitwise; reread ties cold and wins more hot cases.
 pub fn selected() -> Result<Entry, String> {
-    Ok(entries()?.remove(0))
+    let cached = super::norm_quantize_cached::choice(
+        &FLASH,
+        "norm.query_strategy.prefill",
+        FLASH.shape.attention.q_rank,
+        PREFILL_TOKENS,
+        1,
+    )
+    .is_some_and(|row| row.schedule == "cached");
+    Ok(entries()?
+        .into_iter()
+        .find(|entry| entry.cache_input == cached)
+        .expect("prefill query strategy"))
 }

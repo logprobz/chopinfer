@@ -21,50 +21,27 @@ pub const FAMILY: &str = "sinkhorn_hc_cols";
 /// whole step's 77 boundaries replayed at 1.05 ms and 0.10 J against 1.20 ms
 /// and 0.12 J at one row, and 1.11 ms and 0.13 J against 2.06 ms and 0.28 J
 /// at eight (one board, means of two).
-pub const BUCKETS: &[finish_split::Bucket] = &[
-    finish_split::Bucket {
-        rows: 1,
-        tile: 2,
-        transposed: true,
-        warps: 32,
-    },
-    finish_split::Bucket {
-        rows: 8,
-        tile: 4,
-        transposed: true,
-        warps: 32,
-    },
-    finish_split::Bucket {
-        rows: 16,
-        tile: 4,
-        transposed: true,
-        warps: 32,
-    },
-    finish_split::Bucket {
-        rows: 32,
-        tile: 4,
-        transposed: true,
-        warps: 32,
-    },
-];
+pub fn decode_buckets() -> Vec<finish_split::Bucket> {
+    buckets()
+        .into_iter()
+        .filter(|bucket| bucket.rows <= 32)
+        .collect()
+}
 pub const PRODUCER_CUBIN: &str = "sinkhorn_hc_deepseek41_round_cols_sm120";
 pub const FINISH_CUBIN: &str = "sinkhorn_hc_deepseek41_finish_split_sm120";
 
 /// The same column tile and ordered finish at each bounded verify width.
 pub fn buckets() -> Vec<finish_split::Bucket> {
-    BUCKETS
-        .iter()
-        .copied()
-        .chain(
-            (33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS).map(|rows| {
-                finish_split::Bucket {
-                    rows,
-                    tile: 4,
-                    transposed: true,
-                    warps: 32,
-                }
-            }),
-        )
+    (1..=64)
+        .filter_map(|rows| {
+            let row = super::hc_finish_norm::choice(&FLASH, "hc.finish_cols.verify", 64, rows)?;
+            Some(finish_split::Bucket {
+                rows,
+                tile: row.knobs["tile"].count().expect("HC column tile"),
+                transposed: row.knobs["transposed"].flag().expect("HC transpose"),
+                warps: row.knobs["warps"].count().expect("HC finish warps"),
+            })
+        })
         .collect()
 }
 
@@ -157,7 +134,7 @@ mod tests {
             assert_eq!(e.params, tail_params);
         }
         assert_eq!(
-            BUCKETS.iter().map(|b| b.rows).collect::<Vec<_>>(),
+            decode_buckets().iter().map(|b| b.rows).collect::<Vec<_>>(),
             [1, 8, 16, 32]
         );
         for rows in [1, 8, 16, 32] {

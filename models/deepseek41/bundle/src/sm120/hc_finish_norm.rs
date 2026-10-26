@@ -28,8 +28,8 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 
 /// The qualified pair, with its tail on two CTAs per row at the measured
-/// Flash buckets (`TWIN_BUCKETS`), and both launches replaced by the
-/// column-block producer and split finish at `hc_cols::BUCKETS`. The
+/// Flash buckets (`twin_buckets`), and both launches replaced by the
+/// column-block producer and split finish at `hc_cols::buckets`. The
 /// column pair replaced the one-launch boundary (`hc_completion`) at C1 and
 /// C8, its last buckets.
 pub fn register(
@@ -39,7 +39,7 @@ pub fn register(
     let backend = register_pair(backend, g);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
         backend
-            .with_sinkhorn_finish_norm_twin(super::hc_finish_twin::served(), TWIN_BUCKETS.to_vec())
+            .with_sinkhorn_finish_norm_twin(super::hc_finish_twin::served(), twin_buckets())
             .with_sinkhorn_finish_norm_cols(
                 super::hc_cols::producer(),
                 super::hc_cols::finish(),
@@ -52,7 +52,9 @@ pub fn register(
 
 /// Measured (row bucket, warp count) pairs of the two-CTA tail: DSpark's
 /// Verify-6 bucket (five drafts and the root).
-pub const TWIN_BUCKETS: [(u32, u32); 1] = [(6, 32)];
+pub fn twin_buckets() -> Vec<(u32, u32)> {
+    counted_buckets("hc.finish_twin.verify", 64, "warps")
+}
 
 /// Only measured Flash decode and verify buckets use the 1024-thread tail.
 /// The lab compares one-launch boundaries against exactly this pair.
@@ -71,29 +73,78 @@ pub fn register_pair(
 }
 
 pub(crate) fn pair_buckets() -> Vec<u32> {
-    [1, 4, 6, 8, 12, 16, 32]
-        .into_iter()
-        .chain(33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
-        .collect()
+    selected_rows("hc.finish_pair.verify", 64)
 }
 
 pub(crate) fn chain_buckets() -> Vec<(u32, u32)> {
-    [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
-        .into_iter()
-        .chain((33..=model_deepseek41_contract::serving::VERIFY_DECODE_ROWS).map(|rows| (rows, 4)))
-        .collect()
+    counted_buckets("hc.finish_chain.verify", 64, "warps")
 }
 
 pub(crate) fn row_buckets() -> Vec<(u32, u32)> {
-    vec![(32, 2)]
+    counted_buckets("hc.finish_rows.verify", 64, "tile")
 }
 
-#[cfg(test)]
-pub(crate) fn migration_mixer_buckets() -> Vec<u32> {
-    super::hc::warp_buckets()
+pub(crate) fn choice(
+    g: &Geometry,
+    op: &str,
+    bucket: u32,
+    rows: u32,
+) -> Option<&'static kernel_build::tuning::Row> {
+    use model_deepseek41_contract::tuning::{self, Family};
+    tuning::select(
+        g,
+        Family::Hc,
+        op,
+        "f32",
+        &[("groups", g.shape.hc.streams), ("width", g.shape.hidden)],
+        bucket,
+        rows,
+    )
 }
 
-#[cfg(test)]
-pub(crate) fn migration_prefill_buckets() -> Vec<((u32, u32), Vec<u32>)> {
-    super::hc_prefill::buckets()
+pub(crate) fn selected_rows(op: &str, bucket: u32) -> Vec<u32> {
+    (1..=bucket)
+        .filter(|&rows| {
+            choice(
+                &model_deepseek41_contract::geometry::FLASH,
+                op,
+                bucket,
+                rows,
+            )
+            .is_some()
+        })
+        .collect()
+}
+
+pub(crate) fn counted_buckets(op: &str, bucket: u32, knob: &str) -> Vec<(u32, u32)> {
+    (1..=bucket)
+        .filter_map(|rows| {
+            let row = choice(
+                &model_deepseek41_contract::geometry::FLASH,
+                op,
+                bucket,
+                rows,
+            )?;
+            Some((rows, row.knobs[knob].count().expect("HC count knob")))
+        })
+        .collect()
+}
+
+pub(crate) fn prefill_buckets(op: &str) -> Vec<((u32, u32), Vec<u32>)> {
+    let mut buckets: Vec<((u32, u32), Vec<u32>)> = Vec::new();
+    for rows in 1..=model_deepseek41_contract::serving::PREFILL_TOKENS {
+        let Some(row) = choice(&model_deepseek41_contract::geometry::FLASH, op, 8192, rows) else {
+            continue;
+        };
+        let pair = (
+            row.knobs["tile"].count().expect("HC tile"),
+            row.knobs["chains"].count().expect("HC chains"),
+        );
+        if let Some((_, counts)) = buckets.iter_mut().find(|(p, _)| *p == pair) {
+            counts.push(rows);
+        } else {
+            buckets.push((pair, vec![rows]));
+        }
+    }
+    buckets
 }

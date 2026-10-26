@@ -28,7 +28,7 @@ fn decode_fuses_77_hc_boundaries() {
                 // Every measured decode bucket replaces the chain producer and
                 // the finish/norm tail with the column-block producer and
                 // split finish (`wide_hc`); no one-launch boundary remains.
-                let wide = crate::sm120::hc_cols::BUCKETS
+                let wide = crate::sm120::hc_cols::decode_buckets()
                     .iter()
                     .any(|b| b.rows == rows);
                 assert!(wide);
@@ -74,7 +74,7 @@ fn decode_fuses_77_hc_boundaries() {
 
                 assert_eq!(count("input_local_v1"), 0);
                 // Every decode bucket serves the measured cached query norm.
-                let query = crate::sm120::norm_query_cached::BUCKETS
+                let query = crate::sm120::norm_query_cached::buckets()
                     .iter()
                     .find(|(bucket, _)| *bucket == rows)
                     .map(|&(_, warps)| warps)

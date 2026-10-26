@@ -241,7 +241,7 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             let qualified = matches!(rows, 4 | 6 | 8 | 12 | 16 | 32);
             let pairs = if qualified { 77 * 4 } else { 0 };
             // Six rows run the tail on two CTAs per row.
-            let twin = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+            let twin = crate::sm120::hc_finish_norm::twin_buckets()
                 .iter()
                 .find(|(bucket, _)| *bucket == rows)
                 .map(|&(_, warps)| warps);
@@ -252,9 +252,10 @@ fn verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint() {
             );
             // Eight, 16 and 32 rows run the column-block producer and split
             // finish (eight rows share the C8 decode bucket).
-            let wide = crate::sm120::hc_cols::BUCKETS
+            let wide = crate::sm120::hc_cols::decode_buckets()
                 .iter()
-                .find(|b| b.rows == rows);
+                .find(|b| b.rows == rows)
+                .copied();
             let tails = count("hc_finish_norm_w32_v1")
                 + count("_hc_finish_twin_")
                 + count("_hc_finish_split_");

@@ -11,13 +11,19 @@ use model_deepseek41_contract::{
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 pub(crate) fn eligible(g: &Geometry, phase: Phase) -> bool {
+    use model_deepseek41_contract::tuning::{self, Family};
     g == &FLASH
-        && matches!(
-            phase,
-            Phase::Prefill {
-                rows: PREFILL_TOKENS
-            }
+        && phase.prefill()
+        && tuning::select(
+            g,
+            Family::Norm,
+            "norm.query_admit.prefill",
+            "bf16",
+            &[("width", g.shape.attention.q_rank)],
+            PREFILL_TOKENS,
+            phase.rows(),
         )
+        .is_some()
 }
 
 pub(crate) struct QueryPrefillOps {

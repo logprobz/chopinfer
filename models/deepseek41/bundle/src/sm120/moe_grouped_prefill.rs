@@ -21,16 +21,23 @@ pub fn selected(
     g.id == FLASH.id
         && g.shape.hidden == FLASH.shape.hidden
         && g.shape.moe.intermediate == FLASH.shape.moe.intermediate
-        && ranks == 4
-        && set
-            == Experts {
-                count: 384,
-                top_k: 6,
-            }
-        && kind == GatedMlpProjection::Down
-        && usage.phase == ExecutionPhase::Prefill
-        && usage.capacity == 8192
         && !usage.graph
+        && super::moe::choice(
+            g,
+            match kind {
+                GatedMlpProjection::GateUp => "grouped_gate_up",
+                GatedMlpProjection::Down => "grouped_down",
+            },
+            usage.phase,
+            &[
+                ("ranks", ranks),
+                ("experts", set.count),
+                ("top_k", set.top_k),
+            ],
+            usage.capacity,
+            1,
+        )
+        .is_some()
 }
 pub fn prepare(base: Box<dyn PreparedExperts>) -> Result<Box<dyn PreparedExperts>, Refused> {
     let entry = family::entry();

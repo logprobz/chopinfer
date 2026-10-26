@@ -89,8 +89,5 @@ pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
 }
 
 pub(super) fn buckets() -> Vec<((u32, u32), Vec<u32>)> {
-    vec![
-        ((8, 8), vec![64, 192]),
-        ((8, 4), vec![2240, 2496, 2624, 8192]),
-    ]
+    super::hc_finish_norm::prefill_buckets("hc.lagged_mix.prefill")
 }

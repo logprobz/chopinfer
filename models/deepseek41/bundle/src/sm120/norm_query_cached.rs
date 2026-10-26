@@ -11,7 +11,12 @@ pub const FAMILY: &str = "norm_query_cached";
 /// Rows and warps per CTA where the paired lab timing gained on both devices:
 /// the warp count with the larger minimum chained saving at each row count.
 /// Other rows keep the served entry.
-pub const BUCKETS: [(u32, u32); 4] = [(1, 16), (6, 16), (8, 32), (32, 32)];
+pub fn buckets() -> Vec<(u32, u32)> {
+    super::norm_quantize_cached::cached_buckets(
+        "norm.query_cached.decode",
+        FLASH.shape.attention.q_rank,
+    )
+}
 
 pub fn cubin_name(g: &Geometry) -> String {
     format!("norm_query_cached_{}_sm120", g.kernel_tag)
@@ -43,7 +48,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// Select only the measured Flash decode and verify buckets.
 pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
     if g.id == FLASH.id {
-        backend.with_rmsnorm_quantize_cached(entry(g), BUCKETS.to_vec())
+        backend.with_rmsnorm_quantize_cached(entry(g), buckets())
     } else {
         backend
     }

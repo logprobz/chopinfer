@@ -1,6 +1,4 @@
-use crate::sm120::{
-    moe as serving, moe_grouped_prefill, moe_pipeline, moe_router_finish as router,
-};
+use crate::sm120::moe as serving;
 use kernel_build::tuning::{Key, Knob, Knobs, Row, Table, Target};
 use kernel_core::{
     gated_mlp::GatedMlpProjection,
@@ -75,7 +73,7 @@ fn generated() -> Table {
         sm_count: 188,
     });
     for ranks in [1, 2, 4] {
-        if serving::streamed_qualified(&FLASH, ranks) {
+        if legacy_streamed(&FLASH, ranks) {
             for phase in [ExecutionPhase::Decode, ExecutionPhase::Verify] {
                 add(
                     &mut t,
@@ -103,17 +101,13 @@ fn generated() -> Table {
                     8192,
                     "prefill",
                     (1..=8192).filter_map(|r| {
-                        serving::prefill_selected(&FLASH, ranks, set.count, kind, r)
-                            .then(|| (r, Knobs::new()))
+                        legacy_prefill(&FLASH, ranks, set.count, kind, r).then(|| (r, Knobs::new()))
                     }),
                 );
                 for capacity in [512, 2048, 4096, 8192] {
                     for (site, selected) in [
-                        ("pipeline", moe_pipeline::selected as fn(_, _, _, _, _) -> _),
-                        (
-                            "grouped",
-                            moe_grouped_prefill::selected as fn(_, _, _, _, _) -> _,
-                        ),
+                        ("pipeline", legacy_pipeline as fn(_, _, _, _, _) -> _),
+                        ("grouped", legacy_grouped as fn(_, _, _, _, _) -> _),
                     ] {
                         for phase in phases() {
                             let usage = OperationUse {
@@ -138,14 +132,8 @@ fn generated() -> Table {
             }
         }
         for (site, entries) in [
-            (
-                "compact",
-                serving::serving_compact_projections(&FLASH, ranks).unwrap(),
-            ),
-            (
-                "active",
-                serving::serving_active_projections(&FLASH, ranks).unwrap(),
-            ),
+            ("compact", legacy_compact(&FLASH, ranks).unwrap()),
+            ("active", legacy_active(&FLASH, ranks).unwrap()),
         ] {
             for entry in entries {
                 let grouped = entry.query.projection.gemm.grouped.unwrap();
@@ -172,7 +160,7 @@ fn generated() -> Table {
             }
         }
     }
-    for route in serving::streamed_routes(&FLASH) {
+    for route in legacy_routes(&FLASH) {
         let r = route.local;
         add(
             &mut t,
@@ -186,15 +174,11 @@ fn generated() -> Table {
     }
     for set in moe::expert_sets(&FLASH) {
         let shape = [("experts", set.count), ("top_k", set.top_k)];
-        for (order, (phase, rows)) in serving::migration_direct_buckets(set, 64)
-            .into_iter()
-            .enumerate()
-        {
+        for (order, (phase, rows)) in legacy_buckets(set, 64).into_iter().enumerate() {
             let schedule = if rows > 32 && rows < 64 && set.count != 128 {
                 "wide"
-            } else if router::small_gap(set, phase, rows)
-                && !router::with_base_admission(|| serving::migration_direct_buckets(set, 64))
-                    .contains(&(phase, rows))
+            } else if legacy_small_gap(set, phase, rows)
+                && !matches!(rows, 1 | 2 | 4 | 5 | 6 | 8 | 16 | 32 | 64)
             {
                 "gap"
             } else {
@@ -228,8 +212,7 @@ fn generated() -> Table {
                     64,
                     site,
                     (1..=64).filter_map(|r| {
-                        serving::migration_direct_choice(site, set.count, phase, r)
-                            .then(|| (r, Knobs::new()))
+                        legacy_direct_choice(site, set.count, phase, r).then(|| (r, Knobs::new()))
                     }),
                 );
             }
@@ -243,12 +226,10 @@ fn generated() -> Table {
                     site,
                     (1..=64).filter_map(|rows| {
                         let chosen = match site {
-                            "router_finish" => {
-                                router::with_base_admission(|| router::qualified(set, phase, rows))
-                            }
-                            "router_gap" => router::small_gap(set, phase, rows),
-                            "router_wide" => router::wide(set, phase, rows, 64),
-                            _ => router::with_base_admission(|| router::r2(set, phase, rows)),
+                            "router_finish" => legacy_qualified(set, phase, rows),
+                            "router_gap" => legacy_small_gap(set, phase, rows),
+                            "router_wide" => legacy_wide(set, phase, rows),
+                            _ => legacy_r2(set, phase, rows),
                         };
                         chosen.then(|| (rows, Knobs::new()))
                     }),
@@ -293,4 +274,262 @@ fn differential() {
     }
     assert!(cases > 100_000);
     eprintln!("MoE differential: {cases} cases");
+    use crate::sm120::{moe_grouped_prefill, moe_pipeline, moe_router_finish as router};
+    for ranks in [1, 2, 4] {
+        assert_eq!(
+            serving::streamed_qualified(&FLASH, ranks),
+            legacy_streamed(&FLASH, ranks)
+        );
+        for set in moe::expert_sets(&FLASH) {
+            for kind in [GatedMlpProjection::GateUp, GatedMlpProjection::Down] {
+                for rows in 0..=8193 {
+                    assert_eq!(
+                        serving::prefill_selected(&FLASH, ranks, set.count, kind, rows),
+                        legacy_prefill(&FLASH, ranks, set.count, kind, rows)
+                    );
+                }
+                for capacity in [
+                    0, 1, 8, 32, 64, 128, 512, 2048, 4095, 4096, 8191, 8192, 8193,
+                ] {
+                    for phase in phases() {
+                        for graph in [false, true] {
+                            let usage = OperationUse {
+                                phase,
+                                capacity,
+                                graph,
+                            };
+                            assert_eq!(
+                                moe_pipeline::selected(&FLASH, ranks, set, kind, usage),
+                                legacy_pipeline(&FLASH, ranks, set, kind, usage)
+                            );
+                            assert_eq!(
+                                moe_grouped_prefill::selected(&FLASH, ranks, set, kind, usage),
+                                legacy_grouped(&FLASH, ranks, set, kind, usage)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for set in moe::expert_sets(&FLASH) {
+        for maximum in 32..=64 {
+            assert_eq!(
+                serving::migration_direct_buckets(set, maximum),
+                legacy_buckets(set, maximum)
+            );
+        }
+        for phase in phases() {
+            for rows in 1..=64 {
+                for site in [
+                    "absorb",
+                    "strip2",
+                    "wide",
+                    "small",
+                    "gate_grid",
+                    "gate_resident",
+                    "gate_finish",
+                ] {
+                    assert_eq!(
+                        serving::migration_direct_choice(site, set.count, phase, rows),
+                        legacy_direct_choice(site, set.count, phase, rows)
+                    );
+                }
+                let gap = legacy_small_gap(set, phase, rows);
+                assert_eq!(
+                    router::qualified(set, phase, rows),
+                    gap || legacy_qualified(set, phase, rows)
+                );
+                assert_eq!(
+                    router::r2(set, phase, rows),
+                    gap || legacy_r2(set, phase, rows)
+                );
+                for maximum in 32..=64 {
+                    assert_eq!(
+                        router::wide(set, phase, rows, maximum),
+                        rows <= maximum && legacy_wide(set, phase, rows)
+                    );
+                }
+            }
+        }
+    }
 }
+
+fn legacy_streamed(g: &Geometry, ranks: u32) -> bool {
+    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4
+}
+
+fn legacy_prefill(
+    g: &Geometry,
+    ranks: u32,
+    experts: u32,
+    kind: GatedMlpProjection,
+    rows: u32,
+) -> bool {
+    legacy_streamed(g, ranks)
+        && [512, 2048, 4096].contains(&rows)
+        && !(experts == 128 && kind == GatedMlpProjection::Down && rows == 2048)
+}
+
+fn legacy_compact(g: &Geometry, ranks: u32) -> Result<Vec<quantized::Projection>, String> {
+    if !legacy_streamed(g, ranks) {
+        return Ok(Vec::new());
+    }
+    serving::projections(g, ranks)?
+        .into_iter()
+        .filter(|e| {
+            e.row_tile == 16
+                && e.query
+                    .projection
+                    .gemm
+                    .grouped
+                    .is_some_and(|g| g.experts == 128 && g.top_k == 3)
+        })
+        .map(|e| {
+            e.with_compact_columns()
+                .and_then(|e| e.with_max_rows(1))
+                .map(|e| e.with_phase(kernel_core::precision::ExecutionPhase::Decode))
+                .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+fn legacy_active(g: &Geometry, ranks: u32) -> Result<Vec<quantized::Projection>, String> {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id || ranks != 4 {
+        return Ok(Vec::new());
+    }
+    serving::active_projections(g, ranks)?
+        .into_iter()
+        .filter(|e| {
+            e.gate_up()
+                && e.tokens_capacity == DECODE_BATCH
+                && e.query.projection.gemm.grouped.unwrap().experts == g.shape.moe.experts
+        })
+        .map(|e| e.with_max_rows(1).map_err(|e| e.to_string()))
+        .collect()
+}
+
+fn legacy_routes(g: &Geometry) -> Vec<row_bias::Route> {
+    moe::expert_sets(g)
+        .into_iter()
+        .flat_map(|set| {
+            [8, 64].map(|capacity| row_bias::Route {
+                local: LocalRoute {
+                    experts: set.count,
+                    local_experts: set.count,
+                    top_k: set.top_k,
+                    capacity,
+                    pad: 64,
+                },
+            })
+        })
+        .collect()
+}
+
+fn legacy_pipeline(
+    g: &Geometry,
+    ranks: u32,
+    set: Experts,
+    kind: GatedMlpProjection,
+    usage: OperationUse,
+) -> bool {
+    g.id == FLASH.id
+        && ranks == 4
+        && matches!(
+            (set.count, set.top_k, usage.capacity),
+            (384, 6, 8192) | (128, 3, 8192 | 4096)
+        )
+        && kind == GatedMlpProjection::GateUp
+        && usage.phase == ExecutionPhase::Prefill
+        && !usage.graph
+}
+
+fn legacy_grouped(
+    g: &Geometry,
+    ranks: u32,
+    set: Experts,
+    kind: GatedMlpProjection,
+    usage: OperationUse,
+) -> bool {
+    g.id == FLASH.id
+        && g.shape.hidden == FLASH.shape.hidden
+        && g.shape.moe.intermediate == FLASH.shape.moe.intermediate
+        && ranks == 4
+        && set
+            == Experts {
+                count: 384,
+                top_k: 6,
+            }
+        && kind == GatedMlpProjection::Down
+        && usage.phase == ExecutionPhase::Prefill
+        && usage.capacity == 8192
+        && !usage.graph
+}
+
+fn legacy_direct_choice(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) -> bool {
+    use ExecutionPhase::{Decode, Verify};
+    match site {
+        "absorb" => experts == 384 && matches!((phase, rows), (Decode, 32) | (Verify, 32)),
+        "strip2" => experts == 384 && matches!(rows, 16 | 32),
+        "wide" => experts == 384 && phase == Verify && (33..=64).contains(&rows),
+        "small" => rows <= 8,
+        "gate_grid" => experts == 384 && matches!((phase, rows), (Decode, 8 | 32) | (Verify, 32)),
+        "gate_resident" => {
+            experts == 384
+                && (matches!(rows, 16 | 32) || (phase == Verify && matches!(rows, 4 | 6)))
+        }
+        "gate_finish" => {
+            experts == 384 && matches!((phase, rows), (Decode, 1 | 8 | 16) | (Verify, 4 | 6 | 16))
+        }
+        _ => unreachable!("direct selection site"),
+    }
+}
+
+fn legacy_buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
+    use ExecutionPhase::{Decode, Verify};
+    let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
+    out.extend([1, 2, 4, 5, 6, 8, 16, 32, 64].map(|rows| (Verify, rows)));
+    if set.count == 128 {
+        out.push((Verify, 48));
+    } else {
+        out.extend((33..=maximum_verify_rows.min(63)).map(|rows| (Verify, rows)));
+    }
+    for rows in 2..=32 {
+        if legacy_small_gap(set, Verify, rows) && !out.contains(&(Verify, rows)) {
+            out.push((Verify, rows));
+        }
+    }
+    out
+}
+
+fn legacy_small_gap(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    set.count == 384
+        && set.top_k == 6
+        && matches!((phase,rows),
+        (ExecutionPhase::Decode,2|4)|(ExecutionPhase::Verify,2|3|5|7|9..=15|17..=31))
+}
+fn legacy_qualified(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    match (set.count, set.top_k, phase) {
+        (384, 6, ExecutionPhase::Decode) => [1, 8, 16, 32].contains(&rows),
+        (384, 6, ExecutionPhase::Verify) => [4, 6, 8, 16, 32].contains(&rows),
+        (128, 3, ExecutionPhase::Decode) => rows == 1,
+        _ => false,
+    }
+}
+fn legacy_r2(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    legacy_qualified(set, phase, rows)
+        && matches!(
+            (set.count, set.top_k, phase, rows),
+            (384, 6, ExecutionPhase::Decode, 1 | 8 | 16 | 32)
+                | (384, 6, ExecutionPhase::Verify, 4 | 6 | 16 | 32)
+        )
+}
+fn legacy_wide(set: Experts, phase: ExecutionPhase, rows: u32) -> bool {
+    set.count == 384
+        && set.top_k == 6
+        && phase == ExecutionPhase::Verify
+        && (33..=64).contains(&rows)
+}
+
+use kernels_sm120::moe::chained::{LocalRoute, quantized, row_bias};
+use model_deepseek41_contract::{geometry::Geometry, moe::Experts, serving::DECODE_BATCH};

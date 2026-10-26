@@ -56,7 +56,17 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     baseline_quantizers(g, ranks)?
         .into_iter()
         .try_fold(backend, |backend, entry| {
-            let warps = selected_warps(entry.query.width);
+            let warps = super::ceil_parallel::tuning_choice(
+                g,
+                "norm.ceil_prefill.prefill",
+                ranks,
+                &entry,
+                entry.capacity,
+            )
+            .map_or_else(
+                || selected_warps(entry.query.width),
+                |row| row.knobs["warps"].count().expect("prefill quantizer warps"),
+            );
             Ok(backend.with_block_quantize(prefill(entry, warps)?))
         })
 }

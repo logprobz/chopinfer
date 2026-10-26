@@ -57,7 +57,23 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// of its parallel entry.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in super::ceil_parallel::registered_quantizers(g, ranks)? {
-        backend = backend.with_block_quantize(cached(&entry).unwrap_or(entry));
+        let selected = if g.id == model_deepseek41_contract::geometry::FLASH.id {
+            super::ceil_parallel::tuning_choice(
+                g,
+                "norm.ceil_cached.decode",
+                ranks,
+                &entry,
+                entry.capacity,
+            )
+            .is_some()
+        } else {
+            WIDTHS.contains(&entry.query.width)
+        };
+        backend = backend.with_block_quantize(if selected {
+            cached(&entry).unwrap_or(entry)
+        } else {
+            entry
+        });
     }
     Ok(backend.with_silu_mul_quantize(super::ceil_parallel::activation(g, ranks)?))
 }

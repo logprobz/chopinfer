@@ -25,7 +25,7 @@ use crate::{program::Phase, shape::Shape};
 const PARTIALS: &str = "scratch.partials";
 const TICKETS: &str = "scratch.tickets";
 
-pub(crate) fn finish_selected(phase: Phase, finish_rows: u32) -> bool {
+fn baseline_finish_selected(phase: Phase, finish_rows: u32) -> bool {
     matches!(
         phase,
         Phase::Decode(1 | 8 | 16 | 32)
@@ -33,14 +33,14 @@ pub(crate) fn finish_selected(phase: Phase, finish_rows: u32) -> bool {
                 rows: 4 | 6 | 8 | 12 | 16 | 32,
                 ..
             }
-    ) || wide_selected(phase, finish_rows)
+    ) || baseline_wide_selected(phase, finish_rows)
 }
 
-pub(crate) fn wide_selected(phase: Phase, finish_rows: u32) -> bool {
+fn baseline_wide_selected(phase: Phase, finish_rows: u32) -> bool {
     matches!(phase, Phase::Verify { rows: 33..=64, .. }) && phase.rows() <= finish_rows
 }
 
-pub(crate) fn decode_selected(phase: Phase) -> bool {
+fn baseline_decode_selected(phase: Phase) -> bool {
     matches!(
         phase,
         Phase::Decode(1 | 8)
@@ -51,23 +51,126 @@ pub(crate) fn decode_selected(phase: Phase) -> bool {
     )
 }
 
-pub(crate) fn draft_selected(phase: Phase) -> bool {
+fn baseline_draft_selected(phase: Phase) -> bool {
     phase.rows() > DECODE_BATCH && phase.rows() <= SMALL_DRAFT_ROWS
 }
 
 #[cfg(test)]
 impl super::Ops {
+    pub(crate) fn migration_hc_actual(phase: Phase, capacity: u32) -> [bool; 4] {
+        let g = &model_deepseek41_contract::geometry::FLASH;
+        [
+            finish_selected(g, phase, capacity),
+            wide_selected(g, phase, capacity),
+            decode_selected(g, phase),
+            draft_selected(g, phase),
+        ]
+    }
+
     pub(crate) fn migration_hc_choices(phase: Phase, capacity: u32) -> [bool; 4] {
         [
-            finish_selected(phase, capacity),
-            wide_selected(phase, capacity),
-            decode_selected(phase),
-            draft_selected(phase),
+            baseline_finish_selected(phase, capacity),
+            baseline_wide_selected(phase, capacity),
+            baseline_decode_selected(phase),
+            baseline_draft_selected(phase),
         ]
     }
 }
 
+fn table_selected(
+    g: &model_deepseek41_contract::geometry::Geometry,
+    phase: Phase,
+    ops: [&str; 3],
+    capacity: u32,
+) -> bool {
+    use model_deepseek41_contract::tuning::{self, Family};
+    let op = match phase {
+        Phase::Decode(_) => ops[0],
+        Phase::Verify { .. } => ops[1],
+        Phase::Prefill { .. } => ops[2],
+    };
+    tuning::select(
+        g,
+        Family::Hc,
+        op,
+        "f32",
+        &[("groups", g.shape.hc.streams), ("width", g.shape.hidden)],
+        capacity,
+        phase.rows(),
+    )
+    .is_some()
+}
+fn finish_selected(
+    g: &model_deepseek41_contract::geometry::Geometry,
+    phase: Phase,
+    capacity: u32,
+) -> bool {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
+        return baseline_finish_selected(phase, capacity);
+    }
+    table_selected(
+        g,
+        phase,
+        [
+            "hc.finish_admit.decode",
+            "hc.finish_admit.verify",
+            "hc.finish_admit.prefill",
+        ],
+        capacity,
+    )
+}
+fn wide_selected(
+    g: &model_deepseek41_contract::geometry::Geometry,
+    phase: Phase,
+    capacity: u32,
+) -> bool {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
+        return baseline_wide_selected(phase, capacity);
+    }
+    table_selected(
+        g,
+        phase,
+        [
+            "hc.wide_mix.decode",
+            "hc.wide_mix.verify",
+            "hc.wide_mix.prefill",
+        ],
+        capacity,
+    )
+}
+fn decode_selected(g: &model_deepseek41_contract::geometry::Geometry, phase: Phase) -> bool {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
+        return baseline_decode_selected(phase);
+    }
+    table_selected(
+        g,
+        phase,
+        [
+            "hc.decode_mix.decode",
+            "hc.decode_mix.verify",
+            "hc.decode_mix.prefill",
+        ],
+        32,
+    )
+}
+fn draft_selected(g: &model_deepseek41_contract::geometry::Geometry, phase: Phase) -> bool {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id {
+        return baseline_draft_selected(phase);
+    }
+    table_selected(
+        g,
+        phase,
+        [
+            "hc.draft_mix.decode",
+            "hc.draft_mix.verify",
+            "hc.draft_mix.prefill",
+        ],
+        SMALL_DRAFT_ROWS,
+    )
+}
+
 pub(crate) struct HcOps {
+    geometry: &'static model_deepseek41_contract::geometry::Geometry,
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
     prefill_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     decode_mix: Prepared<LaggedMixCollapseBuffers<View>>,
@@ -150,6 +253,7 @@ impl HcOps {
         let g = shape.geometry;
         let finish_rows = shape.verify_decode_rows();
         Ok(HcOps {
+            geometry: g,
             finish_rows,
             finish_norm: {
                 let capacity = finish_rows;
@@ -366,7 +470,7 @@ impl HcOps {
     // rounded expansion mixer and input norm it replaces, memcheck clean,
     // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
-        finish_selected(phase, self.finish_rows) && self.finish_norm.is_some()
+        finish_selected(self.geometry, phase, self.finish_rows) && self.finish_norm.is_some()
     }
 
     pub(crate) fn round_expand_mix_norm(
@@ -444,13 +548,13 @@ impl HcOps {
     fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
         if phase.prefill() {
             &self.prefill_mix
-        } else if wide_selected(phase, self.finish_rows)
+        } else if wide_selected(self.geometry, phase, self.finish_rows)
             && let Some(op) = &self.verify_mix
         {
             op
-        } else if decode_selected(phase) {
+        } else if decode_selected(self.geometry, phase) {
             &self.decode_mix
-        } else if draft_selected(phase) {
+        } else if draft_selected(self.geometry, phase) {
             &self.draft_mix
         } else {
             &self.mix
@@ -772,7 +876,7 @@ mod tests {
                     .unwrap();
                 // Measured verify buckets keep the producer and run the tail
                 // on two CTAs per row with the tail's own arguments.
-                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::TWIN_BUCKETS
+                if let Some(&(_, warps)) = crate::sm120::hc_finish_norm::twin_buckets()
                     .iter()
                     .find(|(bucket, _)| *bucket == rows)
                 {
@@ -786,7 +890,7 @@ mod tests {
                 }
                 // The column pair's measured buckets run the column-block
                 // producer and split finish over both launches' own arguments.
-                if let Some(b) = crate::sm120::hc_cols::BUCKETS
+                if let Some(b) = crate::sm120::hc_cols::decode_buckets()
                     .iter()
                     .find(|b| b.rows == rows)
                 {

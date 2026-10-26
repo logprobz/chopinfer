@@ -60,7 +60,7 @@ pub(crate) struct Device {
     pub prepared: Prepared,
     pub heads: Heads,
     pub ring_gathers: Vec<Op<RingGatherBuffers<View>>>,
-    pub retention: Option<super::retention::Prepared>,
+    pub retention: super::retention::Prepared,
     pub runtime: Option<Runtime>,
     pub staging: Option<Staging>,
     pub ranks: Vec<Rank>,
@@ -93,7 +93,7 @@ pub(crate) struct Rank {
     pub keys: Span,
     pub taps: Span,
     pub packed: Span,
-    pub retention_segments: Option<Span>,
+    pub retention_segments: Span,
     pub feature_indices: Span,
     pub feature_counts: Vec<Span>,
     pub feature_codes: Span,
@@ -253,9 +253,7 @@ impl Device {
             prepared,
             heads,
             ring_gathers,
-            retention: super::retention::enabled()
-                .then(|| super::retention::Prepared::new(kernels.own.as_ref(), features))
-                .transpose()?,
+            retention: super::retention::Prepared::new(kernels.own.as_ref(), features)?,
             runtime: Some(runtime),
             staging: Some(Staging::new(g)?),
             ranks: Vec::new(),
@@ -296,11 +294,9 @@ impl Device {
                 *most = (*most).max(*shared);
             }
         }
-        if let Some(retention) = &self.retention {
-            for (symbol, shared) in &retention.op.info().symbols {
-                let most = bytes.entry(symbol.clone()).or_default();
-                *most = (*most).max(*shared);
-            }
+        for (symbol, shared) in &self.retention.op.info().symbols {
+            let most = bytes.entry(symbol.clone()).or_default();
+            *most = (*most).max(*shared);
         }
         bytes
     }
@@ -525,11 +521,7 @@ impl Device {
             keys: plane(metadata_layout.keys)?,
             taps: alloc(u64::from(PREFILL_TOKENS) * targets * hidden * 2)?,
             packed: alloc(u64::from(TARGET_ROWS) * targets * hidden * 2)?,
-            retention_segments: self
-                .retention
-                .as_ref()
-                .map(|_| alloc(super::retention::METADATA_BYTES))
-                .transpose()?,
+            retention_segments: alloc(super::retention::METADATA_BYTES)?,
             feature_indices,
             feature_counts,
             feature_codes: {

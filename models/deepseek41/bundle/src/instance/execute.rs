@@ -1578,9 +1578,7 @@ impl Instance {
             && !runs[0].inputs.verify
             && runs[0].inputs.q_len.iter().all(|&rows| rows == 1)
             && self.dspark.as_ref().is_some_and(|device| {
-                device.cycle.undrafted_status
-                    && device.cycle.pending.is_none()
-                    && device.results.metadata.is_none()
+                device.cycle.pending.is_none() && device.results.metadata.is_none()
             });
         let ready_epoch = if sink.device_results_enabled()
             && (self.dspark.is_none() || undrafted)

@@ -16,7 +16,7 @@ fn read(root: &Path, boundary: &str, step: u64, name: &str) -> Value {
     .unwrap()
 }
 
-fn run(root: &Path, enabled: bool) {
+fn run(root: &Path) {
     std::fs::create_dir_all(root).unwrap();
     std::fs::write(root.join("enabled"), []).unwrap();
     std::fs::write(
@@ -28,7 +28,7 @@ fn run(root: &Path, enabled: bool) {
         .unwrap(),
     )
     .unwrap();
-    let (host, mut instance) = create_with_sampling(1, enabled, true);
+    let (host, mut instance) = create_with_sampling(1, true);
     crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.into()));
     instance
         .execute(&prompt(1, 0, 0, 193, true), &mut Views::default())
@@ -39,7 +39,7 @@ fn run(root: &Path, enabled: bool) {
         instance
             .execute(&decode(&[(1, 0, position, 17)]), &mut result)
             .unwrap();
-        assert_eq!(result.ready.is_empty(), !enabled);
+        assert!(!result.ready.is_empty());
         instance.commit().unwrap();
     }
     let after_zero = read(root, "after-commit", 3, "request-1/state.json");
@@ -178,23 +178,11 @@ fn passive_full_state_capture_keeps_native_readiness_and_committed_cursors() {
     let root = PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
         .join("deepseek41-tests")
         .join(format!("passive-ready-{}", std::process::id()));
-    run(&root.join("legacy"), false);
-    run(&root.join("ready"), true);
-    let expected = files(&root.join("legacy"));
-    let actual = files(&root.join("ready"));
-    assert_eq!(
-        expected.keys().collect::<Vec<_>>(),
-        actual.keys().collect::<Vec<_>>()
-    );
-    for (name, bytes) in &expected {
-        assert!(
-            bytes == &actual[name],
-            "capture bytes differ: {}",
-            name.display()
-        );
-    }
+    run(&root);
+    let captured = files(&root);
+    assert!(!captured.is_empty());
     assert!(
-        expected
+        captured
             .values()
             .map(|bytes| bytes.len() as u64)
             .sum::<u64>()
@@ -218,7 +206,7 @@ fn passive_capture_budget_failure_keeps_a_committed_instance_terminal() {
         .unwrap(),
     )
     .unwrap();
-    let (host, mut instance) = create(1, true);
+    let (host, mut instance) = create(1);
     crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
     prefill(&host, &mut instance, 1);
     let mut result = sink(&host, 1, 9);

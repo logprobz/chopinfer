@@ -13,9 +13,7 @@ impl Instance {
         copies: &[(usize, crate::dspark::features::Copy)],
     ) -> Result<Option<Bound>, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let Some(prepared) = &device.retention else {
-            return Ok(None);
-        };
+        let prepared = &device.retention;
         if plan
             .items()
             .iter()
@@ -35,9 +33,7 @@ impl Instance {
                 .named("dspark.features")
                 .ok_or("retention state is absent")?;
             let stored = &device.ranks[rank];
-            let metadata = stored
-                .retention_segments
-                .ok_or("retention metadata is absent")?;
+            let metadata = stored.retention_segments;
             let copies: Vec<_> = copies
                 .iter()
                 .filter(|(owner, _)| *owner == rank)

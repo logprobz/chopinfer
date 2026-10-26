@@ -295,12 +295,7 @@ impl Instance {
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
         let mut memory = memory::Ledger::open(ranks.iter().map(|&(_, pool, _)| pool));
-        if self
-            .dspark
-            .as_ref()
-            .is_none_or(|d| d.cycle.undrafted_status)
-            && crate::device_results::enabled(shape, self.config.kv.storage)
-        {
+        if crate::device_results::enabled(shape, self.config.kv.storage) {
             for &(context, _, _) in &ranks {
                 let event = services.create_event(context)?;
                 held.push(Held::Event(event));
@@ -1624,7 +1619,7 @@ pub(crate) fn retention_metadata_for_test(
                 device
                     .ranks
                     .iter()
-                    .filter_map(|rank| rank.retention_segments)
+                    .map(|rank| rank.retention_segments)
                     .collect()
             })
             .unwrap_or_default()

@@ -35,8 +35,6 @@ pub(crate) struct Cycle {
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
     pub boundary_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
-    /// Status aggregation and ready logits for a pure undrafted step.
-    pub undrafted_status: bool,
     pub pending: Option<Pending>,
     /// Rank 0's side stream producing the early ids, so their reads wait
     /// for no queued device work, and the ids' storage on it. Both are
@@ -68,30 +66,6 @@ pub(crate) struct Early {
     pub rows: Option<u32>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static UNDRAFTED_STATUS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-}
-
-fn undrafted_status_enabled() -> bool {
-    #[cfg(test)]
-    return UNDRAFTED_STATUS_IN_TESTS.get();
-    #[cfg(not(test))]
-    std::env::var_os("CHOPINFER_DSPARK_UNDRAFTED_STATUS").is_none_or(|value| value == "1")
-}
-
-#[cfg(test)]
-pub(crate) fn with_undrafted_status<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            UNDRAFTED_STATUS_IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(UNDRAFTED_STATUS_IN_TESTS.replace(enabled));
-    run()
-}
-
 /// A layer owns its pinned gather slot and the target piece consuming it.
 pub(crate) struct LayerGather {
     pub layer: u32,
@@ -113,7 +87,6 @@ impl Cycle {
             draft_done: Vec::new(),
             draft_joined: None,
             boundary_ready: Vec::new(),
-            undrafted_status: undrafted_status_enabled(),
             pending: None,
             early_stream: None,
             early_ids: None,

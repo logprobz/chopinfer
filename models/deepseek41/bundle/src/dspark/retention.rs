@@ -14,28 +14,6 @@ use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 pub(crate) const METADATA_BYTES: u64 = MAX_SEGMENTS as u64 * 12;
 pub(crate) const MIN_COPIES: usize = 8;
 
-pub(crate) fn enabled() -> bool {
-    #[cfg(test)]
-    return ENABLED.get();
-    #[cfg(not(test))]
-    std::env::var_os("CHOPINFER_DSPARK_INDEXED_RETENTION").is_none_or(|value| value == "1")
-}
-
-#[cfg(test)]
-thread_local! { static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(test)]
-pub(crate) fn with_enabled<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            ENABLED.set(self.0);
-        }
-    }
-    let _restore = Restore(ENABLED.replace(enabled));
-    run()
-}
-
 pub(crate) struct Prepared {
     pub query: RetainRows,
     pub op: Operation<RetainRowsBuffers<View>>,

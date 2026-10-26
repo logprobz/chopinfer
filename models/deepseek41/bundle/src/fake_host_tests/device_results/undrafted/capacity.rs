@@ -19,7 +19,7 @@ fn download_lengths(host: &Host, from: usize) -> Vec<u64> {
 
 #[test]
 fn undrafted_status_accepts_equal_capacity_and_refuses_one_extra_word() {
-    let (host, mut instance) = create(1, true);
+    let (host, mut instance) = create(1);
     prefill(&host, &mut instance, 1);
     let from = host.journal.borrow().len();
     instance
@@ -50,7 +50,7 @@ fn undrafted_status_accepts_equal_capacity_and_refuses_one_extra_word() {
 #[test]
 fn undrafted_status_falls_back_only_when_saved_bytes_exceed_packet_capacity() {
     for count in [16_u32, 32] {
-        let (host, mut instance) = create(count, true);
+        let (host, mut instance) = create(count);
         let lengths = [193_u64, 192, 255, 256, 133, 134, 267, 268];
         let mut positions = Vec::new();
         for slot in 0..count {

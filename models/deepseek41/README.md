@@ -374,20 +374,18 @@ pages per rank (0.734%). The gather ID buffers also reserve 1.5 MiB on
 rank 0 before KV sizing. These bounded comparisons do not replace release
 qualification.
 
-`CHOPINFER_DSPARK_UNDRAFTED_STATUS=1` opts into one joined saved-status
-readback for pure decode steps where no item drafts. On the native device
+DSpark uses one joined saved-status readback for pure decode steps where
+no item drafts. On the native device
 result path it submits private sampling before collecting that status and
 completes every Engram gather before returning success. Prefill, mixed and
-drafted steps keep their existing boundaries. This switch is experimental
-until the full-state transition and served bitwise gates pass.
+drafted steps keep their existing boundaries.
 
-`CHOPINFER_DSPARK_INDEXED_RETENTION=1` opts into one byte-copy kernel per
-rank when an undrafted or verify commit would otherwise submit at least
+DSpark uses one byte-copy kernel per rank when an undrafted or verify
+commit would otherwise submit at least
 eight retention copies per rank. Prefill, mixed prefill/decode and smaller
 commits retain the original copy list. Metadata reserves 768 bytes per rank
 before KV sizing. All mappings and rank bindings validate before any write;
 every accepted raw row keeps its original physical slot and wrap position.
-This path also remains experimental until its GPU and served gates pass.
 Step records expose `undrafted_ready` and `undrafted_status_packets`;
 commit records expose `retention_kernel_launches`, `retention_copy_calls`
 and `retention_metadata_bytes` so gates can assert which path executed.

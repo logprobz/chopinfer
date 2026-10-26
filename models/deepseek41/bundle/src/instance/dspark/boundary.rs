@@ -9,9 +9,6 @@ impl Instance {
     /// buffers and packet have the same lifetime as the drafted boundary.
     pub(in crate::instance) fn check_undrafted_status(&self) -> Result<bool, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        if !device.cycle.undrafted_status {
-            return Ok(false);
-        }
         if device.cycle.pending.is_some() || device.results.metadata.is_some() {
             return Err("DSpark undrafted boundary contains draft results".into());
         }

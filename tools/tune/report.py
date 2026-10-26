@@ -52,6 +52,22 @@ def load(run, allow_void=False):
     return config, rows
 
 
+def arm_installs(run, rows):
+    path = Path(run) / 'summary.json'
+    installs = json.loads(path.read_text()).get('arm_installs', {}) if path.exists() else {}
+    for row in rows if installs else []:
+        if {key: row.get(key) for key in ('install', 'revision')} != installs.get(row.get('arm')):
+            raise ValueError('window install or revision differs from its arm')
+    return installs
+
+
+def install_lines(installs):
+    if not installs:
+        return []
+    return ['| Arm | Install | Revision |', '|---|---|---|',
+            *(f"| {arm} | {value['install']} | {value['revision']} |" for arm, value in installs.items()), '']
+
+
 def spread(values):
     values = [v for v in values if v]
     return max(values) / min(values) - 1 if len(values) > 1 else 0.0
@@ -141,9 +157,11 @@ def evaluate(run):
     cells = {key: measure(value) for key, value in groups.items()}
     selection = select(config, cells)
     out = {'depths': schedule(selection), 'selection': selection,
+           'arm_installs': arm_installs(run, rows),
            'cells': {f'c{c}/{k}/d{d}': v for (c, k, d), v in sorted(cells.items())}}
     (run / 'tune.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
-    (run / 'tune.md').write_text(markdown(config, cells, selection, out['depths']))
+    (run / 'tune.md').write_text('\n'.join(install_lines(out['arm_installs']))
+                               + markdown(config, cells, selection, out['depths']))
     return out
 
 
@@ -244,6 +262,7 @@ def costs(run):
                              'widths': option('--speculation-widths'),
                              'ranks': (process.get('memory_after_warmup') or {}).get('ranks', [])}
     out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1]['items'], kv[1]['rows']))),
+           'arm_installs': arm_installs(run, rows),
            'windows': windows, 'gpu_memory_mib': memory, 'memory_after_warmup': warmed}
     full = {key: cell for key, cell in out['cells'].items()
             if ('reserved' in cell and cell['items'] in config['model']['concurrencies'])
@@ -252,7 +271,7 @@ def costs(run):
     out['summary'] = {key: round(cell['cycle_ms_median'], 2) for key, cell in full.items()
                       if cell['cycle_ms_median'] is not None}
     (run / 'costs.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
-    lines = [f"# {config['name']}: step cost per verify width", '',
+    lines = [f"# {config['name']}: step cost per verify width", '', *install_lines(out['arm_installs']),
              'Per (items, rows): steps, median / p10 / p90 cycle ms (completion to completion), median execution '
              'ms, arms.', '', '| items | rows | steps | cycle median | p10 | p90 | execution | arms |',
              '|---:|---:|---:|---:|---:|---:|---:|---|']
@@ -547,10 +566,12 @@ def ab(run):
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
+           'arm_installs': arm_installs(run, rows),
            'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and not cold}
     if cold:
         out['cold_prompt_assignment'] = summary.get('cold_prompt_assignment', {})
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
+             *install_lines(out['arm_installs']),
              'A1 control check: ' + validity.get('a1_control_check', {}).get('status', 'unavailable') + '.',
              validity.get('reason') or '', '',
              'Timing uses supported paired cells with positive weight. Arm-specific shapes and coverage gaps '
@@ -583,7 +604,7 @@ def ab(run):
                 result = pair[str(c)] = {'order': order, 'abba': repeats == 2, 'arms': {}, 'cells': {}}
                 for arm in (baseline, treatment):
                     windows = [row for row in selected if row['arm'] == arm]
-                    value = measure(windows)
+                    value = {**measure(windows), **out['arm_installs'].get(arm, {})}
                     steps = sum(row['full']['steps'] for row in windows)
                     if not steps and not cold:
                         raise ValueError('no full-concurrency steps')

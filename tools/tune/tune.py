@@ -781,10 +781,11 @@ def page_cache_warmup(server, arm, state, power):
         tokens = config['tokens'].get(str(c), config['tokens']['default'])
         w = closed_loop(server, f'w0-c{c}-r{repeat}', lambda i: state['tokens'][i % len(state['tokens'])],
                         tokens, config['sampling'], seeds, power)
-        rows.append({'concurrency': c, 'repeat': repeat, 'seed_set': seeds,
+        rows.append({'concurrency': c, 'repeat': repeat, 'seed_set': seeds, **arm_identity(SEAL, arm),
                      'started': w['started'], 'ended': w['ended'], 'requests': len(w['requests']),
                      'cached_prompt_tokens': w['cached_prompt_tokens'], 'priming': w['priming']})
-    state['page_cache_warmup'] = {'completed': True, 'windows': rows, 'process': arm['label']}
+    state['page_cache_warmup'] = {'completed': True, 'windows': rows, 'process': arm['label'],
+                                **arm_identity(SEAL, arm)}
 
 
 def run_ab_windows(server, arm, state, power, root, cold=None):
@@ -811,7 +812,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             full = full_concurrency(w['steps'], c)
             if not full['steps'] and not cold:
                 raise RuntimeError(f'{name}: no full-concurrency steps')
-            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': arm['depth'],
+            value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': arm['depth'], **arm_identity(SEAL, arm),
                      'arm': arm['arm'], 'visit': arm['visit'], 'repeat': repeat, 'seed_set': seeds,
                      'temperature': config['sampling']['temperature'], 'window_seconds': w['window_seconds'],
                      'window_ended': w['ended'],
@@ -917,20 +918,22 @@ def replay_cohort(expected, count, donors, replay):
 
 def reference_ab(run, state, dry, keep):
     """Replay unmatched requests at their original concurrency after timing."""
-    config, install = SEAL['config'], SEAL['install']
+    config = SEAL['config']
     model = config['model']
     declared = {a['label']: a for a in arms(config)}
     pending, matched = exactness_plan(config, state['deferred'])
     replayed, padding = 0, 0
     for baseline, by_concurrency in pending.items():
         arm = declared[baseline]
-        arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}",
-                     *model.get('extra_arguments', []), *arm['arguments']]
+        _, install = arm_install(SEAL, arm)
+        identity = arm_identity(SEAL, arm)
+        arguments = arm_arguments(config, arm)
         if keep:
             arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
         idle(run, f'reference-{baseline}', dry, (keep or {}).get('lent_mib'))
         server = r.Server(run / 'references' / baseline, install['install'], install['cache'],
-                          arguments, dry, S / 'stub.py')
+                          arguments, dry, S / 'stub.py', identity=identity)
+        state.setdefault('reference_processes', {})[baseline] = identity
         if dry:
             server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
         power = Power(server.directory, dry)
@@ -971,7 +974,7 @@ def reference_ab(run, state, dry, keep):
             end_power = r.power_check(server.directory, 'after', dry,
                                       state['power']['before']['enforced_power_limits_w'])
             state['power'][f'reference-{baseline}-after'] = end_power
-            r.write(server.directory / 'exactness.json', {'passed': True,
+            r.write(server.directory / 'exactness.json', {'passed': True, **identity,
                     'requests_per_concurrency': {str(c): len(v) for c, v in by_concurrency.items()},
                     'power_before': reference_power, 'power_after': end_power})
         finally:
@@ -980,6 +983,7 @@ def reference_ab(run, state, dry, keep):
             finally:
                 power.stop()
     state['exactness'] = {'passed': True, 'matched_keys': matched, 'replayed_keys': replayed,
+                          'arm_installs': {arm['label']: arm_identity(SEAL, arm) for arm in arms(config)},
                           'padding_requests': padding,
                           'scope': 'Keys compared only within their original concurrency.'}
 
@@ -1049,11 +1053,12 @@ def run_windows(server, arm, state, power, root, passes, reference):
             exact = [stream for w in parts for stream in w['exact']]
             if reference:
                 state['reference'][name] = exact
-                r.write(root / 'reference' / f'{name}.json', {'name': name, 'exact': exact})
+                r.write(root / 'reference' / f'{name}.json', {'name': name, 'exact': exact, **arm_identity(SEAL, arm)})
                 continue
             seconds = sum(w['ended'] - w['started'] for w in parts)
             finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat, 'tokens': tokens,
+                     **arm_identity(SEAL, arm),
                      'arm': arm['arm'], 'visit': arm['visit'],
                      'allocated_steps': sum(w['allocated_steps'] for w in parts),
                      'fallback_launches': sum(w['route']['fallback_launches'] for w in parts),
@@ -1069,7 +1074,8 @@ def run_windows(server, arm, state, power, root, passes, reference):
                 raise RuntimeError(f'{label} {name} {tag}: no full-concurrency steps')
             r.write(root / 'windows' / f'{name}-r{repeat}.json',
                     {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
-            record['windows'][f'{name}-r{repeat}'] = {k: value[k] for k in ('request_tokens_per_second', 'full')}
+            record['windows'][f'{name}-r{repeat}'] = {k: value[k] for k in
+                                                    ('request_tokens_per_second', 'full', 'install', 'revision')}
             wanted = state['reference'].get(name)
             if wanted is None:
                 raise RuntimeError(f'{label} {name}: no reference output')
@@ -1085,20 +1091,21 @@ def run_windows(server, arm, state, power, root, passes, reference):
 def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     config = SEAL['config']
     model = config['model']
-    install = SEAL['install']
+    _, install = arm_install(SEAL, arm)
+    identity = arm_identity(SEAL, arm)
     label, depth = arm['label'], arm['depth']
     root = run / label
     require_keeper(model, keep)
-    arguments = ['--speculation', model['speculation_mode'], '--speculation-depths', f'1:{depth}',
-                 *model.get('extra_arguments', []), *arm['arguments']]
+    arguments = arm_arguments(config, arm)
     if keep:
         arguments += ['--weight-keeper', keep['directory'], '--weight-keeper-policy', 'require']
-    server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py')
+    server = r.Server(root / 'server', install['install'], install['cache'], arguments, dry, S / 'stub.py',
+                      identity=identity)
     cold = faults.ColdEngram(server, config['cold_engram']) if config.get('cold_engram') else None
     if model.get('mode') == 'ab' and dry:
         server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
     records = state.setdefault('warmup_processes', {}) if warmup_only else state['processes']
-    record = records[label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {},
+    record = records[label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {}, **identity,
                                           'reference_pass': reference_pass}
     power = Power(root, dry)
     kv_line = re.compile(re.escape(model['kv_pages_line']).replace(re.escape('{pages}'), r'(\d+)'))
@@ -1186,7 +1193,8 @@ def save(run, state):
     lines = [f"{SEAL['config']['name']}: {state['status']}", '']
     for label, row in state['processes'].items():
         memory = row.get('memory_after_warmup') or {}
-        lines.append(f"{label}: depth {row['depth']}, ready {row.get('readiness_seconds', 0):.1f} s, weights "
+        lines.append(f"{label}: install {row['install']}, revision {row['revision']}, "
+                     f"depth {row['depth']}, ready {row.get('readiness_seconds', 0):.1f} s, weights "
                      f"{row.get('weights', {}).get('source')}, KV pages {row.get('kv_pages_per_rank')}, metrics "
                      f"{row.get('metrics')}; memory after warmup " + '; '.join(
                          f"rank {m['rank']}: {m['free_mib']} MiB free" for m in memory.get('ranks', []))
@@ -1220,6 +1228,7 @@ def main(args):
     global SEAL_RUN
     SEAL_RUN = run
     state = {'status': 'running', 'dry_run': args.dry_run, 'revision': m['install'].get('revision'),
+             'arm_installs': {arm['label']: arm_identity(m, arm) for arm in arms(config)},
              'mode': config['model'].get('mode', 'sweep'), 'order': order(config), 'processes': {}, 'exact': {},
              'reference': {}, 'tokens': [], 'sampled_differences': [], 'power': {}, 'telemetry': {}, 'keeper': None,
              'errors': []}
@@ -1234,6 +1243,8 @@ def main(args):
             raise RuntimeError('the output volume is under its free-space reserve')
         keep = keeper(run, args.dry_run)
         require_keeper(config['model'], keep)
+        if len(sealed_installs(m)[0]) > 1 and not keep:
+            raise RuntimeError('multi-install jobs require weight keeper borrowing')
         state['keeper'] = {'used': bool(keep), **(keep or {})}
         before = state['telemetry']['before'] = r.telemetry(run, 'before', args.dry_run, since)
         reference = before['power_limits_w']

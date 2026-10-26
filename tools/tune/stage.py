@@ -2,7 +2,7 @@
 """Seal a depth tuner stage.
 
 Usage: python3 -I tools/tune/stage.py --model models/<model>/depth-tune.json
-           --install-dir ROUND_DIR [--install-name head] [--job NAME] STAGE_DIR
+           --install-dir ROUND_DIR [--install-name NAME ...] [--job NAME] STAGE_DIR
        python3 -I tools/tune/stage.py --model ... --template STAGE_DIR
 
 ROUND_DIR holds a frozen install in the integration layout: install-NAME
@@ -16,7 +16,9 @@ runtime-seal.json, the queue wrapper tune.job (with the seal's digest),
 keeper-spec.json and staged.json (with an estimate of the job's minutes).
 The wrapper's `# keeper use keeper-spec.json SHA256` header asks runner6 for
 a weight keeper started with the first arm's serve options, from which every
-arm's server borrows its weights.
+arm's server borrows its weights. Repeat --install-name to seal multiple
+builds (default: head); each arm's optional install selects one by name.
+Multiple builds require matching CPU rank recipes and non-speculation options.
 
 --template seals without an install, prompts and tools/qual from this tree,
 for CPU dry runs only: the job refuses it outside --dry-run.
@@ -178,6 +180,8 @@ def keeper_compatibility(config, seal, stage, checkpoint):
                 '--weight-keeper', '--weight-keeper-policy', '--weight-keeper-identity'}
     common, identity, files = None, None, set()
     directory = stage / 'keeper-identities'
+    if directory.exists():
+        shutil.rmtree(directory)
     directory.mkdir()
     for index, arm in enumerate(tune.arms(config)):
         name, install = tune.arm_install(seal, arm)

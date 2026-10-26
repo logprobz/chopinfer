@@ -236,6 +236,76 @@ class Tuner(unittest.TestCase):
             spec = json.loads((root / 'first-base/keeper-spec.json').read_text())
             self.assertEqual(spec['install'], str(root / 'install-head'))
 
+    def test_two_install_ab_stub_records_revisions_and_compares_outputs(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            preflight = subprocess.run([sys.executable, '-B', str(staged / 'harness/preflight.py'), str(staged)],
+                                       env=env, text=True, capture_output=True, timeout=30)
+            self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+            cases = json.loads(next(staged.glob('validation/argv-*/preflight.json')).read_text())['cases']
+            identities = {'a': {'install': 'base', 'revision': '1' * 40},
+                          'b': {'install': 'head', 'revision': '2' * 40}}
+            for row in cases:
+                self.assertEqual(row['revision'], identities[row['arm']]['revision'])
+                self.assertEqual(row['argv'][0], str(root / f"install-{row['install']}/bin/chopinfer"))
+            for case, control in (('standard', {}), ('different', {'TUNE_STUB_PERTURB_INSTALL': 'head'}), ('cold', {})):
+                if case == 'cold':
+                    backing = root / 'rank.bin'
+                    backing.write_bytes(b'\0' * 4096)
+                    model['cold_engram'] = {'images': [{'path': str(backing), 'bytes': 4096,
+                        'views': [{'name': 'fixture', 'offset': 0, 'bytes': 4096}]}]}
+                    model['planning'].update(tokens_per_second={'1': 10}, ar_tokens_per_second={'1': 10})
+                    result = stage_fixture(root, model, destination='cold-stage')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    staged = root / 'cold-stage'
+                out = root / case
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                         '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                        env={**env, **control}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                with self.subTest(case=case):
+                    if case == 'different':
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn('outputs differ', ' '.join(summary['errors']))
+                        continue
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(summary['windows'], {'executed': 4, 'planned': 4})
+                    self.assertTrue(summary['exactness']['passed'])
+                    self.assertEqual(summary['arm_installs'], identities)
+                    for row in report.load(out)[1]:
+                        self.assertEqual({k: row[k] for k in ('install', 'revision')}, identities[row['arm']])
+                    for label, row in summary['processes'].items():
+                        self.assertEqual({k: row[k] for k in ('install', 'revision')}, identities[label.split('-')[0]])
+                    launches = list(out.glob('*/server/launch.json')) + list(out.glob('references/*/launch.json'))
+                    self.assertTrue(launches)
+                    for path in launches:
+                        launch = json.loads(path.read_text())
+                        name = launch['install']
+                        self.assertEqual(launch['serve_argv'][0], str(root / f'install-{name}/bin/chopinfer'))
+                        self.assertIn(str(root / f'cache-{name}'), launch['serve_argv'])
+                        stub = json.loads(path.with_name('stub-install.json').read_text())
+                        self.assertEqual((stub['install'], stub['revision']), (name, launch['revision']))
+                    result = json.loads((out / 'ab.json').read_text())
+                    self.assertEqual(result['arm_installs'], identities)
+                    for arm in identities:
+                        self.assertEqual(result['pairs']['a/b']['1']['arms'][arm]['revision'], identities[arm]['revision'])
+                        self.assertIn(identities[arm]['revision'], (out / 'ab.md').read_text())
+                    if case == 'standard':
+                        self.assertGreater(summary['exactness']['matched_keys'], 0)
+                        self.assertEqual(summary['page_cache_warmup']['install'], 'base')
+                    else:
+                        self.assertGreater(summary['exactness']['replayed_keys'], 0)
+                        self.assertEqual(summary['reference_processes']['a'], identities['a'])
+
     def test_weighted_targets_step_support_and_coverage(self):
         def mutate(root, function):
             for path in root.glob('*/windows/*.json'):
@@ -437,7 +507,8 @@ class Tuner(unittest.TestCase):
             state = {'tokens': [[1]]}
             result = {'started': 0, 'ended': 1, 'requests': [None] * 16,
                       'cached_prompt_tokens': 0, 'priming': {}}
-            with patch.object(tune, 'SEAL', {'config': config}, create=True), \
+            seal = {'config': config, 'install': {'install': 'install-head', 'revision': 'synthetic'}}
+            with patch.object(tune, 'SEAL', seal, create=True), \
                     patch.object(tune, 'closed_loop', return_value=result) as controller:
                 tune.page_cache_warmup(None, {'label': 'w0'}, state, None)
             self.assertEqual([call.args[1] for call in controller.call_args_list], ['w0-c8-r0', 'w0-c16-r0', 'w0-c16-r1'])

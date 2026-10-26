@@ -180,10 +180,11 @@ class Server:
     `cache`, serving the checkpoint with `arguments` added: the arm's own
     speculation options, or none for the package profile's defaults."""
 
-    def __init__(self, directory, install, cache, arguments, dry=False, stub=None):
+    def __init__(self, directory, install, cache, arguments, dry=False, stub=None, identity=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True)
         self.dry = dry
+        self.identity = identity or {}
         self.pidfile = self.directory / 'server-group.json'
         self.process = self.log = None
         with socket.socket() as sock:
@@ -198,11 +199,13 @@ class Server:
         if dry:
             launched = [sys.executable, '-B', str(stub), '--port', str(port), '--directory', str(self.directory),
                         '--kv-pages', str(KV_PAGES), '--kv-line', KV_LINE, '--model', MODEL, '--gpus', str(GPUS),
+                        *(['--install-name', identity['install'], '--revision', identity['revision']] if identity else []),
                         '--', *arguments]
         self.launch = [sys.executable, '-B', str(HERE / 'runner.py'), 'server-child', str(self.pidfile), *launched]
 
     def start(self):
         write(self.directory / 'launch.json', {'argv': self.launch, 'serve_argv': self.server_command,
+                                              **self.identity,
                                               'dry_run': self.dry, 'startup_timeout_seconds': 240,
                                               'lifetime_timeout_seconds': 2100})
         self.log = (self.directory / 'server.log').open('w')

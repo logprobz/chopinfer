@@ -274,7 +274,7 @@ pub(crate) fn dma_consume_requested() -> bool {
 }
 
 #[cfg(test)]
-thread_local! { static CONSUME_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static CONSUME_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
 
 #[cfg(test)]
 pub(crate) fn with_dma_consume<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

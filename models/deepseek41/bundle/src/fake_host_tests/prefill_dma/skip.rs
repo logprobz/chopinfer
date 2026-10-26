@@ -102,9 +102,11 @@ fn compute(journal: &[String]) -> Vec<&String> {
         .collect()
 }
 
-fn compute_by_stream(journal: &[String]) -> std::collections::BTreeMap<&str, Vec<&String>> {
+fn compute_without_consumers_by_stream(
+    journal: &[String],
+) -> std::collections::BTreeMap<&str, Vec<&String>> {
     let mut streams = std::collections::BTreeMap::<&str, Vec<&String>>::new();
-    for line in compute(journal) {
+    for line in compute(journal).into_iter().filter(|line| !consumer(line)) {
         streams
             .entry(line.split_whitespace().nth(1).unwrap())
             .or_default()
@@ -127,12 +129,26 @@ fn sparse_dma_preserves_compute_and_orders_only_the_required_rows() {
             73 * 4
         );
         assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
-        let before = compute(&reference);
-        let after = compute(&candidate);
+        let before = compute(&reference)
+            .into_iter()
+            .filter(|line| !consumer(line))
+            .collect::<Vec<_>>();
+        let after = compute(&candidate)
+            .into_iter()
+            .filter(|line| !consumer(line))
+            .collect::<Vec<_>>();
         assert_eq!(before.len(), after.len());
         for (index, (before, after)) in before.iter().zip(&after).enumerate() {
             assert_eq!(before, after, "compute dispatch {index}");
         }
+        assert_eq!(
+            split_chains(&reference, &candidate),
+            if rows == 8192 {
+                (40 * 4, 20 * 4)
+            } else {
+                (0, 0)
+            }
+        );
         let copies = candidate
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
@@ -205,7 +221,18 @@ fn sparse_dma_serves_dspark_target_prefill() {
         // of independent streams around the transport joins. Each stream
         // must retain every launch, operand, extent and alias in order.
         // The dependency audit below still checks all cross-stream joins.
-        assert_eq!(compute_by_stream(&reference), compute_by_stream(&candidate));
+        assert_eq!(
+            compute_without_consumers_by_stream(&reference),
+            compute_without_consumers_by_stream(&candidate)
+        );
+        assert_eq!(
+            split_chains(&reference, &candidate),
+            if rows == 8192 {
+                (40 * 4, 20 * 4)
+            } else {
+                (0, 0)
+            }
+        );
         assert_eq!(phased(&candidate), 0);
         assert_eq!(
             candidate
@@ -383,9 +410,23 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
         assert_eq!(count(&candidate, SUM), 0);
         assert_eq!(count(&candidate, BF16_SUM), 73 * 4);
         assert_eq!(count(&candidate, BF16_ROUND), 73 * 6);
-        let before = compute(&reference);
-        let after = compute(&candidate);
+        let before = compute(&reference)
+            .into_iter()
+            .filter(|line| !consumer(line))
+            .collect::<Vec<_>>();
+        let after = compute(&candidate)
+            .into_iter()
+            .filter(|line| !consumer(line))
+            .collect::<Vec<_>>();
         assert_eq!(before, after);
+        assert_eq!(
+            split_chains(&reference, &candidate),
+            if rows == 8192 {
+                (40 * 4, 20 * 4)
+            } else {
+                (0, 0)
+            }
+        );
         let copies = candidate
             .iter()
             .filter(|line| line.starts_with("peer-copy "))

@@ -801,22 +801,18 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                     Phase::Prefill,
                     0,
                     vec![1, 2, 3],
-                    if serving.draft_tokens > 0 {
+                    Some(if serving.draft_tokens > 0 {
                         "prefill_disabled"
                     } else {
                         "ar_prefill"
-                    },
+                    }),
                     "prefill",
                 ),
                 (
                     Phase::Decode,
                     3,
                     vec![4],
-                    if serving.draft_tokens > 0 {
-                        "undrafted_disabled"
-                    } else {
-                        "ar_decode_disabled"
-                    },
+                    None,
                     if serving.draft_tokens > 0 {
                         "dspark_undrafted"
                     } else {
@@ -854,7 +850,10 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                 let entry = if prepared {
                     format!("engram/prepared/{fast}")
                 } else {
-                    format!("engram/sync/{sync}")
+                    format!(
+                        "engram/sync/{}",
+                        sync.expect("decode uses prepared gathers")
+                    )
                 };
                 let calls = records[0]["entries"][&entry]["launches"]
                     .as_u64()

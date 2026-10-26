@@ -27,10 +27,7 @@ pub(crate) struct Cycle {
     pub diagnostics: Option<DeviceBufferSpanV1>,
     pub layers: Vec<LayerGather>,
     pub gathering: bool,
-    /// Whether decode steps without drafts upload their host-hashed rows
-    /// through `layers` (`instance::ar_engram`'s switch).
-    pub undrafted: bool,
-    /// Such a step's ids, hashed and awaiting its target launch.
+    /// An undrafted decode step's ids, hashed and awaiting its target launch.
     pub deferred: Option<Deferred>,
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
@@ -82,7 +79,6 @@ impl Cycle {
             diagnostics: None,
             layers: Vec::new(),
             gathering: false,
-            undrafted: false,
             deferred: None,
             draft_done: Vec::new(),
             draft_joined: None,

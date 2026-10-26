@@ -29,7 +29,6 @@ impl Instance {
         let Some(device) = &mut self.dspark else {
             return Ok(());
         };
-        device.cycle.undrafted = true;
         let memory = device
             .cycle
             .memory
@@ -172,12 +171,10 @@ impl Instance {
             });
         }
         let early = device.cycle.early.is_some();
-        if device.cycle.undrafted {
-            let layers = device.cycle.layers.len();
-            self.log(&format!(
-                "AR Engram: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
-            ));
-        }
+        let layers = device.cycle.layers.len();
+        self.log(&format!(
+            "AR Engram: DSpark decode steps without drafts join {layers} Engram layers at their consumers"
+        ));
         if early {
             self.log(
                 "DSpark drafted steps gather each item's first Engram rows before the drafter",
@@ -436,7 +433,7 @@ impl Instance {
         };
         let cycle = &mut device.cycle;
         let stride = cycle.hash.shape.stride as usize;
-        if !cycle.undrafted || cycle.layers.is_empty() || hashed.rows() > stride {
+        if cycle.layers.is_empty() || hashed.rows() > stride {
             return Ok(false);
         }
         if cycle.pending.is_some() || cycle.gathering || cycle.deferred.is_some() {

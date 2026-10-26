@@ -204,9 +204,7 @@ impl Program for Work<'_> {
             return SyncReason::NoPreparedGather;
         };
         let cycle = &device.cycle;
-        if !cycle.undrafted {
-            SyncReason::UndraftedDisabled
-        } else if !cycle.layers.is_empty() && hashed.rows() > cycle.hash.shape.stride as usize {
+        if !cycle.layers.is_empty() && hashed.rows() > cycle.hash.shape.stride as usize {
             SyncReason::GatherCapacity
         } else {
             SyncReason::NoPreparedGather

@@ -35,7 +35,6 @@ pub enum SyncReason {
     NoAsyncService,
     ArDecodeDisabled,
     PrefillDisabled,
-    UndraftedDisabled,
     MixedTarget,
     HostTarget,
     NoPreparedGather,
@@ -44,7 +43,7 @@ pub enum SyncReason {
 
 impl SyncReason {
     #[cfg(test)]
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 11] = [
         Self::ArPrefill,
         Self::Media,
         Self::Taps,
@@ -52,7 +51,6 @@ impl SyncReason {
         Self::NoAsyncService,
         Self::ArDecodeDisabled,
         Self::PrefillDisabled,
-        Self::UndraftedDisabled,
         Self::MixedTarget,
         Self::HostTarget,
         Self::NoPreparedGather,
@@ -68,7 +66,6 @@ impl SyncReason {
             Self::NoAsyncService => "engram/sync/no_async_service",
             Self::ArDecodeDisabled => "engram/sync/ar_decode_disabled",
             Self::PrefillDisabled => "engram/sync/prefill_disabled",
-            Self::UndraftedDisabled => "engram/sync/undrafted_disabled",
             Self::MixedTarget => "engram/sync/mixed_target",
             Self::HostTarget => "engram/sync/host_target",
             Self::NoPreparedGather => "engram/sync/no_prepared_gather",

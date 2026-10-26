@@ -62,16 +62,6 @@ pub fn entries() -> Vec<Entry> {
         )
         .collect()
 }
-pub fn label(e: &Entry) -> String {
-    format!(
-        "cluster{}n{}c{}s{}{}",
-        e.tile_rows,
-        e.tile_n,
-        e.splits,
-        e.stages,
-        if e.distributed { "d" } else { "" }
-    )
-}
 pub fn cubins() -> Vec<CubinSpec> {
     vec![kernels_sm120::gemm::mxfp8_fold_cluster::cubin_spec(CUBIN, &entries(), true).unwrap()]
 }

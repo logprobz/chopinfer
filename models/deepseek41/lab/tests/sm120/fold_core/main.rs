@@ -17,6 +17,7 @@ use runtime_cuda::{DeviceBuffer, Function, Module, Stream};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
 mod arena;
+#[allow(dead_code)]
 #[path = "../../../sm120/fold_cluster.rs"]
 mod cluster_family;
 mod data;

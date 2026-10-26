@@ -275,11 +275,10 @@ fn simple() -> Vec<Recipe> {
                     ("position_mma_guard_probe", spec)
                 })
                 .collect::<Vec<_>>();
-            let specs = families
+            families
                 .iter()
                 .map(|(_, spec)| spec.clone())
-                .collect::<Vec<_>>();
-            specs
+                .collect::<Vec<_>>()
         }),
         one!(
             Bundle,

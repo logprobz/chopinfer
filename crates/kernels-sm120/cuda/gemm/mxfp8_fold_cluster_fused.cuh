@@ -1,16 +1,38 @@
 #pragma once
-#include "mxfp8_fold_cluster.cuh"
+#include "fold_rows.cuh"
+#include "mxfp8_fold_admit.cuh"
+#include "../common/ptx_control.cuh"
 #include "../row/ceil_parallel.cuh"
 #include "mxfp8_fold_packed.cuh"
 
 namespace chop::gemm::mxfp8_fold_cluster_fused {
-using mxfp8_fold_cluster::Layout;
-using mxfp8_fold_cluster::dynamic_shared_bytes;
-using mxfp8_fold_cluster::wait_newer;
+// cp.async.wait_group with a compile-time count.
+template<int Pending>
+__device__ __forceinline__ void wait_newer() {
+  asm volatile("cp.async.wait_group %0;" :: "n"(Pending) : "memory");
+}
 
-// mxfp8_fold_cluster::run without its admission launch and, with Quantize,
-// with the next projection's block quantization in the merge. The folds,
-// the fold partials and their increasing-K sums are unchanged.
+// Dynamic shared memory of one CTA: Stages fold slots of Rows activation
+// rows then TileN weight rows of 128 bytes, their scale quads, and row flags.
+template<int Rows, int TileN, int Stages>
+struct Layout {
+  static constexpr uint32_t stage = (Rows + TileN) * 128;
+  static constexpr uint32_t scale_stage = (Rows + TileN) * 4;
+  static constexpr uint32_t scales = Stages * stage;
+  static constexpr uint32_t failed = scales + Stages * scale_stage;
+  static constexpr uint32_t bytes = failed + Rows * 4;
+};
+
+__device__ __forceinline__ uint32_t dynamic_shared_bytes() {
+  uint32_t bytes;
+  asm volatile("mov.u32 %0, %dynamic_smem_size;" : "=r"(bytes));
+  return bytes;
+}
+
+
+// Cluster split-K folds with workspace or producer-status admission.
+// Distributed keeps the fold slabs in cluster shared memory. Quantize
+// applies the next projection's block quantizer after the ordered sum.
 //
 // Admission: a live row fails exactly when its status, ORed with the
 // Pending flag bytes a fused producer left for the row, is nonzero after the
@@ -43,7 +65,8 @@ using mxfp8_fold_cluster::wait_newer;
 // stored codes, unlike the row quantizer's zeros, are then dead.
 template<int N, int K, int Groups, int RowStride, int GroupStride, int TileN,
          int Rows, int Splits, int Stages, int Pending, bool Quantize,
-         uint32_t FloorBits, bool IgnoreStatus, bool PackedWeights = false>
+         uint32_t FloorBits, bool IgnoreStatus, bool PackedWeights = false,
+         bool WorkspaceAdmission = false, bool Distributed = false, bool OmitFirst = false>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
     const uint8_t* weights, const uint8_t* weight_scales, float* output,
     uint8_t* codes_out, uint8_t* scales_out, uint8_t* flags_out,
@@ -63,6 +86,8 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   static_assert(Stages >= 2 && Stages <= Per);
   static_assert(!Quantize || (TileN % 32 == 0 && Outputs % 32 == 0 && Threads * 4 <= L::scales));
   static_assert(Pending % 16 == 0);
+  static_assert(!WorkspaceAdmission || (Pending == 0 && !Quantize && !IgnoreStatus));
+  static_assert(!Distributed || (!Quantize && Per * Rows * TileN * 4 <= L::scales));
   static_assert(!PackedWeights || N % 8 == 0);
   extern __shared__ __align__(16) uint8_t storage[];
   // A launch with less shared memory than the layout is a planning fault.
@@ -132,20 +157,25 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     __syncthreads();
     return;
   }
-  for (uint32_t r = threadIdx.x; r < Rows; r += Threads) {
-    uint32_t flags = 0;
-    if (r < live) {
-#pragma unroll
-      for (int b = 0; b < Pending; b += 16) {
-        const uint4 v = __ldcg(reinterpret_cast<const uint4*>(pending + uint64_t(r) * Pending + b));
-        flags |= v.x | v.y | v.z | v.w;
+  if constexpr (WorkspaceAdmission) {
+    for (uint32_t r = threadIdx.x; r < Rows; r += Threads)
+      failed[r] = r < live ? reinterpret_cast<const uint32_t*>(workspace)[r] : 1;
+  } else {
+    for (uint32_t r = threadIdx.x; r < Rows; r += Threads) {
+      uint32_t flags = 0;
+      if (r < live) {
+  #pragma unroll
+        for (int b = 0; b < Pending; b += 16) {
+          const uint4 v = __ldcg(reinterpret_cast<const uint4*>(pending + uint64_t(r) * Pending + b));
+          flags |= v.x | v.y | v.z | v.w;
+        }
+        flags = (flags | flags >> 8 | flags >> 16 | flags >> 24) & 0xffu;
+        if (Pending && flags && blockIdx.x == 0 && blockIdx.z == 0)
+          atomicOr(status + status_row_offset + r, flags);
       }
-      flags = (flags | flags >> 8 | flags >> 16 | flags >> 24) & 0xffu;
-      if (Pending && flags && blockIdx.x == 0 && blockIdx.z == 0)
-        atomicOr(status + status_row_offset + r, flags);
+      failed[r] = r >= live ? 1u
+          : IgnoreStatus ? 0u : flags | __ldcg(status + status_row_offset + r);
     }
-    failed[r] = r >= live ? 1u
-        : IgnoreStatus ? 0u : flags | __ldcg(status + status_row_offset + r);
   }
   __syncthreads();
 #pragma unroll
@@ -204,8 +234,14 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
   asm volatile("cp.async.wait_group 0;" ::: "memory");
   // Slab of fold partials [f][row][column] for this CTA.
   constexpr uint32_t SlabFloats = Per * Rows * TileN;
-  float* slab = reinterpret_cast<float*>(workspace)
-      + (uint64_t(blockIdx.z) * gridDim.x + blockIdx.x) * SlabFloats;
+  float* slab;
+  if constexpr (Distributed) {
+    __syncthreads();
+    slab = reinterpret_cast<float*>(storage);
+  } else {
+    slab = reinterpret_cast<float*>(workspace + (WorkspaceAdmission ? 256 : 0))
+        + (uint64_t(blockIdx.z) * gridDim.x + blockIdx.x) * SlabFloats;
+  }
 #pragma unroll
   for (int f = 0; f < Per; ++f) {
 #pragma unroll
@@ -237,9 +273,15 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       for (int f = 0; f < Per; ++f) {
         if (source * Per + f >= Folds) continue;
         const uint32_t at = (f * Rows + row) * TileN + column;
-        const float* base = reinterpret_cast<const float*>(workspace)
-            + (uint64_t(blockIdx.z - split + source) * gridDim.x + blockIdx.x) * SlabFloats;
-        values[e][source * Per + f] = __ldcg(base + at);
+        if constexpr (Distributed) {
+          const uint32_t remote = ptx::cluster_map_shared(slab + at, source);
+          asm volatile("ld.shared::cluster.f32 %0, [%1];"
+              : "=f"(values[e][source * Per + f]) : "r"(remote) : "memory");
+        } else {
+          const float* base = reinterpret_cast<const float*>(workspace + (WorkspaceAdmission ? 256 : 0))
+              + (uint64_t(blockIdx.z - split + source) * gridDim.x + blockIdx.x) * SlabFloats;
+          values[e][source * Per + f] = __ldcg(base + at);
+        }
       }
     }
   }
@@ -255,7 +297,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     float total = 0.0f;
     if (!failed[row]) {
 #pragma unroll
-      for (int fold = 0; fold < Folds; ++fold) total = __fadd_rn(total, values[e][fold]);
+      for (int fold = 0; fold < Folds; ++fold) total = __fadd_rn(total, OmitFirst && fold == 0 ? 0.0f : values[e][fold]);
     }
     const uint64_t at = (uint64_t(row) * Groups + g) * N + column_base + column;
     output[at] = total;
@@ -275,6 +317,11 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
         *reinterpret_cast<uint16_t*>(codes_out + block + 2 * lane) = value.codes;
       __syncwarp();
     }
+  }
+  if constexpr (Distributed) {
+    // No CTA leaves while another may still read its shared memory.
+    ptx::cluster_arrive_release();
+    ptx::cluster_wait_acquire();
   }
 }
 

@@ -1,5 +1,5 @@
 //! C16/C32 split-K folds whose K splits form one cluster
-//! (`mxfp8_fold_cluster::run`), for the five attention projection shapes:
+//! (`mxfp8_fold_cluster_fused::run`), for the five attention projection shapes:
 //! every fold's loads in flight at once and a rank-parallel ordered merge,
 //! through the workspace or distributed shared memory.
 use kernel_build::CubinSpec;

@@ -74,7 +74,7 @@ impl Entry {
         }
         Ok(())
     }
-    /// Dynamic shared memory (`mxfp8_fold_cluster::Layout`): each slot's
+    /// Dynamic shared memory (`mxfp8_fold_cluster_fused::Layout`): each slot's
     /// operand rows and scale quads, then one flag per row.
     pub fn shared_bytes(&self) -> u32 {
         let rows = self.tile_rows + self.tile_n;
@@ -258,7 +258,7 @@ impl Entry {
         specs[1].max_threads = self.tile_n * 4;
         specs[1].min_blocks = 1;
         specs[1].body = format!(
-            "chop::gemm::mxfp8_fold_cluster::run<{},{},{},{},{},{},{},{},{},{},false>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);",
+            "chop::gemm::mxfp8_fold_cluster_fused::run<{},{},{},{},{},{},{},{},{},0,false,0u,false,false,true,{},false>(activations,activation_scales,weights,weight_scales,output,nullptr,nullptr,nullptr,nullptr,workspace,live_rows,nullptr,0,rows);",
             q.n,
             q.k,
             q.groups,
@@ -303,7 +303,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry], controls: bool) -> Result<Cubin
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec!["#include \"gemm/mxfp8_fold_cluster.cuh\"".into()],
+        headers: vec!["#include \"gemm/mxfp8_fold_cluster_fused.cuh\"".into()],
         defines: vec![],
         entries: entries
             .iter()
@@ -429,14 +429,14 @@ mod tests {
                     let specs = e.specs();
                     assert_eq!(specs.len(), 2);
                     assert!(specs[1].body.contains(&format!(
-                        "run<{n},{k},{groups},{},{k},32,{tile_rows},8,{},{distributed},false>(",
+                        "run<{n},{k},{groups},{},{k},32,{tile_rows},8,{},0,false,0u,false,false,true,{distributed},false>(",
                         k * groups,
                         k / 128 / 8
                     )));
                     let controls = e.control_specs();
                     assert_eq!(controls.len(), 2);
                     assert_eq!(controls[0].symbol, format!("{}_omit_v1", specs[1].symbol));
-                    assert!(controls[0].body.ends_with(",true>(activations,activation_scales,weights,weight_scales,output,workspace,live_rows,rows);"));
+                    assert!(controls[0].body.ends_with(",true>(activations,activation_scales,weights,weight_scales,output,nullptr,nullptr,nullptr,nullptr,workspace,live_rows,nullptr,0,rows);"));
                     assert!(controls[1].symbol.ends_with("_admit_v1_delayed_v1"));
                 }
             }
@@ -501,7 +501,10 @@ mod tests {
         assert!(ring.validate().is_err());
         let both = [entry(q, 32, 8, false), entry(q, 32, 8, true)];
         let spec = cubin_spec("cluster", &both, false).unwrap();
-        assert_eq!(spec.headers, ["#include \"gemm/mxfp8_fold_cluster.cuh\""]);
+        assert_eq!(
+            spec.headers,
+            ["#include \"gemm/mxfp8_fold_cluster_fused.cuh\""]
+        );
         assert_eq!(spec.entries.len(), 4);
         assert!(spec.entries.iter().all(|e| !e.body.contains(",true>(")));
         let lab = cubin_spec("cluster", &both, true).unwrap();

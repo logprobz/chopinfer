@@ -2,6 +2,7 @@
 
 pub mod cluster;
 mod construction;
+pub mod dense_decode;
 pub mod fused;
 pub mod mid;
 pub mod mxfp8_fold;

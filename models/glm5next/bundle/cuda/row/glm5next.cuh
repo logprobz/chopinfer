@@ -3,39 +3,20 @@
 // rounding of an all-reduced F32 row to BF16, the widening of a BF16 row
 // into an F32 rank partial, the drafter's residual add and the gather of its
 // row inputs. One CTA per row; rows at or past the device live count return.
-#include "row/row.cuh"
+#include "row/rounding.cuh"
 
 namespace chop::row::glm5next {
 
 // output[row] = bf16(input[row]), round to nearest even.
 template<int Width>
 __device__ void round_rows(const float* input, uint16_t* output, const uint32_t* live_rows) {
-  begin();
-  static_assert(Width % 4 == 0);
-  const uint32_t row = blockIdx.x;
-  if (row >= *live_rows) return;
-  for (int c = threadIdx.x * 4; c < Width; c += blockDim.x * 4) {
-    const float4 v = reinterpret_cast<const float4*>(input + uint64_t(row) * Width + c)[0];
-    uint2 bits;
-    bits.x = uint32_t(to_bf(v.x)) | (uint32_t(to_bf(v.y)) << 16);
-    bits.y = uint32_t(to_bf(v.z)) | (uint32_t(to_bf(v.w)) << 16);
-    reinterpret_cast<uint2*>(output + uint64_t(row) * Width + c)[0] = bits;
-  }
+  rounding::round_rows<Width>(input, output, live_rows);
 }
 
 // output[row] = f32(input[row]), exact.
 template<int Width>
 __device__ void widen_rows(const uint16_t* input, float* output, const uint32_t* live_rows) {
-  begin();
-  static_assert(Width % 4 == 0);
-  const uint32_t row = blockIdx.x;
-  if (row >= *live_rows) return;
-  for (int c = threadIdx.x * 4; c < Width; c += blockDim.x * 4) {
-    const uint2 bits = reinterpret_cast<const uint2*>(input + uint64_t(row) * Width + c)[0];
-    const float4 v = make_float4(bf(uint16_t(bits.x)), bf(uint16_t(bits.x >> 16)),
-                                 bf(uint16_t(bits.y)), bf(uint16_t(bits.y >> 16)));
-    reinterpret_cast<float4*>(output + uint64_t(row) * Width + c)[0] = v;
-  }
+  rounding::widen_rows<Width>(input, output, live_rows);
 }
 
 // x[row] = bf16(x[row] + y[row]), F32 add, one rounding: the drafter's

@@ -22,7 +22,7 @@ use model_deepseek41_contract::moe::Experts;
 // Full graphs, poisoned replays and clean eager/graph memcheck preserve
 // the result. Local-fold candidates remain unselected. A separate measured
 // router epilogue may fuse projection reduction, selection and metadata.
-pub(super) fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
+fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
     let mut out = Vec::new();
     for phase in [ExecutionPhase::Decode, ExecutionPhase::Verify] {
         for rows in 1..=64 {
@@ -139,7 +139,7 @@ fn strips2(entry: &Entry, phase: ExecutionPhase, rows: u32) -> bool {
     stage_selected("strip2", entry.experts(), phase, rows)
 }
 
-pub(super) fn stage_selected(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) -> bool {
+fn stage_selected(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) -> bool {
     super::moe::choice(
         &model_deepseek41_contract::geometry::FLASH,
         site,

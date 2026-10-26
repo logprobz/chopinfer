@@ -1,346 +1,224 @@
-use crate::sm120::{ceil_cached, ceil_parallel, ceil_prefill};
-use kernel_build::tuning::{Key, Knob, Knobs, Row, Table, Target};
-use kernel_core::contract::DType;
+//! Served query domains and the keys that retain their baseline schedule.
+use kernel_build::tuning::Key;
 use model_deepseek41_contract::{
     geometry::FLASH,
-    rows,
-    tuning::{Family, table},
+    tuning::{self, Family},
 };
 
 fn add(
-    t: &mut Table,
+    out: &mut std::collections::BTreeSet<Key>,
     op: &str,
     weights: &str,
     shape: &[(&str, u32)],
     bucket: u32,
-    range: Option<[u32; 2]>,
-    schedule: &str,
-    knobs: Knobs,
 ) {
-    t.upsert(Row {
-        key: Key {
-            op: if op.starts_with("ceil_") {
-                let (site, phase) = op.rsplit_once('.').unwrap();
-                format!("norm.{site}_{weights}.{phase}")
-            } else {
-                format!("norm.{op}")
-            },
-            weights: if op.starts_with("ceil_") || op.starts_with("activation_") {
-                "none"
-            } else {
-                "bf16"
-            }
-            .into(),
-            shape: shape.iter().map(|&(k, v)| (k.into(), v)).collect(),
-            bucket,
-            rows: range,
-        },
-        schedule: schedule.into(),
-        knobs,
-    })
-    .unwrap();
-}
-
-fn dtype(input: DType) -> &'static str {
-    match input {
-        DType::Bf16 => "bf16",
-        DType::F32 => "f32",
-        _ => unreachable!(),
-    }
-}
-
-fn generated() -> Table {
-    let mut t = Table::new(Target {
-        compute_capability: 120,
-        sm_count: 188,
+    out.insert(Key {
+        op: op.into(),
+        weights: weights.into(),
+        shape: shape.iter().map(|&(k, v)| (k.into(), v)).collect(),
+        bucket,
+        rows: None,
     });
-    for (index, (site, buckets)) in [
-        ("input_cached.decode", vec![(1, 32), (8, 32)]),
-        (
-            "query_cached.decode",
-            vec![(1, 16), (6, 16), (8, 32), (32, 32)],
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let width = rows::norm_quantizers(&FLASH)[index].norm.width;
-        for (rows, warps) in buckets {
-            add(
-                &mut t,
-                site,
-                "f32",
-                &[("width", width)],
-                64,
-                Some([rows, rows]),
-                "cached",
-                [("warps".into(), Knob::Count(warps))].into(),
-            );
-        }
-        for (rows, warps) in vec![
-            (2, if index == 1 { 16 } else { 32 }),
-            (4, if index == 1 { 16 } else { 32 }),
-        ] {
-            let site = if index == 0 {
-                "input_small.decode"
-            } else {
-                "query_small.decode"
-            };
-            add(
-                &mut t,
-                site,
-                "f32",
-                &[("ranks", 4), ("width", width)],
-                4,
-                Some([rows, rows]),
-                "cached",
-                [("warps".into(), Knob::Count(warps))].into(),
-            );
-        }
+}
+fn dtype(dtype: kernel_core::contract::DType) -> &'static str {
+    match dtype {
+        kernel_core::contract::DType::Bf16 => "bf16",
+        kernel_core::contract::DType::F32 => "f32",
+        _ => panic!("norm table dtype"),
     }
-    for (site, width, cached) in [
-        (
-            "input_strategy.prefill",
-            rows::norm_quantizers(&FLASH)[0].norm.width,
-            true,
-        ),
-        (
-            "query_strategy.prefill",
-            rows::norm_quantizers(&FLASH)[1].norm.width,
-            false,
-        ),
-    ] {
-        add(
-            &mut t,
-            site,
-            "f32",
-            &[("width", width)],
-            8192,
-            None,
-            if cached { "cached" } else { "reread" },
-            Knobs::new(),
-        );
-    }
-    for rows in 1..=8192 {
-        for (index, (site, chosen)) in [
-            (
-                "input_admit.prefill",
-                rows == 8192 || ((64..=2624).contains(&rows) && (rows - 64) % 128 == 0),
-            ),
-            ("query_admit.prefill", rows == 8192),
-        ]
+}
+fn domains() -> std::collections::BTreeSet<Key> {
+    use crate::sm120::{ceil_parallel, ceil_prefill};
+    use model_deepseek41_contract::{
+        admission::SUPPORTED_RANKS,
+        rows,
+        serving::{PREFILL_TOKENS, VERIFY_DECODE_ROWS},
+    };
+    let mut out = std::collections::BTreeSet::new();
+    for (site, query) in ["input", "query"]
         .into_iter()
-        .enumerate()
-        {
-            if chosen {
-                add(
-                    &mut t,
-                    site,
-                    "f32",
-                    &[("width", rows::norm_quantizers(&FLASH)[index].norm.width)],
-                    8192,
-                    Some([rows, rows]),
-                    "admit",
-                    Knobs::new(),
-                );
-            }
-        }
-    }
-    for rows in 1..=4 {
-        if matches!(rows, 2 | 4) {
+        .zip(rows::norm_quantizers(&FLASH))
+    {
+        let shape = [("width", query.norm.width)];
+        let weights = dtype(query.norm.weight);
+        add(
+            &mut out,
+            &format!("norm.{site}_cached.decode"),
+            weights,
+            &shape,
+            VERIFY_DECODE_ROWS,
+        );
+        for &ranks in SUPPORTED_RANKS {
             add(
-                &mut t,
-                "small_admit.decode",
-                "f32",
-                &[("ranks", 4)],
+                &mut out,
+                &format!("norm.{site}_small.decode"),
+                weights,
+                &[("ranks", ranks), ("width", query.norm.width)],
                 4,
-                Some([rows, rows]),
-                "admit",
-                Knobs::new(),
+            );
+        }
+        for kind in ["strategy", "admit"] {
+            add(
+                &mut out,
+                &format!("norm.{site}_{kind}.prefill"),
+                weights,
+                &shape,
+                PREFILL_TOKENS,
             );
         }
     }
-    for ranks in [1, 2, 4] {
+    add(
+        &mut out,
+        "norm.small_admit.decode",
+        "bf16",
+        &[("ranks", 4)],
+        4,
+    );
+    for &ranks in SUPPORTED_RANKS {
         for entry in ceil_parallel::baseline_quantizers(&FLASH, ranks).unwrap() {
-            let shape = [("ranks", ranks), ("width", entry.query.width)];
-            let capacity = legacy_capacity(ranks, &entry);
             add(
-                &mut t,
-                "ceil_capacity.decode",
-                dtype(entry.query.input),
+                &mut out,
+                &format!("norm.ceil_capacity_{}.decode", dtype(entry.query.input)),
+                "none",
+                &[("ranks", ranks), ("width", entry.query.width)],
+                entry.capacity,
+            );
+        }
+        for entry in ceil_parallel::registered_quantizers(&FLASH, ranks).unwrap() {
+            let shape = [("ranks", ranks), ("width", entry.query.width)];
+            add(
+                &mut out,
+                &format!("norm.ceil_registered_{}.decode", dtype(entry.query.input)),
+                "none",
+                &shape,
+                VERIFY_DECODE_ROWS,
+            );
+            add(
+                &mut out,
+                &format!("norm.ceil_cached_{}.decode", dtype(entry.query.input)),
+                "none",
                 &shape,
                 entry.capacity,
-                None,
-                "parallel",
-                [("capacity".into(), Knob::Count(capacity))].into(),
             );
         }
-        for entry in legacy_registered(ranks) {
-            let shape = [("ranks", ranks), ("width", entry.query.width)];
-            add(
-                &mut t,
-                "ceil_registered.decode",
-                dtype(entry.query.input),
-                &shape,
-                64,
-                None,
-                "parallel",
-                [("capacity".into(), Knob::Count(entry.capacity))].into(),
-            );
-            if ceil_cached::cached(&entry).is_some() {
-                add(
-                    &mut t,
-                    "ceil_cached.decode",
-                    dtype(entry.query.input),
-                    &shape,
-                    entry.capacity,
-                    None,
-                    "cached",
-                    Knobs::new(),
-                );
-            }
-        }
-        let capacity = if ranks == 4 { 64 } else { 60 };
         add(
-            &mut t,
-            "activation_capacity.decode",
-            "bf16",
+            &mut out,
+            "norm.activation_capacity.decode",
+            "none",
             &[("ranks", ranks)],
-            64,
-            None,
-            "parallel",
-            [("capacity".into(), Knob::Count(capacity))].into(),
+            VERIFY_DECODE_ROWS,
         );
         for entry in ceil_prefill::baseline_quantizers(&FLASH, ranks).unwrap() {
             add(
-                &mut t,
-                "ceil_prefill.prefill",
-                dtype(entry.query.input),
+                &mut out,
+                &format!("norm.ceil_prefill_{}.prefill", dtype(entry.query.input)),
+                "none",
                 &[("ranks", ranks), ("width", entry.query.width)],
                 entry.capacity,
-                None,
-                "prefill",
-                [(
-                    "warps".into(),
-                    Knob::Count(ceil_prefill::selected_warps(entry.query.width)),
-                )]
-                .into(),
             );
         }
     }
-    t
+    out
 }
 
-#[test]
-#[ignore = "one-time migration generator; writes to the external evidence directory"]
-fn generate() {
-    let out = std::path::PathBuf::from(
-        std::env::var_os("CHOPINFER_TUNING_OUT").expect("external output directory"),
-    );
-    assert!(
-        !out.canonicalize().unwrap().starts_with(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .canonicalize()
-                .unwrap()
-        )
-    );
-    std::fs::write(out.join("norm.json"), generated().render()).unwrap();
-}
+const UNTUNED: &[&str] = &[
+    "norm.ceil_cached_bf16.decode none ranks=1,width=13824 t32: 1..=32",
+    "norm.ceil_cached_bf16.decode none ranks=1,width=32768 t60: 1..=60",
+    "norm.ceil_cached_bf16.decode none ranks=2,width=3456 t60: 1..=60",
+    "norm.ceil_cached_bf16.decode none ranks=2,width=16384 t60: 1..=60",
+    "norm.ceil_cached_bf16.decode none ranks=4,width=1728 t64: 1..=64",
+    "norm.ceil_cached_bf16.decode none ranks=4,width=3456 t32: 1..=32",
+    "norm.ceil_cached_f32.decode none ranks=1,width=512 t60: 1..=60",
+    "norm.ceil_cached_f32.decode none ranks=1,width=1280 t60: 1..=60",
+    "norm.ceil_cached_f32.decode none ranks=2,width=512 t60: 1..=60",
+    "norm.ceil_cached_f32.decode none ranks=2,width=1280 t60: 1..=60",
+    "norm.ceil_cached_f32.decode none ranks=4,width=512 t64: 1..=64",
+    "norm.ceil_cached_f32.decode none ranks=4,width=1280 t64: 1..=64",
+    "norm.ceil_cached_f32.decode none ranks=4,width=2048 t64: 1..=64",
+    "norm.input_admit.prefill bf16 width=5120 t8192: 1..=63,65..=191,193..=319,321..=447,449..=575,577..=703,705..=831,833..=959,961..=1087,1089..=1215,1217..=1343,1345..=1471,1473..=1599,1601..=1727,1729..=1855,1857..=1983,1985..=2111,2113..=2239,2241..=2367,2369..=2495,2497..=2623,2625..=8191",
+    "norm.input_cached.decode bf16 width=5120 t64: 2..=7,9..=64",
+    "norm.input_small.decode bf16 ranks=1,width=5120 t4: 1..=4",
+    "norm.input_small.decode bf16 ranks=2,width=5120 t4: 1..=4",
+    "norm.input_small.decode bf16 ranks=4,width=5120 t4: 1,3",
+    "norm.query_admit.prefill bf16 width=1280 t8192: 1..=8191",
+    "norm.query_cached.decode bf16 width=1280 t64: 2..=5,7,9..=31,33..=64",
+    "norm.query_small.decode bf16 ranks=1,width=1280 t4: 1..=4",
+    "norm.query_small.decode bf16 ranks=2,width=1280 t4: 1..=4",
+    "norm.query_small.decode bf16 ranks=4,width=1280 t4: 1,3",
+    "norm.small_admit.decode bf16 ranks=4 t4: 1,3",
+];
 
 #[test]
-fn differential() {
-    let expected = generated();
-    let actual = table(&FLASH, Family::Norm).unwrap();
-    assert_eq!(actual.render(), expected.render());
+fn pin_untuned_served_keys() {
+    let family = Family::Norm;
+    let table = tuning::table(&FLASH, family).unwrap();
+    assert!(!table.rows().is_empty());
+    let domains = domains();
+    let mut missing = Vec::new();
     let mut cases = 0;
-    for row in expected.rows() {
-        let key = &row.key;
-        for rows in 0..=key.bucket + 1 {
-            assert_eq!(
-                actual.select(&key.op, &key.weights, &key.shape, key.bucket, rows),
-                expected.select(&key.op, &key.weights, &key.shape, key.bucket, rows)
-            );
+    for key in &domains {
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for rows in 1..=key.bucket {
+            if table
+                .select(&key.op, &key.weights, &key.shape, key.bucket, rows)
+                .is_none()
+            {
+                if let Some((_, hi)) = ranges.last_mut()
+                    && *hi + 1 == rows
+                {
+                    *hi = rows;
+                } else {
+                    ranges.push((rows, rows));
+                }
+            }
             cases += 1;
         }
-    }
-    assert!(cases > 100_000);
-    eprintln!("Norm differential: {cases} cases");
-    for count in 0..=8193 {
-        for phase in [
-            crate::program::Phase::Decode(count),
-            crate::program::Phase::Verify {
-                rows: count,
-                items: 1,
-            },
-            crate::program::Phase::Prefill { rows: count },
-        ] {
-            assert_eq!(
-                crate::ops::norm_prefill::qualified(&FLASH, phase),
-                phase.prefill()
-                    && (count == 8192 || ((64..=2624).contains(&count) && (count - 64) % 128 == 0))
-            );
-            assert_eq!(
-                crate::ops::query_prefill::eligible(&FLASH, phase),
-                phase.prefill() && count == 8192
-            );
-            assert_eq!(
-                crate::ops::norm_quantize::small_selected(phase),
-                matches!(phase, crate::program::Phase::Decode(2 | 4))
-            );
+        assert!(
+            table
+                .select(&key.op, &key.weights, &key.shape, key.bucket, 0)
+                .is_none()
+        );
+        assert!(
+            table
+                .select(
+                    &key.op,
+                    &key.weights,
+                    &key.shape,
+                    key.bucket,
+                    key.bucket + 1
+                )
+                .is_none()
+        );
+        if !ranges.is_empty() {
+            let rows = ranges
+                .into_iter()
+                .map(|(lo, hi)| {
+                    if lo == hi {
+                        lo.to_string()
+                    } else {
+                        format!("{lo}..={hi}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            missing.push(format!("{key}: {rows}"));
         }
     }
-    for ranks in [1, 2, 4] {
-        for entry in ceil_parallel::baseline_quantizers(&FLASH, ranks).unwrap() {
-            assert_eq!(
-                ceil_parallel::capacity(&FLASH, ranks, &entry),
-                legacy_capacity(ranks, &entry)
-            );
-        }
-        let actual = ceil_parallel::registered_quantizers(&FLASH, ranks).unwrap();
-        let old = legacy_registered(ranks);
-        assert_eq!(actual.len(), old.len());
-        for (a, b) in actual.iter().zip(&old) {
-            assert_eq!((&a.symbol, a.capacity), (&b.symbol, b.capacity));
-        }
-        assert_eq!(
-            ceil_parallel::activation(&FLASH, ranks).unwrap().capacity,
-            if ranks == 4 { 64 } else { 60 }
+    assert_eq!(missing, UNTUNED, "untuned served keys changed");
+    for row in table.rows() {
+        assert!(
+            domains.contains(&Key {
+                rows: None,
+                ..row.key.clone()
+            }),
+            "table row is outside the pinned served domains: {}",
+            row.key
         );
     }
-}
-
-fn legacy_capacity(ranks: u32, entry: &kernels_sm120::row::block_quantize::Entry) -> u32 {
-    if ranks == 4 {
-        return 64;
-    }
-    let intermediate = FLASH.shape.moe.top_k * (FLASH.shape.moe.intermediate / ranks);
-    let draft = FLASH.shape.dspark.top_k * (FLASH.shape.moe.intermediate / ranks);
-    if entry.symbol == format!("chop_{}_moe_ceil_w{intermediate}_v1", FLASH.kernel_tag)
-        && intermediate != draft
-    {
-        32
-    } else {
-        60
-    }
-}
-fn legacy_registered(ranks: u32) -> Vec<kernels_sm120::row::block_quantize::Entry> {
-    let intermediate = FLASH.shape.moe.top_k * (FLASH.shape.moe.intermediate / ranks);
-    let draft = FLASH.shape.dspark.top_k * (FLASH.shape.moe.intermediate / ranks);
-    ceil_parallel::baseline_quantizers(&FLASH, ranks)
-        .unwrap()
-        .into_iter()
-        .map(|mut e| {
-            e.capacity = legacy_capacity(ranks, &e);
-            if e.query == model_deepseek41_contract::moe::quantizer(intermediate)
-                && intermediate != draft
-            {
-                e.capacity = 32;
-            }
-            if e.symbol == "chop_deepseek41_latent_ceil32_v1" {
-                e.symbol = format!("chop_{}_latent_ceil32_v1", FLASH.kernel_tag);
-            }
-            e.symbol = format!("{}_parallel_v1", e.symbol.strip_suffix("_v1").unwrap());
-            e.parallel().unwrap()
-        })
-        .collect()
+    assert!(cases > 0);
+    eprintln!(
+        "{}: {cases} served lookup cases, {} untuned keys",
+        family.name(),
+        missing.len()
+    );
 }

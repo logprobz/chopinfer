@@ -4,7 +4,9 @@ use kernel_core::backend::{Counts, Launch, OpInfo, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::moe_experts::{GatedMlpBuffers, PreparedExperts};
-use kernel_core::precision::{ExecutionPhase, OperationUse};
+#[cfg(test)]
+use kernel_core::precision::ExecutionPhase;
+use kernel_core::precision::OperationUse;
 use model_deepseek41_contract::{
     geometry::{FLASH, Geometry},
     moe::Experts,

@@ -573,23 +573,6 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     Ok(backend)
 }
 
-#[cfg(test)]
-pub(crate) fn migration_direct_buckets(
-    set: moe::Experts,
-    maximum: u32,
-) -> Vec<(kernel_core::precision::ExecutionPhase, u32)> {
-    super::moe_direct::buckets(set, maximum)
-}
-#[cfg(test)]
-pub(crate) fn migration_direct_choice(
-    site: &str,
-    experts: u32,
-    phase: kernel_core::precision::ExecutionPhase,
-    rows: u32,
-) -> bool {
-    super::moe_direct::stage_selected(site, experts, phase, rows)
-}
-
 pub(crate) fn choice(
     g: &Geometry,
     site: &str,

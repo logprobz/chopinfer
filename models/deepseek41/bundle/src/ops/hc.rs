@@ -55,28 +55,6 @@ fn baseline_draft_selected(phase: Phase) -> bool {
     phase.rows() > DECODE_BATCH && phase.rows() <= SMALL_DRAFT_ROWS
 }
 
-#[cfg(test)]
-impl super::Ops {
-    pub(crate) fn migration_hc_actual(phase: Phase, capacity: u32) -> [bool; 4] {
-        let g = &model_deepseek41_contract::geometry::FLASH;
-        [
-            finish_selected(g, phase, capacity),
-            wide_selected(g, phase, capacity),
-            decode_selected(g, phase),
-            draft_selected(g, phase),
-        ]
-    }
-
-    pub(crate) fn migration_hc_choices(phase: Phase, capacity: u32) -> [bool; 4] {
-        [
-            baseline_finish_selected(phase, capacity),
-            baseline_wide_selected(phase, capacity),
-            baseline_decode_selected(phase),
-            baseline_draft_selected(phase),
-        ]
-    }
-}
-
 fn table_selected(
     g: &model_deepseek41_contract::geometry::Geometry,
     phase: Phase,

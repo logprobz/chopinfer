@@ -39,7 +39,7 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Sm120 {
     }
 }
 
-pub(crate) fn buckets(ranks: u32) -> Vec<(u32, u32)> {
+fn buckets(ranks: u32) -> Vec<(u32, u32)> {
     use model_deepseek41_contract::{
         geometry::FLASH,
         tuning::{self, Family},

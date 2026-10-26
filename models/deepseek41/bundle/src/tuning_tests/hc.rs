@@ -1,307 +1,399 @@
-use crate::{program::Phase, sm120::hc_prefill_expand_mix};
-use kernel_build::tuning::{Key, Knob, Knobs, Row, Table, Target};
+//! Served query domains and the keys that retain their baseline schedule.
+use kernel_build::tuning::Key;
 use model_deepseek41_contract::{
     geometry::FLASH,
-    tuning::{Family, table},
+    tuning::{self, Family},
 };
 
-fn shape() -> Vec<(&'static str, u32)> {
-    vec![
-        ("groups", FLASH.shape.hc.streams),
-        ("width", FLASH.shape.hidden),
-    ]
-}
-
 fn add(
-    table: &mut Table,
-    site: &str,
-    phase: &str,
+    out: &mut std::collections::BTreeSet<Key>,
+    op: &str,
+    weights: &str,
     shape: &[(&str, u32)],
     bucket: u32,
-    schedule: &str,
-    cases: impl IntoIterator<Item = (u32, Knobs)>,
 ) {
-    let mut cases = cases.into_iter().collect::<Vec<_>>();
-    cases.sort_by_key(|(rows, _)| *rows);
-    let mut ranges: Vec<(u32, u32, Knobs)> = Vec::new();
-    for (rows, knobs) in cases {
-        if let Some((_, hi, old)) = ranges.last_mut()
-            && *hi + 1 == rows
-            && old == &knobs
-        {
-            *hi = rows;
-        } else {
-            ranges.push((rows, rows, knobs));
-        }
-    }
-    for (lo, hi, knobs) in ranges {
-        table
-            .upsert(Row {
-                key: Key {
-                    op: format!("hc.{site}.{phase}"),
-                    weights: "f32".into(),
-                    shape: shape.iter().map(|&(k, v)| (k.into(), v)).collect(),
-                    bucket,
-                    rows: (lo != 1 || hi != bucket).then_some([lo, hi]),
-                },
-                schedule: schedule.into(),
-                knobs,
-            })
-            .unwrap();
-    }
-}
-
-fn counts(entries: impl IntoIterator<Item = (u32, u32)>, knob: &str) -> Vec<(u32, Knobs)> {
-    entries
-        .into_iter()
-        .map(|(rows, value)| (rows, [(knob.into(), Knob::Count(value))].into()))
-        .collect()
-}
-
-fn generated() -> Table {
-    let mut t = Table::new(Target {
-        compute_capability: 120,
-        sm_count: 188,
+    out.insert(Key {
+        op: op.into(),
+        weights: weights.into(),
+        shape: shape.iter().map(|&(k, v)| (k.into(), v)).collect(),
+        bucket,
+        rows: None,
     });
-    let plain = |rows: Vec<u32>| {
-        rows.into_iter()
-            .map(|r| (r, Knobs::new()))
-            .collect::<Vec<_>>()
+}
+fn domains() -> std::collections::BTreeSet<Key> {
+    use model_deepseek41_contract::{
+        admission::SUPPORTED_RANKS,
+        dspark_options::SMALL_DRAFT_ROWS,
+        serving::{DECODE_BATCH, PREFILL_TOKENS, VERIFY_DECODE_ROWS},
     };
+    let mut out = std::collections::BTreeSet::new();
+    let shape = [
+        ("groups", FLASH.shape.hc.streams),
+        ("width", FLASH.shape.hidden),
+    ];
     add(
-        &mut t,
-        "lagged_warp",
-        "decode",
-        &shape(),
-        32,
-        "warp",
-        plain(vec![1, 4, 6, 8, 12, 16, 32]),
+        &mut out,
+        "hc.lagged_warp.decode",
+        "f32",
+        &shape,
+        DECODE_BATCH,
     );
-    for ranks in [1, 2, 4] {
-        let mut s = shape();
-        s.push(("ranks", ranks));
+    for &ranks in SUPPORTED_RANKS {
         add(
-            &mut t,
-            "round_chain",
-            "decode",
-            &s,
-            64,
-            "chain",
-            counts(
-                if ranks == 4 {
-                    vec![
-                        (1, 8),
-                        (2, 8),
-                        (3, 8),
-                        (4, 8),
-                        (5, 4),
-                        (6, 4),
-                        (7, 4),
-                        (8, 4),
-                    ]
-                } else {
-                    vec![(1, 8), (8, 4)]
-                },
-                "warps",
-            ),
+            &mut out,
+            "hc.round_chain.decode",
+            "f32",
+            &[
+                ("groups", FLASH.shape.hc.streams),
+                ("ranks", ranks),
+                ("width", FLASH.shape.hidden),
+            ],
+            VERIFY_DECODE_ROWS,
         );
     }
-    add(
-        &mut t,
+    for site in [
         "finish_pair",
-        "verify",
-        &shape(),
-        64,
-        "pair",
-        plain(
-            [1, 4, 6, 8, 12, 16, 32]
-                .into_iter()
-                .chain(33..=64)
-                .collect(),
-        ),
-    );
-    add(
-        &mut t,
         "finish_chain",
-        "verify",
-        &shape(),
-        64,
-        "chain",
-        counts(
-            [(1, 8), (4, 8), (6, 4), (8, 4), (12, 4), (16, 4), (32, 4)]
-                .into_iter()
-                .chain((33..=64).map(|r| (r, 4))),
-            "warps",
-        ),
-    );
-    add(
-        &mut t,
         "finish_rows",
-        "verify",
-        &shape(),
-        64,
-        "rows",
-        counts([(32, 2)], "tile"),
-    );
-    add(
-        &mut t,
         "finish_twin",
-        "verify",
-        &shape(),
-        64,
-        "twin",
-        counts([(6, 32)], "warps"),
-    );
-    add(
-        &mut t,
         "finish_cols",
-        "verify",
-        &shape(),
-        64,
-        "cols",
-        [1, 8, 16, 32]
-            .into_iter()
-            .chain(33..=64)
-            .map(|rows| kernels_sm120::sinkhorn_hc::finish_split::Bucket {
-                rows,
-                tile: if rows == 1 { 2 } else { 4 },
-                warps: 32,
-                transposed: true,
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|b| {
-                (
-                    b.rows,
-                    [
-                        ("tile".into(), Knob::Count(b.tile)),
-                        ("warps".into(), Knob::Count(b.warps)),
-                        ("transposed".into(), Knob::Flag(b.transposed)),
-                    ]
-                    .into(),
-                )
-            }),
-    );
-    for (site, buckets) in [
-        (
-            "lagged_mix",
-            vec![
-                ((8, 8), vec![64, 192]),
-                ((8, 4), vec![2240, 2496, 2624, 8192]),
-            ],
-        ),
-        (
-            "expand_mix",
-            hc_prefill_expand_mix::BUCKETS
-                .iter()
-                .map(|&(pair, rows)| (pair, rows.to_vec()))
-                .collect(),
-        ),
     ] {
         add(
-            &mut t,
-            site,
-            "prefill",
-            &shape(),
-            8192,
-            "pipeline",
-            buckets.into_iter().flat_map(|((tile, chains), rows)| {
-                rows.into_iter().map(move |r| {
-                    (
-                        r,
-                        [
-                            ("tile".into(), Knob::Count(tile)),
-                            ("chains".into(), Knob::Count(chains)),
-                        ]
-                        .into(),
-                    )
-                })
-            }),
+            &mut out,
+            &format!("hc.{site}.verify"),
+            "f32",
+            &shape,
+            VERIFY_DECODE_ROWS,
         );
     }
-    for capacity in 32..=64 {
-        for phase in ["decode", "verify", "prefill"] {
-            for (index, site) in ["finish_admit", "wide_mix", "decode_mix", "draft_mix"]
-                .into_iter()
-                .enumerate()
-            {
-                // These two mixers have fixed prepared capacities; only the
-                // finish and wide mixer queries use the instance's verify bound.
-                if (site == "decode_mix" && capacity != 32)
-                    || (site == "draft_mix" && capacity != 60)
-                {
-                    continue;
-                }
+    for site in ["lagged_mix", "expand_mix"] {
+        add(
+            &mut out,
+            &format!("hc.{site}.prefill"),
+            "f32",
+            &shape,
+            PREFILL_TOKENS,
+        );
+    }
+    for phase in ["decode", "verify", "prefill"] {
+        for capacity in DECODE_BATCH..=VERIFY_DECODE_ROWS {
+            for site in ["finish_admit", "wide_mix"] {
                 add(
-                    &mut t,
-                    site,
-                    phase,
-                    &shape(),
+                    &mut out,
+                    &format!("hc.{site}.{phase}"),
+                    "f32",
+                    &shape,
                     capacity,
-                    "admit",
-                    (1..=capacity).filter_map(|rows| {
-                        let p = match phase {
-                            "decode" => Phase::Decode(rows),
-                            "verify" => Phase::Verify { rows, items: 1 },
-                            _ => Phase::Prefill { rows },
-                        };
-                        crate::ops::Ops::migration_hc_choices(p, capacity)[index]
-                            .then(|| (rows, Knobs::new()))
-                    }),
                 );
             }
         }
+        add(
+            &mut out,
+            &format!("hc.decode_mix.{phase}"),
+            "f32",
+            &shape,
+            DECODE_BATCH,
+        );
+        add(
+            &mut out,
+            &format!("hc.draft_mix.{phase}"),
+            "f32",
+            &shape,
+            SMALL_DRAFT_ROWS,
+        );
     }
-    t
+    out
 }
 
-#[test]
-#[ignore = "one-time migration generator; writes to the external evidence directory"]
-fn generate() {
-    let out = std::path::PathBuf::from(
-        std::env::var_os("CHOPINFER_TUNING_OUT").expect("external output directory"),
-    );
-    assert!(
-        !out.canonicalize().unwrap().starts_with(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .canonicalize()
-                .unwrap()
-        )
-    );
-    std::fs::write(out.join("hc.json"), generated().render()).unwrap();
-}
+const UNTUNED: &[&str] = &[
+    "hc.decode_mix.decode f32 groups=4,width=5120 t32: 2..=7,9..=32",
+    "hc.decode_mix.prefill f32 groups=4,width=5120 t32: 1..=32",
+    "hc.decode_mix.verify f32 groups=4,width=5120 t32: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.draft_mix.decode f32 groups=4,width=5120 t60: 1..=32",
+    "hc.draft_mix.prefill f32 groups=4,width=5120 t60: 1..=32",
+    "hc.draft_mix.verify f32 groups=4,width=5120 t60: 1..=32",
+    "hc.expand_mix.prefill f32 groups=4,width=5120 t8192: 1..=63,65..=319,321..=8191",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t32: 2..=7,9..=15,17..=31",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t33: 2..=7,9..=15,17..=31,33",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t34: 2..=7,9..=15,17..=31,33..=34",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t35: 2..=7,9..=15,17..=31,33..=35",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t36: 2..=7,9..=15,17..=31,33..=36",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t37: 2..=7,9..=15,17..=31,33..=37",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t38: 2..=7,9..=15,17..=31,33..=38",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t39: 2..=7,9..=15,17..=31,33..=39",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t40: 2..=7,9..=15,17..=31,33..=40",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t41: 2..=7,9..=15,17..=31,33..=41",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t42: 2..=7,9..=15,17..=31,33..=42",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t43: 2..=7,9..=15,17..=31,33..=43",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t44: 2..=7,9..=15,17..=31,33..=44",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t45: 2..=7,9..=15,17..=31,33..=45",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t46: 2..=7,9..=15,17..=31,33..=46",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t47: 2..=7,9..=15,17..=31,33..=47",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t48: 2..=7,9..=15,17..=31,33..=48",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t49: 2..=7,9..=15,17..=31,33..=49",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t50: 2..=7,9..=15,17..=31,33..=50",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t51: 2..=7,9..=15,17..=31,33..=51",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t52: 2..=7,9..=15,17..=31,33..=52",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t53: 2..=7,9..=15,17..=31,33..=53",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t54: 2..=7,9..=15,17..=31,33..=54",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t55: 2..=7,9..=15,17..=31,33..=55",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t56: 2..=7,9..=15,17..=31,33..=56",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t57: 2..=7,9..=15,17..=31,33..=57",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t58: 2..=7,9..=15,17..=31,33..=58",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t59: 2..=7,9..=15,17..=31,33..=59",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t60: 2..=7,9..=15,17..=31,33..=60",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t61: 2..=7,9..=15,17..=31,33..=61",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t62: 2..=7,9..=15,17..=31,33..=62",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t63: 2..=7,9..=15,17..=31,33..=63",
+    "hc.finish_admit.decode f32 groups=4,width=5120 t64: 2..=7,9..=15,17..=31,33..=64",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t32: 1..=32",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t33: 1..=33",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t34: 1..=34",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t35: 1..=35",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t36: 1..=36",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t37: 1..=37",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t38: 1..=38",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t39: 1..=39",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t40: 1..=40",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t41: 1..=41",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t42: 1..=42",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t43: 1..=43",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t44: 1..=44",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t45: 1..=45",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t46: 1..=46",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t47: 1..=47",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t48: 1..=48",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t49: 1..=49",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t50: 1..=50",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t51: 1..=51",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t52: 1..=52",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t53: 1..=53",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t54: 1..=54",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t55: 1..=55",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t56: 1..=56",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t57: 1..=57",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t58: 1..=58",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t59: 1..=59",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t60: 1..=60",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t61: 1..=61",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t62: 1..=62",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t63: 1..=63",
+    "hc.finish_admit.prefill f32 groups=4,width=5120 t64: 1..=64",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t32: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t33: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t34: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t35: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t36: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t37: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t38: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t39: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t40: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t41: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t42: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t43: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t44: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t45: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t46: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t47: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t48: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t49: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t50: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t51: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t52: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t53: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t54: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t55: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t56: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t57: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t58: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t59: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t60: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t61: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t62: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t63: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t64: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_chain.verify f32 groups=4,width=5120 t64: 2..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_cols.verify f32 groups=4,width=5120 t64: 2..=7,9..=15,17..=31",
+    "hc.finish_pair.verify f32 groups=4,width=5120 t64: 2..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_rows.verify f32 groups=4,width=5120 t64: 1..=31,33..=64",
+    "hc.finish_twin.verify f32 groups=4,width=5120 t64: 1..=5,7..=64",
+    "hc.lagged_mix.prefill f32 groups=4,width=5120 t8192: 1..=63,65..=191,193..=2239,2241..=2495,2497..=2623,2625..=8191",
+    "hc.lagged_warp.decode f32 groups=4,width=5120 t32: 2..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.round_chain.decode f32 groups=4,ranks=1,width=5120 t64: 2..=7,9..=64",
+    "hc.round_chain.decode f32 groups=4,ranks=2,width=5120 t64: 2..=7,9..=64",
+    "hc.round_chain.decode f32 groups=4,ranks=4,width=5120 t64: 9..=64",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t32: 1..=32",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t33: 1..=33",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t34: 1..=34",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t35: 1..=35",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t36: 1..=36",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t37: 1..=37",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t38: 1..=38",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t39: 1..=39",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t40: 1..=40",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t41: 1..=41",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t42: 1..=42",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t43: 1..=43",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t44: 1..=44",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t45: 1..=45",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t46: 1..=46",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t47: 1..=47",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t48: 1..=48",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t49: 1..=49",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t50: 1..=50",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t51: 1..=51",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t52: 1..=52",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t53: 1..=53",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t54: 1..=54",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t55: 1..=55",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t56: 1..=56",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t57: 1..=57",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t58: 1..=58",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t59: 1..=59",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t60: 1..=60",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t61: 1..=61",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t62: 1..=62",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t63: 1..=63",
+    "hc.wide_mix.decode f32 groups=4,width=5120 t64: 1..=64",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t32: 1..=32",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t33: 1..=33",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t34: 1..=34",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t35: 1..=35",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t36: 1..=36",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t37: 1..=37",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t38: 1..=38",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t39: 1..=39",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t40: 1..=40",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t41: 1..=41",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t42: 1..=42",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t43: 1..=43",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t44: 1..=44",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t45: 1..=45",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t46: 1..=46",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t47: 1..=47",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t48: 1..=48",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t49: 1..=49",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t50: 1..=50",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t51: 1..=51",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t52: 1..=52",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t53: 1..=53",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t54: 1..=54",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t55: 1..=55",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t56: 1..=56",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t57: 1..=57",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t58: 1..=58",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t59: 1..=59",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t60: 1..=60",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t61: 1..=61",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t62: 1..=62",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t63: 1..=63",
+    "hc.wide_mix.prefill f32 groups=4,width=5120 t64: 1..=64",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t32: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t33: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t34: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t35: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t36: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t37: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t38: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t39: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t40: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t41: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t42: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t43: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t44: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t45: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t46: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t47: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t48: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t49: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t50: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t51: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t52: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t53: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t54: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t55: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t56: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t57: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t58: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t59: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t60: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t61: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t62: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t63: 1..=32",
+    "hc.wide_mix.verify f32 groups=4,width=5120 t64: 1..=32",
+];
 
 #[test]
-fn differential() {
-    let expected = generated();
-    let actual = table(&FLASH, Family::Hc).unwrap();
-    assert_eq!(actual.render(), expected.render());
+fn pin_untuned_served_keys() {
+    let family = Family::Hc;
+    let table = tuning::table(&FLASH, family).unwrap();
+    assert!(!table.rows().is_empty());
+    let domains = domains();
+    let mut missing = Vec::new();
     let mut cases = 0;
-    for row in expected.rows() {
-        for rows in 0..=row.key.bucket + 1 {
-            let key = &row.key;
-            assert_eq!(
-                actual.select(&key.op, &key.weights, &key.shape, key.bucket, rows),
-                expected.select(&key.op, &key.weights, &key.shape, key.bucket, rows)
-            );
+    for key in &domains {
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for rows in 1..=key.bucket {
+            if table
+                .select(&key.op, &key.weights, &key.shape, key.bucket, rows)
+                .is_none()
+            {
+                if let Some((_, hi)) = ranges.last_mut()
+                    && *hi + 1 == rows
+                {
+                    *hi = rows;
+                } else {
+                    ranges.push((rows, rows));
+                }
+            }
             cases += 1;
         }
-    }
-    assert!(cases > 50_000);
-    eprintln!("HC differential: {cases} cases");
-    for capacity in 32..=64 {
-        for rows in 0..=8193 {
-            for phase in [
-                Phase::Decode(rows),
-                Phase::Verify { rows, items: 1 },
-                Phase::Prefill { rows },
-            ] {
-                assert_eq!(
-                    crate::ops::Ops::migration_hc_actual(phase, capacity),
-                    crate::ops::Ops::migration_hc_choices(phase, capacity),
-                    "{phase:?} capacity={capacity}"
-                );
-            }
+        assert!(
+            table
+                .select(&key.op, &key.weights, &key.shape, key.bucket, 0)
+                .is_none()
+        );
+        assert!(
+            table
+                .select(
+                    &key.op,
+                    &key.weights,
+                    &key.shape,
+                    key.bucket,
+                    key.bucket + 1
+                )
+                .is_none()
+        );
+        if !ranges.is_empty() {
+            let rows = ranges
+                .into_iter()
+                .map(|(lo, hi)| {
+                    if lo == hi {
+                        lo.to_string()
+                    } else {
+                        format!("{lo}..={hi}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            missing.push(format!("{key}: {rows}"));
         }
     }
+    assert_eq!(missing, UNTUNED, "untuned served keys changed");
+    for row in table.rows() {
+        assert!(
+            domains.contains(&Key {
+                rows: None,
+                ..row.key.clone()
+            }),
+            "table row is outside the pinned served domains: {}",
+            row.key
+        );
+    }
+    assert!(cases > 0);
+    eprintln!(
+        "{}: {cases} served lookup cases, {} untuned keys",
+        family.name(),
+        missing.len()
+    );
 }

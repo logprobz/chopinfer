@@ -51,7 +51,7 @@ pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {
     Ok(backend.with_rmsnorm_quantize(entry.reference))
 }
 
-pub(crate) fn selected() -> Result<Entry, String> {
+fn selected() -> Result<Entry, String> {
     let cached = super::norm_quantize_cached::choice(
         &FLASH,
         "norm.input_strategy.prefill",

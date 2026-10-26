@@ -6,7 +6,7 @@ use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;
 use model_deepseek41_contract::{rows, serving::DECODE_BATCH};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
-pub(crate) fn small_selected(phase: Phase) -> bool {
+fn small_selected(phase: Phase) -> bool {
     use model_deepseek41_contract::{
         geometry::FLASH,
         tuning::{self, Family},

@@ -45,7 +45,7 @@ pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
 
 /// Flash TP4 includes the target intermediate in its wide verify forms.
 /// Other topologies retain their target decode and drafter row limits.
-pub(crate) fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
+fn capacity(g: &Geometry, ranks: u32, entry: &block_quantize::Entry) -> u32 {
     if let Some(row) = tuning_choice(g, "norm.ceil_capacity.decode", ranks, entry, entry.capacity) {
         return row.knobs["capacity"]
             .count()

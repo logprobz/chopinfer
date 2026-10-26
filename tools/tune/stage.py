@@ -222,6 +222,8 @@ def main():
     keys = ('tokens', 'warm', 'warm_tokens', 'kinds', 'sampling', 'selection', 'work_seconds',
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
+    if 'allow_fallbacks' in model:
+        config['allow_fallbacks'] = model['allow_fallbacks']
     cold_files = []
     cold = model.get('cold_engram', workload.get('cold_engram'))
     if cold:

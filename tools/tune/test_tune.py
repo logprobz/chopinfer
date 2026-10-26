@@ -506,6 +506,34 @@ class Tuner(unittest.TestCase):
         self.assertIsNone(report.measure([row, {**row, 'fallback_launches': 2}])['fallback_launches'])
         self.assertEqual(report.measure([{**row, 'fallback_launches': 2}] * 2)['fallback_launches'], 4)
 
+    def test_staged_job_preserves_fallback_allowances(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workload = root / 'workload.json'
+            workload.write_text(json.dumps({'name': 'fixture', 'prompts': 1}))
+            model = {**MODEL, 'model': 'fixture', 'workload': str(workload),
+                     'concurrencies': [1], 'tokens': {'default': 32}, 'warm': [], 'warm_tokens': 8,
+                     'kinds': {'sampled': 1}, 'sampling': {'seed': 1}, 'selection': {},
+                     'work_seconds': 60, 'queue_timeout_seconds': 90,
+                     'checkpoint_env': 'CHOPINFER_TEST_CHECKPOINT', 'tensor_parallel_size': 1,
+                     'allow_fallbacks': {'mapped_rows': 'Prepared prefill pending'},
+                     'jobs': {'small': {'concurrencies': [1]}}}
+            source = root / 'model.json'
+            source.write_text(json.dumps(model))
+            destination = root / 'staged'
+            argv = ['stage.py', str(destination), '--model', str(source), '--job', 'small', '--template']
+            with patch.object(sys, 'argv', argv), patch.object(stage, 'check_budget', return_value=1), \
+                    patch.object(stage.builder, 'build', return_value={'prompts': ['fixture'], 'sources': []}):
+                stage.main()
+            config = json.loads((destination / 'runtime-seal.json').read_text())['config']
+            allow = config.get('allow_fallbacks', {})
+            steps = [{'route': {'fallback_launches': 4, 'families': {'mapped_rows': 4}}}]
+            self.assertEqual(tune.check_fallbacks('window', steps, allow)['fallback_launches'], 4)
+            with self.assertRaisesRegex(RuntimeError, 'unallowed fallback'):
+                tune.check_fallbacks('window', [{'route': {'fallback_launches': 1,
+                                                         'families': {'unrelated': 1}}}], allow)
+
     def test_fallback_gate_requires_complete_counts_and_justified_families(self):
         steps = [{'route': {'fallback_launches': 3, 'families': {'projection': 3}}}]
         with self.assertRaisesRegex(RuntimeError, 'unallowed fallback'):

@@ -89,9 +89,8 @@ fn early_decision(value: Option<&std::ffi::OsStr>) -> bool {
 
 #[cfg(test)]
 thread_local! {
-    /// The switch in tests. Tests gather every row behind the drafter unless
-    /// they set it, so their pinned journals stay that route's.
-    static EARLY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests follow the served early-gather route unless explicitly overridden.
+    static EARLY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     static UNDRAFTED_STATUS_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

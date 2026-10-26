@@ -167,13 +167,16 @@ use super::*;
 // ordered merge. Graph pieces retain their boundaries and gain 1/13/26 nodes
 // per rank. Every other operation, allocation and the five other verify
 // widths' complete histories remain identical.
+// Early Engram preparation adds five buffers, one stream and two gather
+// handles. The six verify bodies and every retained full-history operation
+// stay identical under the ordered resource map.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0x14a54339e79e3cc4)),
-    (6, (8040, 0x04922e21885dd236)),
-    (8, (7720, 0x0964038e3c2e379e)),
-    (12, (8216, 0x0ec465aff4ac2fb1)),
-    (16, (8052, 0x95be8e536d06d196)),
-    (32, (7744, 0xa76bd0b206edaeed)),
+    (4, (7880, 0x3c0921348475553d)),
+    (6, (8040, 0xc04ff05f855b8dc5)),
+    (8, (7720, 0xf8df1ad416e49950)),
+    (12, (8216, 0xab1c078384eb0cc2)),
+    (16, (8052, 0xefb1eb7716c335aa)),
+    (32, (7744, 0xd2baa7e92db29cc1)),
 ];
 
 #[test]

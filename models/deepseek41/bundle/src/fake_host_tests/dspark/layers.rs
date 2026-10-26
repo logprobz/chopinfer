@@ -31,9 +31,24 @@ fn layer_gathers_join_only_at_their_own_consumers() {
             if cycle == 1 {
                 let journal = host.journal.borrow();
                 let step = &journal[begin..];
+                let hash = step
+                    .iter()
+                    .position(|s| s.contains(crate::sm120::engram_hash_rows::SYMBOL))
+                    .unwrap();
+                assert_eq!(
+                    step[..hash]
+                        .iter()
+                        .filter(|s| s.starts_with("async mapped ids "))
+                        .count(),
+                    2,
+                    "each layer starts its early gather before the target hash"
+                );
                 let at = step
                     .iter()
-                    .position(|s| s.starts_with("async mapped ids "))
+                    .enumerate()
+                    .find_map(|(at, s)| {
+                        (at > hash && s.starts_with("async mapped ids ")).then_some(at)
+                    })
                     .unwrap();
                 let target = &step[at..];
                 assert_eq!(
@@ -67,7 +82,8 @@ fn layer_gathers_join_only_at_their_own_consumers() {
                         .iter()
                         .filter(|s| s.starts_with("async mapped complete"))
                         .count(),
-                    2
+                    4,
+                    "both early and late gathers complete at the boundary"
                 );
                 assert!(!target.iter().any(|s| s.starts_with("synchronize ")));
             }

@@ -113,9 +113,16 @@ fn warm_cycle_host_boundary_inventory() {
                     "one catch-up graph and bounded draft chunks per rank"
                 );
                 let draft = before_hash[4];
-                let enqueue = execute
+                let early = execute
                     .iter()
                     .position(|line| line.starts_with("async mapped ids "))
+                    .unwrap();
+                let enqueue = execute
+                    .iter()
+                    .enumerate()
+                    .find_map(|(at, line)| {
+                        (at > hash && line.starts_with("async mapped ids ")).then_some(at)
+                    })
                     .unwrap();
                 let wait = execute
                     .iter()
@@ -131,7 +138,8 @@ fn warm_cycle_host_boundary_inventory() {
                     .rposition(|line| line.starts_with("replay "))
                     .unwrap();
                 assert!(
-                    draft < hash
+                    early < draft
+                        && draft < hash
                         && hash < enqueue
                         && enqueue < wait
                         && wait < gathered
@@ -169,11 +177,11 @@ fn warm_cycle_host_boundary_inventory() {
                     "status and diagnostics are joined in one packet"
                 );
                 assert_eq!(
-                    totals["async_device_to_host"], 2,
-                    "disjoint ID slices feed the two layer gathers"
+                    totals["async_device_to_host"], 4,
+                    "disjoint ID slices feed each layer's early and late gathers"
                 );
-                assert_eq!(totals["physical_readbacks"], if joined { 3 } else { 7 });
-                assert_eq!(totals["mapped_waits"], 8);
+                assert_eq!(totals["physical_readbacks"], if joined { 5 } else { 9 });
+                assert_eq!(totals["mapped_waits"], 16);
                 assert_eq!(
                     totals["graph_replays"],
                     4 * (4 + items.div_ceil(8)),

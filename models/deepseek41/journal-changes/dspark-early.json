@@ -1,0 +1,1068 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Exercise the served DSpark early Engram gathers by default in tests. Only the six verify fixture creates add one rank-zero stream, a 36864-byte ID buffer, four 405504-byte early-row buffers and two mapped gathers. Every retained operation and all kernel locks remain unchanged.",
+ "handles": {
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added": [
+    {
+     "name": "early_stream_0",
+     "kind": "stream",
+     "at": 355,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "stream @id"
+      ],
+      [
+       "stream",
+       "@id",
+       0
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_0",
+     "kind": "allocation",
+     "at": 358,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 36864 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       36864,
+       256,
+       4294967422
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_1",
+     "kind": "allocation",
+     "at": 516,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       405504,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_2",
+     "kind": "allocation",
+     "at": 1020,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       405504,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_3",
+     "kind": "allocation",
+     "at": 1524,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       405504,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "early_allocation_4",
+     "kind": "allocation",
+     "at": 2028,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 405504 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       405504,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_0",
+     "kind": "mapped-gather",
+     "at": 34689,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    },
+    {
+     "name": "early_mapped_gather_1",
+     "kind": "mapped-gather",
+     "at": 34692,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ],
+      [
+       "note",
+       "async mapped create @id"
+      ]
+     ]
+    }
+   ]
+  }
+ }
+}

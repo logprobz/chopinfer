@@ -264,7 +264,7 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
         let step = &journal[start..];
         let boundary = step
             .iter()
-            .position(|line| line.starts_with("async mapped ids "))
+            .position(|line| line.contains(crate::sm120::engram_hash_rows::SYMBOL))
             .or_else(|| {
                 step.iter()
                     .rposition(|line| line.starts_with("mapped gather"))

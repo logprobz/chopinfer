@@ -192,10 +192,14 @@ impl HostServicesBackendV1 for MappedHost {
         source_context: BundleContextHandleV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
-        assert_eq!(
-            self.host.fake().stream_ranks.borrow()[&stream.slot()] + 1,
-            destination_context.slot()
+        let issuer = self.host.fake().stream_ranks.borrow()[&stream.slot()] + 1;
+        assert!(
+            issuer == destination_context.slot() || issuer == source_context.slot(),
+            "a peer copy must use an endpoint's stream"
         );
+        if !self.peer_copies && issuer != destination_context.slot() {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
         assert_ne!(destination_context, source_context);
         assert!(!self.host.fake().capturing_on_device_of(stream.slot()));
         self.host.fake().note(format!(

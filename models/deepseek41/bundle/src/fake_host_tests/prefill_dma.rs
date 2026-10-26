@@ -212,7 +212,9 @@ fn prefill_dma_preserves_all_owner_intervals_and_orders_every_transfer() {
 #[test]
 fn prefill_dma_pushes_only_where_the_host_allows_it() {
     for (mode, rows) in [(0, 8192), (0, 8191), (2, 8191)] {
-        let pulled = capture(mode, rows);
+        let pull_host = host();
+        pull_host.pull_only.set(true);
+        let pulled = capture_on(&pull_host, mode, rows);
         for pull_only in [false, true] {
             let host = host();
             host.pull_only.set(pull_only);
@@ -324,6 +326,7 @@ fn prefill_dma_partial_copy_failure_poisoning_prevents_capture_or_retry() {
     for mode in [0, 2] {
         let host = host();
         let mut instance = with_dma(true, || with_mode(mode, || create(&host, 4)));
+        host.device.journal.borrow_mut().clear();
         host.device.fail_copy.set(Some(2));
         let batch = prompt(7, 0, 0, 8191, true);
         assert_eq!(

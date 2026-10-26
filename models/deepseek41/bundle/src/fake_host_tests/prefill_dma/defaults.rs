@@ -187,9 +187,9 @@ fn package_defaults_select_dma_for_upper_skip_only() {
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
             .count(),
-        73 * 24
+        73 * 24 + 12
     );
-    assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
     assert_ne!(unset, capture(Some("0"), true, &defaults, 8192));
     // A DSpark target prefill under the tp4-dspark defaults takes the same
     // transport and allocates the same inbox, streams and events.
@@ -200,9 +200,9 @@ fn package_defaults_select_dma_for_upper_skip_only() {
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
             .count(),
-        73 * 24
+        73 * 24 + 12
     );
-    assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3));
+    assert_eq!(audit(&dspark).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
     assert_ne!(dspark, capture_with(Some("0"), true, &defaults, 8192, true));
     // Without the BF16 gather it was measured with, the default keeps
     // the SM transport.
@@ -220,13 +220,13 @@ fn full_prefill_profile_requires_explicit_dma_selection() {
     assert_disabled_journal(&capture(None, true, &full, 8192), &disabled);
     assert_disabled_journal(&capture(None, true, &BTreeMap::new(), 8192), &disabled);
     let explicit = capture(Some("1"), true, &full, 8192);
-    assert_eq!(audit(&explicit).unwrap(), 81 * (24 * 2 + 4 * 3));
+    assert_eq!(audit(&explicit).unwrap(), 81 * (24 * 2 + 4 * 3) + 12 * 2);
     assert_eq!(
         explicit
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
             .count(),
-        81 * 24
+        81 * 24 + 12
     );
 }
 
@@ -234,13 +234,13 @@ fn full_prefill_profile_requires_explicit_dma_selection() {
 fn explicit_dma_keeps_the_existing_transport_controls() {
     for bf16 in [true, false] {
         let journal = capture(Some("1"), bf16, &BTreeMap::new(), 8191);
-        assert_eq!(audit(&journal).unwrap(), 81 * (24 * 2 + 4 * 3));
+        assert_eq!(audit(&journal).unwrap(), 81 * (24 * 2 + 4 * 3) + 12 * 2);
         assert_eq!(
             journal
                 .iter()
                 .filter(|line| line.starts_with("peer-copy "))
                 .count(),
-            81 * 24
+            81 * 24 + 12
         );
     }
 }
@@ -273,9 +273,9 @@ fn package_defaults_send_bf16_partials_where_the_prefill_reduces_them() {
                 .iter()
                 .filter(|line| line.starts_with("peer-copy "))
                 .count(),
-            73 * 24
+            73 * 24 + 12
         );
-        assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3));
+        assert_eq!(audit(&unset).unwrap(), 73 * (24 * 2 + 4 * 3) + 12 * 2);
         assert!(!off.iter().any(|line| line.starts_with("peer-copy ")));
         assert!(launches(&off, BF16_SUM) == 0 && launches(&off, BF16_ROUND) == 0);
     }

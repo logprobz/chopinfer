@@ -329,7 +329,7 @@ pub(crate) fn dma_push_requested() -> bool {
 }
 
 #[cfg(test)]
-thread_local! { static PUSH_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! { static PUSH_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
 
 #[cfg(test)]
 pub(crate) fn with_dma_push<T>(enabled: bool, run: impl FnOnce() -> T) -> T {

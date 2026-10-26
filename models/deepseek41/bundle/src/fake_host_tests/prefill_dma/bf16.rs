@@ -92,10 +92,22 @@ fn bf16_prefill_dma_rounds_once_and_sends_half_the_scatter_bytes() {
             .cloned()
             .collect::<Vec<_>>();
         assert!(audit(&missing_waits).is_err());
-        // A round submitted after its first scatter is unordered.
+        // A round moved after its scatter on another rank's stream is
+        // unordered, including when source-stream copies are available.
         let mut late = journal.clone();
         let first_round = late.iter().position(|s| s.contains(BF16_ROUND)).unwrap();
         let round = late.remove(first_round);
+        let stream = round.split_whitespace().nth(1).unwrap();
+        let other_stream = rounds
+            .iter()
+            .map(|line| line.split_whitespace().nth(1).unwrap())
+            .find(|&other| other != stream)
+            .unwrap();
+        let round = round.replacen(
+            &format!("launch {stream} "),
+            &format!("launch {other_stream} "),
+            1,
+        );
         let first_copy = late
             .iter()
             .position(|s| s.starts_with("peer-copy "))

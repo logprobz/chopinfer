@@ -15,7 +15,6 @@ pub mod mxfp8_fold_local_rows;
 pub mod mxfp8_fold_local_tiled;
 pub mod mxfp8_fold_local_wide;
 pub mod mxfp8_fold_packed;
-pub mod mxfp8_fold_resident;
 pub mod mxfp8_fold_reuse;
 pub mod mxfp8_fold_stream;
 pub mod mxfp8_fold_ticket;
@@ -3336,7 +3335,6 @@ mod tests {
     }
 }
 
-pub mod mxfp8_fold_tiled;
 pub mod mxfp8_prefill_matrix;
 
 pub mod mxfp8_prefill_tma_matrix;

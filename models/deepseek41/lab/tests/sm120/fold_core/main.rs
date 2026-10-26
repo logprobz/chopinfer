@@ -10,7 +10,7 @@ use kernel_harness::{
 };
 use kernels_sm120::{
     backend::Sm120,
-    gemm::{mxfp8_fold, mxfp8_fold_tiled as decode, mxfp8_prefill_matrix as prefill},
+    gemm::{mxfp8_fold, mxfp8_prefill_matrix as prefill},
 };
 use model_deepseek41_contract::geometry::FLASH;
 use runtime_cuda::{DeviceBuffer, Function, Module, Stream};
@@ -61,21 +61,18 @@ fn backend() -> &'static Sm120 {
 }
 #[derive(Clone)]
 enum Candidate {
-    Decode(decode::Entry),
     Prefill(prefill::Entry),
     LocalRows(kernels_sm120::gemm::mxfp8_fold_local_rows::Entry),
 }
 impl Candidate {
     fn base(&self) -> mxfp8_fold::Entry {
         match self {
-            Self::Decode(e) => e.packed.ticket.legacy().unwrap(),
             Self::Prefill(e) => e.base.clone(),
             Self::LocalRows(e) => e.base.clone(),
         }
     }
     fn label(&self) -> String {
         match self {
-            Self::Decode(e) => e.schedule.name().into(),
             Self::Prefill(e) => format!("m{}s{}", e.tile_rows, e.stages),
             Self::LocalRows(e) if e.stages > 0 => deep_family::label(e),
             Self::LocalRows(e) => format!("local32n{}", e.tile_n),
@@ -84,15 +81,10 @@ impl Candidate {
 }
 fn candidates() -> Vec<Candidate> {
     let all: Vec<_> = if is_decode() {
-        family::decode_entries()
+        local_family::entries()
             .into_iter()
-            .map(Candidate::Decode)
-            .chain(
-                local_family::entries()
-                    .into_iter()
-                    .chain(deep_family::entries())
-                    .map(Candidate::LocalRows),
-            )
+            .chain(deep_family::entries())
+            .map(Candidate::LocalRows)
             .collect()
     } else {
         family::prefill_entries()
@@ -271,21 +263,6 @@ fn prefill_reference(
 }
 fn candidate(a: &mut Arena<'_>, c: &Candidate, b: &Buffers<View>, rows: u32) -> LabResult<Calls> {
     match c {
-        Candidate::Decode(e) => {
-            let state = a.filled(e.state_bytes(32).map_err(|e| e.to_string())?, 0)?;
-            let packed = a.filled(e.packed.packed_bytes(), 0)?;
-            let views = Mxfp8FoldStreamBuffers {
-                first: *b,
-                second: None,
-                packed_weights: [packed, View::EMPTY],
-                state,
-            };
-            Ok(Calls {
-                init: vec![e.initialize(&views).map_err(|e| e.to_string())?],
-                run: vec![e.launch(&views, rows, None).map_err(|e| e.to_string())?],
-                state: Some(state),
-            })
-        }
         Candidate::LocalRows(e) => {
             let work = a.filled(e.workspace(), 0)?;
             Ok(Calls {
@@ -324,8 +301,6 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
             Some(deep_family::CUBIN)
         } else if call.symbol.starts_with("chop_fold_cluster_") {
             Some(cluster_family::CUBIN)
-        } else if call.symbol.starts_with("chop_fold_core_") {
-            Some(family::DECODE)
         } else if call.symbol.contains("_matrix_") && !call.symbol.ends_with("_packed_v1") {
             Some(family::PREFILL)
         } else {
@@ -475,7 +450,7 @@ fn check_case(
     let mut omit = calls[1].run.clone();
     let last = omit.last_mut().unwrap();
     match c {
-        Candidate::Decode(_) | Candidate::LocalRows(_) => last.symbol.push_str("_omit_v1"),
+        Candidate::LocalRows(_) => last.symbol.push_str("_omit_v1"),
         Candidate::Prefill(_) => last.symbol.push_str("_omit_first_v1"),
     }
     let mut delayed = calls[1].run.clone();
@@ -664,7 +639,7 @@ fn cpu_catalog() {
     }
     println!(
         "FOLD_CORE_CATALOG {}",
-        json!({"family":if deep_rows(){deep_family::FAMILY}else if local_rows(){local_family::FAMILY}else{family::FAMILY},"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans,"captured_memcheck":local_rows(),"candidate_cubins":if deep_rows(){vec![deep_family::CUBIN]}else if local_rows(){vec![local_family::CUBIN]}else{vec![family::DECODE,family::PREFILL]}})
+        json!({"family":if deep_rows(){deep_family::FAMILY}else if local_rows(){local_family::FAMILY}else{family::FAMILY},"phase":if is_decode(){"decode"}else{"prefill"},"rows":row_counts(false),"memcheck_rows":row_counts(true),"variants":candidates().iter().map(|c|{let q=c.base().query;json!({"n":q.n,"k":q.k,"groups":q.groups,"variant":c.label()})}).collect::<Vec<_>>(),"candidate_symbols":symbols,"references":references,"plans":plans,"captured_memcheck":local_rows(),"candidate_cubins":if deep_rows(){vec![deep_family::CUBIN]}else if local_rows(){vec![local_family::CUBIN]}else if is_decode(){vec![local_family::CUBIN,deep_family::CUBIN]}else{vec![family::PREFILL]}})
     );
 }
 
